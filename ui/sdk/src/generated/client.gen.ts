@@ -153,6 +153,16 @@ import type {
   MlxEngineBrowseFiltersResponse_unstable,
   MlxEngineBrowseRequest_unstable,
   MlxEngineBrowseResponse_unstable,
+  MlxEngineDistributedConfigResponse_unstable,
+  MlxEngineDistributedConfigUpdateRequest_unstable,
+  MlxEngineDistributedPreflightRequest_unstable,
+  MlxEngineDistributedPreflightResponse_unstable,
+  MlxEngineDistributedStartRequest_unstable,
+  MlxEngineDistributedStartResponse_unstable,
+  MlxEngineDistributedStatusRequest_unstable,
+  MlxEngineDistributedStatusResponse_unstable,
+  MlxEngineDistributedStopRequest_unstable,
+  MlxEngineDistributedStopResponse_unstable,
   MlxEngineDownloadCancelRequest_unstable,
   MlxEngineDownloadPauseRequest_unstable,
   MlxEngineDownloadProgressRequest_unstable,
@@ -316,6 +326,11 @@ import {
   zLocalInferenceModelsListResponse_unstable,
   zMlxEngineBrowseFiltersResponse_unstable,
   zMlxEngineBrowseResponse_unstable,
+  zMlxEngineDistributedConfigResponse_unstable,
+  zMlxEngineDistributedPreflightResponse_unstable,
+  zMlxEngineDistributedStartResponse_unstable,
+  zMlxEngineDistributedStatusResponse_unstable,
+  zMlxEngineDistributedStopResponse_unstable,
   zMlxEngineDownloadProgressResponse_unstable,
   zMlxEngineHfSearchResponse_unstable,
   zMlxEngineLinkFactsResponse_unstable,
@@ -1687,6 +1702,66 @@ export class GooseExtClient {
       "_goose/unstable/mlxEngine/downloadResume",
       params,
     );
+  }
+
+  async mlxEngineDistributedStatus_unstable(
+    params: MlxEngineDistributedStatusRequest_unstable,
+  ): Promise<MlxEngineDistributedStatusResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/distributedStatus",
+      params,
+    );
+    return zMlxEngineDistributedStatusResponse_unstable.parse(
+      raw,
+    ) as MlxEngineDistributedStatusResponse_unstable;
+  }
+
+  async mlxEngineDistributedPreflight_unstable(
+    params: MlxEngineDistributedPreflightRequest_unstable,
+  ): Promise<MlxEngineDistributedPreflightResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/distributedPreflight",
+      params,
+    );
+    return zMlxEngineDistributedPreflightResponse_unstable.parse(
+      raw,
+    ) as MlxEngineDistributedPreflightResponse_unstable;
+  }
+
+  async mlxEngineDistributedStart_unstable(
+    params: MlxEngineDistributedStartRequest_unstable,
+  ): Promise<MlxEngineDistributedStartResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/distributedStart",
+      params,
+    );
+    return zMlxEngineDistributedStartResponse_unstable.parse(
+      raw,
+    ) as MlxEngineDistributedStartResponse_unstable;
+  }
+
+  async mlxEngineDistributedStop_unstable(
+    params: MlxEngineDistributedStopRequest_unstable,
+  ): Promise<MlxEngineDistributedStopResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/distributedStop",
+      params,
+    );
+    return zMlxEngineDistributedStopResponse_unstable.parse(
+      raw,
+    ) as MlxEngineDistributedStopResponse_unstable;
+  }
+
+  async mlxEngineDistributedConfigUpdate_unstable(
+    params: MlxEngineDistributedConfigUpdateRequest_unstable,
+  ): Promise<MlxEngineDistributedConfigResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/distributedConfigUpdate",
+      params,
+    );
+    return zMlxEngineDistributedConfigResponse_unstable.parse(
+      raw,
+    ) as MlxEngineDistributedConfigResponse_unstable;
   }
 
   async mlxEngineDownloadCancel_unstable(

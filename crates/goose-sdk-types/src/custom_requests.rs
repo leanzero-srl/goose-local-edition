@@ -3069,6 +3069,405 @@ pub struct MlxEngineReplicaCancelRequest {
 }
 
 // ============================================================================
+// Distributed MLX engine — one model split across several Macs (this Mac = rank 0).
+//
+// Methods `_goose/unstable/mlxEngine/distributed*`, local to THIS goosed (no nodeId: the
+// distributed engine is supervised by the Mac that is rank 0). Only one engine owns a Mac at a
+// time: `distributedStart` is refused with refusal code `singleEngineMounted` while the single
+// engine is mounted (the UI offers "unmount and continue"), and `mount` is refused while the
+// distributed engine owns the Mac. Enum-like fields are strings; their values are listed on each.
+// ============================================================================
+
+/// One node of the distributed engine. `ssh` absent = this Mac, which must be `nodes[0]` (rank 0).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedNodeConfigDto {
+    pub name: String,
+    /// The peer's ssh alias (e.g. `workhorse`); absent exactly for this Mac.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<String>,
+    /// This node's IPv4 on the Thunderbolt /30 (e.g. 192.168.0.1).
+    pub tb_ip: String,
+    /// The /30's mask (255.255.255.252), re-applied by the link repair.
+    pub tb_netmask: String,
+    /// The TB interface (e.g. en3).
+    pub tb_interface: String,
+    /// The macOS network service on that interface (e.g. "EXO Thunderbolt 3"); the ONLY service
+    /// the link repair may toggle, and only after proving it sits on a Thunderbolt hardware port.
+    pub tb_service: String,
+    /// The RDMA device JACCL uses (e.g. rdma_en3).
+    pub rdma_device: String,
+    /// Absolute path of the interpreter carrying mlx + mlx_lm on this node.
+    pub python: String,
+    /// Absolute path of the fork's interpreter (`rapid_mlx`); only the qwen4_exp runner uses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_python: Option<String>,
+    /// Absolute path of the model directory ON THIS NODE (paths may differ per node).
+    pub model_dir: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedConfigDto {
+    /// The id the engine serves on `/v1/models` — the id chat requests use.
+    pub model_id: String,
+    /// "jaccl" (RDMA over TB5) | "ring" (TCP over the TB /30).
+    pub backend: String,
+    /// The OpenAI API port on this Mac (loopback). Refused when equal to the single engine's port.
+    pub port: u16,
+    /// JACCL coordinator port on rank 0's TB IP; ring uses it + rank on each node. Must sit below
+    /// each node's ephemeral range (preflight check `portRange`).
+    pub coordinator_port: u16,
+    /// The context to allow; absent = derived (the largest every rank fits, capped at the model's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<u64>,
+    /// Restart automatically after a rank death or a hang (a breaker still applies; a memory
+    /// watchdog CRITICAL stop never restarts).
+    #[serde(default)]
+    pub restart_on_failure: bool,
+    pub nodes: Vec<MlxDistributedNodeConfigDto>,
+}
+
+/// One preflight check. `verdict`: "pass" | "warn" | "fail". `id`: "reachable" |
+/// "foreignEngines" | "memory" | "model" | "modelManifest" | "python" | "tbIpv4" | "ping" |
+/// "rdmaGid" | "linkRepair" | "portRange" | "ports" | "runner" | "plan". `message` carries the numbers.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedCheckDto {
+    pub id: String,
+    pub verdict: String,
+    pub message: String,
+}
+
+/// What one rank will hold, in bytes. Tensor split: every layer's shard (`shardIndex` of
+/// `shardCount`, layers [layerStart, layerEnd) = all). Pipeline split: layers [layerStart, layerEnd).
+/// `withOverheadBytes` = `plannedBytes` × the measured runtime-overhead ratio (1.10); `fits` =
+/// `withOverheadBytes` ≤ `budgetBytes` = min(available × 0.90, RAM × 0.75).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedRankPlanDto {
+    pub layer_start: u32,
+    pub layer_end: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard_count: Option<u32>,
+    pub weights_bytes: u64,
+    pub state_bytes: u64,
+    pub workspace_bytes: u64,
+    pub prompt_cache_bytes: u64,
+    pub planned_bytes: u64,
+    pub with_overhead_bytes: u64,
+    pub budget_bytes: u64,
+    pub fits: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedNodePreflightDto {
+    pub name: String,
+    pub rank: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub checks: Vec<MlxDistributedCheckDto>,
+    /// Measured available memory ((free − speculative) + file-backed + purgeable pages); absent
+    /// exactly when the `memory` check says the probe failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    /// Kernel memory pressure: "normal" | "warn" | "critical".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<MlxDistributedRankPlanDto>,
+    /// The TB receptacle's live speed (e.g. "80 Gb/s"); absent when not reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_speed: Option<String>,
+    /// e.g. "mlx 0.32.2 · mlx_lm 0.31.3".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mlx_version: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedPreflightDto {
+    /// Every check passed (warns allowed) and every rank has a plan.
+    pub ok: bool,
+    pub ran_at_ms: u64,
+    /// "jaccl" | "ring".
+    pub backend: String,
+    /// "mlxLmTensor" (qwen3_5) | "pipelineQwen4" (qwen4_exp); absent when the model type has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_type: Option<String>,
+    /// The context this launch allows (goose-side bookkeeping — the chat context limit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit: Option<u64>,
+    /// "requested" | "derived".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_source: Option<String>,
+    /// The largest context every rank fits on the measured memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context_fits: Option<u64>,
+    /// Cluster-wide checks (runner, cross-node versions, the plan).
+    pub checks: Vec<MlxDistributedCheckDto>,
+    pub nodes: Vec<MlxDistributedNodePreflightDto>,
+    /// Thunderbolt link repairs performed (each names the service and the before/after).
+    pub repairs: Vec<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedLinkDto {
+    /// "jaccl" | "ring".
+    pub backend: String,
+    pub tb_ip: String,
+    pub interface: String,
+    /// e.g. "80 Gb/s"; absent when the node did not report it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<String>,
+}
+
+/// One node of the running (or last) distributed engine. Memory figures are GiB.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedNodeStatusDto {
+    pub name: String,
+    pub rank: u32,
+    /// "coordinator" (rank 0, serves HTTP) | "worker".
+    pub role: String,
+    /// The ssh alias; absent for this Mac.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// "preflight" | "loading" | "ready" | "serving" | "failed" | "stopped".
+    pub state: String,
+    /// The rank's own pid on its node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer_start: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer_end: Option<u32>,
+    /// Tensor split only: this rank's shard of `shardCount`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard_index: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_memory_gb: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_memory_gb: Option<f64>,
+    /// "normal" | "warn" | "critical".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure: Option<String>,
+    /// The watchdog could not sample this node on the last poll (the figures above are stale).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_error: Option<String>,
+    /// MLX's own counters on the rank (`mx.get_active_memory` / the highest `get_peak_memory` seen).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_memory_gb: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_memory_gb: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_memory_gb: Option<f64>,
+    /// The in-process caps the rank reported applying: `mx.set_memory_limit` (0.75 × RAM),
+    /// `mx.set_wired_limit` (min(0.60 × RAM, the GPU's recommended working set)) and
+    /// `mx.set_cache_limit`. Absent until the rank reported them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit_gb: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wired_limit_gb: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_limit_gb: Option<f64>,
+    pub link: MlxDistributedLinkDto,
+}
+
+/// A supervisor event. `kind`: "preflight" | "linkRepaired" | "launched" | "ready" |
+/// "startFailed" | "rankDied" | "rankFrozen" | "hang" | "streamWithoutDone" | "restart" |
+/// "breakerOpen" | "watchdogWarn" | "watchdogCritical" | "watchdogBlind" | "admissionClosed" |
+/// "admissionOpened" | "stopRequested" | "stopped" | "orphanReclaimed".
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedEventDto {
+    pub at_ms: u64,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    pub message: String,
+}
+
+/// The supervisor's liveness measure: progress intervals sampled so far, their running median,
+/// the hang bound (10 × median; absent until 3 samples exist) and how long progress has been silent.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedLivenessDto {
+    pub samples: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub median_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_ms: Option<u64>,
+    pub silent_ms: u64,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedStatusDto {
+    /// Which engine owns this Mac: "single" | "distributed".
+    pub mode: String,
+    /// "stopped" | "preflight" | "starting" | "ready" | "serving" | "failed" | "stopping".
+    pub state: String,
+    /// "jaccl" | "ring".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    /// "mlxLmTensor" | "pipelineQwen4".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    /// The distributed engine's OpenAI base URL (goose's `omlx` provider targets it while
+    /// `mode` = "distributed").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_limit: Option<u64>,
+    /// False while the memory watchdog holds new requests out (WARN on some node).
+    pub admission_open: bool,
+    /// Requests the engine has accepted and not finished; absent when not measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inflight: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liveness: Option<MlxDistributedLivenessDto>,
+    pub nodes: Vec<MlxDistributedNodeStatusDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_preflight: Option<MlxDistributedPreflightDto>,
+    /// Supervisor events, oldest first (bounded).
+    pub events: Vec<MlxDistributedEventDto>,
+    pub restarts: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// The running config, else the persisted one (`mlx_distributed` config key).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<MlxDistributedConfigDto>,
+}
+
+/// Read the distributed engine's status (this Mac's supervisor).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/distributedStatus",
+    response = MlxEngineDistributedStatusResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedStatusRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedStatusResponse {
+    pub status: MlxDistributedStatusDto,
+}
+
+/// Dry run: every preflight check on every node, no launch. `config` absent = the persisted one.
+/// `repairLink` = perform the documented TB repair (toggle the configured TB service + re-apply
+/// its manual IP) when a JACCL GID/IPv4 check fails; default false (a dry run changes nothing).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/distributedPreflight",
+    response = MlxEngineDistributedPreflightResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedPreflightRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<MlxDistributedConfigDto>,
+    #[serde(default)]
+    pub repair_link: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedPreflightResponse {
+    pub preflight: MlxDistributedPreflightDto,
+}
+
+/// Why a start was refused. `code`: "singleEngineMounted" (unmount the single engine, then start
+/// again — the UI's "unmount and continue") | "alreadyRunning" | "preflightFailed".
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedRefusalDto {
+    pub code: String,
+    pub message: String,
+}
+
+/// Preflight (repairing the TB link when a JACCL check fails), then launch under supervision.
+/// Returns once launching has begun (`started: true`) — poll `distributedStatus` for
+/// ready/serving/failed — or with `started: false` and a `refusal`. `config` absent = the
+/// persisted one; a given config is persisted.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/distributedStart",
+    response = MlxEngineDistributedStartResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedStartRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<MlxDistributedConfigDto>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedStartResponse {
+    pub started: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<MlxDistributedRefusalDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<MlxDistributedPreflightDto>,
+}
+
+/// The verified stop: each step (what was signalled, per pid, and what was observed).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedStopReportDto {
+    pub steps: Vec<String>,
+    /// Every rank's own pid was observed gone (the peers' over ssh).
+    pub verified: bool,
+}
+
+/// Stop the distributed engine: SIGTERM rank 0, then each peer rank's pid verified gone over ssh
+/// (SIGTERM, then SIGKILL, per pid). With nothing supervised, the configured nodes are swept for
+/// goose ranks a previous goosed left behind. Returns after the stop completed.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/distributedStop",
+    response = MlxEngineDistributedStopResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedStopRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedStopResponse {
+    pub stop: MlxDistributedStopReportDto,
+    pub status: MlxDistributedStatusDto,
+}
+
+/// Persist the distributed config without starting (validated first).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/distributedConfigUpdate",
+    response = MlxEngineDistributedConfigResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedConfigUpdateRequest {
+    pub config: MlxDistributedConfigDto,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedConfigResponse {
+    pub config: MlxDistributedConfigDto,
+}
+
+// ============================================================================
 // LeanZero Link — passwordless account identity + a goose-owned Tailscale mesh.
 //
 // Method namespace: `_goose/unstable/leanzeroLink/*`. These camelCase DTOs are the

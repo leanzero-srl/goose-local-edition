@@ -51,6 +51,23 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   LmStudioEngine (verbatim), Engines registry with per-engine unservable partition; sidecar
   registration is the open step C (six decision points commented at their sites).
 
+## The distributed engine (2026-09-24 — one model split across Macs; isolated from the single engine)
+- Code: `crates/goose-sidecar/src/distributed/` (own manager `distributed::global_manager()`, own port, own config key
+  `mlx_distributed`); ACP `_goose/unstable/mlxEngine/distributed{Status,Preflight,Start,Stop,ConfigUpdate}` in
+  `crates/goose/src/acp/server/mlx_distributed.rs`; capability `mlxDistributed`. engine.rs/Sidecar unchanged (visibility only);
+  the single engine's tests/argv goldens pass unchanged (99 → 99 present, lib 74 → 120 with the 46 new).
+- One engine owns a Mac: `distributedStart` → refusal code `singleEngineMounted` while the single engine is mounted (UI
+  offers "unmount and continue"); `mount` → `distributedEngineActive` while distributed owns the Mac. Never a silent unmount.
+- Runner by `model_type`: qwen3_5 → `mlx_lm.server` tensor split via goose's own rank launcher + embedded `rank_wrapper.py`
+  (caps as RAM ratios, /v1/models = the goose id only, /goose/progress, /goose/admission); qwen4_exp → the fork's
+  `pipeline_qwen4 plan` for preflight, start REFUSED (fork has no `serve` entry yet).
+- Switch: `align_omlx_host_env` points OMLX_HOST at the distributed base URL while it owns the Mac (goosed-owned only), back
+  to the single port after stop. Swarm router / goose-cli lanes do NOT route to it (not wired).
+- Liveness = rank-0 step counter OR every rank's CPU time advancing; hang = silent > 10 × running median (≥3 samples);
+  ps stat `T` = frozen at once. Watchdog per poll: kernel pressure WARN or available < 5% RAM → admission 503; CRITICAL →
+  verified stop, never restarted. Restart breaker = the single Sidecar's (3 per 600 s, backoff 1 s → 30 s).
+- Live tests + measured numbers: mlx-jaccl-cluster skill, section "goose's DISTRIBUTED engine".
+
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
   families by REGISTRY id (aws_bedrock, zai, google, custom_deepseek). One allow-list, `LOCAL_EDITION_PROVIDER_IDS` in

@@ -28,6 +28,12 @@ pub(super) fn align_omlx_host_env() {
     if user_owned {
         return;
     }
+    // The explicit switch: while the distributed engine owns this Mac, the omlx provider targets
+    // ITS port; the moment it stops, the single engine's port below is restored.
+    if let Some(base) = goose_sidecar::distributed::global_manager().active_base_url() {
+        std::env::set_var("OMLX_HOST", base);
+        return;
+    }
     // No `mlx_engine` block = the default engine on the default port (honest: nothing was
     // configured). An UNREADABLE block is a different fact: pointing chat at the default port
     // would impersonate a configuration the operator did write and we could not read — the
@@ -317,6 +323,7 @@ async fn core_status() -> Result<MlxEngineStatusResponse, agent_client_protocol:
 async fn core_mount(
     req: MlxEngineMountRequest,
 ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    super::mlx_distributed::refuse_single_mount_while_distributed()?;
     let manager = synced_manager()?;
     manager.mount(&req.model_id).await.invalid_params_err()?;
     Ok(EmptyResponse {})

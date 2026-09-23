@@ -96,16 +96,16 @@ pub struct MemoryReading {
 /// Page counts from `host_statistics64(HOST_VM_INFO64)`, as the kernel reports them.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
-struct VmPageCounts {
+pub(crate) struct VmPageCounts {
     /// `free_count` — INCLUDES the speculative pages (vm_stat prints `free_count -
     /// speculative_count` as "Pages free"; measured: raw 3,347,169 = 2,719,606 + 626,850
     /// speculative on 2026-09-23).
-    free: u64,
-    speculative: u64,
+    pub(crate) free: u64,
+    pub(crate) speculative: u64,
     /// `external_page_count` — file-backed pages ("File-backed pages" in vm_stat); the
     /// speculative read-ahead pages are among them.
-    external: u64,
-    purgeable: u64,
+    pub(crate) external: u64,
+    pub(crate) purgeable: u64,
 }
 
 /// macOS available memory the way Activity Monitor draws it: physical memory minus App
@@ -119,7 +119,11 @@ struct VmPageCounts {
 /// figure 41.4 → 28.0 GiB and left memorystatus_level at 46–47% throughout, so it cannot
 /// guard a mount. Filling 11 GiB of file cache moved this figure by < 0.4 GiB.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn darwin_reading(counts: VmPageCounts, page_size: u64, total_bytes: u64) -> MemoryReading {
+pub(crate) fn darwin_reading(
+    counts: VmPageCounts,
+    page_size: u64,
+    total_bytes: u64,
+) -> MemoryReading {
     let truly_free = counts.free.saturating_sub(counts.speculative);
     let reclaimable = counts.external.saturating_add(counts.purgeable);
     MemoryReading {

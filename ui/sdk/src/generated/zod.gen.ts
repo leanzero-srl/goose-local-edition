@@ -3287,6 +3287,400 @@ export const zMlxEngineDownloadResumeRequest_unstable = z.object({
 });
 
 /**
+ * Read the distributed engine's status (this Mac's supervisor).
+ */
+export const zMlxEngineDistributedStatusRequest_unstable = z.record(z.unknown());
+
+/**
+ * The supervisor's liveness measure: progress intervals sampled so far, their running median,
+ * the hang bound (10 × median; absent until 3 samples exist) and how long progress has been silent.
+ */
+export const zMlxDistributedLivenessDto = z.object({
+    samples: z.number().int().gte(0),
+    medianMs: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    boundMs: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    silentMs: z.number().int().gte(0)
+});
+
+export const zMlxDistributedLinkDto = z.object({
+    backend: z.string(),
+    tbIp: z.string(),
+    interface: z.string(),
+    speed: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * One node of the running (or last) distributed engine. Memory figures are GiB.
+ */
+export const zMlxDistributedNodeStatusDto = z.object({
+    name: z.string(),
+    rank: z.number().int().gte(0),
+    role: z.string(),
+    host: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    state: z.string(),
+    pid: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    layerStart: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    layerEnd: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    shardIndex: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    shardCount: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    availableMemoryGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    totalMemoryGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    pressure: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    memoryError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    activeMemoryGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    peakMemoryGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    plannedMemoryGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    memoryLimitGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    wiredLimitGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    cacheLimitGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    link: zMlxDistributedLinkDto
+});
+
+/**
+ * One preflight check. `verdict`: "pass" | "warn" | "fail". `id`: "reachable" |
+ * "foreignEngines" | "memory" | "model" | "modelManifest" | "python" | "tbIpv4" | "ping" |
+ * "rdmaGid" | "linkRepair" | "portRange" | "ports" | "runner" | "plan". `message` carries the numbers.
+ */
+export const zMlxDistributedCheckDto = z.object({
+    id: z.string(),
+    verdict: z.string(),
+    message: z.string()
+});
+
+/**
+ * What one rank will hold, in bytes. Tensor split: every layer's shard (`shardIndex` of
+ * `shardCount`, layers [layerStart, layerEnd) = all). Pipeline split: layers [layerStart, layerEnd).
+ * `withOverheadBytes` = `plannedBytes` × the measured runtime-overhead ratio (1.10); `fits` =
+ * `withOverheadBytes` ≤ `budgetBytes` = min(available × 0.90, RAM × 0.75).
+ */
+export const zMlxDistributedRankPlanDto = z.object({
+    layerStart: z.number().int().gte(0),
+    layerEnd: z.number().int().gte(0),
+    shardIndex: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    shardCount: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    weightsBytes: z.number().int().gte(0),
+    stateBytes: z.number().int().gte(0),
+    workspaceBytes: z.number().int().gte(0),
+    promptCacheBytes: z.number().int().gte(0),
+    plannedBytes: z.number().int().gte(0),
+    withOverheadBytes: z.number().int().gte(0),
+    budgetBytes: z.number().int().gte(0),
+    fits: z.boolean()
+});
+
+export const zMlxDistributedNodePreflightDto = z.object({
+    name: z.string(),
+    rank: z.number().int().gte(0),
+    host: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    checks: z.array(zMlxDistributedCheckDto),
+    availableBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    totalBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    pressure: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    plan: z.union([
+        zMlxDistributedRankPlanDto,
+        z.null()
+    ]).optional(),
+    linkSpeed: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    mlxVersion: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxDistributedPreflightDto = z.object({
+    ok: z.boolean(),
+    ranAtMs: z.number().int().gte(0),
+    backend: z.string(),
+    runner: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    modelType: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    contextLimit: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    contextSource: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    maxContextFits: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    checks: z.array(zMlxDistributedCheckDto),
+    nodes: z.array(zMlxDistributedNodePreflightDto),
+    repairs: z.array(z.string())
+});
+
+/**
+ * A supervisor event. `kind`: "preflight" | "linkRepaired" | "launched" | "ready" |
+ * "startFailed" | "rankDied" | "rankFrozen" | "hang" | "streamWithoutDone" | "restart" |
+ * "breakerOpen" | "watchdogWarn" | "watchdogCritical" | "watchdogBlind" | "admissionClosed" |
+ * "admissionOpened" | "stopRequested" | "stopped" | "orphanReclaimed".
+ */
+export const zMlxDistributedEventDto = z.object({
+    atMs: z.number().int().gte(0),
+    kind: z.string(),
+    node: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    message: z.string()
+});
+
+/**
+ * One node of the distributed engine. `ssh` absent = this Mac, which must be `nodes[0]` (rank 0).
+ */
+export const zMlxDistributedNodeConfigDto = z.object({
+    name: z.string(),
+    ssh: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    tbIp: z.string(),
+    tbNetmask: z.string(),
+    tbInterface: z.string(),
+    tbService: z.string(),
+    rdmaDevice: z.string(),
+    python: z.string(),
+    pipelinePython: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    modelDir: z.string()
+});
+
+export const zMlxDistributedConfigDto = z.object({
+    modelId: z.string(),
+    backend: z.string(),
+    port: z.number().int().gte(0).lte(65535),
+    coordinatorPort: z.number().int().gte(0).lte(65535),
+    context: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    restartOnFailure: z.boolean().optional().default(false),
+    nodes: z.array(zMlxDistributedNodeConfigDto)
+});
+
+export const zMlxDistributedStatusDto = z.object({
+    mode: z.string(),
+    state: z.string(),
+    backend: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    runner: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    modelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    baseUrl: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    contextLimit: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    admissionOpen: z.boolean(),
+    inflight: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    liveness: z.union([
+        zMlxDistributedLivenessDto,
+        z.null()
+    ]).optional(),
+    nodes: z.array(zMlxDistributedNodeStatusDto),
+    lastPreflight: z.union([
+        zMlxDistributedPreflightDto,
+        z.null()
+    ]).optional(),
+    events: z.array(zMlxDistributedEventDto),
+    restarts: z.number().int().gte(0),
+    lastError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    config: z.union([
+        zMlxDistributedConfigDto,
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineDistributedStatusResponse_unstable = z.object({
+    status: zMlxDistributedStatusDto
+});
+
+/**
+ * Dry run: every preflight check on every node, no launch. `config` absent = the persisted one.
+ * `repairLink` = perform the documented TB repair (toggle the configured TB service + re-apply
+ * its manual IP) when a JACCL GID/IPv4 check fails; default false (a dry run changes nothing).
+ */
+export const zMlxEngineDistributedPreflightRequest_unstable = z.object({
+    config: z.union([
+        zMlxDistributedConfigDto,
+        z.null()
+    ]).optional(),
+    repairLink: z.boolean().optional().default(false)
+});
+
+export const zMlxEngineDistributedPreflightResponse_unstable = z.object({
+    preflight: zMlxDistributedPreflightDto
+});
+
+/**
+ * Preflight (repairing the TB link when a JACCL check fails), then launch under supervision.
+ * Returns once launching has begun (`started: true`) — poll `distributedStatus` for
+ * ready/serving/failed — or with `started: false` and a `refusal`. `config` absent = the
+ * persisted one; a given config is persisted.
+ */
+export const zMlxEngineDistributedStartRequest_unstable = z.object({
+    config: z.union([
+        zMlxDistributedConfigDto,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Why a start was refused. `code`: "singleEngineMounted" (unmount the single engine, then start
+ * again — the UI's "unmount and continue") | "alreadyRunning" | "preflightFailed".
+ */
+export const zMlxDistributedRefusalDto = z.object({
+    code: z.string(),
+    message: z.string()
+});
+
+export const zMlxEngineDistributedStartResponse_unstable = z.object({
+    started: z.boolean(),
+    refusal: z.union([
+        zMlxDistributedRefusalDto,
+        z.null()
+    ]).optional(),
+    preflight: z.union([
+        zMlxDistributedPreflightDto,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Stop the distributed engine: SIGTERM rank 0, then each peer rank's pid verified gone over ssh
+ * (SIGTERM, then SIGKILL, per pid). With nothing supervised, the configured nodes are swept for
+ * goose ranks a previous goosed left behind. Returns after the stop completed.
+ */
+export const zMlxEngineDistributedStopRequest_unstable = z.record(z.unknown());
+
+/**
+ * The verified stop: each step (what was signalled, per pid, and what was observed).
+ */
+export const zMlxDistributedStopReportDto = z.object({
+    steps: z.array(z.string()),
+    verified: z.boolean()
+});
+
+export const zMlxEngineDistributedStopResponse_unstable = z.object({
+    stop: zMlxDistributedStopReportDto,
+    status: zMlxDistributedStatusDto
+});
+
+/**
+ * Persist the distributed config without starting (validated first).
+ */
+export const zMlxEngineDistributedConfigUpdateRequest_unstable = z.object({
+    config: zMlxDistributedConfigDto
+});
+
+export const zMlxEngineDistributedConfigResponse_unstable = z.object({
+    config: zMlxDistributedConfigDto
+});
+
+/**
  * Cancel a download AND delete its on-disk claim: every `.part` and the whole partial
  * repo directory are removed. Works on active and paused/failed downloads; the state
  * becomes "cancelled" once the deletion has run.
@@ -3966,6 +4360,11 @@ export const zExtRequest = z.object({
             zMlxEngineModelCardRequest_unstable,
             zMlxEngineDownloadPauseRequest_unstable,
             zMlxEngineDownloadResumeRequest_unstable,
+            zMlxEngineDistributedStatusRequest_unstable,
+            zMlxEngineDistributedPreflightRequest_unstable,
+            zMlxEngineDistributedStartRequest_unstable,
+            zMlxEngineDistributedStopRequest_unstable,
+            zMlxEngineDistributedConfigUpdateRequest_unstable,
             zMlxEngineDownloadCancelRequest_unstable,
             zMlxEngineLinkFactsRequest_unstable,
             zMlxEngineReplicaTargetsRequest_unstable,
@@ -4080,6 +4479,11 @@ export const zExtResponse = z.union([
                 zMlxEngineDownloadProgressResponse_unstable,
                 zMlxEngineBrowseFiltersResponse_unstable,
                 zMlxEngineModelCardResponse_unstable,
+                zMlxEngineDistributedStatusResponse_unstable,
+                zMlxEngineDistributedPreflightResponse_unstable,
+                zMlxEngineDistributedStartResponse_unstable,
+                zMlxEngineDistributedStopResponse_unstable,
+                zMlxEngineDistributedConfigResponse_unstable,
                 zMlxEngineLinkFactsResponse_unstable,
                 zMlxEngineReplicaTargetsResponse_unstable,
                 zMlxEngineReplicateResponse_unstable,

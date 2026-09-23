@@ -7801,6 +7801,910 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/downloadResume"
     },
+    "MlxEngineDistributedStatusRequest_unstable": {
+      "type": "object",
+      "description": "Read the distributed engine's status (this Mac's supervisor).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedStatus"
+    },
+    "MlxEngineDistributedStatusResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/MlxDistributedStatusDto"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedStatus"
+    },
+    "MlxDistributedStatusDto": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "description": "Which engine owns this Mac: \"single\" | \"distributed\"."
+        },
+        "state": {
+          "type": "string",
+          "description": "\"stopped\" | \"preflight\" | \"starting\" | \"ready\" | \"serving\" | \"failed\" | \"stopping\"."
+        },
+        "backend": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"jaccl\" | \"ring\"."
+        },
+        "runner": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"mlxLmTensor\" | \"pipelineQwen4\"."
+        },
+        "modelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "baseUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The distributed engine's OpenAI base URL (goose's `omlx` provider targets it while\n`mode` = \"distributed\")."
+        },
+        "contextLimit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "admissionOpen": {
+          "type": "boolean",
+          "description": "False while the memory watchdog holds new requests out (WARN on some node)."
+        },
+        "inflight": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Requests the engine has accepted and not finished; absent when not measured.",
+          "minimum": 0
+        },
+        "liveness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedLivenessDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedNodeStatusDto"
+          }
+        },
+        "lastPreflight": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedPreflightDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedEventDto"
+          },
+          "description": "Supervisor events, oldest first (bounded)."
+        },
+        "restarts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedConfigDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The running config, else the persisted one (`mlx_distributed` config key)."
+        }
+      },
+      "required": [
+        "mode",
+        "state",
+        "admissionOpen",
+        "nodes",
+        "events",
+        "restarts"
+      ]
+    },
+    "MlxDistributedLivenessDto": {
+      "type": "object",
+      "properties": {
+        "samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "medianMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "boundMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "silentMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "samples",
+        "silentMs"
+      ],
+      "description": "The supervisor's liveness measure: progress intervals sampled so far, their running median,\nthe hang bound (10 × median; absent until 3 samples exist) and how long progress has been silent."
+    },
+    "MlxDistributedNodeStatusDto": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "role": {
+          "type": "string",
+          "description": "\"coordinator\" (rank 0, serves HTTP) | \"worker\"."
+        },
+        "host": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The ssh alias; absent for this Mac."
+        },
+        "state": {
+          "type": "string",
+          "description": "\"preflight\" | \"loading\" | \"ready\" | \"serving\" | \"failed\" | \"stopped\"."
+        },
+        "pid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The rank's own pid on its node.",
+          "minimum": 0
+        },
+        "layerStart": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "layerEnd": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "shardIndex": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Tensor split only: this rank's shard of `shardCount`.",
+          "minimum": 0
+        },
+        "shardCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "availableMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "totalMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "pressure": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"normal\" | \"warn\" | \"critical\"."
+        },
+        "memoryError": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The watchdog could not sample this node on the last poll (the figures above are stale)."
+        },
+        "activeMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "MLX's own counters on the rank (`mx.get_active_memory` / the highest `get_peak_memory` seen)."
+        },
+        "peakMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "plannedMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "memoryLimitGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "The in-process caps the rank reported applying: `mx.set_memory_limit` (0.75 × RAM),\n`mx.set_wired_limit` (min(0.60 × RAM, the GPU's recommended working set)) and\n`mx.set_cache_limit`. Absent until the rank reported them."
+        },
+        "wiredLimitGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "cacheLimitGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "link": {
+          "$ref": "#/$defs/MlxDistributedLinkDto"
+        }
+      },
+      "required": [
+        "name",
+        "rank",
+        "role",
+        "state",
+        "link"
+      ],
+      "description": "One node of the running (or last) distributed engine. Memory figures are GiB."
+    },
+    "MlxDistributedLinkDto": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "description": "\"jaccl\" | \"ring\"."
+        },
+        "tbIp": {
+          "type": "string"
+        },
+        "interface": {
+          "type": "string"
+        },
+        "speed": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "e.g. \"80 Gb/s\"; absent when the node did not report it."
+        }
+      },
+      "required": [
+        "backend",
+        "tbIp",
+        "interface"
+      ]
+    },
+    "MlxDistributedPreflightDto": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "description": "Every check passed (warns allowed) and every rank has a plan."
+        },
+        "ranAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "backend": {
+          "type": "string",
+          "description": "\"jaccl\" | \"ring\"."
+        },
+        "runner": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"mlxLmTensor\" (qwen3_5) | \"pipelineQwen4\" (qwen4_exp); absent when the model type has none."
+        },
+        "modelType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contextLimit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The context this launch allows (goose-side bookkeeping — the chat context limit).",
+          "minimum": 0
+        },
+        "contextSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"requested\" | \"derived\"."
+        },
+        "maxContextFits": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The largest context every rank fits on the measured memory.",
+          "minimum": 0
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedCheckDto"
+          },
+          "description": "Cluster-wide checks (runner, cross-node versions, the plan)."
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedNodePreflightDto"
+          }
+        },
+        "repairs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Thunderbolt link repairs performed (each names the service and the before/after)."
+        }
+      },
+      "required": [
+        "ok",
+        "ranAtMs",
+        "backend",
+        "checks",
+        "nodes",
+        "repairs"
+      ]
+    },
+    "MlxDistributedCheckDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "verdict",
+        "message"
+      ],
+      "description": "One preflight check. `verdict`: \"pass\" | \"warn\" | \"fail\". `id`: \"reachable\" |\n\"foreignEngines\" | \"memory\" | \"model\" | \"modelManifest\" | \"python\" | \"tbIpv4\" | \"ping\" |\n\"rdmaGid\" | \"linkRepair\" | \"portRange\" | \"ports\" | \"runner\" | \"plan\". `message` carries the numbers."
+    },
+    "MlxDistributedNodePreflightDto": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "host": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedCheckDto"
+          }
+        },
+        "availableBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Measured available memory ((free − speculative) + file-backed + purgeable pages); absent\nexactly when the `memory` check says the probe failed.",
+          "minimum": 0
+        },
+        "totalBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "pressure": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Kernel memory pressure: \"normal\" | \"warn\" | \"critical\"."
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedRankPlanDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "linkSpeed": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The TB receptacle's live speed (e.g. \"80 Gb/s\"); absent when not reported."
+        },
+        "mlxVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "e.g. \"mlx 0.32.2 · mlx_lm 0.31.3\"."
+        }
+      },
+      "required": [
+        "name",
+        "rank",
+        "checks"
+      ]
+    },
+    "MlxDistributedRankPlanDto": {
+      "type": "object",
+      "properties": {
+        "layerStart": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "layerEnd": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "shardIndex": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "shardCount": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "weightsBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stateBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "workspaceBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "promptCacheBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "plannedBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "withOverheadBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budgetBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fits": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "layerStart",
+        "layerEnd",
+        "weightsBytes",
+        "stateBytes",
+        "workspaceBytes",
+        "promptCacheBytes",
+        "plannedBytes",
+        "withOverheadBytes",
+        "budgetBytes",
+        "fits"
+      ],
+      "description": "What one rank will hold, in bytes. Tensor split: every layer's shard (`shardIndex` of\n`shardCount`, layers [layerStart, layerEnd) = all). Pipeline split: layers [layerStart, layerEnd).\n`withOverheadBytes` = `plannedBytes` × the measured runtime-overhead ratio (1.10); `fits` =\n`withOverheadBytes` ≤ `budgetBytes` = min(available × 0.90, RAM × 0.75)."
+    },
+    "MlxDistributedEventDto": {
+      "type": "object",
+      "properties": {
+        "atMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string"
+        },
+        "node": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "atMs",
+        "kind",
+        "message"
+      ],
+      "description": "A supervisor event. `kind`: \"preflight\" | \"linkRepaired\" | \"launched\" | \"ready\" |\n\"startFailed\" | \"rankDied\" | \"rankFrozen\" | \"hang\" | \"streamWithoutDone\" | \"restart\" |\n\"breakerOpen\" | \"watchdogWarn\" | \"watchdogCritical\" | \"watchdogBlind\" | \"admissionClosed\" |\n\"admissionOpened\" | \"stopRequested\" | \"stopped\" | \"orphanReclaimed\"."
+    },
+    "MlxDistributedConfigDto": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string",
+          "description": "The id the engine serves on `/v1/models` — the id chat requests use."
+        },
+        "backend": {
+          "type": "string",
+          "description": "\"jaccl\" (RDMA over TB5) | \"ring\" (TCP over the TB /30)."
+        },
+        "port": {
+          "type": "integer",
+          "description": "The OpenAI API port on this Mac (loopback). Refused when equal to the single engine's port.",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "coordinatorPort": {
+          "type": "integer",
+          "description": "JACCL coordinator port on rank 0's TB IP; ring uses it + rank on each node. Must sit below\neach node's ephemeral range (preflight check `portRange`).",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "context": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The context to allow; absent = derived (the largest every rank fits, capped at the model's).",
+          "minimum": 0
+        },
+        "restartOnFailure": {
+          "type": "boolean",
+          "description": "Restart automatically after a rank death or a hang (a breaker still applies; a memory\nwatchdog CRITICAL stop never restarts).",
+          "default": false
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedNodeConfigDto"
+          }
+        }
+      },
+      "required": [
+        "modelId",
+        "backend",
+        "port",
+        "coordinatorPort",
+        "nodes"
+      ]
+    },
+    "MlxDistributedNodeConfigDto": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "ssh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The peer's ssh alias (e.g. `workhorse`); absent exactly for this Mac."
+        },
+        "tbIp": {
+          "type": "string",
+          "description": "This node's IPv4 on the Thunderbolt /30 (e.g. 192.168.0.1)."
+        },
+        "tbNetmask": {
+          "type": "string",
+          "description": "The /30's mask (255.255.255.252), re-applied by the link repair."
+        },
+        "tbInterface": {
+          "type": "string",
+          "description": "The TB interface (e.g. en3)."
+        },
+        "tbService": {
+          "type": "string",
+          "description": "The macOS network service on that interface (e.g. \"EXO Thunderbolt 3\"); the ONLY service\nthe link repair may toggle, and only after proving it sits on a Thunderbolt hardware port."
+        },
+        "rdmaDevice": {
+          "type": "string",
+          "description": "The RDMA device JACCL uses (e.g. rdma_en3)."
+        },
+        "python": {
+          "type": "string",
+          "description": "Absolute path of the interpreter carrying mlx + mlx_lm on this node."
+        },
+        "pipelinePython": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Absolute path of the fork's interpreter (`rapid_mlx`); only the qwen4_exp runner uses it."
+        },
+        "modelDir": {
+          "type": "string",
+          "description": "Absolute path of the model directory ON THIS NODE (paths may differ per node)."
+        }
+      },
+      "required": [
+        "name",
+        "tbIp",
+        "tbNetmask",
+        "tbInterface",
+        "tbService",
+        "rdmaDevice",
+        "python",
+        "modelDir"
+      ],
+      "description": "One node of the distributed engine. `ssh` absent = this Mac, which must be `nodes[0]` (rank 0)."
+    },
+    "MlxEngineDistributedPreflightRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedConfigDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repairLink": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "description": "Dry run: every preflight check on every node, no launch. `config` absent = the persisted one.\n`repairLink` = perform the documented TB repair (toggle the configured TB service + re-apply\nits manual IP) when a JACCL GID/IPv4 check fails; default false (a dry run changes nothing).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedPreflight"
+    },
+    "MlxEngineDistributedPreflightResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "preflight": {
+          "$ref": "#/$defs/MlxDistributedPreflightDto"
+        }
+      },
+      "required": [
+        "preflight"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedPreflight"
+    },
+    "MlxEngineDistributedStartRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedConfigDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "Preflight (repairing the TB link when a JACCL check fails), then launch under supervision.\nReturns once launching has begun (`started: true`) — poll `distributedStatus` for\nready/serving/failed — or with `started: false` and a `refusal`. `config` absent = the\npersisted one; a given config is persisted.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedStart"
+    },
+    "MlxEngineDistributedStartResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "started": {
+          "type": "boolean"
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedRefusalDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "preflight": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedPreflightDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "started"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedStart"
+    },
+    "MlxDistributedRefusalDto": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "description": "Why a start was refused. `code`: \"singleEngineMounted\" (unmount the single engine, then start\nagain — the UI's \"unmount and continue\") | \"alreadyRunning\" | \"preflightFailed\"."
+    },
+    "MlxEngineDistributedStopRequest_unstable": {
+      "type": "object",
+      "description": "Stop the distributed engine: SIGTERM rank 0, then each peer rank's pid verified gone over ssh\n(SIGTERM, then SIGKILL, per pid). With nothing supervised, the configured nodes are swept for\ngoose ranks a previous goosed left behind. Returns after the stop completed.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedStop"
+    },
+    "MlxEngineDistributedStopResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "stop": {
+          "$ref": "#/$defs/MlxDistributedStopReportDto"
+        },
+        "status": {
+          "$ref": "#/$defs/MlxDistributedStatusDto"
+        }
+      },
+      "required": [
+        "stop",
+        "status"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedStop"
+    },
+    "MlxDistributedStopReportDto": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "verified": {
+          "type": "boolean",
+          "description": "Every rank's own pid was observed gone (the peers' over ssh)."
+        }
+      },
+      "required": [
+        "steps",
+        "verified"
+      ],
+      "description": "The verified stop: each step (what was signalled, per pid, and what was observed)."
+    },
+    "MlxEngineDistributedConfigUpdateRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/MlxDistributedConfigDto"
+        }
+      },
+      "required": [
+        "config"
+      ],
+      "description": "Persist the distributed config without starting (validated first).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedConfigUpdate"
+    },
+    "MlxEngineDistributedConfigResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/MlxDistributedConfigDto"
+        }
+      },
+      "required": [
+        "config"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedConfigUpdate"
+    },
     "MlxEngineDownloadCancelRequest_unstable": {
       "type": "object",
       "properties": {
@@ -10251,6 +11155,51 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEngineDistributedStatusRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/distributedStatus",
+                  "title": "MlxEngineDistributedStatusRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDistributedPreflightRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/distributedPreflight",
+                  "title": "MlxEngineDistributedPreflightRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDistributedStartRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/distributedStart",
+                  "title": "MlxEngineDistributedStartRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDistributedStopRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/distributedStop",
+                  "title": "MlxEngineDistributedStopRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineDistributedConfigUpdateRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/distributedConfigUpdate",
+                  "title": "MlxEngineDistributedConfigUpdateRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/MlxEngineDownloadCancelRequest_unstable"
                     }
                   ],
@@ -11102,6 +12051,46 @@
                         }
                       ],
                       "title": "MlxEngineModelCardResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineDistributedStatusResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineDistributedStatusResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineDistributedPreflightResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineDistributedPreflightResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineDistributedStartResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineDistributedStartResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineDistributedStopResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineDistributedStopResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineDistributedConfigResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineDistributedConfigResponse_unstable"
                     },
                     {
                       "allOf": [

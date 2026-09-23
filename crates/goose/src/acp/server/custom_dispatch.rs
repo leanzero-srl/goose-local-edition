@@ -1052,6 +1052,46 @@ impl GooseAcpAgent {
         self.on_mlx_engine_download_resume(req).await
     }
 
+    #[custom_method(MlxEngineDistributedStatusRequest)]
+    async fn dispatch_mlx_engine_distributed_status(
+        &self,
+        req: MlxEngineDistributedStatusRequest,
+    ) -> Result<MlxEngineDistributedStatusResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_distributed_status(req).await
+    }
+
+    #[custom_method(MlxEngineDistributedPreflightRequest)]
+    async fn dispatch_mlx_engine_distributed_preflight(
+        &self,
+        req: MlxEngineDistributedPreflightRequest,
+    ) -> Result<MlxEngineDistributedPreflightResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_distributed_preflight(req).await
+    }
+
+    #[custom_method(MlxEngineDistributedStartRequest)]
+    async fn dispatch_mlx_engine_distributed_start(
+        &self,
+        req: MlxEngineDistributedStartRequest,
+    ) -> Result<MlxEngineDistributedStartResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_distributed_start(req).await
+    }
+
+    #[custom_method(MlxEngineDistributedStopRequest)]
+    async fn dispatch_mlx_engine_distributed_stop(
+        &self,
+        req: MlxEngineDistributedStopRequest,
+    ) -> Result<MlxEngineDistributedStopResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_distributed_stop(req).await
+    }
+
+    #[custom_method(MlxEngineDistributedConfigUpdateRequest)]
+    async fn dispatch_mlx_engine_distributed_config_update(
+        &self,
+        req: MlxEngineDistributedConfigUpdateRequest,
+    ) -> Result<MlxEngineDistributedConfigResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_distributed_config_update(req).await
+    }
+
     #[custom_method(MlxEngineDownloadCancelRequest)]
     async fn dispatch_mlx_engine_download_cancel(
         &self,

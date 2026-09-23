@@ -104,6 +104,7 @@ mod list_sessions;
 mod load_session;
 mod local_inference;
 mod manage_sessions;
+mod mlx_distributed;
 mod mlx_engine;
 mod mlx_replica;
 pub use mlx_engine::GoosedMlxControl;
@@ -279,6 +280,7 @@ fn agent_capabilities_meta() -> Option<Meta> {
         goose.insert("localInference".to_string(), serde_json::json!({}));
     }
     goose.insert("mlxEngine".to_string(), serde_json::json!({}));
+    goose.insert("mlxDistributed".to_string(), serde_json::json!({}));
     goose.insert("leanzeroLink".to_string(), serde_json::json!({}));
     // Initialize is the earliest hook every client passes through: align the omlx
     // provider's endpoint to the supervised engine before any provider is constructed.
