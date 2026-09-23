@@ -1,15 +1,14 @@
 import { AgentText } from './AgentText';
 import { ActivityDisclosure } from '../activity/ActivityDisclosure';
 import { useEffect, useState, type ReactElement } from 'react';
-import { Bot, Eye, FileText, Search, Sparkles, X } from 'lucide-react';
+import { Eye, FileText, Search, Sparkles, X } from 'lucide-react';
 import {
   Button,
   Chip,
-  EmptyState,
   NODE_INDEXES,
-  Panel,
   StatusDot,
   TNUM,
+  TONE_FILL,
   TYPE,
   WEIGHT,
   cx,
@@ -50,10 +49,18 @@ export function nodeIndexOf(model: DeskModel, modelId: string): NodeIndex {
   return NODE_INDEXES[i % NODE_INDEXES.length];
 }
 
+const KIND_FILL: Record<DeskLane['kind'], string> = {
+  orient: TONE_FILL.secondary,
+  lane: TONE_FILL.accent,
+  lens: TONE_FILL.stopped,
+  synthesis: TONE_FILL.secondary,
+};
+
 /**
- * The lanes of the CURRENT tick: the orchestrator's orient call, every surgeon lane, every reviewer,
- * the synthesis — each with the node it runs on, its status and its live line (the words, not a
- * shape). Click one to open the inspector with the durable logs.
+ * The lanes of the VIEWED tick, in the order the tick ran them: the orchestrator's orient call,
+ * every surgeon lane, every reviewer, the synthesis — each a card with its role, the node it ran
+ * on, its status and time, and its words (the live line while it runs, the finding once done).
+ * Click one to open the inspector with the durable logs.
  */
 export function LaneBoard({
   model,
@@ -67,33 +74,27 @@ export function LaneBoard({
   onSelect: (key: string | null) => void;
 }) {
   const running = model.lanes.filter((l) => l.status === 'running').length;
+  const liveTick = model.viewTick === model.tick && model.liveness === 'running';
   return (
-    <Panel
-      title={`Tick ${model.tick} lanes`}
-      count={model.lanes.length}
-      headerRight={
+    <section data-testid="lane-board" aria-labelledby="lane-board-heading" className="min-w-0">
+      <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className={TYPE.h2} id="lane-board-heading">
+          Lanes
+        </h2>
         <span className={cx(TYPE.meta, TNUM)}>
-          {running} running · {model.queue.length} queued ·{' '}
-          {model.nodes.reduce((n, d) => n + d.free, 0)} free slots
+          {liveTick
+            ? `${running} running · ${model.queue.length} queued · ${model.nodes.reduce((n, d) => n + d.free, 0)} free slots`
+            : `${model.lanes.length} in tick ${model.viewTick}`}
         </span>
-      }
-      padded={false}
-      className="min-h-0 flex-1"
-    >
+      </div>
       {model.lanes.length === 0 ? (
-        <EmptyState
-          icon={<Bot />}
-          title={
-            model.liveness === 'stopped' ? 'The desk is not running' : 'No lanes yet this tick'
-          }
-          body={
-            model.liveness === 'stopped'
-              ? 'Start the desk: it polls on its cadence and fans one lane per item across your nodes.'
-              : 'Lanes appear the moment the orchestrator has read the poll and decided what needs a surgeon.'
-          }
-        />
+        <p className={cx(TYPE.bodyMuted, 'rounded-lz-card border border-lz-border px-4 py-3')}>
+          {model.liveness === 'stopped'
+            ? 'No lanes ran. Start the desk: it polls on its cadence and fans one lane per item across your nodes.'
+            : 'No lanes yet this tick. They appear the moment the orchestrator has read the poll and decided what needs a surgeon.'}
+        </p>
       ) : (
-        <ul className="divide-y divide-lz-border" data-testid="lane-list">
+        <ol className="flex flex-col gap-2" data-testid="lane-list">
           {model.lanes.map((l) => (
             <LaneRow
               key={l.key}
@@ -103,7 +104,7 @@ export function LaneBoard({
               onClick={() => onSelect(selected === l.key ? null : l.key)}
             />
           ))}
-        </ul>
+        </ol>
       )}
       {selected && (
         <LaneInspector
@@ -113,7 +114,7 @@ export function LaneBoard({
           onClose={() => onSelect(null)}
         />
       )}
-    </Panel>
+    </section>
   );
 }
 
@@ -128,6 +129,8 @@ function LaneRow({
   active: boolean;
   onClick: () => void;
 }) {
+  const role = `${KIND_LABEL[lane.kind]}${lane.kind === 'lane' && lane.surgeon ? ` · ${lane.surgeon}` : ''}${lane.kind === 'lens' && lane.lens ? ` · ${lane.lens}` : ''}`;
+  const settled = lane.status === 'done' || lane.status === 'failed';
   return (
     <li>
       <button
@@ -137,63 +140,77 @@ function LaneRow({
         data-lane-key={lane.key}
         aria-pressed={active}
         className={cx(
-          'flex w-full flex-col gap-1.5 px-4 py-3 text-left transition-colors',
-          active ? 'bg-lz-accent text-lz-accent-ink' : 'hover:bg-lz-surface-2'
+          'grid w-full grid-cols-[32px_minmax(0,1fr)] gap-x-3 rounded-lz-card border p-3 text-left transition-colors',
+          active
+            ? 'border-lz-accent ring-2 ring-inset ring-lz-accent'
+            : 'border-lz-border bg-lz-surface hover:bg-lz-surface-2'
         )}
       >
-        <div className="flex flex-wrap items-center gap-2">
-          <Chip icon={KIND_ICON[lane.kind]} tone={active ? undefined : undefined}>
-            {KIND_LABEL[lane.kind]}
-            {lane.kind === 'lane' && lane.surgeon ? ` · ${lane.surgeon}` : ''}
-            {lane.kind === 'lens' && lane.lens ? ` · ${lane.lens}` : ''}
-          </Chip>
-          <span className={cx(TYPE.body, WEIGHT.semibold, active && 'text-lz-accent-ink')}>
+        <span
+          aria-hidden
+          className={cx(
+            'flex size-8 items-center justify-center rounded-lz-control [&_svg]:size-4',
+            KIND_FILL[lane.kind]
+          )}
+        >
+          {KIND_ICON[lane.kind]}
+        </span>
+        <span className="flex min-w-0 flex-col gap-1">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className={cx(TYPE.meta, 'text-lz-ink-2')}>{role}</span>
+            <span className="ml-auto flex shrink-0 items-center gap-2">
+              {lane.model && <Chip node={node}>{lane.model}</Chip>}
+              <span className="flex items-center gap-1.5">
+                <StatusDot
+                  tone={STATUS_TONE[lane.status]}
+                  live={lane.status === 'running'}
+                  label={lane.status}
+                />
+                <span className={TYPE.meta}>{lane.status}</span>
+              </span>
+              {lane.secs != null && (
+                <span className={cx(TYPE.meta, TNUM, 'text-lz-ink')}>
+                  {fmtDuration(lane.secs * 1000)}
+                </span>
+              )}
+            </span>
+          </span>
+          <span className={cx(TYPE.body, WEIGHT.semibold, 'truncate')}>
             {lane.kind === 'lens' ? lane.laneId : lane.item || lane.laneId}
           </span>
-          <span className="ml-auto flex items-center gap-2">
-            {lane.model && <Chip node={node}>{lane.model}</Chip>}
-            <StatusDot
-              tone={STATUS_TONE[lane.status]}
-              live={lane.status === 'running'}
-              label={lane.status}
-            />
-            {lane.secs != null && (
-              <span className={cx(TYPE.meta, TNUM, active && 'text-lz-accent-ink')}>
-                {fmtDuration(lane.secs * 1000)}
-              </span>
-            )}
+          {lane.objective && (
+            <span className={cx(TYPE.bodyMuted, 'line-clamp-2')}>{lane.objective}</span>
+          )}
+          <span
+            className={cx(TYPE.body, 'line-clamp-3 [overflow-wrap:anywhere]')}
+            data-testid="lane-live-line"
+          >
+            {lane.status === 'interrupted'
+              ? 'Stopped before completion · open activity to inspect the last recorded output'
+              : lane.status === 'queued'
+                ? 'waiting for a free node'
+                : lane.liveLine || (lane.status === 'done' ? summaryOf(lane) : '(no words yet)')}
           </span>
-        </div>
-        {lane.objective && (
-          <div className={cx(TYPE.bodyMuted, 'line-clamp-1', active && 'text-lz-accent-ink')}>
-            {lane.objective}
-          </div>
-        )}
-        <div
-          className={cx(TYPE.mono, 'line-clamp-2 break-words', active && 'text-lz-accent-ink')}
-          data-testid="lane-live-line"
-        >
-          {lane.status === 'interrupted'
-            ? 'Stopped before completion · open activity to inspect the last recorded output'
-            : lane.status === 'queued'
-              ? 'waiting for a free node'
-              : lane.liveLine || (lane.status === 'done' ? summaryOf(lane) : '(no words yet)')}
-        </div>
-        {(lane.status === 'done' || lane.status === 'failed') && (
-          <div className="flex flex-wrap gap-1.5">
-            {lane.hasDraft && <Chip tone="accent">draft</Chip>}
-            {lane.confidence != null && (
-              <Chip tone={lane.confidence >= 2 ? 'ok' : 'warn'}>confidence {lane.confidence}</Chip>
-            )}
-            {lane.verdict && (
-              <Chip tone={lane.verdict === 'PASS' ? 'ok' : 'err'}>{lane.verdict}</Chip>
-            )}
-            {lane.ask && <Chip tone="warn">asks the human</Chip>}
-            {lane.route && <Chip tone="secondary">route → {lane.route}</Chip>}
-            {lane.error && <Chip tone="err">failed</Chip>}
-            <Chip>{lane.toolCalls} calls</Chip>
-          </div>
-        )}
+          {settled && (
+            <span className="mt-1 flex flex-wrap gap-1.5">
+              {lane.confidence != null && (
+                <Chip tone={lane.confidence >= 2 ? 'ok' : 'warn'}>
+                  confidence {lane.confidence}
+                </Chip>
+              )}
+              {lane.verdict && (
+                <Chip tone={lane.verdict === 'PASS' ? 'ok' : 'err'}>{lane.verdict}</Chip>
+              )}
+              {lane.hasDraft && <Chip tone="accent">draft</Chip>}
+              {lane.ask && <Chip tone="warn">asks the human</Chip>}
+              {lane.route && <Chip tone="secondary">route → {lane.route}</Chip>}
+              {lane.error && <Chip tone="err">failed</Chip>}
+              <Chip>
+                {lane.toolCalls} {lane.toolCalls === 1 ? 'call' : 'calls'}
+              </Chip>
+            </span>
+          )}
+        </span>
       </button>
     </li>
   );
@@ -259,7 +276,7 @@ export function LaneInspector({
       role="dialog"
       aria-modal="true"
       aria-label={`Lane ${lane.key}`}
-      className="fixed inset-y-0 right-0 z-40 flex w-[min(720px,90vw)] flex-col border-l-0 bg-lz-surface shadow-lz-overlay dark:shadow-lz-overlay-dark"
+      className="fixed inset-y-0 right-0 z-40 flex w-[min(720px,90vw)] flex-col bg-lz-surface shadow-lz-overlay dark:shadow-lz-overlay-dark"
       data-testid="lane-inspector"
     >
       <div className="flex items-start justify-between gap-3 border-b border-lz-border px-5 py-4">

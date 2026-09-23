@@ -4,7 +4,6 @@ import MarkdownContent from '../MarkdownContent';
 import { useState } from 'react';
 import {
   DataTable,
-  EmptyState,
   Panel,
   Segmented,
   TNUM,
@@ -29,7 +28,15 @@ type Tab = 'ticks' | 'facts' | 'drafts' | 'scratchpad' | 'pending' | 'log';
  * gate's row), the facts the orchestrator carries forward, every draft's fate, and the three files
  * the desk keeps for the human (scratchpad, pending, daily log).
  */
-export function LedgerPanel({ model, read }: { model: DeskModel; read: AgentWorkRead }) {
+export function LedgerPanel({
+  model,
+  read,
+  onOpenTick,
+}: {
+  model: DeskModel;
+  read: AgentWorkRead;
+  onOpenTick?: (tick: number) => void;
+}) {
   const [tab, setTab] = useState<Tab>('ticks');
   const tabs: SegmentedOption<Tab>[] = [
     { value: 'ticks', label: `Ticks (${model.totals.ticks})` },
@@ -41,7 +48,7 @@ export function LedgerPanel({ model, read }: { model: DeskModel; read: AgentWork
   ];
   return (
     <Panel title="Ledger" padded={false}>
-      <div className="overflow-x-auto p-3">
+      <div className="overflow-x-auto px-4 py-3">
         <Segmented
           size="sm"
           options={tabs}
@@ -50,15 +57,20 @@ export function LedgerPanel({ model, read }: { model: DeskModel; read: AgentWork
           aria-label="Ledger sections"
         />
       </div>
-      {tab === 'ticks' && <TicksTable ticks={model.ticks} />}
+      {tab === 'ticks' && (
+        <TicksTable ticks={model.ticks} viewTick={model.viewTick} onOpenTick={onOpenTick} />
+      )}
       {tab === 'facts' &&
         (model.facts.length === 0 ? (
-          <EmptyState
-            title="No facts recorded yet"
-            body="Synthesis writes what the desk must remember: measured things with identifiers, decisions, dead ends."
-          />
+          <p className={cx(TYPE.bodyMuted, 'px-4 pb-4')}>
+            No facts recorded yet. Synthesis writes what the desk must remember: measured things
+            with identifiers, decisions, dead ends.
+          </p>
         ) : (
-          <ul className="flex flex-col gap-1.5" data-testid="facts-list">
+          <ul
+            className="flex max-h-[50vh] flex-col gap-3 overflow-auto px-4 pb-4"
+            data-testid="facts-list"
+          >
             {model.facts.map((f, i) => (
               <li key={i} className={cx(TYPE.body, 'flex gap-3')}>
                 <span className={cx(TYPE.meta, TNUM, 'w-10 shrink-0')}>t{f.tick}</span>
@@ -82,17 +94,35 @@ export function LedgerPanel({ model, read }: { model: DeskModel; read: AgentWork
 
 function FileText({ text, empty }: { text: string; empty: string }) {
   return text.trim() ? (
-    <div className="max-h-[40vh] overflow-auto p-4">
+    <div className="max-h-[40vh] overflow-auto px-4 pb-4">
       <AgentText text={text} />
     </div>
   ) : (
-    <p className={TYPE.bodyMuted}>{empty}</p>
+    <p className={cx(TYPE.bodyMuted, 'px-4 pb-4')}>{empty}</p>
   );
 }
 
-function TicksTable({ ticks }: { ticks: TickRecord[] }) {
+function TicksTable({
+  ticks,
+  viewTick,
+  onOpenTick,
+}: {
+  ticks: TickRecord[];
+  viewTick: number;
+  onOpenTick?: (tick: number) => void;
+}) {
   const columns: DataTableColumn<TickRecord>[] = [
-    { key: 'tick', header: '#', cell: (t) => t.tick, numeric: true, width: 48 },
+    {
+      key: 'tick',
+      header: '#',
+      cell: (t) => (
+        <span className={cx(t.tick === viewTick && cx('text-lz-accent', WEIGHT.semibold))}>
+          {t.tick}
+        </span>
+      ),
+      numeric: true,
+      width: 48,
+    },
     {
       key: 'outcome',
       header: 'Outcome',
@@ -149,14 +179,20 @@ function TicksTable({ ticks }: { ticks: TickRecord[] }) {
   ];
   if (ticks.length === 0)
     return (
-      <div className="p-4">
-        <EmptyState
-          title="No ticks yet"
-          body="Each finished tick lands here with its cost beside what it delivered."
-        />
-      </div>
+      <p className={cx(TYPE.bodyMuted, 'px-4 pb-4')}>
+        No ticks yet. Each finished tick lands here with its cost beside what it delivered.
+      </p>
     );
-  return <DataTable columns={columns} rows={ticks} rowKey={(t) => String(t.tick)} dense />;
+  return (
+    <DataTable
+      columns={columns}
+      rows={ticks}
+      rowKey={(t) => String(t.tick)}
+      onRowClick={onOpenTick ? (t) => onOpenTick(t.tick) : undefined}
+      aria-label="Ticks"
+      dense
+    />
+  );
 }
 
 function DraftsTable({ rows }: { rows: PreparedRow[] }) {
@@ -202,12 +238,9 @@ function DraftsTable({ rows }: { rows: PreparedRow[] }) {
   ];
   if (rows.length === 0)
     return (
-      <div className="p-4">
-        <EmptyState
-          title="No drafts yet"
-          body="A draft the review let through is staged here, then posted on a later tick."
-        />
-      </div>
+      <p className={cx(TYPE.bodyMuted, 'px-4 pb-4')}>
+        No drafts yet. A draft the review let through is staged here, then posted on a later tick.
+      </p>
     );
   return (
     <DataTable

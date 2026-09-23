@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { Check, MessageSquare, Send, X } from 'lucide-react';
-import { Button, Chip, EmptyState, Panel, TNUM, TYPE, WEIGHT, cx } from '../lz';
+import { Button, Chip, Panel, TNUM, TYPE, WEIGHT, cx } from '../lz';
 import type { AskRow, DeskModel, PreparedRow } from './agentWorkModel';
 
 /**
  * What only the human can do: answer the desk's asks, and approve / decline the drafts the review
  * let through. A decision is a line in decisions.jsonl; the engine folds it at its next GUARD and
  * the approved draft posts on that tick through the desk's one write path. Nothing here is native
- * chrome — the reply box is an inline Studio form.
+ * chrome — the reply box is an inline Studio form. Renders nothing when nothing waits.
  */
 export function NeedsYou({
   model,
@@ -21,15 +21,11 @@ export function NeedsYou({
   hasPostCommand: boolean;
 }) {
   const count = model.openAsks.length + model.pendingDrafts.length;
+  // Shown only when something waits: the hero carries the quiet "nothing waits" line.
+  if (count === 0) return null;
   return (
-    <Panel title="Needs you" count={count} padded={false}>
-      {count === 0 ? (
-        <EmptyState
-          icon={<Check />}
-          title="Nothing waits on you"
-          body="Asks and staged drafts land here."
-        />
-      ) : (
+    <div id="agent-work-needs-you" className="scroll-mt-4">
+      <Panel title="Needs you" count={count} padded={false}>
         <ul className="divide-y divide-lz-border" data-testid="needs-you-list">
           {model.openAsks.map((a) => (
             <AskItem key={a.id} ask={a} onDecide={onDecide} />
@@ -44,8 +40,8 @@ export function NeedsYou({
             />
           ))}
         </ul>
-      )}
-    </Panel>
+      </Panel>
+    </div>
   );
 }
 

@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { IntlProvider } from 'react-intl';
 import { assertStudioClean } from '../lz/assertStudioClean';
 import { foldDesk, type AgentWorkRead, type DeskState } from './agentWorkModel';
-import { TickClock } from './TickClock';
+import { DeskHero, type DeskControls } from './DeskHero';
+import { TickAnatomy } from './TickAnatomy';
 import { LaneBoard } from './LaneBoard';
 import { NeedsYou } from './NeedsYou';
 import { AgentResults } from './AgentResults';
@@ -14,6 +15,33 @@ function render(ui: React.ReactNode) {
 }
 
 const NOW = Date.parse('2026-09-07T08:00:00Z');
+
+function controls(over: Partial<DeskControls> = {}): DeskControls {
+  return {
+    busy: false,
+    onStart: vi.fn(),
+    onRunOnce: vi.fn(),
+    onStop: vi.fn(),
+    onTickNow: vi.fn(),
+    onPause: vi.fn(),
+    ...over,
+  };
+}
+
+function hero(model: ReturnType<typeof foldDesk>, over: Partial<DeskControls> = {}) {
+  return (
+    <DeskHero
+      model={model!}
+      title="Research desk"
+      schedule="every 30m"
+      dir="/desks/web-research"
+      plannerModel="big-27b"
+      controls={controls(over)}
+      onRemove={vi.fn()}
+      onReviewNeeds={vi.fn()}
+    />
+  );
+}
 
 const state: DeskState = {
   status: 'ticking',
@@ -205,7 +233,7 @@ describe('Agent Work desk surfaces', () => {
     expect(screen.getByText('Verified page finding.')).toBeTruthy();
     expect(screen.getByText('Exact title remains unverified.')).toBeTruthy();
     expect(screen.queryByText('Full source evidence preserved.')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Evidence and full report' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Full report' }));
     expect(screen.getByRole('heading', { name: 'Finding' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Original handoff' }));
     expect(screen.getByText('Full source evidence preserved.')).toBeTruthy();
@@ -213,16 +241,7 @@ describe('Agent Work desk surfaces', () => {
 
   it('shows direct delivery as a handoff without inventing a synthesis call', () => {
     const model = foldDesk({ ...read, state: { ...state, phase: 'handoff' } }, NOW)!;
-    const { container } = render(
-      <TickClock
-        model={model}
-        busy={false}
-        onStart={vi.fn()}
-        onStop={vi.fn()}
-        onTickNow={vi.fn()}
-        onPause={vi.fn()}
-      />
-    );
+    const { container } = render(<TickAnatomy model={model} onOpenTick={vi.fn()} />);
     expect(container.querySelector('[data-phase="handoff"]')?.getAttribute('data-state')).toBe(
       'live'
     );
@@ -231,18 +250,13 @@ describe('Agent Work desk surfaces', () => {
     expect(model.lanes.some((lane) => lane.kind === 'synthesis')).toBe(false);
   });
 
-  it('the tick clock shows the live tick, the phase ribbon and the controls, studio-clean', () => {
+  it('the hero shows the live tick and the controls, the anatomy the phase clock, studio-clean', () => {
     const model = foldDesk(read, NOW)!;
-    const onTickNow = vi.fn();
     const { container } = render(
-      <TickClock
-        model={model}
-        busy={false}
-        onStart={vi.fn()}
-        onStop={vi.fn()}
-        onTickNow={onTickNow}
-        onPause={vi.fn()}
-      />
+      <>
+        {hero(model)}
+        <TickAnatomy model={model} onOpenTick={vi.fn()} />
+      </>
     );
     assertStudioClean(container);
     expect(screen.getByTestId('next-tick-countdown').textContent).toBe('tick 4 live');
@@ -288,16 +302,7 @@ describe('Agent Work desk surfaces', () => {
       },
       NOW
     )!;
-    render(
-      <TickClock
-        model={waiting}
-        busy={false}
-        onStart={vi.fn()}
-        onStop={vi.fn()}
-        onTickNow={vi.fn()}
-        onPause={vi.fn()}
-      />
-    );
+    render(hero(waiting));
     expect(screen.getByTestId('next-tick-countdown').textContent).toBe('in 12m 34s');
     expect(screen.getByText(/Mon 10:30 Europe\/Zurich — cadence/)).toBeTruthy();
   });

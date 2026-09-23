@@ -1,12 +1,12 @@
 import { AgentResults } from './AgentResults';
 import { useCallback, useEffect, useState } from 'react';
-import { Bot, FolderPlus, Plus, RefreshCw, Send, Trash2 } from 'lucide-react';
+import { Bot, FolderPlus, Plus, RefreshCw, Send } from 'lucide-react';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
+import { ActivityDisclosure } from '../activity/ActivityDisclosure';
 import {
   Button,
   Chip,
   EmptyState,
-  KeyValue,
   PageHeader,
   Panel,
   SURFACE,
@@ -19,7 +19,8 @@ import {
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { scheduleLine, type DeskModel } from './agentWorkModel';
 import { useAgentRoster, useDesk } from './useAgentWork';
-import { TickClock } from './TickClock';
+import { DeskHero } from './DeskHero';
+import { TickAnatomy } from './TickAnatomy';
 import { LaneBoard, nodeIndexOf } from './LaneBoard';
 import { NeedsYou } from './NeedsYou';
 import { LedgerPanel } from './LedgerPanel';
@@ -38,13 +39,16 @@ export default function AgentWorkView() {
   // (`?desk=…`, `?tick=…`, `?new=1`) and falls back to the first desk when it names none.
   const query = useHashQuery();
   const queryDesk = query.get('desk');
+  const queryTick = parseTick(query.get('tick'));
   const wantsNew = query.get('new') === '1';
   const [selected, setSelected] = useState<string | null>(queryDesk);
   const [creating, setCreating] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const desk = useDesk(selected);
+  // `?tick=N` names a tick of the desk the URL names; on the fallback desk it means nothing.
+  const viewTick = queryDesk && queryDesk === selected ? queryTick : null;
+  const desk = useDesk(selected, viewTick);
 
   useEffect(() => {
     if (queryDesk) setSelected(queryDesk);
@@ -92,18 +96,15 @@ export default function AgentWorkView() {
   return (
     <MainPanelLayout>
       <div className={cx('flex min-h-0 flex-1 flex-col', SURFACE.page)}>
-        <div className={cx('border-b px-lz-page pb-5 pt-6', SURFACE.hairline)}>
+        <div className={cx('border-b px-lz-page pb-4 pt-5', SURFACE.hairline)}>
           <PageHeader
             className="page-transition"
             title="Agent Work"
             subtitle={
-              <span>
-                Give agents recurring assignments. Follow their research, read the results, and
-                review decisions in one workspace.
-              </span>
+              <span>Recurring assignments: what each agent found, and what it needs from you.</span>
             }
             actions={
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <Button
                   variant="ghost"
                   icon={<RefreshCw />}
@@ -134,8 +135,10 @@ export default function AgentWorkView() {
             }
           />
         </div>
-        <div className="flex min-h-0 flex-1 flex-col">
-          <main className="flex min-h-0 flex-col gap-4 overflow-auto p-lz-page">
+        {/* The scroller is a BLOCK, not a flex column: a flex column shrinks its overflow-hidden
+            children (every Panel) to fit, and the desk's top card collapsed to its border. */}
+        <main className="min-h-0 flex-1 overflow-auto" data-testid="agent-work-scroll">
+          <div className="mx-auto flex w-full min-w-0 max-w-[1120px] flex-col gap-8 px-lz-page py-6">
             {roster.error && (
               <p role="alert" className="text-lz-err">
                 {roster.error}
@@ -169,6 +172,7 @@ export default function AgentWorkView() {
                 model={desk.model}
                 read={desk.read}
                 busy={busy}
+                onOpenTick={(t) => openTick(selected, t)}
                 onStart={() => act(() => window.electron.agentWorkStart(selected, false))}
                 onRunOnce={() => act(() => window.electron.agentWorkStart(selected, true))}
                 onStop={() => act(() => window.electron.agentWorkStop(selected, true))}
@@ -181,8 +185,8 @@ export default function AgentWorkView() {
                 onRemove={() => setRemoving(selected)}
               />
             )}
-          </main>
-        </div>
+          </div>
+        </main>
       </div>
       {creating && (
         <NewAgentDialog
@@ -210,11 +214,23 @@ export default function AgentWorkView() {
   );
 }
 
+function parseTick(raw: string | null): number | null {
+  return raw != null && /^\d+$/.test(raw) ? Number(raw) : null;
+}
+
+/** Opening a tick is a URL change (`?desk=…&tick=N`) — the sidebar follows it; null is "latest". */
+function openTick(dir: string, tick: number | null) {
+  const params = new URLSearchParams({ desk: dir });
+  if (tick != null) params.set('tick', String(tick));
+  window.location.hash = `#/agent-work?${params.toString()}`;
+}
+
 function Desk({
   dir,
   model,
   read,
   busy,
+  onOpenTick,
   onStart,
   onRunOnce,
   onStop,
@@ -228,6 +244,7 @@ function Desk({
   model: DeskModel;
   read: NonNullable<ReturnType<typeof useDesk>['read']>;
   busy: boolean;
+  onOpenTick: (tick: number | null) => void;
   onStart: () => void;
   onRunOnce: () => void;
   onStop: () => void;
@@ -238,6 +255,58 @@ function Desk({
   onRemove: () => void;
 }) {
   const [lane, setLane] = useState<string | null>(null);
+  const m = read.manifest;
+  const title = m?.title || m?.name || dir;
+  const hasTicks = model.tick > 0 || model.ticks.length > 0;
+  return (
+    <>
+      <DeskHero
+        model={model}
+        title={title}
+        schedule={scheduleLine(m)}
+        dir={dir}
+        plannerModel={read.state?.planner_model ?? ''}
+        controls={{ busy, onStart, onRunOnce, onStop, onTickNow, onPause }}
+        onRemove={onRemove}
+        onReviewNeeds={() =>
+          document
+            .getElementById('agent-work-needs-you')
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      />
+      <NeedsYou
+        model={model}
+        onDecide={onDecide}
+        requiresApproval={(m?.post?.approval ?? 'human') === 'human'}
+        hasPostCommand={Boolean(m?.post?.command)}
+      />
+      {hasTicks && <TickAnatomy model={model} onOpenTick={onOpenTick} />}
+      <AgentResults model={model} />
+      <LaneBoard model={model} dir={dir} selected={lane} onSelect={setLane} />
+      <LedgerPanel model={model} read={read} onOpenTick={(t) => onOpenTick(t)} />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <NoteBox busy={busy} onNote={onNote} />
+        <NodesPanel model={model} />
+      </div>
+      {read.engineLog.trim() && (
+        <div className="rounded-lz-card border border-lz-border" data-testid="engine-log">
+          <ActivityDisclosure label="Engine log">
+            <pre
+              className={cx(
+                TYPE.mono,
+                'max-h-64 overflow-auto whitespace-pre-wrap break-words px-4 pb-3'
+              )}
+            >
+              {read.engineLog.trim().split('\n').slice(-40).join('\n')}
+            </pre>
+          </ActivityDisclosure>
+        </div>
+      )}
+    </>
+  );
+}
+
+function NoteBox({ busy, onNote }: { busy: boolean; onNote: (t: string) => Promise<void> }) {
   const [noteError, setNoteError] = useState('');
   const [note, setNote] = useState('');
   const sendNote = async () => {
@@ -250,160 +319,86 @@ function Desk({
       setNoteError(e instanceof Error ? e.message : String(e));
     }
   };
-  const m = read.manifest;
-  const title = m?.title || m?.name || dir;
   return (
-    <>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className={TYPE.h1}>{title}</h2>
-          <p className={cx(TYPE.meta, 'mt-1')}>
-            {scheduleLine(m)} · {dir}
-          </p>
-        </div>
-        <Button variant="ghost" size="sm" icon={<Trash2 />} onClick={onRemove} disabled={busy}>
-          Remove from roster
+    <Panel title="Tell the desk" padded>
+      <p className={cx(TYPE.bodyMuted, 'mb-2')}>
+        A note the orchestrator reads at its next tick: a hold, a steer, a fact it lacks.
+      </p>
+      <div className="flex gap-2">
+        <input
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void sendNote();
+          }}
+          aria-label="Note to the desk"
+          placeholder="Focus the next run on the sources I shared"
+          className="h-8 min-w-0 flex-1 rounded-lz-control border border-lz-border-strong bg-lz-surface px-2 text-lz-body text-lz-ink"
+        />
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Send />}
+          disabled={busy || !note.trim()}
+          onClick={sendNote}
+        >
+          Send
         </Button>
       </div>
-      <Panel padded>
-        <TickClock
-          model={model}
-          busy={busy}
-          onStart={onStart}
-          onRunOnce={onRunOnce}
-          onStop={onStop}
-          onTickNow={onTickNow}
-          onPause={onPause}
-        />
-      </Panel>
-      <div className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_340px] gap-4">
-        <div className="flex min-h-0 flex-col gap-4">
-          <AgentResults model={model} />
-          <LaneBoard model={model} dir={dir} selected={lane} onSelect={setLane} />
-          <LedgerPanel model={model} read={read} />
-        </div>
-        <div className="flex flex-col gap-4">
-          <NeedsYou
-            model={model}
-            onDecide={onDecide}
-            requiresApproval={(m?.post?.approval ?? 'human') === 'human'}
-            hasPostCommand={Boolean(m?.post?.command)}
-          />
-          <Panel title="Nodes" count={model.nodes.length} padded={false}>
-            {model.nodes.length === 0 ? (
-              <p className={cx(TYPE.bodyMuted, 'p-4')}>
-                {model.liveness === 'stopped'
-                  ? 'The fleet is resolved when the desk starts.'
-                  : 'No node resolved — read the engine log below.'}
-              </p>
-            ) : (
-              <ul className="divide-y divide-lz-border" data-testid="node-list">
-                {model.nodes.map((n) => (
-                  <li key={n.id} className="flex flex-col gap-1 px-4 py-2.5">
-                    <div className="flex items-center gap-2">
-                      <Chip node={nodeIndexOf(model, n.model_id)}>{n.model_id}</Chip>
-                      {n.supervision && <Chip tone="secondary">orchestrator</Chip>}
-                      <span className={cx(TYPE.meta, TNUM, 'ml-auto')}>
-                        {n.running.length}/{n.weight} busy
-                      </span>
-                    </div>
-                    <div className="flex gap-1">
-                      {Array.from({ length: n.weight }).map((_, i) => (
-                        <span
-                          key={i}
-                          className={cx(
-                            'h-2 flex-1 rounded-lz-pill',
-                            i < n.running.length
-                              ? nodeClasses(nodeIndexOf(model, n.model_id), 'dot')
-                              : 'bg-lz-surface-2'
-                          )}
-                        />
-                      ))}
-                    </div>
-                    {n.running.map((l) => (
-                      <div key={l.key} className={cx(TYPE.meta, 'truncate')}>
-                        {l.kind === 'lens' ? `${l.laneId} · ${l.lens} lens` : l.item || l.laneId} —{' '}
-                        {l.liveLine || '…'}
-                      </div>
-                    ))}
-                  </li>
+      {noteError && (
+        <p role="alert" className="mt-2 text-sm text-lz-err">
+          {noteError}
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+function NodesPanel({ model }: { model: DeskModel }) {
+  return (
+    <Panel title="Nodes" count={model.nodes.length} padded={false}>
+      {model.nodes.length === 0 ? (
+        <p className={cx(TYPE.bodyMuted, 'p-4')}>
+          {model.liveness === 'stopped'
+            ? 'The fleet is resolved when the desk starts.'
+            : 'No node resolved. Read the engine log below.'}
+        </p>
+      ) : (
+        <ul className="divide-y divide-lz-border" data-testid="node-list">
+          {model.nodes.map((n) => (
+            <li key={n.id} className="flex min-w-0 flex-col gap-1.5 px-4 py-2.5">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Chip node={nodeIndexOf(model, n.model_id)}>{n.model_id}</Chip>
+                {n.supervision && <Chip tone="secondary">orchestrator</Chip>}
+                <span className={cx(TYPE.meta, TNUM, 'ml-auto')}>
+                  {n.running.length}/{n.weight} busy
+                </span>
+              </div>
+              <div className="flex gap-1">
+                {Array.from({ length: n.weight }).map((_, i) => (
+                  <span
+                    key={i}
+                    className={cx(
+                      'h-2 flex-1 rounded-lz-pill',
+                      i < n.running.length
+                        ? nodeClasses(nodeIndexOf(model, n.model_id), 'dot')
+                        : 'bg-lz-surface-2'
+                    )}
+                  />
                 ))}
-              </ul>
-            )}
-          </Panel>
-          <Panel title="Tell the desk" padded>
-            <p className={cx(TYPE.bodyMuted, 'mb-2')}>
-              A note the orchestrator reads at its next tick — a hold, a steer, a fact it lacks.
-            </p>
-            <div className="flex gap-2">
-              <input
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void sendNote();
-                }}
-                aria-label="Note to the desk"
-                placeholder="Focus the next run on the sources I shared"
-                className="h-8 min-w-0 flex-1 rounded-lz-control border border-lz-border-strong bg-lz-surface px-2 text-lz-body text-lz-ink"
-              />
-              <Button
-                variant="primary"
-                size="sm"
-                icon={<Send />}
-                disabled={busy || !note.trim()}
-                onClick={sendNote}
-              >
-                Send
-              </Button>
-            </div>
-            {noteError && (
-              <p role="alert" className="mt-2 text-sm text-lz-err">
-                {noteError}
-              </p>
-            )}
-          </Panel>
-          <Panel title="This desk" padded>
-            <KeyValue
-              dense
-              items={[
-                { key: 'ticks', label: 'Ticks', value: String(model.totals.ticks) },
-                { key: 'lanes', label: 'Lanes run', value: String(model.totals.lanes) },
-                { key: 'staged', label: 'Drafts staged', value: String(model.totals.staged) },
-                {
-                  key: 'posted',
-                  label: 'Posted',
-                  value: String(model.totals.posted),
-                  tone: model.totals.posted > 0 ? 'ok' : undefined,
-                },
-                { key: 'asks', label: 'Asks raised', value: String(model.totals.asks) },
-                { key: 'cost', label: 'Lane-minutes', value: model.totals.laneMinutes.toFixed(1) },
-                {
-                  key: 'planner',
-                  label: 'Orchestrator model',
-                  value: read.state?.planner_model || '—',
-                  mono: true,
-                },
-                {
-                  key: 'last',
-                  label: 'Last tick',
-                  value: model.lastTick
-                    ? `#${model.lastTick.tick} ${model.lastTick.outcome} — ${model.lastTick.summary}`
-                    : '—',
-                },
-              ]}
-            />
-          </Panel>
-          {read.engineLog.trim() && (
-            <Panel title="Engine log" padded>
-              <pre
-                className={cx(TYPE.mono, 'max-h-48 overflow-auto whitespace-pre-wrap break-words')}
-              >
-                {read.engineLog.trim().split('\n').slice(-40).join('\n')}
-              </pre>
-            </Panel>
-          )}
-        </div>
-      </div>
-    </>
+              </div>
+              {n.running.map((l) => (
+                <div key={l.key} className={cx(TYPE.meta, 'truncate')}>
+                  <span className={WEIGHT.medium}>
+                    {l.kind === 'lens' ? `${l.laneId} · ${l.lens} lens` : l.item || l.laneId}
+                  </span>{' '}
+                  — {l.liveLine || '…'}
+                </div>
+              ))}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
   );
 }
