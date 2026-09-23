@@ -488,6 +488,12 @@
   "cloudProviderSetup.noMatch": {
     "defaultMessage": "没有模型匹配该筛选条件"
   },
+  "cloudProviderSetup.notOfficial": {
+    "defaultMessage": "不是官方 API"
+  },
+  "cloudProviderSetup.notOfficialText": {
+    "defaultMessage": "已保存的设置把这些请求发往 {where},而不是 api.openai.com。连接会将其重置为官方 API。若要继续使用该服务器,请将其添加为 OpenAI 兼容端点。"
+  },
   "cloudProviderSetup.remove": {
     "defaultMessage": "移除"
   },
@@ -521,17 +527,32 @@
   "cloudProviderSetup.typeModel": {
     "defaultMessage": "或输入模型 id"
   },
+  "cloudProviders.addEndpoint": {
+    "defaultMessage": "添加端点"
+  },
   "cloudProviders.available": {
     "defaultMessage": "可供设置"
   },
   "cloudProviders.change": {
     "defaultMessage": "更改"
   },
+  "cloudProviders.chatOnly": {
+    "defaultMessage": "仅聊天"
+  },
+  "cloudProviders.chatOnlyHint": {
+    "defaultMessage": "聊天会话可以使用此端点;swarm 节点暂时不能。"
+  },
   "cloudProviders.checkFailed": {
     "defaultMessage": "检查失败"
   },
   "cloudProviders.checking": {
     "defaultMessage": "正在检查连接…"
+  },
+  "cloudProviders.compatible": {
+    "defaultMessage": "OpenAI 兼容"
+  },
+  "cloudProviders.compatibleHint": {
+    "defaultMessage": "任何支持 OpenAI API 的服务器 — vLLM、llama.cpp、远程 LM Studio、Together、Groq、公司网关。需要多少就加多少。聊天会话可以使用;swarm 节点暂时不能。"
   },
   "cloudProviders.configured": {
     "defaultMessage": "已配置"
@@ -545,6 +566,9 @@
   "cloudProviders.description": {
     "defaultMessage": "此应用可调用的云端提供方的凭据 — 密钥会加密存入 goose 的机密存储。本地后端(LM Studio、MLX 引擎)无需凭据,位于其他标签页。"
   },
+  "cloudProviders.endpointUnread": {
+    "defaultMessage": "无法读取这些请求的去向:{error}"
+  },
   "cloudProviders.loadFailed": {
     "defaultMessage": "无法加载提供方列表。"
   },
@@ -557,6 +581,15 @@
   "cloudProviders.noneConfigured": {
     "defaultMessage": "尚未配置云服务提供商。请在下方选择一个进行设置。"
   },
+  "cloudProviders.notChecked": {
+    "defaultMessage": "尚未检查"
+  },
+  "cloudProviders.notOfficial": {
+    "defaultMessage": "不是官方 API"
+  },
+  "cloudProviders.notOfficialText": {
+    "defaultMessage": "请求发往 {where},而不是 api.openai.com。"
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "未设置"
   },
@@ -568,6 +601,105 @@
   },
   "cloudProviders.setUp": {
     "defaultMessage": "设置"
+  },
+  "compatibleEndpoint.addHeader": {
+    "defaultMessage": "添加请求头"
+  },
+  "compatibleEndpoint.apiKey": {
+    "defaultMessage": "API 密钥"
+  },
+  "compatibleEndpoint.apiKeyOptional": {
+    "defaultMessage": "可选 — 许多本地服务器不需要"
+  },
+  "compatibleEndpoint.back": {
+    "defaultMessage": "返回"
+  },
+  "compatibleEndpoint.baseUrl": {
+    "defaultMessage": "基础 URL"
+  },
+  "compatibleEndpoint.baseUrlHint": {
+    "defaultMessage": "服务器的 API 根地址,通常以 /v1 结尾 — 地址不含版本时 goose 会补上 /v1。"
+  },
+  "compatibleEndpoint.cancel": {
+    "defaultMessage": "取消"
+  },
+  "compatibleEndpoint.headerName": {
+    "defaultMessage": "请求头名称"
+  },
+  "compatibleEndpoint.headerValue": {
+    "defaultMessage": "值"
+  },
+  "compatibleEndpoint.headers": {
+    "defaultMessage": "自定义请求头"
+  },
+  "compatibleEndpoint.headersHint": {
+    "defaultMessage": "随每个请求发送。以明文保存在端点的设置文件中。"
+  },
+  "compatibleEndpoint.intro": {
+    "defaultMessage": "任何支持 OpenAI API 的服务器 — vLLM、llama.cpp、另一台机器上的 LM Studio、Together、Groq、公司网关。测试连接会保存它并向服务器请求模型列表。用于聊天会话:swarm 节点暂时不能使用兼容端点。"
+  },
+  "compatibleEndpoint.keep": {
+    "defaultMessage": "保留"
+  },
+  "compatibleEndpoint.listFailed": {
+    "defaultMessage": "没有模型列表"
+  },
+  "compatibleEndpoint.listFailedHint": {
+    "defaultMessage": "如果该服务器不列出模型,请在下方输入模型 ID;否则请返回修正地址或密钥。"
+  },
+  "compatibleEndpoint.modelIntro": {
+    "defaultMessage": "选择聊天默认使用的模型;如果服务器不列出模型,请手动输入。保存时会运行一次 — 以此证明端点可用。"
+  },
+  "compatibleEndpoint.name": {
+    "defaultMessage": "名称"
+  },
+  "compatibleEndpoint.namePlaceholder": {
+    "defaultMessage": "团队网关"
+  },
+  "compatibleEndpoint.noKey": {
+    "defaultMessage": "此服务器不需要密钥"
+  },
+  "compatibleEndpoint.noKeyHint": {
+    "defaultMessage": "已保存的密钥将被删除,请求将不带密钥发送。"
+  },
+  "compatibleEndpoint.remove": {
+    "defaultMessage": "移除"
+  },
+  "compatibleEndpoint.removeConfirm": {
+    "defaultMessage": "要从此应用中移除 {name}、其密钥和默认模型吗?"
+  },
+  "compatibleEndpoint.removeHeader": {
+    "defaultMessage": "移除请求头 {name}"
+  },
+  "compatibleEndpoint.removeYes": {
+    "defaultMessage": "是,移除"
+  },
+  "compatibleEndpoint.required": {
+    "defaultMessage": "{field} 为必填项"
+  },
+  "compatibleEndpoint.saveDefault": {
+    "defaultMessage": "保存端点"
+  },
+  "compatibleEndpoint.savedKey": {
+    "defaultMessage": "已保存 — 留空以保留"
+  },
+  "compatibleEndpoint.savingDefault": {
+    "defaultMessage": "正在运行 {model}…"
+  },
+  "compatibleEndpoint.test": {
+    "defaultMessage": "测试连接"
+  },
+  "compatibleEndpoint.testing": {
+    "defaultMessage": "正在向 {name} 请求模型列表…"
+  },
+  "compatibleEndpoint.titleEdit": {
+    "defaultMessage": "编辑 {name}"
+  },
+  "compatibleEndpoint.titleModel": {
+    "defaultMessage": "{name} 默认模型"
+  },
+  "compatibleEndpoint.titleNew": {
+    "defaultMessage": "添加 OpenAI 兼容端点"
   },
   "composerReadiness.failed": {
     "defaultMessage": "上次挂载失败:{error}"

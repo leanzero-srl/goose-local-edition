@@ -488,6 +488,12 @@
   "cloudProviderSetup.noMatch": {
     "defaultMessage": "filtreyle eşleşen model yok"
   },
+  "cloudProviderSetup.notOfficial": {
+    "defaultMessage": "Resmi API değil"
+  },
+  "cloudProviderSetup.notOfficialText": {
+    "defaultMessage": "Kayıtlı ayarlar bu istekleri api.openai.com yerine {where} adresine gönderiyor. Bağlan, ayarları resmi API'ye sıfırlar. O sunucuyu kullanmaya devam etmek için onu OpenAI uyumlu uç nokta olarak ekleyin."
+  },
   "cloudProviderSetup.remove": {
     "defaultMessage": "Kaldır"
   },
@@ -521,17 +527,32 @@
   "cloudProviderSetup.typeModel": {
     "defaultMessage": "Veya bir model id'si yazın"
   },
+  "cloudProviders.addEndpoint": {
+    "defaultMessage": "Uç nokta ekle"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Kuruluma hazır"
   },
   "cloudProviders.change": {
     "defaultMessage": "Değiştir"
   },
+  "cloudProviders.chatOnly": {
+    "defaultMessage": "Yalnızca sohbet"
+  },
+  "cloudProviders.chatOnlyHint": {
+    "defaultMessage": "Sohbet oturumları bu uç noktayı kullanabilir; swarm düğümleri henüz kullanamaz."
+  },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Kontrol başarısız oldu"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Bağlantılar denetleniyor…"
+  },
+  "cloudProviders.compatible": {
+    "defaultMessage": "OpenAI uyumlu"
+  },
+  "cloudProviders.compatibleHint": {
+    "defaultMessage": "OpenAI API'sini konuşan her sunucu — vLLM, llama.cpp, uzak bir LM Studio, Together, Groq, bir şirket ağ geçidi. İstediğiniz kadar ekleyin. Sohbet oturumları bunları kullanabilir; swarm düğümleri henüz kullanamaz."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Yapılandırılmış"
@@ -545,6 +566,9 @@
   "cloudProviders.description": {
     "defaultMessage": "Bu uygulamanın çağırabildiği bulut sağlayıcılarının kimlik bilgileri — anahtarlar goose gizli deposuna şifrelenerek yazılır. Yerel arka uçların (LM Studio, MLX motoru) kimlik bilgisine ihtiyacı yoktur ve diğer sekmelerde yaşarlar."
   },
+  "cloudProviders.endpointUnread": {
+    "defaultMessage": "Bu isteklerin nereye gittiği okunamadı: {error}"
+  },
   "cloudProviders.loadFailed": {
     "defaultMessage": "Sağlayıcı listesi yüklenemedi."
   },
@@ -557,6 +581,15 @@
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Henüz yapılandırılmış bulut sağlayıcısı yok. Kurmak için aşağıdan birini seçin."
   },
+  "cloudProviders.notChecked": {
+    "defaultMessage": "Henüz denetlenmedi"
+  },
+  "cloudProviders.notOfficial": {
+    "defaultMessage": "Resmi API değil"
+  },
+  "cloudProviders.notOfficialText": {
+    "defaultMessage": "İstekler api.openai.com yerine {where} adresine gidiyor."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Kurulmadı"
   },
@@ -568,6 +601,105 @@
   },
   "cloudProviders.setUp": {
     "defaultMessage": "Kur"
+  },
+  "compatibleEndpoint.addHeader": {
+    "defaultMessage": "Başlık ekle"
+  },
+  "compatibleEndpoint.apiKey": {
+    "defaultMessage": "API anahtarı"
+  },
+  "compatibleEndpoint.apiKeyOptional": {
+    "defaultMessage": "isteğe bağlı — birçok yerel sunucu gerektirmez"
+  },
+  "compatibleEndpoint.back": {
+    "defaultMessage": "Geri"
+  },
+  "compatibleEndpoint.baseUrl": {
+    "defaultMessage": "Temel URL"
+  },
+  "compatibleEndpoint.baseUrlHint": {
+    "defaultMessage": "Sunucunun API kökü, genellikle /v1 ile biter — adres sürüm içermiyorsa goose /v1 ekler."
+  },
+  "compatibleEndpoint.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "compatibleEndpoint.headerName": {
+    "defaultMessage": "Başlık adı"
+  },
+  "compatibleEndpoint.headerValue": {
+    "defaultMessage": "Değer"
+  },
+  "compatibleEndpoint.headers": {
+    "defaultMessage": "Özel başlıklar"
+  },
+  "compatibleEndpoint.headersHint": {
+    "defaultMessage": "Her istekle gönderilir. Uç noktanın ayar dosyasında düz metin olarak saklanır."
+  },
+  "compatibleEndpoint.intro": {
+    "defaultMessage": "OpenAI API'sini konuşan her sunucu — vLLM, llama.cpp, başka bir makinedeki LM Studio, Together, Groq, bir şirket ağ geçidi. Bağlantıyı test et onu kaydeder ve sunucudan modellerini ister. Sohbet oturumları için: swarm düğümleri henüz uyumlu bir uç nokta kullanamaz."
+  },
+  "compatibleEndpoint.keep": {
+    "defaultMessage": "Tut"
+  },
+  "compatibleEndpoint.listFailed": {
+    "defaultMessage": "Model listesi yok"
+  },
+  "compatibleEndpoint.listFailedHint": {
+    "defaultMessage": "Bu sunucu modellerini listelemiyorsa model kimliğini aşağıya yazın; aksi halde geri dönüp adresi veya anahtarı düzeltin."
+  },
+  "compatibleEndpoint.modelIntro": {
+    "defaultMessage": "Sohbetin başlayacağı modeli seçin ya da sunucu modellerini listelemiyorsa bir tane yazın. Kaydetmek onu bir kez çalıştırır — uç noktayı kanıtlayan budur."
+  },
+  "compatibleEndpoint.name": {
+    "defaultMessage": "Ad"
+  },
+  "compatibleEndpoint.namePlaceholder": {
+    "defaultMessage": "Ekip ağ geçidi"
+  },
+  "compatibleEndpoint.noKey": {
+    "defaultMessage": "Bu sunucu anahtar gerektirmiyor"
+  },
+  "compatibleEndpoint.noKeyHint": {
+    "defaultMessage": "Kayıtlı anahtar silinir ve istekler anahtarsız gider."
+  },
+  "compatibleEndpoint.remove": {
+    "defaultMessage": "Kaldır"
+  },
+  "compatibleEndpoint.removeConfirm": {
+    "defaultMessage": "{name}, anahtarı ve varsayılan modeli bu uygulamadan kaldırılsın mı?"
+  },
+  "compatibleEndpoint.removeHeader": {
+    "defaultMessage": "{name} başlığını kaldır"
+  },
+  "compatibleEndpoint.removeYes": {
+    "defaultMessage": "Evet, kaldır"
+  },
+  "compatibleEndpoint.required": {
+    "defaultMessage": "{field} gerekli"
+  },
+  "compatibleEndpoint.saveDefault": {
+    "defaultMessage": "Uç noktayı kaydet"
+  },
+  "compatibleEndpoint.savedKey": {
+    "defaultMessage": "kayıtlı — korumak için boş bırakın"
+  },
+  "compatibleEndpoint.savingDefault": {
+    "defaultMessage": "{model} çalıştırılıyor…"
+  },
+  "compatibleEndpoint.test": {
+    "defaultMessage": "Bağlantıyı test et"
+  },
+  "compatibleEndpoint.testing": {
+    "defaultMessage": "{name} sunucusundan modeller isteniyor…"
+  },
+  "compatibleEndpoint.titleEdit": {
+    "defaultMessage": "{name} düzenle"
+  },
+  "compatibleEndpoint.titleModel": {
+    "defaultMessage": "{name} varsayılan modeli"
+  },
+  "compatibleEndpoint.titleNew": {
+    "defaultMessage": "OpenAI uyumlu uç nokta ekle"
   },
   "composerReadiness.failed": {
     "defaultMessage": "Son takma başarısız oldu: {error}"

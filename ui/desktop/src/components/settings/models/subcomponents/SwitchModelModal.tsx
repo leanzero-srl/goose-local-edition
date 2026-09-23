@@ -33,6 +33,7 @@ import { useEdition } from '../../../../contexts/EditionContext';
 import { SWARM_DISPLAY_NAME, SWARM_PROVIDER_ID } from '../../../../branding';
 import {
   isLocalEditionCloudProvider,
+  isUserEndpoint,
   keepProviderInLocalEdition,
   SWARM_BUILD_MODEL_ID,
   SWARM_CHAT_MODEL_ID,
@@ -307,10 +308,14 @@ export const SwitchModelModal = ({
   // rows first, then the configured swarm cloud families. A provider outside it (an omlx/lmstudio
   // session) is never preselected, so the only thing a user can submit is an allowed row.
   const { isLocal } = useEdition();
+  // The OpenAI-compatible endpoints the person added in Cloud Providers are chat providers too. Which
+  // ids they are is known only once the registry answers (by type, never by name), so a session
+  // already on one is admitted — and preselected — when the list arrives.
+  const [endpointIds, setEndpointIds] = useState<ReadonlySet<string> | null>(null);
   const admit = useCallback(
     (p: string | null | undefined): string | null =>
-      p ? (isLocal && !keepProviderInLocalEdition(p) ? null : p) : null,
-    [isLocal]
+      p ? (isLocal && !keepProviderInLocalEdition(p) && !endpointIds?.has(p) ? null : p) : null,
+    [isLocal, endpointIds]
   );
   // Use session-specific model/provider if available, otherwise fall back to config defaults
   const currentModel = sessionModel ?? configModel;
@@ -513,10 +518,21 @@ export const SwitchModelModal = ({
       if (admit(currentProvider)) {
         if (!provider) setProvider(currentProvider);
         if (!model) setModel(currentModel);
+        manualSyncDone.current = true;
+      } else if (endpointIds != null) {
+        manualSyncDone.current = true;
       }
-      manualSyncDone.current = true;
     }
-  }, [currentModel, currentProvider, usePredefinedModels, provider, model, initialProvider, admit]);
+  }, [
+    currentModel,
+    currentProvider,
+    usePredefinedModels,
+    provider,
+    model,
+    initialProvider,
+    admit,
+    endpointIds,
+  ]);
 
   useEffect(() => {
     if (usePredefinedModels) {
@@ -529,6 +545,7 @@ export const SwitchModelModal = ({
         const providersResponse = await acpListProviderDetails();
         const activeProviders = providersResponse.filter((provider) => provider.is_configured);
         setActiveProvidersList(activeProviders);
+        setEndpointIds(new Set(providersResponse.filter(isUserEndpoint).map((p) => p.name)));
         if (isLocal) {
           // Swarm needs no credentials; every configured cloud provider is available.
           const swarmRows: ProviderOption[] = [
@@ -550,7 +567,7 @@ export const SwitchModelModal = ({
           setProviderOptions([
             ...swarmRows,
             ...activeProviders
-              .filter(({ name }) => isLocalEditionCloudProvider(name))
+              .filter((p) => isLocalEditionCloudProvider(p.name) || isUserEndpoint(p))
               .map(({ metadata, name }) => ({
                 value: name,
                 label: metadata.display_name,

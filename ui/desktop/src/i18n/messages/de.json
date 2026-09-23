@@ -488,6 +488,12 @@
   "cloudProviderSetup.noMatch": {
     "defaultMessage": "kein Modell entspricht dem Filter"
   },
+  "cloudProviderSetup.notOfficial": {
+    "defaultMessage": "Nicht die offizielle API"
+  },
+  "cloudProviderSetup.notOfficialText": {
+    "defaultMessage": "Gespeicherte Einstellungen senden diese Anfragen an {where}, nicht an api.openai.com. Verbinden setzt sie auf die offizielle API zurück. Um diesen Server weiter zu nutzen, füge ihn als OpenAI-kompatiblen Endpunkt hinzu."
+  },
   "cloudProviderSetup.remove": {
     "defaultMessage": "Entfernen"
   },
@@ -521,17 +527,32 @@
   "cloudProviderSetup.typeModel": {
     "defaultMessage": "Oder eine Modell-ID eingeben"
   },
+  "cloudProviders.addEndpoint": {
+    "defaultMessage": "Endpunkt hinzufügen"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Zur Einrichtung verfügbar"
   },
   "cloudProviders.change": {
     "defaultMessage": "Ändern"
   },
+  "cloudProviders.chatOnly": {
+    "defaultMessage": "Nur Chat"
+  },
+  "cloudProviders.chatOnlyHint": {
+    "defaultMessage": "Chat-Sitzungen können diesen Endpunkt nutzen; Swarm-Knoten noch nicht."
+  },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Prüfung fehlgeschlagen"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Verbindungen werden geprüft…"
+  },
+  "cloudProviders.compatible": {
+    "defaultMessage": "OpenAI-kompatibel"
+  },
+  "cloudProviders.compatibleHint": {
+    "defaultMessage": "Jeder Server, der die OpenAI-API spricht — vLLM, llama.cpp, ein entferntes LM Studio, Together, Groq, ein Firmen-Gateway. Füge so viele hinzu, wie du brauchst. Chat-Sitzungen können sie nutzen; Swarm-Knoten noch nicht."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Konfiguriert"
@@ -545,6 +566,9 @@
   "cloudProviders.description": {
     "defaultMessage": "Zugangsdaten für die Cloud-Anbieter, die diese App aufrufen kann — Schlüssel werden verschlüsselt im goose-Geheimspeicher abgelegt. Lokale Backends (LM Studio, die MLX-Engine) brauchen keine Zugangsdaten und wohnen in den anderen Tabs."
   },
+  "cloudProviders.endpointUnread": {
+    "defaultMessage": "Konnte nicht lesen, wohin diese Anfragen gehen: {error}"
+  },
   "cloudProviders.loadFailed": {
     "defaultMessage": "Die Anbieterliste konnte nicht geladen werden."
   },
@@ -557,6 +581,15 @@
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Noch keine Cloud-Anbieter konfiguriert. Wählen Sie unten einen Anbieter aus."
   },
+  "cloudProviders.notChecked": {
+    "defaultMessage": "Noch nicht geprüft"
+  },
+  "cloudProviders.notOfficial": {
+    "defaultMessage": "Nicht die offizielle API"
+  },
+  "cloudProviders.notOfficialText": {
+    "defaultMessage": "Anfragen gehen an {where}, nicht an api.openai.com."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Nicht eingerichtet"
   },
@@ -568,6 +601,105 @@
   },
   "cloudProviders.setUp": {
     "defaultMessage": "Einrichten"
+  },
+  "compatibleEndpoint.addHeader": {
+    "defaultMessage": "Header hinzufügen"
+  },
+  "compatibleEndpoint.apiKey": {
+    "defaultMessage": "API-Schlüssel"
+  },
+  "compatibleEndpoint.apiKeyOptional": {
+    "defaultMessage": "optional — viele lokale Server brauchen keinen"
+  },
+  "compatibleEndpoint.back": {
+    "defaultMessage": "Zurück"
+  },
+  "compatibleEndpoint.baseUrl": {
+    "defaultMessage": "Basis-URL"
+  },
+  "compatibleEndpoint.baseUrlHint": {
+    "defaultMessage": "Die API-Wurzel des Servers, meist mit /v1 am Ende — goose ergänzt /v1, wenn die Adresse keine Version enthält."
+  },
+  "compatibleEndpoint.cancel": {
+    "defaultMessage": "Abbrechen"
+  },
+  "compatibleEndpoint.headerName": {
+    "defaultMessage": "Header-Name"
+  },
+  "compatibleEndpoint.headerValue": {
+    "defaultMessage": "Wert"
+  },
+  "compatibleEndpoint.headers": {
+    "defaultMessage": "Eigene Header"
+  },
+  "compatibleEndpoint.headersHint": {
+    "defaultMessage": "Wird mit jeder Anfrage gesendet. Im Klartext in der Einstellungsdatei des Endpunkts gespeichert."
+  },
+  "compatibleEndpoint.intro": {
+    "defaultMessage": "Jeder Server, der die OpenAI-API spricht — vLLM, llama.cpp, LM Studio auf einem anderen Rechner, Together, Groq, ein Firmen-Gateway. Verbindung testen speichert ihn und fragt den Server nach seinen Modellen. Für Chat-Sitzungen: Swarm-Knoten können einen kompatiblen Endpunkt noch nicht nutzen."
+  },
+  "compatibleEndpoint.keep": {
+    "defaultMessage": "Behalten"
+  },
+  "compatibleEndpoint.listFailed": {
+    "defaultMessage": "Keine Modellliste"
+  },
+  "compatibleEndpoint.listFailedHint": {
+    "defaultMessage": "Gib unten die Modell-ID ein, wenn dieser Server seine Modelle nicht auflistet; sonst geh zurück und korrigiere Adresse oder Schlüssel."
+  },
+  "compatibleEndpoint.modelIntro": {
+    "defaultMessage": "Wähle das Modell, mit dem der Chat startet, oder gib eines ein, wenn der Server seine Modelle nicht auflistet. Beim Speichern läuft es einmal — das beweist den Endpunkt."
+  },
+  "compatibleEndpoint.name": {
+    "defaultMessage": "Name"
+  },
+  "compatibleEndpoint.namePlaceholder": {
+    "defaultMessage": "Team-Gateway"
+  },
+  "compatibleEndpoint.noKey": {
+    "defaultMessage": "Dieser Server braucht keinen Schlüssel"
+  },
+  "compatibleEndpoint.noKeyHint": {
+    "defaultMessage": "Der gespeicherte Schlüssel wird gelöscht und Anfragen gehen ohne einen raus."
+  },
+  "compatibleEndpoint.remove": {
+    "defaultMessage": "Entfernen"
+  },
+  "compatibleEndpoint.removeConfirm": {
+    "defaultMessage": "{name}, seinen Schlüssel und sein Standardmodell aus dieser App entfernen?"
+  },
+  "compatibleEndpoint.removeHeader": {
+    "defaultMessage": "Header {name} entfernen"
+  },
+  "compatibleEndpoint.removeYes": {
+    "defaultMessage": "Ja, entfernen"
+  },
+  "compatibleEndpoint.required": {
+    "defaultMessage": "{field} ist erforderlich"
+  },
+  "compatibleEndpoint.saveDefault": {
+    "defaultMessage": "Endpunkt speichern"
+  },
+  "compatibleEndpoint.savedKey": {
+    "defaultMessage": "gespeichert — leer lassen, um ihn zu behalten"
+  },
+  "compatibleEndpoint.savingDefault": {
+    "defaultMessage": "{model} läuft…"
+  },
+  "compatibleEndpoint.test": {
+    "defaultMessage": "Verbindung testen"
+  },
+  "compatibleEndpoint.testing": {
+    "defaultMessage": "Frage {name} nach seinen Modellen…"
+  },
+  "compatibleEndpoint.titleEdit": {
+    "defaultMessage": "{name} bearbeiten"
+  },
+  "compatibleEndpoint.titleModel": {
+    "defaultMessage": "Standardmodell von {name}"
+  },
+  "compatibleEndpoint.titleNew": {
+    "defaultMessage": "OpenAI-kompatiblen Endpunkt hinzufügen"
   },
   "composerReadiness.failed": {
     "defaultMessage": "Das letzte Einbinden ist fehlgeschlagen: {error}"

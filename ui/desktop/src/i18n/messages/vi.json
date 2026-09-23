@@ -488,6 +488,12 @@
   "cloudProviderSetup.noMatch": {
     "defaultMessage": "không có mô hình nào khớp với bộ lọc"
   },
+  "cloudProviderSetup.notOfficial": {
+    "defaultMessage": "Không phải API chính thức"
+  },
+  "cloudProviderSetup.notOfficialText": {
+    "defaultMessage": "Cài đặt đã lưu gửi các yêu cầu này đến {where}, không phải api.openai.com. Kết nối sẽ đặt lại về API chính thức. Để tiếp tục dùng máy chủ đó, hãy thêm nó như một endpoint tương thích OpenAI."
+  },
   "cloudProviderSetup.remove": {
     "defaultMessage": "Xóa"
   },
@@ -521,17 +527,32 @@
   "cloudProviderSetup.typeModel": {
     "defaultMessage": "Hoặc nhập id mô hình"
   },
+  "cloudProviders.addEndpoint": {
+    "defaultMessage": "Thêm endpoint"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Có thể thiết lập"
   },
   "cloudProviders.change": {
     "defaultMessage": "Thay đổi"
   },
+  "cloudProviders.chatOnly": {
+    "defaultMessage": "Chỉ trò chuyện"
+  },
+  "cloudProviders.chatOnlyHint": {
+    "defaultMessage": "Phiên trò chuyện có thể dùng endpoint này; các nút swarm thì chưa."
+  },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Kiểm tra thất bại"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Đang kiểm tra kết nối…"
+  },
+  "cloudProviders.compatible": {
+    "defaultMessage": "Tương thích OpenAI"
+  },
+  "cloudProviders.compatibleHint": {
+    "defaultMessage": "Bất kỳ máy chủ nào dùng API của OpenAI — vLLM, llama.cpp, LM Studio từ xa, Together, Groq, cổng nội bộ công ty. Thêm bao nhiêu tùy ý. Phiên trò chuyện có thể dùng chúng; các nút swarm thì chưa."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Đã cấu hình"
@@ -545,6 +566,9 @@
   "cloudProviders.description": {
     "defaultMessage": "Thông tin xác thực của các nhà cung cấp đám mây mà ứng dụng này có thể gọi — khóa được mã hóa vào kho bí mật của goose. Backend cục bộ (LM Studio, động cơ MLX) không cần thông tin xác thực và nằm ở các tab khác."
   },
+  "cloudProviders.endpointUnread": {
+    "defaultMessage": "Không đọc được các yêu cầu này đi đâu: {error}"
+  },
   "cloudProviders.loadFailed": {
     "defaultMessage": "Không tải được danh sách nhà cung cấp."
   },
@@ -557,6 +581,15 @@
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Chưa có nhà cung cấp đám mây nào được cấu hình. Chọn một nhà cung cấp bên dưới để thiết lập."
   },
+  "cloudProviders.notChecked": {
+    "defaultMessage": "Chưa kiểm tra"
+  },
+  "cloudProviders.notOfficial": {
+    "defaultMessage": "Không phải API chính thức"
+  },
+  "cloudProviders.notOfficialText": {
+    "defaultMessage": "Yêu cầu đi đến {where}, không phải api.openai.com."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Chưa thiết lập"
   },
@@ -568,6 +601,105 @@
   },
   "cloudProviders.setUp": {
     "defaultMessage": "Thiết lập"
+  },
+  "compatibleEndpoint.addHeader": {
+    "defaultMessage": "Thêm header"
+  },
+  "compatibleEndpoint.apiKey": {
+    "defaultMessage": "Khóa API"
+  },
+  "compatibleEndpoint.apiKeyOptional": {
+    "defaultMessage": "không bắt buộc — nhiều máy chủ cục bộ không cần"
+  },
+  "compatibleEndpoint.back": {
+    "defaultMessage": "Quay lại"
+  },
+  "compatibleEndpoint.baseUrl": {
+    "defaultMessage": "URL gốc"
+  },
+  "compatibleEndpoint.baseUrlHint": {
+    "defaultMessage": "Gốc API của máy chủ, thường kết thúc bằng /v1 — goose thêm /v1 khi địa chỉ không có phiên bản."
+  },
+  "compatibleEndpoint.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "compatibleEndpoint.headerName": {
+    "defaultMessage": "Tên header"
+  },
+  "compatibleEndpoint.headerValue": {
+    "defaultMessage": "Giá trị"
+  },
+  "compatibleEndpoint.headers": {
+    "defaultMessage": "Header tùy chỉnh"
+  },
+  "compatibleEndpoint.headersHint": {
+    "defaultMessage": "Gửi kèm mọi yêu cầu. Lưu dạng văn bản thường trong tệp cài đặt của endpoint."
+  },
+  "compatibleEndpoint.intro": {
+    "defaultMessage": "Bất kỳ máy chủ nào dùng API của OpenAI — vLLM, llama.cpp, LM Studio trên máy khác, Together, Groq, cổng nội bộ công ty. Kiểm tra kết nối sẽ lưu nó và hỏi máy chủ danh sách mô hình. Dành cho phiên trò chuyện: các nút swarm chưa dùng được endpoint tương thích."
+  },
+  "compatibleEndpoint.keep": {
+    "defaultMessage": "Giữ lại"
+  },
+  "compatibleEndpoint.listFailed": {
+    "defaultMessage": "Không có danh sách mô hình"
+  },
+  "compatibleEndpoint.listFailedHint": {
+    "defaultMessage": "Nhập id mô hình bên dưới nếu máy chủ này không liệt kê mô hình; nếu không, quay lại và sửa địa chỉ hoặc khóa."
+  },
+  "compatibleEndpoint.modelIntro": {
+    "defaultMessage": "Chọn mô hình mà cuộc trò chuyện bắt đầu, hoặc nhập một mô hình nếu máy chủ không liệt kê. Lưu sẽ chạy nó một lần — đó là bằng chứng endpoint hoạt động."
+  },
+  "compatibleEndpoint.name": {
+    "defaultMessage": "Tên"
+  },
+  "compatibleEndpoint.namePlaceholder": {
+    "defaultMessage": "Cổng của nhóm"
+  },
+  "compatibleEndpoint.noKey": {
+    "defaultMessage": "Máy chủ này không cần khóa"
+  },
+  "compatibleEndpoint.noKeyHint": {
+    "defaultMessage": "Khóa đã lưu bị xóa và yêu cầu được gửi mà không có khóa."
+  },
+  "compatibleEndpoint.remove": {
+    "defaultMessage": "Xóa"
+  },
+  "compatibleEndpoint.removeConfirm": {
+    "defaultMessage": "Xóa {name}, khóa và mô hình mặc định của nó khỏi ứng dụng này?"
+  },
+  "compatibleEndpoint.removeHeader": {
+    "defaultMessage": "Xóa header {name}"
+  },
+  "compatibleEndpoint.removeYes": {
+    "defaultMessage": "Có, xóa"
+  },
+  "compatibleEndpoint.required": {
+    "defaultMessage": "{field} là bắt buộc"
+  },
+  "compatibleEndpoint.saveDefault": {
+    "defaultMessage": "Lưu endpoint"
+  },
+  "compatibleEndpoint.savedKey": {
+    "defaultMessage": "đã lưu — để trống để giữ"
+  },
+  "compatibleEndpoint.savingDefault": {
+    "defaultMessage": "Đang chạy {model}…"
+  },
+  "compatibleEndpoint.test": {
+    "defaultMessage": "Kiểm tra kết nối"
+  },
+  "compatibleEndpoint.testing": {
+    "defaultMessage": "Đang hỏi {name} danh sách mô hình…"
+  },
+  "compatibleEndpoint.titleEdit": {
+    "defaultMessage": "Sửa {name}"
+  },
+  "compatibleEndpoint.titleModel": {
+    "defaultMessage": "Mô hình mặc định của {name}"
+  },
+  "compatibleEndpoint.titleNew": {
+    "defaultMessage": "Thêm endpoint tương thích OpenAI"
   },
   "composerReadiness.failed": {
     "defaultMessage": "Lần gắn gần nhất thất bại: {error}"

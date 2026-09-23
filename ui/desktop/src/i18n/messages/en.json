@@ -488,6 +488,12 @@
   "cloudProviderSetup.noMatch": {
     "defaultMessage": "no model matches the filter"
   },
+  "cloudProviderSetup.notOfficial": {
+    "defaultMessage": "Not the official API"
+  },
+  "cloudProviderSetup.notOfficialText": {
+    "defaultMessage": "Saved settings send these requests to {where}, not api.openai.com. Connect resets them to the official API. To keep using that server, add it as an OpenAI-compatible endpoint."
+  },
   "cloudProviderSetup.remove": {
     "defaultMessage": "Remove"
   },
@@ -521,17 +527,32 @@
   "cloudProviderSetup.typeModel": {
     "defaultMessage": "Or type a model id"
   },
+  "cloudProviders.addEndpoint": {
+    "defaultMessage": "Add endpoint"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Available to set up"
   },
   "cloudProviders.change": {
     "defaultMessage": "Change"
   },
+  "cloudProviders.chatOnly": {
+    "defaultMessage": "Chat only"
+  },
+  "cloudProviders.chatOnlyHint": {
+    "defaultMessage": "Chat sessions can use this endpoint; swarm nodes cannot yet."
+  },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Check failed"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Checking connections…"
+  },
+  "cloudProviders.compatible": {
+    "defaultMessage": "OpenAI-compatible"
+  },
+  "cloudProviders.compatibleHint": {
+    "defaultMessage": "Any server that speaks the OpenAI API — vLLM, llama.cpp, a remote LM Studio, Together, Groq, a company gateway. Add as many as you need. Chat sessions can use them; swarm nodes cannot yet."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Configured"
@@ -545,6 +566,9 @@
   "cloudProviders.description": {
     "defaultMessage": "Credentials for the cloud providers this app can call — keys are encrypted into your goose secret store. Local backends (LM Studio, the MLX engine) need no credentials and live in the other tabs."
   },
+  "cloudProviders.endpointUnread": {
+    "defaultMessage": "Could not read where these requests go: {error}"
+  },
   "cloudProviders.loadFailed": {
     "defaultMessage": "Could not load the provider list."
   },
@@ -557,6 +581,15 @@
   "cloudProviders.noneConfigured": {
     "defaultMessage": "No cloud providers configured yet. Choose one below to set it up."
   },
+  "cloudProviders.notChecked": {
+    "defaultMessage": "Not checked yet"
+  },
+  "cloudProviders.notOfficial": {
+    "defaultMessage": "Not the official API"
+  },
+  "cloudProviders.notOfficialText": {
+    "defaultMessage": "Requests go to {where}, not api.openai.com."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Not set up"
   },
@@ -568,6 +601,105 @@
   },
   "cloudProviders.setUp": {
     "defaultMessage": "Set up"
+  },
+  "compatibleEndpoint.addHeader": {
+    "defaultMessage": "Add header"
+  },
+  "compatibleEndpoint.apiKey": {
+    "defaultMessage": "API key"
+  },
+  "compatibleEndpoint.apiKeyOptional": {
+    "defaultMessage": "optional — many local servers need none"
+  },
+  "compatibleEndpoint.back": {
+    "defaultMessage": "Back"
+  },
+  "compatibleEndpoint.baseUrl": {
+    "defaultMessage": "Base URL"
+  },
+  "compatibleEndpoint.baseUrlHint": {
+    "defaultMessage": "The server’s API root, usually ending in /v1 — goose adds /v1 when the address carries no version."
+  },
+  "compatibleEndpoint.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "compatibleEndpoint.headerName": {
+    "defaultMessage": "Header name"
+  },
+  "compatibleEndpoint.headerValue": {
+    "defaultMessage": "Value"
+  },
+  "compatibleEndpoint.headers": {
+    "defaultMessage": "Custom headers"
+  },
+  "compatibleEndpoint.headersHint": {
+    "defaultMessage": "Sent with every request. Stored in plain text in the endpoint’s settings file."
+  },
+  "compatibleEndpoint.intro": {
+    "defaultMessage": "Any server that speaks the OpenAI API — vLLM, llama.cpp, LM Studio on another machine, Together, Groq, a company gateway. Test connection saves it and asks the server for its models. For chat sessions: swarm nodes cannot use a compatible endpoint yet."
+  },
+  "compatibleEndpoint.keep": {
+    "defaultMessage": "Keep"
+  },
+  "compatibleEndpoint.listFailed": {
+    "defaultMessage": "No model list"
+  },
+  "compatibleEndpoint.listFailedHint": {
+    "defaultMessage": "Type the model id below if this server does not list its models; otherwise go back and fix the address or key."
+  },
+  "compatibleEndpoint.modelIntro": {
+    "defaultMessage": "Pick the model chat starts with, or type one if the server does not list its models. Saving runs it once — that is what proves the endpoint."
+  },
+  "compatibleEndpoint.name": {
+    "defaultMessage": "Name"
+  },
+  "compatibleEndpoint.namePlaceholder": {
+    "defaultMessage": "Team gateway"
+  },
+  "compatibleEndpoint.noKey": {
+    "defaultMessage": "This server needs no key"
+  },
+  "compatibleEndpoint.noKeyHint": {
+    "defaultMessage": "The saved key is deleted and requests go out without one."
+  },
+  "compatibleEndpoint.remove": {
+    "defaultMessage": "Remove"
+  },
+  "compatibleEndpoint.removeConfirm": {
+    "defaultMessage": "Remove {name}, its key and its default model from this app?"
+  },
+  "compatibleEndpoint.removeHeader": {
+    "defaultMessage": "Remove header {name}"
+  },
+  "compatibleEndpoint.removeYes": {
+    "defaultMessage": "Yes, remove"
+  },
+  "compatibleEndpoint.required": {
+    "defaultMessage": "{field} is required"
+  },
+  "compatibleEndpoint.saveDefault": {
+    "defaultMessage": "Save endpoint"
+  },
+  "compatibleEndpoint.savedKey": {
+    "defaultMessage": "saved — leave blank to keep"
+  },
+  "compatibleEndpoint.savingDefault": {
+    "defaultMessage": "Running {model}…"
+  },
+  "compatibleEndpoint.test": {
+    "defaultMessage": "Test connection"
+  },
+  "compatibleEndpoint.testing": {
+    "defaultMessage": "Asking {name} for its models…"
+  },
+  "compatibleEndpoint.titleEdit": {
+    "defaultMessage": "Edit {name}"
+  },
+  "compatibleEndpoint.titleModel": {
+    "defaultMessage": "{name} default model"
+  },
+  "compatibleEndpoint.titleNew": {
+    "defaultMessage": "Add an OpenAI-compatible endpoint"
   },
   "composerReadiness.failed": {
     "defaultMessage": "The last mount failed: {error}"

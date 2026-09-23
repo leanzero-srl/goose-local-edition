@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Loader2, Search } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -8,7 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../ui/dialog';
-import { Button, Chip, SURFACE, TYPE, cx } from '../lz';
+import { Button, Chip, TYPE, cx } from '../lz';
 import { INPUT, ToneBanner } from './studio';
 import {
   acpDeleteProviderConfig,
@@ -21,6 +21,8 @@ import type { ProviderDetails } from '../../types/providers';
 import { errorMessage } from '../../utils/conversionUtils';
 import { defineMessages, useIntl } from '../../i18n';
 import { ProviderTile } from './ProviderTile';
+import { ModelChoice, type ModelSource } from './ModelChoice';
+import { officialEndpointReset, type EndpointOverride } from './openaiEndpoint';
 
 const i18n = defineMessages({
   titleSetup: { id: 'cloudProviderSetup.titleSetup', defaultMessage: 'Connect {provider}' },
@@ -47,26 +49,6 @@ const i18n = defineMessages({
   savedKey: { id: 'cloudProviderSetup.savedKey', defaultMessage: 'saved — leave blank to keep' },
   connect: { id: 'cloudProviderSetup.connect', defaultMessage: 'Connect' },
   connecting: { id: 'cloudProviderSetup.connecting', defaultMessage: 'Checking with {provider}…' },
-  listing: {
-    id: 'cloudProviderSetup.listing',
-    defaultMessage: 'Asking {provider} for its models…',
-  },
-  filter: { id: 'cloudProviderSetup.filter', defaultMessage: 'Filter models' },
-  modelsLive: {
-    id: 'cloudProviderSetup.modelsLive',
-    defaultMessage: '{count, plural, one {# model} other {# models}} listed by {provider}',
-  },
-  modelsRegistry: {
-    id: 'cloudProviderSetup.modelsRegistry',
-    defaultMessage:
-      '{provider} has no model listing. These are the ids goose knows for it — access depends on your account.',
-  },
-  noMatch: { id: 'cloudProviderSetup.noMatch', defaultMessage: 'no model matches the filter' },
-  typeModel: {
-    id: 'cloudProviderSetup.typeModel',
-    defaultMessage: 'Or type a model id',
-  },
-  current: { id: 'cloudProviderSetup.current', defaultMessage: 'current default' },
   saveDefault: { id: 'cloudProviderSetup.saveDefault', defaultMessage: 'Save default model' },
   savingDefault: { id: 'cloudProviderSetup.savingDefault', defaultMessage: 'Running {model}…' },
   replaceKey: { id: 'cloudProviderSetup.replaceKey', defaultMessage: 'Replace key' },
@@ -80,6 +62,12 @@ const i18n = defineMessages({
   cancel: { id: 'cloudProviderSetup.cancel', defaultMessage: 'Cancel' },
   back: { id: 'cloudProviderSetup.back', defaultMessage: 'Back' },
   retryList: { id: 'cloudProviderSetup.retryList', defaultMessage: 'Ask again' },
+  notOfficial: { id: 'cloudProviderSetup.notOfficial', defaultMessage: 'Not the official API' },
+  notOfficialText: {
+    id: 'cloudProviderSetup.notOfficialText',
+    defaultMessage:
+      'Saved settings send these requests to {where}, not api.openai.com. Connect resets them to the official API. To keep using that server, add it as an OpenAI-compatible endpoint.',
+  },
   azureDone: {
     id: 'cloudProviderSetup.azureDone',
     defaultMessage: 'Azure runs the deployment you named; there is no separate model to choose.',
@@ -93,6 +81,9 @@ const DEPLOYMENT_PROVIDERS = new Set(['azure_openai']);
 
 export interface CloudProviderSetupDialogProps {
   provider: ProviderDetails;
+  /** Saved endpoint fields that send this provider somewhere other than its official API (OpenAI's
+   *  OPENAI_HOST & co.). Shown loudly on every step; Connect resets them to the official values. */
+  endpointOverrides?: EndpointOverride[];
   onClose: () => void;
   /** The provider list changed (a key landed, a default was saved, a config was removed). */
   onSaved: () => Promise<void>;
@@ -105,6 +96,7 @@ export interface CloudProviderSetupDialogProps {
  */
 export default function CloudProviderSetupDialog({
   provider,
+  endpointOverrides = [],
   onClose,
   onSaved,
 }: CloudProviderSetupDialogProps) {
@@ -113,15 +105,18 @@ export default function CloudProviderSetupDialog({
   const deploymentOnly = DEPLOYMENT_PROVIDERS.has(provider.name);
   // A stored key — proven or still waiting on its default model — is what makes Replace/Remove real.
   const hasKey = provider.credentials_saved || provider.is_configured;
-  const [step, setStep] = useState<Step>(hasKey ? 'model' : 'key');
+  // An endpoint that is not the official API opens on Connect: that is the step that resets it, and
+  // a default saved first would be proven against the wrong server.
+  const [step, setStep] = useState<Step>(
+    hasKey && endpointOverrides.length === 0 ? 'model' : 'key'
+  );
   const [values, setValues] = useState<Record<string, string>>({});
   const [serverValues, setServerValues] = useState<Record<string, string>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<'connect' | 'list' | 'save' | 'remove' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [models, setModels] = useState<string[] | null>(null);
-  const [liveListing, setLiveListing] = useState(true);
-  const [filter, setFilter] = useState('');
+  const [modelSource, setModelSource] = useState<ModelSource>('live');
   const [typed, setTyped] = useState('');
   const [chosen, setChosen] = useState<string | null>(provider.default_model ?? null);
 
@@ -159,10 +154,10 @@ export default function CloudProviderSetupDialog({
       const live = await acpListProviderLiveModels(provider.name);
       if (live.length > 0) {
         setModels(live);
-        setLiveListing(true);
+        setModelSource('live');
       } else {
         setModels(provider.metadata.known_models.map((m) => m.name));
-        setLiveListing(false);
+        setModelSource('registry');
       }
     } catch (e) {
       setError(errorMessage(e));
@@ -193,6 +188,7 @@ export default function CloudProviderSetupDialog({
     }
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) return;
+    submit.push(...officialEndpointReset(endpointOverrides));
     setBusy('connect');
     setError(null);
     try {
@@ -241,14 +237,6 @@ export default function CloudProviderSetupDialog({
     }
   };
 
-  const shown = useMemo(() => {
-    const list = models ?? [];
-    const q = filter.trim().toLowerCase();
-    const ordered =
-      chosen && list.includes(chosen) ? [chosen, ...list.filter((m) => m !== chosen)] : list;
-    return q ? ordered.filter((m) => m.toLowerCase().includes(q)) : ordered;
-  }, [models, filter, chosen]);
-
   const selection = (chosen ?? typed).trim();
 
   return (
@@ -271,6 +259,17 @@ export default function CloudProviderSetupDialog({
                 : intl.formatMessage(i18n.modelIntro)}
           </DialogDescription>
         </DialogHeader>
+
+        {endpointOverrides.length > 0 && step !== 'remove' && (
+          <ToneBanner
+            tone="err"
+            testId="cloud-provider-not-official"
+            label={intl.formatMessage(i18n.notOfficial)}
+            text={intl.formatMessage(i18n.notOfficialText, {
+              where: endpointOverrides.map((o) => `${o.key}=${o.value}`).join(', '),
+            })}
+          />
+        )}
 
         {step === 'key' && (
           <form
@@ -334,105 +333,23 @@ export default function CloudProviderSetupDialog({
             {deploymentOnly ? (
               <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.azureDone)}</p>
             ) : (
-              <>
-                <div className="flex items-center gap-2">
-                  <label className="relative flex-1">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-lz-ink-3" />
-                    <input
-                      className={cx(INPUT, 'w-full pl-8')}
-                      placeholder={intl.formatMessage(i18n.filter)}
-                      aria-label={intl.formatMessage(i18n.filter)}
-                      value={filter}
-                      onChange={(e) => setFilter(e.target.value)}
-                      autoComplete="off"
-                    />
-                  </label>
-                  {models != null && busy !== 'list' && (
-                    <Chip tone={liveListing ? 'ok' : 'warn'}>
-                      {liveListing
-                        ? intl.formatMessage(i18n.modelsLive, {
-                            count: models.length,
-                            provider: label,
-                          })
-                        : label}
-                    </Chip>
-                  )}
-                </div>
-                {!liveListing && models != null && (
-                  <p className={TYPE.meta}>
-                    {intl.formatMessage(i18n.modelsRegistry, { provider: label })}
-                  </p>
-                )}
-                {busy === 'list' || models == null ? (
-                  <p className={cx('flex items-center gap-2', TYPE.meta)}>
-                    <Loader2 className="size-3 animate-spin" />
-                    {intl.formatMessage(i18n.listing, { provider: label })}
-                  </p>
-                ) : (
-                  <div
-                    role="listbox"
-                    aria-label={intl.formatMessage(i18n.titleModel, { provider: label })}
-                    className={cx(
-                      'max-h-64 overflow-y-auto',
-                      SURFACE.outline,
-                      'rounded-lz-control'
-                    )}
-                  >
-                    {shown.length === 0 ? (
-                      <p className={cx('px-3 py-2', TYPE.meta)}>
-                        {intl.formatMessage(i18n.noMatch)}
-                      </p>
-                    ) : (
-                      shown.map((model) => {
-                        const selected = model === chosen;
-                        return (
-                          <button
-                            key={model}
-                            type="button"
-                            role="option"
-                            aria-selected={selected}
-                            data-testid={`cloud-model-${model}`}
-                            onClick={() => {
-                              setChosen(model);
-                              setTyped('');
-                            }}
-                            className={cx(
-                              'flex h-8 w-full items-center gap-2 px-3 text-left font-mono text-lz-mono',
-                              selected ? SURFACE.selected : cx('text-lz-ink', SURFACE.hover)
-                            )}
-                          >
-                            <span className="size-4 shrink-0">
-                              {selected && <Check className="size-4" />}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate">{model}</span>
-                            {model === provider.default_model && (
-                              <Chip tone={selected ? 'secondary' : 'accent'}>
-                                {intl.formatMessage(i18n.current)}
-                              </Chip>
-                            )}
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
-                <label className="flex items-center gap-2">
-                  <span className={cx(TYPE.meta, 'shrink-0')}>
-                    {intl.formatMessage(i18n.typeModel)}
-                  </span>
-                  <input
-                    className={cx(INPUT, 'flex-1 font-mono')}
-                    aria-label={intl.formatMessage(i18n.typeModel)}
-                    value={typed}
-                    onChange={(e) => {
-                      setTyped(e.target.value);
-                      setChosen(null);
-                    }}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                </label>
-              </>
+              <ModelChoice
+                label={label}
+                models={models}
+                source={modelSource}
+                loading={busy === 'list'}
+                currentDefault={provider.default_model}
+                chosen={chosen}
+                onChoose={(model) => {
+                  setChosen(model);
+                  setTyped('');
+                }}
+                typed={typed}
+                onType={(model) => {
+                  setTyped(model);
+                  setChosen(null);
+                }}
+              />
             )}
             {error && (
               <ToneBanner

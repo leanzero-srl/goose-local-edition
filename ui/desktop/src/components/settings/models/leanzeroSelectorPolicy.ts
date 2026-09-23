@@ -49,6 +49,14 @@ export function isLocalEditionCloudProvider(registryId: string): boolean {
   return Object.prototype.hasOwnProperty.call(CLOUD_PROVIDER_LABELS, registryId);
 }
 
+/** An endpoint the person added themselves — an OpenAI-compatible server from Cloud Providers. The
+ *  registry says so by type (`Custom`: a file in the custom-provider store), never by a name pattern:
+ *  a bundled declarative provider can carry a `custom_` id too (DeepSeek does). Chat may select one;
+ *  a swarm node cannot (the engine's CLOUD_DEFS are a fixed roster). */
+export function isUserEndpoint(provider: { name: string; provider_type: string }): boolean {
+  return provider.provider_type === 'Custom' && !isLocalEditionCloudProvider(provider.name);
+}
+
 /** The providers a migrated install may still carry as its ACTIVE provider: the MLX sidecar and the
  *  LM Studio fleet provider. Both reach the same engines the Goose Swarm provider reaches through
  *  the pool, so switching the active provider to Swarm loses nothing. */

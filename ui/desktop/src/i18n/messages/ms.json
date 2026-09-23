@@ -488,6 +488,12 @@
   "cloudProviderSetup.noMatch": {
     "defaultMessage": "tiada model sepadan dengan tapisan"
   },
+  "cloudProviderSetup.notOfficial": {
+    "defaultMessage": "Bukan API rasmi"
+  },
+  "cloudProviderSetup.notOfficialText": {
+    "defaultMessage": "Tetapan yang disimpan menghantar permintaan ini ke {where}, bukan ke api.openai.com. Sambung menetapkannya semula kepada API rasmi. Untuk terus menggunakan pelayan itu, tambahkannya sebagai titik akhir yang serasi dengan OpenAI."
+  },
   "cloudProviderSetup.remove": {
     "defaultMessage": "Alih keluar"
   },
@@ -521,17 +527,32 @@
   "cloudProviderSetup.typeModel": {
     "defaultMessage": "Atau taip id model"
   },
+  "cloudProviders.addEndpoint": {
+    "defaultMessage": "Tambah titik akhir"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Tersedia untuk disediakan"
   },
   "cloudProviders.change": {
     "defaultMessage": "Tukar"
   },
+  "cloudProviders.chatOnly": {
+    "defaultMessage": "Sembang sahaja"
+  },
+  "cloudProviders.chatOnlyHint": {
+    "defaultMessage": "Sesi sembang boleh menggunakan titik akhir ini; nod swarm belum lagi."
+  },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Semakan gagal"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Menyemak sambungan…"
+  },
+  "cloudProviders.compatible": {
+    "defaultMessage": "Serasi dengan OpenAI"
+  },
+  "cloudProviders.compatibleHint": {
+    "defaultMessage": "Mana-mana pelayan yang menggunakan API OpenAI — vLLM, llama.cpp, LM Studio jauh, Together, Groq, get laluan syarikat. Tambah seberapa banyak yang perlu. Sesi sembang boleh menggunakannya; nod swarm belum lagi."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Dikonfigurasi"
@@ -545,6 +566,9 @@
   "cloudProviders.description": {
     "defaultMessage": "Kelayakan penyedia awan yang boleh dipanggil aplikasi ini — kunci disulitkan ke dalam stor rahsia goose. Backend tempatan (LM Studio, enjin MLX) tidak memerlukan kelayakan dan berada di tab lain."
   },
+  "cloudProviders.endpointUnread": {
+    "defaultMessage": "Tidak dapat membaca ke mana permintaan ini pergi: {error}"
+  },
   "cloudProviders.loadFailed": {
     "defaultMessage": "Senarai penyedia tidak dapat dimuatkan."
   },
@@ -557,6 +581,15 @@
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Belum ada penyedia awan yang dikonfigurasi. Pilih satu di bawah untuk menyediakannya."
   },
+  "cloudProviders.notChecked": {
+    "defaultMessage": "Belum disemak"
+  },
+  "cloudProviders.notOfficial": {
+    "defaultMessage": "Bukan API rasmi"
+  },
+  "cloudProviders.notOfficialText": {
+    "defaultMessage": "Permintaan pergi ke {where}, bukan ke api.openai.com."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Belum disediakan"
   },
@@ -568,6 +601,105 @@
   },
   "cloudProviders.setUp": {
     "defaultMessage": "Sediakan"
+  },
+  "compatibleEndpoint.addHeader": {
+    "defaultMessage": "Tambah pengepala"
+  },
+  "compatibleEndpoint.apiKey": {
+    "defaultMessage": "Kunci API"
+  },
+  "compatibleEndpoint.apiKeyOptional": {
+    "defaultMessage": "pilihan — banyak pelayan tempatan tidak memerlukannya"
+  },
+  "compatibleEndpoint.back": {
+    "defaultMessage": "Kembali"
+  },
+  "compatibleEndpoint.baseUrl": {
+    "defaultMessage": "URL asas"
+  },
+  "compatibleEndpoint.baseUrlHint": {
+    "defaultMessage": "Akar API pelayan, biasanya berakhir dengan /v1 — goose menambah /v1 apabila alamat tiada versi."
+  },
+  "compatibleEndpoint.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "compatibleEndpoint.headerName": {
+    "defaultMessage": "Nama pengepala"
+  },
+  "compatibleEndpoint.headerValue": {
+    "defaultMessage": "Nilai"
+  },
+  "compatibleEndpoint.headers": {
+    "defaultMessage": "Pengepala tersuai"
+  },
+  "compatibleEndpoint.headersHint": {
+    "defaultMessage": "Dihantar dengan setiap permintaan. Disimpan sebagai teks biasa dalam fail tetapan titik akhir."
+  },
+  "compatibleEndpoint.intro": {
+    "defaultMessage": "Mana-mana pelayan yang menggunakan API OpenAI — vLLM, llama.cpp, LM Studio pada mesin lain, Together, Groq, get laluan syarikat. Uji sambungan menyimpannya dan meminta senarai model daripada pelayan. Untuk sesi sembang: nod swarm belum boleh menggunakan titik akhir yang serasi."
+  },
+  "compatibleEndpoint.keep": {
+    "defaultMessage": "Kekalkan"
+  },
+  "compatibleEndpoint.listFailed": {
+    "defaultMessage": "Tiada senarai model"
+  },
+  "compatibleEndpoint.listFailedHint": {
+    "defaultMessage": "Taip id model di bawah jika pelayan ini tidak menyenaraikan modelnya; jika tidak, kembali dan betulkan alamat atau kunci."
+  },
+  "compatibleEndpoint.modelIntro": {
+    "defaultMessage": "Pilih model permulaan sembang, atau taip satu jika pelayan tidak menyenaraikan modelnya. Menyimpan menjalankannya sekali — itulah yang membuktikan titik akhir."
+  },
+  "compatibleEndpoint.name": {
+    "defaultMessage": "Nama"
+  },
+  "compatibleEndpoint.namePlaceholder": {
+    "defaultMessage": "Get laluan pasukan"
+  },
+  "compatibleEndpoint.noKey": {
+    "defaultMessage": "Pelayan ini tidak memerlukan kunci"
+  },
+  "compatibleEndpoint.noKeyHint": {
+    "defaultMessage": "Kunci yang disimpan dipadam dan permintaan dihantar tanpanya."
+  },
+  "compatibleEndpoint.remove": {
+    "defaultMessage": "Buang"
+  },
+  "compatibleEndpoint.removeConfirm": {
+    "defaultMessage": "Buang {name}, kuncinya dan model lalainya daripada aplikasi ini?"
+  },
+  "compatibleEndpoint.removeHeader": {
+    "defaultMessage": "Buang pengepala {name}"
+  },
+  "compatibleEndpoint.removeYes": {
+    "defaultMessage": "Ya, buang"
+  },
+  "compatibleEndpoint.required": {
+    "defaultMessage": "{field} diperlukan"
+  },
+  "compatibleEndpoint.saveDefault": {
+    "defaultMessage": "Simpan titik akhir"
+  },
+  "compatibleEndpoint.savedKey": {
+    "defaultMessage": "disimpan — biarkan kosong untuk kekalkan"
+  },
+  "compatibleEndpoint.savingDefault": {
+    "defaultMessage": "Menjalankan {model}…"
+  },
+  "compatibleEndpoint.test": {
+    "defaultMessage": "Uji sambungan"
+  },
+  "compatibleEndpoint.testing": {
+    "defaultMessage": "Meminta senarai model daripada {name}…"
+  },
+  "compatibleEndpoint.titleEdit": {
+    "defaultMessage": "Sunting {name}"
+  },
+  "compatibleEndpoint.titleModel": {
+    "defaultMessage": "Model lalai {name}"
+  },
+  "compatibleEndpoint.titleNew": {
+    "defaultMessage": "Tambah titik akhir yang serasi dengan OpenAI"
   },
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"

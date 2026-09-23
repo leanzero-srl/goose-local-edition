@@ -219,6 +219,47 @@ describe('SwitchModelModal — Goose Swarm (local) edition: all configured cloud
     expect(screen.getByText('Please select a provider')).toBeInTheDocument();
   });
 
+  it('an OpenAI-compatible endpoint the person added is a chat row; a bundled custom_ id is not', async () => {
+    mockIsLocal = true;
+    mockListProviderDetails.mockResolvedValue([
+      ...ALL_PROVIDERS,
+      { ...providerOf('custom_team_gateway', 'Team Gateway'), provider_type: 'Custom' },
+      { ...providerOf('custom_other', 'Other Bundled'), provider_type: 'Declarative' },
+    ]);
+    render(
+      <SwitchModelModal
+        sessionId={null}
+        onClose={vi.fn()}
+        setView={vi.fn()}
+        initialProvider={null}
+      />
+    );
+    await openProviderMenu();
+    expect(rowIds()).toContain('custom_team_gateway');
+    expect(rowIds()).not.toContain('custom_other');
+    expect(screen.getByText('Team Gateway')).toBeInTheDocument();
+  });
+
+  it('a session already on an endpoint opens on it once the registry has answered', async () => {
+    mockIsLocal = true;
+    mockCurrentProvider = 'custom_team_gateway';
+    mockCurrentModel = 'qwen3-coder';
+    mockListProviderDetails.mockResolvedValue([
+      ...ALL_PROVIDERS,
+      { ...providerOf('custom_team_gateway', 'Team Gateway'), provider_type: 'Custom' },
+    ]);
+    render(<SwitchModelModal sessionId={null} onClose={vi.fn()} setView={vi.fn()} />);
+    await waitFor(() => {
+      expect(screen.getAllByText('Team Gateway').length).toBeGreaterThan(0);
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Select model' }));
+    await waitFor(() => expect(mockChangeModel).toHaveBeenCalledTimes(1));
+    expect(mockChangeModel).toHaveBeenCalledWith(
+      null,
+      expect.objectContaining({ name: 'qwen3-coder', provider: 'custom_team_gateway' })
+    );
+  });
+
   it('a session already on Goose Swarm opens on its row', async () => {
     mockIsLocal = true;
     mockCurrentProvider = 'swarm';

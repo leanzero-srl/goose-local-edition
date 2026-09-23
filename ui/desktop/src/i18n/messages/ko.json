@@ -488,6 +488,12 @@
   "cloudProviderSetup.noMatch": {
     "defaultMessage": "필터와 일치하는 모델이 없습니다"
   },
+  "cloudProviderSetup.notOfficial": {
+    "defaultMessage": "공식 API가 아님"
+  },
+  "cloudProviderSetup.notOfficialText": {
+    "defaultMessage": "저장된 설정이 이 요청을 api.openai.com이 아닌 {where}(으)로 보냅니다. 연결하면 공식 API로 되돌립니다. 그 서버를 계속 쓰려면 OpenAI 호환 엔드포인트로 추가하세요."
+  },
   "cloudProviderSetup.remove": {
     "defaultMessage": "제거"
   },
@@ -521,17 +527,32 @@
   "cloudProviderSetup.typeModel": {
     "defaultMessage": "또는 모델 id 입력"
   },
+  "cloudProviders.addEndpoint": {
+    "defaultMessage": "엔드포인트 추가"
+  },
   "cloudProviders.available": {
     "defaultMessage": "설정 가능한 공급자"
   },
   "cloudProviders.change": {
     "defaultMessage": "변경"
   },
+  "cloudProviders.chatOnly": {
+    "defaultMessage": "채팅 전용"
+  },
+  "cloudProviders.chatOnlyHint": {
+    "defaultMessage": "채팅 세션은 이 엔드포인트를 쓸 수 있지만 swarm 노드는 아직 쓸 수 없습니다."
+  },
   "cloudProviders.checkFailed": {
     "defaultMessage": "확인 실패"
   },
   "cloudProviders.checking": {
     "defaultMessage": "연결 확인 중…"
+  },
+  "cloudProviders.compatible": {
+    "defaultMessage": "OpenAI 호환"
+  },
+  "cloudProviders.compatibleHint": {
+    "defaultMessage": "OpenAI API를 쓰는 모든 서버 — vLLM, llama.cpp, 원격 LM Studio, Together, Groq, 회사 게이트웨이. 필요한 만큼 추가하세요. 채팅 세션은 쓸 수 있지만 swarm 노드는 아직 쓸 수 없습니다."
   },
   "cloudProviders.configured": {
     "defaultMessage": "설정됨"
@@ -545,6 +566,9 @@
   "cloudProviders.description": {
     "defaultMessage": "이 앱이 호출할 수 있는 클라우드 제공자의 자격 증명 — 키는 goose 비밀 저장소에 암호화되어 보관됩니다. 로컬 백엔드(LM Studio, MLX 엔진)는 자격 증명이 필요 없으며 다른 탭에 있습니다."
   },
+  "cloudProviders.endpointUnread": {
+    "defaultMessage": "이 요청이 어디로 가는지 읽지 못했습니다: {error}"
+  },
   "cloudProviders.loadFailed": {
     "defaultMessage": "제공자 목록을 불러오지 못했습니다."
   },
@@ -557,6 +581,15 @@
   "cloudProviders.noneConfigured": {
     "defaultMessage": "아직 설정된 클라우드 공급자가 없습니다. 아래에서 하나를 선택해 설정하세요."
   },
+  "cloudProviders.notChecked": {
+    "defaultMessage": "아직 확인 안 됨"
+  },
+  "cloudProviders.notOfficial": {
+    "defaultMessage": "공식 API가 아님"
+  },
+  "cloudProviders.notOfficialText": {
+    "defaultMessage": "요청이 api.openai.com이 아닌 {where}(으)로 갑니다."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "설정되지 않음"
   },
@@ -568,6 +601,105 @@
   },
   "cloudProviders.setUp": {
     "defaultMessage": "설정"
+  },
+  "compatibleEndpoint.addHeader": {
+    "defaultMessage": "헤더 추가"
+  },
+  "compatibleEndpoint.apiKey": {
+    "defaultMessage": "API 키"
+  },
+  "compatibleEndpoint.apiKeyOptional": {
+    "defaultMessage": "선택 — 많은 로컬 서버는 필요 없음"
+  },
+  "compatibleEndpoint.back": {
+    "defaultMessage": "뒤로"
+  },
+  "compatibleEndpoint.baseUrl": {
+    "defaultMessage": "기본 URL"
+  },
+  "compatibleEndpoint.baseUrlHint": {
+    "defaultMessage": "서버의 API 루트로, 보통 /v1로 끝납니다 — 주소에 버전이 없으면 goose가 /v1을 붙입니다."
+  },
+  "compatibleEndpoint.cancel": {
+    "defaultMessage": "취소"
+  },
+  "compatibleEndpoint.headerName": {
+    "defaultMessage": "헤더 이름"
+  },
+  "compatibleEndpoint.headerValue": {
+    "defaultMessage": "값"
+  },
+  "compatibleEndpoint.headers": {
+    "defaultMessage": "사용자 지정 헤더"
+  },
+  "compatibleEndpoint.headersHint": {
+    "defaultMessage": "모든 요청에 함께 보냅니다. 엔드포인트 설정 파일에 평문으로 저장됩니다."
+  },
+  "compatibleEndpoint.intro": {
+    "defaultMessage": "OpenAI API를 쓰는 모든 서버 — vLLM, llama.cpp, 다른 컴퓨터의 LM Studio, Together, Groq, 회사 게이트웨이. 연결 테스트는 이를 저장하고 서버에 모델 목록을 요청합니다. 채팅 세션용이며, swarm 노드는 아직 호환 엔드포인트를 쓸 수 없습니다."
+  },
+  "compatibleEndpoint.keep": {
+    "defaultMessage": "유지"
+  },
+  "compatibleEndpoint.listFailed": {
+    "defaultMessage": "모델 목록 없음"
+  },
+  "compatibleEndpoint.listFailedHint": {
+    "defaultMessage": "이 서버가 모델 목록을 제공하지 않으면 아래에 모델 ID를 입력하세요. 그렇지 않으면 뒤로 가서 주소나 키를 고치세요."
+  },
+  "compatibleEndpoint.modelIntro": {
+    "defaultMessage": "채팅을 시작할 모델을 고르거나, 서버가 목록을 제공하지 않으면 직접 입력하세요. 저장하면 한 번 실행합니다 — 그것이 엔드포인트를 확인하는 방법입니다."
+  },
+  "compatibleEndpoint.name": {
+    "defaultMessage": "이름"
+  },
+  "compatibleEndpoint.namePlaceholder": {
+    "defaultMessage": "팀 게이트웨이"
+  },
+  "compatibleEndpoint.noKey": {
+    "defaultMessage": "이 서버는 키가 필요 없음"
+  },
+  "compatibleEndpoint.noKeyHint": {
+    "defaultMessage": "저장된 키를 삭제하고 키 없이 요청을 보냅니다."
+  },
+  "compatibleEndpoint.remove": {
+    "defaultMessage": "제거"
+  },
+  "compatibleEndpoint.removeConfirm": {
+    "defaultMessage": "{name}, 해당 키와 기본 모델을 이 앱에서 제거할까요?"
+  },
+  "compatibleEndpoint.removeHeader": {
+    "defaultMessage": "헤더 {name} 제거"
+  },
+  "compatibleEndpoint.removeYes": {
+    "defaultMessage": "예, 제거"
+  },
+  "compatibleEndpoint.required": {
+    "defaultMessage": "{field}은(는) 필수입니다"
+  },
+  "compatibleEndpoint.saveDefault": {
+    "defaultMessage": "엔드포인트 저장"
+  },
+  "compatibleEndpoint.savedKey": {
+    "defaultMessage": "저장됨 — 유지하려면 비워 두세요"
+  },
+  "compatibleEndpoint.savingDefault": {
+    "defaultMessage": "{model} 실행 중…"
+  },
+  "compatibleEndpoint.test": {
+    "defaultMessage": "연결 테스트"
+  },
+  "compatibleEndpoint.testing": {
+    "defaultMessage": "{name}에 모델 목록을 요청하는 중…"
+  },
+  "compatibleEndpoint.titleEdit": {
+    "defaultMessage": "{name} 편집"
+  },
+  "compatibleEndpoint.titleModel": {
+    "defaultMessage": "{name} 기본 모델"
+  },
+  "compatibleEndpoint.titleNew": {
+    "defaultMessage": "OpenAI 호환 엔드포인트 추가"
   },
   "composerReadiness.failed": {
     "defaultMessage": "마지막 마운트에 실패했습니다: {error}"

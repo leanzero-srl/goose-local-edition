@@ -488,6 +488,12 @@
   "cloudProviderSetup.noMatch": {
     "defaultMessage": "tidak ada model yang cocok dengan filter"
   },
+  "cloudProviderSetup.notOfficial": {
+    "defaultMessage": "Bukan API resmi"
+  },
+  "cloudProviderSetup.notOfficialText": {
+    "defaultMessage": "Pengaturan tersimpan mengirim permintaan ini ke {where}, bukan ke api.openai.com. Hubungkan mengembalikannya ke API resmi. Untuk tetap memakai server itu, tambahkan sebagai endpoint yang kompatibel dengan OpenAI."
+  },
   "cloudProviderSetup.remove": {
     "defaultMessage": "Hapus"
   },
@@ -521,17 +527,32 @@
   "cloudProviderSetup.typeModel": {
     "defaultMessage": "Atau ketik id model"
   },
+  "cloudProviders.addEndpoint": {
+    "defaultMessage": "Tambah endpoint"
+  },
   "cloudProviders.available": {
     "defaultMessage": "Tersedia untuk disiapkan"
   },
   "cloudProviders.change": {
     "defaultMessage": "Ubah"
   },
+  "cloudProviders.chatOnly": {
+    "defaultMessage": "Hanya chat"
+  },
+  "cloudProviders.chatOnlyHint": {
+    "defaultMessage": "Sesi chat dapat memakai endpoint ini; node swarm belum bisa."
+  },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Pemeriksaan gagal"
   },
   "cloudProviders.checking": {
     "defaultMessage": "Memeriksa koneksi…"
+  },
+  "cloudProviders.compatible": {
+    "defaultMessage": "Kompatibel dengan OpenAI"
+  },
+  "cloudProviders.compatibleHint": {
+    "defaultMessage": "Server apa pun yang berbicara API OpenAI — vLLM, llama.cpp, LM Studio jarak jauh, Together, Groq, gateway perusahaan. Tambahkan sebanyak yang Anda perlukan. Sesi chat dapat memakainya; node swarm belum bisa."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Dikonfigurasi"
@@ -545,6 +566,9 @@
   "cloudProviders.description": {
     "defaultMessage": "Kredensial penyedia cloud yang bisa dipanggil aplikasi ini — kunci dienkripsi ke penyimpanan rahasia goose. Backend lokal (LM Studio, mesin MLX) tidak butuh kredensial dan ada di tab lain."
   },
+  "cloudProviders.endpointUnread": {
+    "defaultMessage": "Tidak dapat membaca ke mana permintaan ini pergi: {error}"
+  },
   "cloudProviders.loadFailed": {
     "defaultMessage": "Tidak bisa memuat daftar penyedia."
   },
@@ -557,6 +581,15 @@
   "cloudProviders.noneConfigured": {
     "defaultMessage": "Belum ada penyedia cloud yang dikonfigurasi. Pilih salah satu di bawah untuk menyiapkannya."
   },
+  "cloudProviders.notChecked": {
+    "defaultMessage": "Belum diperiksa"
+  },
+  "cloudProviders.notOfficial": {
+    "defaultMessage": "Bukan API resmi"
+  },
+  "cloudProviders.notOfficialText": {
+    "defaultMessage": "Permintaan pergi ke {where}, bukan ke api.openai.com."
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "Belum disiapkan"
   },
@@ -568,6 +601,105 @@
   },
   "cloudProviders.setUp": {
     "defaultMessage": "Siapkan"
+  },
+  "compatibleEndpoint.addHeader": {
+    "defaultMessage": "Tambah header"
+  },
+  "compatibleEndpoint.apiKey": {
+    "defaultMessage": "Kunci API"
+  },
+  "compatibleEndpoint.apiKeyOptional": {
+    "defaultMessage": "opsional — banyak server lokal tidak memerlukannya"
+  },
+  "compatibleEndpoint.back": {
+    "defaultMessage": "Kembali"
+  },
+  "compatibleEndpoint.baseUrl": {
+    "defaultMessage": "URL dasar"
+  },
+  "compatibleEndpoint.baseUrlHint": {
+    "defaultMessage": "Akar API server, biasanya diakhiri /v1 — goose menambahkan /v1 bila alamat tidak memuat versi."
+  },
+  "compatibleEndpoint.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "compatibleEndpoint.headerName": {
+    "defaultMessage": "Nama header"
+  },
+  "compatibleEndpoint.headerValue": {
+    "defaultMessage": "Nilai"
+  },
+  "compatibleEndpoint.headers": {
+    "defaultMessage": "Header kustom"
+  },
+  "compatibleEndpoint.headersHint": {
+    "defaultMessage": "Dikirim di setiap permintaan. Disimpan sebagai teks biasa di berkas pengaturan endpoint."
+  },
+  "compatibleEndpoint.intro": {
+    "defaultMessage": "Server apa pun yang berbicara API OpenAI — vLLM, llama.cpp, LM Studio di mesin lain, Together, Groq, gateway perusahaan. Uji koneksi menyimpannya dan meminta daftar model dari server. Untuk sesi chat: node swarm belum bisa memakai endpoint yang kompatibel."
+  },
+  "compatibleEndpoint.keep": {
+    "defaultMessage": "Simpan"
+  },
+  "compatibleEndpoint.listFailed": {
+    "defaultMessage": "Tidak ada daftar model"
+  },
+  "compatibleEndpoint.listFailedHint": {
+    "defaultMessage": "Ketik id model di bawah jika server ini tidak mendaftar modelnya; jika tidak, kembali dan perbaiki alamat atau kunci."
+  },
+  "compatibleEndpoint.modelIntro": {
+    "defaultMessage": "Pilih model awal chat, atau ketik satu jika server tidak mendaftar modelnya. Menyimpan menjalankannya sekali — itulah yang membuktikan endpoint."
+  },
+  "compatibleEndpoint.name": {
+    "defaultMessage": "Nama"
+  },
+  "compatibleEndpoint.namePlaceholder": {
+    "defaultMessage": "Gateway tim"
+  },
+  "compatibleEndpoint.noKey": {
+    "defaultMessage": "Server ini tidak butuh kunci"
+  },
+  "compatibleEndpoint.noKeyHint": {
+    "defaultMessage": "Kunci tersimpan dihapus dan permintaan dikirim tanpa kunci."
+  },
+  "compatibleEndpoint.remove": {
+    "defaultMessage": "Hapus"
+  },
+  "compatibleEndpoint.removeConfirm": {
+    "defaultMessage": "Hapus {name}, kuncinya, dan model bawaannya dari aplikasi ini?"
+  },
+  "compatibleEndpoint.removeHeader": {
+    "defaultMessage": "Hapus header {name}"
+  },
+  "compatibleEndpoint.removeYes": {
+    "defaultMessage": "Ya, hapus"
+  },
+  "compatibleEndpoint.required": {
+    "defaultMessage": "{field} wajib diisi"
+  },
+  "compatibleEndpoint.saveDefault": {
+    "defaultMessage": "Simpan endpoint"
+  },
+  "compatibleEndpoint.savedKey": {
+    "defaultMessage": "tersimpan — kosongkan untuk mempertahankan"
+  },
+  "compatibleEndpoint.savingDefault": {
+    "defaultMessage": "Menjalankan {model}…"
+  },
+  "compatibleEndpoint.test": {
+    "defaultMessage": "Uji koneksi"
+  },
+  "compatibleEndpoint.testing": {
+    "defaultMessage": "Meminta daftar model dari {name}…"
+  },
+  "compatibleEndpoint.titleEdit": {
+    "defaultMessage": "Edit {name}"
+  },
+  "compatibleEndpoint.titleModel": {
+    "defaultMessage": "Model bawaan {name}"
+  },
+  "compatibleEndpoint.titleNew": {
+    "defaultMessage": "Tambah endpoint yang kompatibel dengan OpenAI"
   },
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"

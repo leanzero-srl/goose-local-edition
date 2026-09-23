@@ -8,7 +8,7 @@ import type { ProviderDetails } from '../../../types/providers';
 import { createNavigationHandler } from '../../../utils/navigationUtils';
 import { defineMessages, useIntl } from '../../../i18n';
 import { useEdition } from '../../../contexts/EditionContext';
-import { keepProviderInLocalEdition } from '../models/leanzeroSelectorPolicy';
+import { isUserEndpoint, keepProviderInLocalEdition } from '../models/leanzeroSelectorPolicy';
 
 const i18n = defineMessages({
   otherProviders: {
@@ -51,7 +51,10 @@ export default function ProviderSettings({
 
   const setView = useMemo(() => createNavigationHandler(navigate), [navigate]);
   const shownProviders = useMemo(
-    () => (isLocal ? providers.filter((p) => keepProviderInLocalEdition(p.name)) : providers),
+    () =>
+      isLocal
+        ? providers.filter((p) => keepProviderInLocalEdition(p.name) || isUserEndpoint(p))
+        : providers,
     [isLocal, providers]
   );
 

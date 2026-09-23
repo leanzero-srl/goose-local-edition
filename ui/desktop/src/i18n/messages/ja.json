@@ -488,6 +488,12 @@
   "cloudProviderSetup.noMatch": {
     "defaultMessage": "フィルターに一致するモデルがありません"
   },
+  "cloudProviderSetup.notOfficial": {
+    "defaultMessage": "公式 API ではありません"
+  },
+  "cloudProviderSetup.notOfficialText": {
+    "defaultMessage": "保存された設定により、これらのリクエストは api.openai.com ではなく {where} に送られています。「接続」で公式 API に戻します。そのサーバーを使い続けるには、OpenAI 互換エンドポイントとして追加してください。"
+  },
   "cloudProviderSetup.remove": {
     "defaultMessage": "削除"
   },
@@ -521,17 +527,32 @@
   "cloudProviderSetup.typeModel": {
     "defaultMessage": "またはモデル id を入力"
   },
+  "cloudProviders.addEndpoint": {
+    "defaultMessage": "エンドポイントを追加"
+  },
   "cloudProviders.available": {
     "defaultMessage": "設定できるプロバイダー"
   },
   "cloudProviders.change": {
     "defaultMessage": "変更"
   },
+  "cloudProviders.chatOnly": {
+    "defaultMessage": "チャットのみ"
+  },
+  "cloudProviders.chatOnlyHint": {
+    "defaultMessage": "チャットセッションはこのエンドポイントを使えます。swarm ノードはまだ使えません。"
+  },
   "cloudProviders.checkFailed": {
     "defaultMessage": "確認に失敗しました"
   },
   "cloudProviders.checking": {
     "defaultMessage": "接続を確認中…"
+  },
+  "cloudProviders.compatible": {
+    "defaultMessage": "OpenAI 互換"
+  },
+  "cloudProviders.compatibleHint": {
+    "defaultMessage": "OpenAI API を話すあらゆるサーバー — vLLM、llama.cpp、リモートの LM Studio、Together、Groq、社内ゲートウェイ。必要なだけ追加できます。チャットセッションで使えますが、swarm ノードはまだ使えません。"
   },
   "cloudProviders.configured": {
     "defaultMessage": "設定済み"
@@ -545,6 +566,9 @@
   "cloudProviders.description": {
     "defaultMessage": "このアプリが呼び出せるクラウドプロバイダーの認証情報 — キーは goose のシークレットストアに暗号化して保存されます。ローカルバックエンド(LM Studio、MLX エンジン)には認証情報は不要で、他のタブにあります。"
   },
+  "cloudProviders.endpointUnread": {
+    "defaultMessage": "これらのリクエストの送信先を読み取れませんでした: {error}"
+  },
   "cloudProviders.loadFailed": {
     "defaultMessage": "プロバイダー一覧を読み込めませんでした。"
   },
@@ -557,6 +581,15 @@
   "cloudProviders.noneConfigured": {
     "defaultMessage": "クラウドプロバイダーはまだ設定されていません。下から選んで設定してください。"
   },
+  "cloudProviders.notChecked": {
+    "defaultMessage": "未確認"
+  },
+  "cloudProviders.notOfficial": {
+    "defaultMessage": "公式 API ではありません"
+  },
+  "cloudProviders.notOfficialText": {
+    "defaultMessage": "リクエストは api.openai.com ではなく {where} に送られています。"
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "未設定"
   },
@@ -568,6 +601,105 @@
   },
   "cloudProviders.setUp": {
     "defaultMessage": "設定"
+  },
+  "compatibleEndpoint.addHeader": {
+    "defaultMessage": "ヘッダーを追加"
+  },
+  "compatibleEndpoint.apiKey": {
+    "defaultMessage": "API キー"
+  },
+  "compatibleEndpoint.apiKeyOptional": {
+    "defaultMessage": "任意 — 多くのローカルサーバーでは不要です"
+  },
+  "compatibleEndpoint.back": {
+    "defaultMessage": "戻る"
+  },
+  "compatibleEndpoint.baseUrl": {
+    "defaultMessage": "ベース URL"
+  },
+  "compatibleEndpoint.baseUrlHint": {
+    "defaultMessage": "サーバーの API ルート。通常は /v1 で終わります — アドレスにバージョンがない場合、goose が /v1 を補います。"
+  },
+  "compatibleEndpoint.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "compatibleEndpoint.headerName": {
+    "defaultMessage": "ヘッダー名"
+  },
+  "compatibleEndpoint.headerValue": {
+    "defaultMessage": "値"
+  },
+  "compatibleEndpoint.headers": {
+    "defaultMessage": "カスタムヘッダー"
+  },
+  "compatibleEndpoint.headersHint": {
+    "defaultMessage": "すべてのリクエストに付けて送信されます。エンドポイントの設定ファイルに平文で保存されます。"
+  },
+  "compatibleEndpoint.intro": {
+    "defaultMessage": "OpenAI API を話すあらゆるサーバー — vLLM、llama.cpp、別のマシンの LM Studio、Together、Groq、社内ゲートウェイ。「接続をテスト」で保存し、サーバーにモデル一覧を問い合わせます。チャットセッション用です。swarm ノードはまだ互換エンドポイントを使えません。"
+  },
+  "compatibleEndpoint.keep": {
+    "defaultMessage": "残す"
+  },
+  "compatibleEndpoint.listFailed": {
+    "defaultMessage": "モデル一覧なし"
+  },
+  "compatibleEndpoint.listFailedHint": {
+    "defaultMessage": "このサーバーがモデル一覧を返さない場合は下にモデル ID を入力してください。そうでなければ戻ってアドレスかキーを修正してください。"
+  },
+  "compatibleEndpoint.modelIntro": {
+    "defaultMessage": "チャットで最初に使うモデルを選ぶか、サーバーが一覧を返さない場合は入力してください。保存時に一度実行します — それがエンドポイントの確認になります。"
+  },
+  "compatibleEndpoint.name": {
+    "defaultMessage": "名前"
+  },
+  "compatibleEndpoint.namePlaceholder": {
+    "defaultMessage": "チームのゲートウェイ"
+  },
+  "compatibleEndpoint.noKey": {
+    "defaultMessage": "このサーバーはキー不要"
+  },
+  "compatibleEndpoint.noKeyHint": {
+    "defaultMessage": "保存されたキーは削除され、リクエストはキーなしで送られます。"
+  },
+  "compatibleEndpoint.remove": {
+    "defaultMessage": "削除"
+  },
+  "compatibleEndpoint.removeConfirm": {
+    "defaultMessage": "{name} とそのキー、既定モデルをこのアプリから削除しますか?"
+  },
+  "compatibleEndpoint.removeHeader": {
+    "defaultMessage": "ヘッダー {name} を削除"
+  },
+  "compatibleEndpoint.removeYes": {
+    "defaultMessage": "はい、削除します"
+  },
+  "compatibleEndpoint.required": {
+    "defaultMessage": "{field} は必須です"
+  },
+  "compatibleEndpoint.saveDefault": {
+    "defaultMessage": "エンドポイントを保存"
+  },
+  "compatibleEndpoint.savedKey": {
+    "defaultMessage": "保存済み — 空欄のままで維持"
+  },
+  "compatibleEndpoint.savingDefault": {
+    "defaultMessage": "{model} を実行中…"
+  },
+  "compatibleEndpoint.test": {
+    "defaultMessage": "接続をテスト"
+  },
+  "compatibleEndpoint.testing": {
+    "defaultMessage": "{name} にモデル一覧を問い合わせ中…"
+  },
+  "compatibleEndpoint.titleEdit": {
+    "defaultMessage": "{name} を編集"
+  },
+  "compatibleEndpoint.titleModel": {
+    "defaultMessage": "{name} の既定モデル"
+  },
+  "compatibleEndpoint.titleNew": {
+    "defaultMessage": "OpenAI 互換エンドポイントを追加"
   },
   "composerReadiness.failed": {
     "defaultMessage": "前回のマウントに失敗しました: {error}"

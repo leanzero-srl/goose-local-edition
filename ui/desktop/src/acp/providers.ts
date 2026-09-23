@@ -14,6 +14,7 @@ import type {
 import {
   CLOUD_PROVIDER_LABELS,
   isLocalEditionCloudProvider,
+  isUserEndpoint,
 } from '../components/settings/models/leanzeroSelectorPolicy';
 import { getAcpClient } from './acpConnection';
 
@@ -39,13 +40,20 @@ function updateRequestToCreate(
 
 const startupConnectionChecks = new WeakMap<object, Promise<unknown>>();
 
-export async function acpRecheckProviderConnections(): Promise<void> {
+/** Re-run every connection check on demand: the cloud families plus `endpointIds`, the
+ *  OpenAI-compatible endpoints the person added (each runs its saved default model once). */
+export async function acpRecheckProviderConnections(endpointIds: string[] = []): Promise<void> {
   const client = await getAcpClient();
   await client.goose.providersConfigStatus_unstable({
-    providerIds: Object.keys(CLOUD_PROVIDER_LABELS),
+    providerIds: [...Object.keys(CLOUD_PROVIDER_LABELS), ...endpointIds],
     checkConnections: true,
   });
 }
+
+/** What the official OpenAI tile shows: the key alone. Where the requests actually go
+ *  (OPENAI_HOST / OPENAI_BASE_URL / OPENAI_BASE_PATH) is read separately and flagged on the tile
+ *  when it is not api.openai.com — see openaiEndpoint.ts. */
+const OPENAI_OFFICIAL_FIELDS = new Set(['OPENAI_API_KEY']);
 
 export async function acpListProviderDetails(): Promise<ProviderDetails[]> {
   const client = await getAcpClient();
@@ -59,10 +67,18 @@ export async function acpListProviderDetails(): Promise<ProviderDetails[]> {
     startupCheck.catch(() => startupConnectionChecks.delete(client));
   }
   await startupCheck;
-  const { statuses } = await client.goose.providersConfigStatus_unstable({
-    providerIds: Object.keys(CLOUD_PROVIDER_LABELS),
-  });
   const { entries } = await client.goose.providersList_unstable({});
+  // Endpoints the person added carry a default model and a connection result exactly like a cloud
+  // family; they are read here but never checked at startup (that would run a model on every
+  // launch against a server that may be a desk machine) — the Recheck button includes them.
+  const endpointIds = entries
+    .filter((entry) =>
+      isUserEndpoint({ name: entry.providerId, provider_type: entry.providerType })
+    )
+    .map((entry) => entry.providerId);
+  const { statuses } = await client.goose.providersConfigStatus_unstable({
+    providerIds: [...Object.keys(CLOUD_PROVIDER_LABELS), ...endpointIds],
+  });
   return entries.map((entry) => ({
     name: entry.providerId,
     is_configured:
@@ -93,6 +109,7 @@ export async function acpListProviderDetails(): Promise<ProviderDetails[]> {
           if (entry.providerId === 'aws_bedrock')
             return ['AWS_BEARER_TOKEN_BEDROCK', 'AWS_REGION'].includes(key.name);
           if (entry.providerId === 'azure_openai') return key.name !== 'AZURE_OPENAI_AD_TOKEN';
+          if (entry.providerId === 'openai') return OPENAI_OFFICIAL_FIELDS.has(key.name);
           return true;
         })
         .map((key) => ({

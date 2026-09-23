@@ -1,3 +1,4 @@
+import { Server } from 'lucide-react';
 import { cx } from '../lz';
 import openai from './provider-logos/openai.svg?raw';
 import anthropic from './provider-logos/anthropic.svg?raw';
@@ -12,6 +13,10 @@ import openrouter from './provider-logos/openrouter.svg?raw';
 import minimax from './provider-logos/minimax.svg?raw';
 import moonshot from './provider-logos/moonshot.svg?raw';
 import xaiPng from './provider-logos/xai.png';
+
+/** The tile id every OpenAI-compatible endpoint wears: they are one family (any server speaking the
+ *  OpenAI API), told apart by the name the person gave each. */
+export const OPENAI_COMPATIBLE_TILE = 'openai_compatible';
 
 /** One solid hue per cloud provider — brand-adjacent, saturated, identity only (never state). */
 const PROVIDER_HUE: Readonly<Record<string, string>> = {
@@ -29,6 +34,7 @@ const PROVIDER_HUE: Readonly<Record<string, string>> = {
   alibaba: '#615ced',
   xai: '#1d4ed8',
   zai: '#16a34a',
+  [OPENAI_COMPATIBLE_TILE]: '#c026d3',
 };
 
 /** The provider's own mark (simple-icons, monochrome) drawn in white on its tile. Z.ai has no
@@ -69,7 +75,15 @@ export function ProviderTile({
     <span
       aria-hidden
       data-testid={`provider-tile-${providerId}`}
-      data-mark={mark ? 'svg' : providerId === 'xai' ? 'png' : 'initial'}
+      data-mark={
+        mark
+          ? 'svg'
+          : providerId === 'xai'
+            ? 'png'
+            : providerId === OPENAI_COMPATIBLE_TILE
+              ? 'icon'
+              : 'initial'
+      }
       className={cx(
         'inline-flex shrink-0 items-center justify-center rounded-lz-control font-lz-semibold text-white',
         '[&_svg]:size-full [&_svg]:fill-current',
@@ -81,6 +95,8 @@ export function ProviderTile({
         <span className="contents" dangerouslySetInnerHTML={{ __html: mark }} />
       ) : providerId === 'xai' ? (
         <img src={xaiPng} alt="" className="size-full invert" />
+      ) : providerId === OPENAI_COMPATIBLE_TILE ? (
+        <Server className="size-full !fill-none" />
       ) : (
         label.trim().charAt(0).toUpperCase()
       )}

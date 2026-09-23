@@ -488,6 +488,12 @@
   "cloudProviderSetup.noMatch": {
     "defaultMessage": "फ़िल्टर से कोई मॉडल मेल नहीं खाता"
   },
+  "cloudProviderSetup.notOfficial": {
+    "defaultMessage": "आधिकारिक API नहीं"
+  },
+  "cloudProviderSetup.notOfficialText": {
+    "defaultMessage": "सहेजी गई सेटिंग्स ये अनुरोध api.openai.com के बजाय {where} पर भेज रही हैं। कनेक्ट उन्हें आधिकारिक API पर रीसेट करता है। उस सर्वर का उपयोग जारी रखने के लिए उसे OpenAI-संगत एंडपॉइंट के रूप में जोड़ें।"
+  },
   "cloudProviderSetup.remove": {
     "defaultMessage": "हटाएँ"
   },
@@ -521,17 +527,32 @@
   "cloudProviderSetup.typeModel": {
     "defaultMessage": "या एक मॉडल id टाइप करें"
   },
+  "cloudProviders.addEndpoint": {
+    "defaultMessage": "एंडपॉइंट जोड़ें"
+  },
   "cloudProviders.available": {
     "defaultMessage": "सेटअप के लिए उपलब्ध"
   },
   "cloudProviders.change": {
     "defaultMessage": "बदलें"
   },
+  "cloudProviders.chatOnly": {
+    "defaultMessage": "केवल चैट"
+  },
+  "cloudProviders.chatOnlyHint": {
+    "defaultMessage": "चैट सत्र इस एंडपॉइंट का उपयोग कर सकते हैं; swarm नोड अभी नहीं।"
+  },
   "cloudProviders.checkFailed": {
     "defaultMessage": "जाँच विफल"
   },
   "cloudProviders.checking": {
     "defaultMessage": "कनेक्शन जाँचे जा रहे हैं…"
+  },
+  "cloudProviders.compatible": {
+    "defaultMessage": "OpenAI-संगत"
+  },
+  "cloudProviders.compatibleHint": {
+    "defaultMessage": "OpenAI API बोलने वाला कोई भी सर्वर — vLLM, llama.cpp, दूरस्थ LM Studio, Together, Groq, कंपनी गेटवे। जितने चाहें जोड़ें। चैट सत्र इनका उपयोग कर सकते हैं; swarm नोड अभी नहीं।"
   },
   "cloudProviders.configured": {
     "defaultMessage": "कॉन्फ़िगर किए गए"
@@ -545,6 +566,9 @@
   "cloudProviders.description": {
     "defaultMessage": "उन क्लाउड प्रदाताओं की साख जिन्हें यह ऐप कॉल कर सकता है — कुंजियाँ goose के गुप्त भंडार में एन्क्रिप्ट होती हैं। स्थानीय बैकएंड (LM Studio, MLX इंजन) को साख की ज़रूरत नहीं और वे दूसरे टैब में हैं।"
   },
+  "cloudProviders.endpointUnread": {
+    "defaultMessage": "ये अनुरोध कहाँ जाते हैं, यह पढ़ा नहीं जा सका: {error}"
+  },
   "cloudProviders.loadFailed": {
     "defaultMessage": "प्रदाता सूची लोड नहीं हो सकी।"
   },
@@ -557,6 +581,15 @@
   "cloudProviders.noneConfigured": {
     "defaultMessage": "अभी कोई क्लाउड प्रदाता कॉन्फ़िगर नहीं है। सेटअप के लिए नीचे किसी एक को चुनें।"
   },
+  "cloudProviders.notChecked": {
+    "defaultMessage": "अभी जाँचा नहीं गया"
+  },
+  "cloudProviders.notOfficial": {
+    "defaultMessage": "आधिकारिक API नहीं"
+  },
+  "cloudProviders.notOfficialText": {
+    "defaultMessage": "अनुरोध api.openai.com के बजाय {where} पर जाते हैं।"
+  },
   "cloudProviders.notSetUp": {
     "defaultMessage": "सेटअप नहीं किया गया"
   },
@@ -568,6 +601,105 @@
   },
   "cloudProviders.setUp": {
     "defaultMessage": "सेटअप करें"
+  },
+  "compatibleEndpoint.addHeader": {
+    "defaultMessage": "हेडर जोड़ें"
+  },
+  "compatibleEndpoint.apiKey": {
+    "defaultMessage": "API कुंजी"
+  },
+  "compatibleEndpoint.apiKeyOptional": {
+    "defaultMessage": "वैकल्पिक — कई स्थानीय सर्वरों को इसकी ज़रूरत नहीं होती"
+  },
+  "compatibleEndpoint.back": {
+    "defaultMessage": "वापस"
+  },
+  "compatibleEndpoint.baseUrl": {
+    "defaultMessage": "बेस URL"
+  },
+  "compatibleEndpoint.baseUrlHint": {
+    "defaultMessage": "सर्वर का API रूट, आमतौर पर /v1 पर समाप्त — पते में संस्करण न हो तो goose /v1 जोड़ देता है।"
+  },
+  "compatibleEndpoint.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "compatibleEndpoint.headerName": {
+    "defaultMessage": "हेडर नाम"
+  },
+  "compatibleEndpoint.headerValue": {
+    "defaultMessage": "मान"
+  },
+  "compatibleEndpoint.headers": {
+    "defaultMessage": "कस्टम हेडर"
+  },
+  "compatibleEndpoint.headersHint": {
+    "defaultMessage": "हर अनुरोध के साथ भेजे जाते हैं। एंडपॉइंट की सेटिंग फ़ाइल में सादे पाठ में सहेजे जाते हैं।"
+  },
+  "compatibleEndpoint.intro": {
+    "defaultMessage": "OpenAI API बोलने वाला कोई भी सर्वर — vLLM, llama.cpp, किसी दूसरी मशीन पर LM Studio, Together, Groq, कंपनी गेटवे। कनेक्शन जाँचें इसे सहेजता है और सर्वर से उसके मॉडल पूछता है। चैट सत्रों के लिए: swarm नोड अभी संगत एंडपॉइंट का उपयोग नहीं कर सकते।"
+  },
+  "compatibleEndpoint.keep": {
+    "defaultMessage": "रखें"
+  },
+  "compatibleEndpoint.listFailed": {
+    "defaultMessage": "कोई मॉडल सूची नहीं"
+  },
+  "compatibleEndpoint.listFailedHint": {
+    "defaultMessage": "यदि यह सर्वर अपने मॉडल सूचीबद्ध नहीं करता तो नीचे मॉडल id लिखें; अन्यथा वापस जाकर पता या कुंजी ठीक करें।"
+  },
+  "compatibleEndpoint.modelIntro": {
+    "defaultMessage": "वह मॉडल चुनें जिससे चैट शुरू होती है, या सर्वर सूची न दे तो एक लिखें। सहेजने पर यह एक बार चलता है — यही एंडपॉइंट का प्रमाण है।"
+  },
+  "compatibleEndpoint.name": {
+    "defaultMessage": "नाम"
+  },
+  "compatibleEndpoint.namePlaceholder": {
+    "defaultMessage": "टीम गेटवे"
+  },
+  "compatibleEndpoint.noKey": {
+    "defaultMessage": "इस सर्वर को कुंजी की ज़रूरत नहीं"
+  },
+  "compatibleEndpoint.noKeyHint": {
+    "defaultMessage": "सहेजी गई कुंजी हटा दी जाती है और अनुरोध बिना कुंजी के जाते हैं।"
+  },
+  "compatibleEndpoint.remove": {
+    "defaultMessage": "हटाएँ"
+  },
+  "compatibleEndpoint.removeConfirm": {
+    "defaultMessage": "{name}, उसकी कुंजी और डिफ़ॉल्ट मॉडल को इस ऐप से हटाएँ?"
+  },
+  "compatibleEndpoint.removeHeader": {
+    "defaultMessage": "हेडर {name} हटाएँ"
+  },
+  "compatibleEndpoint.removeYes": {
+    "defaultMessage": "हाँ, हटाएँ"
+  },
+  "compatibleEndpoint.required": {
+    "defaultMessage": "{field} आवश्यक है"
+  },
+  "compatibleEndpoint.saveDefault": {
+    "defaultMessage": "एंडपॉइंट सहेजें"
+  },
+  "compatibleEndpoint.savedKey": {
+    "defaultMessage": "सहेजी गई — रखने के लिए खाली छोड़ें"
+  },
+  "compatibleEndpoint.savingDefault": {
+    "defaultMessage": "{model} चल रहा है…"
+  },
+  "compatibleEndpoint.test": {
+    "defaultMessage": "कनेक्शन जाँचें"
+  },
+  "compatibleEndpoint.testing": {
+    "defaultMessage": "{name} से उसके मॉडल पूछे जा रहे हैं…"
+  },
+  "compatibleEndpoint.titleEdit": {
+    "defaultMessage": "{name} संपादित करें"
+  },
+  "compatibleEndpoint.titleModel": {
+    "defaultMessage": "{name} का डिफ़ॉल्ट मॉडल"
+  },
+  "compatibleEndpoint.titleNew": {
+    "defaultMessage": "OpenAI-संगत एंडपॉइंट जोड़ें"
   },
   "composerReadiness.failed": {
     "defaultMessage": "पिछला माउंट विफल रहा: {error}"

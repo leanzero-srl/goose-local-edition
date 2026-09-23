@@ -65,6 +65,34 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('CloudProviderSetupDialog', () => {
+  it('an OpenAI tile pointing at another server says so, opens on Connect, and Connect resets it to the official API', async () => {
+    mockSave.mockResolvedValue(undefined);
+    mockLive.mockResolvedValue(['gpt-5']);
+    rtlRender(
+      <CloudProviderSetupDialog
+        provider={provider(true, 'gpt-5')}
+        endpointOverrides={[
+          { key: 'OPENAI_HOST', value: 'http://192.168.8.220:1234' },
+          { key: 'OPENAI_BASE_PATH', value: 'api/v0/chat/completions' },
+        ]}
+        onClose={vi.fn()}
+        onSaved={vi.fn().mockResolvedValue(undefined)}
+      />,
+      { wrapper: IntlTestWrapper }
+    );
+    expect(screen.getByTestId('cloud-provider-not-official')).toHaveTextContent(
+      'OPENAI_HOST=http://192.168.8.220:1234'
+    );
+    // The stored key is kept (blank input) and the endpoint fields go back to api.openai.com.
+    await userEvent.click(screen.getByTestId('cloud-provider-connect'));
+    await waitFor(() => {
+      expect(mockSave).toHaveBeenCalledWith('openai', [
+        { key: 'OPENAI_HOST', value: 'https://api.openai.com' },
+        { key: 'OPENAI_BASE_PATH', value: 'v1/chat/completions' },
+      ]);
+    });
+  });
+
   it('key → the provider’s own model list → a chosen default, saved through the engine', async () => {
     mockSave.mockResolvedValue(undefined);
     mockLive.mockResolvedValue(['gpt-5', 'gpt-5-mini', 'o4']);
