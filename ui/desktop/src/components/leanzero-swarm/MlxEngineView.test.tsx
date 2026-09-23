@@ -396,7 +396,7 @@ describe('MlxEngineView engine tab', () => {
     );
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => {
-      expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('running');
+      expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('Running');
     });
     expect(screen.getAllByText(QWEN).length).toBeGreaterThan(0);
     expect(screen.getByText('131,072')).toBeInTheDocument();
@@ -435,7 +435,7 @@ describe('MlxEngineView engine tab', () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() =>
-      expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('stopped')
+      expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('Stopped')
     );
     expect(screen.queryByTestId('mlx-inflight-unknown')).toBeNull();
     expect(screen.queryByTestId('mlx-inflight-count')).toBeNull();
@@ -493,7 +493,7 @@ describe('MlxEngineView engine tab', () => {
         screen.getByText('sidecar exited with code 1 before the port opened')
       ).toBeInTheDocument();
     });
-    expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('failed');
+    expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('Failed');
     unmount();
   });
 
@@ -641,7 +641,9 @@ describe('MlxEngineView status hero', () => {
     await waitFor(() =>
       expect(within(hero).getByTestId('mlx-state-badge')).toHaveAttribute('data-state', 'running')
     );
-    expect(within(hero).getByTestId('mlx-state-badge').className).toContain('bg-lz-ok-solid');
+    // No live read in this test (no bridge): what the engine is DOING is unknown, so the fill is the
+    // neutral slate — green is reserved for measured writing.
+    expect(within(hero).getByTestId('mlx-state-badge').className).toContain('bg-lz-stopped-solid');
     // Named as the served model (display size), and again in the picker as the selection.
     expect(within(hero).getAllByText(QWEN)[0].className).toContain('text-lz-h2');
     expect(within(hero).getByRole('button', { name: /Unmount/ })).toBeEnabled();
@@ -685,12 +687,52 @@ describe('MlxEngineView status hero', () => {
 // while running, watches free memory across a mount, and prices the picked model while stopped.
 // ---------------------------------------------------------------------------
 
-type LiveBridge = { mlxLiveStatus?: (baseUrl: string) => Promise<unknown> };
+type LiveBridge = {
+  mlxLiveStatus?: (baseUrl: string) => Promise<unknown>;
+  mlxEngineActivity?: () => Promise<unknown>;
+};
 
 describe('MlxEngineView state tile instrument', () => {
   const bridge = window.electron as unknown as LiveBridge;
   afterEach(() => {
     delete bridge.mlxLiveStatus;
+    delete bridge.mlxEngineActivity;
+  });
+
+  it('RUNNING shows WHO the engine serves, as main read it (goose in-flight list)', async () => {
+    bridge.mlxLiveStatus = vi.fn(async (baseUrl: string) => ({
+      ok: true,
+      url: `${baseUrl}/v1/status`,
+      body: GENERATING_STATUS,
+    }));
+    bridge.mlxEngineActivity = vi.fn(async () => ({
+      mode: 'running',
+      serving: {
+        clients: [
+          {
+            key: 'chat:s1',
+            kind: 'chat',
+            sessionId: 's1',
+            sessionName: 'Memory · verify recall',
+            count: 1,
+          },
+        ],
+        unattributed: 2,
+        swarmRuns: [],
+        error: null,
+      },
+    }));
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'running', modelId: QWEN, baseUrl: 'http://127.0.0.1:8090' })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const serving = await screen.findByTestId('mlx-serving');
+    expect(
+      within(serving)
+        .getAllByTestId('mlx-serving-row')
+        .map((r) => r.textContent)
+    ).toEqual(['Chat · Memory · verify recall', "2 requests not from this app's chats or /v1"]);
+    unmount();
   });
 
   it('RUNNING reads /v1/status at the engine base URL and draws the live readout', async () => {
@@ -708,8 +750,9 @@ describe('MlxEngineView state tile instrument', () => {
     expect(tps).toHaveTextContent('19.9');
     expect(live).toHaveBeenCalledWith('http://127.0.0.1:8090');
     const tile = screen.getByTestId('mlx-state-badge');
-    expect(within(tile).getByText('Generating')).toBeInTheDocument();
-    expect(within(tile).getByText('Reading prompt · 32k tokens')).toBeInTheDocument();
+    expect(within(tile).getByTestId('mlx-activity')).toHaveTextContent('Writing');
+    expect(tile.className).toContain('bg-lz-ok-solid');
+    expect(within(tile).getByText('Reading prompt · 32.3K tokens')).toBeInTheDocument();
     // Mount/Retry are not on a running tile; the picker row keeps Mounted + Unmount.
     expect(within(tile).queryByRole('button')).toBeNull();
     expect(screen.getByRole('button', { name: /Mounted/ })).toBeDisabled();
@@ -886,7 +929,7 @@ describe('MlxEngineView mount card truth', () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'running', modelId: QWEN }));
     forceStatusRefresh();
     await waitFor(() => {
-      expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('running');
+      expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('Running');
     });
     // The user's pick survives: the button offers Switch model, not the Mounted status.
     expect(screen.getByText(OTHER_MODEL)).toBeInTheDocument();

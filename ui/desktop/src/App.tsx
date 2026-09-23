@@ -64,6 +64,7 @@ import StandaloneAppView from './components/apps/StandaloneAppView';
 import { View, ViewOptions } from './utils/navigationUtils';
 
 import { useNavigation } from './hooks/useNavigation';
+import { useMlxTrayActions } from './hooks/useMlxTrayActions';
 import { errorMessage } from './utils/conversionUtils';
 import { getInitialWorkingDir } from './utils/workingDir';
 import { usePageViewTracking } from './hooks/useAnalytics';
@@ -415,6 +416,7 @@ export function AppInner() {
   const navigate = useNavigate();
   const setView = useNavigation();
   const intl = useIntl();
+  useMlxTrayActions();
 
   const [chat, setChat] = useState<ChatType>({
     sessionId: '',

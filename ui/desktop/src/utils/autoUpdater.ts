@@ -807,11 +807,36 @@ function openUpdateSettings() {
   }
 }
 
+// The LeanZero MLX engine's live section (utils/mlxTray.ts, built in main.ts), shown above the
+// window items, and what to do when the menu opens (main re-reads the engine then).
+let engineSection: MenuItemConstructorOptions[] = [];
+let onMenuWillShow: (() => void) | null = null;
+// The update flag the menu was last drawn with (updateTrayIcon may override the raw state).
+let menuHasUpdate = false;
+let menuOpen = false;
+let sectionPending = false;
+
+export function setTrayEngineSection(items: MenuItemConstructorOptions[], willShow: () => void) {
+  engineSection = items;
+  onMenuWillShow = willShow;
+  // Never swap the menu out from under an open one; the close handler redraws with the latest.
+  if (menuOpen) {
+    sectionPending = true;
+    return;
+  }
+  updateTrayMenu(menuHasUpdate);
+}
+
 // Export function to update tray menu
 export function updateTrayMenu(hasUpdate: boolean) {
+  menuHasUpdate = hasUpdate;
   if (!trayRef) return;
 
   const menuItems: MenuItemConstructorOptions[] = [];
+
+  if (engineSection.length > 0) {
+    menuItems.push(...engineSection, { type: 'separator' });
+  }
 
   // Add update menu item if update is available
   if (hasUpdate) {
@@ -866,6 +891,17 @@ export function updateTrayMenu(hasUpdate: boolean) {
   );
 
   const contextMenu = Menu.buildFromTemplate(menuItems);
+  contextMenu.on('menu-will-show', () => {
+    menuOpen = true;
+    onMenuWillShow?.();
+  });
+  contextMenu.on('menu-will-close', () => {
+    menuOpen = false;
+    if (!sectionPending) return;
+    sectionPending = false;
+    // After this turn, so a clicked item's handler runs against the menu it was clicked in.
+    setTimeout(() => updateTrayMenu(menuHasUpdate), 0);
+  });
   trayRef.setContextMenu(contextMenu);
 }
 

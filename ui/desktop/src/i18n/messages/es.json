@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "Probar"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "Escribiendo"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "Inactivo"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "Modelo no cargado"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "Leyendo el prompt"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "En cola"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "Memoria ocupada desde que empezó el montaje"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "Memoria ocupada frente al tamaño del modelo"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "Chat · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "Cliente externo vía /v1 · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "Sesión de goose ({type}) · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "{count} solicitudes"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "Tamaño del modelo frente a la memoria libre"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "de las consultas a la caché acertadas"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "tokens del prompt desde la caché"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "memoria de GPU en uso"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "tokens de prompt leídos"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "solicitudes atendidas"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "tiempo activo del motor"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "tokens escritos"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "El montaje falló — el error está en el aviso de arriba."
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "Cabe, sobran {spare} GB"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "Cabe, sobran {spare} GB por encima de la reserva de {reserve} GB"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "{gb} GB libres"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB para montar"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "Motor {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "Estadísticas en vivo no disponibles"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "Cargando pesos"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "Necesita {gb} GB más de memoria libre"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "de {gb} GB"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "Elige un modelo para ver lo que cuesta montarlo."
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "tokens del prompt, leyendo desde hace {elapsed}"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s leyendo este prompt"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s leyendo, último prompt"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "aún no se ha leído ningún prompt"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "Leyendo estadísticas en vivo…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "Solicitudes en curso"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "Tokens escritos frente al límite"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} desde la caché"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "En cola"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "Leyendo el prompt"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} tokens"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "Escribiendo"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} tokens"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} de {max} tokens"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "Atendiendo a"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "No se pudo leer quién lo usa: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "Ritmo de escritura en las últimas {count} lecturas"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "Comprobando"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "Falló"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "Montando"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "En ejecución"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "Detenido"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "Inaccesible"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "No se pudo leer el estado del motor."
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "Ejecución de swarm activa: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, one {# solicitud que no viene de los chats de esta app ni de /v1} other {# solicitudes que no vienen de los chats de esta app ni de /v1}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, one {solicitud en espera} other {solicitudes en espera}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s escribiendo"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s escribiendo, última ejecución"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "aún no se ha escrito nada"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Auto"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Controles de razonamiento no disponibles: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "No se pudo montar el motor MLX"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "No hay ningún modelo configurado para montar. Elige uno en Providers › LeanZero MLX."
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "No se pudo desmontar el motor MLX"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Capacidades completas de modificación de archivos: edita, crea y elimina archivos libremente."

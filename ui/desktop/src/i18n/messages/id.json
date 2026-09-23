@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "Uji"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "Menulis"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "Diam"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "Model belum dimuat"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "Membaca prompt"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "Dalam antrean"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "Memori yang terpakai sejak pemasangan dimulai"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "Memori terpakai terhadap ukuran model"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "Obrolan · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "Klien eksternal melalui /v1 · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "Sesi goose ({type}) · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "{count} permintaan"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "Ukuran model terhadap memori bebas"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "pencarian cache yang kena"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "token prompt dari cache"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "memori GPU terpakai"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "token prompt dibaca"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "permintaan dilayani"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "waktu aktif mesin"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "token ditulis"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "Pemasangan gagal — galatnya ada di spanduk di atas."
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "Muat, tersisa {spare} GB"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "Muat, tersisa {spare} GB di atas cadangan {reserve} GB"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "{gb} GB bebas"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB untuk dipasang"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "Mesin {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "Statistik langsung tidak tersedia"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "Memuat bobot"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "Butuh {gb} GB memori bebas lagi"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "dari {gb} GB"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "Pilih model untuk melihat biaya pemasangannya."
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "token prompt, dibaca selama {elapsed}"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s membaca prompt ini"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s membaca, prompt terakhir"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "belum ada prompt yang dibaca"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "Membaca statistik langsung…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "Permintaan yang berjalan"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "Token ditulis terhadap batas"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} dari cache"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "Dalam antrean"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "Membaca prompt"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} token"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "Menulis"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} token"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} dari {max} token"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "Melayani"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "Siapa yang memakainya tidak dapat dibaca: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "Laju penulisan selama {count} pembacaan terakhir"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "Memeriksa"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "Memasang"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "Berjalan"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "Berhenti"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "Tidak terjangkau"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "Status mesin tidak dapat dibaca."
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "Proses swarm aktif: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, other {# permintaan bukan dari obrolan aplikasi ini atau /v1}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, other {permintaan menunggu}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s menulis"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s menulis, proses terakhir"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "belum ada yang ditulis"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Otomatis"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Kontrol berpikir tidak tersedia: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "Mesin MLX tidak dapat dipasang"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "Belum ada model yang dikonfigurasi untuk dipasang. Pilih satu di Providers › LeanZero MLX."
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "Mesin MLX tidak dapat dilepas"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Kemampuan modifikasi file penuh, edit, buat, dan hapus file dengan bebas."

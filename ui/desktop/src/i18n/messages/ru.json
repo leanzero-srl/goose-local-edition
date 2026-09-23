@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "Проверить"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "Пишет"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "Простаивает"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "Модель не загружена"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "Читает промпт"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "В очереди"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "Память, занятая с начала монтирования"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "Занятая память относительно размера модели"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "Чат · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "Внешний клиент через /v1 · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "Сессия goose ({type}) · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "Запросов: {count}"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "Размер модели относительно свободной памяти"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "обращений к кешу — попадания"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "токенов промпта из кеша"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "занято памяти GPU"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "прочитано токенов промпта"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "обработано запросов"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "время работы движка"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "записано токенов"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "Монтирование не удалось — ошибка указана в баннере выше."
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "Помещается, запас {spare} ГБ"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "Помещается, запас {spare} ГБ сверх резерва {reserve} ГБ"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "Свободно {gb} ГБ"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "ГБ для монтирования"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "Движок: {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "Живая статистика недоступна"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "Загрузка весов"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "Нужно ещё {gb} ГБ свободной памяти"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "из {gb} ГБ"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "Выберите модель, чтобы увидеть, во что обойдётся монтирование."
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "токенов промпта, читается {elapsed}"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s при чтении этого промпта"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s при чтении, последний промпт"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "промпты ещё не читались"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "Чтение живой статистики…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "Запросы в работе"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "Записанные токены относительно лимита"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} из кеша"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "В очереди"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "Читает промпт"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} токенов"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "Пишет"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} токенов"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} из {max} токенов"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "Обслуживает"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "Не удалось прочитать, кто его использует: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "Скорость записи за последние {count} замеров"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "Проверка"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "Сбой"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "Монтирование"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "Работает"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "Остановлен"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "Недоступен"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "Не удалось прочитать состояние движка."
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "Запуск swarm активен: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, one {# запрос не из чатов этого приложения и не через /v1} few {# запроса не из чатов этого приложения и не через /v1} many {# запросов не из чатов этого приложения и не через /v1} other {# запроса не из чатов этого приложения и не через /v1}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, one {запрос ждёт} few {запроса ждут} many {запросов ждут} other {запроса ждут}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s при записи"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s при записи, последний запуск"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "пока ничего не записано"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Авто"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Управление размышлением недоступно: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "Не удалось смонтировать движок MLX"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "Модель для монтирования не настроена. Выберите её в Providers › LeanZero MLX."
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "Не удалось отмонтировать движок MLX"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Полные возможности изменения файлов: свободное редактирование, создание и удаление файлов."

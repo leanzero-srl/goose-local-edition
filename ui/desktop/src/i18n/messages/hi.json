@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "परीक्षण"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "लिख रहा है"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "निष्क्रिय"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "मॉडल लोड नहीं है"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "प्रॉम्प्ट पढ़ रहा है"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "कतार में"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "माउंट शुरू होने के बाद से ली गई मेमोरी"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "मॉडल आकार की तुलना में ली गई मेमोरी"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "चैट · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "/v1 के ज़रिए बाहरी क्लाइंट · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "goose सत्र ({type}) · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "{count} अनुरोध"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "खाली मेमोरी की तुलना में मॉडल का आकार"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "कैश लुकअप सफल"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "कैश से प्रॉम्प्ट टोकन"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "उपयोग में GPU मेमोरी"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "पढ़े गए प्रॉम्प्ट टोकन"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "पूरे किए गए अनुरोध"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "इंजन अपटाइम"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "लिखे गए टोकन"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "माउंट विफल रहा — त्रुटि ऊपर बैनर में है।"
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "फ़िट होता है, {spare} GB बचेगा"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "फ़िट होता है, {reserve} GB रिज़र्व के ऊपर {spare} GB बचेगा"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "{gb} GB खाली"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB माउंट करने हैं"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "इंजन {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "लाइव आँकड़े उपलब्ध नहीं"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "वेट्स लोड हो रहे हैं"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "{gb} GB और खाली मेमोरी चाहिए"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "{gb} GB में से"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "माउंट करने की लागत देखने के लिए एक मॉडल चुनें।"
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "प्रॉम्प्ट टोकन, {elapsed} से पढ़ रहा है"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s इस प्रॉम्प्ट को पढ़ते हुए"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s पढ़ते हुए, पिछला प्रॉम्प्ट"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "अभी तक कोई प्रॉम्प्ट नहीं पढ़ा"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "लाइव आँकड़े पढ़े जा रहे हैं…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "चल रहे अनुरोध"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "सीमा की तुलना में लिखे गए टोकन"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} कैश से"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "कतार में"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "प्रॉम्प्ट पढ़ रहा है"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} टोकन"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "लिख रहा है"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} टोकन"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{max} में से {written} टोकन"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "सेवा दे रहा है"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "कौन उपयोग कर रहा है, यह पढ़ा नहीं जा सका: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "पिछली {count} रीडिंग में लिखने की दर"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "जाँच हो रही है"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "विफल"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "माउंट हो रहा है"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "चल रहा है"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "रुका हुआ"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "पहुँच से बाहर"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "इंजन की स्थिति पढ़ी नहीं जा सकी।"
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "स्वॉर्म रन चालू: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, one {# अनुरोध इस ऐप की चैट या /v1 से नहीं} other {# अनुरोध इस ऐप की चैट या /v1 से नहीं}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, one {अनुरोध प्रतीक्षा में} other {अनुरोध प्रतीक्षा में}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s लिखते हुए"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s लिखते हुए, पिछला रन"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "अभी तक कुछ नहीं लिखा"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "ऑटो"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "सोचने के नियंत्रण उपलब्ध नहीं: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "MLX इंजन माउंट नहीं हो सका"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "माउंट करने के लिए कोई मॉडल सेट नहीं है। Providers › LeanZero MLX में एक चुनें।"
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "MLX इंजन अनमाउंट नहीं हो सका"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "पूर्ण फ़ाइल संशोधन क्षमताएं, फ़ाइलों को स्वतंत्र रूप से संपादित करें, बनाएं और हटाएं।"

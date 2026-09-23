@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { MlxStateTile, type MlxStateTileProps } from './MlxStateTile';
+import { IntlTestWrapper } from '../../i18n/test-utils';
+import { attributeServing, type MlxServingRow } from '../../utils/mlxServing';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
 import {
+  NO_RATES,
+  advanceLastRates,
   advanceMountWatch,
   mountCost,
   mountFill,
   parseMlxLiveStatus,
+  type LastRates,
+  type MlxLiveStats,
   type TpsSample,
 } from './mlxLiveStats';
 import { GENERATING_STATUS, IDLE_STATUS, PREFILL_STATUS } from './mlxLiveStatus.fixtures';
@@ -21,19 +27,36 @@ const HISTORY: TpsSample[] = [
   { uptimeS: 1874.3, tps: 19.9 },
 ];
 
+function statsOf(body: unknown): MlxLiveStats {
+  const read = parseMlxLiveStatus(body);
+  if (!read.ok) throw new Error(read.detail);
+  return read.stats;
+}
+
+/** What the tile carries after it watched the fixture's generating read. */
+const LAST_AFTER_GENERATING: LastRates = advanceLastRates(NO_RATES, statsOf(GENERATING_STATUS));
+
+const ROW_BASE = { startedAt: '2026-09-23T20:00:00Z', sessionError: null };
+
 function tile(overrides: Partial<MlxStateTileProps>) {
   const props: MlxStateTileProps = {
     state: 'running',
     unreachable: false,
     live: null,
     history: [],
+    last: NO_RATES,
+    serving: null,
     mount: null,
     cost: null,
     failedError: null,
     action: null,
     ...overrides,
   };
-  return render(<MlxStateTile {...props} />);
+  return render(
+    <IntlTestWrapper>
+      <MlxStateTile {...props} />
+    </IntlTestWrapper>
+  );
 }
 
 async function expectDesigned(container: HTMLElement) {
@@ -43,16 +66,24 @@ async function expectDesigned(container: HTMLElement) {
   expect(await missingUtilities(utilities)).toEqual([]);
 }
 
-describe('MlxStateTile RUNNING — the live instrument', () => {
-  it('generating: the decode rate big, the sparkline, every request with its phase, the facts', async () => {
-    const { container } = tile({ live: parseMlxLiveStatus(GENERATING_STATUS), history: HISTORY });
+describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => {
+  it('writing: GREEN, the live writing rate big, the reading rate beside it, rows, lifetime facts', async () => {
+    const { container } = tile({
+      live: parseMlxLiveStatus(GENERATING_STATUS),
+      history: HISTORY,
+      last: LAST_AFTER_GENERATING,
+    });
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-state', 'running');
+    expect(t).toHaveAttribute('data-activity', 'generating');
     expect(t.className).toContain('bg-lz-ok-solid');
-    expect(t.className).toContain('lg:w-[30rem]');
-    expect(within(t).getByText('Generating')).toBeInTheDocument();
+    expect(t.className).toContain('lg:w-[32rem]');
+    expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Writing');
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');
-    expect(within(t).getByText('tokens per second')).toBeInTheDocument();
+    expect(within(t).getByText('tok/s writing')).toBeInTheDocument();
+    // 32,277 uncached prompt tokens over a 165 s time to first token.
+    expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('196');
+    expect(within(t).getByText('tok/s reading this prompt')).toBeInTheDocument();
     expect(screen.getByTestId('mlx-tps-sparkline')).toBeInTheDocument();
 
     const rows = screen.getAllByTestId('mlx-live-request');
@@ -62,45 +93,125 @@ describe('MlxStateTile RUNNING — the live instrument', () => {
     expect(rows[0]).toHaveTextContent('86%');
     expect(within(rows[0]).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '86');
     // The long silent pre-fill is visible, with the engine's own elapsed seconds and no fake bar.
-    expect(rows[1]).toHaveTextContent('Reading prompt · 32k tokens');
+    expect(rows[1]).toHaveTextContent('Reading prompt · 32.3K tokens');
     expect(rows[1]).toHaveTextContent('2m 45s');
     expect(within(rows[1]).queryByRole('progressbar')).toBeNull();
-    expect(rows[2]).toHaveTextContent('Queued · 12k tokens');
+    expect(rows[2]).toHaveTextContent('Queued · 12K tokens');
 
-    expect(within(t).getByText('50.7 GB')).toBeInTheDocument();
-    expect(within(t).getByText('GPU memory in use')).toBeInTheDocument();
-    expect(within(t).getByText('78%')).toBeInTheDocument();
-    expect(within(t).getByText('Prompt cache hits')).toBeInTheDocument();
-    expect(within(t).getByText('Waiting')).toBeInTheDocument();
+    const facts = screen.getByTestId('mlx-live-facts');
+    for (const [value, label] of [
+      ['5', 'requests served'],
+      ['91.7K', 'prompt tokens read'],
+      ['672', 'tokens written'],
+      ['45.1K', 'prompt tokens from cache'],
+      ['78%', 'of cache lookups hit'],
+      ['50.7 GB', 'GPU memory in use'],
+      ['31m 14s', 'engine uptime'],
+    ]) {
+      expect(within(facts).getByText(value)).toBeInTheDocument();
+      expect(within(facts).getByText(label)).toBeInTheDocument();
+    }
     await expectDesigned(container);
   });
 
-  it('prefill only: "Reading prompt" is the activity, and the rate is labelled the LAST run', () => {
-    tile({ live: parseMlxLiveStatus(PREFILL_STATUS), history: [{ uptimeS: 1, tps: 19.9 }] });
+  it('reading a prompt: the ACCENT fill, the prompt size and its elapsed seconds as the hero', async () => {
+    const { container } = tile({
+      live: parseMlxLiveStatus(PREFILL_STATUS),
+      last: LAST_AFTER_GENERATING,
+    });
     const t = screen.getByTestId('mlx-state-badge');
-    expect(screen.getByTestId('mlx-live')).toHaveAttribute('data-activity', 'prefill');
-    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');
-    expect(within(t).getByText('tokens per second, last run')).toBeInTheDocument();
-    expect(screen.getByTestId('mlx-live-request')).toHaveTextContent('Reading prompt · 32k tokens');
+    expect(t).toHaveAttribute('data-activity', 'prefill');
+    expect(t.className).toContain('bg-lz-accent');
+    expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Reading prompt');
+    expect(screen.getByTestId('mlx-live-prompt')).toHaveTextContent('32.3K');
+    expect(within(t).getByText('prompt tokens, reading for 2m 45s')).toBeInTheDocument();
+    // No reading rate exists mid-prefill (the engine reports no progress): the last one, labelled so.
+    expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('196');
+    expect(within(t).getByText('tok/s reading, last prompt')).toBeInTheDocument();
+    expect(screen.queryByTestId('mlx-live-tps')).toBeNull();
+    await expectDesigned(container);
   });
 
-  it("idle shows the last rate THIS VIEW measured, never the engine's sticky aggregate", () => {
-    tile({ live: parseMlxLiveStatus(IDLE_STATUS), history: [{ uptimeS: 1, tps: 19.9 }] });
+  it('idle: a SOLID SLATE fill (not green) with the last rates as plain facts', async () => {
+    const { container } = tile({
+      live: parseMlxLiveStatus(IDLE_STATUS),
+      history: [{ uptimeS: 1, tps: 19.9 }],
+      last: LAST_AFTER_GENERATING,
+    });
     const t = screen.getByTestId('mlx-state-badge');
-    expect(within(t).getByText('Idle')).toBeInTheDocument();
-    expect(within(t).getByText('tokens per second, last run')).toBeInTheDocument();
+    expect(t).toHaveAttribute('data-activity', 'idle');
+    expect(t.className).toContain('bg-lz-stopped-solid');
+    expect(t.className).not.toContain('bg-lz-ok-solid');
+    expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Idle');
+    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');
+    expect(within(t).getByText('tok/s writing, last run')).toBeInTheDocument();
+    expect(within(t).getByText('tok/s reading, last prompt')).toBeInTheDocument();
     expect(screen.queryAllByTestId('mlx-live-request')).toHaveLength(0);
     expect(within(t).getByText('54.3 GB')).toBeInTheDocument();
     expect(within(t).getByText('20%')).toBeInTheDocument();
+    await expectDesigned(container);
   });
 
-  it('idle with nothing measured yet: a dash, never the engine aggregate (1,048,576 tok/s after a one-token request)', () => {
+  it('idle with nothing measured yet: dashes, never the engine aggregate (1,048,576 tok/s after a one-token request)', () => {
     tile({
       live: parseMlxLiveStatus({ status: 'idle', generation_tps: 1048576.0, requests: [] }),
-      history: [],
     });
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('—');
-    expect(screen.getByText('no generation measured yet')).toBeInTheDocument();
+    expect(screen.getByText('nothing written yet')).toBeInTheDocument();
+    expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('—');
+    expect(screen.getByText('no prompt read yet')).toBeInTheDocument();
+  });
+
+  it('serving: a chat, an external /v1 client, and the unexplained rest COUNTED beside the live swarm run', async () => {
+    const rows: MlxServingRow[] = [
+      {
+        ...ROW_BASE,
+        id: 1,
+        via: 'swarmRouter',
+        sessionId: '20260923_7',
+        provider: 'omlx',
+        model: 'mihai-qwen3.8-27b-atlassian-q8-mlx',
+        nodeId: 'mihai-mlx',
+        sessionName: 'Memory · verify recall',
+        sessionType: 'user',
+      },
+      {
+        ...ROW_BASE,
+        id: 2,
+        via: 'openaiApi',
+        sessionId: '20260923_9',
+        provider: 'omlx',
+        model: 'mihai-qwen3.8-27b-atlassian-q8-mlx',
+        nodeId: null,
+        sessionName: 'OpenAI-compatible request',
+        sessionType: 'user',
+      },
+    ];
+    const { container } = tile({
+      live: parseMlxLiveStatus(GENERATING_STATUS),
+      serving: attributeServing(rows, 3, ['bench-r9'], null),
+    });
+    const lines = screen.getAllByTestId('mlx-serving-row').map((r) => r.textContent);
+    expect(lines).toEqual([
+      'Chat · Memory · verify recall',
+      'External client via /v1 · omlx/mihai-qwen3.8-27b-atlassian-q8-mlx',
+      "1 request not from this app's chats or /v1",
+      'Swarm run live: bench-r9',
+    ]);
+    await expectDesigned(container);
+  });
+
+  it('serving list unreadable: says so, never an empty "nobody"', () => {
+    tile({
+      live: parseMlxLiveStatus(GENERATING_STATUS),
+      serving: attributeServing([], 3, [], 'goose backend returned 401'),
+    });
+    expect(screen.getByTestId('mlx-serving')).toHaveTextContent(
+      'Who is using it could not be read: goose backend returned 401'
+    );
+    expect(screen.getByTestId('mlx-serving')).toHaveTextContent(
+      "3 requests not from this app's chats or /v1"
+    );
   });
 
   it('a failed read says "Live stats unavailable" with the reason — nothing invented', async () => {
@@ -110,6 +221,8 @@ describe('MlxStateTile RUNNING — the live instrument', () => {
     expect(screen.getByTestId('mlx-live-unavailable')).toHaveTextContent(
       'Live stats unavailableunreachable: connect ECONNREFUSED 127.0.0.1:8090'
     );
+    // Activity unknown: the neutral slate, not a colour that claims work.
+    expect(screen.getByTestId('mlx-state-badge').className).toContain('bg-lz-stopped-solid');
     expect(screen.queryByTestId('mlx-live-tps')).toBeNull();
     expect(screen.queryByTestId('mlx-tps-sparkline')).toBeNull();
     await expectDesigned(container);

@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "Test"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "Writing"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "Idle"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "Model not loaded"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "Reading prompt"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "Queued"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "Memory claimed since the mount began"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "Memory claimed toward the model size"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "Chat · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "External client via /v1 · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "goose session ({type}) · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "{count} requests"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "Model size against free memory"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "of cache lookups hit"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "prompt tokens from cache"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "GPU memory in use"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "prompt tokens read"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "requests served"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "engine uptime"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "tokens written"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "The mount failed — the error is in the banner above."
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "Fits, {spare} GB to spare"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "Fits, {spare} GB spare above the {reserve} GB reserve"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "{gb} GB free"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB to mount"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "Engine {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "Live stats unavailable"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "Loading weights"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "Needs {gb} GB more free memory"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "of {gb} GB"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "Pick a model to see what mounting it costs."
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "prompt tokens, reading for {elapsed}"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s reading this prompt"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s reading, last prompt"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "no prompt read yet"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "Reading live stats…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "Requests in flight"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "Tokens written of the limit"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} from cache"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "Queued"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "Reading prompt"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} tokens"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "Writing"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} tokens"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} of {max} tokens"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "Serving"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "Who is using it could not be read: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "Writing rate over the last {count} reads"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "Checking"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "Failed"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "Mounting"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "Running"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "Stopped"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "Unreachable"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "The engine status could not be read."
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "Swarm run live: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count,plural,one{# request not from this app's chats or /v1} other{# requests not from this app's chats or /v1}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count,plural,one{request waiting} other{requests waiting}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s writing"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s writing, last run"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "nothing written yet"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Auto"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Thinking controls unavailable: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "Could not mount the MLX engine"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "No model is configured to mount. Pick one in Providers › LeanZero MLX."
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "Could not unmount the MLX engine"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Full file modification capabilities, edit, create, and delete files freely."

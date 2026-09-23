@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "测试"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "正在生成"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "空闲"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "模型未加载"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "正在读取提示词"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "排队中"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "自挂载开始已占用的内存"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "已占用内存占模型大小的比例"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "对话 · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "经 /v1 的外部客户端 · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "goose 会话（{type}） · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "{count} 个请求"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "模型大小占可用内存的比例"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "的缓存查询命中"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "来自缓存的提示词 token"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "已用 GPU 内存"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "已读取的提示词 token"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "已处理请求"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "引擎运行时间"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "已生成 token"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "挂载失败——错误信息在上方横幅中。"
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "可容纳，剩余 {spare} GB"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "可容纳，在 {reserve} GB 预留之上剩余 {spare} GB"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "可用 {gb} GB"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB 待挂载"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "引擎 {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "实时统计不可用"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "正在加载权重"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "还需要 {gb} GB 可用内存"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "/ {gb} GB"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "选择一个模型以查看挂载所需资源。"
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "个提示词 token，已读取 {elapsed}"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s（读取此提示词）"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s（读取，上一个提示词）"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "尚未读取提示词"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "正在读取实时统计…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "处理中的请求"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "已生成 token 占上限的比例"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} 来自缓存"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "排队中"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "正在读取提示词"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} 个 token"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "正在生成"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} 个 token"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} / {max} 个 token"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "正在服务"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "无法读取使用方：{detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "最近 {count} 次读数的生成速度"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "检查中"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "失败"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "挂载中"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "运行中"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "已停止"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "无法访问"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "无法读取引擎状态。"
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "运行中的 swarm：{runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, other {# 个请求不是来自本应用的对话或 /v1}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, other {个请求在等待}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s（生成）"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s（生成，上一次）"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "尚未生成内容"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "自动"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "思考控制不可用：{reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "无法挂载 MLX 引擎"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "尚未配置要挂载的模型。请在 Providers › LeanZero MLX 中选择一个。"
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "无法卸载 MLX 引擎"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "完整文件修改能力，可自由编辑、创建和删除文件。"

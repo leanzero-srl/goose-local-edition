@@ -150,6 +150,11 @@ export class GooseServeLeaseRegistry {
     }
   }
 
+  /** Every backend still serving a window — attached, not cleaned up, not exited. */
+  liveLeases(): GooseServeLease[] {
+    return this.uniqueLeases().filter((lease) => !lease.cleanedUp && !lease.exited);
+  }
+
   activeLeaseCount(): number {
     return this.uniqueLeases().length;
   }
