@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Skills"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "Das gespeicherte Modell der MLX-Engine stellt {served} bereit; dieser Knoten erwartet {wanted}. Wähle das Modell unter Providers."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Alle Plätze auf diesem Knoten sind belegt."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} ist in LM Studio nicht geladen."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "Unter {url} antwortet nichts — LM Studio läuft möglicherweise nicht."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "Konnte nicht lesen, welches Modell dieser Knoten einbindet: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "Die MLX-Engine läuft nicht — unter {base} antwortet nichts."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "Die MLX-Engine stellt {served} bereit, dieser Knoten ist aber auf {wanted} eingestellt."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "{model} einbinden"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Einbinden fehlgeschlagen"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Eingebunden"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Wird eingebunden"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "Kein aktiver Knoten ist konfiguriert."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "Kein gespeichertes MLX-Modell für diesen Knoten — wähle eines unter Providers."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Providers öffnen"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "Der Knoten ist bereit — versuche es erneut, um deine Nachricht noch einmal zu senden."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Erneut versuchen"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "Der Swarm hat jeden aktiven Knoten geprüft, keiner konnte diese Nachricht übernehmen."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "Kein Knoten kann antworten"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "Kein Modell eingebunden"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "fehlgeschlagen"
   },

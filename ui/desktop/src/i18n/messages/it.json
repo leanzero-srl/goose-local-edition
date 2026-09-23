@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Competenze"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "Il modello salvato del motore MLX serve {served}; questo nodo vuole {wanted}. Scegli il modello in Providers."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Tutti gli slot di questo nodo sono occupati."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} non è caricato in LM Studio."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "Nulla risponde su {url} — LM Studio potrebbe non essere in esecuzione."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "Impossibile leggere quale modello monta questo nodo: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "Il motore MLX non è in esecuzione — nulla risponde su {base}."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "Il motore MLX serve {served}, ma questo nodo è impostato su {wanted}."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "Monta {model}"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Montaggio non riuscito"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Montato"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Montaggio in corso"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "Nessun nodo attivo è configurato."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "Nessun modello MLX salvato per questo nodo — scegline uno in Providers."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Apri Providers"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "Il nodo è pronto — riprova per inviare di nuovo il messaggio."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Riprova"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "Lo swarm ha controllato ogni nodo attivo e nessuno ha potuto prendere questo messaggio."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "Nessun nodo può rispondere"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "Nessun modello montato"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "non riuscito"
   },

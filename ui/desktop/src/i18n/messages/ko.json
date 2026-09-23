@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "스킬"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "MLX 엔진에 저장된 모델은 {served}를 제공합니다. 이 노드는 {wanted}를 원합니다. Providers에서 모델을 선택하세요."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "이 노드의 모든 슬롯이 사용 중입니다."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model}이(가) LM Studio에 로드되지 않았습니다."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "{url}에서 응답이 없습니다 — LM Studio가 실행 중이 아닐 수 있습니다."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "이 노드가 마운트하는 모델을 읽을 수 없습니다: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "MLX 엔진이 실행 중이 아닙니다 — {base}에서 응답이 없습니다."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "MLX 엔진은 {served}를 제공하지만 이 노드는 {wanted}로 설정되어 있습니다."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "{model} 마운트"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "마운트 실패"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "마운트됨"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "마운트 중"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "구성된 활성 노드가 없습니다."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "이 노드에 저장된 MLX 모델이 없습니다 — Providers에서 선택하세요."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Providers 열기"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "노드가 준비되었습니다 — 다시 시도하면 메시지를 한 번 더 보냅니다."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "다시 시도"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "스웜이 활성화된 모든 노드를 확인했지만 이 메시지를 받을 수 있는 노드가 없었습니다."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "응답할 수 있는 노드가 없습니다"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "마운트된 모델이 없습니다"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "실패"
   },

@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Skills"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "The MLX engine’s saved model serves {served}; this node wants {wanted}. Pick the model in Providers."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Every slot on this node is busy."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} is not loaded in LM Studio."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "Nothing answers at {url} — LM Studio may not be running."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "Could not read which model this node mounts: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "The MLX engine is not running — nothing answers at {base}."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "The MLX engine serves {served}, but this node is set to {wanted}."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "Mount {model}"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Mount failed"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Mounted"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Mounting"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "No enabled node is configured."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "No saved MLX model for this node — pick one in Providers."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Open Providers"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "The node is up — retry to send your message again."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Retry"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "The swarm checked every enabled node and none could take this message."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "No node can answer"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "No model is mounted"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "failed"
   },

@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Навыки"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "Сохранённая модель движка MLX обслуживает {served}; этому узлу нужна {wanted}. Выберите модель в Providers."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Все слоты этого узла заняты."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} не загружена в LM Studio."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "По адресу {url} никто не отвечает — возможно, LM Studio не запущен."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "Не удалось прочитать, какую модель монтирует этот узел: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "Движок MLX не запущен — по адресу {base} никто не отвечает."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "Движок MLX обслуживает {served}, но этот узел настроен на {wanted}."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "Смонтировать {model}"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Не удалось смонтировать"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Смонтировано"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Монтирование"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "Не настроено ни одного активного узла."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "Для этого узла нет сохранённой модели MLX — выберите её в Providers."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Открыть Providers"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "Узел готов — повторите, чтобы снова отправить сообщение."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "Swarm проверил каждый активный узел, и ни один не смог принять это сообщение."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "Ни один узел не может ответить"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "Модель не смонтирована"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "сбой"
   },

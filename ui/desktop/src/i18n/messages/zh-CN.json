@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "技能"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "MLX 引擎保存的模型提供 {served}；此节点需要 {wanted}。请在 Providers 中选择模型。"
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "此节点的所有槽位都已占用。"
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} 未在 LM Studio 中加载。"
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "{url} 上没有响应 — LM Studio 可能没有运行。"
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "无法读取此节点挂载的模型：{error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "MLX 引擎未运行 — {base} 上没有响应。"
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "MLX 引擎正在提供 {served}，但此节点设置为 {wanted}。"
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "挂载 {model}"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "挂载失败"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "已挂载"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "正在挂载"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "没有配置已启用的节点。"
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "此节点没有已保存的 MLX 模型 — 请在 Providers 中选择一个。"
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "打开 Providers"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "节点已就绪 — 重试即可再次发送你的消息。"
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "重试"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "Swarm 检查了每个已启用的节点，没有一个能接收这条消息。"
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "没有节点可以应答"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "没有已挂载的模型"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "失败"
   },

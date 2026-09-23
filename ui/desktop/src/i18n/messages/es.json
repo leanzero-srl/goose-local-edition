@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Skills"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "El modelo guardado del motor MLX sirve {served}; este nodo quiere {wanted}. Elige el modelo en Providers."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Todas las plazas de este nodo están ocupadas."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} no está cargado en LM Studio."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "Nada responde en {url} — puede que LM Studio no esté en ejecución."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "No se pudo leer qué modelo monta este nodo: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "El motor MLX no está en ejecución — nada responde en {base}."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "El motor MLX sirve {served}, pero este nodo está configurado para {wanted}."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "Montar {model}"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Error al montar"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Montado"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Montando"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "No hay ningún nodo activo configurado."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "No hay un modelo MLX guardado para este nodo — elige uno en Providers."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Abrir Providers"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "El nodo está listo — reintenta para enviar tu mensaje de nuevo."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Reintentar"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "El swarm revisó cada nodo activo y ninguno pudo atender este mensaje."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "Ningún nodo puede responder"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "No hay ningún modelo montado"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "con error"
   },

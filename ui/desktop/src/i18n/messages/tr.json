@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Beceriler"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "MLX motorunun kayıtlı modeli {served} sunuyor; bu düğüm {wanted} istiyor. Modeli Providers’ta seçin."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Bu düğümdeki tüm yuvalar dolu."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} LM Studio’da yüklü değil."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "{url} adresinde yanıt veren yok — LM Studio çalışmıyor olabilir."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "Bu düğümün hangi modeli taktığı okunamadı: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "MLX motoru çalışmıyor — {base} adresinde yanıt veren yok."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "MLX motoru {served} sunuyor, ancak bu düğüm {wanted} olarak ayarlı."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "{model} modelini tak"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Takma başarısız"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Takıldı"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Takılıyor"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "Etkin bir düğüm yapılandırılmamış."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "Bu düğüm için kayıtlı MLX modeli yok — Providers’ta bir tane seçin."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Providers’ı aç"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "Düğüm hazır — mesajınızı yeniden göndermek için tekrar deneyin."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Yeniden dene"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "Swarm her etkin düğümü denetledi, hiçbiri bu mesajı alamadı."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "Hiçbir düğüm yanıt veremiyor"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "Takılı model yok"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "başarısız"
   },

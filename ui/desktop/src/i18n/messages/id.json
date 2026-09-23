@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Keterampilan"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "Model tersimpan mesin MLX menyajikan {served}; node ini menginginkan {wanted}. Pilih model di Providers."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Semua slot di node ini sedang sibuk."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} tidak dimuat di LM Studio."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "Tidak ada yang menjawab di {url} — LM Studio mungkin tidak berjalan."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "Tidak dapat membaca model yang dipasang node ini: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "Mesin MLX tidak berjalan — tidak ada yang menjawab di {base}."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "Mesin MLX menyajikan {served}, tetapi node ini diatur ke {wanted}."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "Pasang {model}"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Gagal memasang"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Terpasang"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Memasang"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "Tidak ada node aktif yang dikonfigurasi."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "Tidak ada model MLX tersimpan untuk node ini — pilih satu di Providers."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Buka Providers"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "Node sudah siap — coba lagi untuk mengirim pesan Anda sekali lagi."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Coba lagi"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "Swarm memeriksa setiap node aktif dan tidak ada yang bisa menerima pesan ini."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "Tidak ada node yang bisa menjawab"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "Tidak ada model yang terpasang"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "gagal"
   },

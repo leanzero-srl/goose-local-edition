@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Kemahiran"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "Model tersimpan enjin MLX menyajikan {served}; nod ini mahukan {wanted}. Pilih model dalam Providers."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Semua slot pada nod ini sibuk."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} tidak dimuatkan dalam LM Studio."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "Tiada apa menjawab di {url} — LM Studio mungkin tidak berjalan."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "Tidak dapat membaca model yang dipasang oleh nod ini: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "Enjin MLX tidak berjalan — tiada apa menjawab di {base}."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "Enjin MLX menyajikan {served}, tetapi nod ini ditetapkan kepada {wanted}."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "Pasang {model}"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Gagal memasang"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Dipasang"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Sedang memasang"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "Tiada nod aktif dikonfigurasi."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "Tiada model MLX tersimpan untuk nod ini — pilih satu dalam Providers."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Buka Providers"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "Nod sudah sedia — cuba lagi untuk menghantar mesej anda sekali lagi."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Cuba lagi"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "Swarm menyemak setiap nod aktif dan tiada satu pun boleh menerima mesej ini."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "Tiada nod boleh menjawab"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "Tiada model dipasang"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "gagal"
   },

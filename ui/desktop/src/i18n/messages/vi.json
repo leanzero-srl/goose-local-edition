@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Kỹ năng"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "Mô hình đã lưu của công cụ MLX phục vụ {served}; nút này cần {wanted}. Hãy chọn mô hình trong Providers."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Mọi vị trí trên nút này đều đang bận."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} chưa được tải trong LM Studio."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "Không có gì trả lời tại {url} — có thể LM Studio chưa chạy."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "Không đọc được nút này gắn mô hình nào: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "Công cụ MLX không chạy — không có gì trả lời tại {base}."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "Công cụ MLX đang phục vụ {served}, nhưng nút này được đặt là {wanted}."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "Gắn {model}"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Gắn thất bại"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Đã gắn"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Đang gắn"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "Chưa cấu hình nút nào đang bật."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "Không có mô hình MLX đã lưu cho nút này — hãy chọn một trong Providers."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Mở Providers"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "Nút đã sẵn sàng — thử lại để gửi lại tin nhắn của bạn."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "Swarm đã kiểm tra mọi nút đang bật và không nút nào nhận được tin nhắn này."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "Không có nút nào có thể trả lời"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "Chưa gắn mô hình nào"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "thất bại"
   },

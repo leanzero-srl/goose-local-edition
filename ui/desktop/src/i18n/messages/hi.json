@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "कौशल"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "MLX इंजन का सहेजा मॉडल {served} देता है; यह नोड {wanted} चाहता है। Providers में मॉडल चुनें।"
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "इस नोड के सभी स्लॉट व्यस्त हैं।"
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} LM Studio में लोड नहीं है।"
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "{url} पर कुछ जवाब नहीं देता — शायद LM Studio नहीं चल रहा।"
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "यह नोड कौन सा मॉडल माउंट करता है, पढ़ा नहीं जा सका: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "MLX इंजन नहीं चल रहा — {base} पर कुछ जवाब नहीं देता।"
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "MLX इंजन {served} दे रहा है, पर यह नोड {wanted} पर सेट है।"
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "{model} माउंट करें"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "माउंट विफल"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "माउंट हो गया"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "माउंट हो रहा है"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "कोई सक्रिय नोड कॉन्फ़िगर नहीं है।"
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "इस नोड के लिए कोई सहेजा MLX मॉडल नहीं — Providers में एक चुनें।"
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Providers खोलें"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "नोड तैयार है — अपना संदेश फिर भेजने के लिए दोबारा कोशिश करें।"
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "फिर से कोशिश करें"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "स्वॉर्म ने हर सक्रिय नोड जाँचा, कोई भी यह संदेश नहीं ले सका।"
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "कोई नोड जवाब नहीं दे सकता"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "कोई मॉडल माउंट नहीं है"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "विफल"
   },

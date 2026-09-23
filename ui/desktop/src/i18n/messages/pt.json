@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Competências"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "O modelo salvo do motor MLX serve {served}; este nó quer {wanted}. Escolha o modelo em Providers."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Todas as vagas deste nó estão ocupadas."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} não está carregado no LM Studio."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "Nada responde em {url} — o LM Studio pode não estar em execução."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "Não foi possível ler qual modelo este nó monta: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "O motor MLX não está em execução — nada responde em {base}."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "O motor MLX serve {served}, mas este nó está configurado para {wanted}."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "Montar {model}"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Falha ao montar"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Montado"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Montando"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "Nenhum nó ativo está configurado."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "Nenhum modelo MLX salvo para este nó — escolha um em Providers."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Abrir Providers"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "O nó está pronto — tente novamente para reenviar sua mensagem."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Tentar novamente"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "O swarm verificou cada nó ativo e nenhum pôde receber esta mensagem."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "Nenhum nó pode responder"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "Nenhum modelo montado"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "falhou"
   },

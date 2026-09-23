@@ -22,6 +22,8 @@ import ElicitationRequest from './ElicitationRequest';
 import MessageCopyLink from './MessageCopyLink';
 import { cn } from '../utils';
 import { identifyConsecutiveToolCalls, shouldHideTimestamp } from '../utils/toolCallChaining';
+import NoNodeNotice from './noNodeNotice/NoNodeNotice';
+import { parseNoNodeError } from './noNodeNotice/parseNoNodeError';
 
 interface GooseMessageProps {
   sessionId: string;
@@ -117,6 +119,43 @@ export default function GooseMessage({
   }, [messages, messageIndex, toolRequests]);
 
   const pendingConfirmationIds = getPendingToolConfirmationIds(messages);
+
+  // The swarm router's "no node can serve this turn" arrives as plain assistant text; it renders as
+  // an actionable notice. Retry resends the last user turn's text — only when that turn was text
+  // alone, since a resend without its images would not be the same message.
+  const noNodeRows = useMemo(
+    () =>
+      !isStreaming && message.content.every((c) => c.type === 'text')
+        ? parseNoNodeError(displayText)
+        : null,
+    [isStreaming, message.content, displayText]
+  );
+  const noNodeRetryText = useMemo(() => {
+    if (!noNodeRows) return null;
+    for (let i = messageIndex - 1; i >= 0; i--) {
+      if (messages[i].role !== 'user') continue;
+      const { textContent, imagePaths: userImages } = getTextAndImageContent(messages[i]);
+      if (!textContent.trim()) continue;
+      return userImages.length === 0 ? textContent : null;
+    }
+    return null;
+  }, [noNodeRows, messages, messageIndex]);
+
+  if (noNodeRows) {
+    return (
+      <div className="goose-message flex w-[90%] justify-start min-w-0">
+        <div className="flex flex-col w-full min-w-0">
+          <NoNodeNotice
+            rows={noNodeRows}
+            live={messageIndex === messages.length - 1}
+            retryText={noNodeRetryText}
+            onRetry={append}
+          />
+          <div className="text-xs font-mono text-text-secondary pt-1">{timestamp}</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="goose-message flex w-[90%] justify-start min-w-0">

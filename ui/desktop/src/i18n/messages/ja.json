@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "スキル"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "MLX エンジンの保存済みモデルは {served} を提供しています。このノードは {wanted} を必要とします。Providers でモデルを選んでください。"
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "このノードのスロットはすべて使用中です。"
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} は LM Studio に読み込まれていません。"
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "{url} で応答がありません — LM Studio が起動していない可能性があります。"
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "このノードがマウントするモデルを読み取れませんでした: {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "MLX エンジンが起動していません — {base} で応答がありません。"
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "MLX エンジンは {served} を提供していますが、このノードは {wanted} に設定されています。"
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "{model} をマウント"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "マウントに失敗しました"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "マウント済み"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "マウント中"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "有効なノードが設定されていません。"
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "このノード用に保存された MLX モデルがありません — Providers で選んでください。"
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Providers を開く"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "ノードの準備ができました — 再試行するとメッセージをもう一度送信します。"
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "再試行"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "スウォームは有効なノードをすべて確認しましたが、このメッセージを受けられるノードはありませんでした。"
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "応答できるノードがありません"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "マウントされたモデルがありません"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "失敗"
   },

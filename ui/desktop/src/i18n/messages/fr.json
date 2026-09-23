@@ -2795,6 +2795,63 @@
   "navigation.itemSkills": {
     "defaultMessage": "Compétences"
   },
+  "noNodeNotice.aliasMismatch": {
+    "defaultMessage": "Le modèle enregistré du moteur MLX sert {served} ; ce nœud attend {wanted}. Choisissez le modèle dans Providers."
+  },
+  "noNodeNotice.busy": {
+    "defaultMessage": "Toutes les places de ce nœud sont occupées."
+  },
+  "noNodeNotice.lmNotListed": {
+    "defaultMessage": "{model} n’est pas chargé dans LM Studio."
+  },
+  "noNodeNotice.lmUnreachable": {
+    "defaultMessage": "Rien ne répond sur {url} — LM Studio n’est peut-être pas lancé."
+  },
+  "noNodeNotice.lookupFailed": {
+    "defaultMessage": "Impossible de lire quel modèle ce nœud monte : {error}"
+  },
+  "noNodeNotice.mlxDown": {
+    "defaultMessage": "Le moteur MLX ne tourne pas — rien ne répond sur {base}."
+  },
+  "noNodeNotice.mlxWrongModel": {
+    "defaultMessage": "Le moteur MLX sert {served}, mais ce nœud est réglé sur {wanted}."
+  },
+  "noNodeNotice.mount": {
+    "defaultMessage": "Monter {model}"
+  },
+  "noNodeNotice.mountFailed": {
+    "defaultMessage": "Échec du montage"
+  },
+  "noNodeNotice.mounted": {
+    "defaultMessage": "Monté"
+  },
+  "noNodeNotice.mounting": {
+    "defaultMessage": "Montage en cours"
+  },
+  "noNodeNotice.noDevices": {
+    "defaultMessage": "Aucun nœud actif n’est configuré."
+  },
+  "noNodeNotice.noMountTarget": {
+    "defaultMessage": "Aucun modèle MLX enregistré pour ce nœud — choisissez-en un dans Providers."
+  },
+  "noNodeNotice.openProviders": {
+    "defaultMessage": "Ouvrir Providers"
+  },
+  "noNodeNotice.ready": {
+    "defaultMessage": "Le nœud est prêt — réessayez pour renvoyer votre message."
+  },
+  "noNodeNotice.retry": {
+    "defaultMessage": "Réessayer"
+  },
+  "noNodeNotice.summary": {
+    "defaultMessage": "Le swarm a vérifié chaque nœud actif et aucun n’a pu prendre ce message."
+  },
+  "noNodeNotice.titleNoNode": {
+    "defaultMessage": "Aucun nœud ne peut répondre"
+  },
+  "noNodeNotice.titleUnmounted": {
+    "defaultMessage": "Aucun modèle n’est monté"
+  },
   "nodesStrip.failed": {
     "defaultMessage": "en échec"
   },
