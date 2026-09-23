@@ -2780,12 +2780,6 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "Reset Provider and Model"
   },
-  "navigation.itemAgentWork": {
-    "defaultMessage": "Agent Work"
-  },
-  "navigation.itemBenchmark": {
-    "defaultMessage": "Benchmark"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
   },

@@ -2780,12 +2780,6 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "重置提供商和模型"
   },
-  "navigation.itemAgentWork": {
-    "defaultMessage": "智能体工作"
-  },
-  "navigation.itemBenchmark": {
-    "defaultMessage": "Benchmark"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
   },

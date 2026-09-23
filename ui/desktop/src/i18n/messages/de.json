@@ -2780,12 +2780,6 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "Anbieter und Modell zurücksetzen"
   },
-  "navigation.itemAgentWork": {
-    "defaultMessage": "Agentenarbeit"
-  },
-  "navigation.itemBenchmark": {
-    "defaultMessage": "Benchmark"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
   },

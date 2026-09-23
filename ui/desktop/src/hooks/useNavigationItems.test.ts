@@ -18,24 +18,18 @@ describe('NAV_ITEMS fixture', () => {
       'extensions',
       'skills',
       'memories',
-      'agent-work',
-      'benchmark',
       'leanzero-swarm',
     ]);
     expect(NAV_ITEMS.map((i) => i.path)).toEqual([
       '/extensions',
       '/skills',
       '/memories',
-      '/agent-work',
-      '/benchmark',
       '/leanzero-swarm',
     ]);
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
       'MCPs',
       'Skills',
       'Memories',
-      'Agent Work',
-      'Benchmark',
       'Providers',
     ]);
   });
@@ -43,6 +37,10 @@ describe('NAV_ITEMS fixture', () => {
   it('has NO New Chat row and no item pointing at "/" — sessions start from projects only', () => {
     expect(NAV_ITEMS.some((i) => i.label === 'New Chat' || i.id === 'home')).toBe(false);
     expect(NAV_ITEMS.some((i) => i.path === '/')).toBe(false);
+  });
+
+  it('has NO Agent Work or Benchmark row — their sidebar sections are the only door (owner 2026-09-23)', () => {
+    expect(NAV_ITEMS.some((i) => i.path === '/agent-work' || i.path === '/benchmark')).toBe(false);
   });
 
   it('pins Settings to its own bottom slot', () => {

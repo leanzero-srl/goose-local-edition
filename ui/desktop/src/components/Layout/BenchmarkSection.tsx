@@ -6,6 +6,7 @@ import { Button, Chip, SectionHeader, TNUM, TYPE, WEIGHT, cx } from '../lz';
 import type { BenchSession, CatalogBenchmark } from '../benchmark/bridge';
 import { fmtWhen, OutcomeChip } from '../benchmark/outcome';
 import {
+  SectionTitleLink,
   TreeChildren,
   TreeContextMenu,
   treeParentClass,
@@ -275,7 +276,14 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
   return (
     <div className={cx('flex min-h-0 flex-col', className)} data-testid="benchmark-section">
       <SectionHeader
-        title={intl.formatMessage(i18n.title)}
+        title={
+          <SectionTitleLink
+            label={intl.formatMessage(i18n.title)}
+            active={onBenchmark}
+            onClick={() => navigate(BENCHMARK_PATH)}
+            testId="benchmark-title"
+          />
+        }
         count={runsCount}
         className="px-4"
         right={

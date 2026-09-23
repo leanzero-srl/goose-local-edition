@@ -2780,12 +2780,6 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "제공업체 및 모델 초기화"
   },
-  "navigation.itemAgentWork": {
-    "defaultMessage": "에이전트 작업"
-  },
-  "navigation.itemBenchmark": {
-    "defaultMessage": "Benchmark"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
   },

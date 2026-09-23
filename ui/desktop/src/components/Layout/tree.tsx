@@ -37,6 +37,34 @@ export const TreeChildren: React.FC<{ children: ReactNode }> = ({ children }) =>
   </div>
 );
 
+/**
+ * A section title that opens its view — Agent Work and Benchmark have no pinned nav row (owner
+ * 2026-09-23: the row and the section were two doors to one view), so the title is the door.
+ * While the view is open the title carries the accent ink and aria-current.
+ */
+export const SectionTitleLink: React.FC<{
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  testId: string;
+}> = ({ label, active, onClick, testId }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-current={active ? 'page' : undefined}
+    data-testid={testId}
+    className={cx(
+      'no-drag uppercase',
+      RADIUS.control,
+      FOCUS,
+      MOTION,
+      active ? 'text-lz-accent' : 'hover:text-lz-ink'
+    )}
+  >
+    {label}
+  </button>
+);
+
 /** Row actions stay out of the way until the row is hovered or holds focus. Visibility, not opacity
  *  (opacity utilities are banned as faded colour); group-focus-within keeps them reachable by
  *  keyboard. */

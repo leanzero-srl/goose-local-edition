@@ -2780,12 +2780,6 @@
   "modelsSection.resetTitle": {
     "defaultMessage": "Redefinir Provedor e Modelo"
   },
-  "navigation.itemAgentWork": {
-    "defaultMessage": "Trabalho dos agentes"
-  },
-  "navigation.itemBenchmark": {
-    "defaultMessage": "Benchmark"
-  },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
   },

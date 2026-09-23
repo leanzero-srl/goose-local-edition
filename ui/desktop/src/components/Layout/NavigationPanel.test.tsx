@@ -85,11 +85,11 @@ describe('NavigationPanel (Studio shell)', () => {
   });
 
   it('nav rows are 36px icon+label rows; the current view is the accent fill with accent ink, never a rail', () => {
-    renderNav('/benchmark');
+    renderNav('/memories');
     const rows = screen.getAllByRole('button');
     const current = rows.filter((b) => b.getAttribute('aria-current') === 'page');
     expect(current).toHaveLength(1);
-    expect(current[0].textContent).toContain('Benchmark');
+    expect(current[0].textContent).toContain('Memories');
     for (const c of SURFACE.selected.split(' ')) expect(current[0].className).toContain(c);
     expect(current[0].className).toContain('h-lz-row');
     expect(current[0].className).toContain('rounded-lz-control');
@@ -97,6 +97,7 @@ describe('NavigationPanel (Studio shell)', () => {
     expect(current[0].querySelector('svg')).not.toBeNull();
 
     const idle = rows.find((b) => (b.textContent ?? '').includes('Skills'));
+    expect(rows.some((b) => /^(Agent Work|Benchmark)$/.test(b.textContent ?? ''))).toBe(false);
     expect(idle).toBeDefined();
     expect(idle?.className).not.toContain('bg-lz-accent');
     expect(idle?.className).toContain(SURFACE.hover);

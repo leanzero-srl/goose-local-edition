@@ -1,4 +1,4 @@
-import { Bot, Brain, Plug, Gauge, Settings, Zap } from 'lucide-react';
+import { Brain, Plug, Settings, Zap } from 'lucide-react';
 import { Goose } from '../components/icons';
 import type React from 'react';
 import { defineMessages, type IntlShape, type MessageDescriptor } from 'react-intl';
@@ -29,13 +29,15 @@ export interface NavItem {
  * Pass D (owner): the "New Chat" row is GONE — sessions start from a project, so the only
  * session-creating affordance is the Projects tree's per-project "+ New session here". The "/"
  * route stays reachable (Settings close, error escapes) and renders the project landing.
+ *
+ * 2026-09-23 (owner): Agent Work and Benchmark left the pinned rows — each already has its own
+ * sidebar section (desks / runs), and the section's title is what opens the view. Two doors to one
+ * view read as duplication.
  */
 export const NAV_ITEMS: NavItem[] = [
   { id: 'extensions', path: '/extensions', label: 'MCPs', icon: Plug },
   { id: 'skills', path: '/skills', label: 'Skills', icon: Zap },
   { id: 'memories', path: '/memories', label: 'Memories', icon: Brain },
-  { id: 'agent-work', path: '/agent-work', label: 'Agent Work', icon: Bot },
-  { id: 'benchmark', path: '/benchmark', label: 'Benchmark', icon: Gauge },
   { id: 'leanzero-swarm', path: '/leanzero-swarm', label: 'Providers', icon: Goose },
 ];
 
@@ -58,14 +60,6 @@ const navItemMessages = defineMessages({
   memories: {
     id: 'navigation.itemMemories',
     defaultMessage: 'Memories',
-  },
-  'agent-work': {
-    id: 'navigation.itemAgentWork',
-    defaultMessage: 'Agent Work',
-  },
-  benchmark: {
-    id: 'navigation.itemBenchmark',
-    defaultMessage: 'Benchmark',
   },
   'leanzero-swarm': {
     id: 'navigation.itemLeanzeroSwarm',

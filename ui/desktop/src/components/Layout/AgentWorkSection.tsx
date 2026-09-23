@@ -11,6 +11,7 @@ import {
 } from '../agent-work/agentWorkModel';
 import { useAgentRoster } from '../agent-work/useAgentWork';
 import {
+  SectionTitleLink,
   TreeChildren,
   TreeContextMenu,
   timeAgo,
@@ -394,7 +395,14 @@ export const AgentWorkSection: React.FC<{ className?: string }> = ({ className }
   return (
     <div className={cx('flex min-h-0 flex-col', className)} data-testid="agent-work-section">
       <SectionHeader
-        title={intl.formatMessage(i18n.title)}
+        title={
+          <SectionTitleLink
+            label={intl.formatMessage(i18n.title)}
+            active={onAgentWork}
+            onClick={() => navigate(AGENT_WORK_PATH)}
+            testId="agent-work-title"
+          />
+        }
         count={rows.length}
         className="px-4"
         right={
