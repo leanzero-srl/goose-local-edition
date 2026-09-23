@@ -60,7 +60,9 @@ describe('the MCP card context menu', () => {
     fireEvent.contextMenu(screen.getByText('jira'));
     menu = await screen.findByTestId('extension-context-menu');
     fireEvent.click(within(menu).getByText('Start an AI session about this MCP'));
-    expect(chat.startChat).toHaveBeenCalledWith(askAboutExtensionPrompt(ext));
+    expect(chat.startChat).toHaveBeenCalledWith(askAboutExtensionPrompt(ext), {
+      alsoEnable: ['jira'],
+    });
     expect(askAboutExtensionPrompt(ext)).toContain('npx jira-mcp');
 
     fireEvent.contextMenu(screen.getByText('jira'));

@@ -12,14 +12,15 @@ import { askAboutSessionPrompt } from './ProjectsSection';
 import { askAboutAgentPrompt } from './AgentWorkSection';
 import { askAboutRunPrompt } from './BenchmarkSection';
 
-/** A "work on this item" chat must be able to CHANGE the item: the memory, skills, developer and
- *  extension-manager extensions ride along even when the profile has them off; a disabled
- *  extension outside that set stays off; one the profile does not carry is not invented. */
+/** A "work on this item" chat loads EXACTLY what can change the item — memory, skills, developer
+ *  and extension-manager, even when the profile has them off — plus what the item names, and
+ *  nothing else: the profile's other enabled extensions pushed an MLX session past the engine's
+ *  grammar-compile bounds on its first turn (62 tools / 55,750 bytes, 2026-09-23). */
 const entry = (name: string, enabled: boolean): FixedExtensionEntry =>
   ({ type: 'builtin', name, enabled, timeout: 300 }) as FixedExtensionEntry;
 
 describe('extensionsForWorkOnItem', () => {
-  it('adds the required extensions the profile has turned off and keeps the rest of the selection', () => {
+  it('loads the required set whatever the profile says, and leaves every other enabled extension out', () => {
     const all = [
       entry('developer', true),
       entry('memory', false),
@@ -27,11 +28,27 @@ describe('extensionsForWorkOnItem', () => {
       entry('extensionmanager', false),
       entry('todo', false),
       entry('analyze', true),
+      entry('playwright', true),
     ];
     const names = extensionsForWorkOnItem(all).map((c) => c.name);
-    expect(names).toEqual(['developer', 'memory', 'skills', 'extensionmanager', 'analyze']);
-    expect(names).not.toContain('todo');
+    expect(names).toEqual(['developer', 'memory', 'skills', 'extensionmanager']);
+    expect(names).not.toContain('analyze');
+    expect(names).not.toContain('playwright');
     expect(WORK_ON_ITEM_EXTENSIONS).toEqual(['developer', 'memory', 'skills', 'extensionmanager']);
+  });
+
+  it('adds what the item names (the MCP being asked about, chatrecall) even when it is off', () => {
+    const all = [
+      entry('developer', true),
+      entry('memory', true),
+      entry('jira', false),
+      entry('chatrecall', false),
+      entry('playwright', true),
+    ];
+    const names = extensionsForWorkOnItem(all, [...WORK_ON_ITEM_EXTENSIONS, 'jira']).map(
+      (c) => c.name
+    );
+    expect(names).toEqual(['developer', 'memory', 'jira']);
   });
 
   it('never invents an extension the profile does not carry, and strips the enabled flag', () => {

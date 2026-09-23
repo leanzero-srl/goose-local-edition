@@ -265,7 +265,10 @@ export default function ExtensionItem({
               icon: <Sparkles />,
               onClick: () => {
                 setMenu(null);
-                void startChat(askAboutExtensionPrompt(extension));
+                // The MCP itself rides along even when the profile has it off, so it can be tried.
+                void startChat(askAboutExtensionPrompt(extension), {
+                  alsoEnable: [extension.name],
+                });
               },
             },
             {
