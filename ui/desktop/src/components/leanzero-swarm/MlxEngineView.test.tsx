@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { cleanup, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
@@ -557,13 +557,96 @@ describe('MlxEngineView engine tab', () => {
     unmount();
   });
 
-  it('stopped with NO stray listener keeps Unmount disabled', async () => {
+  it('stopped with NO stray listener offers no Unmount — there is nothing to unmount', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^Mount$/ })).toBeEnabled();
     });
-    expect(screen.getByRole('button', { name: /Unmount/ })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /Unmount/ })).toBeNull();
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The status hero (UX audit P1): the page leads with the state and the state's own action, and
+// the running engine's facts fold away until there is something to show.
+// ---------------------------------------------------------------------------
+
+describe('MlxEngineView status hero', () => {
+  it('STOPPED leads with a solid stopped tile, the headroom, and Mount beside the picker; the details fold away', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'stopped', availableMemoryGb: 96.6, totalMemoryGb: 128 })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    await waitFor(() =>
+      expect(within(hero).getByTestId('mlx-state-badge')).toHaveAttribute('data-state', 'stopped')
+    );
+    const tile = within(hero).getByTestId('mlx-state-badge');
+    expect(tile.className).toContain('bg-lz-stopped-solid');
+    expect(within(hero).getByText('no model mounted')).toBeInTheDocument();
+    expect(within(hero).getByText('96.6 GB free of 128.0 GB')).toBeInTheDocument();
+    // The primary action and the model it acts on share the hero.
+    expect(within(hero).getByRole('combobox', { name: 'Model to mount' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(hero).getByRole('button', { name: /^Mount$/ })).toBeEnabled()
+    );
+    // The facts table is collapsed: a disclosure, not twelve rows of "—" leading the page.
+    const toggle = screen.getByRole('button', { name: 'Engine details' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByLabelText('Engine status')).not.toBeVisible();
+    await userEvent.click(toggle);
+    expect(screen.getByLabelText('Engine status')).toBeVisible();
+    expect(screen.getByText('Spawn command')).toBeVisible();
+    // The Engine tab's hero owns the state: no second badge in the tab row.
+    expect(screen.getAllByTestId('mlx-state-badge')).toHaveLength(1);
+    unmount();
+  });
+
+  it('RUNNING names the served model in the hero, offers Unmount, and shows the details open', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'running', modelId: QWEN, pid: 4242, toolCallParser: 'qwen3' })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    await waitFor(() =>
+      expect(within(hero).getByTestId('mlx-state-badge')).toHaveAttribute('data-state', 'running')
+    );
+    expect(within(hero).getByTestId('mlx-state-badge').className).toContain('bg-lz-ok-solid');
+    // Named as the served model (display size), and again in the picker as the selection.
+    expect(within(hero).getAllByText(QWEN)[0].className).toContain('text-lz-h2');
+    expect(within(hero).getByRole('button', { name: /Unmount/ })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Engine details' })).toBeNull();
+    expect(screen.getByLabelText('Engine status')).toBeVisible();
+    expect(screen.getByText('4242')).toBeVisible();
+    unmount();
+  });
+
+  it('FAILED shows the error in the hero and Retry mounts the selection again', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'failed', modelId: QWEN, lastError: 'port 9600 never opened' })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    await waitFor(() =>
+      expect(within(hero).getByText('port 9600 never opened')).toBeInTheDocument()
+    );
+    expect(within(hero).getByTestId('mlx-state-badge').className).toContain('bg-lz-err-solid');
+    const retry = await within(hero).findByRole('button', { name: /Retry/ });
+    await waitFor(() => expect(retry).toBeEnabled());
+    await userEvent.click(retry);
+    await waitFor(() => expect(mockMount).toHaveBeenCalledWith(QWEN, undefined));
+    unmount();
+  });
+
+  it('the engine sub-tabs are the subordinate underline register, not a second solid strip', () => {
+    const { unmount } = render(<MlxEngineView />);
+    const group = screen.getByRole('radiogroup', { name: 'Engine sections' });
+    expect(group).toHaveAttribute('data-variant', 'underline');
+    const active = screen.getByRole('radio', { name: /^Engine$/ });
+    expect(active.className).toContain('border-lz-accent');
+    expect(active.className).not.toContain('bg-lz-accent');
     unmount();
   });
 });

@@ -30,6 +30,7 @@ import {
   Button,
   Chip,
   DataTable,
+  Disclosure,
   EmptyState,
   KeyValue,
   Panel,
@@ -42,6 +43,7 @@ import {
   SURFACE,
   TNUM,
   TONE_DOT,
+  TONE_FILL,
   TONE_TEXT,
   TYPE,
   WEIGHT,
@@ -605,6 +607,50 @@ interface EngineSectionProps {
   onRemount: () => void;
 }
 
+/**
+ * The hero's state tile: ONE solid fill that is the engine's state at a glance — the status triad
+ * for running/failed/stopped, the accent (with a spinner) while a mount is in flight, a neutral
+ * "checking" before the first status lands and the err fill when the status itself cannot be read.
+ * The word stays lowercase in the DOM (the state's own token) and is capitalised by CSS.
+ */
+function StateTile({ state, unreachable }: { state: MlxEngineState | null; unreachable: boolean }) {
+  const tone: Tone =
+    state === null
+      ? unreachable
+        ? 'err'
+        : 'stopped'
+      : state === 'mounting'
+        ? 'accent'
+        : STATE_TONE[state];
+  const word = state ?? (unreachable ? 'unreachable' : 'checking');
+  const icon =
+    state === 'running' ? (
+      <Play />
+    ) : state === 'mounting' || (state === null && !unreachable) ? (
+      <Loader2 className="animate-spin" />
+    ) : state === 'failed' || unreachable ? (
+      <X />
+    ) : (
+      <Square />
+    );
+  return (
+    <div
+      data-testid="mlx-state-badge"
+      data-state={word}
+      role="status"
+      aria-label={`Engine ${word}`}
+      className={cx(
+        'flex w-32 shrink-0 flex-col justify-between gap-6 p-3 [&_svg]:size-5',
+        RADIUS.card,
+        TONE_FILL[tone]
+      )}
+    >
+      <span aria-hidden>{icon}</span>
+      <span className={cx('text-lz-h2 capitalize', TNUM)}>{word}</span>
+    </div>
+  );
+}
+
 function EngineSection(props: EngineSectionProps) {
   const {
     status,
@@ -619,37 +665,34 @@ function EngineSection(props: EngineSectionProps) {
     onUnmount,
     onRemount,
   } = props;
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   const state = status?.state ?? null;
+  const running = state === 'running';
   const mountedModelId = status?.modelId ?? null;
   const strayPort = state === 'stopped' ? status?.strayListenerPort : undefined;
-  const selectionIsMounted =
-    state === 'running' && !!mountModelId && mountModelId === mountedModelId;
+  const selectionIsMounted = running && !!mountModelId && mountModelId === mountedModelId;
   const canMount =
     !!mountModelId && !engineBusy && (state === 'stopped' || state === 'failed' || state === null);
-  const canSwitch =
-    state === 'running' && !!mountModelId && mountModelId !== mountedModelId && !engineBusy;
+  const canSwitch = running && !!mountModelId && mountModelId !== mountedModelId && !engineBusy;
   const canUnmount =
     !engineBusy && (state === 'running' || state === 'mounting' || strayPort != null);
+  // Unmount is on offer only where it does something: a live or mounting engine, or a stray
+  // listener to reclaim. A stopped engine has nothing to unmount, so the button is not drawn.
+  const offerUnmount = state === 'running' || state === 'mounting' || strayPort != null;
+  const failedError =
+    state === 'failed' && status?.lastError && status.lastError !== mountError
+      ? status.lastError
+      : null;
 
   const memoryTight =
     status != null &&
     status.totalMemoryGb > 0 &&
     status.availableMemoryGb / status.totalMemoryGb < 0.15;
 
-  // Every row is backend truth or an honest "—"; nothing here is fabricated.
+  // Every row is backend truth or an honest "—"; nothing here is fabricated. The state, the served
+  // model and the memory headroom live in the hero above — these are the running engine's facts.
   const facts: KeyValueItem[] = [
-    {
-      key: 'model',
-      label: 'Served model',
-      value: status?.modelId ?? <span className="text-lz-ink-4">no model mounted</span>,
-      mono: status?.modelId != null,
-    },
-    {
-      key: 'state',
-      label: 'State',
-      value: status ? <StateBadge state={status.state} /> : <Absent />,
-    },
     {
       key: 'context',
       label: 'Context length',
@@ -678,16 +721,6 @@ function EngineSection(props: EngineSectionProps) {
           : status?.state === 'running' && (status.activeRequests as number) > 0
             ? 'ok'
             : undefined,
-    },
-    {
-      key: 'memory',
-      label: 'Memory headroom',
-      value: status ? (
-        `${status.availableMemoryGb.toFixed(1)} GB free of ${status.totalMemoryGb.toFixed(1)} GB`
-      ) : (
-        <Absent />
-      ),
-      tone: memoryTight ? 'warn' : undefined,
     },
     {
       key: 'gate',
@@ -720,6 +753,48 @@ function EngineSection(props: EngineSectionProps) {
     },
   ];
 
+  const details = (
+    <div className="flex flex-col gap-4">
+      <KeyValue items={facts} aria-label="Engine status" />
+      {settings && (
+        // Spawn command — visible, not editable here: the owner sees exactly what would run.
+        <div className="flex flex-col gap-1.5">
+          <span className={TYPE.meta}>Spawn command</span>
+          <code className={cx('block break-all', TYPE.mono)}>
+            {settings.spawnCommand.join(' ')}
+          </code>
+        </div>
+      )}
+    </div>
+  );
+
+  // The primary action is the STATE'S action and tells the truth about the live engine, not just
+  // mount intent: mounting -> spinner; the mounted selection -> "Mounted" as a disabled status; a
+  // different selection while running -> "Switch model" (the backend shuts the old model down);
+  // failed -> Retry the selection; otherwise the plain Mount.
+  const primary =
+    state === 'mounting' ? (
+      <Button variant="primary" disabled icon={<Loader2 className="animate-spin" />}>
+        Mounting
+      </Button>
+    ) : selectionIsMounted ? (
+      <Button variant="secondary" disabled icon={<Check />}>
+        Mounted
+      </Button>
+    ) : running ? (
+      <Button variant="primary" icon={<Play />} onClick={onMount} disabled={!canSwitch}>
+        Switch model
+      </Button>
+    ) : state === 'failed' ? (
+      <Button variant="primary" icon={<RefreshCw />} onClick={onMount} disabled={!canMount}>
+        Retry
+      </Button>
+    ) : (
+      <Button variant="primary" icon={<Play />} onClick={onMount} disabled={!canMount}>
+        Mount
+      </Button>
+    );
+
   return (
     <div className="flex flex-col gap-4 pb-8">
       {statusError && <ToneBanner tone="err" label="Engine unreachable" text={statusError} />}
@@ -737,9 +812,6 @@ function EngineSection(props: EngineSectionProps) {
         />
       )}
       {mountError && <ToneBanner tone="err" label="Mount failed" text={mountError} />}
-      {status?.state === 'failed' && status.lastError && status.lastError !== mountError && (
-        <ToneBanner tone="err" label="Engine failed" text={status.lastError} />
-      )}
       <RestartRequiredBanner
         status={status}
         settings={settings}
@@ -747,81 +819,94 @@ function EngineSection(props: EngineSectionProps) {
         onRemount={onRemount}
       />
 
-      {/* Status panel: label / value rows, every value right-aligned in tabular figures. */}
-      <Panel title="Engine" padded={false}>
-        <div className="px-4">
-          <KeyValue items={facts} aria-label="Engine status" />
-        </div>
-        {status?.probeError && (
-          <p
-            className={cx(
-              'break-words border-t px-4 py-3 text-lz-body',
-              WEIGHT.semibold,
-              TONE_TEXT.err,
-              SURFACE.hairline
+      {/* The status hero: the state tile, what is served, the headroom a mount has, and the
+          state's own action right beside the model it acts on. */}
+      <section
+        aria-label="Engine"
+        data-testid="mlx-engine-hero"
+        className={cx('flex flex-col gap-4 p-4 sm:flex-row', SURFACE.card)}
+      >
+        <StateTile state={state} unreachable={statusError != null && status == null} />
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className={TYPE.meta}>
+              {running || state === 'mounting' ? 'Serving' : 'Served model'}
+            </span>
+            {mountedModelId && (running || state === 'mounting') ? (
+              <span className={cx('break-all font-mono text-lz-h2 text-lz-ink')}>
+                {mountedModelId}
+              </span>
+            ) : (
+              <span className={cx('text-lz-h2 text-lz-ink-2')}>no model mounted</span>
             )}
-          >
-            Probe failed: {status.probeError}
-          </p>
-        )}
-        {status && (
-          <div className={cx('border-t px-4 py-3', SURFACE.hairline)}>
-            <MemoryBar availableGb={status.availableMemoryGb} totalGb={status.totalMemoryGb} />
           </div>
-        )}
-      </Panel>
-
-      {/* Mount controls: the picker, ONE primary action, Unmount as the secondary. */}
-      <Panel title="Mount a model">
-        {/* flex-wrap + a min width on the picker: at ~800px the two buttons otherwise
-            crushed the model picker into unreadability. */}
-        <div className="flex flex-wrap items-start gap-2">
-          <div className="min-w-[220px] flex-1">
-            <ModelPicker
-              models={models}
-              value={mountModelId}
-              onChange={setMountModelId}
-              disabled={engineBusy || state === 'mounting'}
-            />
-          </div>
-          {/* The primary button tells the truth about the LIVE engine, not just mount intent:
-              mounting -> spinner; selection already mounted -> "Mounted" as a disabled status;
-              a different selection while running -> "Switch model" (the backend shuts the old
-              model down); otherwise the plain Mount action. */}
-          {state === 'mounting' ? (
-            <Button variant="primary" disabled icon={<Loader2 className="animate-spin" />}>
-              Mounting
-            </Button>
-          ) : selectionIsMounted ? (
-            <Button variant="secondary" disabled icon={<Check />}>
-              Mounted
-            </Button>
-          ) : state === 'running' ? (
-            <Button variant="primary" icon={<Play />} onClick={onMount} disabled={!canSwitch}>
-              Switch model
-            </Button>
-          ) : (
-            <Button variant="primary" icon={<Play />} onClick={onMount} disabled={!canMount}>
-              Mount
-            </Button>
+          {failedError && (
+            <p className={cx('break-words text-lz-body', WEIGHT.semibold, TONE_TEXT.err)}>
+              {failedError}
+            </p>
           )}
-          <Button variant="secondary" icon={<Square />} onClick={onUnmount} disabled={!canUnmount}>
-            Unmount
-          </Button>
+          {status?.probeError && (
+            <p className={cx('break-words text-lz-body', WEIGHT.semibold, TONE_TEXT.err)}>
+              Probe failed: {status.probeError}
+            </p>
+          )}
+          {status && (
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <span
+                className={cx(
+                  'text-lz-body',
+                  TNUM,
+                  memoryTight ? cx(WEIGHT.semibold, TONE_TEXT.warn) : 'text-lz-ink'
+                )}
+              >
+                {`${status.availableMemoryGb.toFixed(1)} GB free of ${status.totalMemoryGb.toFixed(1)} GB`}
+              </span>
+              <MemoryBar availableGb={status.availableMemoryGb} totalGb={status.totalMemoryGb} />
+            </div>
+          )}
+          {/* flex-wrap + a min width on the picker: at ~800px the buttons otherwise crushed the
+              model picker into unreadability. */}
+          <div className="flex flex-wrap items-start gap-2">
+            <div className="min-w-[220px] flex-1">
+              <ModelPicker
+                models={models}
+                value={mountModelId}
+                onChange={setMountModelId}
+                disabled={engineBusy || state === 'mounting'}
+              />
+            </div>
+            {primary}
+            {offerUnmount && (
+              <Button
+                variant="secondary"
+                icon={<Square />}
+                onClick={onUnmount}
+                disabled={!canUnmount}
+              >
+                Unmount
+              </Button>
+            )}
+          </div>
+          <p className={TYPE.meta}>
+            Mount returns immediately and the engine flips to mounting; this card follows the live
+            engine every 2 seconds. Each model mounts with its own sampling profile.
+          </p>
         </div>
-        <p className={cx('mt-3', TYPE.meta)}>
-          Mount returns immediately and the engine flips to mounting; the status above follows the
-          live engine every 2 seconds. Each model mounts with its own sampling profile.
-        </p>
-      </Panel>
+      </section>
 
-      {/* Spawn command — visible, not editable here: the owner sees exactly what would run. */}
-      {settings && (
-        <Panel title="Spawn command">
-          <code className={cx('block break-all', TYPE.mono)}>
-            {settings.spawnCommand.join(' ')}
-          </code>
-        </Panel>
+      {/* The running engine's facts are the point of the page once it runs; before that they are
+          all "—", so they fold away under a disclosure instead of leading the page. */}
+      {running ? (
+        <Panel title="Engine details">{details}</Panel>
+      ) : (
+        <Disclosure
+          title="Engine details"
+          open={detailsOpen}
+          onOpenChange={setDetailsOpen}
+          testId="mlx-engine-details"
+        >
+          {details}
+        </Disclosure>
       )}
     </div>
   );
@@ -2755,8 +2840,12 @@ const MlxEngineView: React.FC = () => {
         />
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
+      {/* The engine's own section switch sits UNDER the Providers strip, so it is the subordinate
+          underline register, on the row's hairline — never a second solid strip that reads as
+          another top nav. */}
+      <div className={cx('flex flex-wrap items-end gap-3 border-b', SURFACE.hairline)}>
         <Segmented<MlxTab>
+          variant="underline"
           aria-label="Engine sections"
           options={[
             { value: 'engine', label: 'Engine' },
@@ -2774,10 +2863,15 @@ const MlxEngineView: React.FC = () => {
           value={tab}
           onChange={setTab}
         />
-        {status && <StateBadge state={status.state} />}
+        {/* The Engine tab's hero owns the state; the other tabs keep the badge in view. */}
+        {status && tab !== 'engine' && (
+          <span className="pb-2">
+            <StateBadge state={status.state} />
+          </span>
+        )}
         {/* pr-3: without it the ScrollArea's right edge shaved the final glyph off "Rapid-MLX"
             (caught live on the packaged build, 2026-08-31). */}
-        <span className={cx('ml-auto shrink-0 pr-3', TYPE.meta)}>Powered by Rapid-MLX</span>
+        <span className={cx('ml-auto shrink-0 pb-2.5 pr-3', TYPE.meta)}>Powered by Rapid-MLX</span>
       </div>
 
       {tab === 'engine' && (
