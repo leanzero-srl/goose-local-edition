@@ -85,6 +85,22 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   provider and goose-cli swarm lanes do NOT get it. Defaults = byte-identical request (test
   `default_choices_leave_the_mlx_request_byte_identical`).
 
+## Live state: the tile, the tray, and "who is using it" (2026-09-23)
+- Rapid-MLX `/v1/status` cannot tell clients apart and has NO per-request prefill progress
+  (`scheduler.get_running_requests_info`: prompt_tokens, cached_tokens, ttft_s, tokens_per_second only). The honest
+  reading rate is `(prompt_tokens - cached_tokens) / ttft_s` of the newest generating request (oMLX's "prefill speed";
+  ttft runs from arrival, so it is conservative). `generation_tps` and `prompt_tps` are STICKY aggregates and
+  prompt_tps counts cached tokens as read — never display either. Code: `mlxLiveStats.ts` measuredPrefillTps/LastRates.
+- WHO: goose registers in-flight work at its two doors — the swarm router's lease on the mlx-sidecar node (session id
+  from the reply loop's task-local) and the OpenAI-compatible turn — in `providers/mlx_serving.rs`, served at
+  `GET /mlx-engine/serving` on goose serve's API routes (X-Secret-Key). Anything else on the engine (a `goose swarm run`
+  child, another app, a linked peer) is COUNTED as unattributed, never named.
+- MAIN owns one loop (`utils/mlxEngineMonitor.ts`, the view's 2 s cadence) that runs only while the engine answers or goose
+  says "mounting"; woken by every local ACP `mlxEngineStatus` read (reported via IPC `mlx-engine-report`), tray creation
+  and the tray menu opening. The tray section is a pure model (`utils/mlxTray.ts`); Mount/Unmount run in a window's
+  renderer (`hooks/useMlxTrayActions.ts`) because main has no ACP client.
+- Tile colours while RUNNING: slate idle / accent reading / ok writing / slate when activity is unknown.
+
 ## Releasing a notarized macOS build (2026-09-05 — every release is notarized, one command)
 - `just release-notarized <version>` (bump from ui/desktop/package.json's current version; the own-version floor is 2.0.0). It sources
   `~/.leanzero/apple/notary.env`, unlocks the dedicated `goose-signing` keychain, builds, signs with the Developer ID (Mihai Perdum,
