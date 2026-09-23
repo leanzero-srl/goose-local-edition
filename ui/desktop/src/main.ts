@@ -112,6 +112,7 @@ import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-insta
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
 import { fleetChatHandler, fleetProbeHandler } from './utils/fleetIpc';
+import { fetchMlxLiveStatus } from './utils/mlxLiveStatus';
 import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
 import {
@@ -2020,6 +2021,12 @@ ipcMain.handle('fleet-status', async (): Promise<Record<string, string>> => {
 const mainFetch = net.fetch as unknown as typeof globalThis.fetch;
 ipcMain.handle('fleet-probe', fleetProbeHandler(mainFetch));
 ipcMain.handle('fleet-chat', fleetChatHandler(mainFetch));
+// The LeanZero MLX tile's live instrument: Rapid-MLX's own GET /v1/status on the LOCAL engine (loopback
+// only — utils/mlxLiveStatus.ts refuses any other host), every failure named so the tile says why it has
+// no live numbers instead of inventing any.
+ipcMain.handle('mlx-live-status', (_event, baseUrl: unknown) =>
+  fetchMlxLiveStatus(typeof baseUrl === 'string' ? baseUrl : '', mainFetch)
+);
 
 // The swarm's MACHINES, from `lms ps --json`: each loaded model's identifier is prefixed with its
 // machine name (workhorse-…, mihai-…), and `deviceIdentifier: null` marks the LOCAL machine's own

@@ -20,6 +20,7 @@ import type {
   MlxLocalModel,
 } from '../../acp/mlx-engine';
 import type { NodeState, NodesResponse } from '../../acp/leanzero-link';
+import { GENERATING_STATUS } from './mlxLiveStatus.fixtures';
 
 const mockStatus = vi.fn();
 const mockMount = vi.fn();
@@ -647,6 +648,109 @@ describe('MlxEngineView status hero', () => {
     const active = screen.getByRole('radio', { name: /^Engine$/ });
     expect(active.className).toContain('border-lz-accent');
     expect(active.className).not.toContain('bg-lz-accent');
+    unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The state tile as a live instrument, end to end through the view shell: the SAME 2-second status
+// poll reads Rapid-MLX /v1/status through the main-process bridge (window.electron.mlxLiveStatus)
+// while running, watches free memory across a mount, and prices the picked model while stopped.
+// ---------------------------------------------------------------------------
+
+type LiveBridge = { mlxLiveStatus?: (baseUrl: string) => Promise<unknown> };
+
+describe('MlxEngineView state tile instrument', () => {
+  const bridge = window.electron as unknown as LiveBridge;
+  afterEach(() => {
+    delete bridge.mlxLiveStatus;
+  });
+
+  it('RUNNING reads /v1/status at the engine base URL and draws the live readout', async () => {
+    const live = vi.fn(async (baseUrl: string) => ({
+      ok: true,
+      url: `${baseUrl}/v1/status`,
+      body: GENERATING_STATUS,
+    }));
+    bridge.mlxLiveStatus = live;
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'running', modelId: QWEN, baseUrl: 'http://127.0.0.1:8090' })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const tps = await screen.findByTestId('mlx-live-tps');
+    expect(tps).toHaveTextContent('19.9');
+    expect(live).toHaveBeenCalledWith('http://127.0.0.1:8090');
+    const tile = screen.getByTestId('mlx-state-badge');
+    expect(within(tile).getByText('Generating')).toBeInTheDocument();
+    expect(within(tile).getByText('Reading prompt · 32k tokens')).toBeInTheDocument();
+    // Mount/Retry are not on a running tile; the picker row keeps Mounted + Unmount.
+    expect(within(tile).queryByRole('button')).toBeNull();
+    expect(screen.getByRole('button', { name: /Mounted/ })).toBeDisabled();
+    unmount();
+  });
+
+  it('RUNNING with a failed read says live stats unavailable and names why', async () => {
+    bridge.mlxLiveStatus = vi.fn(async () => ({
+      ok: false,
+      url: 'http://127.0.0.1:8090/v1/status',
+      error: 'unreachable',
+      detail: 'connect ECONNREFUSED',
+    }));
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'running', modelId: QWEN, baseUrl: 'http://127.0.0.1:8090' })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    expect(await screen.findByTestId('mlx-live-unavailable')).toHaveTextContent(
+      'unreachable: connect ECONNREFUSED'
+    );
+    expect(screen.queryByTestId('mlx-live-tps')).toBeNull();
+    unmount();
+  });
+
+  it('MOUNTING seen from its start fills with the memory the engine claimed toward the model size', async () => {
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped', availableMemoryGb: 60 }));
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() =>
+      expect(screen.getByTestId('mlx-state-badge')).toHaveAttribute('data-state', 'stopped')
+    );
+    // QWEN is 17 GB on disk; 8.5 GB of free memory has gone since the stopped read.
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'mounting', modelId: QWEN, availableMemoryGb: 51.5 })
+    );
+    forceStatusRefresh();
+    const fill = await screen.findByTestId('mlx-mount-fill');
+    expect(fill).toHaveAttribute('data-measured', 'true');
+    expect(fill).toHaveTextContent('8.5of 17.0 GB');
+    expect(within(fill).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
+    unmount();
+  });
+
+  it('MOUNTING opened mid-mount shows the model size and "Loading weights", never a percent', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'mounting', modelId: QWEN, availableMemoryGb: 51.5 })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const fill = await screen.findByTestId('mlx-mount-fill');
+    expect(fill).toHaveAttribute('data-measured', 'false');
+    expect(fill).toHaveTextContent('17.0 GBLoading weights');
+    expect(within(fill).queryByRole('progressbar')).toBeNull();
+    unmount();
+  });
+
+  it('STOPPED prices the picked model against free memory and mounts from the tile', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'stopped', availableMemoryGb: 40.2, totalMemoryGb: 64 })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const cost = await screen.findByTestId('mlx-mount-cost');
+    // 40.2 free − 17 model − 8 reserve (max(8, 6.4)) = 15.2 spare.
+    expect(cost).toHaveAttribute('data-verdict', 'fits');
+    expect(cost).toHaveTextContent('Fits, 15.2 GB to spare');
+    const tile = screen.getByTestId('mlx-state-badge');
+    const mount = within(tile).getByRole('button', { name: /^Mount$/ });
+    await waitFor(() => expect(mount).toBeEnabled());
+    await userEvent.click(mount);
+    await waitFor(() => expect(mockMount).toHaveBeenCalledWith(QWEN, undefined));
     unmount();
   });
 });

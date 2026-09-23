@@ -43,7 +43,6 @@ import {
   SURFACE,
   TNUM,
   TONE_DOT,
-  TONE_FILL,
   TONE_TEXT,
   TYPE,
   WEIGHT,
@@ -88,6 +87,18 @@ import {
 import { FilterCombobox } from './FilterCombobox';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
 import { ModelCardModal } from './ModelCardModal';
+import { MlxStateTile } from './MlxStateTile';
+import {
+  advanceMountWatch,
+  liveDecodeTps,
+  mountCost,
+  mountFill,
+  pushSample,
+  readMlxLiveStatus,
+  type MlxLiveRead,
+  type MountWatch,
+  type TpsSample,
+} from './mlxLiveStats';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import {
   leanzeroLinkNodes,
@@ -605,50 +616,11 @@ interface EngineSectionProps {
   onMount: () => void;
   onUnmount: () => void;
   onRemount: () => void;
-}
-
-/**
- * The hero's state tile: ONE solid fill that is the engine's state at a glance — the status triad
- * for running/failed/stopped, the accent (with a spinner) while a mount is in flight, a neutral
- * "checking" before the first status lands and the err fill when the status itself cannot be read.
- * The word stays lowercase in the DOM (the state's own token) and is capitalised by CSS.
- */
-function StateTile({ state, unreachable }: { state: MlxEngineState | null; unreachable: boolean }) {
-  const tone: Tone =
-    state === null
-      ? unreachable
-        ? 'err'
-        : 'stopped'
-      : state === 'mounting'
-        ? 'accent'
-        : STATE_TONE[state];
-  const word = state ?? (unreachable ? 'unreachable' : 'checking');
-  const icon =
-    state === 'running' ? (
-      <Play />
-    ) : state === 'mounting' || (state === null && !unreachable) ? (
-      <Loader2 className="animate-spin" />
-    ) : state === 'failed' || unreachable ? (
-      <X />
-    ) : (
-      <Square />
-    );
-  return (
-    <div
-      data-testid="mlx-state-badge"
-      data-state={word}
-      role="status"
-      aria-label={`Engine ${word}`}
-      className={cx(
-        'flex w-32 shrink-0 flex-col justify-between gap-6 p-3 [&_svg]:size-5',
-        RADIUS.card,
-        TONE_FILL[tone]
-      )}
-    >
-      <span aria-hidden>{icon}</span>
-      <span className={cx('text-lz-h2 capitalize', TNUM)}>{word}</span>
-    </div>
-  );
+  /** The tile's live instrument while running — the last Rapid-MLX /v1/status read. */
+  live: MlxLiveRead | null;
+  tpsHistory: readonly TpsSample[];
+  /** The memory watch across an in-flight mount. */
+  mountWatch: MountWatch | null;
 }
 
 function EngineSection(props: EngineSectionProps) {
@@ -664,6 +636,9 @@ function EngineSection(props: EngineSectionProps) {
     onMount,
     onUnmount,
     onRemount,
+    live,
+    tpsHistory,
+    mountWatch,
   } = props;
   const [detailsOpen, setDetailsOpen] = useState(false);
 
@@ -769,10 +744,21 @@ function EngineSection(props: EngineSectionProps) {
   );
 
   // The primary action is the STATE'S action and tells the truth about the live engine, not just
-  // mount intent: mounting -> spinner; the mounted selection -> "Mounted" as a disabled status; a
-  // different selection while running -> "Switch model" (the backend shuts the old model down);
-  // failed -> Retry the selection; otherwise the plain Mount.
-  const primary =
+  // mount intent. With the engine down it lives ON the tile, beside what the mount would cost: Retry
+  // when failed, else the plain Mount. With the engine up it stays by the picker: a spinner while
+  // mounting, "Mounted" as a disabled status for the mounted selection, "Switch model" for another
+  // selection (the backend shuts the old model down).
+  const tileAction =
+    state === 'failed' ? (
+      <Button variant="secondary" icon={<RefreshCw />} onClick={onMount} disabled={!canMount}>
+        Retry
+      </Button>
+    ) : state === 'stopped' || state === null ? (
+      <Button variant="secondary" icon={<Play />} onClick={onMount} disabled={!canMount}>
+        Mount
+      </Button>
+    ) : null;
+  const rowAction =
     state === 'mounting' ? (
       <Button variant="primary" disabled icon={<Loader2 className="animate-spin" />}>
         Mounting
@@ -785,15 +771,20 @@ function EngineSection(props: EngineSectionProps) {
       <Button variant="primary" icon={<Play />} onClick={onMount} disabled={!canSwitch}>
         Switch model
       </Button>
-    ) : state === 'failed' ? (
-      <Button variant="primary" icon={<RefreshCw />} onClick={onMount} disabled={!canMount}>
-        Retry
-      </Button>
-    ) : (
-      <Button variant="primary" icon={<Play />} onClick={onMount} disabled={!canMount}>
-        Mount
-      </Button>
-    );
+    ) : null;
+
+  // The tile's instrument inputs — each a measured fact or absent, never a stand-in.
+  const sizeOf = (id: string | null | undefined) =>
+    (id ? models.find((m) => m.id === id)?.sizeBytes : undefined) ?? null;
+  const mount =
+    state === 'mounting' && status
+      ? mountFill(mountWatch, status.availableMemoryGb, sizeOf(mountedModelId))
+      : null;
+  const pickedBytes = sizeOf(mountModelId);
+  const cost =
+    state === 'stopped' && status && pickedBytes != null && pickedBytes > 0
+      ? mountCost(pickedBytes, status.availableMemoryGb, status.totalMemoryGb)
+      : null;
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -819,14 +810,24 @@ function EngineSection(props: EngineSectionProps) {
         onRemount={onRemount}
       />
 
-      {/* The status hero: the state tile, what is served, the headroom a mount has, and the
-          state's own action right beside the model it acts on. */}
+      {/* The status hero: the state tile (a live instrument for the state), what is served, the
+          headroom a mount has, and the picker. Side by side from lg; stacked below it, where the
+          instrument would crush the picker. */}
       <section
         aria-label="Engine"
         data-testid="mlx-engine-hero"
-        className={cx('flex flex-col gap-4 p-4 sm:flex-row', SURFACE.card)}
+        className={cx('flex flex-col gap-4 p-4 lg:flex-row', SURFACE.card)}
       >
-        <StateTile state={state} unreachable={statusError != null && status == null} />
+        <MlxStateTile
+          state={state}
+          unreachable={statusError != null && status == null}
+          live={live}
+          history={tpsHistory}
+          mount={mount}
+          cost={cost}
+          failedError={failedError}
+          action={tileAction}
+        />
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           <div className="flex min-w-0 flex-col gap-1">
             <span className={TYPE.meta}>
@@ -840,11 +841,6 @@ function EngineSection(props: EngineSectionProps) {
               <span className={cx('text-lz-h2 text-lz-ink-2')}>no model mounted</span>
             )}
           </div>
-          {failedError && (
-            <p className={cx('break-words text-lz-body', WEIGHT.semibold, TONE_TEXT.err)}>
-              {failedError}
-            </p>
-          )}
           {status?.probeError && (
             <p className={cx('break-words text-lz-body', WEIGHT.semibold, TONE_TEXT.err)}>
               Probe failed: {status.probeError}
@@ -875,7 +871,7 @@ function EngineSection(props: EngineSectionProps) {
                 disabled={engineBusy || state === 'mounting'}
               />
             </div>
-            {primary}
+            {rowAction}
             {offerUnmount && (
               <Button
                 variant="secondary"
@@ -2377,17 +2373,76 @@ const MlxEngineView: React.FC = () => {
     setMountModelId(id);
   }, []);
 
+  // The state tile's live instrument (MlxStateTile): Rapid-MLX's own /v1/status while running, the
+  // decode-rate history for the sparkline, and the memory watch across a mount. All of it rides the
+  // SAME 2-second status poll below — no second clock.
+  const [live, setLive] = useState<MlxLiveRead | null>(null);
+  const [tpsHistory, setTpsHistory] = useState<TpsSample[]>([]);
+  const [mountWatch, setMountWatch] = useState<MountWatch | null>(null);
+  // Free memory at the last status that was NOT mounting: the baseline a mount's claim is measured
+  // from. Null until this view has seen one (a view opened mid-mount has no baseline).
+  const settledFreeGb = useRef<number | null>(null);
+  // One live read at a time, so a slow read never lands after a newer one and reorders the samples.
+  const liveInFlight = useRef(false);
+
+  const refreshLive = useCallback(
+    async (next: MlxEngineStatus) => {
+      if (next.state !== 'running') {
+        setLive(null);
+        setTpsHistory([]);
+        return;
+      }
+      if (activeNodeId !== undefined) {
+        // The engine's base URL is loopback on the PEER; reading it here would read this Mac's engine.
+        setLive({
+          ok: false,
+          detail: `live stats are read on this device only — this engine runs on ${remoteHostname ?? 'a linked device'}`,
+        });
+        return;
+      }
+      if (!next.baseUrl) {
+        setLive({ ok: false, detail: 'the running engine reported no base URL' });
+        return;
+      }
+      if (liveInFlight.current) return;
+      liveInFlight.current = true;
+      try {
+        const read = await readMlxLiveStatus(next.baseUrl);
+        if (activeNodeRef.current !== activeNodeId) return;
+        setLive(read);
+        if (read.ok && read.stats.uptimeS != null) {
+          const sample = { uptimeS: read.stats.uptimeS, tps: liveDecodeTps(read.stats) };
+          setTpsHistory((h) => pushSample(h, sample));
+        }
+      } finally {
+        liveInFlight.current = false;
+      }
+    },
+    [activeNodeId, remoteHostname]
+  );
+
   const refreshStatus = useCallback(async () => {
+    let next: MlxEngineStatus;
     try {
-      const next = await mlxEngineStatus(activeNodeId);
+      next = await mlxEngineStatus(activeNodeId);
       if (activeNodeRef.current !== activeNodeId) return; // switched away mid-flight — drop
       setStatus(next);
       setStatusError(null);
     } catch (error) {
       if (activeNodeRef.current !== activeNodeId) return;
       setStatusError(mlxErrorMessage(error, 'Could not read the engine status.'));
+      return;
     }
-  }, [activeNodeId]);
+    if (next.state === 'mounting' && next.modelId) {
+      const modelId = next.modelId;
+      const baseline = settledFreeGb.current;
+      setMountWatch((w) => advanceMountWatch(w, modelId, next.availableMemoryGb, baseline));
+    } else {
+      settledFreeGb.current = next.availableMemoryGb;
+      setMountWatch(null);
+    }
+    await refreshLive(next);
+  }, [activeNodeId, refreshLive]);
 
   // Poll status every 2s while this window is actually visible; stop when hidden.
   useEffect(() => {
@@ -2649,6 +2704,10 @@ const MlxEngineView: React.FC = () => {
       setMountModelId(null);
       setSamplingModelId(null);
       setProfileDrafts({});
+      setLive(null);
+      setTpsHistory([]);
+      setMountWatch(null);
+      settledFreeGb.current = null;
       defaultedPicker.current = false;
       userPickedModel.current = false;
     }
@@ -2887,6 +2946,9 @@ const MlxEngineView: React.FC = () => {
           onMount={onMount}
           onUnmount={onUnmount}
           onRemount={onRemount}
+          live={live}
+          tpsHistory={tpsHistory}
+          mountWatch={mountWatch}
         />
       )}
       {tab === 'models' && (

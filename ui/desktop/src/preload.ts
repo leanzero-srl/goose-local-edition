@@ -10,6 +10,7 @@ import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings } from './utils/settings';
 import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL } from './utils/closeGuard';
 import type { FleetChatResult, FleetProbeResult } from './utils/fleetProbe';
+import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
 
 // Mapping from settings keys to their old localStorage keys for lazy migration
 const localStorageKeyMap: Partial<Record<SettingKey, string>> = {
@@ -474,6 +475,9 @@ type ElectronAPI = {
   fleetChat: (endpoint: string, body: unknown) => Promise<FleetChatResult>;
   /** The swarm's MACHINES from `lms ps --json` (identifier prefixes; deviceIdentifier null = local). */
   fleetMachines: () => Promise<Array<{ machine: string; local: boolean }>>;
+  /** GET `<baseUrl>/v1/status` of the LOCAL Rapid-MLX engine from MAIN (loopback only): the raw body
+   *  or a NAMED error. Feeds the Providers › LeanZero MLX state tile's live instrument. */
+  mlxLiveStatus: (baseUrl: string) => Promise<MlxLiveStatusResult>;
 };
 
 type AppConfigAPI = {
@@ -545,6 +549,7 @@ const electronAPI: ElectronAPI = {
   fleetProbe: (endpoint: string) => ipcRenderer.invoke('fleet-probe', endpoint),
   fleetChat: (endpoint: string, body: unknown) => ipcRenderer.invoke('fleet-chat', endpoint, body),
   fleetMachines: () => ipcRenderer.invoke('fleet-machines'),
+  mlxLiveStatus: (baseUrl: string) => ipcRenderer.invoke('mlx-live-status', baseUrl),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
   swarmAddNote: (workingDir: string, text: string) =>
