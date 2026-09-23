@@ -101,6 +101,19 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   renderer (`hooks/useMlxTrayActions.ts`) because main has no ACP client.
 - Tile colours while RUNNING: slate idle / accent reading / ok writing / slate when activity is unknown.
 
+## Available memory on macOS (2026-09-23 — the measure under the mount gate and the page)
+- `memory::measure()` on macOS = `host_statistics64(HOST_VM_INFO64)`: (free_count − speculative_count) +
+  external_page_count + purgeable_count, × page size — Activity Monitor's physical minus (app + wired + compressed).
+  `reclaimableCacheGb` = external + purgeable. Linux keeps sysinfo `MemAvailable`. A failed probe is `memoryError`,
+  and mount refuses on it (`measure()?`).
+- NEVER sysinfo on macOS: `free + inactive + purgeable − compressor` read 0.0–3.6 GiB while 41 GiB was available
+  (a 41.8 GiB compressor subtracted, active file cache dropped) — the "0.0 GB free" orange page. NEVER
+  `kern.memorystatus_level` (memory_pressure's %): 12 GiB of held anon memory left it at 46–47% while the chosen
+  figure fell 41.4 → 28.0. raw `free_count` INCLUDES speculative (vm_stat subtracts it). Probe: vm_stat + a
+  16 KiB-page C loop over host_statistics64; cache load = `cat` of already-downloaded shards, never a download.
+- local-edition/mlx/gates.py G1 still sums vm_stat free + inactive + speculative + purgeable — NOT parity (counts
+  inactive anon, drops active file cache).
+
 ## Releasing a notarized macOS build (2026-09-05 — every release is notarized, one command)
 - `just release-notarized <version>` (bump from ui/desktop/package.json's current version; the own-version floor is 2.0.0). It sources
   `~/.leanzero/apple/notary.env`, unlocks the dedicated `goose-signing` keychain, builds, signs with the Developer ID (Mihai Perdum,
