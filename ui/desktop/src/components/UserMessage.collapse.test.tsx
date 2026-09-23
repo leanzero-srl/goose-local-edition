@@ -68,8 +68,14 @@ describe('UserMessage — a wall renders compactly', () => {
     expect(screen.getByTestId('user-message-toggle').textContent).toBe('Show the full message');
   });
 
-  it('a message that fits renders whole, with no toggle', () => {
+  it('a seeded brief at half the window (the 3.0.10 ask-AI case: 480px of 1000) collapses', () => {
     renderedHeight = 480;
+    mount(true);
+    expect(screen.getByTestId('user-message-body').getAttribute('data-collapsed')).toBe('true');
+  });
+
+  it('a message that fits renders whole, with no toggle', () => {
+    renderedHeight = 300; // under a third of the 1000px window
     mount(true);
     expect(screen.getByTestId('user-message-body').getAttribute('data-collapsed')).toBeNull();
     expect(screen.queryByTestId('user-message-toggle')).toBeNull();

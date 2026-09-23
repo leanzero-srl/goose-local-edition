@@ -88,7 +88,7 @@ const i18n = defineMessages({
 /** A message taller than this share of the window is a WALL: it renders compactly — its heading
  *  line and the start of its body — until asked (UX audit C4: a seeded ask-AI brief filled the
  *  whole transcript). Measured from the message's own rendered height, not a character count. */
-const TALL_SHARE_OF_VIEWPORT = 0.5; // ratio: of window.innerHeight
+const TALL_SHARE_OF_VIEWPORT = 1 / 3; // ratio: of window.innerHeight — a seeded brief measured 480px in a 1254px window read as a wall at half
 /** How much of a wall stays visible while collapsed. */
 const COLLAPSED_SHARE_OF_VIEWPORT = 0.2; // ratio: of window.innerHeight
 

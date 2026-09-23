@@ -3,6 +3,7 @@ import { Brain, BookOpen, MessageSquare, Pencil, Sparkles, Trash2 } from 'lucide
 import { TreeContextMenu } from '../Layout/tree';
 import { useStartChatAbout } from '../Layout/useStartChatAbout';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
+import MarkdownContent from '../MarkdownContent';
 import { errorMessage } from '../../utils/conversionUtils';
 import { getInitialWorkingDir } from '../../utils/workingDir';
 import { acpGetSessionListItem } from '../../acp/sessions';
@@ -444,11 +445,8 @@ function MemoryDetail({
               </div>
             </div>
           ) : (
-            <div
-              data-testid="memory-body"
-              className="whitespace-pre-wrap break-words text-lz-body leading-relaxed text-lz-ink"
-            >
-              {memory.content}
+            <div data-testid="memory-body" className="break-words text-lz-body text-lz-ink">
+              <MarkdownContent content={memory.content} />
             </div>
           )}
           <MemoryProvenance memory={memory} workingDir={workingDir} />
