@@ -2375,6 +2375,8 @@ describe('MlxEngineView copy a model to a linked device', () => {
     expect(screen.getByTestId('mlx-replica-target-peer-workhorse')).toHaveTextContent(
       'No Thunderbolt link, so copies go over the local network.'
     );
+    // Each read asks every peer for its interfaces: once per tab open, never a render loop.
+    expect(mockReplicaTargets).toHaveBeenCalledTimes(1);
     unmount();
   });
 

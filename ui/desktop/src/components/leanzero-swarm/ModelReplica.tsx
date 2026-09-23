@@ -178,6 +178,10 @@ export function useModelReplicas({
   const [checking, setChecking] = useState(false);
   const [jobs, setJobs] = useState<Record<string, ReplicaJob>>({});
   const readSeq = useRef(0);
+  // Plain strings, so the callbacks below do not change identity with the intl object.
+  const linksFailed = intl.formatMessage(i18n.linksFailed);
+  const startFailed = intl.formatMessage(i18n.startFailed);
+  const cancelFailed = intl.formatMessage(i18n.cancelFailed);
 
   const refreshTargets = useCallback(() => {
     if (!enabled) return;
@@ -191,12 +195,12 @@ export function useModelReplicas({
         setTargetsError(null);
       } catch (error) {
         if (seq !== readSeq.current) return;
-        setTargetsError(mlxErrorMessage(error, intl.formatMessage(i18n.linksFailed)));
+        setTargetsError(mlxErrorMessage(error, linksFailed));
       } finally {
         if (seq === readSeq.current) setChecking(false);
       }
     })();
-  }, [enabled, senderNodeId, intl]);
+  }, [enabled, senderNodeId, linksFailed]);
 
   useEffect(() => {
     if (!enabled) {
@@ -239,12 +243,12 @@ export function useModelReplicas({
         } catch (error) {
           setJob(modelId, (job) => ({
             ...job,
-            error: mlxErrorMessage(error, intl.formatMessage(i18n.startFailed)),
+            error: mlxErrorMessage(error, startFailed),
           }));
         }
       })();
     },
-    [senderNodeId, setJob, intl]
+    [senderNodeId, setJob, startFailed]
   );
 
   const cancel = useCallback(
@@ -257,12 +261,12 @@ export function useModelReplicas({
         } catch (error) {
           setJob(modelId, (j) => ({
             ...j,
-            error: mlxErrorMessage(error, intl.formatMessage(i18n.cancelFailed)),
+            error: mlxErrorMessage(error, cancelFailed),
           }));
         }
       })();
     },
-    [jobs, setJob, intl]
+    [jobs, setJob, cancelFailed]
   );
 
   const dismiss = useCallback((modelId: string) => {

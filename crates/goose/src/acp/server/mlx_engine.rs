@@ -509,16 +509,22 @@ async fn core_model_card(
     })
 }
 
+/// A model mid-copy from a peer lists as incomplete here, and its row offers Resume: an HF
+/// download or resume of it would write the same `.part` files the copy is writing.
+fn refuse_while_copying(repo_id: &str) -> Result<(), agent_client_protocol::Error> {
+    if super::mlx_replica::REPLICAS.is_active(repo_id) {
+        return Err(agent_client_protocol::Error::invalid_params().data(format!(
+            "'{repo_id}' is being copied from a peer on this node; cancel the copy or let it finish first"
+        )));
+    }
+    Ok(())
+}
+
 async fn core_download(
     req: MlxEngineDownloadRequest,
 ) -> Result<EmptyResponse, agent_client_protocol::Error> {
     let settings = load_engine_settings()?;
-    if super::mlx_replica::REPLICAS.is_active(&req.repo_id) {
-        return Err(agent_client_protocol::Error::invalid_params().data(format!(
-            "'{}' is being copied from a peer on this node; cancel the copy or let it finish first",
-            req.repo_id
-        )));
-    }
+    refuse_while_copying(&req.repo_id)?;
     let token = huggingface_token().await;
     DOWNLOAD_TRACKER
         .start_download(&req.repo_id, &expand_tilde(&settings.models_dir), token)
@@ -555,6 +561,7 @@ async fn core_download_resume(
     req: MlxEngineDownloadResumeRequest,
 ) -> Result<EmptyResponse, agent_client_protocol::Error> {
     let settings = load_engine_settings()?;
+    refuse_while_copying(&req.repo_id)?;
     let token = huggingface_token().await;
     DOWNLOAD_TRACKER
         .resume(&req.repo_id, &expand_tilde(&settings.models_dir), token)
