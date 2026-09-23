@@ -5,7 +5,9 @@
  * rapid-mlx v0.14.3-lz.1, `curl http://127.0.0.1:8090/v1/status`, 2026-09-23) — note the STICKY
  * generation_tps 19.91 on an idle engine. The in-flight bodies are that same body with `requests`
  * filled in the shape `scheduler.py get_running_requests_info` emits; the GENERATING request's
- * numbers are the owner's own capture from a live run (28,035 of 32,768 tokens, 19.9 tok/s).
+ * numbers are the owner's own capture from a live run (28,035 of 32,768 tokens, 19.9 tok/s); its
+ * 165 s time to first token over a 32,277-token uncached prompt is the 195.6 tok/s prefill the
+ * body's own sticky `prompt_tps` (195.5) says the engine measured for it.
  */
 export const IDLE_STATUS = {
   status: 'idle',
@@ -126,8 +128,8 @@ export const GENERATING_STATUS = {
       progress: 0.856,
       tokens_per_second: 19.9,
       ttft_s: 165,
-      cache_hit_type: 'prefix',
-      cached_tokens: 30720,
+      cache_hit_type: null,
+      cached_tokens: 0,
     },
     {
       request_id: 'req-prefill-2',
@@ -154,4 +156,29 @@ export const PREFILL_STATUS = {
   num_running: 1,
   num_waiting: 0,
   requests: [GENERATING_STATUS.requests[2]],
+};
+
+/** A follow-up turn: most of its prompt came from the prefix cache, so the engine computed 2,400. */
+export const CACHED_GENERATING_STATUS = {
+  ...IDLE_STATUS,
+  status: 'generating',
+  uptime_s: 1900.5,
+  num_running: 1,
+  num_waiting: 0,
+  requests: [
+    {
+      request_id: 'req-followup-4',
+      status: 'running',
+      phase: 'generation',
+      elapsed_s: 30.0,
+      prompt_tokens: 33000,
+      completion_tokens: 240,
+      max_tokens: 32768,
+      progress: 0.007,
+      tokens_per_second: 20.3,
+      ttft_s: 12.0,
+      cache_hit_type: 'prefix',
+      cached_tokens: 30600,
+    },
+  ],
 };

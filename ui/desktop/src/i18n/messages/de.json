@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "Testen"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "Schreibt"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "Leerlauf"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "Modell nicht geladen"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "Liest Prompt"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "In Warteschlange"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "Seit Beginn des Mountens belegter Speicher"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "Belegter Speicher im Verhältnis zur Modellgröße"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "Chat · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "Externer Client über /v1 · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "goose-Sitzung ({type}) · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "{count} Anfragen"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "Modellgröße im Verhältnis zum freien Speicher"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "der Cache-Abfragen getroffen"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "Prompt-Tokens aus dem Cache"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "belegter GPU-Speicher"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "gelesene Prompt-Tokens"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "beantwortete Anfragen"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "Laufzeit der Engine"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "geschriebene Tokens"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "Das Mounten ist fehlgeschlagen — der Fehler steht im Banner oben."
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "Passt, {spare} GB frei"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "Passt, {spare} GB frei über der Reserve von {reserve} GB"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "{gb} GB frei"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB zu mounten"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "Engine {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "Live-Werte nicht verfügbar"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "Lädt Gewichte"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "Braucht {gb} GB mehr freien Speicher"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "von {gb} GB"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "Wähle ein Modell, um zu sehen, was das Mounten kostet."
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "Prompt-Tokens, wird seit {elapsed} gelesen"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s beim Lesen dieses Prompts"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s beim Lesen, letzter Prompt"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "noch kein Prompt gelesen"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "Live-Werte werden gelesen…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "Laufende Anfragen"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "Geschriebene Tokens im Verhältnis zum Limit"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} aus dem Cache"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "In Warteschlange"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "Liest Prompt"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} Tokens"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "Schreibt"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} Tokens"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} von {max} Tokens"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "Bedient"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "Wer sie nutzt, ließ sich nicht lesen: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "Schreibrate über die letzten {count} Messungen"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "Wird geprüft"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "Fehlgeschlagen"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "Wird gemountet"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "Läuft"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "Gestoppt"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "Nicht erreichbar"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "Der Engine-Status konnte nicht gelesen werden."
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "Swarm-Lauf aktiv: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, one {# Anfrage nicht aus den Chats dieser App oder /v1} other {# Anfragen nicht aus den Chats dieser App oder /v1}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, one {Anfrage wartet} other {Anfragen warten}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s beim Schreiben"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s beim Schreiben, letzter Lauf"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "noch nichts geschrieben"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Auto"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Denk-Steuerung nicht verfügbar: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "Die MLX-Engine konnte nicht gemountet werden"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "Kein Modell zum Mounten konfiguriert. Wähle eines unter Providers › LeanZero MLX."
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "Die MLX-Engine konnte nicht ausgehängt werden"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Vollständige Dateiänderungsfunktionen, Dateien frei bearbeiten, erstellen und löschen."

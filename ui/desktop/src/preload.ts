@@ -11,6 +11,7 @@ import { defaultSettings } from './utils/settings';
 import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL } from './utils/closeGuard';
 import type { FleetChatResult, FleetProbeResult } from './utils/fleetProbe';
 import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
+import type { MlxEngineReport, MlxEngineSnapshot } from './utils/mlxEngineMonitor';
 
 // Mapping from settings keys to their old localStorage keys for lazy migration
 const localStorageKeyMap: Partial<Record<SettingKey, string>> = {
@@ -478,6 +479,11 @@ type ElectronAPI = {
   /** GET `<baseUrl>/v1/status` of the LOCAL Rapid-MLX engine from MAIN (loopback only): the raw body
    *  or a NAMED error. Feeds the Providers › LeanZero MLX state tile's live instrument. */
   mlxLiveStatus: (baseUrl: string) => Promise<MlxLiveStatusResult>;
+  /** Hand MAIN what goose's ACP `mlxEngine/status` just said about the LOCAL engine; main's tray
+   *  monitor reads the engine while it runs (utils/mlxEngineMonitor.ts). Fire-and-forget. */
+  mlxEngineReport: (report: MlxEngineReport) => void;
+  /** MAIN's latest read of the local engine: activity, rates and WHO it is serving. */
+  mlxEngineActivity: () => Promise<MlxEngineSnapshot>;
 };
 
 type AppConfigAPI = {
@@ -550,6 +556,8 @@ const electronAPI: ElectronAPI = {
   fleetChat: (endpoint: string, body: unknown) => ipcRenderer.invoke('fleet-chat', endpoint, body),
   fleetMachines: () => ipcRenderer.invoke('fleet-machines'),
   mlxLiveStatus: (baseUrl: string) => ipcRenderer.invoke('mlx-live-status', baseUrl),
+  mlxEngineReport: (report: MlxEngineReport) => ipcRenderer.send('mlx-engine-report', report),
+  mlxEngineActivity: () => ipcRenderer.invoke('mlx-engine-activity'),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
   swarmAddNote: (workingDir: string, text: string) =>

@@ -89,13 +89,19 @@ import { FilterCombobox } from './FilterCombobox';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
 import { ModelCardModal } from './ModelCardModal';
 import { MlxStateTile } from './MlxStateTile';
+import type { MlxServing } from '../../utils/mlxServing';
 import {
+  NO_RATES,
+  advanceLastRates,
   advanceMountWatch,
   liveDecodeTps,
   mountCost,
   mountFill,
+  MLX_STATUS_POLL_MS,
   pushSample,
   readMlxLiveStatus,
+  readMlxServing,
+  type LastRates,
   type MlxLiveRead,
   type MountWatch,
   type TpsSample,
@@ -628,6 +634,10 @@ interface EngineSectionProps {
   /** The tile's live instrument while running — the last Rapid-MLX /v1/status read. */
   live: MlxLiveRead | null;
   tpsHistory: readonly TpsSample[];
+  /** The last rates measured while running, for the idle tile. */
+  lastRates: LastRates;
+  /** Who the engine is serving (main's read of goose's in-flight list). */
+  serving: MlxServing | null;
   /** The memory watch across an in-flight mount. */
   mountWatch: MountWatch | null;
 }
@@ -647,6 +657,8 @@ function EngineSection(props: EngineSectionProps) {
     onRemount,
     live,
     tpsHistory,
+    lastRates,
+    serving,
     mountWatch,
   } = props;
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -832,6 +844,8 @@ function EngineSection(props: EngineSectionProps) {
           unreachable={statusError != null && status == null}
           live={live}
           history={tpsHistory}
+          last={lastRates}
+          serving={serving}
           mount={mount}
           cost={cost}
           failedError={failedError}
@@ -2278,8 +2292,6 @@ function useLinkNodes(enabled: boolean): NodesResponse | null {
 
 type MlxTab = 'engine' | 'models' | 'sampling';
 
-const STATUS_POLL_MS = 2000;
-
 const MlxEngineView: React.FC = () => {
   const [tab, setTab] = useState<MlxTab>('engine');
 
@@ -2392,6 +2404,8 @@ const MlxEngineView: React.FC = () => {
   // SAME 2-second status poll below — no second clock.
   const [live, setLive] = useState<MlxLiveRead | null>(null);
   const [tpsHistory, setTpsHistory] = useState<TpsSample[]>([]);
+  const [lastRates, setLastRates] = useState<LastRates>(NO_RATES);
+  const [serving, setServing] = useState<MlxServing | null>(null);
   const [mountWatch, setMountWatch] = useState<MountWatch | null>(null);
   // Free memory at the last status that was NOT mounting: the baseline a mount's claim is measured
   // from. Null until this view has seen one (a view opened mid-mount has no baseline).
@@ -2404,6 +2418,8 @@ const MlxEngineView: React.FC = () => {
       if (next.state !== 'running') {
         setLive(null);
         setTpsHistory([]);
+        setLastRates(NO_RATES);
+        setServing(null);
         return;
       }
       if (activeNodeId !== undefined) {
@@ -2421,12 +2437,17 @@ const MlxEngineView: React.FC = () => {
       if (liveInFlight.current) return;
       liveInFlight.current = true;
       try {
-        const read = await readMlxLiveStatus(next.baseUrl);
+        const [read, who] = await Promise.all([readMlxLiveStatus(next.baseUrl), readMlxServing()]);
         if (activeNodeRef.current !== activeNodeId) return;
         setLive(read);
-        if (read.ok && read.stats.uptimeS != null) {
-          const sample = { uptimeS: read.stats.uptimeS, tps: liveDecodeTps(read.stats) };
-          setTpsHistory((h) => pushSample(h, sample));
+        setServing(who);
+        if (read.ok) {
+          const stats = read.stats;
+          setLastRates((prev) => advanceLastRates(prev, stats));
+          if (stats.uptimeS != null) {
+            const sample = { uptimeS: stats.uptimeS, tps: liveDecodeTps(stats) };
+            setTpsHistory((h) => pushSample(h, sample));
+          }
         }
       } finally {
         liveInFlight.current = false;
@@ -2464,7 +2485,7 @@ const MlxEngineView: React.FC = () => {
     const start = () => {
       if (timer != null) return;
       void refreshStatus();
-      timer = setInterval(() => void refreshStatus(), STATUS_POLL_MS);
+      timer = setInterval(() => void refreshStatus(), MLX_STATUS_POLL_MS);
     };
     const stop = () => {
       if (timer != null) {
@@ -2720,6 +2741,8 @@ const MlxEngineView: React.FC = () => {
       setProfileDrafts({});
       setLive(null);
       setTpsHistory([]);
+      setLastRates(NO_RATES);
+      setServing(null);
       setMountWatch(null);
       settledFreeGb.current = null;
       defaultedPicker.current = false;
@@ -2962,6 +2985,8 @@ const MlxEngineView: React.FC = () => {
           onRemount={onRemount}
           live={live}
           tpsHistory={tpsHistory}
+          lastRates={lastRates}
+          serving={serving}
           mountWatch={mountWatch}
         />
       )}

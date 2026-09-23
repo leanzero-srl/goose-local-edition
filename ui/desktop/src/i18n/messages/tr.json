@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "testi"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "Yazıyor"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "Boşta"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "Model yüklenmedi"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "İstem okunuyor"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "Kuyrukta"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "Bağlama başladığından beri alınan bellek"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "Model boyutuna göre alınan bellek"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "Sohbet · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "/v1 üzerinden harici istemci · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "goose oturumu ({type}) · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "{count} istek"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "Boş belleğe göre model boyutu"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "önbellek aramasında isabet"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "önbellekten istem tokenı"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "kullanılan GPU belleği"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "okunan istem tokenı"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "karşılanan istek"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "motor çalışma süresi"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "yazılan token"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "Bağlama başarısız oldu — hata yukarıdaki başlıkta."
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "Sığar, {spare} GB boş kalır"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "Sığar, {reserve} GB yedeğin üstünde {spare} GB boş kalır"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "{gb} GB boş"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB bağlanacak"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "Motor {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "Canlı istatistikler kullanılamıyor"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "Ağırlıklar yükleniyor"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "{gb} GB daha boş bellek gerekiyor"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "/ {gb} GB"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "Bağlama maliyetini görmek için bir model seçin."
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "istem tokenı, {elapsed} süredir okunuyor"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s (bu istemi okuma)"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s (okuma, son istem)"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "henüz istem okunmadı"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "Canlı istatistikler okunuyor…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "Süren istekler"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "Sınıra göre yazılan token"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} önbellekten"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "Kuyrukta"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "İstem okunuyor"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} token"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "Yazıyor"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} token"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} / {max} token"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "Hizmet veriyor"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "Kimin kullandığı okunamadı: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "Son {count} okumadaki yazma hızı"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "Denetleniyor"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "Başarısız"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "Bağlanıyor"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "Çalışıyor"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "Durduruldu"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "Erişilemiyor"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "Motor durumu okunamadı."
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "Etkin swarm çalıştırması: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, other {bu uygulamanın sohbetlerinden veya /v1 üzerinden gelmeyen # istek}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, other {istek bekliyor}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s (yazma)"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s (yazma, son çalıştırma)"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "henüz bir şey yazılmadı"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Otomatik"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Düşünme denetimleri kullanılamıyor: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "MLX motoru bağlanamadı"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "Bağlanacak model yapılandırılmadı. Providers › LeanZero MLX bölümünden birini seçin."
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "MLX motorunun bağlantısı kaldırılamadı"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Tam dosya değiştirme yetenekleri, dosyaları özgürce düzenleyin, oluşturun ve silin."

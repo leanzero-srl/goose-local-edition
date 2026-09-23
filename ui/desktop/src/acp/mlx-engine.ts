@@ -292,7 +292,28 @@ export async function mlxEngineStatus(nodeId?: string): Promise<MlxEngineStatus>
     '_goose/unstable/mlxEngine/status',
     withNode({}, nodeId)
   );
+  if (nodeId == null) reportToMain(response.status);
   return response.status;
+}
+
+/**
+ * Every LOCAL status read, wherever it happens (the Providers view, the chat selector, the tray's
+ * mount), tells MAIN what goose said, so the menu-bar monitor wakes on the same fact the view saw.
+ * A linked peer's status is never reported: main reads only this machine's engine.
+ */
+function reportToMain(status: MlxEngineStatus): void {
+  const report = (
+    window as unknown as {
+      electron?: { mlxEngineReport?: (r: Record<string, string | undefined>) => void };
+    }
+  ).electron?.mlxEngineReport;
+  report?.({
+    state: status.state,
+    baseUrl: status.baseUrl,
+    modelId: status.modelId,
+    servedModelId: status.servedModelId,
+    lastError: status.lastError,
+  });
 }
 
 /** Returns immediately; state flips to "mounting" — poll status for running/failed. */

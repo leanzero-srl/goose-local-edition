@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  NO_RATES,
   SPARK_WINDOW,
+  advanceLastRates,
   advanceMountWatch,
   compactTokens,
   formatElapsed,
-  lastMeasuredTps,
+  formatRate,
   liveDecodeTps,
+  measuredPrefillTps,
   mlxActivity,
   mountCost,
   mountFill,
@@ -14,7 +17,12 @@ import {
   sparklinePoints,
   type MlxLiveStats,
 } from './mlxLiveStats';
-import { GENERATING_STATUS, IDLE_STATUS, PREFILL_STATUS } from './mlxLiveStatus.fixtures';
+import {
+  CACHED_GENERATING_STATUS,
+  GENERATING_STATUS,
+  IDLE_STATUS,
+  PREFILL_STATUS,
+} from './mlxLiveStatus.fixtures';
 
 const GIB = 1024 * 1024 * 1024;
 
@@ -37,6 +45,17 @@ describe('parseMlxLiveStatus — the real engine body', () => {
     expect(s.requests).toEqual([]);
   });
 
+  it("reads the engine's lifetime counters and the tokens the prefix cache saved", () => {
+    const s = statsOf(IDLE_STATUS);
+    expect(s.totalRequests).toBe(5);
+    expect(s.totalPromptTokens).toBe(91743);
+    expect(s.totalCompletionTokens).toBe(672);
+    expect(s.cacheTokensSaved).toBe(45056);
+    const bare = statsOf({ status: 'idle', requests: [] });
+    expect(bare.totalRequests).toBeNull();
+    expect(bare.cacheTokensSaved).toBeNull();
+  });
+
   it('reads every in-flight request with its identity, phase and token counts', () => {
     const s = statsOf(GENERATING_STATUS);
     expect(s.requests.map((r) => [r.id, r.status, r.phase])).toEqual([
@@ -50,6 +69,9 @@ describe('parseMlxLiveStatus — the real engine body', () => {
     expect(gen.promptTokens).toBe(32277);
     expect(gen.elapsedS).toBe(1574);
     expect(gen.tokensPerSecond).toBe(19.9);
+    expect(gen.ttftS).toBe(165);
+    expect(gen.cachedTokens).toBe(0);
+    expect(s.requests[2].ttftS).toBeNull();
     expect(s.activeMemoryGb).toBe(50.7);
     expect(s.cacheHitRate).toBe(0.78);
   });
@@ -241,15 +263,62 @@ describe('a rate needs two tokens — the engine aggregate is never shown (2026-
     if (!read.ok) throw new Error(read.detail);
     expect(liveDecodeTps(read.stats)).toBe(0);
   });
+});
 
-  it('idle shows the last rate this view measured, and none before any', () => {
-    expect(lastMeasuredTps([])).toBeNull();
-    expect(
-      lastMeasuredTps([
-        { uptimeS: 1, tps: 18.2 },
-        { uptimeS: 3, tps: 19.9 },
-        { uptimeS: 5, tps: 0 },
-      ])
-    ).toBe(19.9);
+describe('the prefill (reading) rate — computed prompt tokens over time to first token', () => {
+  it('an uncached 32,277-token prompt read in 165 s is 195.6 tok/s (the engine said 195.5)', () => {
+    expect(measuredPrefillTps(statsOf(GENERATING_STATUS))).toBeCloseTo(32277 / 165, 5);
+  });
+
+  it('cached prompt tokens are not counted as read: (33,000 − 30,600) / 12 s = 200 tok/s', () => {
+    expect(measuredPrefillTps(statsOf(CACHED_GENERATING_STATUS))).toBeCloseTo(200, 5);
+  });
+
+  it('a request still reading its prompt has no rate yet; idle has none', () => {
+    expect(measuredPrefillTps(statsOf(PREFILL_STATUS))).toBe(0);
+    expect(measuredPrefillTps(statsOf(IDLE_STATUS))).toBe(0);
+  });
+
+  it('a fully cached prompt computed nothing, so it yields no rate rather than infinity', () => {
+    const body = {
+      ...CACHED_GENERATING_STATUS,
+      requests: [{ ...CACHED_GENERATING_STATUS.requests[0], cached_tokens: 33000 }],
+    };
+    expect(measuredPrefillTps(statsOf(body))).toBe(0);
+  });
+
+  it('of two generating requests, the one whose first token landed last is the reading rate', () => {
+    const older = { ...GENERATING_STATUS.requests[1] }; // first token 1,409 s ago
+    const newer = { ...CACHED_GENERATING_STATUS.requests[0] }; // first token 18 s ago
+    const body = { ...IDLE_STATUS, status: 'generating', requests: [older, newer] };
+    expect(measuredPrefillTps(statsOf(body))).toBeCloseTo(200, 5);
+  });
+});
+
+describe('last measured rates — what an idle tile or tray states as "last run"', () => {
+  it('keeps the last writing and reading rates through idle reads', () => {
+    let last = advanceLastRates(NO_RATES, statsOf(GENERATING_STATUS));
+    expect(last.decodeTps).toBe(19.9);
+    expect(last.prefillTps).toBeCloseTo(195.6, 1);
+    last = advanceLastRates(last, statsOf({ ...IDLE_STATUS, uptime_s: 1990 }));
+    expect(last.decodeTps).toBe(19.9);
+    expect(last.prefillTps).toBeCloseTo(195.6, 1);
+    expect(last.uptimeS).toBe(1990);
+  });
+
+  it('nothing measured yet is null — never the sticky engine aggregate', () => {
+    const last = advanceLastRates(NO_RATES, statsOf(IDLE_STATUS));
+    expect(last).toEqual({ uptimeS: 874.3, decodeTps: null, prefillTps: null });
+  });
+
+  it('an engine whose uptime went backwards restarted: its old rates are dropped', () => {
+    const before = advanceLastRates(NO_RATES, statsOf(GENERATING_STATUS));
+    const after = advanceLastRates(before, statsOf({ ...IDLE_STATUS, uptime_s: 3 }));
+    expect(after).toEqual({ uptimeS: 3, decodeTps: null, prefillTps: null });
+  });
+
+  it('rates read at a glance: one decimal under 100, whole numbers above', () => {
+    expect(formatRate(19.94, 'en-US')).toBe('19.9');
+    expect(formatRate(1240.4, 'en-US')).toBe('1,240');
   });
 });

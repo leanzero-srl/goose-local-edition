@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "Kiểm tra"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "Đang viết"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "Nhàn rỗi"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "Chưa tải mô hình"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "Đang đọc prompt"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "Đang xếp hàng"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "Bộ nhớ đã chiếm từ khi bắt đầu nạp"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "Bộ nhớ đã chiếm so với kích thước mô hình"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "Trò chuyện · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "Máy khách bên ngoài qua /v1 · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "Phiên goose ({type}) · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "{count} yêu cầu"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "Kích thước mô hình so với bộ nhớ trống"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "lượt tra cứu cache trúng"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "token prompt từ cache"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "bộ nhớ GPU đang dùng"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "token prompt đã đọc"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "yêu cầu đã phục vụ"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "thời gian chạy của engine"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "token đã viết"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "Nạp thất bại — lỗi nằm ở biểu ngữ phía trên."
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "Vừa, còn dư {spare} GB"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "Vừa, dư {spare} GB trên mức dự trữ {reserve} GB"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "Trống {gb} GB"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB cần nạp"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "Engine {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "Không có số liệu trực tiếp"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "Đang tải trọng số"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "Cần thêm {gb} GB bộ nhớ trống"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "trên {gb} GB"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "Chọn một mô hình để xem chi phí nạp."
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "token prompt, đang đọc {elapsed}"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s khi đọc prompt này"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s khi đọc, prompt gần nhất"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "chưa đọc prompt nào"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "Đang đọc số liệu trực tiếp…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "Yêu cầu đang xử lý"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "Token đã viết so với giới hạn"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} từ cache"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "Đang xếp hàng"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "Đang đọc prompt"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} token"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "Đang viết"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} token"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} / {max} token"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "Đang phục vụ"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "Không đọc được ai đang dùng: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "Tốc độ viết trong {count} lần đọc gần nhất"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "Đang kiểm tra"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "Thất bại"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "Đang nạp"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "Đang chạy"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "Đã dừng"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "Không kết nối được"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "Không đọc được trạng thái engine."
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "Lượt chạy swarm đang hoạt động: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, other {# yêu cầu không đến từ các cuộc trò chuyện của ứng dụng này hay /v1}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, other {yêu cầu đang chờ}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s khi viết"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s khi viết, lần chạy gần nhất"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "chưa viết gì"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Tự động"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Không có điều khiển suy nghĩ: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "Không nạp được engine MLX"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "Chưa cấu hình mô hình để nạp. Hãy chọn một mô hình trong Providers › LeanZero MLX."
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "Không gỡ được engine MLX"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Khả năng chỉnh sửa tệp đầy đủ, chỉnh sửa, tạo và xóa tệp một cách tự do."

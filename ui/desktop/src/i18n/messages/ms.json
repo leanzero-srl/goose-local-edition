@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "Uji"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "Menulis"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "Melahu"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "Model belum dimuatkan"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "Membaca prompt"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "Dalam baris gilir"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "Memori yang diambil sejak pelekapan bermula"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "Memori diambil berbanding saiz model"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "Sembang · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "Klien luaran melalui /v1 · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "Sesi goose ({type}) · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "{count} permintaan"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "Saiz model berbanding memori bebas"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "carian cache yang kena"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "token prompt daripada cache"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "memori GPU digunakan"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "token prompt dibaca"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "permintaan dilayan"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "masa aktif enjin"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "token ditulis"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "Pelekapan gagal — ralatnya ada dalam sepanduk di atas."
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "Muat, berbaki {spare} GB"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "Muat, berbaki {spare} GB melebihi simpanan {reserve} GB"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "{gb} GB bebas"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB untuk dilekapkan"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "Enjin {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "Statistik langsung tidak tersedia"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "Memuatkan pemberat"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "Perlu {gb} GB lagi memori bebas"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "daripada {gb} GB"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "Pilih model untuk melihat kos pelekapannya."
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "token prompt, dibaca selama {elapsed}"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s membaca prompt ini"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s membaca, prompt terakhir"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "belum ada prompt dibaca"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "Membaca statistik langsung…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "Permintaan sedang berjalan"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "Token ditulis berbanding had"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} daripada cache"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "Dalam baris gilir"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "Membaca prompt"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} token"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "Menulis"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} token"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} daripada {max} token"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "Melayan"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "Siapa yang menggunakannya tidak dapat dibaca: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "Kadar menulis sepanjang {count} bacaan terakhir"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "Menyemak"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "Melekap"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "Berjalan"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "Berhenti"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "Tidak dapat dicapai"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "Status enjin tidak dapat dibaca."
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "Larian swarm aktif: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, other {# permintaan bukan daripada sembang aplikasi ini atau /v1}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, other {permintaan menunggu}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s menulis"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s menulis, larian terakhir"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "belum ada yang ditulis"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "Auto"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "Kawalan berfikir tidak tersedia: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "Enjin MLX tidak dapat dilekapkan"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "Tiada model dikonfigurasikan untuk dilekapkan. Pilih satu dalam Providers › LeanZero MLX."
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "Enjin MLX tidak dapat dinyahlekap"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Keupayaan pengubahsuaian fail penuh, sunting, cipta dan padam fail secara bebas."

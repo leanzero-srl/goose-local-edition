@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "テスト"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "書き込み中"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "アイドル"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "モデル未読み込み"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "プロンプト読み込み中"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "待機中"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "マウント開始以降に確保されたメモリ"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "モデルサイズに対する確保済みメモリ"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "チャット · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "/v1 経由の外部クライアント · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "goose セッション（{type}） · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "{count} 件のリクエスト"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "空きメモリに対するモデルサイズ"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "のキャッシュ参照がヒット"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "キャッシュから取得したプロンプトトークン"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "使用中の GPU メモリ"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "読み込んだプロンプトトークン"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "処理したリクエスト"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "エンジン稼働時間"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "書き込んだトークン"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "マウントに失敗しました — エラーは上のバナーにあります。"
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "収まります（余裕 {spare} GB）"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "収まります（予約 {reserve} GB を超えて余裕 {spare} GB）"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "空き {gb} GB"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB をマウント"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "エンジン {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "ライブ統計を取得できません"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "重みを読み込み中"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "あと {gb} GB の空きメモリが必要"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "/ {gb} GB"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "モデルを選ぶとマウントに必要な量が表示されます。"
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "プロンプトトークン、{elapsed} 読み込み中"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s（このプロンプトの読み込み）"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s（読み込み、直前のプロンプト）"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "まだプロンプトを読み込んでいません"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "ライブ統計を読み込み中…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "処理中のリクエスト"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "上限に対する書き込み済みトークン"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count} はキャッシュから"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "待機中"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "プロンプト読み込み中"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} トークン"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "書き込み中"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} トークン"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} / {max} トークン"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "処理対象"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "利用者を読み取れませんでした: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "直近 {count} 回の書き込み速度"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "確認中"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "失敗"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "マウント中"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "実行中"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "停止"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "到達不能"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "エンジンの状態を読み取れませんでした。"
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "実行中の swarm: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, other {このアプリのチャットや /v1 以外からのリクエスト # 件}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, other {件のリクエストが待機中}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s（書き込み）"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s（書き込み、前回）"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "まだ書き込みはありません"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "自動"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "思考の制御を利用できません: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "MLX エンジンをマウントできませんでした"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "マウントするモデルが設定されていません。Providers › LeanZero MLX で選んでください。"
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "MLX エンジンをアンマウントできませんでした"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "ファイルを自由に編集、作成、削除できる完全なファイル変更権限。"

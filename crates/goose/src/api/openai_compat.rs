@@ -723,12 +723,19 @@ async fn chat_completions(
     let (tx, mut rx) = mpsc::channel::<TurnEvent>(64);
     let turn_agents = agents.clone();
     let turn_session = session_id.clone();
-    drop(tokio::spawn(run_turn(
-        turn_agents,
-        turn_session,
-        translated,
-        tx,
-    )));
+    // Listed as an external client's work for exactly the turn's life (the desktop's MLX tile and
+    // tray attribute engine requests by it; see providers::mlx_serving).
+    let serving = crate::providers::mlx_serving::register(
+        crate::providers::mlx_serving::ServingVia::OpenaiApi,
+        Some(session_id.clone()),
+        &model_ref.provider,
+        &model_ref.model,
+        None,
+    );
+    drop(tokio::spawn(async move {
+        let _serving = serving;
+        run_turn(turn_agents, turn_session, translated, tx).await
+    }));
 
     if request.stream {
         let (sse_tx, sse_rx) = mpsc::channel::<String>(64);

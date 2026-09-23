@@ -2714,6 +2714,186 @@
   "microphoneSelector.test": {
     "defaultMessage": "테스트"
   },
+  "mlxStateTile.activity.generating": {
+    "defaultMessage": "작성 중"
+  },
+  "mlxStateTile.activity.idle": {
+    "defaultMessage": "유휴"
+  },
+  "mlxStateTile.activity.notLoaded": {
+    "defaultMessage": "모델이 로드되지 않음"
+  },
+  "mlxStateTile.activity.prefill": {
+    "defaultMessage": "프롬프트 읽는 중"
+  },
+  "mlxStateTile.activity.queued": {
+    "defaultMessage": "대기열"
+  },
+  "mlxStateTile.claimed": {
+    "defaultMessage": "마운트 시작 이후 점유한 메모리"
+  },
+  "mlxStateTile.claimedBar": {
+    "defaultMessage": "모델 크기 대비 점유 메모리"
+  },
+  "mlxStateTile.client.chat": {
+    "defaultMessage": "채팅 · {name}"
+  },
+  "mlxStateTile.client.external": {
+    "defaultMessage": "/v1을 통한 외부 클라이언트 · {model}"
+  },
+  "mlxStateTile.client.session": {
+    "defaultMessage": "goose 세션({type}) · {name}"
+  },
+  "mlxStateTile.client.times": {
+    "defaultMessage": "요청 {count}개"
+  },
+  "mlxStateTile.costBar": {
+    "defaultMessage": "여유 메모리 대비 모델 크기"
+  },
+  "mlxStateTile.fact.cacheHits": {
+    "defaultMessage": "캐시 조회 적중"
+  },
+  "mlxStateTile.fact.cacheSaved": {
+    "defaultMessage": "캐시에서 가져온 프롬프트 토큰"
+  },
+  "mlxStateTile.fact.gpu": {
+    "defaultMessage": "사용 중인 GPU 메모리"
+  },
+  "mlxStateTile.fact.promptRead": {
+    "defaultMessage": "읽은 프롬프트 토큰"
+  },
+  "mlxStateTile.fact.served": {
+    "defaultMessage": "처리한 요청"
+  },
+  "mlxStateTile.fact.uptime": {
+    "defaultMessage": "엔진 가동 시간"
+  },
+  "mlxStateTile.fact.written": {
+    "defaultMessage": "작성한 토큰"
+  },
+  "mlxStateTile.failedFallback": {
+    "defaultMessage": "마운트에 실패했습니다 — 오류는 위 배너에 있습니다."
+  },
+  "mlxStateTile.fits": {
+    "defaultMessage": "들어갑니다, {spare}GB 여유"
+  },
+  "mlxStateTile.fitsTight": {
+    "defaultMessage": "들어갑니다, 예비 {reserve}GB 위로 {spare}GB 여유"
+  },
+  "mlxStateTile.free": {
+    "defaultMessage": "{gb}GB 여유"
+  },
+  "mlxStateTile.gbToMount": {
+    "defaultMessage": "GB 마운트"
+  },
+  "mlxStateTile.groupLabel": {
+    "defaultMessage": "엔진 {state}"
+  },
+  "mlxStateTile.liveUnavailable": {
+    "defaultMessage": "실시간 통계를 사용할 수 없음"
+  },
+  "mlxStateTile.loadingWeights": {
+    "defaultMessage": "가중치 로드 중"
+  },
+  "mlxStateTile.needsMore": {
+    "defaultMessage": "여유 메모리가 {gb}GB 더 필요합니다"
+  },
+  "mlxStateTile.ofGb": {
+    "defaultMessage": "/ {gb}GB"
+  },
+  "mlxStateTile.pickModel": {
+    "defaultMessage": "모델을 고르면 마운트 비용이 표시됩니다."
+  },
+  "mlxStateTile.promptSize": {
+    "defaultMessage": "프롬프트 토큰, {elapsed}째 읽는 중"
+  },
+  "mlxStateTile.readRate": {
+    "defaultMessage": "tok/s (이 프롬프트 읽기)"
+  },
+  "mlxStateTile.readRateLast": {
+    "defaultMessage": "tok/s (읽기, 마지막 프롬프트)"
+  },
+  "mlxStateTile.readRateNone": {
+    "defaultMessage": "아직 읽은 프롬프트 없음"
+  },
+  "mlxStateTile.readingLive": {
+    "defaultMessage": "실시간 통계 읽는 중…"
+  },
+  "mlxStateTile.requestsAria": {
+    "defaultMessage": "처리 중인 요청"
+  },
+  "mlxStateTile.row.bar": {
+    "defaultMessage": "한도 대비 작성한 토큰"
+  },
+  "mlxStateTile.row.cached": {
+    "defaultMessage": "{count}개는 캐시에서"
+  },
+  "mlxStateTile.row.queued": {
+    "defaultMessage": "대기열"
+  },
+  "mlxStateTile.row.reading": {
+    "defaultMessage": "프롬프트 읽는 중"
+  },
+  "mlxStateTile.row.tokens": {
+    "defaultMessage": "{count} 토큰"
+  },
+  "mlxStateTile.row.writing": {
+    "defaultMessage": "작성 중"
+  },
+  "mlxStateTile.row.written": {
+    "defaultMessage": "{written} 토큰"
+  },
+  "mlxStateTile.row.writtenOf": {
+    "defaultMessage": "{written} / {max} 토큰"
+  },
+  "mlxStateTile.serving": {
+    "defaultMessage": "처리 중"
+  },
+  "mlxStateTile.servingUnknown": {
+    "defaultMessage": "사용 주체를 읽을 수 없음: {detail}"
+  },
+  "mlxStateTile.sparkAria": {
+    "defaultMessage": "최근 {count}회 측정의 작성 속도"
+  },
+  "mlxStateTile.state.checking": {
+    "defaultMessage": "확인 중"
+  },
+  "mlxStateTile.state.failed": {
+    "defaultMessage": "실패"
+  },
+  "mlxStateTile.state.mounting": {
+    "defaultMessage": "마운트 중"
+  },
+  "mlxStateTile.state.running": {
+    "defaultMessage": "실행 중"
+  },
+  "mlxStateTile.state.stopped": {
+    "defaultMessage": "중지됨"
+  },
+  "mlxStateTile.state.unreachable": {
+    "defaultMessage": "연결 불가"
+  },
+  "mlxStateTile.statusUnread": {
+    "defaultMessage": "엔진 상태를 읽을 수 없습니다."
+  },
+  "mlxStateTile.swarmLive": {
+    "defaultMessage": "실행 중인 swarm: {runs}"
+  },
+  "mlxStateTile.unattributed": {
+    "defaultMessage": "{count, plural, other {이 앱의 채팅이나 /v1이 아닌 요청 #개}}"
+  },
+  "mlxStateTile.waiting": {
+    "defaultMessage": "{count, plural, other {개 요청 대기 중}}"
+  },
+  "mlxStateTile.writeRate": {
+    "defaultMessage": "tok/s (작성)"
+  },
+  "mlxStateTile.writeRateLast": {
+    "defaultMessage": "tok/s (작성, 마지막 실행)"
+  },
+  "mlxStateTile.writeRateNone": {
+    "defaultMessage": "아직 작성한 내용 없음"
+  },
   "mlxThinking.auto": {
     "defaultMessage": "자동"
   },
@@ -2758,6 +2938,15 @@
   },
   "mlxThinking.unavailable": {
     "defaultMessage": "사고 제어를 사용할 수 없음: {reason}"
+  },
+  "mlxTray.mountFailed": {
+    "defaultMessage": "MLX 엔진을 마운트할 수 없습니다"
+  },
+  "mlxTray.noModel": {
+    "defaultMessage": "마운트할 모델이 설정되어 있지 않습니다. Providers › LeanZero MLX에서 하나를 고르세요."
+  },
+  "mlxTray.unmountFailed": {
+    "defaultMessage": "MLX 엔진을 마운트 해제할 수 없습니다"
   },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "파일을 자유롭게 편집, 생성, 삭제할 수 있습니다."

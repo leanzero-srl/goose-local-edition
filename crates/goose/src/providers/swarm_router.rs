@@ -496,6 +496,9 @@ impl NodeProbe for LiveProbe {
 pub(crate) struct Lease {
     pub node: Node,
     _permit: OwnedSemaphorePermit,
+    /// The node is the local MLX engine: this turn is listed as in flight on it for exactly the
+    /// lease's life (see `mlx_serving`).
+    _serving: Option<super::mlx_serving::ServingGuard>,
 }
 
 pub(crate) struct Router {
@@ -659,9 +662,19 @@ impl Router {
             queue_depth = self.queued.load(Ordering::SeqCst),
             "pick"
         );
+        let serving = matches!(node.kind, NodeKind::MlxSidecar).then(|| {
+            super::mlx_serving::register(
+                super::mlx_serving::ServingVia::SwarmRouter,
+                crate::session_context::current_session_id(),
+                node.provider_name(),
+                &node.model_id,
+                Some(&node.id),
+            )
+        });
         Lease {
             node: node.clone(),
             _permit: permit,
+            _serving: serving,
         }
     }
 }
@@ -1020,6 +1033,45 @@ mod tests {
             .unwrap();
         assert_eq!(l3.node.id, "a");
         drop((lease, l2, l3));
+    }
+
+    #[tokio::test]
+    async fn a_lease_on_the_mlx_engine_is_listed_as_serving_its_session_for_its_life() {
+        let router = Router::new();
+        let mlx = Node {
+            kind: NodeKind::MlxSidecar,
+            ..node("serving-test-mlx", 2, 1)
+        };
+        let lm = node("serving-test-lm", 2, 9);
+        let probe = FakeProbe::all_idle(&[mlx.clone(), lm.clone()]);
+        let mine = |id: &str| {
+            super::super::mlx_serving::snapshot()
+                .into_iter()
+                .filter(|e| e.node_id.as_deref() == Some(id))
+                .collect::<Vec<_>>()
+        };
+
+        let lease = crate::session_context::with_session_id(Some("20260923_42".to_string()), {
+            router.pick(std::slice::from_ref(&mlx), &probe, 11, &HashSet::new())
+        })
+        .await
+        .unwrap();
+        let listed = mine("serving-test-mlx");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].session_id.as_deref(), Some("20260923_42"));
+        assert_eq!(listed[0].provider, "omlx");
+        assert_eq!(listed[0].model, "serving-test-mlx-model");
+
+        // An LM Studio lease is not the MLX engine's work and is never listed.
+        let other = router
+            .pick(std::slice::from_ref(&lm), &probe, 12, &HashSet::new())
+            .await
+            .unwrap();
+        assert!(mine("serving-test-lm").is_empty());
+
+        drop(lease);
+        assert!(mine("serving-test-mlx").is_empty());
+        drop(other);
     }
 
     #[tokio::test]

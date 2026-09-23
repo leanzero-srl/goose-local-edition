@@ -1,4 +1,6 @@
 import type { MlxLiveStatusResult } from '../../utils/mlxLiveStatus';
+import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
+import type { MlxServing } from '../../utils/mlxServing';
 
 /**
  * The state tile's live instrument, as pure functions over MEASURED inputs: Rapid-MLX's own
@@ -12,6 +14,12 @@ import type { MlxLiveStatusResult } from '../../utils/mlxLiveStatus';
 
 const GIB = 1024 * 1024 * 1024;
 
+/**
+ * How often the engine is read while it runs — the Providers view's status poll and main's tray
+ * monitor share it, so the tile and the menu bar tick together.
+ */
+export const MLX_STATUS_POLL_MS = 2000;
+
 export interface MlxLiveRequest {
   /** `request_id` — the row's stable identity across polls. */
   id: string;
@@ -24,6 +32,10 @@ export interface MlxLiveRequest {
   completionTokens: number;
   maxTokens: number | null;
   tokensPerSecond: number | null;
+  /** Seconds from ARRIVAL to the first token (queue wait included); null until that token lands. */
+  ttftS: number | null;
+  /** Prompt tokens the prefix cache supplied, so the engine never computed them. */
+  cachedTokens: number | null;
 }
 
 export interface MlxLiveStats {
@@ -41,6 +53,12 @@ export interface MlxLiveStats {
   numWaiting: number | null;
   activeMemoryGb: number | null;
   cacheHitRate: number | null;
+  /** Prompt tokens the prefix cache supplied across the engine's life (`cache.tokens_saved`). */
+  cacheTokensSaved: number | null;
+  /** Lifetime counters since the engine process started (they reset with `uptimeS`). */
+  totalRequests: number | null;
+  totalPromptTokens: number | null;
+  totalCompletionTokens: number | null;
   requests: MlxLiveRequest[];
 }
 
@@ -78,6 +96,8 @@ export function parseMlxLiveStatus(body: unknown): MlxLiveRead {
       completionTokens: num(r.completion_tokens) ?? 0,
       maxTokens: num(r.max_tokens),
       tokensPerSecond: num(r.tokens_per_second),
+      ttftS: num(r.ttft_s),
+      cachedTokens: num(r.cached_tokens),
     });
   });
   return {
@@ -90,6 +110,10 @@ export function parseMlxLiveStatus(body: unknown): MlxLiveRead {
       numWaiting: num(root.num_waiting),
       activeMemoryGb: metal ? num(metal.active_memory_gb) : null,
       cacheHitRate: cache ? num(cache.hit_rate) : null,
+      cacheTokensSaved: cache ? num(cache.tokens_saved) : null,
+      totalRequests: num(root.total_requests_processed),
+      totalPromptTokens: num(root.total_prompt_tokens),
+      totalCompletionTokens: num(root.total_completion_tokens),
       requests,
     },
   };
@@ -121,12 +145,56 @@ export function liveDecodeTps(stats: MlxLiveStats): number {
     .reduce((sum, r) => sum + (r.tokensPerSecond ?? 0), 0);
 }
 
-/** The last decode rate this view MEASURED while something generated — the idle tile's "last run". */
-export function lastMeasuredTps(history: readonly TpsSample[]): number | null {
-  for (let i = history.length - 1; i >= 0; i--) {
-    if (history[i].tps > 0) return history[i].tps;
+/**
+ * The prompt-reading (prefill) rate the engine achieved on the request whose first token landed
+ * most recently: (prompt − cached) / ttft_s — the tokens it actually COMPUTED over the time it took
+ * to compute them, the same accounting oMLX's usage history calls "prefill speed". Cached tokens are
+ * excluded because a prefix-cache hit reads as thousands of tok/s it never did (the engine's own
+ * aggregate `prompt_tps` counts them, and is sticky like `generation_tps`, so it is never shown).
+ * ttft_s runs from ARRIVAL, so time queued behind another request is inside it: the figure is
+ * conservative, never flattering. A request still in prefill has no rate yet — the engine reports
+ * no per-request progress — so this is 0 until some request has written its first token.
+ */
+export function measuredPrefillTps(stats: MlxLiveStats): number {
+  let best: { firstTokenAge: number; tps: number } | null = null;
+  for (const r of stats.requests) {
+    if (r.phase !== 'generation' || r.ttftS == null || r.ttftS <= 0 || r.promptTokens == null) {
+      continue;
+    }
+    const computed = r.promptTokens - (r.cachedTokens ?? 0);
+    if (computed <= 0) continue;
+    // Seconds since the first token: the smallest is the prefill that finished last.
+    const firstTokenAge = (r.elapsedS ?? r.ttftS) - r.ttftS;
+    if (best == null || firstTokenAge < best.firstTokenAge) {
+      best = { firstTokenAge, tps: computed / r.ttftS };
+    }
   }
-  return null;
+  return best?.tps ?? 0;
+}
+
+/**
+ * The last rates this reader MEASURED — what an idle tile or tray states as "last run". Kept apart
+ * from the sparkline window (which forgets after two minutes) and dropped when the engine's own
+ * uptime goes backwards (a restarted engine, possibly on another model, has measured nothing yet).
+ */
+export interface LastRates {
+  uptimeS: number | null;
+  decodeTps: number | null;
+  prefillTps: number | null;
+}
+
+export const NO_RATES: LastRates = { uptimeS: null, decodeTps: null, prefillTps: null };
+
+export function advanceLastRates(prev: LastRates, stats: MlxLiveStats): LastRates {
+  const restarted = prev.uptimeS != null && stats.uptimeS != null && stats.uptimeS < prev.uptimeS;
+  const base = restarted ? NO_RATES : prev;
+  const decode = liveDecodeTps(stats);
+  const prefill = measuredPrefillTps(stats);
+  return {
+    uptimeS: stats.uptimeS ?? base.uptimeS,
+    decodeTps: decode > 0 ? decode : base.decodeTps,
+    prefillTps: prefill > 0 ? prefill : base.prefillTps,
+  };
 }
 
 export interface TpsSample {
@@ -251,6 +319,15 @@ export function compactTokens(n: number): string {
   return String(n);
 }
 
+/** A rate a person reads at a glance: one decimal under 100 tok/s, whole numbers above. */
+export function formatRate(tps: number, locale?: string): string {
+  const digits = tps >= 100 ? 0 : 1;
+  return new Intl.NumberFormat(locale, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(tps);
+}
+
 /** "27m 54s" / "45s" from the engine's own elapsed seconds. */
 export function formatElapsed(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
@@ -276,4 +353,22 @@ export async function readMlxLiveStatus(baseUrl: string): Promise<MlxLiveRead> {
   }
   if (!result.ok) return { ok: false, detail: `${result.error}: ${result.detail}` };
   return parseMlxLiveStatus(result.body);
+}
+
+/**
+ * WHO the local engine is serving, as main last read it (utils/mlxEngineMonitor.ts) — null when this
+ * build has no bridge, main has not read a running engine, or the bridge fails: the tile then shows
+ * no "Serving" block rather than an empty one that would read as "nobody".
+ */
+export async function readMlxServing(): Promise<MlxServing | null> {
+  const bridge = (
+    window as unknown as { electron?: { mlxEngineActivity?: () => Promise<MlxEngineSnapshot> } }
+  ).electron?.mlxEngineActivity;
+  if (!bridge) return null;
+  try {
+    const snapshot = await bridge();
+    return snapshot.mode === 'running' ? snapshot.serving : null;
+  } catch {
+    return null;
+  }
 }

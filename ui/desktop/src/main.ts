@@ -21,7 +21,11 @@ import { uploadBenchmarkVideo } from './benchVideoUpload';
 import { BenchMediaServer, readBenchMedia } from './benchMedia';
 import { pickBenchShots, limitBenchShotsForPublish, type BenchShot } from './benchShots';
 import { projectBenchScore, recoverStoredSb8Score } from './benchScoreProjection';
-import type { OpenDialogOptions, OpenDialogReturnValue } from 'electron';
+import type {
+  MenuItemConstructorOptions,
+  OpenDialogOptions,
+  OpenDialogReturnValue,
+} from 'electron';
 import {
   app,
   App,
@@ -93,7 +97,7 @@ import { formatAppName, errorMessage, formatErrorForLogging } from './utils/conv
 import { isRetiredGooseChatApp } from './utils/retiredApps';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings, getKeyboardShortcuts } from './utils/settings';
-import { getBrandName } from './utils/mainBrand';
+import { defaultGooseConfigPath, getBrandName } from './utils/mainBrand';
 import * as crypto from 'crypto';
 import * as yaml from 'yaml';
 import windowStateKeeper from 'electron-window-state';
@@ -101,6 +105,7 @@ import {
   getUpdateAvailable,
   registerUpdateIpcHandlers,
   setAutoDownloadDisabled,
+  setTrayEngineSection,
   setTrayRef,
   setupAutoUpdater,
   updateTrayMenu,
@@ -112,7 +117,16 @@ import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-insta
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
 import { fleetChatHandler, fleetProbeHandler } from './utils/fleetIpc';
-import { fetchMlxLiveStatus } from './utils/mlxLiveStatus';
+import { MLX_LIVE_STATUS_TIMEOUT_MS, fetchMlxLiveStatus } from './utils/mlxLiveStatus';
+import {
+  MlxEngineMonitor,
+  isMlxEngineReport,
+  mlxEngineConfigFromYaml,
+  type MlxEngineSnapshot,
+} from './utils/mlxEngineMonitor';
+import { fetchMlxServing, serveHttpBase, type MlxServingRow } from './utils/mlxServing';
+import { buildMlxTrayModel, type MlxTrayAction, type MlxTrayItem } from './utils/mlxTray';
+import { MLX_STATUS_POLL_MS } from './components/leanzero-swarm/mlxLiveStats';
 import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
 import {
@@ -1663,6 +1677,9 @@ const createTray = () => {
     tray = new Tray(iconPath);
     setTrayRef(tray);
     updateTrayMenu(getUpdateAvailable());
+    lastMlxTrayMenu = '';
+    renderMlxTray(mlxMonitor.current());
+    mlxMonitor.wake();
 
     if (process.platform === 'win32') {
       tray.on('click', showWindow);
@@ -2027,6 +2044,115 @@ ipcMain.handle('fleet-chat', fleetChatHandler(mainFetch));
 ipcMain.handle('mlx-live-status', (_event, baseUrl: unknown) =>
   fetchMlxLiveStatus(typeof baseUrl === 'string' ? baseUrl : '', mainFetch)
 );
+
+// The LeanZero MLX engine's live presence owned by MAIN (utils/mlxEngineMonitor.ts): the menu-bar
+// title and menu section, and the state tile's "who is using it". ONE read loop, running only while
+// the engine answers; woken by a renderer's ACP status read (`mlx-engine-report`), the tray being
+// created and the tray menu opening. "Who" comes from each goose backend's GET /mlx-engine/serving.
+const mlxEngineConfig = () => {
+  let text: string;
+  try {
+    text = fsSync.readFileSync(defaultGooseConfigPath(), 'utf8');
+  } catch {
+    return { baseUrl: null, modelId: null };
+  }
+  return mlxEngineConfigFromYaml(text);
+};
+const mlxActionWindow = (): BrowserWindow | null =>
+  BrowserWindow.getFocusedWindow() ??
+  BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ??
+  null;
+const mlxSwarmRuns = (): string[] => {
+  const runs = new Set<string>();
+  if (activeBenchRun) runs.add(activeBenchRun.runId ?? path.basename(activeBenchRun.workdir));
+  for (const target of liveSwarmRunTargets(() => true)) runs.add(target.runId);
+  return [...runs];
+};
+const mlxMonitor = new MlxEngineMonitor({
+  readStatus: (baseUrl) => fetchMlxLiveStatus(baseUrl, mainFetch),
+  readServing: async () => {
+    const leases = gooseServeLeases.liveLeases();
+    if (leases.length === 0) return { ok: false, detail: 'no goose backend is running' };
+    const rows: MlxServingRow[] = [];
+    for (const lease of leases) {
+      const base = serveHttpBase(lease.acpUrl);
+      if (!base) return { ok: false, detail: 'a goose backend has no http address' };
+      const read = await fetchMlxServing(
+        base,
+        lease.secretKey,
+        mainFetch,
+        MLX_LIVE_STATUS_TIMEOUT_MS
+      );
+      if (!read.ok) return read;
+      rows.push(...read.rows);
+    }
+    return { ok: true, rows };
+  },
+  configBaseUrl: () => mlxEngineConfig().baseUrl,
+  swarmRuns: mlxSwarmRuns,
+  onSnapshot: (snapshot) => renderMlxTray(snapshot),
+  schedule: (fn, ms) => {
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
+  },
+  intervalMs: MLX_STATUS_POLL_MS,
+});
+
+const runMlxTrayAction = (action: MlxTrayAction) => {
+  const win = mlxActionWindow();
+  if (!win) return;
+  if (action === 'open-providers') {
+    if (!win.isVisible()) win.show();
+    win.focus();
+    win.webContents.send('set-view', 'leanzero-swarm');
+    return;
+  }
+  // Mount/unmount are ACP calls, and the ACP client lives in the renderer (useMlxTrayActions).
+  win.webContents.send('mlx-tray-action', action);
+};
+
+const mlxTrayMenuItem = (item: MlxTrayItem): MenuItemConstructorOptions => {
+  switch (item.type) {
+    case 'separator':
+      return { type: 'separator' };
+    case 'info':
+      return { label: item.label, enabled: false };
+    case 'action':
+      return {
+        label: item.label,
+        enabled: item.enabled,
+        click: () => runMlxTrayAction(item.action),
+      };
+  }
+};
+
+let lastMlxTrayMenu = '';
+const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
+  if (!tray) return;
+  // No engine configured and none reported: the tray says nothing about one.
+  const silent = snapshot.mode === 'unknown' && snapshot.baseUrl == null;
+  const model = buildMlxTrayModel(snapshot, {
+    canAct: mlxActionWindow() != null,
+    mountModelId:
+      snapshot.mode === 'running' || snapshot.mode === 'mounting'
+        ? null
+        : mlxEngineConfig().modelId,
+  });
+  if (process.platform === 'darwin') {
+    tray.setTitle(silent ? '' : model.title, { fontType: 'monospacedDigit' });
+  }
+  const items = silent ? [] : model.items;
+  const key = JSON.stringify(items);
+  if (key === lastMlxTrayMenu) return;
+  lastMlxTrayMenu = key;
+  setTrayEngineSection(items.map(mlxTrayMenuItem), () => mlxMonitor.wake());
+};
+
+ipcMain.on('mlx-engine-report', (_event, report: unknown) => {
+  if (isMlxEngineReport(report)) mlxMonitor.reportFromRenderer(report);
+});
+// The state tile reads "who is using it" from here, on its own poll — main's latest read, no fetch.
+ipcMain.handle('mlx-engine-activity', () => mlxMonitor.current());
 
 // The swarm's MACHINES, from `lms ps --json`: each loaded model's identifier is prefixed with its
 // machine name (workhorse-…, mihai-…), and `deviceIdentifier: null` marks the LOCAL machine's own
@@ -6091,6 +6217,7 @@ async function getAllowList(): Promise<string[]> {
 let relaunchOnQuit = false;
 
 app.on('will-quit', async () => {
+  mlxMonitor.stop();
   // A benchmark run cannot outlive the app that owns it: the same per-pid cancel as the button,
   // synchronous so it lands before Electron finishes quitting (U-M8).
   if (activeBenchRun !== null) {
