@@ -319,23 +319,39 @@ pub(crate) fn parse_skill_frontmatter(raw: &str) -> (String, String) {
 /// Every directory the agent reads skills from, paired with whether each is a
 /// global (home-rooted) location. Order matches discovery precedence: project
 /// dirs first, then global dirs.
+///
+/// When the project IS a directory whose skill roots are also global roots — the home folder, the
+/// desktop's default working dir — `<project>/.agents/skills` and `~/.agents/skills` are one folder.
+/// It used to be listed twice, first as project, and the first listing wins the `seen` set, so every
+/// global skill was labelled PROJECT. The folder keeps its first (project-precedence) position and
+/// the global flag; the later duplicate is dropped.
 pub fn all_skill_dirs(working_dir: Option<&Path>) -> Vec<(PathBuf, bool)> {
-    let mut dirs: Vec<(PathBuf, bool)> = Vec::new();
-
-    if let Some(wd) = working_dir {
-        dirs.push((wd.join(".agents").join("skills"), false));
-        dirs.push((wd.join(".goose").join("skills"), false));
-        dirs.push((wd.join(".claude").join("skills"), false));
-    }
-
+    let mut global_dirs: Vec<PathBuf> = Vec::new();
     let home = dirs::home_dir();
     if let Some(h) = home.as_ref() {
-        dirs.push((h.join(".agents").join("skills"), true));
+        global_dirs.push(h.join(".agents").join("skills"));
     }
-    dirs.push((Paths::config_dir().join("skills"), true));
+    global_dirs.push(Paths::config_dir().join("skills"));
     if let Some(h) = home.as_ref() {
-        dirs.push((h.join(".claude").join("skills"), true));
-        dirs.push((h.join(".config").join("agents").join("skills"), true));
+        global_dirs.push(h.join(".claude").join("skills"));
+        global_dirs.push(h.join(".config").join("agents").join("skills"));
+    }
+
+    let mut dirs: Vec<(PathBuf, bool)> = Vec::new();
+    if let Some(wd) = working_dir {
+        for project_dir in [
+            wd.join(".agents").join("skills"),
+            wd.join(".goose").join("skills"),
+            wd.join(".claude").join("skills"),
+        ] {
+            let is_global = global_dirs.iter().any(|g| same_dir(g, &project_dir));
+            dirs.push((project_dir, is_global));
+        }
+    }
+    for global_dir in global_dirs {
+        if !dirs.iter().any(|(d, _)| same_dir(d, &global_dir)) {
+            dirs.push((global_dir, true));
+        }
     }
 
     dirs.extend(
@@ -345,6 +361,16 @@ pub fn all_skill_dirs(working_dir: Option<&Path>) -> Vec<(PathBuf, bool)> {
     );
 
     dirs
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 fn parse_skill_content(content: &str, path: &Path, global: bool) -> Option<SourceEntry> {
@@ -685,5 +711,39 @@ mod tests {
             "manifest still too big for a local context: {} chars",
             rendered.len()
         );
+    }
+
+    // UX audit 2026-09-23: the desktop's working dir was the home folder, so `~/.agents/skills` was
+    // scanned first as `<project>/.agents/skills` and every global skill was labelled PROJECT.
+    #[test]
+    fn a_project_that_is_the_home_folder_does_not_relabel_the_global_roots() {
+        let home = dirs::home_dir().expect("home dir");
+        let dirs = all_skill_dirs(Some(&home));
+        let agents = home.join(".agents").join("skills");
+        let listed: Vec<_> = dirs.iter().filter(|(d, _)| *d == agents).collect();
+        assert_eq!(listed, vec![&(agents.clone(), true)], "{dirs:?}");
+        assert_eq!(
+            dirs[0],
+            (agents, true),
+            "the folder keeps its first position"
+        );
+        let claude = home.join(".claude").join("skills");
+        assert_eq!(
+            dirs.iter().filter(|(d, _)| *d == claude).count(),
+            1,
+            "{dirs:?}"
+        );
+        assert!(dirs.contains(&(home.join(".goose").join("skills"), false)));
+    }
+
+    #[test]
+    fn a_real_project_keeps_its_skill_roots_project_scoped() {
+        let project = tempfile::tempdir().expect("tempdir");
+        let dirs = all_skill_dirs(Some(project.path()));
+        assert_eq!(
+            dirs[0],
+            (project.path().join(".agents").join("skills"), false)
+        );
+        assert!(dirs.iter().any(|(_, global)| *global));
     }
 }
