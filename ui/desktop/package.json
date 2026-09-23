@@ -1,7 +1,7 @@
 {
   "name": "goose-app",
   "productName": "Goose Swarm",
-  "version": "3.0.12",
+  "version": "3.0.13",
   "description": "Goose App",
   "engines": {
     "node": "^24.10.0",
