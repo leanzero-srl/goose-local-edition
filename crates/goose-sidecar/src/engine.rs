@@ -62,9 +62,15 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
 /// is the whole MTP auto-detection: the engine's injector probes exactly this name first.
 pub const MTP_SIDECAR_FILE: &str = "mtp.safetensors";
 
-/// Draft depth handed to the engine's MTP speculative decoder (`num_speculative_tokens`).
-/// K=3 is the engine's own intended default for the EV auto-K controller.
-pub const MTP_SPECULATIVE_TOKENS: u32 = 3; // measured: Rapid-MLX cli.py's own MTP default ("K=1 carries draft overhead with no net speedup; default to K=3")
+/// Draft depth handed to the engine's MTP speculative decoder (`num_speculative_tokens`). It
+/// is the CEILING of the engine's EV auto-K controller, which picks K in 0..=this per round
+/// (scheduler.py `mtp_max_k`); the checkpoint caps it again (`mtplx_runtime.json`
+/// `mtp_depth_max`, 3 on the Qwen3.8-27B MTPLX build). A/B 2026-09-23 on that 27B, greedy,
+/// N=3 medians (evals/mlx-engine-bench/results/2026-09-23-phase0-k{3-env,2,1}): decode tok/s
+/// short chat K3 22.8 / K2 23.0 / K1 20.2, 32k prompt K3 17.1 / K2 17.4 / K1 18.4 — K2 is
+/// inside K3's noise on both, K1 trades -11% short for +8% long (under K3 the controller
+/// already drops to K<=2 on 90%+ of the 32k rounds), so no depth beats 3 on both and it stays.
+pub const MTP_SPECULATIVE_TOKENS: u32 = 3; // measured: evals/mlx-engine-bench/results/2026-09-23-phase0-k{3-env,2,1} (and Rapid-MLX cli.py's own K=3 MTP default)
 
 /// The two files an mlx-lm LoRA/DoRA adapter directory must hold (`mlx_lm.lora --train`
 /// writes both). The engine refuses `--adapter-path` without them (exit 2) — we refuse
