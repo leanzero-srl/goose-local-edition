@@ -567,6 +567,22 @@ struct StreamBlockState {
     reasoning_blocks: HashMap<i32, (String, String)>,
     /// content_block_index -> accumulated redacted (encrypted) reasoning bytes
     redacted_blocks: HashMap<i32, Vec<u8>>,
+    /// `MessageStop` arrived: the protocol's end of the answer. An event stream that closes
+    /// without it was cut mid-answer.
+    message_stopped: bool,
+    events: usize,
+}
+
+impl StreamBlockState {
+    fn ensure_complete(&self) -> Result<(), ProviderError> {
+        if self.message_stopped {
+            return Ok(());
+        }
+        Err(ProviderError::stream_truncated(format!(
+            "no messageStop after {} events — the answer is incomplete",
+            self.events
+        )))
+    }
 }
 
 /// Convert a single `ConverseStream` event into zero or more [`Message`]s
@@ -583,6 +599,7 @@ fn process_stream_event(
 ) -> (Vec<Message>, Option<Usage>) {
     let mut messages = Vec::new();
     let mut usage = None;
+    state.events += 1;
 
     match event {
         bedrock::ConverseStreamOutput::ContentBlockStart(ev) => {
@@ -688,8 +705,10 @@ fn process_stream_event(
                 usage = Some(from_bedrock_usage(&u));
             }
         }
-        // MessageStart / MessageStop / unknown variants carry no content
-        // that needs forwarding.
+        bedrock::ConverseStreamOutput::MessageStop(_) => {
+            state.message_stopped = true;
+        }
+        // MessageStart / unknown variants carry no content that needs forwarding.
         _ => {}
     }
 
@@ -897,7 +916,10 @@ impl Provider for BedrockProvider {
                         )),
                     }
                 })?;
-                let Some(event) = event else { break };
+                let Some(event) = event else {
+                    state.ensure_complete()?;
+                    break;
+                };
 
                 let (messages, usage) = process_stream_event(event, &mut state, &message_id);
                 if let Some(usage) = usage {
@@ -1210,6 +1232,49 @@ mod tests {
                 .build()
                 .unwrap(),
         )
+    }
+
+    fn message_stop_event() -> bedrock::ConverseStreamOutput {
+        bedrock::ConverseStreamOutput::MessageStop(
+            bedrock::MessageStopEvent::builder()
+                .stop_reason(bedrock::StopReason::EndTurn)
+                .build()
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn a_stream_with_message_stop_is_complete() {
+        let mut state = StreamBlockState::default();
+        for event in [
+            delta_event(0, bedrock::ContentBlockDelta::Text("Hello".to_string())),
+            stop_event(0),
+            message_stop_event(),
+        ] {
+            process_stream_event(event, &mut state, TEST_MESSAGE_ID);
+        }
+        assert_eq!(state.ensure_complete(), Ok(()));
+    }
+
+    #[test]
+    fn an_event_stream_closed_before_message_stop_is_truncated() {
+        let mut state = StreamBlockState::default();
+        for event in [
+            delta_event(0, bedrock::ContentBlockDelta::Text("Hel".to_string())),
+            delta_event(0, bedrock::ContentBlockDelta::Text("lo".to_string())),
+        ] {
+            process_stream_event(event, &mut state, TEST_MESSAGE_ID);
+        }
+        let err = state
+            .ensure_complete()
+            .expect_err("a cut stream must end in an error, not a short success");
+        assert!(matches!(err, ProviderError::NetworkError(_)), "{err}");
+        assert!(
+            err.to_string()
+                .contains(goose_providers::errors::STREAM_TRUNCATED),
+            "{err}"
+        );
+        assert!(err.to_string().contains("after 2 events"), "{err}");
     }
 
     #[test]

@@ -4,6 +4,10 @@ use thiserror::Error;
 
 use crate::request_log::LogError;
 
+/// The name of the error a stream parser raises when the body ends before its protocol's
+/// completion marker — see [`ProviderError::stream_truncated`].
+pub const STREAM_TRUNCATED: &str = "stream ended before completion";
+
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum ProviderError {
     #[error("Authentication error: {0}")]
@@ -55,6 +59,20 @@ pub enum ProviderError {
 impl ProviderError {
     pub fn stream_decode_error(error: impl std::fmt::Display) -> Self {
         ProviderError::NetworkError(format!("Stream decode error: {error}"))
+    }
+
+    /// The server closed a streamed response before its protocol's completion marker (OpenAI
+    /// chat: a `finish_reason` or `[DONE]`; Anthropic: `message_stop`; Responses:
+    /// `response.completed`/`response.incomplete`; Gemini: a `finishReason`; Bedrock:
+    /// `messageStop`). The partial answer must not pass as a finished one: a serving process
+    /// that dies mid-generation can still close the body cleanly on an HTTP 200, and the only
+    /// evidence of the cut is the missing marker.
+    ///
+    /// It rides `stream_decode_error` on purpose: a clean close mid-answer is the same dropped
+    /// body as a reset one, so it inherits that error's transient retry class and every reader
+    /// already keyed on it (the swarm's mid-stream body-drop re-dispatch).
+    pub fn stream_truncated(detail: impl std::fmt::Display) -> Self {
+        Self::stream_decode_error(format!("{STREAM_TRUNCATED}: {detail}"))
     }
 
     pub fn telemetry_type(&self) -> &'static str {

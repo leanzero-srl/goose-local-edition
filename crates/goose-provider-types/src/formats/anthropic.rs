@@ -144,6 +144,32 @@ const EVENT_MESSAGE_STOP: &str = "message_stop";
 const EVENT_CONTENT_BLOCK_START: &str = "content_block_start";
 const EVENT_CONTENT_BLOCK_DELTA: &str = "content_block_delta";
 const EVENT_CONTENT_BLOCK_STOP: &str = "content_block_stop";
+const EVENT_ERROR: &str = "error";
+
+/// An in-stream `error` event (`{"type":"error","error":{"type":"overloaded_error",...}}`) is the
+/// server reporting WHY the stream is ending; skipping it as an unknown event turned an overload
+/// into a silently short answer.
+fn stream_error_event(data: &Value) -> ProviderError {
+    let error = data.get("error");
+    let kind = error
+        .and_then(|e| e.get("type"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("error");
+    let message = error
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| data.to_string());
+    let details = format!("{kind}: {message}");
+    if kind == "rate_limit_error" {
+        ProviderError::RateLimitExceeded {
+            details,
+            retry_delay: None,
+        }
+    } else {
+        ProviderError::ServerError(details)
+    }
+}
 const STOP_REASON_REFUSAL: &str = "refusal";
 const REFUSAL_FALLBACK_DETAILS: &str = "No additional details were provided.";
 
@@ -771,6 +797,10 @@ where
         let mut message_id: Option<String> = None;
         let mut thinking: Option<ThinkingState> = None;
         let mut stop_reason: Option<String> = None;
+        // `message_stop` is the protocol's end; `[DONE]` is accepted for the OpenAI-style proxies
+        // that append it. A body that ends with neither was cut mid-answer.
+        let mut completed = false;
+        let mut events = 0usize;
 
         while let Some(line_result) = stream.next().await {
             let line = line_result?;
@@ -785,8 +815,10 @@ where
 
             // Handle end of stream
             if data_part.trim() == "[DONE]" {
+                completed = true;
                 break;
             }
+            events += 1;
 
             // Parse the JSON event
             let event: StreamingEvent = match serde_json::from_str(data_part) {
@@ -987,7 +1019,11 @@ where
                     }
                     continue;
                 }
+                EVENT_ERROR => {
+                    Err(stream_error_event(&event.data))?;
+                }
                 EVENT_MESSAGE_STOP => {
+                    completed = true;
                     if let Some(usage_data) = event.data.get("usage") {
                         let usage = get_usage(usage_data).unwrap_or_default();
                         let model = event.data.get("model")
@@ -1004,6 +1040,13 @@ where
                     continue;
                 }
             }
+        }
+
+        if !completed {
+            Err(ProviderError::stream_truncated(format!(
+                "no message_stop after {events} events (stop_reason {}) — the answer is incomplete",
+                stop_reason.as_deref().unwrap_or("never sent")
+            )))?;
         }
 
         // A tool_use block left open at stream end never received its
@@ -2234,6 +2277,86 @@ mod tests {
         let parts = collect_stream(events).await;
         assert_eq!(parts.tool_calls, vec!["write"]);
         assert!(parts.tool_errors.is_empty());
+    }
+
+    const TEXT_HEAD: &str = concat!(
+        r#"data: {"type":"message_start","message":{"id":"msg_c","role":"assistant","content":[],"model":"claude-opus-4-6","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+        "\n",
+        r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+        "\n",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hel"}}"#,
+        "\n",
+        r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}}"#,
+        "\n",
+    );
+
+    /// (text streamed, the error the stream ended with).
+    async fn text_and_error(events: &str) -> (String, Option<ProviderError>) {
+        let mut text = String::new();
+        for result in collect_stream_results(events).await {
+            match result {
+                Ok((Some(msg), _)) => text.push_str(&msg.as_concat_text()),
+                Ok((None, _)) => {}
+                Err(e) => return (text, Some(ProviderError::from_stream_error(e))),
+            }
+        }
+        (text, None)
+    }
+
+    #[tokio::test]
+    async fn a_stream_ended_by_message_stop_is_complete() {
+        let events = format!(
+            "{TEXT_HEAD}{}\n{}\n{}",
+            r#"data: {"type":"content_block_stop","index":0}"#,
+            r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}"#,
+            r#"data: {"type":"message_stop"}"#,
+        );
+        let (text, err) = text_and_error(&events).await;
+        assert_eq!(text, "Hello");
+        assert!(err.is_none(), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_proxy_that_ends_with_done_is_complete() {
+        let (text, err) = text_and_error(&format!("{TEXT_HEAD}data: [DONE]")).await;
+        assert_eq!(text, "Hello");
+        assert!(err.is_none(), "{err:?}");
+    }
+
+    /// The body closes before `message_stop` — even after `message_delta` announced a
+    /// stop_reason, the protocol's end never arrived.
+    #[tokio::test]
+    async fn a_stream_cut_before_message_stop_is_truncated() {
+        let (text, err) = text_and_error(TEXT_HEAD).await;
+        assert_eq!(text, "Hello", "what did arrive is still streamed");
+        let err = err.expect("a cut stream must end in an error, not a short success");
+        assert!(matches!(err, ProviderError::NetworkError(_)), "{err}");
+        assert!(
+            err.to_string().contains(crate::errors::STREAM_TRUNCATED),
+            "{err}"
+        );
+        assert!(err.to_string().contains("after 4 events"), "{err}");
+        assert!(crate::retry::should_retry(
+            &err,
+            &crate::retry::RetryConfig::default().transient_only()
+        ));
+    }
+
+    /// An `error` event is the server saying why the stream is ending; it used to fall into the
+    /// unknown-event arm and leave a silently short answer.
+    #[tokio::test]
+    async fn an_error_event_mid_stream_is_surfaced() {
+        let events = format!(
+            "{TEXT_HEAD}event: error\n{}",
+            r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+        );
+        let (_, err) = text_and_error(&events).await;
+        assert_eq!(
+            err,
+            Some(ProviderError::ServerError(
+                "overloaded_error: Overloaded".to_string()
+            ))
+        );
     }
 
     /// Anthropic prefix caching only pays off when the bytes up to a cache
