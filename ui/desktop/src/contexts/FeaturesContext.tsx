@@ -4,6 +4,8 @@ import { getAcpFeatureCapabilities } from '../acp/capabilities';
 interface FeaturesContextValue {
   localInference: boolean;
   mlxEngine: boolean;
+  /** The distributed MLX engine (one model across several Macs) — absent on older backends. */
+  mlxDistributed: boolean;
   leanzeroLink: boolean;
   isLoading: boolean;
 }
@@ -13,6 +15,7 @@ const FeaturesContext = createContext<FeaturesContextValue | null>(null);
 export function FeaturesProvider({ children }: { children: React.ReactNode }) {
   const [localInference, setLocalInference] = useState(false);
   const [mlxEngine, setMlxEngine] = useState(false);
+  const [mlxDistributed, setMlxDistributed] = useState(false);
   const [leanzeroLink, setLeanzeroLink] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -22,6 +25,7 @@ export function FeaturesProvider({ children }: { children: React.ReactNode }) {
         const capabilities = await getAcpFeatureCapabilities();
         setLocalInference(capabilities.localInference);
         setMlxEngine(capabilities.mlxEngine ?? false);
+        setMlxDistributed(capabilities.mlxDistributed ?? false);
         setLeanzeroLink(capabilities.leanzeroLink ?? false);
       } catch (error) {
         console.warn('[FeaturesContext] Failed to fetch features:', error);
@@ -35,10 +39,11 @@ export function FeaturesProvider({ children }: { children: React.ReactNode }) {
     () => ({
       localInference,
       mlxEngine,
+      mlxDistributed,
       leanzeroLink,
       isLoading,
     }),
-    [localInference, mlxEngine, leanzeroLink, isLoading]
+    [localInference, mlxEngine, mlxDistributed, leanzeroLink, isLoading]
   );
 
   return <FeaturesContext.Provider value={value}>{children}</FeaturesContext.Provider>;

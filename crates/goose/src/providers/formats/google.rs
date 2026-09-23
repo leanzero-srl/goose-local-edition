@@ -387,6 +387,11 @@ where
         let mut last_signature: Option<String> = None;
         let stream_id = Uuid::new_v4().to_string();
         let mut incomplete_data: Option<String> = None;
+        // Gemini ends a stream with a candidate carrying `finishReason` (or, for a blocked
+        // prompt, `promptFeedback.blockReason` and no candidate); `[DONE]` is accepted for
+        // proxies that append it. A body that ends with none of them was cut mid-answer.
+        let mut completed = false;
+        let mut chunks = 0usize;
 
         while let Some(line_result) = stream.next().await {
             let line = line_result?;
@@ -406,6 +411,7 @@ where
             };
 
             if data_part.trim() == "[DONE]" {
+                completed = true;
                 break;
             }
 
@@ -453,6 +459,11 @@ where
                 )))?;
             }
 
+            chunks += 1;
+            if is_terminal_chunk(&chunk) {
+                completed = true;
+            }
+
             if let Ok(usage) = get_usage(&chunk) {
                 if usage.input_tokens.is_some() || usage.output_tokens.is_some() {
                     let model = chunk.get("modelVersion")
@@ -485,10 +496,31 @@ where
             }
         }
 
+        if !completed {
+            Err(ProviderError::stream_truncated(format!(
+                "no finishReason after {chunks} chunks — the answer is incomplete"
+            )))?;
+        }
+
         if let Some(usage) = final_usage {
             yield (None, Some(usage));
         }
     }
+}
+
+fn is_terminal_chunk(chunk: &Value) -> bool {
+    let finished_candidate = chunk
+        .get("candidates")
+        .and_then(Value::as_array)
+        .is_some_and(|candidates| {
+            candidates
+                .iter()
+                .any(|c| c.get("finishReason").is_some_and(|r| !r.is_null()))
+        });
+    let blocked_prompt = chunk
+        .pointer("/promptFeedback/blockReason")
+        .is_some_and(|r| !r.is_null());
+    finished_candidate || blocked_prompt
 }
 
 #[derive(Serialize)]
@@ -1525,5 +1557,63 @@ data: [DONE]"#;
         let config = ModelConfig::new("gpt-4o");
         let result = get_thinking_config(&config);
         assert!(result.is_none());
+    }
+}
+
+#[cfg(test)]
+mod stream_completion_tests {
+    use super::*;
+    use futures::StreamExt;
+    use goose_providers::errors::STREAM_TRUNCATED;
+
+    const HEL: &str = r#"data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hel"}]}}],"modelVersion":"gemini-2.5-flash"}"#;
+    const LO: &str = r#"data: {"candidates":[{"content":{"role":"model","parts":[{"text":"lo"}]}}],"modelVersion":"gemini-2.5-flash"}"#;
+    const LAST: &str = r#"data: {"candidates":[{"content":{"role":"model","parts":[{"text":"!"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":3,"totalTokenCount":8},"modelVersion":"gemini-2.5-flash"}"#;
+
+    async fn text_and_error(lines: &[&str]) -> (String, Option<ProviderError>) {
+        let owned: Vec<anyhow::Result<String>> = lines.iter().map(|l| Ok(l.to_string())).collect();
+        let mut messages =
+            std::pin::pin!(response_to_streaming_message(futures::stream::iter(owned)));
+        let mut text = String::new();
+        while let Some(item) = messages.next().await {
+            match item {
+                Ok((Some(msg), _)) => text.push_str(&msg.as_concat_text()),
+                Ok((None, _)) => {}
+                Err(e) => return (text, Some(ProviderError::from_stream_error(e))),
+            }
+        }
+        (text, None)
+    }
+
+    #[tokio::test]
+    async fn a_candidate_with_finish_reason_ends_the_stream() {
+        let (text, err) = text_and_error(&[HEL, LO, LAST]).await;
+        assert_eq!(text, "Hello!");
+        assert!(err.is_none(), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn done_ends_the_stream() {
+        let (text, err) = text_and_error(&[HEL, LO, "data: [DONE]"]).await;
+        assert_eq!(text, "Hello");
+        assert!(err.is_none(), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_blocked_prompt_ends_the_stream() {
+        let blocked = r#"data: {"promptFeedback":{"blockReason":"SAFETY"},"modelVersion":"gemini-2.5-flash"}"#;
+        let (text, err) = text_and_error(&[blocked]).await;
+        assert!(text.is_empty());
+        assert!(err.is_none(), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_stream_cut_before_finish_reason_is_truncated() {
+        let (text, err) = text_and_error(&[HEL, LO]).await;
+        assert_eq!(text, "Hello", "what did arrive is still streamed");
+        let err = err.expect("a cut stream must end in an error, not a short success");
+        assert!(matches!(err, ProviderError::NetworkError(_)), "{err}");
+        assert!(err.to_string().contains(STREAM_TRUNCATED), "{err}");
+        assert!(err.to_string().contains("after 2 chunks"), "{err}");
     }
 }

@@ -6,6 +6,7 @@ import {
   HardDrive,
   Laptop,
   Loader2,
+  Network,
   Minus,
   Pencil,
   Play,
@@ -115,6 +116,12 @@ import {
   type TpsSample,
 } from './mlxLiveStats';
 import { useFeatures } from '../../contexts/FeaturesContext';
+import { defineMessages, useIntl } from '../../i18n';
+import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
+import { DistributedEngineSection } from './DistributedEngineSection';
+import { modeSummary, ownsTheMac } from './mlxDistributed';
+import { formatMlxMode } from './mlxModeLabel';
+import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import {
   leanzeroLinkNodes,
   leanzeroLinkStatus,
@@ -133,6 +140,19 @@ const STATE_TONE: Record<MlxEngineState, Tone> = {
   failed: 'err',
   stopped: 'stopped',
 };
+
+const i18n = defineMessages({
+  distributedOwns: { id: 'mlxEngineView.distributedOwns', defaultMessage: 'Distributed' },
+  distributedOwnsText: {
+    id: 'mlxEngineView.distributedOwnsText',
+    defaultMessage:
+      'The distributed engine owns this Mac: the single engine cannot mount until it is stopped in the Distributed engine section below.',
+  },
+  servingDistributed: {
+    id: 'mlxEngineView.servingDistributed',
+    defaultMessage: 'Serving across Macs',
+  },
+});
 
 /** A quiet table cell: the meta register in tabular figures. */
 const META = cx(TYPE.meta, TNUM);
@@ -648,9 +668,14 @@ interface EngineSectionProps {
   serving: MlxServing | null;
   /** The memory watch across an in-flight mount. */
   mountWatch: MountWatch | null;
+  /** The distributed engine (this Mac only); while it owns the Mac the single engine cannot mount. */
+  distributed: MlxDistributedStatus | null;
+  /** Which engine owns this Mac, in words — on the tile. */
+  modeLabel: string;
 }
 
 function EngineSection(props: EngineSectionProps) {
+  const intl = useIntl();
   const {
     status,
     statusError,
@@ -668,8 +693,12 @@ function EngineSection(props: EngineSectionProps) {
     lastRates,
     serving,
     mountWatch,
+    distributed,
+    modeLabel,
   } = props;
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // goose refuses a single mount while the distributed engine owns the Mac, so none is offered.
+  const distributedOwns = ownsTheMac(distributed);
 
   const state = status?.state ?? null;
   const running = state === 'running';
@@ -780,8 +809,7 @@ function EngineSection(props: EngineSectionProps) {
   // when failed, else the plain Mount. With the engine up it stays by the picker: a spinner while
   // mounting, "Mounted" as a disabled status for the mounted selection, "Switch model" for another
   // selection (the backend shuts the old model down).
-  const tileAction =
-    state === 'failed' ? (
+  const tileAction = distributedOwns ? null : state === 'failed' ? (
       <Button variant="secondary" icon={<RefreshCw />} onClick={onMount} disabled={!canMount}>
         Retry
       </Button>
@@ -835,6 +863,14 @@ function EngineSection(props: EngineSectionProps) {
         />
       )}
       {mountError && <ToneBanner tone="err" label="Mount failed" text={mountError} />}
+      {distributedOwns && (
+        <ToneBanner
+          tone="accent"
+          label={intl.formatMessage(i18n.distributedOwns)}
+          text={intl.formatMessage(i18n.distributedOwnsText)}
+          testId="mlx-distributed-owns"
+        />
+      )}
       <RestartRequiredBanner
         status={status}
         settings={settings}
@@ -861,13 +897,23 @@ function EngineSection(props: EngineSectionProps) {
           cost={cost}
           failedError={failedError}
           action={tileAction}
+          modeLabel={modeLabel}
+          distributed={distributed}
         />
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           <div className="flex min-w-0 flex-col gap-1">
             <span className={TYPE.meta}>
-              {running || state === 'mounting' ? 'Serving' : 'Served model'}
+              {distributedOwns
+                ? intl.formatMessage(i18n.servingDistributed)
+                : running || state === 'mounting'
+                  ? 'Serving'
+                  : 'Served model'}
             </span>
-            {mountedModelId && (running || state === 'mounting') ? (
+            {distributedOwns && distributed?.modelId ? (
+              <span className={cx('break-all font-mono text-lz-h2 text-lz-ink')}>
+                {distributed.modelId}
+              </span>
+            ) : mountedModelId && (running || state === 'mounting') ? (
               <span className={cx('break-all font-mono text-lz-h2 text-lz-ink')}>
                 {mountedModelId}
               </span>
@@ -909,7 +955,7 @@ function EngineSection(props: EngineSectionProps) {
                 models={models}
                 value={mountModelId}
                 onChange={setMountModelId}
-                disabled={engineBusy || state === 'mounting'}
+                disabled={engineBusy || state === 'mounting' || distributedOwns}
               />
             </div>
             {rowAction}
@@ -2326,7 +2372,8 @@ const MlxEngineView: React.FC = () => {
 
   // Which linked device every op targets. `targetNodeId === null` means THIS device (local):
   // activeNodeId is then `undefined`, omitted from the wire, so the local path is byte-identical.
-  const { leanzeroLink } = useFeatures();
+  const { leanzeroLink, mlxDistributed } = useFeatures();
+  const intl = useIntl();
   const linkNodes = useLinkNodes(leanzeroLink);
   const peers = useMemo(() => linkNodes?.peers ?? [], [linkNodes]);
   const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
@@ -2338,6 +2385,10 @@ const MlxEngineView: React.FC = () => {
   );
   const activeNodeId = selectedPeer ? selectedPeer.node_id : undefined;
   const remoteHostname = selectedPeer ? selectedPeer.hostname : null;
+
+  // The distributed engine is supervised by THIS Mac only: read while this device is the target.
+  const distributed = useMlxDistributedStatus(mlxDistributed && activeNodeId === undefined);
+  const modeLabel = formatMlxMode(intl, modeSummary(distributed.status), remoteHostname);
 
   // Copying a model to a linked device exists only when a peer is linked: with no peer nothing
   // is fetched and no copy control renders — a single machine is exactly as before.
@@ -3010,6 +3061,15 @@ const MlxEngineView: React.FC = () => {
             <StateBadge state={status.state} />
           </span>
         )}
+        {/* Which engine owns this Mac, on every tab. */}
+        <span className="pb-2">
+          <Chip
+            tone={ownsTheMac(distributed.status) ? 'accent' : undefined}
+            icon={<Network />}
+          >
+            <span data-testid="mlx-mode-chip">{modeLabel}</span>
+          </Chip>
+        </span>
         {/* pr-3: without it the ScrollArea's right edge shaved the final glyph off "Rapid-MLX"
             (caught live on the packaged build, 2026-08-31). */}
         <span className={cx('ml-auto shrink-0 pb-2.5 pr-3', TYPE.meta)}>Powered by Rapid-MLX</span>
@@ -3033,6 +3093,20 @@ const MlxEngineView: React.FC = () => {
           lastRates={lastRates}
           serving={serving}
           mountWatch={mountWatch}
+          distributed={distributed.status}
+          modeLabel={modeLabel}
+        />
+      )}
+      {tab === 'engine' && (
+        <DistributedEngineSection
+          capability={mlxDistributed}
+          peerHostname={remoteHostname}
+          status={distributed.status}
+          statusError={distributed.error}
+          onRefresh={distributed.refresh}
+          models={models}
+          singleStatus={status}
+          onSingleChanged={() => void refreshStatus()}
         />
       )}
       {tab === 'models' && (

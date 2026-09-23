@@ -1239,6 +1239,44 @@ fn classify_choiceless_frame(value: &Value) -> Option<ProviderError> {
     Some(ProviderError::ServerError(details))
 }
 
+/// Appended when the server stopped the answer at its output-token limit. tick.py greps this
+/// exact text to count guillotined lanes — reword it only together with that grep.
+pub const OUTPUT_TRUNCATED_BY_LENGTH: &str = "\n\n[OUTPUT TRUNCATED: the model hit its output-token \
+     limit mid-generation — this response is INCOMPLETE]";
+
+/// What a chat-completions stream has shown of its own end.
+///
+/// Servers disagree on the terminator — Rapid-MLX and mlx_lm.server send a `finish_reason`
+/// chunk AND `[DONE]`, some gateways send `[DONE]` with `finish_reason` null on every delta,
+/// others a `finish_reason` and no `[DONE]` — so EITHER marker is a finished stream. Only a body
+/// that ends with neither was cut: a serving process killed mid-generation closes the response
+/// cleanly on an HTTP 200 (measured 2026-09-24: the distributed engine's SIGKILLed rank → client
+/// EOF with no `[DONE]` and no `finish_reason`), which reads exactly like a short answer.
+#[derive(Default)]
+struct StreamCompletion {
+    frames: usize,
+    saw_finish_reason: bool,
+    saw_done: bool,
+}
+
+impl StreamCompletion {
+    fn observe(&mut self, chunk: &StreamingChunk) {
+        if chunk.choices.iter().any(|c| c.finish_reason.is_some()) {
+            self.saw_finish_reason = true;
+        }
+    }
+
+    fn ensure_complete(&self) -> Result<(), ProviderError> {
+        if self.saw_finish_reason || self.saw_done {
+            return Ok(());
+        }
+        Err(ProviderError::stream_truncated(format!(
+            "no finish_reason and no [DONE] after {} data frames — the answer is incomplete",
+            self.frames
+        )))
+    }
+}
+
 /// Parse one SSE `data:` payload.
 ///
 /// Returns `Ok(None)` for a metadata-only frame — a JSON object with no `choices` key at
@@ -1314,12 +1352,14 @@ where
         let mut last_seen_model: Option<String> = None;
         let mut forming = FormingProgress::default();
         let mut unplaced_text = String::new();
+        let mut completion = StreamCompletion::default();
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
             let line = strip_data_prefix(&response_str);
 
             if line.is_some_and(|l| l == "[DONE]") {
+                completion.saw_done = true;
                 break 'outer;
             }
 
@@ -1327,11 +1367,13 @@ where
                 continue
             }
 
+            completion.frames += 1;
             let Some(chunk) = parse_streaming_chunk(
                 line.ok_or_else(|| anyhow!("unexpected stream format"))?
             )? else {
                 continue  // metadata-only frame
             };
+            completion.observe(&chunk);
             if let Some(model) = &chunk.model {
                 last_seen_model = Some(model.clone());
             }
@@ -1396,15 +1438,18 @@ where
                             let response_str = response_chunk?;
                             if let Some(line) = strip_data_prefix(&response_str) {
                                 if line == "[DONE]" {
+                                    completion.saw_done = true;
                                     break 'outer;
                                 }
 
+                                completion.frames += 1;
                                 // A metadata frame here must NOT fall through to the
                                 // empty-choices branch below, which ends accumulation and
                                 // would truncate this tool call's arguments.
                                 let Some(tool_chunk) = parse_streaming_chunk(line)? else {
                                     continue
                                 };
+                                completion.observe(&tool_chunk);
                                 if let Some(model) = &tool_chunk.model {
                                     last_seen_model = Some(model.clone());
                                 }
@@ -1476,6 +1521,10 @@ where
                                 }
                             }
                         } else {
+                            // The body ended while this tool call's arguments were still
+                            // arriving: yielding it would hand the agent a call built from
+                            // a fragment.
+                            completion.ensure_complete()?;
                             break;
                         }
                     }
@@ -1666,10 +1715,7 @@ where
                     // deterministic text every downstream reader sees: a truncated final_output no
                     // longer passes as complete, and the retry machinery has a signal to re-ask.
                     if chunk.choices[0].finish_reason.as_deref() == Some("length") {
-                        msg = msg.with_text(
-                            "\n\n[OUTPUT TRUNCATED: the model hit its output-token limit \
-                             mid-generation — this response is INCOMPLETE]",
-                        );
+                        msg = msg.with_text(OUTPUT_TRUNCATED_BY_LENGTH);
                     }
 
                     yield (
@@ -1687,6 +1733,8 @@ where
                 yield (None, usage)
             }
         }
+
+        completion.ensure_complete()?;
 
         let filtered = think_filter.finish();
         let mut trailing_thinking = String::new();
@@ -5553,5 +5601,168 @@ mod force_tool_until_act_tests {
         let msgs = vec![Message::user().with_text("hi")];
         let p = req(&ModelConfig::new("m"), &msgs, &[write_tool()]);
         assert!(p.get("tool_choice").is_none());
+    }
+}
+
+/// A chat-completions stream is finished only when it shows its end — a `finish_reason` or
+/// `[DONE]`, either one — and a body that closes with neither is a named, retryable error.
+#[cfg(test)]
+mod stream_completion_tests {
+    use super::*;
+    use crate::errors::STREAM_TRUNCATED;
+    use crate::retry::{should_retry, RetryConfig};
+    use futures::StreamExt;
+
+    /// mlx_lm.server 0.31.3's delta frame (`generate_response` with `finish_reason=None`).
+    fn mlx_delta(text: &str) -> String {
+        format!(
+            r#"data: {{"id":"chatcmpl-1","system_fingerprint":"0.31.3","object":"chat.completion.chunk","model":"m","created":1,"choices":[{{"index":0,"finish_reason":null,"delta":{{"role":"assistant","content":{}}}}}]}}"#,
+            serde_json::to_string(text).unwrap()
+        )
+    }
+
+    fn finish(reason: &str) -> String {
+        format!(
+            r#"data: {{"id":"chatcmpl-1","object":"chat.completion.chunk","model":"m","created":1,"choices":[{{"index":0,"finish_reason":"{reason}","delta":{{}}}}]}}"#
+        )
+    }
+
+    const USAGE: &str = r#"data: {"id":"chatcmpl-1","object":"chat.completion.chunk","model":"m","created":1,"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}"#;
+
+    /// (text streamed, the error the stream ended with).
+    async fn run(lines: Vec<String>) -> (String, Option<ProviderError>) {
+        let stream = tokio_stream::iter(lines.into_iter().map(Ok));
+        let mut messages = std::pin::pin!(response_to_streaming_message(stream));
+        let mut text = String::new();
+        while let Some(item) = messages.next().await {
+            match item {
+                Ok((Some(msg), _)) => text.push_str(&msg.as_concat_text()),
+                Ok((None, _)) => {}
+                Err(e) => return (text, Some(ProviderError::from_stream_error(e))),
+            }
+        }
+        (text, None)
+    }
+
+    fn assert_truncated(err: Option<ProviderError>, frames: usize) {
+        let err = err.expect("a cut stream must end in an error, not a short success");
+        let text = err.to_string();
+        assert!(matches!(err, ProviderError::NetworkError(_)), "{text}");
+        assert!(text.contains(STREAM_TRUNCATED), "{text}");
+        assert!(
+            text.contains(&format!("after {frames} data frames")),
+            "{text}"
+        );
+        assert!(
+            text.contains("Stream decode error"),
+            "the swarm's body-drop reader keys on this marker: {text}"
+        );
+        assert!(should_retry(&err, &RetryConfig::default().transient_only()));
+    }
+
+    #[tokio::test]
+    async fn finish_reason_and_done_is_complete() {
+        let (text, err) = run(vec![
+            mlx_delta("Hel"),
+            mlx_delta("lo"),
+            finish("stop"),
+            USAGE.into(),
+            "data: [DONE]".into(),
+        ])
+        .await;
+        assert_eq!(text, "Hello");
+        assert!(err.is_none(), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn finish_reason_without_done_is_complete() {
+        let (text, err) = run(vec![mlx_delta("Hello"), finish("stop"), USAGE.into()]).await;
+        assert_eq!(text, "Hello");
+        assert!(err.is_none(), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn done_with_a_null_finish_reason_is_complete() {
+        let (text, err) =
+            run(vec![mlx_delta("Hel"), mlx_delta("lo"), "data: [DONE]".into()]).await;
+        assert_eq!(text, "Hello");
+        assert!(err.is_none(), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_body_that_ends_with_neither_marker_is_truncated() {
+        let (text, err) = run(vec![mlx_delta("Hel"), mlx_delta("lo")]).await;
+        assert_eq!(text, "Hello", "what did arrive is still streamed");
+        assert_truncated(err, 2);
+    }
+
+    #[tokio::test]
+    async fn an_empty_body_is_truncated() {
+        let (text, err) = run(vec![]).await;
+        assert!(text.is_empty());
+        assert_truncated(err, 0);
+    }
+
+    /// The measured case, 2026-09-24: the distributed engine (mlx_lm.server on every rank) streamed
+    /// "Count from 1 to 3000", the peer rank was SIGKILLed after 30+ chunks, and the client read
+    /// EOF on HTTP 200 with no `[DONE]` and no `finish_reason`. Before this, the parser returned
+    /// "1\n…30\n" as a finished answer.
+    #[tokio::test]
+    async fn the_recorded_sigkilled_rank_stream_is_truncated() {
+        let lines: Vec<String> = (1..=30).map(|n| mlx_delta(&format!("{n}\n"))).collect();
+        let (text, err) = run(lines).await;
+        assert!(text.starts_with("1\n2\n3\n") && text.ends_with("30\n"), "{text:?}");
+        assert_truncated(err, 30);
+    }
+
+    /// A cut in the middle of a tool call's arguments must not yield the call at all: the fragment
+    /// would reach the agent as a request built from half its arguments.
+    #[tokio::test]
+    async fn a_cut_inside_a_tool_call_yields_no_tool_request() {
+        let lines = vec![
+            r#"data: {"id":"c","object":"chat.completion.chunk","model":"m","created":1,"choices":[{"index":0,"finish_reason":null,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\"path\": \"app/"}}]}}]}"#.to_string(),
+            r#"data: {"id":"c","object":"chat.completion.chunk","model":"m","created":1,"choices":[{"index":0,"finish_reason":null,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"main.py\", \"content\": \"imp"}}]}}]}"#.to_string(),
+        ];
+        let stream = tokio_stream::iter(lines.into_iter().map(Ok));
+        let mut messages = std::pin::pin!(response_to_streaming_message(stream));
+        let mut err = None;
+        while let Some(item) = messages.next().await {
+            match item {
+                Ok((Some(msg), _)) => assert!(
+                    !msg.content
+                        .iter()
+                        .any(|c| matches!(c, MessageContent::ToolRequest(_))),
+                    "a truncated tool call was yielded: {msg:?}"
+                ),
+                Ok((None, _)) => {}
+                Err(e) => {
+                    err = Some(ProviderError::from_stream_error(e));
+                    break;
+                }
+            }
+        }
+        assert_truncated(err, 2);
+    }
+
+    #[tokio::test]
+    async fn a_tool_call_finished_by_finish_reason_is_complete() {
+        let lines = vec![
+            r#"data: {"id":"c","object":"chat.completion.chunk","model":"m","created":1,"choices":[{"index":0,"finish_reason":null,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"write","arguments":"{\"a\""}}]}}]}"#.to_string(),
+            r#"data: {"id":"c","object":"chat.completion.chunk","model":"m","created":1,"choices":[{"index":0,"finish_reason":"tool_calls","delta":{"tool_calls":[{"index":0,"function":{"arguments":": 1}"}}]}}]}"#.to_string(),
+        ];
+        let stream = tokio_stream::iter(lines.into_iter().map(Ok));
+        let mut messages = std::pin::pin!(response_to_streaming_message(stream));
+        let mut calls = 0;
+        while let Some(item) = messages.next().await {
+            let (msg, _) = item.expect("a finished tool call is not an error");
+            if let Some(msg) = msg {
+                calls += msg
+                    .content
+                    .iter()
+                    .filter(|c| matches!(c, MessageContent::ToolRequest(r) if r.tool_call.is_ok()))
+                    .count();
+            }
+        }
+        assert_eq!(calls, 1);
     }
 }

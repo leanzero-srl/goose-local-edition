@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { buildMlxTrayModel, mlxTrayTitle, type MlxTrayItem } from './mlxTray';
+import {
+  MLX_DISTRIBUTED_STALE_MS,
+  buildMlxTrayModel,
+  mlxTrayTitle,
+  type MlxTrayItem,
+} from './mlxTray';
+import { toMlxDistributedReport } from './mlxDistributedReport';
+import {
+  FLASH_READY,
+  FLASH_SERVING,
+  STOPPED_WITH_CONFIG,
+} from '../components/leanzero-swarm/mlxDistributed.fixtures';
 import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
 import { attributeServing, type MlxServingRow } from './mlxServing';
 import {
@@ -43,7 +54,7 @@ const labels = (items: MlxTrayItem[]) =>
 const actions = (items: MlxTrayItem[]) =>
   items.flatMap((i) => (i.type === 'action' ? [[i.action, i.label, i.enabled]] : []));
 
-const OPTS = { canAct: true, mountModelId: CONFIGURED };
+const OPTS = { canAct: true, mountModelId: CONFIGURED, distributed: null };
 
 describe('mlxTrayTitle — the text beside the menu-bar icon', () => {
   it('writing shows the live writing rate; reading shows the prompt size; idle says so', () => {
@@ -164,12 +175,12 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
       ['mount', 'Mount Qwen3.8-27B-Atlassian-Q8-mlx', true],
     ]);
     expect(
-      actions(buildMlxTrayModel(off, { canAct: false, mountModelId: CONFIGURED }).items)
+      actions(buildMlxTrayModel(off, { canAct: false, mountModelId: CONFIGURED, distributed: null }).items)
     ).toEqual([
       ['open-providers', 'Open Providers', false],
       ['mount', 'Mount Qwen3.8-27B-Atlassian-Q8-mlx', false],
     ]);
-    expect(actions(buildMlxTrayModel(off, { canAct: true, mountModelId: null }).items)[1]).toEqual([
+    expect(actions(buildMlxTrayModel(off, { canAct: true, mountModelId: null, distributed: null }).items)[1]).toEqual([
       'mount',
       'Mount (pick a model in Providers first)',
       false,
@@ -203,5 +214,82 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
     expect(got).toContain('Stale: timeout: no answer within 1500 ms');
     expect(got).toContain("3 requests not from this app's chats or /v1");
     expect(got).toContain('Who is unknown: goose backend returned 401');
+  });
+});
+
+describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
+  const ready = toMlxDistributedReport(FLASH_READY);
+  const fresh = (report = ready) => ({ ...OPTS, distributed: { report, ageMs: 500 } });
+
+  it('the title is the run: ready, requests in flight while serving, held when admission closes', () => {
+    expect(buildMlxTrayModel(INITIAL_SNAPSHOT, fresh()).title).toBe('Dist · ready');
+    expect(buildMlxTrayModel(INITIAL_SNAPSHOT, fresh(toMlxDistributedReport(FLASH_SERVING))).title).toBe(
+      'Dist · 2 in flight'
+    );
+    expect(
+      buildMlxTrayModel(
+        INITIAL_SNAPSHOT,
+        fresh(toMlxDistributedReport({ ...FLASH_SERVING, admissionOpen: false }))
+      ).title
+    ).toBe('Dist · held');
+  });
+
+  it('the menu names the mode, the nodes and backend, per-node memory, restarts and the last alarm', () => {
+    const model = buildMlxTrayModel({ ...INITIAL_SNAPSHOT, mode: 'off' }, fresh());
+    expect(labels(model.items)).toEqual([
+      'LeanZero MLX: distributed, ready',
+      'Distributed · MacBook Pro + workhorse · JACCL',
+      'Model: rapid-mlx/Qwen3.8-Flash-Next-4bit',
+      'MacBook Pro: L0–19 · peak 61.0 of 83.4 GiB budget',
+      'workhorse: L20–47 · peak 42.5 of 55.4 GiB budget',
+      'In flight: 0',
+      'Restarts: 1',
+      'Last: restart — restart 1 of the breaker window',
+      '---',
+      'Open Providers',
+      'Stop the distributed engine',
+    ]);
+    // Mount is refused by goose while the run owns the Mac, so the tray does not offer it.
+    expect(actions(model.items).map(([a]) => a)).toEqual(['open-providers', 'stop-distributed']);
+  });
+
+  it('a node under pressure or unread says so on its line', () => {
+    const report = toMlxDistributedReport({
+      ...FLASH_READY,
+      nodes: [
+        { ...FLASH_READY.nodes[0], pressure: 'warn' },
+        { ...FLASH_READY.nodes[1], state: 'failed', memoryError: 'ssh workhorse: timed out' },
+      ],
+    });
+    const lines = labels(buildMlxTrayModel(INITIAL_SNAPSHOT, fresh(report)).items);
+    expect(lines).toContain('MacBook Pro: L0–19 · peak 61.0 of 83.4 GiB budget · pressure warn');
+    expect(lines).toContain('workhorse (failed): memory unread — ssh workhorse: timed out');
+  });
+
+  it('a read older than three polls is SAID to be stale, never shown as live', () => {
+    const stale = { ...OPTS, distributed: { report: ready, ageMs: MLX_DISTRIBUTED_STALE_MS + 1 } };
+    const model = buildMlxTrayModel(INITIAL_SNAPSHOT, stale);
+    expect(model.title).toBe('Dist · stale');
+    expect(labels(model.items).at(-4)).toBe('Not refreshed for 6s — open goose to read it again');
+  });
+
+  it('single mode with a distributed report: the menu says "Single · this Mac"; a failed run is named', () => {
+    const stopped = toMlxDistributedReport(STOPPED_WITH_CONFIG);
+    const single = buildMlxTrayModel(running(IDLE_STATUS), { ...OPTS, distributed: { report: stopped, ageMs: 0 } });
+    expect(labels(single.items).slice(0, 2)).toEqual(['LeanZero MLX: idle', 'Single · this Mac']);
+    expect(single.title).toBe('Idle');
+
+    const failed = toMlxDistributedReport({
+      ...STOPPED_WITH_CONFIG,
+      state: 'failed',
+      lastError: 'rank 1 died: exit status 137',
+    });
+    const off = buildMlxTrayModel({ ...INITIAL_SNAPSHOT, mode: 'off' }, {
+      ...OPTS,
+      distributed: { report: failed, ageMs: 0 },
+    });
+    expect(off.title).toBe('Dist failed');
+    expect(labels(off.items)).toContain('Distributed engine failed: rank 1 died: exit status 137');
+    expect(actions(off.items).map(([a]) => a)).toEqual(['open-providers', 'mount']);
   });
 });

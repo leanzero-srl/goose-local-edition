@@ -3,6 +3,7 @@ use crate::conversation::token_usage::{ProviderUsage, Usage};
 use crate::errors::ProviderError;
 use crate::formats::openai::{
     extract_reasoning_effort, is_openai_responses_model, openai_reasoning_effort_for_thinking,
+    OUTPUT_TRUNCATED_BY_LENGTH,
 };
 use crate::mcp_utils::extract_text_from_resource;
 use crate::model::ModelConfig;
@@ -207,6 +208,14 @@ pub enum ResponsesStreamEvent {
         sequence_number: i32,
         response: ResponseMetadata,
     },
+    /// Terminal like `response.completed`, with the output cut short by the server's own limit
+    /// (`incomplete_details.reason`: `max_output_tokens`, `content_filter`). Held as a `Value` so
+    /// a server's variant of the envelope ends the stream instead of failing its decode.
+    #[serde(rename = "response.incomplete")]
+    ResponseIncomplete {
+        #[serde(default)]
+        response: Value,
+    },
     #[serde(rename = "response.failed")]
     ResponseFailed { sequence_number: i32, error: Value },
     #[serde(rename = "response.function_call_arguments.delta")]
@@ -262,6 +271,7 @@ fn is_known_responses_stream_event_type(event_type: &str) -> bool {
             | "response.content_part.done"
             | "response.output_text.done"
             | "response.completed"
+            | "response.incomplete"
             | "response.failed"
             | "response.function_call_arguments.delta"
             | "response.function_call_arguments.done"
@@ -814,6 +824,11 @@ where
         let mut final_usage: Option<ProviderUsage> = None;
         let mut output_items: Vec<ResponseOutputItemInfo> = Vec::new();
         let mut is_text_response = false;
+        // `response.completed` / `response.incomplete` end the protocol; `[DONE]` is accepted for
+        // servers that append it. A body that ends with none of them was cut mid-answer.
+        let mut completed = false;
+        let mut events = 0usize;
+        let mut incomplete_reason: Option<String> = None;
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
@@ -842,8 +857,10 @@ where
             };
 
             if data_line == "[DONE]" {
+                completed = true;
                 break 'outer;
             }
+            events += 1;
 
             let Some(event) = parse_responses_stream_event(data_line)? else {
                 continue;
@@ -898,6 +915,19 @@ where
                         output_items = response.output;
                     }
 
+                    completed = true;
+                    break 'outer;
+                }
+
+                ResponsesStreamEvent::ResponseIncomplete { response } => {
+                    incomplete_reason = Some(
+                        response
+                            .pointer("/incomplete_details/reason")
+                            .and_then(Value::as_str)
+                            .unwrap_or("no reason given")
+                            .to_string(),
+                    );
+                    completed = true;
                     break 'outer;
                 }
 
@@ -953,8 +983,26 @@ where
             }
         }
 
+        if !completed {
+            Err(ProviderError::stream_truncated(format!(
+                "no response.completed and no [DONE] after {events} events — the answer is incomplete"
+            )))?;
+        }
+
         // Process final output items and yield usage data
-        let content = process_streaming_output_items(output_items, is_text_response)?;
+        let mut content = process_streaming_output_items(output_items, is_text_response)?;
+        // The chat-completions parser marks a `length` finish the same way: a server-side cutoff
+        // is a finished stream but not a finished answer, and every reader downstream must see so.
+        if let Some(reason) = incomplete_reason {
+            content.push(MessageContent::text(if reason == "max_output_tokens" {
+                OUTPUT_TRUNCATED_BY_LENGTH.to_string()
+            } else {
+                format!(
+                    "\n\n[OUTPUT TRUNCATED: the server ended the response as incomplete \
+                     ({reason}) — this response is INCOMPLETE]"
+                )
+            }));
+        }
 
         if !content.is_empty() {
             let mut message = Message::new(Role::Assistant, chrono::Utc::now().timestamp(), content);
@@ -2064,5 +2112,66 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("malformed arguments"));
+    }
+}
+
+#[cfg(test)]
+mod stream_completion_tests {
+    use super::*;
+    use crate::errors::STREAM_TRUNCATED;
+    use futures::StreamExt;
+
+    const CREATED: &str = r#"data: {"type":"response.created","sequence_number":1,"response":{"id":"resp_1","object":"response","created_at":1,"status":"in_progress","model":"m","output":[]}}"#;
+    const DELTA_HEL: &str = r#"data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_1","output_index":0,"content_index":0,"delta":"Hel"}"#;
+    const DELTA_LO: &str = r#"data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg_1","output_index":0,"content_index":0,"delta":"lo"}"#;
+    const COMPLETED: &str = r#"data: {"type":"response.completed","sequence_number":4,"response":{"id":"resp_1","object":"response","created_at":1,"status":"completed","model":"m","output":[]}}"#;
+
+    async fn text_and_error(lines: &[&str]) -> (String, Option<ProviderError>) {
+        let owned: Vec<anyhow::Result<String>> = lines.iter().map(|l| Ok(l.to_string())).collect();
+        let stream = tokio_stream::iter(owned);
+        let mut messages = std::pin::pin!(responses_api_to_streaming_message(stream));
+        let mut text = String::new();
+        while let Some(item) = messages.next().await {
+            match item {
+                Ok((Some(msg), _)) => text.push_str(&msg.as_concat_text()),
+                Ok((None, _)) => {}
+                Err(e) => return (text, Some(ProviderError::from_stream_error(e))),
+            }
+        }
+        (text, None)
+    }
+
+    #[tokio::test]
+    async fn response_completed_is_complete() {
+        let (text, err) = text_and_error(&[CREATED, DELTA_HEL, DELTA_LO, COMPLETED]).await;
+        assert_eq!(text, "Hello");
+        assert!(err.is_none(), "{err:?}");
+    }
+
+    #[tokio::test]
+    async fn done_without_response_completed_is_complete() {
+        let (text, err) = text_and_error(&[CREATED, DELTA_HEL, DELTA_LO, "data: [DONE]"]).await;
+        assert_eq!(text, "Hello");
+        assert!(err.is_none(), "{err:?}");
+    }
+
+    /// `response.incomplete` is a finished stream but not a finished answer: it ends cleanly and
+    /// the answer carries the same stamp a chat-completions `length` finish does.
+    #[tokio::test]
+    async fn response_incomplete_ends_the_stream_and_is_stamped() {
+        let incomplete = r#"data: {"type":"response.incomplete","sequence_number":4,"response":{"id":"resp_1","object":"response","created_at":1,"status":"incomplete","model":"m","output":[],"incomplete_details":{"reason":"max_output_tokens"}}}"#;
+        let (text, err) = text_and_error(&[CREATED, DELTA_HEL, DELTA_LO, incomplete]).await;
+        assert!(err.is_none(), "{err:?}");
+        assert_eq!(text, format!("Hello{OUTPUT_TRUNCATED_BY_LENGTH}"));
+    }
+
+    #[tokio::test]
+    async fn a_stream_cut_before_its_terminal_event_is_truncated() {
+        let (text, err) = text_and_error(&[CREATED, DELTA_HEL, DELTA_LO]).await;
+        assert_eq!(text, "Hello", "what did arrive is still streamed");
+        let err = err.expect("a cut stream must end in an error, not a short success");
+        assert!(matches!(err, ProviderError::NetworkError(_)), "{err}");
+        assert!(err.to_string().contains(STREAM_TRUNCATED), "{err}");
+        assert!(err.to_string().contains("after 3 events"), "{err}");
     }
 }

@@ -12,8 +12,19 @@ vi.mock('../acp/mlx-engine', () => ({
   mlxEngineSettingsRead: (...a: unknown[]) => settingsRead(...a),
 }));
 vi.mock('../components/leanzero-swarm/mlxLiveStats', () => ({ MLX_STATUS_POLL_MS: 0 }));
+const distributedStop = vi.fn();
+const distributedStatus = vi.fn();
+vi.mock('../acp/mlx-distributed', () => ({
+  mlxDistributedStop: (...a: unknown[]) => distributedStop(...a),
+  mlxDistributedStatus: (...a: unknown[]) => distributedStatus(...a),
+}));
 
-import { runMlxTrayAction } from './useMlxTrayActions';
+import { renderHook, waitFor } from '@testing-library/react';
+import {
+  DistributedStopNotVerified,
+  runMlxTrayAction,
+  useMlxDistributedReporter,
+} from './useMlxTrayActions';
 
 describe('runMlxTrayAction — the tray’s Mount/Unmount through the renderer’s ACP client', () => {
   beforeEach(() => {
@@ -52,5 +63,54 @@ describe('runMlxTrayAction — the tray’s Mount/Unmount through the renderer�
     await runMlxTrayAction('unmount');
     expect(unmount).toHaveBeenCalledTimes(1);
     expect(status).toHaveBeenCalledTimes(1);
+  });
+
+  it('stop-distributed runs the verified stop once; an unverified stop is an error with its steps', async () => {
+    distributedStop.mockResolvedValueOnce({ stop: { steps: ['rank 0 gone'], verified: true } });
+    await runMlxTrayAction('stop-distributed');
+    expect(distributedStop).toHaveBeenCalledTimes(1);
+    expect(unmount).not.toHaveBeenCalled();
+
+    distributedStop.mockResolvedValueOnce({
+      stop: { steps: ['SIGTERM rank 1 pid 5521 → STILL ALIVE'], verified: false },
+    });
+    const error = await runMlxTrayAction('stop-distributed').catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DistributedStopNotVerified);
+    expect((error as DistributedStopNotVerified).steps).toEqual([
+      'SIGTERM rank 1 pid 5521 → STILL ALIVE',
+    ]);
+  });
+});
+
+describe('useMlxDistributedReporter — keeps main’s copy of the distributed engine current', () => {
+  const listeners = new Map<string, () => void>();
+  beforeEach(() => {
+    listeners.clear();
+    distributedStatus.mockReset();
+    (window as unknown as { electron: unknown }).electron = {
+      on: (channel: string, fn: () => void) => listeners.set(channel, fn),
+      off: (channel: string) => listeners.delete(channel),
+    };
+  });
+
+  it('reads while the run owns the Mac, stops when it does not, and reads again on a tray wake', async () => {
+    distributedStatus
+      .mockResolvedValueOnce({ mode: 'distributed' })
+      .mockResolvedValueOnce({ mode: 'distributed' })
+      .mockResolvedValue({ mode: 'single' });
+    const { unmount } = renderHook(() => useMlxDistributedReporter(true));
+    await waitFor(() => expect(distributedStatus).toHaveBeenCalledTimes(3));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(distributedStatus).toHaveBeenCalledTimes(3);
+    listeners.get('mlx-distributed-wake')?.();
+    await waitFor(() => expect(distributedStatus).toHaveBeenCalledTimes(4));
+    unmount();
+    expect(listeners.has('mlx-distributed-wake')).toBe(false);
+  });
+
+  it('without the capability nothing is read', async () => {
+    renderHook(() => useMlxDistributedReporter(false));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(distributedStatus).not.toHaveBeenCalled();
   });
 });

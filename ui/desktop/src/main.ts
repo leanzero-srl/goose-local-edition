@@ -125,7 +125,13 @@ import {
   type MlxEngineSnapshot,
 } from './utils/mlxEngineMonitor';
 import { fetchMlxServing, serveHttpBase, type MlxServingRow } from './utils/mlxServing';
-import { buildMlxTrayModel, type MlxTrayAction, type MlxTrayItem } from './utils/mlxTray';
+import {
+  MLX_DISTRIBUTED_STALE_MS,
+  buildMlxTrayModel,
+  type MlxTrayAction,
+  type MlxTrayItem,
+} from './utils/mlxTray';
+import { isMlxDistributedReport, type MlxDistributedReport } from './utils/mlxDistributedReport';
 import { MLX_STATUS_POLL_MS } from './components/leanzero-swarm/mlxLiveStats';
 import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
@@ -2107,7 +2113,7 @@ const runMlxTrayAction = (action: MlxTrayAction) => {
     win.webContents.send('set-view', 'leanzero-swarm');
     return;
   }
-  // Mount/unmount are ACP calls, and the ACP client lives in the renderer (useMlxTrayActions).
+  // Mount/unmount/stop are ACP calls, and the ACP client lives in the renderer (useMlxTrayActions).
   win.webContents.send('mlx-tray-action', action);
 };
 
@@ -2126,17 +2132,31 @@ const mlxTrayMenuItem = (item: MlxTrayItem): MenuItemConstructorOptions => {
   }
 };
 
+// The DISTRIBUTED engine's presence: main has no ACP client, so a renderer reads goose's
+// `distributedStatus` (useMlxTrayActions) and hands the projection here after every read — while the
+// run owns the Mac on the view's cadence, otherwise when the tray menu opens. The read's age rides
+// along so an old read is SAID to be old (MLX_DISTRIBUTED_STALE_MS), never shown as live.
+let mlxDistributed: { report: MlxDistributedReport; atMs: number } | null = null;
+let mlxDistributedStaleTimer: ReturnType<typeof setTimeout> | null = null;
+
 let lastMlxTrayMenu = '';
 const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   if (!tray) return;
-  // No engine configured and none reported: the tray says nothing about one.
-  const silent = snapshot.mode === 'unknown' && snapshot.baseUrl == null;
+  const distributed = mlxDistributed
+    ? { report: mlxDistributed.report, ageMs: Date.now() - mlxDistributed.atMs }
+    : null;
+  // No engine configured, none reported and no distributed run: the tray says nothing about one.
+  const silent =
+    snapshot.mode === 'unknown' &&
+    snapshot.baseUrl == null &&
+    distributed?.report.mode !== 'distributed';
   const model = buildMlxTrayModel(snapshot, {
     canAct: mlxActionWindow() != null,
     mountModelId:
       snapshot.mode === 'running' || snapshot.mode === 'mounting'
         ? null
         : mlxEngineConfig().modelId,
+    distributed,
   });
   if (process.platform === 'darwin') {
     tray.setTitle(silent ? '' : model.title, { fontType: 'monospacedDigit' });
@@ -2145,11 +2165,26 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   const key = JSON.stringify(items);
   if (key === lastMlxTrayMenu) return;
   lastMlxTrayMenu = key;
-  setTrayEngineSection(items.map(mlxTrayMenuItem), () => mlxMonitor.wake());
+  setTrayEngineSection(items.map(mlxTrayMenuItem), () => {
+    mlxMonitor.wake();
+    mlxActionWindow()?.webContents.send('mlx-distributed-wake');
+  });
 };
 
 ipcMain.on('mlx-engine-report', (_event, report: unknown) => {
   if (isMlxEngineReport(report)) mlxMonitor.reportFromRenderer(report);
+});
+ipcMain.on('mlx-distributed-report', (_event, report: unknown) => {
+  if (!isMlxDistributedReport(report)) return;
+  mlxDistributed = { report, atMs: Date.now() };
+  renderMlxTray(mlxMonitor.current());
+  // While the run owns the Mac a fresh read arrives every poll; if none does, redraw once the
+  // held read turns stale so the tray stops presenting it as live.
+  if (mlxDistributedStaleTimer) clearTimeout(mlxDistributedStaleTimer);
+  mlxDistributedStaleTimer =
+    report.mode === 'distributed'
+      ? setTimeout(() => renderMlxTray(mlxMonitor.current()), MLX_DISTRIBUTED_STALE_MS + 1)
+      : null;
 });
 // The state tile reads "who is using it" from here, on its own poll — main's latest read, no fetch.
 ipcMain.handle('mlx-engine-activity', () => mlxMonitor.current());

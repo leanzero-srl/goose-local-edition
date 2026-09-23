@@ -1,4 +1,5 @@
 import {
+  MLX_STATUS_POLL_MS,
   compactTokens,
   formatElapsed,
   formatRate,
@@ -7,7 +8,13 @@ import {
   mlxActivity,
   type MlxLiveStats,
 } from '../components/leanzero-swarm/mlxLiveStats';
+import {
+  backendName,
+  gb1,
+  layerSpanShort,
+} from '../components/leanzero-swarm/mlxDistributed';
 import type { MlxEngineSnapshot } from './mlxEngineMonitor';
+import type { MlxDistributedReport, MlxDistributedReportNode } from './mlxDistributedReport';
 import type { MlxClient, MlxServing } from './mlxServing';
 
 /**
@@ -17,7 +24,7 @@ import type { MlxClient, MlxServing } from './mlxServing';
  * tested as data. Every figure is one the monitor measured — the same derivations as the state tile.
  */
 
-export type MlxTrayAction = 'open-providers' | 'mount' | 'unmount';
+export type MlxTrayAction = 'open-providers' | 'mount' | 'unmount' | 'stop-distributed';
 
 export type MlxTrayItem =
   | { type: 'info'; label: string }
@@ -35,7 +42,19 @@ export interface MlxTrayOptions {
   canAct: boolean;
   /** The model goose would mount (`mlx_engine.model_id`), or null when none is configured. */
   mountModelId: string | null;
+  /**
+   * The renderer's last read of the DISTRIBUTED engine and how old it is; null when no window has
+   * reported one (a backend without the `mlxDistributed` capability, or no window yet).
+   */
+  distributed: { report: MlxDistributedReport; ageMs: number } | null;
 }
+
+/**
+ * A distributed report older than three missed renderer polls is STALE: main cannot read the
+ * distributed engine itself (ACP lives in the renderer), so past this the tray says it is showing
+ * an old read instead of presenting it as live. ratio: three poll intervals.
+ */
+export const MLX_DISTRIBUTED_STALE_MS = 3 * MLX_STATUS_POLL_MS;
 
 const LABEL_MAX = 80;
 
@@ -219,17 +238,138 @@ function shortModel(id: string): string {
   return id.split('/').pop() || id;
 }
 
+/** "Distributed · MacBook Pro + workhorse · JACCL" — the mode line the tile and the tab say too. */
+export function distributedModeLine(report: MlxDistributedReport): string {
+  const nodes =
+    report.nodeNames.length > 0 ? report.nodeNames.join(' + ') : `${report.nodes.length} nodes`;
+  const backend = backendName(report.backend);
+  return clip(['Distributed', nodes, backend].filter(Boolean).join(' · '));
+}
+
+function ageText(ms: number): string {
+  return formatElapsed(Math.round(ms / 1000));
+}
+
+export function distributedNodeLine(node: MlxDistributedReportNode, runState: string): string {
+  const head = node.state === runState ? node.name : `${node.name} (${node.state})`;
+  if (node.memoryError) return clip(`${head}: memory unread — ${node.memoryError}`);
+  const parts = [
+    layerSpanShort(node.layers),
+    node.peakGb != null
+      ? node.budgetGb != null
+        ? `peak ${gb1(node.peakGb)} of ${gb1(node.budgetGb)} GiB budget`
+        : `peak ${gb1(node.peakGb)} GiB`
+      : node.availableGb != null
+        ? `${gb1(node.availableGb)} GiB available`
+        : null,
+    node.pressure && node.pressure !== 'normal' ? `pressure ${node.pressure}` : null,
+  ].filter(Boolean);
+  return clip(parts.length > 0 ? `${head}: ${parts.join(' · ')}` : head);
+}
+
+function distributedStale(d: MlxTrayOptions['distributed']): boolean {
+  return d != null && d.ageMs > MLX_DISTRIBUTED_STALE_MS;
+}
+
+/** The title while the distributed engine owns this Mac. */
+export function distributedTrayTitle(d: NonNullable<MlxTrayOptions['distributed']>): string {
+  const { report } = d;
+  if (distributedStale(d)) return 'Dist · stale';
+  if (!report.admissionOpen) return 'Dist · held';
+  if (report.state === 'serving') {
+    return report.inflight != null ? `Dist · ${report.inflight} in flight` : 'Dist · serving';
+  }
+  return `Dist · ${report.state}`;
+}
+
+function distributedItems(d: NonNullable<MlxTrayOptions['distributed']>): MlxTrayItem[] {
+  const { report } = d;
+  const items: MlxTrayItem[] = [
+    { type: 'info', label: `LeanZero MLX: distributed, ${report.state}` },
+    { type: 'info', label: distributedModeLine(report) },
+  ];
+  if (report.modelId) items.push({ type: 'info', label: clip(`Model: ${report.modelId}`) });
+  for (const node of report.nodes) {
+    items.push({ type: 'info', label: distributedNodeLine(node, report.state) });
+  }
+  if (report.state === 'serving' || report.state === 'ready') {
+    items.push({
+      type: 'info',
+      label:
+        report.inflight != null ? `In flight: ${report.inflight}` : 'In flight: not measured',
+    });
+  }
+  if (!report.admissionOpen) {
+    items.push({
+      type: 'info',
+      label: "Admission closed: a node's memory is low, new requests wait",
+    });
+  }
+  if (report.restarts > 0) {
+    items.push({ type: 'info', label: `Restarts: ${report.restarts.toLocaleString()}` });
+  }
+  if (report.lastAlarm) {
+    const where = report.lastAlarm.node ? ` on ${report.lastAlarm.node}` : '';
+    items.push({
+      type: 'info',
+      label: clip(`Last: ${report.lastAlarm.kind}${where} — ${report.lastAlarm.message}`),
+    });
+  }
+  if (report.lastError) items.push({ type: 'info', label: clip(`Error: ${report.lastError}`) });
+  if (distributedStale(d)) {
+    items.push({
+      type: 'info',
+      label: `Not refreshed for ${ageText(d.ageMs)} — open goose to read it again`,
+    });
+  }
+  return items;
+}
+
 export function buildMlxTrayModel(
   snapshot: MlxEngineSnapshot,
   options: MlxTrayOptions
 ): MlxTrayModel {
+  const distributed = options.distributed;
+  if (distributed?.report.mode === 'distributed') {
+    // The distributed engine owns this Mac: the single engine cannot mount (goose refuses it), so
+    // the menu speaks for the distributed run and offers its Stop instead of Mount.
+    return {
+      title: distributedTrayTitle(distributed),
+      items: [
+        ...distributedItems(distributed),
+        { type: 'separator' },
+        {
+          type: 'action',
+          label: 'Open Providers',
+          action: 'open-providers',
+          enabled: options.canAct,
+        },
+        {
+          type: 'action',
+          label: 'Stop the distributed engine',
+          action: 'stop-distributed',
+          enabled: options.canAct,
+        },
+      ],
+    };
+  }
   const items: MlxTrayItem[] = [{ type: 'info', label: headline(snapshot) }];
+  if (distributed) items.push({ type: 'info', label: 'Single · this Mac' });
   if (snapshot.modelId && snapshot.mode !== 'off') {
     items.push({ type: 'info', label: clip(`Model: ${snapshot.modelId}`) });
   }
   if (snapshot.mode === 'running') items.push(...runningItems(snapshot));
   if (snapshot.mode === 'failed' && snapshot.failedError) {
     items.push({ type: 'info', label: clip(`Error: ${snapshot.failedError}`) });
+  }
+  const distributedFailed = distributed?.report.state === 'failed';
+  if (distributed && distributedFailed) {
+    items.push({
+      type: 'info',
+      label: clip(
+        `Distributed engine failed: ${distributed.report.lastError ?? 'no error was reported'}`
+      ),
+    });
   }
   items.push({ type: 'separator' });
   items.push({
@@ -255,5 +395,6 @@ export function buildMlxTrayModel(
       enabled: options.canAct && options.mountModelId != null,
     });
   }
-  return { title: mlxTrayTitle(snapshot), items };
+  const single = mlxTrayTitle(snapshot);
+  return { title: single || (distributedFailed ? 'Dist failed' : ''), items };
 }

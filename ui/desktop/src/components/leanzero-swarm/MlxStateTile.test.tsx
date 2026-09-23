@@ -17,6 +17,7 @@ import {
   type TpsSample,
 } from './mlxLiveStats';
 import { GENERATING_STATUS, IDLE_STATUS, PREFILL_STATUS } from './mlxLiveStatus.fixtures';
+import { FLASH_READY, FLASH_SERVING, STOPPED_WITH_CONFIG } from './mlxDistributed.fixtures';
 
 const GIB = 1024 * 1024 * 1024;
 
@@ -50,6 +51,8 @@ function tile(overrides: Partial<MlxStateTileProps>) {
     cost: null,
     failedError: null,
     action: null,
+    modeLabel: 'Single · this Mac',
+    distributed: null,
     ...overrides,
   };
   return render(
@@ -296,5 +299,52 @@ describe('MlxStateTile FAILED — the error and Retry on the tile', () => {
     expect(screen.getByTestId('mlx-failed-excerpt')).toHaveTextContent('port 9600 never opened');
     expect(within(t).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     await expectDesigned(container);
+  });
+});
+
+describe('MlxStateTile — the mode is always said, and a distributed run IS the tile', () => {
+  it('single: the mode line says "Single · this Mac" under the state', () => {
+    tile({ state: 'stopped', distributed: STOPPED_WITH_CONFIG });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(t).toHaveAttribute('data-mode', 'single');
+    expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Single · this Mac');
+    expect(screen.queryByTestId('mlx-dist-tile')).toBeNull();
+  });
+
+  it('distributed READY: slate at rest, the mode, the model, in flight, each rank’s peak of its budget', async () => {
+    const { container } = tile({
+      state: 'stopped',
+      modeLabel: 'Distributed · 2 nodes · JACCL',
+      distributed: FLASH_READY,
+    });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(t).toHaveAttribute('data-mode', 'distributed');
+    expect(t).toHaveAttribute('data-state', 'ready');
+    expect(t.className).toContain('bg-lz-stopped-solid');
+    expect(within(t).getByRole('status')).toHaveTextContent('Ready');
+    expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Distributed · 2 nodes · JACCL');
+    expect(t).toHaveTextContent('rapid-mlx/Qwen3.8-Flash-Next-4bit');
+    expect(screen.getByTestId('mlx-dist-tile-inflight')).toHaveTextContent('0');
+    const nodes = screen.getAllByTestId('mlx-dist-tile-node');
+    expect(nodes[0]).toHaveTextContent('MacBook Pro · L0–19');
+    expect(nodes[0]).toHaveTextContent('61.0 of 83.4 GiB peak');
+    expect(nodes[1]).toHaveTextContent('workhorse · L20–47');
+    expect(nodes[1]).toHaveTextContent('42.5 of 55.4 GiB peak');
+    // The stopped single engine's "what a mount costs" is not drawn while the run owns the Mac.
+    expect(screen.queryByTestId('mlx-mount-cost')).toBeNull();
+    await expectDesigned(container);
+  });
+
+  it('distributed SERVING is green with the requests in flight; a closed admission is warn', () => {
+    const { unmount } = tile({ state: 'stopped', modeLabel: 'x', distributed: FLASH_SERVING });
+    let t = screen.getByTestId('mlx-state-badge');
+    expect(t.className).toContain('bg-lz-ok-solid');
+    expect(screen.getByTestId('mlx-dist-tile-inflight')).toHaveTextContent('2');
+    expect(t).toHaveTextContent('requests in flight');
+    unmount();
+    tile({ state: 'stopped', modeLabel: 'x', distributed: { ...FLASH_SERVING, admissionOpen: false } });
+    t = screen.getByTestId('mlx-state-badge');
+    expect(t.className).toContain('bg-lz-warn-solid');
+    expect(t).toHaveTextContent('Admission closed: a node is low on memory');
   });
 });
