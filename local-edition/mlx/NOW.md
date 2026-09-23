@@ -1,5 +1,17 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## 2026-09-24 — DISTRIBUTED: 27B split proven + goose's isolated distributed mode (3d2136ce2); Flash split exact; UI in flight
+Thread: owner asked for guardrails + memory decongestion on nodes (exo kernel-panicked the 96 GB workhorse) and for the UI to
+SHOW distributed mode. Landed: honest available memory (2bd81c9c4, 8120ad5d2), 3.0.17 (tray/tile/TB copy/Link SOCKS egress,
+verified live except the in-app copy — Link sign-in is owner-only email code), crates/goose-sidecar/src/distributed/ (preflight
+with numbers, per-rank memory caps, supervisor: no-[DONE]=failure, progress-ratio hang rule, per-pid stop + remote verify,
+watchdog). 27B JACCL soak 275/275 (REPORT: ~/goose-builds/jaccl-smoke/STEP1b-soak/REPORT.md). Flash (qwen4_exp) pipeline on
+fork branch lz/pipeline-qwen4: 8-layer + placement parity bit-identical, 683–716 tok/s prefill, 21–24 decode.
+OPEN (each has an agent or a slot): (a) Flash full-model reference by layer streaming + batch-vs-single mismatch (52/260) —
+split agent; (b) live trigger of hang rule + watchdog — backend agent; (c) Engine-tab/tile/tray distributed UI — panel-surgeon;
+(d) qwen4_exp OpenAI server entry in the fork so goose can START a Flash split — QUEUED behind: (a)'s agent; (e) remount the
+owner's 27B on 8090 when (a) finishes; (f) release 3.0.18 with (b)(c)(d) and verify live; (g) in-app TB copy once Link is signed in.
+
 ## 2026-09-06 — THE 27B ARTEFACT MOUNTS AS ITSELF: build_serve_command reads the model dir (MTP sidecar, --text-only, --adapter-path)
 Thread: the Qwen3.8-27B MTPLX artefact (qwen3_5, vision_config, mtp.safetensors beside the trunk) mounted as a plain text
 model. Landed: per-model `speculative`/`adapter_path`/`text_only` profile fields end to end (sidecar → DTO → Sampling tab), argv
