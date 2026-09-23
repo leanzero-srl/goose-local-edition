@@ -42,6 +42,7 @@ import {
   EmptyState,
   PageHeader,
   Panel,
+  SectionHeader,
   Segmented,
   StatusDot,
   DISABLED,
@@ -405,6 +406,7 @@ function SessionDetail({
   publishSlot,
   onRetryScoring,
   retryBusy,
+  justEnded,
 }: {
   session: BenchSession;
   baselines: CatalogBaseline[];
@@ -416,6 +418,9 @@ function SessionDetail({
   publishSlot: ReactNode;
   onRetryScoring: () => void;
   retryBusy: boolean;
+  /** This view watched the session flip from running to its end. Only then does a failure earn
+   *  the full-width band; an old failure is the header's chip plus one line. */
+  justEnded: boolean;
 }) {
   const when = fmtWhen(session.startedAt) ?? session.startedAt;
 
@@ -435,13 +440,27 @@ function SessionDetail({
     );
   }
   if (session.outcome === 'did_not_finish') {
+    const words = session.retryScoring?.ready
+      ? 'Model build completed. Scoring did not finish.'
+      : `Started ${when} — this run ended without a score.`;
     return (
       <div className="min-w-0 space-y-3">
-        <ToneBand tone="err">
-          {session.retryScoring?.ready
-            ? 'Model build completed. Scoring did not finish.'
-            : `Started ${when} — this run ended without a score.`}
-        </ToneBand>
+        {justEnded ? (
+          <ToneBand tone="err">{words}</ToneBand>
+        ) : (
+          // An old failure: the header already carries the solid "Did not finish" chip, so the
+          // body states it in one line instead of a full-width red band.
+          <p
+            data-testid="dnf-line"
+            className={cx(
+              'flex items-center gap-2 text-lz-body text-lz-ink [&>svg]:size-4 [&>svg]:shrink-0',
+              WEIGHT.medium
+            )}
+          >
+            <XCircle className={TONE_TEXT.err} aria-hidden />
+            {words}
+          </p>
+        )}
         {session.retryScoring?.ready ? (
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={onRetryScoring} disabled={retryBusy}>
@@ -450,7 +469,10 @@ function SessionDetail({
             <p className={TYPE.bodyMuted}>Uses the saved build. No new model run.</p>
           </div>
         ) : session.retryScoring?.reason ? (
-          <p className={TYPE.bodyMuted}>{session.retryScoring.reason}</p>
+          // The reason retry is NOT offered — said as such, never as a promise with no button.
+          <p className={TYPE.bodyMuted}>
+            Retry scoring is not available: {session.retryScoring.reason}
+          </p>
         ) : null}
         {session.scoringError && <FailureDetails text={session.scoringError} />}
       </div>
@@ -690,7 +712,21 @@ export default function BenchmarkView() {
     catalog.kind === 'ok' && catalog.stale
   );
   const [sessions, setSessions] = useState<BenchSession[]>([]);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  // Sessions this view WATCHED end: a running row that the next read shows finished otherwise.
+  // Only these earn the full-width failure band — an old failure is a chip and one line.
+  const [justEndedKeys, setJustEndedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const previousOutcomes = useRef<Map<string, BenchSession['outcome']>>(new Map());
+  useEffect(() => {
+    const ended: string[] = [];
+    const next = new Map<string, BenchSession['outcome']>();
+    for (const s of sessions) {
+      next.set(s.startedAt, s.outcome);
+      if (previousOutcomes.current.get(s.startedAt) === 'running' && s.outcome !== 'running')
+        ended.push(sessionKey(s));
+    }
+    previousOutcomes.current = next;
+    if (ended.length > 0) setJustEndedKeys((prev) => new Set([...prev, ...ended]));
+  }, [sessions]);
   // The 'benchmark-started' fact that the site's current benchmark outruns this app's bundle —
   // each new launch restates or clears it, so a stale notice cannot outlive an app update.
   const [catalogMismatch, setCatalogMismatch] = useState<CatalogMismatch | null>(null);
@@ -949,36 +985,43 @@ export default function BenchmarkView() {
     return list;
   }, [catalog, sessions]);
 
-  // Default selection: the running session (its live truth is the page's point), else the newest.
-  // When a running row's key changes (null runId reconciling into the real one ~2s in), the old
-  // key stops matching and this re-picks the same live session under its new identity.
-  useEffect(() => {
-    if (sessions.length === 0) {
-      if (selectedKey != null) setSelectedKey(null);
-      return;
-    }
-    if (selectedKey != null && sessions.some((s) => sessionKey(s) === selectedKey)) return;
-    const live = sessions.find((s) => s.outcome === 'running');
-    const newest = sessions.slice().sort((a, b) => startMs(b) - startMs(a))[0];
-    setSelectedKey(sessionKey(live ?? newest));
-  }, [sessions, selectedKey]);
-
-  const selectedSession = useMemo(
-    () => sessions.find((s) => sessionKey(s) === selectedKey) ?? null,
-    [sessions, selectedKey]
-  );
-
-  // The sidebar's Benchmark tree drives the selection by URL (`?era=…&run=…`); `?new=1` lands on
-  // the run setup. The view lists no runs of its own any more — one list, in the sidebar.
+  // The sidebar's Benchmark tree drives the selection by URL (`?era=…&run=…`); `?new=1` is the
+  // sidebar's "+ New benchmark run" and lands on the run setup. The view lists no runs of its own —
+  // one list, in the sidebar.
   const query = useHashQuery();
   const queryRun = query.get('run');
+  const queryEra = query.get('era');
   const wantsNew = query.get('new') === '1';
-  useEffect(() => {
-    if (queryRun && sessions.some((s) => sessionKey(s) === queryRun)) setSelectedKey(queryRun);
-  }, [queryRun, sessions]);
+  const currentEra = sections.find((sec) => sec.current) ?? null;
+
+  // The session the page shows, DERIVED from the URL and the sessions (never an effect racing
+  // them): the run the URL names; else the live run (its truth is the page's point — and its key
+  // reconciling from start-stamp to runId ~2s in cannot lose it); else nothing while a new run is
+  // being set up; else the newest run of the era the URL names, or the newest run on this machine.
+  // A deleted selection falls through the same chain. Whatever it lands on, the headline names
+  // that run's OWN era (see the history chip and the current-era line below).
+  const selectedSession = useMemo(() => {
+    if (queryRun) {
+      const named = sessions.find((s) => sessionKey(s) === queryRun);
+      if (named) return named;
+    }
+    const live = sessions.find((s) => s.outcome === 'running');
+    if (live) return live;
+    if (wantsNew) return null;
+    const pool = queryEra ? sessions.filter((s) => s.scorerVersion === queryEra) : sessions;
+    return pool.slice().sort((a, b) => startMs(b) - startMs(a))[0] ?? null;
+  }, [sessions, queryRun, queryEra, wantsNew]);
+  const currentEraRuns = currentEra?.sessions.length ?? 0;
+
+  // "+ New benchmark run" must visibly land somewhere: scroll the setup to the top of the view and
+  // put the keyboard on it, every time the URL asks (the view is usually already mounted).
   const setupRef = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (wantsNew) setupRef.current?.scrollIntoView({ block: 'start' });
+    if (!wantsNew) return;
+    const setup = setupRef.current;
+    if (!setup) return;
+    setup.scrollIntoView?.({ block: 'start' });
+    setup.focus({ preventScroll: true });
   }, [wantsNew]);
 
   // The benchmark (SB tier) is a dropdown at run setup: every era the catalog and this machine
@@ -1107,7 +1150,7 @@ export default function BenchmarkView() {
       if (res && res.ok === false) {
         setStatus(`Delete failed: ${res.error ?? 'the delete handler gave no reason'}`);
       } else {
-        if (selectedKey === sessionKey(deleteTarget)) setSelectedKey(null);
+        // A deleted selection falls through the derived chain on the next sessions read.
         await loadSessions();
       }
     } catch (err) {
@@ -1116,7 +1159,7 @@ export default function BenchmarkView() {
       setDeleting(false);
       setDeleteTarget(null);
     }
-  }, [deleteTarget, selectedKey, loadSessions]);
+  }, [deleteTarget, loadSessions]);
 
   const publish = useCallback(async () => {
     if (!mine) return;
@@ -1365,12 +1408,29 @@ export default function BenchmarkView() {
               <Button onClick={loadCatalog}>Refresh benchmark</Button>
             </div>
           )}
-          <p className={TYPE.bodyMuted}>
-            {DEFAULT_BENCHMARK_TIER.toUpperCase().replace('SB-', 'SB')} payments ·{' '}
-            {launchProblem ? 'Bundled benchmark' : 'Latest stable benchmark'}. Previous results
-            below are history only.
-          </p>
-          <section aria-label="Run setup" className="flex flex-col gap-3" ref={setupRef}>
+          <section
+            aria-label="Run setup"
+            tabIndex={-1}
+            ref={setupRef}
+            data-new-run={wantsNew || undefined}
+            className={cx(
+              'flex scroll-mt-4 flex-col gap-3 outline-none',
+              SURFACE.card,
+              SPACE.card,
+              // Arriving from "+ New benchmark run", the setup is THE thing on the page.
+              wantsNew && SURFACE.selectedRing
+            )}
+          >
+            <SectionHeader
+              as="h2"
+              title="New run"
+              right={
+                <span className={TYPE.meta}>
+                  {DEFAULT_BENCHMARK_TIER.toUpperCase().replace('SB-', 'SB')} payments ·{' '}
+                  {launchProblem ? 'Bundled benchmark' : 'Latest stable benchmark'}
+                </span>
+              }
+            />
             <div className="flex flex-wrap items-center gap-3">
               <span className={TYPE.meta}>Benchmark</span>
               <StudioSelect
@@ -1500,7 +1560,13 @@ export default function BenchmarkView() {
                     <Chip tone="ok">CURRENT</Chip>
                   ) : selectedEra.frozen ? (
                     <Chip tone="warn">FROZEN</Chip>
-                  ) : null}
+                  ) : (
+                    // Not the benchmark a run enters today — said on the headline itself, so an
+                    // older era's run never reads as the current one.
+                    <Chip title="An earlier benchmark — its runs stay viewable as history">
+                      history
+                    </Chip>
+                  )}
                   <span className={cx('ml-auto text-lz-body text-lz-ink', WEIGHT.semibold, TNUM)}>
                     {fmtWhen(selectedSession.startedAt) ?? selectedSession.startedAt}
                   </span>
@@ -1532,6 +1598,18 @@ export default function BenchmarkView() {
                     Frozen on the site — sessions stay viewable; submissions are closed.
                   </p>
                 )}
+                {!selectedEra.current && currentEra && (
+                  // The sidebar counts runs per era; this line makes the headline agree with it
+                  // when the run shown belongs to an earlier benchmark.
+                  <p data-testid="era-note" className={TYPE.bodyMuted}>
+                    This run is from an earlier benchmark ({selectedEra.scorerVersion}). The current
+                    benchmark, {currentEra.title} ({currentEra.scorerVersion}), has{' '}
+                    {currentEraRuns === 0
+                      ? 'no runs on this machine yet'
+                      : `${currentEraRuns} run${currentEraRuns === 1 ? '' : 's'} in the sidebar`}
+                    .
+                  </p>
+                )}
                 <SessionDetail
                   session={selectedSession}
                   baselines={selectedEra.baselines}
@@ -1542,6 +1620,7 @@ export default function BenchmarkView() {
                   shots={shots}
                   publishSlot={publishSection}
                   onRetryScoring={() => void retryScoring(selectedSession)}
+                  justEnded={justEndedKeys.has(sessionKey(selectedSession))}
                   retryBusy={
                     running ||
                     !runtimeReady ||
@@ -1551,7 +1630,7 @@ export default function BenchmarkView() {
                 />
               </div>
             </Panel>
-          ) : sessions.length > 0 ? (
+          ) : !wantsNew && sessions.length > 0 ? (
             <Panel>
               <EmptyState
                 icon={<Gauge />}

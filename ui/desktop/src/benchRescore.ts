@@ -19,7 +19,10 @@ export function retryScoringEligibility(
   value: unknown
 ): { ready: boolean; reason?: string } {
   if (row.scorerVersion !== 'sb-7.1')
-    return { ready: false, reason: 'Scoring retry is supported for SB7.1.' };
+    return {
+      ready: false,
+      reason: `Only SB7.1 runs can be rescored; this run is ${row.scorerVersion}.`,
+    };
   if (row.outcome !== 'did_not_finish')
     return { ready: false, reason: 'This session is not awaiting a scoring retry.' };
   if (!value || typeof value !== 'object')

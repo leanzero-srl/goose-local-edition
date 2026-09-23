@@ -183,7 +183,9 @@ describe('the benchmark sections and their sessions', () => {
       </IntlTestWrapper>
     );
     expect(
-      await screen.findByText('No completed-build receipt was recorded for this run.')
+      await screen.findByText(
+        'Retry scoring is not available: No completed-build receipt was recorded for this run.'
+      )
     ).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Retry scoring' })).toBeNull();
     expect(screen.queryByText(/Model build completed/)).toBeNull();
@@ -631,4 +633,117 @@ it.each([
   expect(screen.getByText(/Bundled benchmark/)).toBeInTheDocument();
   expect(screen.queryByText(/Latest stable benchmark/)).not.toBeInTheDocument();
   cleanup();
+});
+
+describe('the benchmark view says what it shows (UX audit B1)', () => {
+  afterEach(() => {
+    window.location.hash = '';
+    cleanup();
+  });
+
+  const RC_DNF = {
+    runId: 'rc-dnf',
+    scorerVersion: 'sb-7.0-rc',
+    startedAt: '2026-09-20T19:54:00.000Z',
+    endedAt: '2026-09-20T20:30:00.000Z',
+    outcome: 'did_not_finish',
+    publishable: false,
+    retryScoring: {
+      ready: false,
+      reason: 'Only SB7.1 runs can be rescored; this run is sb-7.0-rc.',
+    },
+  };
+
+  it("an earlier era's run is labelled history and the page states the current era has no runs", async () => {
+    mockElectron({ sessions: [RC_DNF] });
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    expect(await screen.findByText('Meridian Payments Console')).toBeInTheDocument();
+    expect(screen.getByText('history')).toBeInTheDocument();
+    expect(screen.queryByText('CURRENT')).toBeNull();
+    expect(screen.getByTestId('era-note')).toHaveTextContent(
+      'This run is from an earlier benchmark (sb-7.0-rc). The current benchmark, SB7.1 payments (sb-7.1), has no runs on this machine yet.'
+    );
+  });
+
+  it('an old did-not-finish is the header chip plus one line — no full-width band; the retry sentence says why it is absent', async () => {
+    mockElectron({ sessions: [RC_DNF] });
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    const line = await screen.findByTestId('dnf-line');
+    expect(line).toHaveTextContent('this run ended without a score.');
+    expect(screen.queryByTestId('tone-band')).toBeNull();
+    expect(
+      screen.getByText(
+        'Retry scoring is not available: Only SB7.1 runs can be rescored; this run is sb-7.0-rc.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry scoring' })).toBeNull();
+  });
+
+  it('a run this view watched fail keeps the full-width band', async () => {
+    const live = { ...RC_DNF, outcome: 'running', endedAt: undefined, retryScoring: undefined };
+    let current: unknown[] = [live];
+    mockElectron({ sessions: current });
+    electron().benchmarkSessions = vi.fn(async () => ({ sessions: current }));
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    await screen.findByText(/result lands here when the run finishes/i);
+    // The run ends: main's terminal event makes the view re-read its sessions.
+    current = [RC_DNF];
+    const handlers = (window.electron.on as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([name]) => name === 'benchmark-finished'
+    );
+    const onFinished = handlers[handlers.length - 1][1] as (e: unknown, p: unknown) => void;
+    await act(async () => {
+      onFinished(null, {});
+    });
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByTestId('tone-band')
+          .some((b) => b.textContent?.includes('this run ended without a score.'))
+      ).toBe(true)
+    );
+    expect(screen.queryByTestId('dnf-line')).toBeNull();
+  });
+
+  it('?new=1 lands on the run setup: ringed, focused, and no old run headlines the page', async () => {
+    window.location.hash = '#/benchmark?new=1';
+    mockElectron({ sessions: [RC_DNF] });
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    const setup = await screen.findByRole('region', { name: 'Run setup' });
+    await waitFor(() => expect(setup).toHaveFocus());
+    expect(setup).toHaveAttribute('data-new-run', 'true');
+    expect(setup.className).toContain('ring-lz-accent');
+    expect(screen.getByRole('heading', { name: 'New run' })).toBeInTheDocument();
+    await waitFor(() => expect(electron().benchmarkSessions).toHaveBeenCalled());
+    expect(screen.queryByTestId('dnf-line')).toBeNull();
+    expect(screen.queryByText('Meridian Payments Console')).toBeNull();
+  });
+
+  it("?era= without a run opens that era's newest run", async () => {
+    window.location.hash = '#/benchmark?era=sb-6.0';
+    // No live run (a live run wins the page while it runs).
+    mockElectron({ sessions: SESSIONS.filter((s) => s.outcome !== 'running') });
+    render(
+      <IntlTestWrapper>
+        <BenchmarkView />
+      </IntlTestWrapper>
+    );
+    expect(await screen.findByText('VendorSync Pro')).toBeInTheDocument();
+  });
 });
