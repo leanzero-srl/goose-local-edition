@@ -406,6 +406,32 @@ Another very long URL: https://www.example.com/very/long/path/with/many/segments
     });
   });
 
+  describe('Fenced blocks without a language (UX audit C4)', () => {
+    // The `lms ps` table in an ask-AI prompt was a fence with no language: it fell to the INLINE
+    // code style inside the <pre>, and an inline element across wrapped lines painted a white
+    // highlight per line in the dark user bubble.
+    it('renders as a code block, never as inline code', async () => {
+      const content = [
+        '```',
+        'gabee/mihai/workhorse-qwopus3.6-27b-coder-mlx   GENERATING   22.80GB',
+        'qwen/qwen3.6-27b                                 IDLE         29.53GB',
+        '```',
+      ].join('\n');
+      const { container } = renderWithIntl(<MarkdownContent content={content} />);
+      await screen.findByTitle('Copy code');
+      expect(container.querySelector('code.bg-inline-code')).toBeNull();
+      expect(container).toHaveTextContent('qwen/qwen3.6-27b');
+    });
+
+    it('inline code stays inline', async () => {
+      const { container } = renderWithIntl(<MarkdownContent content={'run `lms ps` first'} />);
+      await waitFor(() =>
+        expect(container.querySelector('code.bg-inline-code')?.textContent).toBe('lms ps')
+      );
+      expect(screen.queryByTitle('Copy code')).toBeNull();
+    });
+  });
+
   describe('Code copy button (LeanZero Studio)', () => {
     // The control used to be a faded tint (`bg-gray-700/50`) revealed by opacity on hover — banned
     // (DESIGN.md ban 2) and invisible to keyboard users, who reach a button they cannot see. It is a

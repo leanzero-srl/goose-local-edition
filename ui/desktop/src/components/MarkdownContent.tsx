@@ -68,9 +68,7 @@ const i18n = defineMessages({
   },
 });
 
-interface CodeProps extends React.ClassAttributes<HTMLElement>, React.HTMLAttributes<HTMLElement> {
-  inline?: boolean;
-}
+type CodeProps = React.ClassAttributes<HTMLElement> & React.HTMLAttributes<HTMLElement>;
 
 interface MarkdownContentProps {
   content: string;
@@ -171,21 +169,53 @@ const CodeBlock = memo(function CodeBlock({
   );
 });
 
+/**
+ * INLINE code only. Every fenced block — with or without a language — arrives wrapped in a <pre>,
+ * and MarkdownPre renders it as a CodeBlock. The old split keyed "block" on a `language-*` class
+ * (react-markdown 10 passes no `inline` flag), so a fence with no language fell through to this
+ * inline style inside the <pre>: an inline element across wrapped lines paints each line box, and
+ * in the dark user bubble that was a white highlight per line (UX audit C4).
+ */
 const MarkdownCode = memo(
   React.forwardRef(function MarkdownCode(
-    { inline, className, children, ...props }: CodeProps,
+    { className: _className, children, ...props }: CodeProps,
     ref: React.Ref<HTMLElement>
   ) {
-    const match = /language-(\w+)/.exec(className || '');
-    return !inline && match ? (
-      <CodeBlock language={match[1]}>{String(children).replace(/\n$/, '')}</CodeBlock>
-    ) : (
+    return (
       <code ref={ref} {...props} className="break-all bg-inline-code whitespace-pre-wrap font-mono">
         {children}
       </code>
     );
   })
 );
+
+type CodeChildProps = { className?: string; children?: React.ReactNode };
+
+function textOf(node: React.ReactNode): string {
+  return React.Children.toArray(node)
+    .map((child) =>
+      typeof child === 'string' || typeof child === 'number'
+        ? String(child)
+        : React.isValidElement<CodeChildProps>(child)
+          ? textOf(child.props.children)
+          : ''
+    )
+    .join('');
+}
+
+/** A fenced block, with or without a language: always the CodeBlock (unlabelled fences as `text`). */
+function MarkdownPre({ children }: { children?: React.ReactNode }) {
+  const code = React.Children.toArray(children)[0];
+  if (!React.isValidElement<CodeChildProps>(code)) {
+    return <pre>{children}</pre>;
+  }
+  const match = /language-(\w+)/.exec(code.props.className || '');
+  return (
+    <CodeBlock language={match?.[1] ?? 'text'}>
+      {textOf(code.props.children).replace(/\n$/, '')}
+    </CodeBlock>
+  );
+}
 
 // Custom URL transform to preserve deep link URLs (spotify:, vscode:, slack:, etc.)
 // React-markdown's default only allows http/https/mailto and strips all other protocols
@@ -298,6 +328,7 @@ const MarkdownContent = memo(function MarkdownContent({
               );
             },
             code: MarkdownCode,
+            pre: MarkdownPre,
           }}
         >
           {processedContent}

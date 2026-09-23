@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ImagePreview from './ImagePreview';
 import MarkdownContent from './MarkdownContent';
 import { getTextAndImageContent, type Message } from '../types/message';
@@ -7,6 +7,7 @@ import { formatMessageTimestamp } from '../utils/timeUtils';
 import Edit from './icons/Edit';
 import { Button } from './ui/button';
 import { defineMessages, useIntl } from '../i18n';
+import { cx } from './lz';
 
 const i18n = defineMessages({
   editPlaceholder: {
@@ -23,7 +24,8 @@ const i18n = defineMessages({
   },
   editInPlaceDescription: {
     id: 'userMessage.editInPlaceDescription',
-    defaultMessage: '<b>Edit in Place</b> updates this session • <b>Fork Session</b> creates a new session',
+    defaultMessage:
+      '<b>Edit in Place</b> updates this session • <b>Fork Session</b> creates a new session',
   },
   cancel: {
     id: 'userMessage.cancel',
@@ -69,14 +71,62 @@ const i18n = defineMessages({
     id: 'userMessage.editMessageTitle',
     defaultMessage: 'Edit message',
   },
+  showFullBrief: {
+    id: 'userMessage.showFullBrief',
+    defaultMessage: 'Show the full brief',
+  },
+  showFullMessage: {
+    id: 'userMessage.showFullMessage',
+    defaultMessage: 'Show the full message',
+  },
+  showLess: {
+    id: 'userMessage.showLess',
+    defaultMessage: 'Show less',
+  },
 });
+
+/** A message taller than this share of the window is a WALL: it renders compactly — its heading
+ *  line and the start of its body — until asked (UX audit C4: a seeded ask-AI brief filled the
+ *  whole transcript). Measured from the message's own rendered height, not a character count. */
+const TALL_SHARE_OF_VIEWPORT = 0.5; // ratio: of window.innerHeight
+/** How much of a wall stays visible while collapsed. */
+const COLLAPSED_SHARE_OF_VIEWPORT = 0.2; // ratio: of window.innerHeight
+
+/**
+ * Is the element taller than TALL_SHARE_OF_VIEWPORT of the window? Re-measured when the element
+ * or the window resizes, before paint, so a wall never flashes open first.
+ */
+function useIsWall(ref: React.RefObject<HTMLDivElement | null>, deps: unknown[]): boolean {
+  const [wall, setWall] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => setWall(el.scrollHeight > window.innerHeight * TALL_SHARE_OF_VIEWPORT);
+    measure();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(el);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return wall;
+}
 
 interface UserMessageProps {
   message: Message;
   onMessageUpdate?: (messageId: string, newContent: string, editType?: 'fork' | 'edit') => void;
+  /** The conversation's first user message — a seeded brief, when collapsed, says so. */
+  opensConversation?: boolean;
 }
 
-export default function UserMessage({ message, onMessageUpdate }: UserMessageProps) {
+export default function UserMessage({
+  message,
+  onMessageUpdate,
+  opensConversation = false,
+}: UserMessageProps) {
   const intl = useIntl();
   const contentRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -86,6 +136,9 @@ export default function UserMessage({ message, onMessageUpdate }: UserMessagePro
 
   const { textContent, imagePaths } = getTextAndImageContent(message);
   const timestamp = formatMessageTimestamp(message.created);
+  const isWall = useIsWall(contentRef, [textContent, isEditing]);
+  const [expanded, setExpanded] = useState(false);
+  const collapsed = isWall && !expanded;
 
   // Effect to handle message content changes and ensure persistence
   useEffect(() => {
@@ -233,7 +286,11 @@ export default function UserMessage({ message, onMessageUpdate }: UserMessagePro
                 })}
               </div>
               <div className="flex gap-3">
-                <Button onClick={handleCancel} variant="ghost" aria-label={intl.formatMessage(i18n.cancelAriaLabel)}>
+                <Button
+                  onClick={handleCancel}
+                  variant="ghost"
+                  aria-label={intl.formatMessage(i18n.cancelAriaLabel)}
+                >
                   {intl.formatMessage(i18n.cancel)}
                 </Button>
                 <Button
@@ -260,32 +317,62 @@ export default function UserMessage({ message, onMessageUpdate }: UserMessagePro
             <div className="flex-col max-w-[85%] w-fit">
               <div className="flex flex-col group">
                 {textContent.trim() && (
-                  <div className="flex bg-text-primary text-background-primary rounded-xl py-2.5 px-4">
+                  <div className="flex flex-col bg-text-primary text-background-primary rounded-xl py-2.5 px-4">
                     <div
-                      ref={contentRef}
-                      // COPYING A MESSAGE MUST GIVE BACK ITS SOURCE. The rendered DOM has already consumed
-                      // the markdown — a mouse-selection copy of a prompt full of `code` and a numbered
-                      // list yields flat prose, so pasting it into a new chat loses every marker and the
-                      // message re-renders plain. The copy BUTTON always got this right (it puts the source
-                      // on text/plain); a hand selection did not. When the selection covers essentially the
-                      // whole message, hand over the source instead. A partial selection is left alone —
-                      // someone quoting one sentence wants that sentence, not the whole markdown blob.
-                      onCopy={(e) => {
-                        const sel = window.getSelection();
-                        const el = contentRef.current;
-                        if (!sel || !el || sel.isCollapsed) return;
-                        const picked = sel.toString().replace(/\s+/g, ' ').trim();
-                        const whole = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
-                        if (!whole || picked.length < whole.length * 0.9) return;
-                        e.clipboardData.setData('text/plain', textContent);
-                        e.preventDefault();
-                      }}
+                      data-testid="user-message-body"
+                      data-collapsed={collapsed || undefined}
+                      className={cx(collapsed && 'overflow-hidden')}
+                      style={
+                        collapsed
+                          ? { maxHeight: `${window.innerHeight * COLLAPSED_SHARE_OF_VIEWPORT}px` }
+                          : undefined
+                      }
                     >
-                      <MarkdownContent
-                        content={textContent}
-                        className="!text-inherit prose-a:!text-inherit prose-headings:!text-inherit prose-strong:!text-inherit prose-em:!text-inherit prose-li:!text-inherit prose-p:!text-inherit user-message"
-                      />
+                      <div
+                        ref={contentRef}
+                        // COPYING A MESSAGE MUST GIVE BACK ITS SOURCE. The rendered DOM has already consumed
+                        // the markdown — a mouse-selection copy of a prompt full of `code` and a numbered
+                        // list yields flat prose, so pasting it into a new chat loses every marker and the
+                        // message re-renders plain. The copy BUTTON always got this right (it puts the source
+                        // on text/plain); a hand selection did not. When the selection covers essentially the
+                        // whole message, hand over the source instead. A partial selection is left alone —
+                        // someone quoting one sentence wants that sentence, not the whole markdown blob.
+                        onCopy={(e) => {
+                          const sel = window.getSelection();
+                          const el = contentRef.current;
+                          if (!sel || !el || sel.isCollapsed) return;
+                          const picked = sel.toString().replace(/\s+/g, ' ').trim();
+                          const whole = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+                          if (!whole || picked.length < whole.length * 0.9) return;
+                          e.clipboardData.setData('text/plain', textContent);
+                          e.preventDefault();
+                        }}
+                      >
+                        <MarkdownContent
+                          content={textContent}
+                          className="!text-inherit prose-a:!text-inherit prose-headings:!text-inherit prose-strong:!text-inherit prose-em:!text-inherit prose-li:!text-inherit prose-p:!text-inherit user-message"
+                        />
+                      </div>
                     </div>
+                    {isWall && (
+                      <div className="mt-2 flex border-t border-current pt-2">
+                        <button
+                          type="button"
+                          data-testid="user-message-toggle"
+                          aria-expanded={expanded}
+                          onClick={() => setExpanded((open) => !open)}
+                          className="h-7 rounded-lz-control border border-current px-2.5 text-lz-meta font-lz-medium hover:bg-background-primary hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-lz-accent"
+                        >
+                          {intl.formatMessage(
+                            expanded
+                              ? i18n.showLess
+                              : opensConversation
+                                ? i18n.showFullBrief
+                                : i18n.showFullMessage
+                          )}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -311,7 +398,9 @@ export default function UserMessage({ message, onMessageUpdate }: UserMessagePro
                         }
                       }}
                       className="flex items-center gap-1 text-xs text-text-secondary hover:cursor-pointer hover:text-text-primary transition-all duration-200 opacity-0 group-hover:opacity-100 -translate-y-4 group-hover:translate-y-0 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-opacity-50 rounded"
-                      aria-label={intl.formatMessage(i18n.editMessageAriaLabel, { preview: `${textContent.substring(0, 50)}${textContent.length > 50 ? '...' : ''}` })}
+                      aria-label={intl.formatMessage(i18n.editMessageAriaLabel, {
+                        preview: `${textContent.substring(0, 50)}${textContent.length > 50 ? '...' : ''}`,
+                      })}
                       aria-expanded={isEditing}
                       title={intl.formatMessage(i18n.editMessageTitle)}
                     >

@@ -234,6 +234,9 @@ export default function ProgressiveMessageList({
   // Render messages up to the current rendered count
   const renderMessages = useCallback(() => {
     const messagesToRender = messages.slice(0, renderedCount);
+    const openingUserIndex = messages.findIndex(
+      (m) => m.metadata.userVisible && isUserMessage(m) && !hasOnlyToolResponses(m)
+    );
     return messagesToRender
       .map((message, index) => {
         if (!message.metadata.userVisible) {
@@ -270,15 +273,17 @@ export default function ProgressiveMessageList({
         const previousResolvedModel = currentResolvedModel ? getPreviousResolvedModel(index) : null;
         const showModelChangeDisclosure = Boolean(
           currentResolvedModel &&
-            previousResolvedModel &&
-            currentResolvedModel !== previousResolvedModel
+          previousResolvedModel &&
+          currentResolvedModel !== previousResolvedModel
         );
 
         const messageKey = message.id ?? `msg-${index}-${message.created}`;
 
         return (
           <Fragment key={messageKey}>
-            {showModelChangeDisclosure && currentResolvedModel && previousResolvedModel &&
+            {showModelChangeDisclosure &&
+              currentResolvedModel &&
+              previousResolvedModel &&
               renderModelChangeDisclosure(previousResolvedModel, currentResolvedModel)}
             <div
               className={`relative ${index === 0 ? 'mt-0' : 'mt-4'} ${isUser ? 'user' : 'assistant'} ${messageIsInChain ? 'in-chain' : ''}`}
@@ -286,7 +291,11 @@ export default function ProgressiveMessageList({
             >
               {isUser ? (
                 !hasOnlyToolResponses(message) && (
-                  <UserMessage message={message} onMessageUpdate={onMessageUpdate} />
+                  <UserMessage
+                    message={message}
+                    onMessageUpdate={onMessageUpdate}
+                    opensConversation={index === openingUserIndex}
+                  />
                 )
               ) : (
                 <GooseMessage
