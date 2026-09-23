@@ -26,10 +26,15 @@ use crate::{
 /// argv and for every router that sizes a sidecar node's slots.
 pub const MAX_CONCURRENT_REQUESTS: u32 = 8; // measured: 9th concurrent request got 503 (MLX busy-signal agent, 2026-09-02)
 
+/// v0.14.3-lz.2 = lz.1 + the `rapid_mlx_transient_tail` request extension (fork 42d207cf): goose
+/// marks its per-turn `<turn-context>` tail transient so the hybrid prefix cache snapshots before it.
+/// measured: evals/mlx-engine-bench/results/2026-09-23-phase1-* — tool-loop turns 2–4 TTFT
+/// 24.6/26.8/28.8 s → 17.5/17.5/18.0 s; 10/12 greedy answers identical (the 2 that differ are
+/// near-tie command choices); the owner approved it 2026-09-23.
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.1",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.2",
     "rapid-mlx",
 ];
 
@@ -54,6 +59,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "git+https://github.com/leanzero-srl/Rapid-MLX@v0.13.4-lz.2",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.1",
         "rapid-mlx",
     ],
 ];
@@ -1049,7 +1060,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.1",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.2",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -1380,7 +1391,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.1",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.2",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
