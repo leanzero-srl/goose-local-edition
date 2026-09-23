@@ -621,6 +621,16 @@ pub fn format_messages_with_options(
 /// the message's sole content on a non-final message (mirrors upstream's guard: a lone-context
 /// mid-history user message must stay a message or strict templates lose the turn boundary).
 fn extract_turn_context(messages: &[Message]) -> Option<(Vec<Message>, String)> {
+    let (mi, bi) = locate_turn_context(messages)?;
+    let mut messages = messages.to_vec();
+    let MessageContent::Text(text) = messages[mi].content.remove(bi) else {
+        return None;
+    };
+    Some((messages, text.text.clone()))
+}
+
+/// The (message, block) index of the turn-context block `extract_turn_context` moves to the tail.
+fn locate_turn_context(messages: &[Message]) -> Option<(usize, usize)> {
     let (mi, bi) = messages.iter().enumerate().rev().find_map(|(mi, m)| {
         if m.role != Role::User {
             return None;
@@ -636,11 +646,33 @@ fn extract_turn_context(messages: &[Message]) -> Option<(Vec<Message>, String)> 
     if mi + 1 != messages.len() && messages[mi].content.len() <= 1 {
         return None;
     }
-    let mut messages = messages.to_vec();
-    let MessageContent::Text(text) = messages[mi].content.remove(bi) else {
+    Some((mi, bi))
+}
+
+/// The exact trailing text of `payload`'s last user message that `append_turn_context_tail` wrote
+/// for `messages`: `"\n" + block` when the block was merged into that message's own text, the block
+/// itself when it rides as its own message. `None` when no block was moved to the tail, or when it
+/// landed as an array content part (no string suffix to name). A server that caches a
+/// non-trimmable (hybrid) prompt can take its boundary snapshot BEFORE this text — the next request
+/// drops it — so this is what goose names as the request's volatile tail.
+pub fn turn_context_tail_suffix(messages: &[Message], payload: &Value) -> Option<String> {
+    let (mi, bi) = locate_turn_context(messages)?;
+    let MessageContent::Text(block) = &messages[mi].content[bi] else {
         return None;
     };
-    Some((messages, text.text.clone()))
+    let content = payload
+        .get("messages")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|m| m["role"] == json!("user"))?
+        .get("content")?
+        .as_str()?;
+    if content == block.text {
+        return Some(block.text.clone());
+    }
+    let merged = format!("\n{}", block.text);
+    content.ends_with(&merged).then_some(merged)
 }
 
 /// Merges into a trailing user message when one exists; strict chat templates reject consecutive
@@ -5390,6 +5422,63 @@ mod cache_prefix_stability_tests {
         assert!(!serde_json::to_string(&out)
             .unwrap()
             .contains("<turn-context>"));
+    }
+
+    fn request(messages: &[Message]) -> Value {
+        create_request(
+            &ModelConfig::new("qwen"),
+            "system",
+            messages,
+            &[],
+            &ImageFormat::OpenAi,
+            false,
+        )
+        .unwrap()
+    }
+
+    /// The suffix names exactly the bytes the tail append wrote, in both shapes: merged into the
+    /// user's own text (the first turn) and riding as its own message (after a tool result, whose
+    /// role is `tool`); stripping it leaves the text the NEXT request renders for that message.
+    #[test]
+    fn the_tail_suffix_is_exactly_what_the_append_wrote() {
+        let tc = turn_context("10:00:00");
+        let merged = vec![Message::user().with_text("build the thing").with_text(&tc)];
+        let payload = request(&merged);
+        let suffix = turn_context_tail_suffix(&merged, &payload).expect("merged tail");
+        assert_eq!(suffix, format!("\n{tc}"));
+        let last = payload["messages"].as_array().unwrap().last().unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(last.strip_suffix(suffix.as_str()), Some("build the thing"));
+
+        let tool_turn = vec![
+            Message::user().with_text("build the thing"),
+            Message::assistant().with_tool_request(
+                "call_1",
+                Ok(rmcp::model::CallToolRequestParams::new("shell")),
+            ),
+            Message::user()
+                .with_tool_response(
+                    "call_1",
+                    Ok(rmcp::model::CallToolResult::success(vec![
+                        rmcp::model::Content::text("ok"),
+                    ])),
+                )
+                .with_text(&tc),
+        ];
+        let payload = request(&tool_turn);
+        assert_eq!(turn_context_tail_suffix(&tool_turn, &payload), Some(tc));
+        assert_eq!(
+            payload["messages"].as_array().unwrap().last().unwrap()["role"],
+            json!("user")
+        );
+    }
+
+    #[test]
+    fn no_block_names_no_tail() {
+        let plain = convo("just text, not a context block");
+        assert_eq!(turn_context_tail_suffix(&plain, &request(&plain)), None);
     }
 }
 

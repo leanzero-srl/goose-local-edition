@@ -8,7 +8,8 @@ use crate::declarative::{DeclarativeProviderConfig, KeyResolver};
 use crate::errors::ProviderError;
 use crate::formats::openai::is_openai_responses_model;
 use crate::formats::openai::{
-    create_request_with_options, get_usage, response_to_message, OpenAiFormatOptions,
+    create_request_with_options, get_usage, response_to_message, turn_context_tail_suffix,
+    OpenAiFormatOptions,
 };
 use crate::formats::openai_responses::{
     create_responses_request, get_responses_usage, responses_api_to_message, ResponsesApiResponse,
@@ -142,6 +143,10 @@ pub struct OpenAiProvider {
     preserve_thinking_context: bool,
     #[serde(skip)]
     n_ctx_cache: Arc<Mutex<HashMap<String, Option<usize>>>>,
+    /// Per model: whether the endpoint's `/v1/models` entry declared
+    /// `request_extensions: ["rapid_mlx_transient_tail"]`. Only answered probes are cached.
+    #[serde(skip)]
+    transient_tail_cache: Arc<Mutex<HashMap<String, bool>>>,
 }
 
 /// Builder for [`OpenAiProvider`].
@@ -262,6 +267,7 @@ impl OpenAiProviderBuilder {
             skip_canonical_filtering: self.skip_canonical_filtering,
             preserve_thinking_context: self.preserve_thinking_context,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
+            transient_tail_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -297,6 +303,7 @@ impl OpenAiProvider {
             skip_canonical_filtering: false,
             preserve_thinking_context: false,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
+            transient_tail_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -360,6 +367,12 @@ impl OpenAiProvider {
 
     const PROVIDERS_NEEDING_STANDARD_CHAT_PARAMS: &[&str] = &["nearai"];
 
+    /// The provider goose routes its supervised MLX engine through (the swarm's `mlx-sidecar`
+    /// device and the desktop's LeanZero MLX tile both resolve to it). Only these endpoints are
+    /// asked whether they accept the transient-tail extension; no other provider is probed or
+    /// sent the field.
+    const PROVIDERS_FRONTING_RAPID_MLX: &[&str] = &["omlx"];
+
     /// Alibaba's Token Plan endpoint speaks a stricter dialect than the OpenAI shape it otherwise
     /// accepts: the cap must arrive as `max_completion_tokens`, `max_tokens` is rejected outright
     /// rather than ignored, and reasoning is opt-in per request through `enable_thinking` /
@@ -406,6 +419,51 @@ impl OpenAiProvider {
         }
 
         payload
+    }
+
+    /// Whether this endpoint declared that it honours `rapid_mlx_transient_tail` (the LeanZero
+    /// Rapid-MLX fork, v0.14.3-lz.2+). The declaration is the engine identity: a stock Rapid-MLX or
+    /// a real oMLX server behind `OMLX_HOST` never declares it and so never receives the field.
+    async fn accepts_transient_tail(&self, model_name: &str) -> bool {
+        if !Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str()) {
+            return false;
+        }
+        if let Some(known) = self
+            .transient_tail_cache
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(model_name).copied())
+        {
+            return known;
+        }
+        let models_path =
+            Self::map_base_path(&self.base_path, "models", OPEN_AI_DEFAULT_MODELS_PATH);
+        let json = match self.fetch_models_json(&models_path).await {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::warn!(
+                    host = %self.api_client.host(),
+                    model = %model_name,
+                    error = %e,
+                    "transient_tail_probe_failed: the turn-context tail rides this request \
+                     unmarked; the probe is retried on the next request"
+                );
+                return false;
+            }
+        };
+        let accepted = declares_request_extension(&json, model_name, RAPID_MLX_TRANSIENT_TAIL);
+        if !accepted {
+            tracing::info!(
+                host = %self.api_client.host(),
+                model = %model_name,
+                "the engine does not declare {RAPID_MLX_TRANSIENT_TAIL}; its hybrid cache \
+                 snapshots after the per-turn context block"
+            );
+        }
+        if let Ok(mut cache) = self.transient_tail_cache.lock() {
+            cache.insert(model_name.to_string(), accepted);
+        }
+        accepted
     }
 
     fn should_use_responses_api_for_provider(&self, model_name: &str) -> bool {
@@ -519,6 +577,29 @@ impl OpenAiProvider {
         let response = self.api_client.request(path).response_get().await?;
         handle_response_openai_compat(response).await
     }
+}
+
+/// The request field the LeanZero Rapid-MLX fork reads to snapshot a hybrid cache before the
+/// request's volatile tail (`ChatCompletionRequest.rapid_mlx_transient_tail`).
+const RAPID_MLX_TRANSIENT_TAIL: &str = "rapid_mlx_transient_tail";
+
+/// Whether `/v1/models` lists `extension` in the `request_extensions` of `model_name`'s entry (or of
+/// the sole entry, the single-model server serving under another id).
+fn declares_request_extension(json: &serde_json::Value, model_name: &str, extension: &str) -> bool {
+    let Some(data) = json.get("data").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    let entry = data
+        .iter()
+        .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(model_name))
+        .or(match data.as_slice() {
+            [only] => Some(only),
+            _ => None,
+        });
+    entry
+        .and_then(|e| e.get("request_extensions"))
+        .and_then(|v| v.as_array())
+        .is_some_and(|list| list.iter().any(|v| v.as_str() == Some(extension)))
 }
 
 fn describe_listing(json: &serde_json::Value) -> String {
@@ -832,7 +913,12 @@ impl Provider for OpenAiProvider {
                     preserve_thinking_context: self.preserve_thinking_context,
                 },
             )?;
-            let payload = self.sanitize_request_for_compat(payload);
+            let mut payload = self.sanitize_request_for_compat(payload);
+            if self.accepts_transient_tail(&model_config.model_name).await {
+                if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
+                    payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
+                }
+            }
             let mut log = start_log(model_config, &payload)?;
 
             // This provider is the one the swarm engine actually calls (lmstudio's declarative
@@ -1037,7 +1123,128 @@ mod tests {
             skip_canonical_filtering: false,
             preserve_thinking_context: false,
             n_ctx_cache: Arc::new(Mutex::new(HashMap::new())),
+            transient_tail_cache: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    async fn post_bodies_through(
+        name: &str,
+        request_extensions: serde_json::Value,
+    ) -> (Vec<serde_json::Value>, usize, String) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "object": "list",
+                "data": [{"id": "served", "request_extensions": request_extensions}],
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            })))
+            .mount(&server)
+            .await;
+
+        let mut provider = make_provider(name);
+        provider.api_client =
+            ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        provider.supports_streaming = false;
+        let tc = "<turn-context>\n<current-time>2026-09-23 14:07:00</current-time>\n\
+                  <working-directory>/w</working-directory>\n</turn-context>";
+        let messages = vec![Message::user().with_text("find the handler").with_text(tc)];
+        for _ in 0..2 {
+            let mut stream = provider
+                .stream(&ModelConfig::new("served"), "system", &messages, &[])
+                .await
+                .unwrap();
+            use futures::StreamExt;
+            while stream.next().await.is_some() {}
+        }
+        let requests = server.received_requests().await.unwrap();
+        let probes = requests
+            .iter()
+            .filter(|r| r.method.as_str() == "GET")
+            .count();
+        let bodies = requests
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect();
+        (bodies, probes, format!("\n{tc}"))
+    }
+
+    /// The marker reaches ONLY an omlx endpoint that declared it, names exactly the appended
+    /// block, and is probed once per model; a non-declaring engine and every other provider get a
+    /// byte-identical request (negative controls), and a non-omlx provider is never probed.
+    #[tokio::test]
+    async fn the_transient_tail_rides_only_to_a_declaring_rapid_mlx_engine() {
+        let (bodies, probes, tail) =
+            post_bodies_through("omlx", json!(["rapid_mlx_transient_tail"])).await;
+        assert_eq!(probes, 1, "one probe per model, then the cache answers");
+        for body in &bodies {
+            assert_eq!(body[RAPID_MLX_TRANSIENT_TAIL], json!(tail));
+            let last = body["messages"].as_array().unwrap().last().unwrap();
+            assert!(last["content"].as_str().unwrap().ends_with(&tail));
+        }
+
+        let (bodies, probes, _) = post_bodies_through("omlx", json!([])).await;
+        assert_eq!(probes, 1);
+        assert!(bodies
+            .iter()
+            .all(|b| b.get(RAPID_MLX_TRANSIENT_TAIL).is_none()));
+
+        let (bodies, probes, _) =
+            post_bodies_through("lmstudio", json!(["rapid_mlx_transient_tail"])).await;
+        assert_eq!(
+            probes, 0,
+            "only the provider fronting the MLX engine is asked"
+        );
+        assert!(bodies
+            .iter()
+            .all(|b| b.get(RAPID_MLX_TRANSIENT_TAIL).is_none()));
+    }
+
+    #[test]
+    fn a_request_extension_is_read_from_the_served_entry_or_the_sole_one() {
+        let listing = json!({"data": [
+            {"id": "a", "request_extensions": ["rapid_mlx_transient_tail"]},
+            {"id": "b", "request_extensions": []},
+        ]});
+        assert!(declares_request_extension(
+            &listing,
+            "a",
+            RAPID_MLX_TRANSIENT_TAIL
+        ));
+        assert!(!declares_request_extension(
+            &listing,
+            "b",
+            RAPID_MLX_TRANSIENT_TAIL
+        ));
+        assert!(!declares_request_extension(
+            &listing,
+            "c",
+            RAPID_MLX_TRANSIENT_TAIL
+        ));
+        let sole =
+            json!({"data": [{"id": "x", "request_extensions": ["rapid_mlx_transient_tail"]}]});
+        assert!(declares_request_extension(
+            &sole,
+            "alias",
+            RAPID_MLX_TRANSIENT_TAIL
+        ));
+        assert!(!declares_request_extension(
+            &json!({"data": [{"id": "x"}]}),
+            "x",
+            RAPID_MLX_TRANSIENT_TAIL
+        ));
     }
 
     /// Alibaba's Token Plan rejects a request outright when any of these four are wrong, and the
