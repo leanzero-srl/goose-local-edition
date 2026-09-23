@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "This approval request is no longer active."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} バイト"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "深さ {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "最大 {n, number} ツール"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "エンジンの上限"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "このセッションのツールを読み取れなかったため、サイズは不明です: {error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "このセッションのツールを計測しています"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "エンジンは上限を数値で示しませんでした — エンジン自身の文言を下に示します。"
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "このセッションにはオフにできる拡張機能がありません。"
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "MCPs を開く"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "再試行"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools, plural, other {# ツール}} · {bytes, number} バイト"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "深さ {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "このセッションが送信"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "サイズは、このセッションのツール一覧からエンジン自身の単位でアプリが計測しています: 各ツールの名前とパラメーターをコンパクトな JSON にしたもの。説明はコンパイルされず、数えられません。"
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "エンジンはこのセッションが送るすべてのツールを文法にコンパイルし、上限を超えるセットを拒否します。このセッションに不要な拡張機能をオフにしてから再試行してください。"
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "このエンジンにはツールが多すぎます"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} バイト"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "深さ {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n, plural, other {# ツール}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "このセッションでオフにする"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "オフにできませんでした: {error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "オフにしています"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "goose 自身のツール (オフにできる拡張機能なし)"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "セッションのツールがエンジンの上限内に収まりました — 再試行してメッセージをもう一度送信してください。"
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "ツールのステータス: {status}"
   },

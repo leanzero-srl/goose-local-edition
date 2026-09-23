@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "This approval request is no longer active."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} bytes"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "depth {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "max {n, number} tools"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "Engine bounds"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "Could not read this session’s tools, so their sizes are unknown: {error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "Measuring this session’s tools"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "The engine did not state its bounds in numbers — its words are below."
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "This session has no extensions to turn off."
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "Open MCPs"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "Retry"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools,plural,one{# tool · {bytes, number} bytes} other{# tools · {bytes, number} bytes}}"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "depth {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "This session sends"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "Sizes are measured by the app from this session’s tool list in the engine’s own units: each tool’s name and parameters as compact JSON. Descriptions are not compiled and not counted."
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "The engine compiles every tool this session sends into a grammar and refuses a set larger than its bounds. Turn off extensions this session does not need, then retry."
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "Too many tools for this engine"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} bytes"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "depth {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n,plural,one{# tool} other{# tools}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "Turn off for this session"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "Could not turn it off: {error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "Turning off"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "goose’s own tools (no extension to turn off)"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "The session’s tools are now within the engine’s bounds — retry to send your message again."
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "Tool status: {status}"
   },

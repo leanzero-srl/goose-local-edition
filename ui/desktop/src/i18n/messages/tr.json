@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "This approval request is no longer active."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} bayt"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "derinlik {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "en fazla {n, number} araç"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "Motor sınırları"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "Bu oturumun araçları okunamadı, bu yüzden boyutları bilinmiyor: {error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "Bu oturumun araçları ölçülüyor"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "Motor sınırlarını sayılarla belirtmedi — kendi sözleri aşağıda."
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "Bu oturumda kapatılacak uzantı yok."
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "MCPs’i aç"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "Yeniden dene"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools, plural, other {# araç}} · {bytes, number} bayt"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "derinlik {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "Bu oturumun gönderdiği"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "Boyutlar, uygulama tarafından bu oturumun araç listesinden motorun kendi birimleriyle ölçülür: her aracın adı ve parametreleri sıkıştırılmış JSON olarak. Açıklamalar derlenmez ve sayılmaz."
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "Motor, bu oturumun gönderdiği her aracı bir dilbilgisine derler ve sınırlarını aşan bir kümeyi reddeder. Bu oturumun ihtiyaç duymadığı uzantıları kapatın, ardından yeniden deneyin."
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "Bu motor için çok fazla araç"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} bayt"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "derinlik {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n, plural, other {# araç}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "Bu oturum için kapat"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "Kapatılamadı: {error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "Kapatılıyor"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "goose’un kendi araçları (kapatılacak uzantı yok)"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "Oturumun araçları artık motorun sınırları içinde — mesajınızı yeniden göndermek için yeniden deneyin."
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "Takım durumu: {status}"
   },

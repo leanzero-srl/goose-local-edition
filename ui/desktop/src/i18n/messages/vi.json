@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "Yêu cầu phê duyệt này không còn hiệu lực."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} byte"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "độ sâu {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "tối đa {n, number} công cụ"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "Giới hạn của engine"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "Không đọc được các công cụ của phiên này nên chưa biết kích thước của chúng: {error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "Đang đo các công cụ của phiên này"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "Engine không nêu giới hạn bằng con số — nguyên văn của nó ở bên dưới."
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "Phiên này không có tiện ích mở rộng nào để tắt."
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "Mở MCPs"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools, plural, other {# công cụ}} · {bytes, number} byte"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "độ sâu {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "Phiên này gửi"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "Ứng dụng đo kích thước từ danh sách công cụ của phiên này theo đơn vị của chính engine: tên và tham số của mỗi công cụ dưới dạng JSON gọn. Phần mô tả không được biên dịch và không được tính."
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "Engine biên dịch mọi công cụ mà phiên này gửi thành một ngữ pháp và từ chối một tập vượt quá giới hạn của nó. Hãy tắt các tiện ích mở rộng mà phiên này không cần rồi thử lại."
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "Quá nhiều công cụ cho engine này"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} byte"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "độ sâu {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n, plural, other {# công cụ}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "Tắt cho phiên này"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "Không tắt được: {error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "Đang tắt"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "Công cụ riêng của goose (không có tiện ích mở rộng để tắt)"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "Các công cụ của phiên giờ đã nằm trong giới hạn của engine — hãy thử lại để gửi lại tin nhắn."
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "Trạng thái công cụ: {status}"
   },

@@ -24,6 +24,8 @@ import { cn } from '../utils';
 import { identifyConsecutiveToolCalls, shouldHideTimestamp } from '../utils/toolCallChaining';
 import NoNodeNotice from './noNodeNotice/NoNodeNotice';
 import { parseNoNodeError } from './noNodeNotice/parseNoNodeError';
+import ToolBoundsNotice from './toolBoundsNotice/ToolBoundsNotice';
+import { parseToolBoundsError } from './toolBoundsNotice/toolSchemaBounds';
 
 interface GooseMessageProps {
   sessionId: string;
@@ -120,18 +122,21 @@ export default function GooseMessage({
 
   const pendingConfirmationIds = getPendingToolConfirmationIds(messages);
 
-  // The swarm router's "no node can serve this turn" arrives as plain assistant text; it renders as
-  // an actionable notice. Retry resends the last user turn's text — only when that turn was text
+  // A turn-failure the chat can act on arrives as plain assistant text — live, and replayed from the
+  // persisted user-only message on reopen (3a98d9974) — and renders as an actionable notice: the
+  // swarm router's "no node can serve this turn", or the engine's "tool schema exceeds
+  // grammar-compile bounds". Retry resends the last user turn's text — only when that turn was text
   // alone, since a resend without its images would not be the same message.
-  const noNodeRows = useMemo(
-    () =>
-      !isStreaming && message.content.every((c) => c.type === 'text')
-        ? parseNoNodeError(displayText)
-        : null,
-    [isStreaming, message.content, displayText]
-  );
-  const noNodeRetryText = useMemo(() => {
-    if (!noNodeRows) return null;
+  const failure = useMemo(() => {
+    if (isStreaming || !message.content.every((c) => c.type === 'text')) return null;
+    const noNodeRows = parseNoNodeError(displayText);
+    if (noNodeRows) return { kind: 'no-node' as const, rows: noNodeRows };
+    const bounds = parseToolBoundsError(displayText);
+    if (bounds) return { kind: 'tool-bounds' as const, bounds };
+    return null;
+  }, [isStreaming, message.content, displayText]);
+  const failureRetryText = useMemo(() => {
+    if (!failure) return null;
     for (let i = messageIndex - 1; i >= 0; i--) {
       if (messages[i].role !== 'user') continue;
       const { textContent, imagePaths: userImages } = getTextAndImageContent(messages[i]);
@@ -139,18 +144,29 @@ export default function GooseMessage({
       return userImages.length === 0 ? textContent : null;
     }
     return null;
-  }, [noNodeRows, messages, messageIndex]);
+  }, [failure, messages, messageIndex]);
 
-  if (noNodeRows) {
+  if (failure) {
+    const live = messageIndex === messages.length - 1;
     return (
       <div className="goose-message flex w-[90%] justify-start min-w-0">
         <div className="flex flex-col w-full min-w-0">
-          <NoNodeNotice
-            rows={noNodeRows}
-            live={messageIndex === messages.length - 1}
-            retryText={noNodeRetryText}
-            onRetry={append}
-          />
+          {failure.kind === 'no-node' ? (
+            <NoNodeNotice
+              rows={failure.rows}
+              live={live}
+              retryText={failureRetryText}
+              onRetry={append}
+            />
+          ) : (
+            <ToolBoundsNotice
+              bounds={failure.bounds}
+              sessionId={sessionId}
+              live={live}
+              retryText={failureRetryText}
+              onRetry={append}
+            />
+          )}
           <div className="text-xs font-mono text-text-secondary pt-1">{timestamp}</div>
         </div>
       </div>

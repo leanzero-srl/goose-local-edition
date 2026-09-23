@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "This approval request is no longer active."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} байт"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "глубина {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "не более {n, number} инструментов"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "Пределы движка"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "Не удалось прочитать инструменты этой сессии, поэтому их размеры неизвестны: {error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "Измеряем инструменты этой сессии"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "Движок не указал свои пределы в числах — его собственные слова ниже."
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "В этой сессии нет расширений, которые можно отключить."
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "Открыть MCPs"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools, plural, one {# инструмент} few {# инструмента} many {# инструментов} other {# инструмента}} · {bytes, number} байт"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "глубина {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "Эта сессия отправляет"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "Размеры измеряет приложение по списку инструментов этой сессии в единицах самого движка: имя и параметры каждого инструмента в виде компактного JSON. Описания не компилируются и не учитываются."
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "Движок компилирует каждый инструмент, который отправляет эта сессия, в грамматику и отклоняет набор, превышающий его пределы. Отключите расширения, которые этой сессии не нужны, и повторите попытку."
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "Слишком много инструментов для этого движка"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} байт"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "глубина {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n, plural, one {# инструмент} few {# инструмента} many {# инструментов} other {# инструмента}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "Отключить для этой сессии"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "Не удалось отключить: {error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "Отключаем"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "Собственные инструменты goose (нет расширения, которое можно отключить)"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "Инструменты сессии теперь в пределах движка — повторите, чтобы отправить сообщение снова."
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "Статус инструмента: {status}"
   },

@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "This approval request is no longer active."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} bytes"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "profundidad {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "máx. {n, number} herramientas"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "Límites del motor"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "No se pudieron leer las herramientas de esta sesión, así que sus tamaños se desconocen: {error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "Midiendo las herramientas de esta sesión"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "El motor no indicó sus límites en números; sus palabras están abajo."
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "Esta sesión no tiene extensiones que desactivar."
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "Abrir MCPs"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "Reintentar"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools, plural, one {# herramienta} other {# herramientas}} · {bytes, number} bytes"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "profundidad {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "Esta sesión envía"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "La app mide los tamaños a partir de la lista de herramientas de esta sesión, en las unidades del propio motor: el nombre y los parámetros de cada herramienta como JSON compacto. Las descripciones no se compilan ni se cuentan."
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "El motor compila cada herramienta que envía esta sesión en una gramática y rechaza un conjunto mayor que sus límites. Desactiva las extensiones que esta sesión no necesita y vuelve a intentarlo."
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "Demasiadas herramientas para este motor"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} bytes"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "profundidad {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n, plural, one {# herramienta} other {# herramientas}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "Desactivar en esta sesión"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "No se pudo desactivar: {error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "Desactivando"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "Herramientas propias de goose (sin extensión que desactivar)"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "Las herramientas de la sesión ya están dentro de los límites del motor; reintenta para enviar tu mensaje de nuevo."
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "Estado de la herramienta: {status}"
   },

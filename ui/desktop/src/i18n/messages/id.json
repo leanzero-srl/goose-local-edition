@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "Permintaan persetujuan ini sudah tidak aktif lagi."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} byte"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "kedalaman {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "maks. {n, number} alat"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "Batas mesin"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "Alat sesi ini tidak dapat dibaca, jadi ukurannya tidak diketahui: {error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "Mengukur alat sesi ini"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "Mesin tidak menyebutkan batasnya dalam angka — kata-katanya ada di bawah."
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "Sesi ini tidak memiliki ekstensi untuk dimatikan."
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "Buka MCPs"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "Coba lagi"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools, plural, other {# alat}} · {bytes, number} byte"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "kedalaman {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "Sesi ini mengirim"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "Ukuran diukur oleh aplikasi dari daftar alat sesi ini dalam satuan mesin itu sendiri: nama dan parameter setiap alat sebagai JSON ringkas. Deskripsi tidak dikompilasi dan tidak dihitung."
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "Mesin mengompilasi setiap alat yang dikirim sesi ini menjadi sebuah grammar dan menolak kumpulan yang melebihi batasnya. Matikan ekstensi yang tidak dibutuhkan sesi ini, lalu coba lagi."
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "Terlalu banyak alat untuk mesin ini"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} byte"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "kedalaman {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n, plural, other {# alat}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "Matikan untuk sesi ini"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "Tidak dapat dimatikan: {error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "Mematikan"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "Alat bawaan goose (tidak ada ekstensi untuk dimatikan)"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "Alat sesi kini berada dalam batas mesin — coba lagi untuk mengirim pesan Anda kembali."
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "Status alat: {status}"
   },

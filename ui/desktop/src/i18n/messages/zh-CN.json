@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "This approval request is no longer active."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} 字节"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "深度 {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "最多 {n, number} 个工具"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "引擎上限"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "无法读取此会话的工具，因此其大小未知：{error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "正在测量此会话的工具"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "引擎没有用数字说明其上限——它的原话见下方。"
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "此会话没有可关闭的扩展。"
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "打开 MCPs"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "重试"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools, plural, other {# 个工具}} · {bytes, number} 字节"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "深度 {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "此会话发送"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "大小由应用根据此会话的工具列表、按引擎自身的单位测量：每个工具的名称和参数以紧凑 JSON 计。描述不会被编译，也不计入。"
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "引擎会把此会话发送的每个工具编译成语法，并拒绝超出其上限的工具集。请关闭此会话不需要的扩展，然后重试。"
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "工具太多，此引擎无法处理"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} 字节"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "深度 {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n, plural, other {# 个工具}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "在此会话中关闭"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "无法关闭：{error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "正在关闭"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "goose 自带工具（没有可关闭的扩展）"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "此会话的工具现已在引擎上限之内——重试即可再次发送你的消息。"
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "工具状态：{status}"
   },

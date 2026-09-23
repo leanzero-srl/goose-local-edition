@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "Permintaan kelulusan ini tidak lagi aktif."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} bait"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "kedalaman {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "maks. {n, number} alat"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "Had enjin"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "Alat sesi ini tidak dapat dibaca, jadi saiznya tidak diketahui: {error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "Mengukur alat sesi ini"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "Enjin tidak menyatakan hadnya dalam nombor — kata-katanya ada di bawah."
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "Sesi ini tiada sambungan untuk dimatikan."
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "Buka MCPs"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "Cuba lagi"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools, plural, other {# alat}} · {bytes, number} bait"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "kedalaman {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "Sesi ini menghantar"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "Saiz diukur oleh apl daripada senarai alat sesi ini dalam unit enjin itu sendiri: nama dan parameter setiap alat sebagai JSON padat. Penerangan tidak dikompil dan tidak dikira."
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "Enjin mengkompil setiap alat yang dihantar oleh sesi ini menjadi tatabahasa dan menolak set yang melebihi hadnya. Matikan sambungan yang tidak diperlukan oleh sesi ini, kemudian cuba lagi."
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "Terlalu banyak alat untuk enjin ini"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} bait"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "kedalaman {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n, plural, other {# alat}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "Matikan untuk sesi ini"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "Tidak dapat dimatikan: {error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "Mematikan"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "Alat goose sendiri (tiada sambungan untuk dimatikan)"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "Alat sesi kini berada dalam had enjin — cuba lagi untuk menghantar semula mesej anda."
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "Status alat: {status}"
   },

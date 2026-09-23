@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "This approval request is no longer active."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} बाइट"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "गहराई {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "अधिकतम {n, number} टूल"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "इंजन की सीमाएँ"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "इस सत्र के टूल पढ़े नहीं जा सके, इसलिए उनके आकार अज्ञात हैं: {error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "इस सत्र के टूल मापे जा रहे हैं"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "इंजन ने अपनी सीमाएँ संख्याओं में नहीं बताईं — उसके शब्द नीचे हैं।"
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "इस सत्र में बंद करने के लिए कोई एक्सटेंशन नहीं है।"
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "MCPs खोलें"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "फिर से कोशिश करें"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools, plural, one {# टूल} other {# टूल}} · {bytes, number} बाइट"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "गहराई {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "यह सत्र भेजता है"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "आकार ऐप इस सत्र की टूल सूची से इंजन की अपनी इकाइयों में मापता है: हर टूल का नाम और पैरामीटर कॉम्पैक्ट JSON के रूप में। विवरण कंपाइल नहीं होते और गिने नहीं जाते।"
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "इंजन इस सत्र के भेजे हर टूल को एक ग्रामर में कंपाइल करता है और अपनी सीमाओं से बड़े सेट को अस्वीकार करता है। जिन एक्सटेंशन की इस सत्र को ज़रूरत नहीं है उन्हें बंद करें, फिर दोबारा कोशिश करें।"
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "इस इंजन के लिए बहुत अधिक टूल"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} बाइट"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "गहराई {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n, plural, one {# टूल} other {# टूल}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "इस सत्र के लिए बंद करें"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "बंद नहीं किया जा सका: {error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "बंद किया जा रहा है"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "goose के अपने टूल (बंद करने के लिए कोई एक्सटेंशन नहीं)"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "सत्र के टूल अब इंजन की सीमाओं के भीतर हैं — अपना संदेश फिर से भेजने के लिए दोबारा कोशिश करें।"
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "उपकरण स्थिति: {status}"
   },

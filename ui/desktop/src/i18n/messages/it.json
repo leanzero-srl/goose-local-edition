@@ -5417,6 +5417,78 @@
   "toolApprovalButtons.staleApprovalRequest": {
     "defaultMessage": "Questa richiesta di approvazione non è più attiva."
   },
+  "toolBoundsNotice.boundBytes": {
+    "defaultMessage": "{n, number} byte"
+  },
+  "toolBoundsNotice.boundDepth": {
+    "defaultMessage": "profondità {n, number}"
+  },
+  "toolBoundsNotice.boundTools": {
+    "defaultMessage": "max {n, number} strumenti"
+  },
+  "toolBoundsNotice.boundsLabel": {
+    "defaultMessage": "Limiti del motore"
+  },
+  "toolBoundsNotice.measureFailed": {
+    "defaultMessage": "Impossibile leggere gli strumenti di questa sessione, quindi le loro dimensioni sono sconosciute: {error}"
+  },
+  "toolBoundsNotice.measuring": {
+    "defaultMessage": "Misurazione degli strumenti di questa sessione"
+  },
+  "toolBoundsNotice.noBounds": {
+    "defaultMessage": "Il motore non ha indicato i suoi limiti in numeri — le sue parole sono qui sotto."
+  },
+  "toolBoundsNotice.noExtensions": {
+    "defaultMessage": "Questa sessione non ha estensioni da disattivare."
+  },
+  "toolBoundsNotice.openMcps": {
+    "defaultMessage": "Apri MCPs"
+  },
+  "toolBoundsNotice.retry": {
+    "defaultMessage": "Riprova"
+  },
+  "toolBoundsNotice.rowSize": {
+    "defaultMessage": "{tools, plural, one {# strumento} other {# strumenti}} · {bytes, number} byte"
+  },
+  "toolBoundsNotice.rowTooDeep": {
+    "defaultMessage": "profondità {n, number}"
+  },
+  "toolBoundsNotice.sessionSends": {
+    "defaultMessage": "Questa sessione invia"
+  },
+  "toolBoundsNotice.sizesNote": {
+    "defaultMessage": "Le dimensioni sono misurate dall’app dall’elenco strumenti di questa sessione, nelle unità del motore: nome e parametri di ogni strumento come JSON compatto. Le descrizioni non vengono compilate né contate."
+  },
+  "toolBoundsNotice.summary": {
+    "defaultMessage": "Il motore compila in una grammatica ogni strumento che questa sessione invia e rifiuta un insieme più grande dei suoi limiti. Disattiva le estensioni di cui questa sessione non ha bisogno, poi riprova."
+  },
+  "toolBoundsNotice.title": {
+    "defaultMessage": "Troppi strumenti per questo motore"
+  },
+  "toolBoundsNotice.totalBytes": {
+    "defaultMessage": "{n, number} byte"
+  },
+  "toolBoundsNotice.totalDepth": {
+    "defaultMessage": "profondità {n, number}"
+  },
+  "toolBoundsNotice.totalTools": {
+    "defaultMessage": "{n, plural, one {# strumento} other {# strumenti}}"
+  },
+  "toolBoundsNotice.turnOff": {
+    "defaultMessage": "Disattiva per questa sessione"
+  },
+  "toolBoundsNotice.turnOffFailed": {
+    "defaultMessage": "Impossibile disattivarla: {error}"
+  },
+  "toolBoundsNotice.turningOff": {
+    "defaultMessage": "Disattivazione"
+  },
+  "toolBoundsNotice.unowned": {
+    "defaultMessage": "Strumenti propri di goose (nessuna estensione da disattivare)"
+  },
+  "toolBoundsNotice.within": {
+    "defaultMessage": "Gli strumenti della sessione ora rientrano nei limiti del motore — riprova per inviare di nuovo il messaggio."
+  },
   "toolCallStatusIndicator.toolStatus": {
     "defaultMessage": "Stato dello strumento: {status}"
   },
