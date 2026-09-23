@@ -7822,6 +7822,426 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/downloadCancel"
     },
+    "MlxEngineLinkFactsRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]."
+        }
+      },
+      "description": "Read a node's interface facts.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/linkFacts"
+    },
+    "MlxEngineLinkFactsResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "interfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxNetInterfaceDto"
+          }
+        },
+        "warning": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A part of the report that could not be read (the TB link speed), stated."
+        }
+      },
+      "required": [
+        "interfaces"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/linkFacts"
+    },
+    "MlxNetInterfaceDto": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "hardwarePort": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "macOS hardware-port name (\"Thunderbolt 3\", \"Wi-Fi\"); absent on platforms without one."
+        },
+        "kind": {
+          "type": "string",
+          "description": "\"thunderbolt\" | \"ethernet\" | \"wifi\" | \"other\""
+        },
+        "ipv4": {
+          "type": "string"
+        },
+        "prefixLen": {
+          "type": "integer",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "linkSpeed": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Negotiated Thunderbolt link speed as the OS reports it (\"80 Gb/s\"); absent when it\ncould not be attributed to this port."
+        }
+      },
+      "required": [
+        "device",
+        "kind",
+        "ipv4",
+        "prefixLen"
+      ],
+      "description": "One IPv4 address on one of a node's interfaces."
+    },
+    "MlxEngineReplicaTargetsRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]. The targets are computed from\nTHAT node's viewpoint (its interfaces, its peers)."
+        }
+      },
+      "description": "The peers a model could be copied to from this node (or from `nodeId`).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/replicaTargets"
+    },
+    "MlxEngineReplicaTargetsResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "meshConnected": {
+          "type": "boolean",
+          "description": "False when this node is not on the mesh: there are no peers, `targets` is empty,\nand the Models tab shows no copy action (a single machine looks exactly as before)."
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxReplicaTargetDto"
+          }
+        },
+        "warning": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A part of THIS node's interface report that could not be read, stated."
+        }
+      },
+      "required": [
+        "meshConnected",
+        "targets"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/replicaTargets"
+    },
+    "MlxReplicaTargetDto": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "link": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxReplicaLinkDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The chosen direct path; absent exactly when `unavailable` says why."
+        },
+        "unavailable": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why no copy can go to this peer now (offline, observe-only, no shared subnet, the\npeer's address did not answer)."
+        }
+      },
+      "required": [
+        "nodeId",
+        "hostname"
+      ],
+      "description": "A peer this node could copy a model to."
+    },
+    "MlxReplicaLinkDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "\"thunderbolt\" when BOTH ends are Thunderbolt ports in one subnet; otherwise\n\"network\" (a shared Ethernet/Wi-Fi subnet)."
+        },
+        "local": {
+          "$ref": "#/$defs/MlxNetInterfaceDto"
+        },
+        "peer": {
+          "$ref": "#/$defs/MlxNetInterfaceDto"
+        }
+      },
+      "required": [
+        "kind",
+        "local",
+        "peer"
+      ],
+      "description": "The direct path between two nodes."
+    },
+    "MlxEngineReplicateRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "targetNodeId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The SENDING node; see [`MlxEngineStatusRequest::node_id`]. Absent/self → this node\nsends; a peer's id makes THAT node send its copy to `targetNodeId`."
+        }
+      },
+      "required": [
+        "modelId",
+        "targetNodeId"
+      ],
+      "description": "Copy a complete local model to `targetNodeId`. Returns once the peer has ACCEPTED the\npull; poll `replicaProgress` with `nodeId = targetNodeId` for the copy itself.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/replicate"
+    },
+    "MlxEngineReplicateResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "link": {
+          "$ref": "#/$defs/MlxReplicaLinkDto"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "description": "The sender's replica listener the peer pulls from (`http://<local address>:<port>`)."
+        }
+      },
+      "required": [
+        "link",
+        "sourceUrl"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/replicate"
+    },
+    "MlxEngineReplicaPullRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "sourceUrl": {
+          "type": "string"
+        },
+        "offerToken": {
+          "type": "string"
+        },
+        "link": {
+          "$ref": "#/$defs/MlxReplicaLinkDto"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`]."
+        }
+      },
+      "required": [
+        "modelId",
+        "sourceUrl",
+        "offerToken",
+        "link"
+      ],
+      "description": "Node-to-node: pull `modelId` from a sender's replica listener into this node's models\ndir. Sent by the SENDING node over the mesh proxy after it offered the model; the\n`offerToken` is the capability for that one offer. Refused while the model is already\ncomplete here or a download/copy of it is running.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/replicaPull"
+    },
+    "MlxEngineReplicaProgressRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`] — the RECEIVING node."
+        }
+      },
+      "required": [
+        "modelId"
+      ],
+      "description": "Poll a copy on the receiving node (`nodeId` = that node). `progress` is unset when no\ncopy of the model was tracked there.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/replicaProgress"
+    },
+    "MlxEngineReplicaProgressResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "progress": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxReplicaProgressDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/replicaProgress"
+    },
+    "MlxReplicaProgressDto": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "sourceUrl": {
+          "type": "string"
+        },
+        "link": {
+          "type": "string",
+          "description": "\"thunderbolt\" | \"network\""
+        },
+        "linkDetail": {
+          "type": "string"
+        },
+        "totalBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "copiedBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "filesTotal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "filesDone": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currentFile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phase": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"transferring\" | \"verifying\" (the file's SHA-256 against the sender's)"
+        },
+        "resumedFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Continued from an on-disk `.part` via HTTP Range."
+        },
+        "restartedFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Restarted from zero (a `.part` at/past the size, or a refused range)."
+        },
+        "skippedFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Already present at full size and verified in place."
+        },
+        "wireBytes": {
+          "type": "integer",
+          "description": "Bytes that crossed the link in this attempt and the milliseconds spent receiving\nthem — `wireBytes / wireMillis` is the link's measured rate.",
+          "minimum": 0
+        },
+        "wireMillis": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "elapsedMillis": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "releaseError": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The sender's offer could not be released (it lapses when the sender exits)."
+        }
+      },
+      "required": [
+        "state",
+        "sourceUrl",
+        "link",
+        "linkDetail",
+        "totalBytes",
+        "copiedBytes",
+        "filesTotal",
+        "filesDone",
+        "wireBytes",
+        "wireMillis",
+        "elapsedMillis"
+      ],
+      "description": "A copy in progress (or finished) on the RECEIVING node. `state` is one of\n\"queued\" | \"copying\" | \"done\" | \"failed\" | \"cancelled\"."
+    },
+    "MlxEngineReplicaCancelRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "nodeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Mesh target; see [`MlxEngineStatusRequest::node_id`] — the RECEIVING node.\nDESTRUCTIVE there: the partial copy is deleted and the op is logged loudly."
+        }
+      },
+      "required": [
+        "modelId"
+      ],
+      "description": "Cancel a running copy on the receiving node and delete its partial model dir.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/replicaCancel"
+    },
     "LeanzeroLinkHealthRequest_unstable": {
       "type": "object",
       "description": "`GET /v1/health` on the auth worker — what the deployment supports.",
@@ -9840,6 +10260,60 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEngineLinkFactsRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/linkFacts",
+                  "title": "MlxEngineLinkFactsRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineReplicaTargetsRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/replicaTargets",
+                  "title": "MlxEngineReplicaTargetsRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineReplicateRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/replicate",
+                  "title": "MlxEngineReplicateRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineReplicaPullRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/replicaPull",
+                  "title": "MlxEngineReplicaPullRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineReplicaProgressRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/replicaProgress",
+                  "title": "MlxEngineReplicaProgressRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineReplicaCancelRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/replicaCancel",
+                  "title": "MlxEngineReplicaCancelRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/LeanzeroLinkHealthRequest_unstable"
                     }
                   ],
@@ -10628,6 +11102,38 @@
                         }
                       ],
                       "title": "MlxEngineModelCardResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineLinkFactsResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineLinkFactsResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineReplicaTargetsResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineReplicaTargetsResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineReplicateResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineReplicateResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineReplicaProgressResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineReplicaProgressResponse_unstable"
                     },
                     {
                       "allOf": [

@@ -2844,6 +2844,231 @@ pub struct MlxEngineDownloadResumeRequest {
 }
 
 // ============================================================================
+// Model replication between LeanZero Link nodes.
+//
+// A model already on one node is copied to a peer over the best DIRECT path the two
+// share: a Thunderbolt cable (both ends' TB ports in one subnet) first, else a shared
+// LAN subnet. The sender offers the model on a listener bound to that one interface; the
+// receiver pulls it file by file (HTTP Range resume, per-file SHA-256 against the
+// sender's bytes) into its own models dir. The control messages ride the mesh's
+// node-token-authenticated `/v1/swarm/mlx/*` proxy; the bytes never do.
+// ============================================================================
+
+/// One IPv4 address on one of a node's interfaces.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxNetInterfaceDto {
+    pub device: String,
+    /// macOS hardware-port name ("Thunderbolt 3", "Wi-Fi"); absent on platforms without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardware_port: Option<String>,
+    /// "thunderbolt" | "ethernet" | "wifi" | "other"
+    pub kind: String,
+    pub ipv4: String,
+    pub prefix_len: u8,
+    /// Negotiated Thunderbolt link speed as the OS reports it ("80 Gb/s"); absent when it
+    /// could not be attributed to this port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_speed: Option<String>,
+}
+
+/// Read a node's interface facts.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/linkFacts",
+    response = MlxEngineLinkFactsResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineLinkFactsRequest {
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineLinkFactsResponse {
+    pub interfaces: Vec<MlxNetInterfaceDto>,
+    /// A part of the report that could not be read (the TB link speed), stated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+/// The direct path between two nodes.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxReplicaLinkDto {
+    /// "thunderbolt" when BOTH ends are Thunderbolt ports in one subnet; otherwise
+    /// "network" (a shared Ethernet/Wi-Fi subnet).
+    pub kind: String,
+    pub local: MlxNetInterfaceDto,
+    pub peer: MlxNetInterfaceDto,
+}
+
+/// A peer this node could copy a model to.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxReplicaTargetDto {
+    pub node_id: String,
+    pub hostname: String,
+    /// The chosen direct path; absent exactly when `unavailable` says why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<MlxReplicaLinkDto>,
+    /// Why no copy can go to this peer now (offline, observe-only, no shared subnet, the
+    /// peer's address did not answer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<String>,
+}
+
+/// The peers a model could be copied to from this node (or from `nodeId`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/replicaTargets",
+    response = MlxEngineReplicaTargetsResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineReplicaTargetsRequest {
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`]. The targets are computed from
+    /// THAT node's viewpoint (its interfaces, its peers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineReplicaTargetsResponse {
+    /// False when this node is not on the mesh: there are no peers, `targets` is empty,
+    /// and the Models tab shows no copy action (a single machine looks exactly as before).
+    pub mesh_connected: bool,
+    pub targets: Vec<MlxReplicaTargetDto>,
+    /// A part of THIS node's interface report that could not be read, stated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+/// Copy a complete local model to `targetNodeId`. Returns once the peer has ACCEPTED the
+/// pull; poll `replicaProgress` with `nodeId = targetNodeId` for the copy itself.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/replicate",
+    response = MlxEngineReplicateResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineReplicateRequest {
+    pub model_id: String,
+    pub target_node_id: String,
+    /// The SENDING node; see [`MlxEngineStatusRequest::node_id`]. Absent/self → this node
+    /// sends; a peer's id makes THAT node send its copy to `targetNodeId`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineReplicateResponse {
+    pub link: MlxReplicaLinkDto,
+    /// The sender's replica listener the peer pulls from (`http://<local address>:<port>`).
+    pub source_url: String,
+}
+
+/// Node-to-node: pull `modelId` from a sender's replica listener into this node's models
+/// dir. Sent by the SENDING node over the mesh proxy after it offered the model; the
+/// `offerToken` is the capability for that one offer. Refused while the model is already
+/// complete here or a download/copy of it is running.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/replicaPull",
+    response = EmptyResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineReplicaPullRequest {
+    pub model_id: String,
+    pub source_url: String,
+    pub offer_token: String,
+    pub link: MlxReplicaLinkDto,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
+
+/// A copy in progress (or finished) on the RECEIVING node. `state` is one of
+/// "queued" | "copying" | "done" | "failed" | "cancelled".
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxReplicaProgressDto {
+    pub state: String,
+    pub source_url: String,
+    /// "thunderbolt" | "network"
+    pub link: String,
+    pub link_detail: String,
+    pub total_bytes: u64,
+    pub copied_bytes: u64,
+    pub files_total: u32,
+    pub files_done: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_file: Option<String>,
+    /// "transferring" | "verifying" (the file's SHA-256 against the sender's)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    /// Continued from an on-disk `.part` via HTTP Range.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resumed_files: Vec<String>,
+    /// Restarted from zero (a `.part` at/past the size, or a refused range).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub restarted_files: Vec<String>,
+    /// Already present at full size and verified in place.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_files: Vec<String>,
+    /// Bytes that crossed the link in this attempt and the milliseconds spent receiving
+    /// them — `wireBytes / wireMillis` is the link's measured rate.
+    pub wire_bytes: u64,
+    pub wire_millis: u64,
+    pub elapsed_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// The sender's offer could not be released (it lapses when the sender exits).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_error: Option<String>,
+}
+
+/// Poll a copy on the receiving node (`nodeId` = that node). `progress` is unset when no
+/// copy of the model was tracked there.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/replicaProgress",
+    response = MlxEngineReplicaProgressResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineReplicaProgressRequest {
+    pub model_id: String,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`] — the RECEIVING node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineReplicaProgressResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<MlxReplicaProgressDto>,
+}
+
+/// Cancel a running copy on the receiving node and delete its partial model dir.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/replicaCancel",
+    response = EmptyResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineReplicaCancelRequest {
+    pub model_id: String,
+    /// Mesh target; see [`MlxEngineStatusRequest::node_id`] — the RECEIVING node.
+    /// DESTRUCTIVE there: the partial copy is deleted and the op is logged loudly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+}
+
+// ============================================================================
 // LeanZero Link — passwordless account identity + a goose-owned Tailscale mesh.
 //
 // Method namespace: `_goose/unstable/leanzeroLink/*`. These camelCase DTOs are the

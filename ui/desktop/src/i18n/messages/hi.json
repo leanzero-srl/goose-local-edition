@@ -2714,6 +2714,111 @@
   "microphoneSelector.test": {
     "defaultMessage": "परीक्षण"
   },
+  "mlxReplica.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "mlxReplica.cancelConfirmMessage": {
+    "defaultMessage": "{model} को {host} पर कॉपी करना रोकें? {host} पर अधूरी कॉपी हटा दी जाएगी।"
+  },
+  "mlxReplica.cancelConfirmTitle": {
+    "defaultMessage": "कॉपी रद्द करें"
+  },
+  "mlxReplica.cancelFailed": {
+    "defaultMessage": "कॉपी रद्द नहीं की जा सकी।"
+  },
+  "mlxReplica.cancelTitle": {
+    "defaultMessage": "कॉपी रोकें और {host} पर अधूरी कॉपी हटाएँ"
+  },
+  "mlxReplica.checkLinks": {
+    "defaultMessage": "लिंक जाँचें"
+  },
+  "mlxReplica.checking": {
+    "defaultMessage": "लिंक जाँचे जा रहे हैं…"
+  },
+  "mlxReplica.copiedTo": {
+    "defaultMessage": "{host} पर कॉपी हो गया"
+  },
+  "mlxReplica.copyCancelled": {
+    "defaultMessage": "{host} पर कॉपी रद्द की गई"
+  },
+  "mlxReplica.copyFailed": {
+    "defaultMessage": "{host} पर कॉपी विफल रही"
+  },
+  "mlxReplica.copyTitleNetwork": {
+    "defaultMessage": "{host} से कोई Thunderbolt लिंक नहीं है, इसलिए कॉपी लोकल नेटवर्क से जाती है: {local} → {peer}"
+  },
+  "mlxReplica.copyTitleThunderbolt": {
+    "defaultMessage": "Thunderbolt केबल से कॉपी: {local} → {peer}"
+  },
+  "mlxReplica.copyTo": {
+    "defaultMessage": "{kind,select,thunderbolt{{host} पर कॉपी करें · Thunderbolt} other{{host} पर कॉपी करें · नेटवर्क}}"
+  },
+  "mlxReplica.copyingTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Thunderbolt से {host} पर कॉपी हो रहा है} other{नेटवर्क से {host} पर कॉपी हो रहा है}}"
+  },
+  "mlxReplica.dismiss": {
+    "defaultMessage": "हटाएँ"
+  },
+  "mlxReplica.files": {
+    "defaultMessage": "{total} में से {done} फ़ाइलें"
+  },
+  "mlxReplica.keepCopying": {
+    "defaultMessage": "कॉपी जारी रखें"
+  },
+  "mlxReplica.linkNetwork": {
+    "defaultMessage": "नेटवर्क"
+  },
+  "mlxReplica.linkThunderbolt": {
+    "defaultMessage": "Thunderbolt"
+  },
+  "mlxReplica.linkThunderboltSpeed": {
+    "defaultMessage": "Thunderbolt · {speed}"
+  },
+  "mlxReplica.linksError": {
+    "defaultMessage": "आपके दूसरे डिवाइस के लिंक नहीं जाँचे जा सके: {reason}"
+  },
+  "mlxReplica.linksFailed": {
+    "defaultMessage": "लिंक पढ़े नहीं जा सके।"
+  },
+  "mlxReplica.linksNote": {
+    "defaultMessage": "इस डिवाइस पर मौजूद मॉडल को दोबारा डाउनलोड करने के बजाय किसी लिंक किए गए डिवाइस पर कॉपी किया जा सकता है। हर फ़ाइल इस्तेमाल से पहले मूल से मिलाई जाती है।"
+  },
+  "mlxReplica.linksTitle": {
+    "defaultMessage": "लिंक किए गए डिवाइस"
+  },
+  "mlxReplica.networkNote": {
+    "defaultMessage": "कोई Thunderbolt लिंक नहीं है, इसलिए कॉपी लोकल नेटवर्क से जाती हैं।"
+  },
+  "mlxReplica.offerLabel": {
+    "defaultMessage": "डाउनलोड हो गया"
+  },
+  "mlxReplica.offerText": {
+    "defaultMessage": "{model} अब इस डिवाइस पर है। {host} Thunderbolt से जुड़ा है: दोबारा डाउनलोड करने के बजाय इसे वहाँ कॉपी करें।"
+  },
+  "mlxReplica.progressLabel": {
+    "defaultMessage": "{model} की {host} पर कॉपी की प्रगति"
+  },
+  "mlxReplica.rate": {
+    "defaultMessage": "{rate}/s"
+  },
+  "mlxReplica.releaseWarning": {
+    "defaultMessage": "भेजने वाले डिवाइस ने अपना ऑफ़र खुला छोड़ दिया: {reason}"
+  },
+  "mlxReplica.restarted": {
+    "defaultMessage": "{count,plural,one{शुरू से दोबारा शुरू: # फ़ाइल} other{शुरू से दोबारा शुरू: # फ़ाइलें}}"
+  },
+  "mlxReplica.resumed": {
+    "defaultMessage": "{count,plural,one{अधूरी कॉपी से जारी: # फ़ाइल} other{अधूरी कॉपी से जारी: # फ़ाइलें}}"
+  },
+  "mlxReplica.startFailed": {
+    "defaultMessage": "कॉपी शुरू नहीं हुई।"
+  },
+  "mlxReplica.starting": {
+    "defaultMessage": "{host} पर कॉपी शुरू हो रही है…"
+  },
+  "mlxReplica.verifying": {
+    "defaultMessage": "{file} जाँची जा रही है"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "लिख रहा है"
   },
@@ -2728,6 +2833,9 @@
   },
   "mlxStateTile.activity.queued": {
     "defaultMessage": "कतार में"
+  },
+  "mlxStateTile.available": {
+    "defaultMessage": "{gb} GB उपलब्ध"
   },
   "mlxStateTile.claimed": {
     "defaultMessage": "माउंट शुरू होने के बाद से ली गई मेमोरी"
@@ -2779,9 +2887,6 @@
   },
   "mlxStateTile.fitsTight": {
     "defaultMessage": "फ़िट होता है, {reserve} GB रिज़र्व के ऊपर {spare} GB बचेगा"
-  },
-  "mlxStateTile.available": {
-    "defaultMessage": "{gb} GB उपलब्ध"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB माउंट करने हैं"

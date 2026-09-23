@@ -1,0 +1,59 @@
+
+Hardware Port: Ethernet
+Device: en0
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Ethernet Adapter (en8)
+Device: en8
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Ethernet Adapter (en9)
+Device: en9
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Ethernet Adapter (en10)
+Device: en10
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Ethernet Adapter (en11)
+Device: en11
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Ethernet Adapter (en12)
+Device: en12
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Ethernet Adapter (en13)
+Device: en13
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Wi-Fi
+Device: en1
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Thunderbolt 1
+Device: en2
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Thunderbolt 2
+Device: en3
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Thunderbolt 3
+Device: en4
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Thunderbolt 4
+Device: en5
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Thunderbolt 5
+Device: en6
+Ethernet Address: 00:00:00:00:00:00
+
+Hardware Port: Thunderbolt 6
+Device: en7
+Ethernet Address: 00:00:00:00:00:00
+
+VLAN Configurations
+===================

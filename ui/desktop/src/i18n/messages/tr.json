@@ -2714,6 +2714,111 @@
   "microphoneSelector.test": {
     "defaultMessage": "testi"
   },
+  "mlxReplica.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "mlxReplica.cancelConfirmMessage": {
+    "defaultMessage": "{model} modelinin {host} cihazına kopyalanması durdurulsun mu? {host} üzerindeki kısmi kopya silinir."
+  },
+  "mlxReplica.cancelConfirmTitle": {
+    "defaultMessage": "Kopyalamayı iptal et"
+  },
+  "mlxReplica.cancelFailed": {
+    "defaultMessage": "Kopyalama iptal edilemedi."
+  },
+  "mlxReplica.cancelTitle": {
+    "defaultMessage": "Kopyalamayı durdur ve {host} üzerindeki kısmi kopyayı sil"
+  },
+  "mlxReplica.checkLinks": {
+    "defaultMessage": "Bağlantıları denetle"
+  },
+  "mlxReplica.checking": {
+    "defaultMessage": "Bağlantılar denetleniyor…"
+  },
+  "mlxReplica.copiedTo": {
+    "defaultMessage": "{host} cihazına kopyalandı"
+  },
+  "mlxReplica.copyCancelled": {
+    "defaultMessage": "{host} cihazına kopyalama iptal edildi"
+  },
+  "mlxReplica.copyFailed": {
+    "defaultMessage": "{host} cihazına kopyalama başarısız oldu"
+  },
+  "mlxReplica.copyTitleNetwork": {
+    "defaultMessage": "{host} ile Thunderbolt bağlantısı yok, bu yüzden kopya yerel ağdan gider: {local} → {peer}"
+  },
+  "mlxReplica.copyTitleThunderbolt": {
+    "defaultMessage": "Thunderbolt kablosu üzerinden kopyalar: {local} → {peer}"
+  },
+  "mlxReplica.copyTo": {
+    "defaultMessage": "{kind,select,thunderbolt{{host} cihazına kopyala · Thunderbolt} other{{host} cihazına kopyala · ağ}}"
+  },
+  "mlxReplica.copyingTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Thunderbolt ile {host} cihazına kopyalanıyor} other{Ağ üzerinden {host} cihazına kopyalanıyor}}"
+  },
+  "mlxReplica.dismiss": {
+    "defaultMessage": "Kapat"
+  },
+  "mlxReplica.files": {
+    "defaultMessage": "{total} dosyadan {done} tanesi"
+  },
+  "mlxReplica.keepCopying": {
+    "defaultMessage": "Kopyalamaya devam et"
+  },
+  "mlxReplica.linkNetwork": {
+    "defaultMessage": "ağ"
+  },
+  "mlxReplica.linkThunderbolt": {
+    "defaultMessage": "Thunderbolt"
+  },
+  "mlxReplica.linkThunderboltSpeed": {
+    "defaultMessage": "Thunderbolt · {speed}"
+  },
+  "mlxReplica.linksError": {
+    "defaultMessage": "Diğer cihazlarınızla olan bağlantılar denetlenemedi: {reason}"
+  },
+  "mlxReplica.linksFailed": {
+    "defaultMessage": "Bağlantılar okunamadı."
+  },
+  "mlxReplica.linksNote": {
+    "defaultMessage": "Bu cihazdaki bir model yeniden indirilmek yerine bağlı bir cihaza kopyalanabilir. Her dosya kullanılmadan önce asıl dosyayla karşılaştırılır."
+  },
+  "mlxReplica.linksTitle": {
+    "defaultMessage": "Bağlı cihazlar"
+  },
+  "mlxReplica.networkNote": {
+    "defaultMessage": "Thunderbolt bağlantısı yok, bu yüzden kopyalar yerel ağdan gider."
+  },
+  "mlxReplica.offerLabel": {
+    "defaultMessage": "İndirildi"
+  },
+  "mlxReplica.offerText": {
+    "defaultMessage": "{model} artık bu cihazda. {host} Thunderbolt ile bağlı: yeniden indirmek yerine oraya kopyalayın."
+  },
+  "mlxReplica.progressLabel": {
+    "defaultMessage": "{model} modelinin {host} cihazına kopyalanma ilerlemesi"
+  },
+  "mlxReplica.rate": {
+    "defaultMessage": "{rate}/s"
+  },
+  "mlxReplica.releaseWarning": {
+    "defaultMessage": "Gönderen cihaz teklifini açık bıraktı: {reason}"
+  },
+  "mlxReplica.restarted": {
+    "defaultMessage": "{count,plural,one{sıfırdan yeniden başlatıldı: # dosya} other{sıfırdan yeniden başlatıldı: # dosya}}"
+  },
+  "mlxReplica.resumed": {
+    "defaultMessage": "{count,plural,one{kısmi kopyadan devam edildi: # dosya} other{kısmi kopyadan devam edildi: # dosya}}"
+  },
+  "mlxReplica.startFailed": {
+    "defaultMessage": "Kopyalama başlamadı."
+  },
+  "mlxReplica.starting": {
+    "defaultMessage": "{host} cihazına kopyalama başlatılıyor…"
+  },
+  "mlxReplica.verifying": {
+    "defaultMessage": "{file} denetleniyor"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Yazıyor"
   },
@@ -2728,6 +2833,9 @@
   },
   "mlxStateTile.activity.queued": {
     "defaultMessage": "Kuyrukta"
+  },
+  "mlxStateTile.available": {
+    "defaultMessage": "{gb} GB kullanılabilir"
   },
   "mlxStateTile.claimed": {
     "defaultMessage": "Bağlama başladığından beri alınan bellek"
@@ -2779,9 +2887,6 @@
   },
   "mlxStateTile.fitsTight": {
     "defaultMessage": "Sığar, {reserve} GB yedeğin üstünde {spare} GB boş kalır"
-  },
-  "mlxStateTile.available": {
-    "defaultMessage": "{gb} GB kullanılabilir"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB bağlanacak"

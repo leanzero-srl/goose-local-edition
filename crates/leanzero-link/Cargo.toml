@@ -21,6 +21,7 @@ dirs = { workspace = true }
 futures = { workspace = true }
 gethostname = "1.1.0"
 hmac = "0.13"
+rand.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -40,6 +41,7 @@ url = { workspace = true }
 libc = "0.2"
 
 [dev-dependencies]
+goose-sidecar = { path = "../goose-sidecar" }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 wiremock = { workspace = true }

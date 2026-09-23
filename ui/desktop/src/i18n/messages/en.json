@@ -2714,6 +2714,111 @@
   "microphoneSelector.test": {
     "defaultMessage": "Test"
   },
+  "mlxReplica.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "mlxReplica.cancelConfirmMessage": {
+    "defaultMessage": "Stop copying {model} to {host}? The partial copy on {host} is deleted."
+  },
+  "mlxReplica.cancelConfirmTitle": {
+    "defaultMessage": "Cancel copy"
+  },
+  "mlxReplica.cancelFailed": {
+    "defaultMessage": "The copy could not be cancelled."
+  },
+  "mlxReplica.cancelTitle": {
+    "defaultMessage": "Stop the copy and delete the partial copy on {host}"
+  },
+  "mlxReplica.checkLinks": {
+    "defaultMessage": "Check links"
+  },
+  "mlxReplica.checking": {
+    "defaultMessage": "Checking links…"
+  },
+  "mlxReplica.copiedTo": {
+    "defaultMessage": "Copied to {host}"
+  },
+  "mlxReplica.copyCancelled": {
+    "defaultMessage": "Copy to {host} cancelled"
+  },
+  "mlxReplica.copyFailed": {
+    "defaultMessage": "Copy to {host} failed"
+  },
+  "mlxReplica.copyTitleNetwork": {
+    "defaultMessage": "No Thunderbolt link to {host}, so the copy goes over the local network: {local} → {peer}"
+  },
+  "mlxReplica.copyTitleThunderbolt": {
+    "defaultMessage": "Copies over the Thunderbolt cable: {local} → {peer}"
+  },
+  "mlxReplica.copyTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Copy to {host} · Thunderbolt} other{Copy to {host} · network}}"
+  },
+  "mlxReplica.copyingTo": {
+    "defaultMessage": "{kind,select,thunderbolt{Copying to {host} over Thunderbolt} other{Copying to {host} over the network}}"
+  },
+  "mlxReplica.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
+  "mlxReplica.files": {
+    "defaultMessage": "{done} of {total} files"
+  },
+  "mlxReplica.keepCopying": {
+    "defaultMessage": "Keep copying"
+  },
+  "mlxReplica.linkNetwork": {
+    "defaultMessage": "network"
+  },
+  "mlxReplica.linkThunderbolt": {
+    "defaultMessage": "Thunderbolt"
+  },
+  "mlxReplica.linkThunderboltSpeed": {
+    "defaultMessage": "Thunderbolt · {speed}"
+  },
+  "mlxReplica.linksError": {
+    "defaultMessage": "Could not check the links to your other devices: {reason}"
+  },
+  "mlxReplica.linksFailed": {
+    "defaultMessage": "The links could not be read."
+  },
+  "mlxReplica.linksNote": {
+    "defaultMessage": "A model on this device can be copied to a linked device instead of being downloaded again. Every file is checked against the original before it is used."
+  },
+  "mlxReplica.linksTitle": {
+    "defaultMessage": "Linked devices"
+  },
+  "mlxReplica.networkNote": {
+    "defaultMessage": "No Thunderbolt link, so copies go over the local network."
+  },
+  "mlxReplica.offerLabel": {
+    "defaultMessage": "Downloaded"
+  },
+  "mlxReplica.offerText": {
+    "defaultMessage": "{model} is on this device now. {host} is linked by Thunderbolt: copy it there instead of downloading it again."
+  },
+  "mlxReplica.progressLabel": {
+    "defaultMessage": "Copy progress for {model} to {host}"
+  },
+  "mlxReplica.rate": {
+    "defaultMessage": "{rate}/s"
+  },
+  "mlxReplica.releaseWarning": {
+    "defaultMessage": "The sending device kept its offer open: {reason}"
+  },
+  "mlxReplica.restarted": {
+    "defaultMessage": "{count,plural,one{restarted from zero: # file} other{restarted from zero: # files}}"
+  },
+  "mlxReplica.resumed": {
+    "defaultMessage": "{count,plural,one{continued from a partial copy: # file} other{continued from a partial copy: # files}}"
+  },
+  "mlxReplica.startFailed": {
+    "defaultMessage": "The copy did not start."
+  },
+  "mlxReplica.starting": {
+    "defaultMessage": "Starting the copy to {host}…"
+  },
+  "mlxReplica.verifying": {
+    "defaultMessage": "checking {file}"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Writing"
   },

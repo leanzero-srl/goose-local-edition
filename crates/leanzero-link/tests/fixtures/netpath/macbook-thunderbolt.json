@@ -1,0 +1,74 @@
+{
+  "SPThunderboltDataType" : [
+    {
+      "_items" : [
+        {
+          "_name" : "Mac Studio",
+          "device_id_key" : "redacted",
+          "device_name_key" : "Mac15,14",
+          "domain_uuid_key" : "redacted",
+          "services_title" : [
+            {
+              "_name" : "service_ip",
+              "protocol_id_key" : 1,
+              "protocol_revision_key" : 1,
+              "protocol_version_key" : 1,
+              "service_uuid_key" : "redacted"
+            },
+            {
+              "_name" : "unknown_xd_service",
+              "protocol_id_key" : 64087,
+              "protocol_revision_key" : 0,
+              "protocol_version_key" : 1,
+              "service_key_key" : "ˇˇˇˇˇˇAD",
+              "service_uuid_key" : "redacted"
+            }
+          ],
+          "vendor_id_key" : "0x0A27",
+          "vendor_name_key" : "Apple Inc."
+        }
+      ],
+      "_name" : "thunderboltusb4_bus_2",
+      "device_name_key" : "MacBook Pro",
+      "domain_uuid_key" : "redacted",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "80 Gb/s",
+        "link_status_key" : "0x2",
+        "micro_version_key" : "0.0.0",
+        "receptacle_id_key" : "3",
+        "receptacle_status_key" : "receptacle_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "redacted",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_name" : "thunderboltusb4_bus_1",
+      "device_name_key" : "MacBook Pro",
+      "domain_uuid_key" : "redacted",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "Up to 120 Gb/s",
+        "link_status_key" : "0x100",
+        "receptacle_id_key" : "2",
+        "receptacle_status_key" : "receptacle_no_devices_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "redacted",
+      "vendor_name_key" : "Apple Inc."
+    },
+    {
+      "_name" : "thunderboltusb4_bus_0",
+      "device_name_key" : "MacBook Pro",
+      "domain_uuid_key" : "redacted",
+      "receptacle_1_tag" : {
+        "current_speed_key" : "Up to 120 Gb/s",
+        "link_status_key" : "0x100",
+        "receptacle_id_key" : "1",
+        "receptacle_status_key" : "receptacle_no_devices_connected"
+      },
+      "route_string_key" : "0",
+      "switch_uid_key" : "redacted",
+      "vendor_name_key" : "Apple Inc."
+    }
+  ]
+}

@@ -2714,6 +2714,111 @@
   "microphoneSelector.test": {
     "defaultMessage": "测试"
   },
+  "mlxReplica.cancel": {
+    "defaultMessage": "取消"
+  },
+  "mlxReplica.cancelConfirmMessage": {
+    "defaultMessage": "停止将 {model} 复制到 {host}？{host} 上的部分副本将被删除。"
+  },
+  "mlxReplica.cancelConfirmTitle": {
+    "defaultMessage": "取消复制"
+  },
+  "mlxReplica.cancelFailed": {
+    "defaultMessage": "无法取消复制。"
+  },
+  "mlxReplica.cancelTitle": {
+    "defaultMessage": "停止复制并删除 {host} 上的部分副本"
+  },
+  "mlxReplica.checkLinks": {
+    "defaultMessage": "检查连接"
+  },
+  "mlxReplica.checking": {
+    "defaultMessage": "正在检查连接…"
+  },
+  "mlxReplica.copiedTo": {
+    "defaultMessage": "已复制到 {host}"
+  },
+  "mlxReplica.copyCancelled": {
+    "defaultMessage": "已取消复制到 {host}"
+  },
+  "mlxReplica.copyFailed": {
+    "defaultMessage": "复制到 {host} 失败"
+  },
+  "mlxReplica.copyTitleNetwork": {
+    "defaultMessage": "与 {host} 之间没有 Thunderbolt 连接，因此通过本地网络复制：{local} → {peer}"
+  },
+  "mlxReplica.copyTitleThunderbolt": {
+    "defaultMessage": "通过 Thunderbolt 线缆复制：{local} → {peer}"
+  },
+  "mlxReplica.copyTo": {
+    "defaultMessage": "{kind,select,thunderbolt{复制到 {host} · Thunderbolt} other{复制到 {host} · 网络}}"
+  },
+  "mlxReplica.copyingTo": {
+    "defaultMessage": "{kind,select,thunderbolt{正在通过 Thunderbolt 复制到 {host}} other{正在通过网络复制到 {host}}}"
+  },
+  "mlxReplica.dismiss": {
+    "defaultMessage": "关闭"
+  },
+  "mlxReplica.files": {
+    "defaultMessage": "{done} / {total} 个文件"
+  },
+  "mlxReplica.keepCopying": {
+    "defaultMessage": "继续复制"
+  },
+  "mlxReplica.linkNetwork": {
+    "defaultMessage": "网络"
+  },
+  "mlxReplica.linkThunderbolt": {
+    "defaultMessage": "Thunderbolt"
+  },
+  "mlxReplica.linkThunderboltSpeed": {
+    "defaultMessage": "Thunderbolt · {speed}"
+  },
+  "mlxReplica.linksError": {
+    "defaultMessage": "无法检查与其他设备的连接：{reason}"
+  },
+  "mlxReplica.linksFailed": {
+    "defaultMessage": "无法读取连接。"
+  },
+  "mlxReplica.linksNote": {
+    "defaultMessage": "此设备上的模型可以复制到已连接的设备，而无需重新下载。每个文件在使用前都会与原文件核对。"
+  },
+  "mlxReplica.linksTitle": {
+    "defaultMessage": "已连接的设备"
+  },
+  "mlxReplica.networkNote": {
+    "defaultMessage": "没有 Thunderbolt 连接，因此通过本地网络复制。"
+  },
+  "mlxReplica.offerLabel": {
+    "defaultMessage": "已下载"
+  },
+  "mlxReplica.offerText": {
+    "defaultMessage": "{model} 现已在此设备上。{host} 通过 Thunderbolt 连接：请复制过去，而不要重新下载。"
+  },
+  "mlxReplica.progressLabel": {
+    "defaultMessage": "{model} 复制到 {host} 的进度"
+  },
+  "mlxReplica.rate": {
+    "defaultMessage": "{rate}/s"
+  },
+  "mlxReplica.releaseWarning": {
+    "defaultMessage": "发送设备保留了其共享：{reason}"
+  },
+  "mlxReplica.restarted": {
+    "defaultMessage": "{count,plural,one{从头重新开始：# 个文件} other{从头重新开始：# 个文件}}"
+  },
+  "mlxReplica.resumed": {
+    "defaultMessage": "{count,plural,one{从部分副本继续：# 个文件} other{从部分副本继续：# 个文件}}"
+  },
+  "mlxReplica.startFailed": {
+    "defaultMessage": "复制未开始。"
+  },
+  "mlxReplica.starting": {
+    "defaultMessage": "正在开始复制到 {host}…"
+  },
+  "mlxReplica.verifying": {
+    "defaultMessage": "正在校验 {file}"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "正在生成"
   },
@@ -2728,6 +2833,9 @@
   },
   "mlxStateTile.activity.queued": {
     "defaultMessage": "排队中"
+  },
+  "mlxStateTile.available": {
+    "defaultMessage": "可用 {gb} GB"
   },
   "mlxStateTile.claimed": {
     "defaultMessage": "自挂载开始已占用的内存"
@@ -2779,9 +2887,6 @@
   },
   "mlxStateTile.fitsTight": {
     "defaultMessage": "可容纳，在 {reserve} GB 预留之上剩余 {spare} GB"
-  },
-  "mlxStateTile.available": {
-    "defaultMessage": "可用 {gb} GB"
   },
   "mlxStateTile.gbToMount": {
     "defaultMessage": "GB 待挂载"

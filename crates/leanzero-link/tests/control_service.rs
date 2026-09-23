@@ -1251,6 +1251,7 @@ fn destructive_mlx_ops_include_settings_update_and_unmount() {
         MlxOp::DownloadCancel,
         MlxOp::SettingsUpdate,
         MlxOp::Unmount,
+        MlxOp::ReplicaCancel,
     ] {
         assert!(op.is_destructive(), "{op:?} reshapes the node; must warn");
     }
@@ -1259,9 +1260,23 @@ fn destructive_mlx_ops_include_settings_update_and_unmount() {
         MlxOp::SettingsRead,
         MlxOp::ModelsList,
         MlxOp::DownloadProgress,
+        MlxOp::LinkFacts,
+        MlxOp::ReplicaTargets,
+        MlxOp::ReplicaProgress,
     ] {
         assert!(!op.is_destructive(), "{op:?} is a read");
     }
+}
+
+#[test]
+fn every_mlx_op_path_round_trips_and_is_unique() {
+    let mut seen = std::collections::HashSet::new();
+    for op in MlxOp::ALL {
+        assert_eq!(MlxOp::from_path(op.path()), Some(op), "{op:?}");
+        assert!(seen.insert(op.path()), "duplicate path {}", op.path());
+    }
+    assert_eq!(MlxOp::from_path("replicaPull"), Some(MlxOp::ReplicaPull));
+    assert_eq!(MlxOp::from_path("replica_pull"), None);
 }
 
 #[tokio::test]

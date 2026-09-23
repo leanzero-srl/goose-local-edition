@@ -3300,6 +3300,188 @@ export const zMlxEngineDownloadCancelRequest_unstable = z.object({
 });
 
 /**
+ * Read a node's interface facts.
+ */
+export const zMlxEngineLinkFactsRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * One IPv4 address on one of a node's interfaces.
+ */
+export const zMlxNetInterfaceDto = z.object({
+    device: z.string(),
+    hardwarePort: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    kind: z.string(),
+    ipv4: z.string(),
+    prefixLen: z.number().int().gte(0).lte(255),
+    linkSpeed: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineLinkFactsResponse_unstable = z.object({
+    interfaces: z.array(zMlxNetInterfaceDto),
+    warning: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * The peers a model could be copied to from this node (or from `nodeId`).
+ */
+export const zMlxEngineReplicaTargetsRequest_unstable = z.object({
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * The direct path between two nodes.
+ */
+export const zMlxReplicaLinkDto = z.object({
+    kind: z.string(),
+    local: zMlxNetInterfaceDto,
+    peer: zMlxNetInterfaceDto
+});
+
+/**
+ * A peer this node could copy a model to.
+ */
+export const zMlxReplicaTargetDto = z.object({
+    nodeId: z.string(),
+    hostname: z.string(),
+    link: z.union([
+        zMlxReplicaLinkDto,
+        z.null()
+    ]).optional(),
+    unavailable: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineReplicaTargetsResponse_unstable = z.object({
+    meshConnected: z.boolean(),
+    targets: z.array(zMlxReplicaTargetDto),
+    warning: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Copy a complete local model to `targetNodeId`. Returns once the peer has ACCEPTED the
+ * pull; poll `replicaProgress` with `nodeId = targetNodeId` for the copy itself.
+ */
+export const zMlxEngineReplicateRequest_unstable = z.object({
+    modelId: z.string(),
+    targetNodeId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineReplicateResponse_unstable = z.object({
+    link: zMlxReplicaLinkDto,
+    sourceUrl: z.string()
+});
+
+/**
+ * Node-to-node: pull `modelId` from a sender's replica listener into this node's models
+ * dir. Sent by the SENDING node over the mesh proxy after it offered the model; the
+ * `offerToken` is the capability for that one offer. Refused while the model is already
+ * complete here or a download/copy of it is running.
+ */
+export const zMlxEngineReplicaPullRequest_unstable = z.object({
+    modelId: z.string(),
+    sourceUrl: z.string(),
+    offerToken: z.string(),
+    link: zMlxReplicaLinkDto,
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Poll a copy on the receiving node (`nodeId` = that node). `progress` is unset when no
+ * copy of the model was tracked there.
+ */
+export const zMlxEngineReplicaProgressRequest_unstable = z.object({
+    modelId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * A copy in progress (or finished) on the RECEIVING node. `state` is one of
+ * "queued" | "copying" | "done" | "failed" | "cancelled".
+ */
+export const zMlxReplicaProgressDto = z.object({
+    state: z.string(),
+    sourceUrl: z.string(),
+    link: z.string(),
+    linkDetail: z.string(),
+    totalBytes: z.number().int().gte(0),
+    copiedBytes: z.number().int().gte(0),
+    filesTotal: z.number().int().gte(0),
+    filesDone: z.number().int().gte(0),
+    currentFile: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    phase: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    resumedFiles: z.array(z.string()).optional(),
+    restartedFiles: z.array(z.string()).optional(),
+    skippedFiles: z.array(z.string()).optional(),
+    wireBytes: z.number().int().gte(0),
+    wireMillis: z.number().int().gte(0),
+    elapsedMillis: z.number().int().gte(0),
+    error: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    releaseError: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineReplicaProgressResponse_unstable = z.object({
+    progress: z.union([
+        zMlxReplicaProgressDto,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Cancel a running copy on the receiving node and delete its partial model dir.
+ */
+export const zMlxEngineReplicaCancelRequest_unstable = z.object({
+    modelId: z.string(),
+    nodeId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
  * `GET /v1/health` on the auth worker — what the deployment supports.
  */
 export const zLeanzeroLinkHealthRequest_unstable = z.record(z.unknown());
@@ -3785,6 +3967,12 @@ export const zExtRequest = z.object({
             zMlxEngineDownloadPauseRequest_unstable,
             zMlxEngineDownloadResumeRequest_unstable,
             zMlxEngineDownloadCancelRequest_unstable,
+            zMlxEngineLinkFactsRequest_unstable,
+            zMlxEngineReplicaTargetsRequest_unstable,
+            zMlxEngineReplicateRequest_unstable,
+            zMlxEngineReplicaPullRequest_unstable,
+            zMlxEngineReplicaProgressRequest_unstable,
+            zMlxEngineReplicaCancelRequest_unstable,
             zLeanzeroLinkHealthRequest_unstable,
             zLeanzeroLinkRequestCodeRequest_unstable,
             zLeanzeroLinkVerifyRequest_unstable,
@@ -3892,6 +4080,10 @@ export const zExtResponse = z.union([
                 zMlxEngineDownloadProgressResponse_unstable,
                 zMlxEngineBrowseFiltersResponse_unstable,
                 zMlxEngineModelCardResponse_unstable,
+                zMlxEngineLinkFactsResponse_unstable,
+                zMlxEngineReplicaTargetsResponse_unstable,
+                zMlxEngineReplicateResponse_unstable,
+                zMlxEngineReplicaProgressResponse_unstable,
                 zLeanzeroLinkHealthResponse_unstable,
                 zLeanzeroLinkRequestCodeResponse_unstable,
                 zLeanzeroLinkVerifyResponse_unstable,

@@ -1060,6 +1060,54 @@ impl GooseAcpAgent {
         self.on_mlx_engine_download_cancel(req).await
     }
 
+    #[custom_method(MlxEngineLinkFactsRequest)]
+    async fn dispatch_mlx_engine_link_facts(
+        &self,
+        req: MlxEngineLinkFactsRequest,
+    ) -> Result<MlxEngineLinkFactsResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_link_facts(req).await
+    }
+
+    #[custom_method(MlxEngineReplicaTargetsRequest)]
+    async fn dispatch_mlx_engine_replica_targets(
+        &self,
+        req: MlxEngineReplicaTargetsRequest,
+    ) -> Result<MlxEngineReplicaTargetsResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_replica_targets(req).await
+    }
+
+    #[custom_method(MlxEngineReplicateRequest)]
+    async fn dispatch_mlx_engine_replicate(
+        &self,
+        req: MlxEngineReplicateRequest,
+    ) -> Result<MlxEngineReplicateResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_replicate(req).await
+    }
+
+    #[custom_method(MlxEngineReplicaPullRequest)]
+    async fn dispatch_mlx_engine_replica_pull(
+        &self,
+        req: MlxEngineReplicaPullRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_replica_pull(req).await
+    }
+
+    #[custom_method(MlxEngineReplicaProgressRequest)]
+    async fn dispatch_mlx_engine_replica_progress(
+        &self,
+        req: MlxEngineReplicaProgressRequest,
+    ) -> Result<MlxEngineReplicaProgressResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_replica_progress(req).await
+    }
+
+    #[custom_method(MlxEngineReplicaCancelRequest)]
+    async fn dispatch_mlx_engine_replica_cancel(
+        &self,
+        req: MlxEngineReplicaCancelRequest,
+    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_replica_cancel(req).await
+    }
+
     #[custom_method(LeanzeroLinkHealthRequest)]
     async fn dispatch_leanzero_link_health(
         &self,

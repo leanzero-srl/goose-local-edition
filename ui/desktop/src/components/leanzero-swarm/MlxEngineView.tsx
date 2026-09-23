@@ -88,6 +88,14 @@ import {
 import { FilterCombobox } from './FilterCombobox';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
 import { ModelCardModal } from './ModelCardModal';
+import {
+  ReplicaCopyButtons,
+  ReplicaDownloadOffers,
+  ReplicaLinksPanel,
+  ReplicaModelControls,
+  useModelReplicas,
+  type ModelReplicas,
+} from './ModelReplica';
 import { MlxStateTile } from './MlxStateTile';
 import type { MlxServing } from '../../utils/mlxServing';
 import {
@@ -1802,6 +1810,8 @@ interface ModelsSectionProps {
   nodeId?: string;
   /** Hostname of the selected REMOTE device, or null when local — names the delete confirm. */
   remoteHostname: string | null;
+  /** Copies of the shown device's models to linked devices; inert without a linked peer. */
+  replicas: ModelReplicas;
 }
 
 function ModelsSection({
@@ -1820,6 +1830,7 @@ function ModelsSection({
   filtersError,
   nodeId,
   remoteHostname,
+  replicas,
 }: ModelsSectionProps) {
   // Owner amendment: the Models area splits into [Hugging Face | Downloaded] — the local models
   // used to sit at the bottom of one long column and were hard to see. The browser's state lives
@@ -1920,6 +1931,7 @@ function ModelsSection({
                 onCancel={() => downloadHandlers.onCancel(model.id)}
               />
             )}
+            <ReplicaModelControls modelId={model.id} replicas={replicas} />
           </div>
         ),
       },
@@ -1952,7 +1964,7 @@ function ModelsSection({
         cell: (model) => <span className={META}>{formatGb(model.sizeBytes)}</span>,
       },
     ],
-    [downloads, downloadErrors, downloadHandlers, mountedModelId]
+    [downloads, downloadErrors, downloadHandlers, mountedModelId, replicas]
   );
 
   return (
@@ -1976,6 +1988,8 @@ function ModelsSection({
         value={view}
         onChange={setView}
       />
+
+      <ReplicaDownloadOffers downloads={downloads} models={models} replicas={replicas} />
 
       {view === 'hf' && (
         <>
@@ -2039,16 +2053,19 @@ function ModelsSection({
                       Resume
                     </Button>
                   ) : (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      icon={<SlidersHorizontal />}
-                      onClick={() => onOpenSampling(model.id)}
-                      aria-label={`Sampling for ${model.id}`}
-                      title="This model's sampling profile — opens the Sampling tab"
-                    >
-                      Sampling
-                    </Button>
+                    <>
+                      <ReplicaCopyButtons modelId={model.id} replicas={replicas} />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<SlidersHorizontal />}
+                        onClick={() => onOpenSampling(model.id)}
+                        aria-label={`Sampling for ${model.id}`}
+                        title="This model's sampling profile — opens the Sampling tab"
+                      >
+                        Sampling
+                      </Button>
+                    </>
                   )}
                   <Button
                     size="sm"
@@ -2072,6 +2089,8 @@ function ModelsSection({
               }
             />
           </Panel>
+
+          <ReplicaLinksPanel replicas={replicas} />
 
           {/* Models folder + disk — the local library's home, so it lives on the Downloaded tab. */}
           <Panel title="Models folder">
@@ -2319,6 +2338,22 @@ const MlxEngineView: React.FC = () => {
   );
   const activeNodeId = selectedPeer ? selectedPeer.node_id : undefined;
   const remoteHostname = selectedPeer ? selectedPeer.hostname : null;
+
+  // Copying a model to a linked device exists only when a peer is linked: with no peer nothing
+  // is fetched and no copy control renders — a single machine is exactly as before.
+  const peerKey = useMemo(
+    () =>
+      peers
+        .map((p) => p.node_id)
+        .sort()
+        .join(','),
+    [peers]
+  );
+  const replicas = useModelReplicas({
+    enabled: leanzeroLink && peers.length > 0 && tab === 'models',
+    senderNodeId: activeNodeId,
+    peerKey,
+  });
 
   const deviceTargets = useMemo<DeviceTarget[]>(() => {
     const self: DeviceTarget = {
@@ -3017,6 +3052,7 @@ const MlxEngineView: React.FC = () => {
           filtersError={browseFiltersError}
           nodeId={activeNodeId}
           remoteHostname={remoteHostname}
+          replicas={replicas}
         />
       )}
       {tab === 'sampling' && (

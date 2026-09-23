@@ -56,6 +56,17 @@ vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineDownloadResume: (...args: unknown[]) => mockDownloadResume(...args),
 }));
 
+const mockReplicaTargets = vi.fn();
+const mockReplicate = vi.fn();
+const mockReplicaProgress = vi.fn();
+const mockReplicaCancel = vi.fn();
+vi.mock('../../acp/mlx-replica', () => ({
+  mlxEngineReplicaTargets: (...args: unknown[]) => mockReplicaTargets(...args),
+  mlxEngineReplicate: (...args: unknown[]) => mockReplicate(...args),
+  mlxEngineReplicaProgress: (...args: unknown[]) => mockReplicaProgress(...args),
+  mlxEngineReplicaCancel: (...args: unknown[]) => mockReplicaCancel(...args),
+}));
+
 // The device picker sources the mesh roster from leanzeroLink and is gated on the
 // `leanzeroLink` capability. Default: capability OFF → the view is exactly as before, every
 // mlx op local (nodeId undefined). Tests that exercise the remote path flip mockFeatures and
@@ -169,6 +180,29 @@ const CONNECTED = {
   nodeCount: 2,
 };
 
+/** The measured TB5 pair: MacBook en3 "Thunderbolt 3" ↔ Studio en3 "Thunderbolt 2", /30. */
+const TB_LINK = {
+  kind: 'thunderbolt' as const,
+  local: {
+    device: 'en3',
+    hardwarePort: 'Thunderbolt 3',
+    kind: 'thunderbolt' as const,
+    ipv4: '192.168.0.1',
+    prefixLen: 30,
+    linkSpeed: '80 Gb/s',
+  },
+  peer: {
+    device: 'en3',
+    hardwarePort: 'Thunderbolt 2',
+    kind: 'thunderbolt' as const,
+    ipv4: '192.168.0.2',
+    prefixLen: 30,
+    linkSpeed: '80 Gb/s',
+  },
+};
+
+const TB_TARGET = { nodeId: 'peer-workhorse', hostname: 'workhorse', link: TB_LINK };
+
 /** Turn on the capability + a connected roster with the given peers, so the picker renders. */
 function withMesh(peers: NodeState[]) {
   mockFeatures.leanzeroLink = true;
@@ -203,6 +237,10 @@ beforeEach(() => {
   mockDownloadCancel.mockResolvedValue(undefined);
   mockDownloadPause.mockResolvedValue(undefined);
   mockDownloadResume.mockResolvedValue(undefined);
+  mockReplicaTargets.mockResolvedValue({ meshConnected: true, targets: [TB_TARGET] });
+  mockReplicate.mockResolvedValue({ link: TB_LINK, sourceUrl: 'http://192.168.0.1:54496' });
+  mockReplicaProgress.mockResolvedValue(null);
+  mockReplicaCancel.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -2287,3 +2325,190 @@ describe('MlxEngineView — Studio clean on every tab', () => {
     unmount();
   });
 });
+
+describe('MlxEngineView copy a model to a linked device', () => {
+  const copyButton = () => screen.queryByRole('button', { name: /^Copy to workhorse/ });
+
+  it('a single machine shows no copy control and never reads the links', async () => {
+    const { unmount } = render(<MlxEngineView />);
+    await openDownloadedTab();
+    await waitFor(() => expect(screen.getByText(QWEN)).toBeInTheDocument());
+    expect(copyButton()).not.toBeInTheDocument();
+    expect(screen.queryByText('Linked devices')).not.toBeInTheDocument();
+    expect(mockReplicaTargets).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('connected with zero peers reads nothing either', async () => {
+    withMesh([]);
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
+    await openDownloadedTab();
+    await waitFor(() => expect(screen.getByText(QWEN)).toBeInTheDocument());
+    expect(copyButton()).not.toBeInTheDocument();
+    expect(mockReplicaTargets).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('a Thunderbolt peer: a complete model offers the copy, the copy follows the RECEIVER to done', async () => {
+    withMesh([peerNode()]);
+    mockReplicaProgress
+      .mockResolvedValueOnce({
+        state: 'copying',
+        sourceUrl: 'http://192.168.0.1:54496',
+        link: 'thunderbolt',
+        linkDetail: 'Thunderbolt 3 en3 192.168.0.1 → 192.168.0.2 (80 Gb/s)',
+        totalBytes: 17 * GB,
+        copiedBytes: 4 * GB,
+        filesTotal: 4,
+        filesDone: 1,
+        currentFile: 'model-00002-of-00004.safetensors',
+        phase: 'transferring',
+        wireBytes: 4 * GB,
+        wireMillis: 2000,
+        elapsedMillis: 2100,
+      })
+      .mockResolvedValue({
+        state: 'done',
+        sourceUrl: 'http://192.168.0.1:54496',
+        link: 'thunderbolt',
+        linkDetail: 'Thunderbolt 3 en3 192.168.0.1 → 192.168.0.2 (80 Gb/s)',
+        totalBytes: 17 * GB,
+        copiedBytes: 17 * GB,
+        filesTotal: 4,
+        filesDone: 4,
+        wireBytes: 17 * GB,
+        wireMillis: 8000,
+        elapsedMillis: 8400,
+      });
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
+    await openDownloadedTab();
+    await waitFor(() => expect(copyButton()).toBeInTheDocument());
+    expect(copyButton()).toHaveTextContent('Copy to workhorse · Thunderbolt');
+    // ONE button: the incomplete model offers Resume, never a copy of half a model.
+    expect(screen.getAllByRole('button', { name: /^Copy to workhorse/ })).toHaveLength(1);
+    expect(mockReplicaTargets).toHaveBeenCalledWith(undefined);
+    const links = screen.getByTestId('mlx-replica-target-peer-workhorse');
+    expect(links).toHaveTextContent('Thunderbolt · 80 Gb/s');
+    expect(links).toHaveTextContent('en3 192.168.0.1 → 192.168.0.2');
+
+    await userEvent.click(copyButton()!);
+    expect(mockReplicate).toHaveBeenCalledWith(QWEN, 'peer-workhorse', undefined);
+    await waitFor(
+      () =>
+        expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent(
+          'Copying to workhorse over Thunderbolt'
+        ),
+      { timeout: 3000 }
+    );
+    expect(mockReplicaProgress).toHaveBeenCalledWith(QWEN, 'peer-workhorse');
+    const row = screen.getByTestId(`mlx-replica-${QWEN}`);
+    expect(row).toHaveTextContent('1 of 4 files');
+    expect(row).toHaveTextContent('4.00 GB / 17.00 GB');
+    expect(row).toHaveTextContent('2.00 GB/s');
+    await waitFor(
+      () =>
+        expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent('Copied to workhorse'),
+      { timeout: 3000 }
+    );
+    studioCleanNow();
+    unmount();
+  });
+
+  it('a network-only peer is labelled network and says there is no Thunderbolt link', async () => {
+    withMesh([peerNode()]);
+    mockReplicaTargets.mockResolvedValue({
+      meshConnected: true,
+      targets: [
+        {
+          nodeId: 'peer-workhorse',
+          hostname: 'workhorse',
+          link: {
+            kind: 'network',
+            local: {
+              device: 'en0',
+              hardwarePort: 'Wi-Fi',
+              kind: 'wifi',
+              ipv4: '192.168.10.127',
+              prefixLen: 24,
+            },
+            peer: {
+              device: 'en1',
+              hardwarePort: 'Wi-Fi',
+              kind: 'wifi',
+              ipv4: '192.168.10.161',
+              prefixLen: 24,
+            },
+          },
+        },
+      ],
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
+    await openDownloadedTab();
+    await waitFor(() => expect(copyButton()).toBeInTheDocument());
+    expect(copyButton()).toHaveTextContent('Copy to workhorse · network');
+    expect(copyButton()).toHaveAttribute(
+      'title',
+      'No Thunderbolt link to workhorse, so the copy goes over the local network: 192.168.10.127 → 192.168.10.161'
+    );
+    expect(screen.getByTestId('mlx-replica-target-peer-workhorse')).toHaveTextContent(
+      'No Thunderbolt link, so copies go over the local network.'
+    );
+    // Each read asks every peer for its interfaces: once per tab open, never a render loop.
+    expect(mockReplicaTargets).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it('an unreachable peer states why and offers no copy', async () => {
+    withMesh([peerNode()]);
+    mockReplicaTargets.mockResolvedValue({
+      meshConnected: true,
+      targets: [
+        {
+          nodeId: 'peer-workhorse',
+          hostname: 'workhorse',
+          unavailable:
+            'this node and workhorse share no Thunderbolt or LAN subnet; a copy needs a direct path',
+        },
+      ],
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
+    await openDownloadedTab();
+    await waitFor(() =>
+      expect(screen.getByTestId('mlx-replica-target-peer-workhorse')).toHaveTextContent(
+        'share no Thunderbolt or LAN subnet'
+      )
+    );
+    expect(copyButton()).not.toBeInTheDocument();
+    unmount();
+  });
+
+  it('a refused start shows the reason verbatim under the model', async () => {
+    withMesh([peerNode()]);
+    mockReplicate.mockRejectedValue(
+      Object.assign(new Error('Invalid params'), {
+        data: "'mlx-community/Qwen3-30B-A3B-4bit' is already complete on this node",
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
+    await openDownloadedTab();
+    await waitFor(() => expect(copyButton()).toBeInTheDocument());
+    await userEvent.click(copyButton()!);
+    await waitFor(() =>
+      expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent(
+        'is already complete on this node'
+      )
+    );
+    expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent('Copy to workhorse failed');
+    expect(mockReplicaProgress).not.toHaveBeenCalled();
+    unmount();
+  });
+});
+
+function studioCleanNow() {
+  assertStudioClean(document.body);
+}
