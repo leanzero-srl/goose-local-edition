@@ -12,6 +12,9 @@
 //!   that ANSWERS but not as a LeanZero Link node should (a 401, a 503, an unparseable
 //!   body) is alive: its `status` keeps the last known value and the failure text
 //!   rides in `NodeState::last_poll_error` — never a fabricated `Offline` either.
+//! - Every peer call — the polls AND the `/stream` WebSocket — is dialed through the
+//!   mesh daemon's SOCKS5 listener ([`crate::peer_dial`]); the host has no route to mesh
+//!   IPs. No proxy → the peer is `Offline` with the named refusal, never a direct dial.
 //! - Peer tasks are aborted individually per peer (the per-pid discipline);
 //!   they hold only a `Weak` handle to the registry so a dropped registry ends
 //!   its tasks instead of leaking them.
@@ -28,6 +31,7 @@ use thiserror::Error;
 use tokio::task::JoinHandle;
 
 use crate::mesh::MeshPeer;
+use crate::peer_dial::{MeshProxy, PeerDialError, PeerTimeout};
 use crate::pubsub::{EventOrigin, PubSub};
 use crate::wire::{
     LinkEvent, NodeState, NodeStatus, SessionSummary, StreamFrame, SwarmNodesResponse,
@@ -318,6 +322,14 @@ pub struct PeerRegistryConfig {
     pub poll_interval: Duration,
     pub request_timeout: Duration,
     pub reconnect_backoff: Duration,
+    /// The mesh daemon's SOCKS5 listener; see `ControlConfig::peer_proxy`.
+    pub peer_proxy: Option<MeshProxy>,
+}
+
+/// How this registry reaches peers: the proxy plus the one poll client built over it.
+struct PeerDial {
+    proxy: MeshProxy,
+    http: reqwest::Client,
 }
 
 struct PeerEntry {
@@ -329,7 +341,9 @@ struct PeerEntry {
 struct RegistryInner {
     config: PeerRegistryConfig,
     pubsub: Arc<PubSub>,
-    http: reqwest::Client,
+    /// `None` ⇔ no mesh proxy: every poll and stream attempt fails with
+    /// [`PeerDialError::NoMeshProxy`] and the peer is `Offline` with that text on record.
+    dial: Option<PeerDial>,
     /// Keyed by mesh hostname (the identity the tailnet gives us before a peer
     /// ever answers). Lock order where both are held: `peers` before `sessions`.
     peers: StdMutex<HashMap<String, PeerEntry>>,
@@ -355,15 +369,19 @@ pub struct PeerRegistry {
 }
 
 impl PeerRegistry {
-    pub fn new(config: PeerRegistryConfig, pubsub: Arc<PubSub>) -> Result<Self, reqwest::Error> {
-        let http = reqwest::Client::builder()
-            .timeout(config.request_timeout)
-            .build()?;
+    pub fn new(config: PeerRegistryConfig, pubsub: Arc<PubSub>) -> Result<Self, PeerDialError> {
+        let dial = match config.peer_proxy {
+            Some(proxy) => Some(PeerDial {
+                proxy,
+                http: proxy.http_client(PeerTimeout::Total(config.request_timeout))?,
+            }),
+            None => None,
+        };
         Ok(Self {
             inner: Arc::new(RegistryInner {
                 config,
                 pubsub,
-                http,
+                dial,
                 peers: StdMutex::new(HashMap::new()),
                 sessions: StdMutex::new(HashMap::new()),
             }),
@@ -501,6 +519,13 @@ impl PeerRegistry {
             .and_then(|entry| entry.target.base_url())
     }
 
+    /// The mesh proxy peer calls are dialed through (`None` when the service runs with
+    /// no mesh) — what [`LinkManager`](crate::manager::LinkManager)'s `/execute` and
+    /// `/mlx/*` POSTs build their client over.
+    pub fn peer_proxy(&self) -> Option<MeshProxy> {
+        self.inner.config.peer_proxy
+    }
+
     /// Abort every peer task and clear the view.
     pub fn shutdown(&self) {
         let mut peers = self.inner.peers.lock().unwrap();
@@ -557,7 +582,11 @@ async fn fetch_json<T: serde::de::DeserializeOwned>(
     inner: &Arc<RegistryInner>,
     url: String,
 ) -> Result<T, PollFailure> {
-    let response = inner
+    let dial = inner
+        .dial
+        .as_ref()
+        .ok_or_else(|| PollFailure::Transport(PeerDialError::NoMeshProxy.to_string()))?;
+    let response = dial
         .http
         .get(&url)
         .bearer_auth(&inner.config.node_token)
@@ -707,13 +736,19 @@ async fn stream_peer_loop(weak: Weak<RegistryInner>, target: PeerTarget, ws_base
         let Some(inner) = weak.upgrade() else { return };
         let backoff = inner.config.reconnect_backoff;
         let url = stream_url(&ws_base, &inner.config.node_token, since);
+        let proxy = inner.dial.as_ref().map(|dial| dial.proxy);
+        let connect_timeout = inner.config.request_timeout;
         drop(inner);
 
-        match tokio_tungstenite::connect_async(&url).await {
+        let connected = match proxy {
+            Some(proxy) => proxy.websocket(&url, connect_timeout).await,
+            None => Err(PeerDialError::NoMeshProxy),
+        };
+        match connected {
             Err(error) => {
                 tracing::debug!(hostname = %target.hostname, %error, "peer stream connect failed; will retry");
             }
-            Ok((mut ws, _response)) => {
+            Ok(mut ws) => {
                 tracing::debug!(hostname = %target.hostname, "peer stream connected");
                 use tokio_tungstenite::tungstenite::Message as TsMessage;
                 while let Some(message) = ws.next().await {

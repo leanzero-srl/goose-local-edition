@@ -2454,6 +2454,13 @@ mod tests {
         async fn status(&self) -> Result<MeshStatus, leanzero_link::mesh::MeshError> {
             Ok(MeshStatus::stopped())
         }
+        async fn peer_proxy(
+            &self,
+        ) -> Result<leanzero_link::peer_dial::MeshProxy, leanzero_link::mesh::MeshError> {
+            Err(leanzero_link::mesh::MeshError::NoPeerProxy {
+                reason: "fake mesh: no daemon".to_string(),
+            })
+        }
         async fn logout(&self) -> Result<(), leanzero_link::mesh::MeshError> {
             self.logouts.fetch_add(1, Ordering::SeqCst);
             Ok(())

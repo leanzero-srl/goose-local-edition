@@ -18,7 +18,9 @@
 //! The [`control`] module is the `/v1/swarm` node-to-node service: `GET /nodes`,
 //! `GET /sessions`, and the `GET /stream` WebSocket, fed by a [`state::SwarmStateSource`]
 //! (implemented later by goose-server) and by the [`state::PeerRegistry`] peer fabric
-//! built on [`mesh::MeshStatus`] / [`mesh::MeshPeer`].
+//! built on [`mesh::MeshStatus`] / [`mesh::MeshPeer`]. Userspace networking gives the
+//! host no route to mesh IPs, so every OUTBOUND peer call goes through the daemon's
+//! loopback SOCKS5 listener via [`peer_dial`] — never a direct dial.
 
 pub mod control;
 pub mod discovery;
@@ -26,6 +28,7 @@ pub mod identity;
 pub mod manager;
 pub mod mesh;
 pub mod netpath;
+pub mod peer_dial;
 pub mod pubsub;
 pub mod replica;
 pub mod state;

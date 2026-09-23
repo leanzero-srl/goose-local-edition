@@ -109,25 +109,30 @@ fn garbage_and_empty_status_are_loud_parse_errors() {
     assert!(err.to_string().contains("<empty>"), "{err}");
 }
 
+/// The COMPLETE daemon argv, pinned exactly: the isolation flags, plus the loopback,
+/// kernel-chosen SOCKS5 listener every outbound peer call is dialed through (userspace
+/// networking gives the host no route to mesh IPs — see `peer_dial`). A bind on a
+/// non-loopback address or a fixed port would fail this test, as would dropping the
+/// listener and quietly dialing peers directly again.
 #[test]
 fn tailscaled_argv_uses_verified_isolation_flags() {
     let argv = test_config().tailscaled_argv();
-    assert_eq!(argv[0], "/opt/leanzero/bin/tailscaled");
-    assert!(
-        argv.contains(&"--tun=userspace-networking".to_string()),
-        "{argv:?}"
+    assert_eq!(
+        argv,
+        [
+            "/opt/leanzero/bin/tailscaled",
+            "--tun=userspace-networking",
+            "--statedir=/home/lz/.leanzero/tailscale",
+            "--socket=/home/lz/.leanzero/tailscale/tailscaled.sock",
+            "--no-logs-no-support",
+            "--socks5-server=127.0.0.1:0",
+        ]
     );
     assert!(
-        argv.contains(&"--statedir=/home/lz/.leanzero/tailscale".to_string()),
-        "{argv:?}"
-    );
-    assert!(
-        argv.contains(&"--socket=/home/lz/.leanzero/tailscale/tailscaled.sock".to_string()),
-        "{argv:?}"
-    );
-    assert!(
-        argv.contains(&"--no-logs-no-support".to_string()),
-        "{argv:?}"
+        !argv
+            .iter()
+            .any(|a| a.starts_with("--outbound-http-proxy-listen")),
+        "one proxy, SOCKS5: {argv:?}"
     );
 }
 

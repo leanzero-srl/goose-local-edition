@@ -4,11 +4,15 @@ version = "0.1.0"
 edition = "2021"
 description = "LeanZero Link: goose-owned userspace Tailscale mesh sidecar, fully isolated from any system tailscaled"
 
-# TLS for the auth worker client (worker_client.rs → HTTPS). Off by default so the
-# crate builds and its tests run against a plain-HTTP mock with no TLS backend; the
-# consuming crate (goose-server) enables one, exactly as it does for goose-sidecar.
+# TLS for the auth worker client (worker_client.rs → HTTPS) — AND a precondition of
+# the peer fabric's SOCKS5 client: reqwest 0.13.4 built with NO TLS backend leaves its
+# connector's `enforce_http` on, so every `socks5h://` proxy connect fails with
+# "failed to create underlying connection" (measured 2026-09-23: the same peer call
+# fails without a backend and succeeds with `rustls-tls`). On by default for that
+# reason; goose enables it explicitly. Without either feature, peer_dial refuses with
+# a named error instead of building a client that can never connect.
 [features]
-default = []
+default = ["rustls-tls"]
 rustls-tls = ["reqwest/rustls"]
 native-tls = ["reqwest/native-tls"]
 
@@ -22,13 +26,17 @@ futures = { workspace = true }
 gethostname = "1.1.0"
 hmac = "0.13"
 rand.workspace = true
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "socks"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2.workspace = true
 subtle = { version = "2.5", default-features = false, features = ["std"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "process", "time", "sync", "macros", "rt-multi-thread", "io-util", "net"] }
+# SOCKS5 CLIENT for the peer WebSocket: under --tun=userspace-networking the host has
+# no route to mesh IPs, so every peer dial goes through tailscaled's SOCKS5 listener
+# (peer_dial.rs). Already in the tree via async-wsocket; no new crate.
+tokio-socks = "0.5"
 # WebSocket CLIENT for the peer fabric (PeerRegistry subscribing to each peer's
 # /v1/swarm/stream): axum's ws is server-side only and reqwest 0.13 has no ws
 # feature. Pinned to the minor axum 0.8 already pulls in, so no new crate enters

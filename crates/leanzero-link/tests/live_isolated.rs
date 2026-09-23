@@ -80,3 +80,81 @@ async fn live_userspace_daemon_reaches_needs_login_and_shuts_down_clean() {
         "state file must survive shutdown for fast re-login"
     );
 }
+
+/// Live peer dial through the engine's SOCKS5 listener — ignored by default; it joins a
+/// REAL tailnet. Point it ONLY at a hermetic control server you started yourself (a
+/// local Headscale), never the owner's LeanZero Link account or personal tailnet. The
+/// daemon's state lives in a temp dir, never `~/.leanzero`. Env:
+/// - `LEANZERO_LINK_LIVE_LOGIN_SERVER` — the hermetic control URL;
+/// - `LEANZERO_LINK_LIVE_AUTH_KEY` — a preauth key minted on it;
+/// - `LEANZERO_LINK_LIVE_PEER_URL` — `http://<peer mesh ip>:<port>/<path>` served by a
+///   second node of that tailnet (bound on the peer's loopback);
+/// - `LEANZERO_LINK_LIVE_PEER_EXPECT` — a substring the peer's body must contain.
+///
+/// Proves the whole fix end to end: the argv's `--socks5-server=127.0.0.1:0` is accepted
+/// by the real binary, readiness records the listener the daemon reports, and a peer
+/// call through `MeshProxy::http_client` reaches the peer — while a direct dial to the
+/// same URL (the pre-fix behavior, the negative control) does not.
+#[tokio::test]
+#[ignore = "joins a real (hermetic) tailnet; set the LEANZERO_LINK_LIVE_* env and capture the personal tailscale status before/after"]
+async fn live_peer_call_goes_through_the_daemons_socks5_listener() {
+    use leanzero_link::peer_dial::PeerTimeout;
+
+    let env = |name: &str| {
+        std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set for this live test"))
+    };
+    let login_server = env("LEANZERO_LINK_LIVE_LOGIN_SERVER");
+    let auth_key = env("LEANZERO_LINK_LIVE_AUTH_KEY");
+    let peer_url = env("LEANZERO_LINK_LIVE_PEER_URL");
+    let expect = env("LEANZERO_LINK_LIVE_PEER_EXPECT");
+
+    let state = tempfile::tempdir().unwrap();
+    let mut config = MeshConfig::new(
+        discovery::find_tailscaled().unwrap(),
+        discovery::find_tailscale_cli().unwrap(),
+        "lzp-live-proxy".to_string(),
+    )
+    .unwrap();
+    config.state_dir = state.path().join("ts");
+    config.socket_path = config.state_dir.join("tailscaled.sock");
+    config.login_server = login_server;
+    config.validate().unwrap();
+
+    let engine = MeshEngine::start(config).await.unwrap();
+    let proxy = engine.peer_proxy().await.unwrap();
+    eprintln!("live daemon SOCKS5 listener: {}", proxy.addr());
+    engine.join(&auth_key, "lzp-live-proxy").await.unwrap();
+    eprintln!("live self: {:?}", engine.status().await.unwrap().self_ip);
+
+    let direct = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap()
+        .get(&peer_url)
+        .send()
+        .await;
+    eprintln!("direct dial (negative control): {direct:?}");
+    assert!(
+        direct.is_err(),
+        "the host must have no route to a mesh IP under userspace networking"
+    );
+
+    let client = proxy
+        .http_client(PeerTimeout::Total(Duration::from_secs(20)))
+        .unwrap();
+    let body = client
+        .get(&peer_url)
+        .send()
+        .await
+        .expect("the peer answers through the mesh proxy")
+        .error_for_status()
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    eprintln!("through the proxy: {body:?}");
+    assert!(body.contains(&expect), "{body}");
+
+    engine.shutdown().await;
+}
