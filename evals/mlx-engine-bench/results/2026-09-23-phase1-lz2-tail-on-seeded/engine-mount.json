@@ -1,0 +1,34 @@
+{
+ "argv": [
+  "uvx",
+  "--from",
+  "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@42d207cfc1e95337781a475539b1b5c9e63ccccf",
+  "rapid-mlx",
+  "serve",
+  "/Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+  "--port",
+  "8090",
+  "--served-model-name",
+  "mihai-qwen3.8-27b-atlassian-q8-mlx",
+  "--enable-prefix-cache",
+  "--max-concurrent-requests",
+  "8",
+  "--enable-auto-tool-choice",
+  "--tool-call-parser",
+  "qwen3_coder_xml",
+  "--reasoning-parser",
+  "deepseek_r1",
+  "--speculative-config",
+  "{\"method\":\"mtp\",\"model\":\"/Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx\",\"num_speculative_tokens\":3}",
+  "--text-only"
+ ],
+ "unmount_seconds": 0.51,
+ "spawn_env_over_inherited": {
+  "RAPID_MLX_TELEMETRY": "0",
+  "PATH": "/Users/mihaiperdum/.cache/uv/archive-v0/2bnN1FNGgoQD_l7B/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+  "UV_PYTHON_INSTALL_DIR": "/Users/mihaiperdum/.local/share/uv/python",
+  "HOME": "/private/tmp/claude-501/-Users-mihaiperdum-Projects-goose/6fecca04-8d69-4ea2-b03d-d1da3d17162d/scratchpad/home-phase1-lz2-tail-on-seeded",
+  "DO_NOT_TRACK": "1",
+  "UV_CACHE_DIR": "/Users/mihaiperdum/.cache/uv"
+ }
+}

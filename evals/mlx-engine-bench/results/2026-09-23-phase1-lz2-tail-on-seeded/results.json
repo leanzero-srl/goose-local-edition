@@ -1,0 +1,1324 @@
+{
+ "label": "phase1-lz2-tail-on-seeded",
+ "nonce": "phase1-identity",
+ "started": "2026-09-23T19:47:26.034993",
+ "engine": {
+  "id": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+  "context_window": 262144,
+  "is_hybrid": true,
+  "tool_call_parser": "qwen3_coder_xml",
+  "reasoning_parser": "deepseek_r1",
+  "speculative_decoding": {
+   "configured": true,
+   "method": "mtp",
+   "runtime_state": "active",
+   "request_fallback_features": []
+  },
+  "request_extensions": [
+   "rapid_mlx_transient_tail"
+  ]
+ },
+ "transient_tail": true,
+ "sampling": {
+  "temperature": 0.0,
+  "seed": 7
+ },
+ "reps": 3,
+ "warmup": {
+  "ttft_s": 0.6470764159967075,
+  "total_s": 0.7152936249985942,
+  "prompt_tokens": 22,
+  "completion_tokens": 2,
+  "decode_tps": null,
+  "finish_reason": "stop",
+  "content_chars": 2,
+  "reasoning_chars": 0,
+  "tool_call_deltas": 0,
+  "output": {
+   "content": "OK",
+   "reasoning": "",
+   "tool_calls": []
+  },
+  "request_metrics": null
+ },
+ "workloads": {
+  "a": [
+   [
+    {
+     "ttft_s": 1.0625062079998315,
+     "total_s": 15.174199417000636,
+     "prompt_tokens": 193,
+     "completion_tokens": 300,
+     "decode_tps": 21.188615420707837,
+     "finish_reason": "length",
+     "content_chars": 1486,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "output": {
+      "content": "The dominant cost for a long prompt is the prefill phase, where the model must process the entire input sequence to compute the initial hidden states and populate the Key-Value (KV) cache. This stage is compute-bound because the GPU must perform massive matrix multiplications across all tokens simultaneously, and even with ample memory, a single GPU has a finite number of tensor cores that must be saturated. In contrast, a short chat request has a negligible prefill cost, so its latency is dominated by the decode phase, which is memory-bandwidth-bound as the model reads the weights and KV cache for each generated token. Consequently, the \"many seconds\" operators observe for long prompts is almost entirely the time spent filling the KV cache, a cost that scales linearly with prompt length and cannot be reduced by adding more RAM, only by faster compute or parallelism.\n\nThe prefix cache can only save time if the new request shares a significant, identical prefix with a previously processed request. If the end of every prompt changes but the beginning remains static, the cache allows the server to skip the prefill computation for that shared prefix, reusing the existing KV entries. However, if the prompts are unique or diverge early, the cache provides no benefit, and the full prefill cost must be paid. Crucially, the cache does not reduce the cost of processing the *new* tokens at the end of the prompt; it only avoids recomputing the *old* tokens. Therefore, for a",
+      "reasoning": "",
+      "tool_calls": []
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 137,
+       "correction_tokens": 86,
+       "bonus_tokens": 51,
+       "accepted_by_depth": [
+        97,
+        47,
+        9
+       ],
+       "drafted_by_depth": [
+        137,
+        117,
+        49
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 0,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 5,
+      "current_memory_mb_after": 1497.94
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 303.0,
+      "accepts_total{method=\"mtp\"}": 152.0,
+      "tokens_saved_total{method=\"mtp\"}": 152.0,
+      "verify_calls_total{method=\"mtp\"}": 137.0,
+      "correction_tokens_total{method=\"mtp\"}": 86.0,
+      "bonus_tokens_total{method=\"mtp\"}": 51.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 137.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 117.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 49.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 97.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 47.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"3\"}": 9.0,
+      "park_total{method=\"mtp\"}": 11.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 11.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 20.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 68.0,
+      "k_chosen_total{method=\"mtp\",k=\"3\"}": 49.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 148.0
+     },
+     "uncached_prompt_tokens": 193,
+     "prefill_tps": 181.64599749805
+    }
+   ],
+   [
+    {
+     "ttft_s": 1.4553432500033523,
+     "total_s": 14.698031250001804,
+     "prompt_tokens": 193,
+     "completion_tokens": 300,
+     "decode_tps": 22.579121910979925,
+     "finish_reason": "length",
+     "content_chars": 1560,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "output": {
+      "content": "The dominant cost for a long prompt is the prefill phase, where the model must process the entire input sequence to compute the initial hidden states. On a single GPU with ample memory, this is a compute-bound operation because the matrix multiplications involve large batches of tokens processed in parallel, but the arithmetic intensity is high enough to saturate the tensor cores. If the prompt is ten thousand tokens long, the GPU spends seconds just calculating the attention scores and feed-forward outputs for those tokens before it can even generate the first output token. In contrast, a short chat request has a tiny prefill cost, so the user perceives the response as immediate because the bottleneck shifts almost instantly to the much slower autoregressive decoding phase, which is memory-bandwidth-bound rather than compute-bound.\n\nThe prefix cache helps only when the beginning of the new prompt is byte-for-byte identical to a previous one. It stores the intermediate hidden states (key-value pairs) for those shared tokens, allowing the server to skip the prefill computation for that portion. However, if the end of every prompt changes, the cache cannot save the work for the unique suffix, and more critically, if the prompts diverge early, the cache miss propagates. For example, if two users ask different questions about the same document, the cache might save the prefill for the document text, but if the questions are appended in a way that breaks the prefix match, or if the system does not support branching, the entire prefill must",
+      "reasoning": "",
+      "tool_calls": []
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 142,
+       "correction_tokens": 89,
+       "bonus_tokens": 53,
+       "accepted_by_depth": [
+        100,
+        52,
+        2
+       ],
+       "drafted_by_depth": [
+        142,
+        140,
+        3
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 0,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 7,
+      "current_memory_mb_after": 2108.38
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 285.0,
+      "accepts_total{method=\"mtp\"}": 154.0,
+      "tokens_saved_total{method=\"mtp\"}": 154.0,
+      "verify_calls_total{method=\"mtp\"}": 142.0,
+      "correction_tokens_total{method=\"mtp\"}": 89.0,
+      "bonus_tokens_total{method=\"mtp\"}": 53.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 142.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 140.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 3.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 100.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 52.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"3\"}": 2.0,
+      "park_total{method=\"mtp\"}": 4.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 4.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 2.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 137.0,
+      "k_chosen_total{method=\"mtp\",k=\"3\"}": 3.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 146.0
+     },
+     "uncached_prompt_tokens": 193,
+     "prefill_tps": 132.61476287436344
+    }
+   ],
+   [
+    {
+     "ttft_s": 1.457586791999347,
+     "total_s": 14.47201537500223,
+     "prompt_tokens": 193,
+     "completion_tokens": 300,
+     "decode_tps": 22.97507175376788,
+     "finish_reason": "length",
+     "content_chars": 1563,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "output": {
+      "content": "The dominant cost for a long prompt is the prefill phase, where the model must process the entire input sequence to compute the initial hidden states. On a single GPU with ample memory, this is a compute-bound operation because the matrix multiplications involve large batches of tokens processed in parallel, but the arithmetic intensity is high enough to saturate the tensor cores. If the prompt is ten thousand tokens long, the GPU spends seconds just calculating the attention scores and feed-forward outputs for those tokens before it can even generate the first output token. In contrast, a short chat request has a tiny prefill cost, so the user perceives the response as immediate because the bottleneck shifts almost instantly to the much slower autoregressive decoding phase, which is memory-bandwidth-bound rather than compute-bound.\n\nThe prefix cache helps only when the beginning of the new prompt is byte-for-byte identical to a previous one. It stores the intermediate hidden states (the KV cache) for those shared tokens, allowing the server to skip the prefill computation for that portion. However, if the end of every prompt changes, the cache cannot save the work for the unique suffix, and more critically, if the prompts diverge early, the cache miss propagates. For example, if two users ask different questions about the same document, the cache might save the prefill for the document text, but if the questions are phrased differently, the subsequent processing must still happen. The cache does not reduce the cost of the unique part of",
+      "reasoning": "",
+      "tool_calls": []
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 138,
+       "correction_tokens": 84,
+       "bonus_tokens": 54,
+       "accepted_by_depth": [
+        99,
+        57,
+        6
+       ],
+       "drafted_by_depth": [
+        138,
+        137,
+        17
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 1,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 8,
+      "current_memory_mb_after": 2423.19
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 292.0,
+      "accepts_total{method=\"mtp\"}": 160.0,
+      "tokens_saved_total{method=\"mtp\"}": 160.0,
+      "verify_calls_total{method=\"mtp\"}": 138.0,
+      "correction_tokens_total{method=\"mtp\"}": 84.0,
+      "bonus_tokens_total{method=\"mtp\"}": 54.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 138.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 137.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 17.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 99.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 57.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"3\"}": 6.0,
+      "park_total{method=\"mtp\"}": 2.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 2.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 120.0,
+      "k_chosen_total{method=\"mtp\",k=\"3\"}": 17.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 140.0
+     },
+     "uncached_prompt_tokens": 193,
+     "prefill_tps": 132.41064001085326
+    }
+   ]
+  ],
+  "b": [
+   [
+    {
+     "ttft_s": 170.82786287499766,
+     "total_s": 182.13826545800111,
+     "prompt_tokens": 31972,
+     "completion_tokens": 188,
+     "decode_tps": 16.670787746310534,
+     "finish_reason": "stop",
+     "content_chars": 1040,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "output": {
+      "content": "The log is a dense collection of fragmented phrases heavily focused on LLM inference infrastructure. The most frequently mentioned components are **prefill**, **decode**, **cache**, **memory**, and **scheduler**. These terms appear in various combinations, often describing data flow and resource management.\n\nThe text suggests a system where prefill and decode phases interact with memory and cache to manage throughput and latency. For instance, it notes that prefill loads into memory or cache, while decode reads from these sources. The scheduler is repeatedly linked to managing queues, budgets, and state, indicating its role in orchestrating these processes. Additionally, **tensor**, **kernel**, and **disk** are common, highlighting the underlying hardware and software layers. The log implies a complex interplay where state is maintained across checkpoints, and resources like memory and cache are carefully managed to optimize performance, often involving measures, drops, and shares of data between different system components.",
+      "reasoning": "",
+      "tool_calls": []
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 103,
+       "correction_tokens": 56,
+       "bonus_tokens": 47,
+       "accepted_by_depth": [
+        64,
+        13,
+        1
+       ],
+       "drafted_by_depth": [
+        103,
+        41,
+        17
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 8,
+      "current_memory_mb_after": 7295.0
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 161.0,
+      "accepts_total{method=\"mtp\"}": 78.0,
+      "tokens_saved_total{method=\"mtp\"}": 78.0,
+      "verify_calls_total{method=\"mtp\"}": 103.0,
+      "correction_tokens_total{method=\"mtp\"}": 56.0,
+      "bonus_tokens_total{method=\"mtp\"}": 47.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 103.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 41.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 17.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 64.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 13.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"3\"}": 1.0,
+      "park_total{method=\"mtp\"}": 7.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 7.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 62.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 24.0,
+      "k_chosen_total{method=\"mtp\",k=\"3\"}": 17.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 110.0
+     },
+     "uncached_prompt_tokens": 31972,
+     "prefill_tps": 187.15916397897766
+    }
+   ],
+   [
+    {
+     "ttft_s": 179.6724609169978,
+     "total_s": 191.02118737499404,
+     "prompt_tokens": 31972,
+     "completion_tokens": 188,
+     "decode_tps": 16.62474493491236,
+     "finish_reason": "stop",
+     "content_chars": 1040,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "output": {
+      "content": "The log is a dense collection of fragmented phrases heavily focused on LLM inference infrastructure. The most frequently mentioned components are **prefill**, **decode**, **cache**, **memory**, and **scheduler**. These terms appear in various combinations, often describing data flow and resource management.\n\nThe text suggests a system where prefill and decode phases interact with memory and cache to manage throughput and latency. For instance, it notes that prefill loads into memory or cache, while decode reads from these sources. The scheduler is repeatedly linked to managing queues, budgets, and state, indicating its role in orchestrating these processes. Additionally, **tensor**, **kernel**, and **disk** are common, highlighting the underlying hardware and software layers. The log implies a complex interplay where state is maintained across checkpoints, and resources like memory and cache are carefully managed to optimize performance, often involving measures, drops, and shares of data between different system components.",
+      "reasoning": "",
+      "tool_calls": []
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 97,
+       "correction_tokens": 59,
+       "bonus_tokens": 38,
+       "accepted_by_depth": [
+        62,
+        23,
+        0
+       ],
+       "drafted_by_depth": [
+        97,
+        71,
+        1
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 8,
+      "current_memory_mb_after": 12148.25
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 169.0,
+      "accepts_total{method=\"mtp\"}": 85.0,
+      "tokens_saved_total{method=\"mtp\"}": 85.0,
+      "verify_calls_total{method=\"mtp\"}": 97.0,
+      "correction_tokens_total{method=\"mtp\"}": 59.0,
+      "bonus_tokens_total{method=\"mtp\"}": 38.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 97.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 71.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 1.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 62.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 23.0,
+      "park_total{method=\"mtp\"}": 6.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 6.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 26.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 70.0,
+      "k_chosen_total{method=\"mtp\",k=\"3\"}": 1.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 103.0
+     },
+     "uncached_prompt_tokens": 31972,
+     "prefill_tps": 177.94602376359674
+    }
+   ],
+   [
+    {
+     "ttft_s": 168.46403983399796,
+     "total_s": 179.00303870900098,
+     "prompt_tokens": 31972,
+     "completion_tokens": 188,
+     "decode_tps": 17.899283104146157,
+     "finish_reason": "stop",
+     "content_chars": 1040,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "output": {
+      "content": "The log is a dense collection of fragmented phrases heavily focused on LLM inference infrastructure. The most frequently mentioned components are **prefill**, **decode**, **cache**, **memory**, and **scheduler**. These terms appear in various combinations, often describing data flow and resource management.\n\nThe text suggests a system where prefill and decode phases interact with memory and cache to manage throughput and latency. For instance, it notes that prefill loads into memory or cache, while decode reads from these sources. The scheduler is repeatedly linked to managing queues, budgets, and state, indicating its role in orchestrating these processes. Additionally, **tensor**, **kernel**, and **disk** are common, highlighting the underlying hardware and software layers. The log implies a complex interplay where state is maintained across checkpoints, and resources like memory and cache are carefully managed to optimize performance, often involving measures, drops, and shares of data between different system components.",
+      "reasoning": "",
+      "tool_calls": []
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 108,
+       "correction_tokens": 51,
+       "bonus_tokens": 57,
+       "accepted_by_depth": [
+        66,
+        8
+       ],
+       "drafted_by_depth": [
+        108,
+        31
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 5,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 5,
+      "current_memory_mb_after": 13659.69
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 139.0,
+      "accepts_total{method=\"mtp\"}": 74.0,
+      "tokens_saved_total{method=\"mtp\"}": 74.0,
+      "verify_calls_total{method=\"mtp\"}": 108.0,
+      "correction_tokens_total{method=\"mtp\"}": 51.0,
+      "bonus_tokens_total{method=\"mtp\"}": 57.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 108.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 31.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 66.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 8.0,
+      "park_total{method=\"mtp\"}": 6.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 6.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 77.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 31.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 114.0
+     },
+     "uncached_prompt_tokens": 31972,
+     "prefill_tps": 189.7853098590343
+    }
+   ]
+  ],
+  "c": [
+   [
+    {
+     "ttft_s": 224.6569034169952,
+     "total_s": 226.1812093329936,
+     "prompt_tokens": 42214,
+     "completion_tokens": 39,
+     "decode_tps": 24.932964640761874,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "tree",
+        "arguments": "{\"path\": \"/Users/operator/project\", \"depth\": 2}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 16,
+       "correction_tokens": 4,
+       "bonus_tokens": 12,
+       "accepted_by_depth": [
+        13,
+        4
+       ],
+       "drafted_by_depth": [
+        16,
+        7
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 3,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 4,
+      "current_memory_mb_after": 12201.44
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 25.0,
+      "accepts_total{method=\"mtp\"}": 19.0,
+      "tokens_saved_total{method=\"mtp\"}": 19.0,
+      "verify_calls_total{method=\"mtp\"}": 16.0,
+      "correction_tokens_total{method=\"mtp\"}": 4.0,
+      "bonus_tokens_total{method=\"mtp\"}": 12.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 16.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 7.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 13.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 4.0,
+      "park_total{method=\"mtp\"}": 2.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 2.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 9.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 7.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 18.0
+     },
+     "uncached_prompt_tokens": 42214,
+     "prefill_tps": 187.90430811576178,
+     "turn": 1
+    },
+    {
+     "ttft_s": 16.82379970799957,
+     "total_s": 18.186982291001186,
+     "prompt_tokens": 44577,
+     "completion_tokens": 34,
+     "decode_tps": 24.215004283387202,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "shell",
+        "arguments": "{\"command\": \"ls -la /Users/operator/project/src/\"}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 15,
+       "correction_tokens": 9,
+       "bonus_tokens": 6,
+       "accepted_by_depth": [
+        9,
+        5
+       ],
+       "drafted_by_depth": [
+        15,
+        14
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 42100,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 4,
+      "current_memory_mb_after": 13769.19
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 31.0,
+      "accepts_total{method=\"mtp\"}": 16.0,
+      "tokens_saved_total{method=\"mtp\"}": 16.0,
+      "verify_calls_total{method=\"mtp\"}": 15.0,
+      "correction_tokens_total{method=\"mtp\"}": 9.0,
+      "bonus_tokens_total{method=\"mtp\"}": 6.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 15.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 9.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 5.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 14.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 16.0
+     },
+     "uncached_prompt_tokens": 2477,
+     "prefill_tps": 147.231900224193,
+     "turn": 2
+    },
+    {
+     "ttft_s": 16.793465624999953,
+     "total_s": 18.40376549999928,
+     "prompt_tokens": 46855,
+     "completion_tokens": 40,
+     "decode_tps": 24.222578155231894,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "shell",
+        "arguments": "{\"command\": \"rg -n 'handle_request' /Users/operator/project/src --no-heading\"}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 14,
+       "correction_tokens": 8,
+       "bonus_tokens": 6,
+       "accepted_by_depth": [
+        7,
+        6
+       ],
+       "drafted_by_depth": [
+        14,
+        14
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 44436,
+      "evictions": 3,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10827.12
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 38.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 14.0,
+      "correction_tokens_total{method=\"mtp\"}": 8.0,
+      "bonus_tokens_total{method=\"mtp\"}": 6.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 14.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 7.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 6.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 14.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 15.0
+     },
+     "uncached_prompt_tokens": 2419,
+     "prefill_tps": 144.04412132769687,
+     "turn": 3
+    },
+    {
+     "ttft_s": 17.71244149999984,
+     "total_s": 19.483421083001303,
+     "prompt_tokens": 49236,
+     "completion_tokens": 45,
+     "decode_tps": 24.847383895090562,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "shell",
+        "arguments": "{\"command\": \"sed -n '1,120p' /Users/operator/project/src/server/handler.rs\"}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 8,
+       "correction_tokens": 4,
+       "bonus_tokens": 4,
+       "accepted_by_depth": [
+        5,
+        3
+       ],
+       "drafted_by_depth": [
+        8,
+        7
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 46708,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 11265.94
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 68.0,
+      "accepts_total{method=\"mtp\"}": 29.0,
+      "tokens_saved_total{method=\"mtp\"}": 29.0,
+      "verify_calls_total{method=\"mtp\"}": 8.0,
+      "correction_tokens_total{method=\"mtp\"}": 4.0,
+      "bonus_tokens_total{method=\"mtp\"}": 4.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 8.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 7.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 5.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 3.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 7.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 9.0
+     },
+     "uncached_prompt_tokens": 2528,
+     "prefill_tps": 142.7245363096907,
+     "turn": 4
+    }
+   ],
+   [
+    {
+     "ttft_s": 147.5730241670026,
+     "total_s": 148.99753295800474,
+     "prompt_tokens": 42214,
+     "completion_tokens": 39,
+     "decode_tps": 26.67961564157664,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "tree",
+        "arguments": "{\"path\": \"/Users/operator/project\", \"depth\": 2}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 14,
+       "correction_tokens": 6,
+       "bonus_tokens": 8,
+       "accepted_by_depth": [
+        11,
+        8
+       ],
+       "drafted_by_depth": [
+        14,
+        14
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 16384,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10549.06
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 32.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 14.0,
+      "correction_tokens_total{method=\"mtp\"}": 6.0,
+      "bonus_tokens_total{method=\"mtp\"}": 8.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 14.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 11.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 8.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 14.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 15.0
+     },
+     "uncached_prompt_tokens": 25830,
+     "prefill_tps": 175.03198938831264,
+     "turn": 1
+    },
+    {
+     "ttft_s": 17.04767737500515,
+     "total_s": 18.452339292001852,
+     "prompt_tokens": 44577,
+     "completion_tokens": 34,
+     "decode_tps": 23.49568435904418,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "shell",
+        "arguments": "{\"command\": \"ls -la /Users/operator/project/src/\"}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 15,
+       "correction_tokens": 9,
+       "bonus_tokens": 6,
+       "accepted_by_depth": [
+        8,
+        6
+       ],
+       "drafted_by_depth": [
+        15,
+        15
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 42100,
+      "evictions": 1,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 4,
+      "current_memory_mb_after": 13769.19
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 32.0,
+      "accepts_total{method=\"mtp\"}": 16.0,
+      "tokens_saved_total{method=\"mtp\"}": 16.0,
+      "verify_calls_total{method=\"mtp\"}": 15.0,
+      "correction_tokens_total{method=\"mtp\"}": 9.0,
+      "bonus_tokens_total{method=\"mtp\"}": 6.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 15.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 15.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 8.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 6.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 15.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 16.0
+     },
+     "uncached_prompt_tokens": 2477,
+     "prefill_tps": 145.29838555202312,
+     "turn": 2
+    },
+    {
+     "ttft_s": 16.831402875002823,
+     "total_s": 18.443664417005493,
+     "prompt_tokens": 46855,
+     "completion_tokens": 40,
+     "decode_tps": 24.19288365309906,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "shell",
+        "arguments": "{\"command\": \"rg -n 'handle_request' /Users/operator/project/src --no-heading\"}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 14,
+       "correction_tokens": 8,
+       "bonus_tokens": 6,
+       "accepted_by_depth": [
+        7,
+        6
+       ],
+       "drafted_by_depth": [
+        14,
+        14
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 44436,
+      "evictions": 3,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10827.12
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 38.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 14.0,
+      "correction_tokens_total{method=\"mtp\"}": 8.0,
+      "bonus_tokens_total{method=\"mtp\"}": 6.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 14.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 7.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 6.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 14.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 15.0
+     },
+     "uncached_prompt_tokens": 2419,
+     "prefill_tps": 143.71945214338496,
+     "turn": 3
+    },
+    {
+     "ttft_s": 18.018839583004592,
+     "total_s": 19.971863582999504,
+     "prompt_tokens": 49236,
+     "completion_tokens": 45,
+     "decode_tps": 22.53197091059635,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "shell",
+        "arguments": "{\"command\": \"sed -n '1,120p' /Users/operator/project/src/server/handler.rs\"}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 9,
+       "correction_tokens": 7,
+       "bonus_tokens": 2,
+       "accepted_by_depth": [
+        4,
+        3,
+        0
+       ],
+       "drafted_by_depth": [
+        9,
+        9,
+        1
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 46708,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 11265.94
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 72.0,
+      "accepts_total{method=\"mtp\"}": 28.0,
+      "tokens_saved_total{method=\"mtp\"}": 28.0,
+      "verify_calls_total{method=\"mtp\"}": 9.0,
+      "correction_tokens_total{method=\"mtp\"}": 7.0,
+      "bonus_tokens_total{method=\"mtp\"}": 2.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 9.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 9.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 1.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 4.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 3.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 8.0,
+      "k_chosen_total{method=\"mtp\",k=\"3\"}": 1.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 10.0
+     },
+     "uncached_prompt_tokens": 2528,
+     "prefill_tps": 140.29760287029887,
+     "turn": 4
+    }
+   ],
+   [
+    {
+     "ttft_s": 147.70700329199462,
+     "total_s": 149.149548166999,
+     "prompt_tokens": 42214,
+     "completion_tokens": 39,
+     "decode_tps": 26.34834248590837,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "tree",
+        "arguments": "{\"path\": \"/Users/operator/project\", \"depth\": 2}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 14,
+       "correction_tokens": 6,
+       "bonus_tokens": 8,
+       "accepted_by_depth": [
+        11,
+        8
+       ],
+       "drafted_by_depth": [
+        14,
+        14
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 16384,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10549.06
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 32.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 14.0,
+      "correction_tokens_total{method=\"mtp\"}": 6.0,
+      "bonus_tokens_total{method=\"mtp\"}": 8.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 14.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 11.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 8.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 14.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 15.0
+     },
+     "uncached_prompt_tokens": 25830,
+     "prefill_tps": 174.8732248594737,
+     "turn": 1
+    },
+    {
+     "ttft_s": 16.987631874995714,
+     "total_s": 18.34445208300167,
+     "prompt_tokens": 44577,
+     "completion_tokens": 34,
+     "decode_tps": 24.325870851977655,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "shell",
+        "arguments": "{\"command\": \"ls -la /Users/operator/project/src/\"}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 15,
+       "correction_tokens": 9,
+       "bonus_tokens": 6,
+       "accepted_by_depth": [
+        8,
+        6
+       ],
+       "drafted_by_depth": [
+        15,
+        15
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 42100,
+      "evictions": 1,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 4,
+      "current_memory_mb_after": 13769.19
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 32.0,
+      "accepts_total{method=\"mtp\"}": 16.0,
+      "tokens_saved_total{method=\"mtp\"}": 16.0,
+      "verify_calls_total{method=\"mtp\"}": 15.0,
+      "correction_tokens_total{method=\"mtp\"}": 9.0,
+      "bonus_tokens_total{method=\"mtp\"}": 6.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 15.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 15.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 8.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 6.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 15.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 16.0
+     },
+     "uncached_prompt_tokens": 2477,
+     "prefill_tps": 145.811965918918,
+     "turn": 2
+    },
+    {
+     "ttft_s": 16.85498112499772,
+     "total_s": 18.44740450000245,
+     "prompt_tokens": 46855,
+     "completion_tokens": 40,
+     "decode_tps": 24.49421153641748,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "shell",
+        "arguments": "{\"command\": \"rg -n 'handle_request' /Users/operator/project/src --no-heading\"}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 14,
+       "correction_tokens": 8,
+       "bonus_tokens": 6,
+       "accepted_by_depth": [
+        7,
+        6
+       ],
+       "drafted_by_depth": [
+        14,
+        14
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 44436,
+      "evictions": 3,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10827.12
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 38.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 14.0,
+      "correction_tokens_total{method=\"mtp\"}": 8.0,
+      "bonus_tokens_total{method=\"mtp\"}": 6.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 14.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 7.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 6.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 14.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 15.0
+     },
+     "uncached_prompt_tokens": 2419,
+     "prefill_tps": 143.51840456305032,
+     "turn": 3
+    },
+    {
+     "ttft_s": 18.30024229099945,
+     "total_s": 20.2745979159954,
+     "prompt_tokens": 49236,
+     "completion_tokens": 45,
+     "decode_tps": 22.288531537839958,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "output": {
+      "content": "",
+      "reasoning": "",
+      "tool_calls": [
+       {
+        "name": "shell",
+        "arguments": "{\"command\": \"sed -n '1,120p' /Users/operator/project/src/server/handler.rs\"}"
+       }
+      ]
+     },
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 9,
+       "correction_tokens": 6,
+       "bonus_tokens": 3,
+       "accepted_by_depth": [
+        4,
+        3
+       ],
+       "drafted_by_depth": [
+        9,
+        9
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 46708,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 11265.94
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 71.0,
+      "accepts_total{method=\"mtp\"}": 28.0,
+      "tokens_saved_total{method=\"mtp\"}": 28.0,
+      "verify_calls_total{method=\"mtp\"}": 9.0,
+      "correction_tokens_total{method=\"mtp\"}": 6.0,
+      "bonus_tokens_total{method=\"mtp\"}": 3.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 9.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 9.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 4.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 3.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 9.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 10.0
+     },
+     "uncached_prompt_tokens": 2528,
+     "prefill_tps": 138.1402475334077,
+     "turn": 4
+    }
+   ]
+  ]
+ },
+ "finished": "2026-09-23T20:08:57.705336",
+ "status_after": {
+  "status": "idle",
+  "model": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+  "uptime_s": 1296.4,
+  "steps_executed": 2099,
+  "num_running": 0,
+  "num_waiting": 0,
+  "total_requests_processed": 20,
+  "total_prompt_tokens": 645216,
+  "total_completion_tokens": 1942,
+  "generation_tps": 18.43,
+  "prompt_tps": 2806.88,
+  "adaptive_prefill": {
+   "chunk_size": 2048,
+   "protected_chunks": 89,
+   "reduced_chunks": 0
+  },
+  "mtp_prompt_lookup": {
+   "vendored_steps": 1942,
+   "fallthrough_steps": 0,
+   "ft_batch_size": 0,
+   "ft_non_greedy": 0,
+   "ft_logits_processors": 0,
+   "ft_disabled": 0,
+   "gen_exhausted": 0,
+   "gen_raised": 0,
+   "invariant_violations": 0,
+   "prompt_lookup_proposals": 44.0,
+   "prompt_lookup_drafted_tokens": 211.0,
+   "prompt_lookup_matched_suffix_tokens": 523.0,
+   "prompt_lookup_accepted_tokens": 105.0,
+   "prompt_lookup_rejections": 11.0,
+   "prompt_lookup_cache_fallthroughs": 0.0,
+   "prompt_lookup_ev_declines": 0.0,
+   "prompt_lookup_mtp_sync_seconds": 0.2977078289768542,
+   "prompt_eval_seconds": 7.220997213153169e-05,
+   "draft_seconds": 0.3447626280685654,
+   "verify_sync_seconds": 83.7856134350659,
+   "verify_calls": 923.0
+  },
+  "idle_cache_clear": {
+   "enabled": false,
+   "seconds": 0.0,
+   "clear_count": 0,
+   "last_clear_at": null
+  },
+  "metal": {
+   "active_memory_gb": 42.58,
+   "peak_memory_gb": 57.34,
+   "cache_memory_gb": 9.71
+  },
+  "cache": {
+   "hits": 11,
+   "misses": 9,
+   "hit_rate": 0.55,
+   "evictions": 36,
+   "tokens_saved": 432500,
+   "current_memory_mb": 11265.94,
+   "max_memory_mb": 15532.62,
+   "current_memory_bytes": 11813191680,
+   "max_memory_bytes": 16287127961,
+   "memory_utilization": 0.7253,
+   "entry_count": 3,
+   "load_skipped": 0,
+   "save_drift_drops": 0,
+   "non_trimmable_skips": 0,
+   "non_trimmable_entries": 3,
+   "radix": {
+    "hits": 9,
+    "misses": 11,
+    "inserts": 41,
+    "removes": 36,
+    "deduped_prefix_bytes_saved": 4387960,
+    "node_count": 49236,
+    "entry_count": 3,
+    "max_depth": 49236,
+    "lookup_p50_seconds": 0.0013355,
+    "lookup_p99_seconds": 0.002313708
+   }
+  },
+  "requests": []
+ }
+}

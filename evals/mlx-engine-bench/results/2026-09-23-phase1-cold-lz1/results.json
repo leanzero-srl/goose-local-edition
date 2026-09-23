@@ -1,0 +1,289 @@
+{
+ "label": "phase1-cold-lz1",
+ "nonce": "phase1-identity",
+ "seed": 7,
+ "usage_from": "/Users/mihaiperdum/Projects/goose/evals/mlx-engine-bench/results/2026-09-23-phase1-lz1-seeded/results.json",
+ "started": "2026-09-23T20:11:27.205003",
+ "engine": {
+  "id": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+  "request_extensions": null
+ },
+ "replays": [
+  {
+   "target": "a:0:1",
+   "attempt": 0,
+   "ttft_s": 1.4483005410002079,
+   "total_s": 14.69214116600051,
+   "prompt_tokens": 193,
+   "completion_tokens": 300,
+   "decode_tps": 22.576817881841443,
+   "finish_reason": "length",
+   "content_chars": 1581,
+   "reasoning_chars": 0,
+   "tool_call_deltas": 0,
+   "output": {
+    "content": "The dominant cost for a long prompt is the prefill phase, where the model must process the entire input sequence to compute the initial hidden states. On a single GPU with ample memory, this is a compute-bound operation because the matrix multiplications involve large batches of tokens processed in parallel, but the arithmetic intensity is high enough to saturate the tensor cores. If the prompt is ten thousand tokens long, the GPU spends seconds just calculating the attention scores and feed-forward outputs for those tokens before it can even generate the first output token. In contrast, a short chat request has a tiny prefill cost, so the user perceives the response as immediate because the bottleneck shifts almost instantly to the much slower autoregressive decoding phase, which is memory-bandwidth-bound rather than compute-bound.\n\nThe prefix cache helps only when the beginning of the new prompt is byte-for-byte identical to a previously cached prompt. It saves the prefill computation for that shared prefix by reusing the stored key-value tensors, but it cannot save anything if the end of every prompt changes, because the cache is keyed on the exact sequence of tokens. If two prompts share the first fifty tokens but diverge at token fifty-one, the cache serves the first fifty, but the model must still fully process the remainder of the new prompt from scratch. Therefore, in a workload where every user appends unique context or questions to a common system message, the cache provides a fixed, small speedup proportional to the length of the shared header,",
+    "reasoning": "",
+    "tool_calls": []
+   },
+   "request_metrics": {
+    "speculative_decoding": {
+     "verify_calls": 140,
+     "correction_tokens": 110,
+     "bonus_tokens": 30,
+     "accepted_by_depth": [
+      98,
+      41,
+      12
+     ],
+     "drafted_by_depth": [
+      140,
+      125,
+      110
+     ]
+    }
+   },
+   "cache": {
+    "hits": 0,
+    "misses": 1,
+    "tokens_saved": 0,
+    "evictions": 0,
+    "non_trimmable_skips": 0,
+    "load_skipped": 0,
+    "entry_count_after": 2,
+    "current_memory_mb_after": 610.44
+   },
+   "spec_decode": {
+    "attempts_total{method=\"mtp\"}": 375.0,
+    "accepts_total{method=\"mtp\"}": 151.0,
+    "tokens_saved_total{method=\"mtp\"}": 151.0,
+    "verify_calls_total{method=\"mtp\"}": 140.0,
+    "correction_tokens_total{method=\"mtp\"}": 110.0,
+    "bonus_tokens_total{method=\"mtp\"}": 30.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 140.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 125.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 110.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 98.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 41.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"3\"}": 12.0,
+    "park_total{method=\"mtp\"}": 9.0,
+    "k_chosen_total{method=\"mtp\",k=\"0\"}": 9.0,
+    "k_chosen_total{method=\"mtp\",k=\"1\"}": 15.0,
+    "k_chosen_total{method=\"mtp\",k=\"2\"}": 15.0,
+    "k_chosen_total{method=\"mtp\",k=\"3\"}": 110.0,
+    "k_chosen_rounds_total{method=\"mtp\"}": 149.0
+   },
+   "uncached_prompt_tokens": 193,
+   "prefill_tps": 133.25963398916682
+  },
+  {
+   "target": "a:0:1",
+   "attempt": 1,
+   "ttft_s": 0.9830760000040755,
+   "total_s": 13.558814291005547,
+   "prompt_tokens": 193,
+   "completion_tokens": 300,
+   "decode_tps": 23.77643164586191,
+   "finish_reason": "length",
+   "content_chars": 1554,
+   "reasoning_chars": 0,
+   "tool_call_deltas": 0,
+   "output": {
+    "content": "The dominant cost for a long prompt is the prefill phase, where the model must process the entire input sequence to compute the initial hidden states. On a single GPU with ample memory, this is a compute-bound operation because the matrix multiplications involve large batches of tokens processed in parallel, but the arithmetic intensity is high enough to saturate the tensor cores. If the prompt is ten thousand tokens long, the GPU spends seconds just calculating the attention scores and feed-forward outputs for those tokens before it can even generate the first output token. In contrast, a short chat request has a tiny prefill cost, so the user perceives the response as immediate because the bottleneck shifts almost instantly to the much slower autoregressive decoding phase, which is memory-bandwidth-bound rather than compute-bound.\n\nThe prefix cache helps only when the beginning of the new prompt is byte-for-byte identical to a previous one. It stores the intermediate hidden states (the KV cache) for those shared tokens, allowing the server to skip the prefill computation for that prefix and jump straight to processing the new suffix. However, if the end of every prompt changes, the cache is useless for the unique tail, and more critically, if the prompts do not share a common start, the cache hit rate is zero. Even with a shared start, the cache cannot save the cost of processing the new, unique tokens at the end; it only reduces the work for the overlapping head. Therefore, for a workload where every prompt is distinct or has",
+    "reasoning": "",
+    "tool_calls": []
+   },
+   "request_metrics": {
+    "speculative_decoding": {
+     "verify_calls": 132,
+     "correction_tokens": 106,
+     "bonus_tokens": 26,
+     "accepted_by_depth": [
+      89,
+      50,
+      25
+     ],
+     "drafted_by_depth": [
+      132,
+      130,
+      130
+     ]
+    }
+   },
+   "cache": {
+    "hits": 0,
+    "misses": 1,
+    "tokens_saved": 0,
+    "evictions": 0,
+    "non_trimmable_skips": 0,
+    "load_skipped": 0,
+    "entry_count_after": 2,
+    "current_memory_mb_after": 610.44
+   },
+   "spec_decode": {
+    "attempts_total{method=\"mtp\"}": 392.0,
+    "accepts_total{method=\"mtp\"}": 164.0,
+    "tokens_saved_total{method=\"mtp\"}": 164.0,
+    "verify_calls_total{method=\"mtp\"}": 132.0,
+    "correction_tokens_total{method=\"mtp\"}": 106.0,
+    "bonus_tokens_total{method=\"mtp\"}": 26.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 132.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 130.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 130.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 89.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 50.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"3\"}": 25.0,
+    "park_total{method=\"mtp\"}": 3.0,
+    "k_chosen_total{method=\"mtp\",k=\"0\"}": 3.0,
+    "k_chosen_total{method=\"mtp\",k=\"1\"}": 2.0,
+    "k_chosen_total{method=\"mtp\",k=\"3\"}": 130.0,
+    "k_chosen_rounds_total{method=\"mtp\"}": 135.0
+   },
+   "uncached_prompt_tokens": 193,
+   "prefill_tps": 196.32256305636582
+  },
+  {
+   "target": "c:2:2",
+   "attempt": 0,
+   "ttft_s": 250.53768533300172,
+   "total_s": 251.90841041599924,
+   "prompt_tokens": 44577,
+   "completion_tokens": 31,
+   "decode_tps": 21.8903330244143,
+   "finish_reason": "tool_calls",
+   "content_chars": 0,
+   "reasoning_chars": 0,
+   "tool_call_deltas": 2,
+   "output": {
+    "content": "",
+    "reasoning": "",
+    "tool_calls": [
+     {
+      "name": "shell",
+      "arguments": "{\"command\": \"ls /Users/operator/project/src\"}"
+     }
+    ]
+   },
+   "request_metrics": {
+    "speculative_decoding": {
+     "verify_calls": 13,
+     "correction_tokens": 7,
+     "bonus_tokens": 6,
+     "accepted_by_depth": [
+      8,
+      5,
+      2
+     ],
+     "drafted_by_depth": [
+      13,
+      11,
+      7
+     ]
+    }
+   },
+   "cache": {
+    "hits": 0,
+    "misses": 1,
+    "tokens_saved": 0,
+    "evictions": 0,
+    "non_trimmable_skips": 0,
+    "load_skipped": 0,
+    "entry_count_after": 2,
+    "current_memory_mb_after": 7039.31
+   },
+   "spec_decode": {
+    "attempts_total{method=\"mtp\"}": 33.0,
+    "accepts_total{method=\"mtp\"}": 16.0,
+    "tokens_saved_total{method=\"mtp\"}": 16.0,
+    "verify_calls_total{method=\"mtp\"}": 13.0,
+    "correction_tokens_total{method=\"mtp\"}": 7.0,
+    "bonus_tokens_total{method=\"mtp\"}": 6.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 13.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 11.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 7.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 8.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 5.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"3\"}": 2.0,
+    "park_total{method=\"mtp\"}": 1.0,
+    "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+    "k_chosen_total{method=\"mtp\",k=\"1\"}": 2.0,
+    "k_chosen_total{method=\"mtp\",k=\"2\"}": 4.0,
+    "k_chosen_total{method=\"mtp\",k=\"3\"}": 7.0,
+    "k_chosen_rounds_total{method=\"mtp\"}": 14.0
+   },
+   "uncached_prompt_tokens": 44577,
+   "prefill_tps": 177.92532864167944
+  },
+  {
+   "target": "c:2:2",
+   "attempt": 1,
+   "ttft_s": 251.47307058300066,
+   "total_s": 252.62384608300636,
+   "prompt_tokens": 44577,
+   "completion_tokens": 31,
+   "decode_tps": 26.073749600613382,
+   "finish_reason": "tool_calls",
+   "content_chars": 0,
+   "reasoning_chars": 0,
+   "tool_call_deltas": 2,
+   "output": {
+    "content": "",
+    "reasoning": "",
+    "tool_calls": [
+     {
+      "name": "shell",
+      "arguments": "{\"command\": \"ls /Users/operator/project/src\"}"
+     }
+    ]
+   },
+   "request_metrics": {
+    "speculative_decoding": {
+     "verify_calls": 10,
+     "correction_tokens": 4,
+     "bonus_tokens": 6,
+     "accepted_by_depth": [
+      7,
+      5,
+      5
+     ],
+     "drafted_by_depth": [
+      10,
+      9,
+      9
+     ]
+    }
+   },
+   "cache": {
+    "hits": 0,
+    "misses": 1,
+    "tokens_saved": 0,
+    "evictions": 0,
+    "non_trimmable_skips": 0,
+    "load_skipped": 0,
+    "entry_count_after": 2,
+    "current_memory_mb_after": 7039.31
+   },
+   "spec_decode": {
+    "attempts_total{method=\"mtp\"}": 32.0,
+    "accepts_total{method=\"mtp\"}": 18.0,
+    "tokens_saved_total{method=\"mtp\"}": 18.0,
+    "verify_calls_total{method=\"mtp\"}": 10.0,
+    "correction_tokens_total{method=\"mtp\"}": 4.0,
+    "bonus_tokens_total{method=\"mtp\"}": 6.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 10.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 9.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 9.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 7.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 5.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"3\"}": 5.0,
+    "park_total{method=\"mtp\"}": 1.0,
+    "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+    "k_chosen_total{method=\"mtp\",k=\"1\"}": 1.0,
+    "k_chosen_total{method=\"mtp\",k=\"3\"}": 9.0,
+    "k_chosen_rounds_total{method=\"mtp\"}": 11.0
+   },
+   "uncached_prompt_tokens": 44577,
+   "prefill_tps": 177.26351333228348
+  }
+ ]
+}

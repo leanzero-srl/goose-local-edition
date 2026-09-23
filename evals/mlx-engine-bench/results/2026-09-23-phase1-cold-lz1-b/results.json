@@ -1,0 +1,151 @@
+{
+ "label": "phase1-cold-lz1-b",
+ "nonce": "phase1-identity",
+ "seed": 7,
+ "usage_from": "/Users/mihaiperdum/Projects/goose/evals/mlx-engine-bench/results/2026-09-23-phase1-lz1-seeded/results.json",
+ "started": "2026-09-23T20:20:33.102510",
+ "engine": {
+  "id": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+  "request_extensions": null
+ },
+ "replays": [
+  {
+   "target": "c:2:4",
+   "attempt": 0,
+   "ttft_s": 279.5817057910026,
+   "total_s": 281.5960158750022,
+   "prompt_tokens": 49236,
+   "completion_tokens": 46,
+   "decode_tps": 22.343772798667942,
+   "finish_reason": "tool_calls",
+   "content_chars": 0,
+   "reasoning_chars": 0,
+   "tool_call_deltas": 2,
+   "output": {
+    "content": "",
+    "reasoning": "",
+    "tool_calls": [
+     {
+      "name": "shell",
+      "arguments": "{\"command\": \"rg -n 'handle_request' /Users/operator/project/src/server/handler.rs | head -20\"}"
+     }
+    ]
+   },
+   "request_metrics": {
+    "speculative_decoding": {
+     "verify_calls": 13,
+     "correction_tokens": 6,
+     "bonus_tokens": 7,
+     "accepted_by_depth": [
+      7,
+      3
+     ],
+     "drafted_by_depth": [
+      13,
+      3
+     ]
+    }
+   },
+   "cache": {
+    "hits": 0,
+    "misses": 1,
+    "tokens_saved": 0,
+    "evictions": 0,
+    "non_trimmable_skips": 0,
+    "load_skipped": 0,
+    "entry_count_after": 2,
+    "current_memory_mb_after": 7621.38
+   },
+   "spec_decode": {
+    "attempts_total{method=\"mtp\"}": 32.0,
+    "accepts_total{method=\"mtp\"}": 21.0,
+    "tokens_saved_total{method=\"mtp\"}": 21.0,
+    "verify_calls_total{method=\"mtp\"}": 13.0,
+    "correction_tokens_total{method=\"mtp\"}": 6.0,
+    "bonus_tokens_total{method=\"mtp\"}": 7.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 13.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 3.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 7.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 3.0,
+    "park_total{method=\"mtp\"}": 6.0,
+    "k_chosen_total{method=\"mtp\",k=\"0\"}": 6.0,
+    "k_chosen_total{method=\"mtp\",k=\"1\"}": 10.0,
+    "k_chosen_total{method=\"mtp\",k=\"2\"}": 3.0,
+    "k_chosen_rounds_total{method=\"mtp\"}": 19.0
+   },
+   "uncached_prompt_tokens": 49236,
+   "prefill_tps": 176.10594320075322
+  },
+  {
+   "target": "c:0:2",
+   "attempt": 0,
+   "ttft_s": 252.0725082909994,
+   "total_s": 253.49005625000427,
+   "prompt_tokens": 44577,
+   "completion_tokens": 34,
+   "decode_tps": 23.284349851300963,
+   "finish_reason": "tool_calls",
+   "content_chars": 0,
+   "reasoning_chars": 0,
+   "tool_call_deltas": 2,
+   "output": {
+    "content": "",
+    "reasoning": "",
+    "tool_calls": [
+     {
+      "name": "shell",
+      "arguments": "{\"command\": \"ls -la /Users/operator/project/src/\"}"
+     }
+    ]
+   },
+   "request_metrics": {
+    "speculative_decoding": {
+     "verify_calls": 15,
+     "correction_tokens": 8,
+     "bonus_tokens": 7,
+     "accepted_by_depth": [
+      8,
+      6,
+      0
+     ],
+     "drafted_by_depth": [
+      15,
+      14,
+      1
+     ]
+    }
+   },
+   "cache": {
+    "hits": 0,
+    "misses": 1,
+    "tokens_saved": 0,
+    "evictions": 0,
+    "non_trimmable_skips": 0,
+    "load_skipped": 0,
+    "entry_count_after": 2,
+    "current_memory_mb_after": 7039.31
+   },
+   "spec_decode": {
+    "attempts_total{method=\"mtp\"}": 32.0,
+    "accepts_total{method=\"mtp\"}": 16.0,
+    "tokens_saved_total{method=\"mtp\"}": 16.0,
+    "verify_calls_total{method=\"mtp\"}": 15.0,
+    "correction_tokens_total{method=\"mtp\"}": 8.0,
+    "bonus_tokens_total{method=\"mtp\"}": 7.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 15.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+    "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 1.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 8.0,
+    "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 6.0,
+    "park_total{method=\"mtp\"}": 1.0,
+    "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+    "k_chosen_total{method=\"mtp\",k=\"1\"}": 1.0,
+    "k_chosen_total{method=\"mtp\",k=\"2\"}": 13.0,
+    "k_chosen_total{method=\"mtp\",k=\"3\"}": 1.0,
+    "k_chosen_rounds_total{method=\"mtp\"}": 16.0
+   },
+   "uncached_prompt_tokens": 44577,
+   "prefill_tps": 176.8419741693493
+  }
+ ]
+}

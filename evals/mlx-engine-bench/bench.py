@@ -4,6 +4,7 @@
 Usage:
   bench.py --label <label> [--base-url http://127.0.0.1:8090] [--reps 3]
            [--workloads a,b,c] [--nonce <text>] [--temperature 0 | --omit-temperature]
+           [--transient-tail] [--seed N]
 
 Three fixed workloads, each repeated --reps times:
   a  short chat   ~200-token prompt  -> max 300 tokens out
@@ -24,11 +25,25 @@ the configuration under test. The nonce makes every repetition cold at token ~0;
 then measures only the reuse INSIDE its own conversation. Pass --nonce explicitly to replay a
 conversation on purpose (the unmount -> mount persistence check).
 
+--transient-tail sends, on every (c) request, the LeanZero fork's `rapid_mlx_transient_tail` field
+naming the <turn-context> text exactly as goose does (formats/openai.rs turn_context_tail_suffix):
+"\n" + block when merged into the task message, the block itself when it rides as its own
+message. The prompt is unchanged; only the hybrid cache's boundary snapshot moves before the tail.
+Every request's output (content, reasoning, tool-call name+arguments) is recorded in results.json
+so compare_outputs.py can prove two configurations answered IDENTICALLY for the same nonce.
+
 Why temperature 0 and NO seed: greedy decoding makes the output (and so the completion length)
 repeatable; a seed would pin Rapid-MLX's MTP depth to max_k and switch off the EV auto-K
 controller production runs (scheduler.py:2133-2138 `disable_auto_k=... lane_rng is not None`).
 goose itself sends no temperature (the engine's default sampler applies) — --omit-temperature
 reproduces that for a production-shaped check.
+
+What is replayable (measured 2026-09-23, results/2026-09-23-phase1-*): (b) and (c) greedy outputs
+are byte-identical across mounts, seeded or not, when the cache reuse points match. (a) is NOT —
+its 300-token answer differed on every mount and even back-to-back on ONE mount with the prefix
+cache cleared and a seed set (phase1-cold-lz1: a:0:1 #0 != #1), so (a) is a timing guard only and
+compare_outputs.py results on (a) say nothing about a change. --seed pins MTP depth to max_k
+(scheduler.py:2133-2138) for runs that want that source of variation removed; timing runs omit it.
 """
 
 import argparse
@@ -100,7 +115,7 @@ def stream_chat(base: str, body: dict) -> dict:
     t0 = time.perf_counter()
     t_first = t_last = None
     usage, finish, req_metrics = None, None, None
-    content_chars = reasoning_chars = 0
+    content_parts, reasoning_parts = [], []
     tool_calls = []
     with urllib.request.urlopen(req, timeout=None) as r:
         for raw in r:
@@ -117,11 +132,11 @@ def stream_chat(base: str, body: dict) -> dict:
                 delta = ch.get("delta", {})
                 produced = False
                 if delta.get("content"):
-                    content_chars += len(delta["content"])
+                    content_parts.append(delta["content"])
                     produced = True
                 for key in ("reasoning_content", "reasoning"):
                     if delta.get(key):
-                        reasoning_chars += len(delta[key])
+                        reasoning_parts.append(delta[key])
                         produced = True
                 if delta.get("tool_calls"):
                     tool_calls.extend(delta["tool_calls"])
@@ -141,6 +156,13 @@ def stream_chat(base: str, body: dict) -> dict:
     if t_first is None:
         raise RuntimeError(f"engine produced no output delta (finish={finish}, usage={usage})")
     completion = usage["completion_tokens"]
+    calls: dict[int, dict] = {}
+    for tc in tool_calls:
+        call = calls.setdefault(tc.get("index", 0), {"name": "", "arguments": ""})
+        fn = tc.get("function") or {}
+        call["name"] += fn.get("name") or ""
+        call["arguments"] += fn.get("arguments") or ""
+    content, reasoning = "".join(content_parts), "".join(reasoning_parts)
     decode_span = (t_last - t_first) if t_last and t_last > t_first else None
     return {
         "ttft_s": t_first - t0,
@@ -149,9 +171,10 @@ def stream_chat(base: str, body: dict) -> dict:
         "completion_tokens": completion,
         "decode_tps": ((completion - 1) / decode_span) if decode_span and completion > 1 else None,
         "finish_reason": finish,
-        "content_chars": content_chars,
-        "reasoning_chars": reasoning_chars,
+        "content_chars": len(content),
+        "reasoning_chars": len(reasoning),
         "tool_call_deltas": len(tool_calls),
+        "output": {"content": content, "reasoning": reasoning, "tool_calls": [calls[i] for i in sorted(calls)]},
         "request_metrics": req_metrics,
     }
 
@@ -250,7 +273,10 @@ def turn_context(turn: int, context_used: int | None, window: int) -> str:
 
 
 def sampling(args) -> dict:
-    return {} if args.omit_temperature else {"temperature": args.temperature}
+    out = {} if args.omit_temperature else {"temperature": args.temperature}
+    if args.seed is not None:
+        out["seed"] = args.seed
+    return out
 
 
 def workload_a(base, model, args, rep):
@@ -280,9 +306,13 @@ def workload_c(base, model, args, rep, fixture, window):
         messages = [dict(m) for m in history]
         if messages[-1]["role"] == "user":
             messages[-1]["content"] = messages[-1]["content"] + "\n" + tail
+            transient = "\n" + tail
         else:
             messages.append({"role": "user", "content": tail})
+            transient = tail
         body = {"model": model, "messages": messages, "tools": fixture["tools"], "max_tokens": 200, **sampling(args)}
+        if args.transient_tail:
+            body["rapid_mlx_transient_tail"] = transient
         r = measured(base, body)
         r["turn"] = turn + 1
         turns.append(r)
@@ -336,6 +366,8 @@ def main():
     ap.add_argument("--nonce", default=None)
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--omit-temperature", action="store_true")
+    ap.add_argument("--seed", type=int, default=None, help="pin MTP depth for replayable greedy output (identity checks)")
+    ap.add_argument("--transient-tail", action="store_true", help="mark (c)'s <turn-context> tail as rapid_mlx_transient_tail")
     ap.add_argument("--long-words", type=int, default=28600, help="document size for (b); ~32k tokens at the default (measured 24,000 words -> 26,838 tokens)")
     ap.add_argument("--rep-start", type=int, default=0, help="first repetition index (replays a specific nonce-rep)")
     args = ap.parse_args()
@@ -344,7 +376,9 @@ def main():
 
     models = json.loads(http_get(f"{base}/v1/models"))["data"]
     model, window = models[0]["id"], models[0].get("context_window") or 0
-    engine = {k: models[0].get(k) for k in ("id", "context_window", "is_hybrid", "tool_call_parser", "reasoning_parser", "speculative_decoding")}
+    engine = {k: models[0].get(k) for k in ("id", "context_window", "is_hybrid", "tool_call_parser", "reasoning_parser", "speculative_decoding", "request_extensions")}
+    if args.transient_tail and "rapid_mlx_transient_tail" not in (models[0].get("request_extensions") or []):
+        sys.exit("refusing: --transient-tail but the engine does not declare rapid_mlx_transient_tail in /v1/models request_extensions")
     status0 = json.loads(http_get(f"{base}/v1/status"))
     if status0.get("num_running") or status0.get("num_waiting"):
         sys.exit(f"refusing: engine is busy ({status0.get('num_running')} running, {status0.get('num_waiting')} waiting)")
@@ -353,6 +387,7 @@ def main():
     warm = stream_chat(base, {"model": model, "messages": [{"role": "user", "content": f"Warmup {args.nonce}: reply OK."}], "max_tokens": 8, **sampling(args)})
 
     results = {"label": args.label, "nonce": args.nonce, "started": datetime.now().isoformat(), "engine": engine,
+               "transient_tail": args.transient_tail,
                "sampling": sampling(args) or "engine default (omitted)", "reps": args.reps, "warmup": warm, "workloads": {}}
     for w in args.workloads.split(","):
         runs = []
@@ -378,7 +413,8 @@ def main():
     with open(os.path.join(out_dir, "results.json"), "w") as f:
         json.dump(results, f, indent=1)
 
-    md = [f"# {args.label}", "", f"engine `{model}` · sampling {results['sampling']} · reps {args.reps} · nonce `{args.nonce}`",
+    md = [f"# {args.label}", "", f"engine `{model}` · sampling {results['sampling']} · reps {args.reps} · nonce `{args.nonce}`"
+          f" · transient tail {'ON' if args.transient_tail else 'off'}",
           "", "median (min–max) over reps", "",
           "| workload | TTFT s | prefill tok/s (uncached) | decode tok/s | prompt tok | completion tok | cache tokens_saved | MTP accepted/drafted (verify calls) |",
           "|---|---|---|---|---|---|---|---|"]
