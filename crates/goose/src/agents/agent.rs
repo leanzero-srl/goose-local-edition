@@ -51,8 +51,8 @@ use crate::security::egress_inspector::EgressInspector;
 use crate::security::security_inspector::SecurityInspector;
 use crate::session::extension_data::{EnabledExtensionsState, ExtensionState};
 use crate::session::{Session, SessionManager, SessionNameUpdate};
-use crate::tool_inspection::ToolInspectionManager;
-use crate::tool_monitor::RepetitionInspector;
+use crate::tool_inspection::{InspectionAction, InspectionResult, ToolInspectionManager};
+use crate::tool_monitor::{RepetitionInspector, REPETITION_INSPECTOR_NAME};
 use crate::utils::is_token_cancelled;
 use goose_providers::errors::ProviderError;
 use goose_providers::thinking::ThinkingEffort;
@@ -290,6 +290,10 @@ pub struct Agent {
     /// that reported no usage is announced to the caller. Default false → every non-swarm agent is
     /// byte-identical.
     swarm_measured_context: std::sync::atomic::AtomicBool,
+    /// The repeat guard (`tool_monitor`): on for every agent, off for swarm workers, whose loops the
+    /// judge supervises and whose golden benchmark was measured without it. Shared with the
+    /// repetition inspector and read again where tool results are noted.
+    repeat_guard: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -387,6 +391,7 @@ impl Agent {
         let inspection_session_manager = Arc::clone(&config.session_manager);
         let permission_manager = Arc::clone(&config.permission_manager);
         let use_login_shell_path = config.resolve_use_login_shell_path();
+        let repeat_guard = Arc::new(std::sync::atomic::AtomicBool::new(true));
         Self {
             provider: provider.clone(),
             config,
@@ -411,6 +416,7 @@ impl Agent {
                 permission_manager,
                 provider.clone(),
                 inspection_session_manager,
+                repeat_guard.clone(),
             ),
             hook_manager: crate::hooks::HookManager::load(
                 std::env::current_dir().ok().as_deref(),
@@ -425,7 +431,22 @@ impl Agent {
             steer_arrived: Notify::new(),
             swarm_single_owned_file: std::sync::RwLock::new(None),
             swarm_measured_context: std::sync::atomic::AtomicBool::new(false),
+            repeat_guard,
         }
+    }
+
+    /// Turn the repeat guard off (the swarm does, per worker) or back on. See the field doc.
+    pub fn set_repeat_guard(&self, on: bool) {
+        self.repeat_guard
+            .store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// SWARM worker door: registers the task's single owned file (`set_swarm_single_owned_file`) and
+    /// turns chat's repeat guard OFF — a worker's loops are the judge's to read (recurrence,
+    /// repeat-break), and the golden benchmark run was measured without the guard.
+    pub fn configure_swarm_worker(&self, single_owned_file: Option<String>) {
+        self.set_swarm_single_owned_file(single_owned_file);
+        self.set_repeat_guard(false);
     }
 
     /// SWARM: register the task's single owned file so a pathless `write`/`edit` gets repaired (see the field
@@ -741,6 +762,7 @@ impl Agent {
         permission_manager: Arc<PermissionManager>,
         provider: SharedProvider,
         session_manager: Arc<SessionManager>,
+        repeat_guard: Arc<std::sync::atomic::AtomicBool>,
     ) -> ToolInspectionManager {
         let mut tool_inspection_manager = ToolInspectionManager::new();
 
@@ -761,8 +783,7 @@ impl Agent {
             session_manager,
         )));
 
-        // Add repetition inspector (lower priority - basic repetition checking)
-        tool_inspection_manager.add_inspector(Box::new(RepetitionInspector::new(None)));
+        tool_inspection_manager.add_inspector(Box::new(RepetitionInspector::new(repeat_guard)));
 
         tool_inspection_manager
     }
@@ -895,6 +916,7 @@ impl Agent {
         request_to_response_map: &mut HashMap<String, Message>,
         cancel_token: Option<tokio_util::sync::CancellationToken>,
         session: &Session,
+        inspection_results: &[InspectionResult],
     ) -> Result<Vec<(String, ToolStream)>> {
         let mut tool_futures: Vec<(String, ToolStream)> = Vec::new();
 
@@ -932,21 +954,37 @@ impl Agent {
             }
         }
 
-        Self::handle_denied_tools(permission_check_result, request_to_response_map);
+        Self::handle_denied_tools(
+            permission_check_result,
+            request_to_response_map,
+            inspection_results,
+        );
         Ok(tool_futures)
     }
 
+    /// A call denied ONLY by the repeat guard gets the guard's factual result; the generic
+    /// DECLINED_RESPONSE says the user declined and tells the model to STOP, which is false for it.
     fn handle_denied_tools(
         permission_check_result: &PermissionCheckResult,
         request_to_response_map: &mut HashMap<String, Message>,
+        inspection_results: &[InspectionResult],
     ) {
         for request in &permission_check_result.denied {
+            let mut denials = inspection_results
+                .iter()
+                .filter(|r| r.tool_request_id == request.id && r.action == InspectionAction::Deny)
+                .peekable();
+            let repeat_only = denials.peek().is_some()
+                && denials.all(|r| r.inspector_name == REPETITION_INSPECTOR_NAME);
+            let result = if repeat_only {
+                crate::tool_monitor::skipped_result()
+            } else {
+                CallToolResult::error(vec![rmcp::model::Content::text(DECLINED_RESPONSE)])
+            };
             if let Some(response) = request_to_response_map.get_mut(&request.id) {
                 response.add_tool_response_with_metadata(
                     request.id.clone(),
-                    Ok(CallToolResult::error(vec![rmcp::model::Content::text(
-                        DECLINED_RESPONSE,
-                    )])),
+                    Ok(result),
                     request.metadata.as_ref(),
                 );
             }
@@ -2376,6 +2414,7 @@ impl Agent {
                                         &mut request_to_response_map,
                                         cancel_token.clone(),
                                         &session,
+                                        &inspection_results,
                                     ).await?;
 
                                     {
@@ -2424,7 +2463,7 @@ impl Agent {
                                                                 }
                                                                 yield AgentEvent::Message(msg);
                                                             }
-                                                            ToolStreamItem::Result(output) => {
+                                                            ToolStreamItem::Result(mut output) => {
                                                                 if let Ok(ref call_result) = output {
                                                                     if let Some(ref meta) = call_result.meta {
                                                                         if let Some(notification_data) = meta.0.get("platform_notification") {
@@ -2446,6 +2485,19 @@ impl Agent {
                                                                     && output.is_err()
                                                                 {
                                                                     all_install_successful = false;
+                                                                }
+                                                                if self.repeat_guard.load(std::sync::atomic::Ordering::Relaxed) {
+                                                                    if let Some(call) = remaining_requests
+                                                                        .iter()
+                                                                        .find(|r| r.id == request_id)
+                                                                        .and_then(|r| r.tool_call.as_ref().ok())
+                                                                    {
+                                                                        crate::tool_monitor::note_if_unchanged(
+                                                                            conversation.messages(),
+                                                                            call,
+                                                                            &mut output,
+                                                                        );
+                                                                    }
                                                                 }
                                                                 if let Some(response) = request_to_response_map.get_mut(&request_id) {
                                                                     let metadata = request_metadata.get(&request_id).and_then(|m| m.as_ref());

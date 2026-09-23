@@ -5435,6 +5435,15 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Salida"
   },
+  "toolCallWithResponse.repeatSameOutput": {
+    "defaultMessage": "Misma llamada y misma salida que la anterior — se le indicó al modelo"
+  },
+  "toolCallWithResponse.repeatSkipped": {
+    "defaultMessage": "Omitida — idéntica a la llamada anterior, misma salida"
+  },
+  "toolCallWithResponse.skipped": {
+    "defaultMessage": "Omitida"
+  },
   "toolCallWithResponse.toolDetails": {
     "defaultMessage": "Detalles de la herramienta"
   },

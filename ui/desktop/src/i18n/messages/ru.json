@@ -5435,6 +5435,15 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Вывод"
   },
+  "toolCallWithResponse.repeatSameOutput": {
+    "defaultMessage": "Тот же вызов и тот же вывод, что и в прошлый раз — модели сообщено"
+  },
+  "toolCallWithResponse.repeatSkipped": {
+    "defaultMessage": "Пропущено — идентично предыдущему вызову, тот же вывод"
+  },
+  "toolCallWithResponse.skipped": {
+    "defaultMessage": "Пропущено"
+  },
   "toolCallWithResponse.toolDetails": {
     "defaultMessage": "Сведения об инструменте"
   },

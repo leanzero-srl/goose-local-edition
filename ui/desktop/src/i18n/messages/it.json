@@ -5435,6 +5435,15 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Output"
   },
+  "toolCallWithResponse.repeatSameOutput": {
+    "defaultMessage": "Stessa chiamata e stesso output della precedente — il modello è stato avvisato"
+  },
+  "toolCallWithResponse.repeatSkipped": {
+    "defaultMessage": "Saltata — identica alla chiamata precedente, stesso output"
+  },
+  "toolCallWithResponse.skipped": {
+    "defaultMessage": "Saltata"
+  },
   "toolCallWithResponse.toolDetails": {
     "defaultMessage": "Dettagli dello strumento"
   },

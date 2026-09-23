@@ -11794,7 +11794,7 @@ impl GooseAgentDispatcher {
             GoosePlatform::GooseCli,
         );
         let agent = Agent::with_config(agent_config);
-        agent.set_swarm_single_owned_file(single_owned_file);
+        agent.configure_swarm_worker(single_owned_file);
         agent.set_knowledge_blind(benchmark());
 
         let session = self

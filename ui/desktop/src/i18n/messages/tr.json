@@ -5435,6 +5435,15 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Çıkış"
   },
+  "toolCallWithResponse.repeatSameOutput": {
+    "defaultMessage": "Öncekiyle aynı çağrı ve aynı çıktı — modele bildirildi"
+  },
+  "toolCallWithResponse.repeatSkipped": {
+    "defaultMessage": "Atlandı — önceki çağrıyla aynı, aynı çıktı"
+  },
+  "toolCallWithResponse.skipped": {
+    "defaultMessage": "Atlandı"
+  },
   "toolCallWithResponse.toolDetails": {
     "defaultMessage": "Araç Ayrıntıları"
   },

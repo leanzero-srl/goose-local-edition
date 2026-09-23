@@ -5435,6 +5435,15 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "输出"
   },
+  "toolCallWithResponse.repeatSameOutput": {
+    "defaultMessage": "与上一次调用相同、输出相同 — 已告知模型"
+  },
+  "toolCallWithResponse.repeatSkipped": {
+    "defaultMessage": "已跳过 — 与上一次调用相同，输出相同"
+  },
+  "toolCallWithResponse.skipped": {
+    "defaultMessage": "已跳过"
+  },
   "toolCallWithResponse.toolDetails": {
     "defaultMessage": "工具详情"
   },

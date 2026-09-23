@@ -5435,6 +5435,15 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "출력"
   },
+  "toolCallWithResponse.repeatSameOutput": {
+    "defaultMessage": "이전과 같은 호출, 같은 출력 — 모델에 알렸습니다"
+  },
+  "toolCallWithResponse.repeatSkipped": {
+    "defaultMessage": "건너뜀 — 이전 호출과 동일, 같은 출력"
+  },
+  "toolCallWithResponse.skipped": {
+    "defaultMessage": "건너뜀"
+  },
   "toolCallWithResponse.toolDetails": {
     "defaultMessage": "도구 세부정보"
   },

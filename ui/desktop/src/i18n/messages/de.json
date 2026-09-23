@@ -5435,6 +5435,15 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Ausgabe"
   },
+  "toolCallWithResponse.repeatSameOutput": {
+    "defaultMessage": "Gleicher Aufruf und gleiche Ausgabe wie beim vorherigen — dem Modell wurde es mitgeteilt"
+  },
+  "toolCallWithResponse.repeatSkipped": {
+    "defaultMessage": "Übersprungen — identisch mit dem vorherigen Aufruf, gleiche Ausgabe"
+  },
+  "toolCallWithResponse.skipped": {
+    "defaultMessage": "Übersprungen"
+  },
   "toolCallWithResponse.toolDetails": {
     "defaultMessage": "Tool-Details"
   },

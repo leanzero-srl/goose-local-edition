@@ -55,7 +55,27 @@ const i18n = defineMessages({
     id: 'toolCallWithResponse.loadingSpinner',
     defaultMessage: 'Loading spinner',
   },
+  skipped: {
+    id: 'toolCallWithResponse.skipped',
+    defaultMessage: 'Skipped',
+  },
+  repeatSkipped: {
+    id: 'toolCallWithResponse.repeatSkipped',
+    defaultMessage: 'Skipped — identical to the previous call, same output',
+  },
+  repeatSameOutput: {
+    id: 'toolCallWithResponse.repeatSameOutput',
+    defaultMessage: 'Same call and same output as the previous one — the model was told',
+  },
 });
+
+type RepeatMarker = 'skipped' | 'same_output';
+
+// Set by the engine's repeat guard (tool_monitor.rs) and carried by the ACP adapter.
+function getRepeatMarker(toolResponse?: ToolResponseMessageContent): RepeatMarker | null {
+  const repeat = toolResponse?.metadata?.repeat;
+  return repeat === 'skipped' || repeat === 'same_output' ? repeat : null;
+}
 
 interface ToolGraphNode {
   tool: string;
@@ -230,6 +250,7 @@ export default function ToolCallWithResponse({
   confirmationContent,
   isApprovalClicked,
 }: ToolCallWithResponseProps) {
+  const intl = useIntl();
   // Handle both the wrapped ToolResult format and the unwrapped format
   // The server serializes ToolResult<T> as { status: "success", value: T } or { status: "error", error: string }
   const toolCallData = toolRequest.toolCall as Record<string, unknown>;
@@ -251,6 +272,7 @@ export default function ToolCallWithResponse({
   const shouldShowMcpContent = !isPendingApproval;
 
   const showInlineApproval = isPendingApproval && confirmationContent && sessionId;
+  const repeat = getRepeatMarker(toolResponse);
 
   return (
     <>
@@ -271,6 +293,11 @@ export default function ToolCallWithResponse({
             isStreamingMessage,
           }}
         />
+        {repeat && (
+          <div className="border-t border-lz-border px-4 py-2 text-xs font-medium text-lz-warn">
+            {intl.formatMessage(repeat === 'skipped' ? i18n.repeatSkipped : i18n.repeatSameOutput)}
+          </div>
+        )}
         {/* Inline approval UI */}
         {showInlineApproval && (
           <div className="border-t border-amber-500/30">
@@ -720,9 +747,11 @@ function ToolCallView({
             : 'No result received'
           : loadingStatus === 'loading'
             ? 'Working'
-            : loadingStatus === 'error'
-              ? 'Failed'
-              : 'Completed'}
+            : getRepeatMarker(toolResponse) === 'skipped'
+              ? intl.formatMessage(i18n.skipped)
+              : loadingStatus === 'error'
+                ? 'Failed'
+                : 'Completed'}
       </span>
     </span>
   );

@@ -5435,6 +5435,15 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "出力"
   },
+  "toolCallWithResponse.repeatSameOutput": {
+    "defaultMessage": "前回と同じ呼び出し・同じ出力 — モデルに伝えました"
+  },
+  "toolCallWithResponse.repeatSkipped": {
+    "defaultMessage": "スキップ — 前回の呼び出しと同一で、出力も同じ"
+  },
+  "toolCallWithResponse.skipped": {
+    "defaultMessage": "スキップ"
+  },
   "toolCallWithResponse.toolDetails": {
     "defaultMessage": "ツールの詳細"
   },

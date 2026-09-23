@@ -151,8 +151,21 @@ function toolResponseMetadata(
   if (update.content) {
     metadata.content = update.content;
   }
+  const repeat = repeatMarker(update);
+  if (repeat) {
+    metadata.repeat = repeat;
+  }
 
   return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+// The engine's repeat guard marks a call that repeated the previous one with the same output
+// ('same_output') or was not run for that reason ('skipped'); it rides the trusted `_meta.goose`.
+function repeatMarker(update: ToolCallUpdate): string | undefined {
+  if (!isRecord(update._meta)) return undefined;
+  const goose = update._meta.goose;
+  if (!isRecord(goose)) return undefined;
+  return typeof goose.repeat === 'string' ? goose.repeat : undefined;
 }
 
 function baseToolMetadata(

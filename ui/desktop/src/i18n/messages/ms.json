@@ -5435,6 +5435,15 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Output"
   },
+  "toolCallWithResponse.repeatSameOutput": {
+    "defaultMessage": "Panggilan dan output sama seperti sebelumnya — model telah dimaklumkan"
+  },
+  "toolCallWithResponse.repeatSkipped": {
+    "defaultMessage": "Dilangkau — sama dengan panggilan sebelumnya, output sama"
+  },
+  "toolCallWithResponse.skipped": {
+    "defaultMessage": "Dilangkau"
+  },
   "toolCallWithResponse.toolDetails": {
     "defaultMessage": "Butiran Alat"
   },

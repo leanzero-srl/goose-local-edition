@@ -414,6 +414,29 @@ describe('createAcpSessionNotificationAdapter', () => {
         });
       });
 
+      it('carries the repeat guard marker onto the tool response', () => {
+        const adapter = createAcpSessionNotificationAdapter();
+
+        const messages = expectOnlyMessagesChange(
+          adapter.apply(
+            acpUpdate({
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'tool-3',
+              status: 'failed',
+              rawOutput: 'Not run: this exact call already returned the same output twice',
+              _meta: { goose: { repeat: 'skipped' } },
+            })
+          )
+        );
+
+        expect(firstContent(messages[0])).toMatchObject({
+          type: 'toolResponse',
+          id: 'tool-3',
+          toolResult: { status: 'error' },
+          metadata: { status: 'failed', repeat: 'skipped' },
+        });
+      });
+
       it('uses failed tool response text content when raw output is absent', () => {
         const adapter = createAcpSessionNotificationAdapter();
 
