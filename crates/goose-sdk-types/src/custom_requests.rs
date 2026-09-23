@@ -3125,6 +3125,18 @@ pub struct MlxDistributedConfigDto {
     /// watchdog CRITICAL stop never restarts).
     #[serde(default)]
     pub restart_on_failure: bool,
+    /// Diagnostic: skip the ps-stat-T fast path so a stopped rank is caught only by the
+    /// progress-ratio hang rule. Default false.
+    #[serde(default)]
+    pub hang_ratio_only: bool,
+    /// The memory watchdog's WARN reserve as a fraction of each node's RAM (available below it →
+    /// admission closes, 503). Absent = 0.05.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watchdog_warn_ratio: Option<f64>,
+    /// The CRITICAL reserve (available below it → verified stop, never restarted). Absent = 0.02.
+    /// Must satisfy 0 < critical < warn < 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watchdog_critical_ratio: Option<f64>,
     pub nodes: Vec<MlxDistributedNodeConfigDto>,
 }
 

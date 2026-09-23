@@ -31,6 +31,9 @@ pub fn recorded_config() -> DistributedConfig {
         coordinator_port: 32323,
         context: None,
         restart_on_failure: false,
+        hang_ratio_only: false,
+        watchdog_warn_ratio: None,
+        watchdog_critical_ratio: None,
         nodes: vec![
             NodeConfig {
                 name: "MacBook Pro".to_string(),
@@ -388,4 +391,523 @@ async fn live_flash_pipeline_is_planned_and_refused_by_name() {
     assert_eq!(rank0.layer_end, rank1.layer_start);
     assert_eq!(rank1.layer_end, 48);
     assert!(rank0.fits && rank1.fits);
+}
+
+/// A streaming completion read chunk by chunk: (chunks received, saw `[DONE]`, how it ended).
+async fn stream_completion(
+    base: String,
+    model: String,
+    max_tokens: u32,
+    chunks_seen: Arc<std::sync::atomic::AtomicUsize>,
+) -> (usize, bool, String) {
+    let resp = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "Count from 1 to 3000, one number per line, nothing else."}],
+                "max_tokens": max_tokens,
+                "temperature": 0,
+                "stream": true,
+                "chat_template_kwargs": {"enable_thinking": false},
+            })
+            .to_string(),
+        )
+        .send()
+        .await;
+    let mut resp = match resp {
+        Ok(resp) => resp,
+        Err(e) => return (0, false, format!("send failed: {e}")),
+    };
+    let status = resp.status();
+    let mut text = String::new();
+    let mut ended = format!("EOF after HTTP {status}");
+    loop {
+        match resp.chunk().await {
+            Ok(None) => break,
+            Ok(Some(bytes)) => {
+                text.push_str(&String::from_utf8_lossy(&bytes));
+                let chunks = text.matches("data: {").count();
+                chunks_seen.store(chunks, std::sync::atomic::Ordering::SeqCst);
+            }
+            Err(e) => {
+                ended = format!("transport error after HTTP {status}: {e}");
+                break;
+            }
+        }
+    }
+    (
+        text.matches("data: {").count(),
+        text.contains("data: [DONE]"),
+        ended,
+    )
+}
+
+async fn short_ok(base: &str, model: &str) -> u16 {
+    reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "Say ok."}],
+                "max_tokens": 3,
+                "temperature": 0,
+                "chat_template_kwargs": {"enable_thinking": false},
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .map(|r| r.status().as_u16())
+        .unwrap_or(0)
+}
+
+fn print_events(manager: &DistributedManager, from: usize) -> usize {
+    let events = manager.status().events;
+    for event in &events[from.min(events.len())..] {
+        println!(
+            "  event {:?} {:?}: {}",
+            event.kind,
+            event.node,
+            event.message.lines().next().unwrap_or_default()
+        );
+    }
+    events.len()
+}
+
+/// The hang rule proven on a real freeze MID-STREAM: `hang_ratio_only` turns off the ps-stat-T
+/// fast path, so only the progress-ratio rule can see the SIGSTOPped peer. Then a stream CUT
+/// (SIGKILL mid-stream) surfaces as rankDied + streamWithoutDone. Both restart per policy.
+#[tokio::test]
+#[ignore = "needs both Macs and the owner's 27B on each; freezes and kills the peer rank"]
+async fn live_hang_rule_and_stream_cut_mid_stream() {
+    use goose_sidecar::distributed::EventKind;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut config = recorded_config();
+    config.restart_on_failure = true;
+    config.hang_ratio_only = true;
+    let base = config.base_url();
+    let model = config.model_id.clone();
+    let manager = DistributedManager::new(Arc::new(SystemExec));
+    match manager.start(config).await.unwrap() {
+        StartOutcome::Started { .. } => {}
+        StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
+    }
+    let first = wait_serving(&manager, None).await;
+    while manager.status().liveness.map(|l| l.samples).unwrap_or(0) < 3 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    println!(
+        "ready, peer pid {first}, liveness {:?}",
+        manager.status().liveness
+    );
+
+    // 1. SIGSTOP the peer while tokens flow.
+    let seen = Arc::new(AtomicUsize::new(0));
+    let stream = tokio::spawn(stream_completion(
+        base.clone(),
+        model.clone(),
+        3000,
+        Arc::clone(&seen),
+    ));
+    while seen.load(Ordering::SeqCst) < 30 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let frozen_at = Instant::now();
+    ssh_signal("STOP", first);
+    println!(
+        "SIGSTOP peer pid {first} after {} chunks",
+        seen.load(Ordering::SeqCst)
+    );
+    let (chunks, done, ended) = stream.await.unwrap();
+    println!(
+        "client: {chunks} chunks, [DONE]={done}, ended '{ended}' {:?} after the freeze",
+        frozen_at.elapsed()
+    );
+    assert!(!done, "a frozen pair must not complete the stream");
+    let second = wait_serving(&manager, Some(first)).await;
+    println!(
+        "restarted, peer pid {second}, {:?} after the freeze",
+        frozen_at.elapsed()
+    );
+    let mut cursor = print_events(&manager, 0);
+    let events = manager.status().events;
+    let hang = events
+        .iter()
+        .find(|e| e.kind == EventKind::Hang)
+        .expect("the ratio rule fired");
+    assert!(
+        hang.message.starts_with("progress-ratio rule: samples"),
+        "{}",
+        hang.message
+    );
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::RankFrozen),
+        "the ps fast path was off"
+    );
+    assert!(events
+        .iter()
+        .any(|e| e.kind == EventKind::StreamWithoutDone));
+    assert_eq!(
+        short_ok(&base, &model).await,
+        200,
+        "the restarted pair serves"
+    );
+
+    // 2. SIGKILL the peer mid-stream.
+    let seen = Arc::new(AtomicUsize::new(0));
+    let stream = tokio::spawn(stream_completion(
+        base.clone(),
+        model.clone(),
+        3000,
+        Arc::clone(&seen),
+    ));
+    while seen.load(Ordering::SeqCst) < 30 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let killed_at = Instant::now();
+    ssh_signal("KILL", second);
+    println!(
+        "SIGKILL peer pid {second} after {} chunks",
+        seen.load(Ordering::SeqCst)
+    );
+    let (chunks, done, ended) = stream.await.unwrap();
+    println!(
+        "client: {chunks} chunks, [DONE]={done}, ended '{ended}' {:?} after the kill",
+        killed_at.elapsed()
+    );
+    assert!(!done);
+    let third = wait_serving(&manager, Some(second)).await;
+    println!(
+        "restarted, peer pid {third}, {:?} after the kill",
+        killed_at.elapsed()
+    );
+    cursor = print_events(&manager, cursor);
+    let events = manager.status().events;
+    let cuts = events
+        .iter()
+        .filter(|e| e.kind == EventKind::StreamWithoutDone)
+        .count();
+    assert_eq!(cuts, 2, "each failure named the stream it cut");
+    assert!(events.iter().any(|e| e.kind == EventKind::RankDied));
+    assert_eq!(short_ok(&base, &model).await, 200);
+
+    let stop = manager.stop().await;
+    print_events(&manager, cursor);
+    assert!(stop.verified, "{stop:#?}");
+    assert_eq!(manager.status().restarts, 2);
+    for pid in [first, second, third] {
+        let out = std::process::Command::new("/usr/bin/ssh")
+            .args(["workhorse", &format!("/bin/ps -o pid=,stat= -p {pid}")])
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&out.stdout).trim().is_empty(),
+            "peer pid {pid} survived"
+        );
+    }
+}
+
+const BALLAST: &str = "import os, sys, time
+target = int(sys.argv[1])
+held = []
+for i in range(target):
+    held.append(os.urandom(1 << 30))
+    print(f'BALLAST_HELD {i + 1}', flush=True)
+    time.sleep(0.5)
+print('BALLAST_DONE', flush=True)
+while True:
+    time.sleep(60)
+";
+
+/// A process WE own on the workhorse holding `gib` GiB of incompressible (urandom) anonymous
+/// memory, allocated 1 GiB per step. Killed by its own pid; `ssh -tt` also takes it with the
+/// session if the test dies.
+struct Ballast {
+    pid: u32,
+    held: Arc<std::sync::atomic::AtomicUsize>,
+    _child: tokio::process::Child,
+}
+
+impl Ballast {
+    async fn start(gib: u64) -> Self {
+        use tokio::io::AsyncBufReadExt;
+        let script = format!(
+            "echo BALLAST_PID=$$; exec /usr/bin/python3 -u -c {} {gib}",
+            goose_sidecar::distributed::exec::sh_quote(BALLAST)
+        );
+        let mut child = tokio::process::Command::new("/usr/bin/ssh")
+            .args([
+                "-tt",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "LogLevel=QUIET",
+                "workhorse",
+                &script,
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+        let pid: u32 = loop {
+            let line = lines
+                .next_line()
+                .await
+                .unwrap()
+                .expect("ballast printed its pid");
+            if let Some(pid) = line.trim().strip_prefix("BALLAST_PID=") {
+                break pid.trim().parse().unwrap();
+            }
+        };
+        let held = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&held);
+        tokio::spawn(async move {
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(n) = line.trim().strip_prefix("BALLAST_HELD ") {
+                    counter.store(n.parse().unwrap_or(0), std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        });
+        Ballast {
+            pid,
+            held,
+            _child: child,
+        }
+    }
+
+    fn held(&self) -> usize {
+        self.held.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn kill(&self) -> bool {
+        ssh_signal("TERM", self.pid);
+        for _ in 0..50 {
+            let out = std::process::Command::new("/usr/bin/ssh")
+                .args(["workhorse", &format!("/bin/ps -o pid= -p {}", self.pid)])
+                .output()
+                .unwrap();
+            if String::from_utf8_lossy(&out.stdout).trim().is_empty() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        false
+    }
+}
+
+impl Drop for Ballast {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("/usr/bin/ssh")
+            .args([
+                "workhorse",
+                &format!("/bin/kill -KILL {} 2>/dev/null", self.pid),
+            ])
+            .output();
+    }
+}
+
+fn workhorse_memory() -> (u64, u64, u64) {
+    let out = std::process::Command::new("/usr/bin/ssh")
+        .args([
+            "workhorse",
+            "/usr/bin/vm_stat; echo @@; /usr/sbin/sysctl -n hw.memsize kern.memorystatus_level kern.memorystatus_vm_pressure_level",
+        ])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let (vm, sys) = text.split_once("@@").unwrap();
+    let values: Vec<u64> = sys.split_whitespace().map(|v| v.parse().unwrap()).collect();
+    let reading = goose_sidecar::distributed::probe::parse_vm_stat(vm, values[0]).unwrap();
+    (reading.available_bytes, values[1], values[2])
+}
+
+const GIB_F: f64 = (1u64 << 30) as f64;
+
+/// The memory watchdog on REAL pressure: a ballast we own on the workhorse crosses the WARN
+/// reserve (admission closes: a new request is refused by name while the in-flight stream
+/// finishes), is released (admission reopens), then a second ballast crosses CRITICAL (a verified
+/// stop, never restarted). The reserves are RAISED by config for this run so both crossings leave
+/// the 96 GB Mac with tens of GiB available — far from the kernel's own pressure levels.
+#[tokio::test]
+#[ignore = "needs both Macs and the owner's 27B; allocates up to ~25 GiB of ballast on the workhorse"]
+async fn live_watchdog_warn_then_critical_on_real_workhorse_pressure() {
+    use goose_sidecar::distributed::{EventKind, RunState};
+    let (idle, idle_level, _) = workhorse_memory();
+    let total = 96.0 * GIB_F;
+    // The rank takes ~18.5 GiB; WARN 8 GiB below where the loaded node will sit, CRITICAL 10 below that.
+    let warn_threshold = idle as f64 - 18.5 * GIB_F - 8.0 * GIB_F;
+    let critical_threshold = warn_threshold - 10.0 * GIB_F;
+    let mut config = recorded_config();
+    config.restart_on_failure = true;
+    config.watchdog_warn_ratio = Some(warn_threshold / total);
+    config.watchdog_critical_ratio = Some(critical_threshold / total);
+    println!(
+        "workhorse idle: available {:.1} GiB, memorystatus_level {idle_level}%; WARN below {:.1} GiB \
+         (ratio {:.4}), CRITICAL below {:.1} GiB (ratio {:.4})",
+        idle as f64 / GIB_F,
+        warn_threshold / GIB_F,
+        warn_threshold / total,
+        critical_threshold / GIB_F,
+        critical_threshold / total
+    );
+    let base = config.base_url();
+    let model = config.model_id.clone();
+    let manager = DistributedManager::new(Arc::new(SystemExec));
+    match manager.start(config).await.unwrap() {
+        StartOutcome::Started { .. } => {}
+        StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
+    }
+    wait_serving(&manager, None).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let status = manager.status();
+    let loaded = status.nodes[1].available_bytes.unwrap() as f64;
+    let macbook = status.nodes[0].available_bytes.unwrap() as f64;
+    let macbook_warn = warn_threshold / total * 128.0 * GIB_F;
+    println!(
+        "loaded: workhorse {:.1} GiB, MacBook {:.1} GiB (its WARN line {:.1} GiB)",
+        loaded / GIB_F,
+        macbook / GIB_F,
+        macbook_warn / GIB_F
+    );
+    assert!(
+        loaded > warn_threshold + 3.0 * GIB_F,
+        "the loaded workhorse already sits near WARN"
+    );
+    if macbook < macbook_warn + 5.0 * GIB_F {
+        manager.stop().await;
+        panic!("the MacBook is too close to the raised WARN line for a clean workhorse-only test");
+    }
+    let mut cursor = print_events(&manager, 0);
+
+    // WARN: an in-flight stream, then ballast past the line.
+    let seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let inflight = tokio::spawn(stream_completion(
+        base.clone(),
+        model.clone(),
+        1500,
+        Arc::clone(&seen),
+    ));
+    while seen.load(std::sync::atomic::Ordering::SeqCst) < 5 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let ballast_gib = ((loaded - warn_threshold) / GIB_F).ceil() as u64 + 3;
+    let ballast = Ballast::start(ballast_gib).await;
+    println!("ballast 1: pid {} → {ballast_gib} GiB", ballast.pid);
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let (avail, level, pressure) = workhorse_memory();
+        println!(
+            "  held {:>2} GiB | workhorse available {:.1} GiB, memorystatus_level {level}%, pressure level {pressure} | admission open {}",
+            ballast.held(),
+            avail as f64 / GIB_F,
+            manager.status().admission_open
+        );
+        if !manager.status().admission_open {
+            break;
+        }
+        assert!(
+            manager.status().state != RunState::Stopped,
+            "stopped before WARN"
+        );
+        assert!(ballast.held() <= ballast_gib as usize);
+    }
+    cursor = print_events(&manager, cursor);
+    let refused = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .header("content-type", "application/json")
+        .body(serde_json::json!({"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 2}).to_string())
+        .send()
+        .await
+        .unwrap();
+    let code = refused.status().as_u16();
+    let body = refused.text().await.unwrap();
+    println!("new request during WARN: {code} {body}");
+    assert_eq!(code, 503);
+    assert!(body.contains("not admitting") && body.contains("workhorse"));
+    let (chunks, done, ended) = inflight.await.unwrap();
+    println!("in-flight stream: {chunks} chunks, [DONE]={done}, {ended}");
+    assert!(done, "the request admitted before WARN finishes");
+
+    // Release → admission reopens.
+    assert!(ballast.kill(), "ballast 1 pid {} did not exit", ballast.pid);
+    println!("ballast 1 pid {} killed", ballast.pid);
+    while !manager.status().admission_open {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    cursor = print_events(&manager, cursor);
+    let (avail, level, _) = workhorse_memory();
+    println!(
+        "after release: workhorse available {:.1} GiB, memorystatus_level {level}%",
+        avail as f64 / GIB_F
+    );
+    assert_eq!(short_ok(&base, &model).await, 200, "admission reopened");
+
+    // CRITICAL: second ballast past the critical line → verified stop, no restart.
+    let now = manager.status().nodes[1].available_bytes.unwrap() as f64;
+    let ballast_gib = ((now - critical_threshold) / GIB_F).ceil() as u64 + 3;
+    let ballast = Ballast::start(ballast_gib).await;
+    println!("ballast 2: pid {} → {ballast_gib} GiB", ballast.pid);
+    loop {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let (avail, level, pressure) = workhorse_memory();
+        let state = manager.status().state;
+        println!(
+            "  held {:>2} GiB | workhorse available {:.1} GiB, memorystatus_level {level}%, pressure level {pressure} | state {state:?}",
+            ballast.held(),
+            avail as f64 / GIB_F
+        );
+        if state == RunState::Stopped {
+            break;
+        }
+        assert!(ballast.held() <= ballast_gib as usize);
+    }
+    print_events(&manager, cursor);
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    let status = manager.status();
+    println!(
+        "after CRITICAL: state {:?}, restarts {}, lastError {:?}",
+        status.state, status.restarts, status.last_error
+    );
+    assert_eq!(
+        status.state,
+        RunState::Stopped,
+        "a CRITICAL stop is never restarted"
+    );
+    assert_eq!(status.restarts, 0);
+    assert!(status
+        .events
+        .iter()
+        .any(|e| e.kind == EventKind::WatchdogCritical));
+    let stopped = status
+        .events
+        .iter()
+        .rev()
+        .find(|e| e.kind == EventKind::Stopped)
+        .unwrap();
+    assert!(
+        stopped.message.contains("gone (verified over ssh)"),
+        "{}",
+        stopped.message
+    );
+
+    assert!(ballast.kill(), "ballast 2 pid {} did not exit", ballast.pid);
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let (back, level, pressure) = workhorse_memory();
+    println!(
+        "ballast 2 pid {} killed; workhorse available {:.1} GiB (idle was {:.1}), memorystatus_level {level}%, pressure level {pressure}",
+        ballast.pid,
+        back as f64 / GIB_F,
+        idle as f64 / GIB_F
+    );
+    assert!(back as f64 > idle as f64 - 4.0 * GIB_F, "memory returned");
+    let leftover = std::process::Command::new("/usr/bin/ssh")
+        .args(["workhorse", "/bin/ps -axo pid=,command= | /usr/bin/grep -E 'goose-distributed-rank|BALLAST' | /usr/bin/grep -v grep"])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&leftover.stdout).trim().is_empty());
 }

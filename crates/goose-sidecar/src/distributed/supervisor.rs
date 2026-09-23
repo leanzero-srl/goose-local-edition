@@ -27,7 +27,7 @@ use super::exec::{NodeExec, SystemExec};
 use super::launch::{self, RankProcess, RANK_MARKER};
 use super::preflight::{self, now_ms, PreflightReport};
 use super::probe::{self, Pressure, SseVerdict};
-use super::{HANG_MEDIAN_MULTIPLE, HANG_MIN_SAMPLES, WATCHDOG_RESERVE_RATIO};
+use super::{HANG_MEDIAN_MULTIPLE, HANG_MIN_SAMPLES};
 use crate::{SidecarConfig, GIB, GRACE_TICK, GRACE_TICKS};
 
 /// The supervisor's sampling cadence (memory, pressure, rank processes, the step counter) and the
@@ -436,14 +436,21 @@ enum Watchdog {
     Critical,
 }
 
-fn watchdog_verdict(pressure: Pressure, available: u64, total: u64) -> Watchdog {
-    match pressure {
-        Pressure::Critical => Watchdog::Critical,
-        Pressure::Warn => Watchdog::Warn,
-        Pressure::Normal if (available as f64) < WATCHDOG_RESERVE_RATIO * total as f64 => {
-            Watchdog::Warn
-        }
-        Pressure::Normal => Watchdog::Normal,
+/// The kernel's own level, or the configured reserves of RAM — whichever is worse.
+fn watchdog_verdict(
+    pressure: Pressure,
+    available: u64,
+    total: u64,
+    (warn_ratio, critical_ratio): (f64, f64),
+) -> Watchdog {
+    let available = available as f64;
+    let total = total as f64;
+    if pressure == Pressure::Critical || available < critical_ratio * total {
+        Watchdog::Critical
+    } else if pressure == Pressure::Warn || available < warn_ratio * total {
+        Watchdog::Warn
+    } else {
+        Watchdog::Normal
     }
 }
 
@@ -942,6 +949,7 @@ async fn monitor(
         .ok();
 
         let mut cpu: Vec<Option<u64>> = vec![None; ranks.len()];
+        let mut stats: Vec<Option<String>> = vec![None; ranks.len()];
         let mut worst = (Watchdog::Normal, String::new());
         for (rank, sample) in samples.into_iter().enumerate() {
             let node_name = ctx.config.nodes[rank].name.clone();
@@ -986,7 +994,7 @@ async fn monitor(
                             ),
                         )
                     }
-                    Some(row) if row.stopped() => {
+                    Some(row) if row.stopped() && !ctx.config.hang_ratio_only => {
                         return RunOutcome::Failed(
                             EventKind::RankFrozen,
                             Some(node_name),
@@ -997,18 +1005,30 @@ async fn monitor(
                         ),
                         )
                     }
-                    Some(row) => cpu[rank] = Some(row.cpu_centis),
+                    Some(row) => {
+                        cpu[rank] = Some(row.cpu_centis);
+                        stats[rank] = Some(row.stat.clone());
+                    }
                 }
             }
-            let verdict = watchdog_verdict(pressure, reading.available_bytes, reading.total_bytes);
+            let (warn_ratio, critical_ratio) = ctx.config.watchdog_ratios();
+            let verdict = watchdog_verdict(
+                pressure,
+                reading.available_bytes,
+                reading.total_bytes,
+                (warn_ratio, critical_ratio),
+            );
             if verdict != Watchdog::Normal && verdict as u8 >= worst.0 as u8 {
                 worst = (
                     verdict,
                     format!(
-                        "{node_name}: kernel pressure {}, available {} of {}",
+                        "{node_name}: kernel pressure {}, available {} of {} (WARN below {} = \
+                         {warn_ratio:.3} × RAM, CRITICAL below {} = {critical_ratio:.3} × RAM)",
                         pressure.as_str(),
                         gib(reading.available_bytes),
-                        gib(reading.total_bytes)
+                        gib(reading.total_bytes),
+                        gib((warn_ratio * reading.total_bytes as f64) as u64),
+                        gib((critical_ratio * reading.total_bytes as f64) as u64),
                     ),
                 );
             }
@@ -1066,10 +1086,15 @@ async fn monitor(
                 EventKind::Hang,
                 None,
                 format!(
-                    "no progress for {} ms — the step counter and the ranks' CPU time both stood \
-                     still for more than {HANG_MEDIAN_MULTIPLE}× the median progress interval ({} ms)",
+                    "progress-ratio rule: samples {}, median {} ms, bound {} ms ({HANG_MEDIAN_MULTIPLE}× \
+                     median), silent {} ms — the rank-0 step counter (last {:?}) and every rank's CPU \
+                     time stood still; rank ps stats {:?}",
+                    meter.intervals.len(),
+                    reading.median.unwrap_or_default().as_millis(),
+                    reading.bound.unwrap_or_default().as_millis(),
                     reading.silent_for.as_millis(),
-                    reading.median.unwrap_or_default().as_millis()
+                    progress.as_ref().map(|p| p.steps),
+                    stats,
                 ),
             );
         }
@@ -1139,6 +1164,8 @@ async fn supervise(
         ctx.update(|s| {
             s.status.state = RunState::Starting;
             s.status.admission_open = true;
+            s.status.inflight = None;
+            s.status.liveness = None;
             s.status.context_limit = Some(context);
             for (node, plan) in s.status.nodes.iter_mut().zip(&preflight.nodes) {
                 node.state = NodeState::Loading;
@@ -1239,6 +1266,17 @@ async fn supervise(
             Err((kind, node, message)) => {
                 ctx.update(|s| {
                     s.event(kind, node.as_deref(), message.clone());
+                    if let Some(cut) = s.status.inflight.filter(|n| *n > 0) {
+                        s.event(
+                            EventKind::StreamWithoutDone,
+                            node.as_deref(),
+                            format!(
+                                "{cut} in-flight request(s) cut by the {}: their streams end without \
+                                 `data: [DONE]` (an HTTP 200 already sent is not a completion)",
+                                kind.as_str()
+                            ),
+                        );
+                    }
                     s.status.last_error = Some(message.clone());
                     s.status.state = RunState::Stopping;
                     for n in &mut s.status.nodes {
@@ -1713,25 +1751,21 @@ mod tests {
     }
 
     #[test]
-    fn the_watchdog_follows_the_kernel_and_the_reserve() {
+    fn the_watchdog_follows_the_kernel_and_the_reserves() {
         let total = 96 * GIB;
-        assert_eq!(
-            watchdog_verdict(Pressure::Normal, 40 * GIB, total),
-            Watchdog::Normal
-        );
-        assert_eq!(
-            watchdog_verdict(Pressure::Warn, 40 * GIB, total),
-            Watchdog::Warn
-        );
-        assert_eq!(
-            watchdog_verdict(Pressure::Critical, 40 * GIB, total),
-            Watchdog::Critical
-        );
-        // 4.8 GiB is the 5% reserve of 96 GiB.
-        assert_eq!(
-            watchdog_verdict(Pressure::Normal, 4 * GIB, total),
-            Watchdog::Warn
-        );
+        let ratios = (0.05, 0.02);
+        let v = |p, a| watchdog_verdict(p, a, total, ratios);
+        assert_eq!(v(Pressure::Normal, 40 * GIB), Watchdog::Normal);
+        assert_eq!(v(Pressure::Warn, 40 * GIB), Watchdog::Warn);
+        assert_eq!(v(Pressure::Critical, 40 * GIB), Watchdog::Critical);
+        // 4.8 GiB is the 5% reserve of 96 GiB, 1.92 GiB the 2% one.
+        assert_eq!(v(Pressure::Normal, 4 * GIB), Watchdog::Warn);
+        assert_eq!(v(Pressure::Normal, GIB), Watchdog::Critical);
+        // Raised reserves (a run's override): 43.2 / 33.6 GiB on 96 GiB.
+        let raised = |a| watchdog_verdict(Pressure::Normal, a, total, (0.45, 0.35));
+        assert_eq!(raised(50 * GIB), Watchdog::Normal);
+        assert_eq!(raised(40 * GIB), Watchdog::Warn);
+        assert_eq!(raised(30 * GIB), Watchdog::Critical);
     }
 
     /// Runs every "peer" script on this Mac: the stop sequence's remote legs, exercised against

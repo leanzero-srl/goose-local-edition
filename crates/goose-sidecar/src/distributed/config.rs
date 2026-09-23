@@ -112,6 +112,18 @@ pub struct DistributedConfig {
     /// stop never restarts.
     #[serde(default)]
     pub restart_on_failure: bool,
+    /// Diagnostic: skip the `ps` stat-T fast path, so a stopped rank is caught only by the
+    /// progress-ratio hang rule (how that rule is proven live on a real freeze).
+    #[serde(default)]
+    pub hang_ratio_only: bool,
+    /// The watchdog's WARN reserve as a fraction of each node's RAM (available below it → stop
+    /// admitting). `None` = `WATCHDOG_WARN_RESERVE_RATIO`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watchdog_warn_ratio: Option<f64>,
+    /// The watchdog's CRITICAL reserve (available below it → verified stop, never restarted).
+    /// `None` = `WATCHDOG_CRITICAL_RESERVE_RATIO`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watchdog_critical_ratio: Option<f64>,
     /// Rank order: `nodes[0]` is this Mac.
     pub nodes: Vec<NodeConfig>,
 }
@@ -173,11 +185,26 @@ impl DistributedConfig {
                 node.name
             );
         }
+        let (warn, critical) = self.watchdog_ratios();
+        ensure!(
+            0.0 < critical && critical < warn && warn < 1.0,
+            "watchdog ratios must satisfy 0 < critical ({critical}) < warn ({warn}) < 1"
+        );
         let mut names: Vec<&str> = self.nodes.iter().map(|n| n.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
         ensure!(names.len() == self.nodes.len(), "node names must be unique");
         Ok(())
+    }
+
+    /// (warn, critical) reserve ratios in force for this run.
+    pub fn watchdog_ratios(&self) -> (f64, f64) {
+        (
+            self.watchdog_warn_ratio
+                .unwrap_or(super::WATCHDOG_WARN_RESERVE_RATIO),
+            self.watchdog_critical_ratio
+                .unwrap_or(super::WATCHDOG_CRITICAL_RESERVE_RATIO),
+        )
     }
 
     pub fn size(&self) -> usize {
@@ -201,6 +228,9 @@ pub(crate) mod tests {
             coordinator_port: 32323,
             context: None,
             restart_on_failure: true,
+            hang_ratio_only: false,
+            watchdog_warn_ratio: None,
+            watchdog_critical_ratio: None,
             nodes: vec![
                 NodeConfig {
                     name: "MacBook Pro".to_string(),
@@ -258,6 +288,17 @@ pub(crate) mod tests {
         assert!(config.validate().is_err());
         let mut config = two_mac_config();
         config.nodes[1].tb_ip = "workhorse.lan".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn watchdog_ratio_overrides_must_keep_critical_below_warn() {
+        let mut config = two_mac_config();
+        assert_eq!(config.watchdog_ratios(), (0.05, 0.02));
+        config.watchdog_warn_ratio = Some(0.45);
+        config.watchdog_critical_ratio = Some(0.35);
+        config.validate().unwrap();
+        config.watchdog_critical_ratio = Some(0.5);
         assert!(config.validate().is_err());
     }
 
