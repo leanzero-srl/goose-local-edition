@@ -2396,8 +2396,18 @@ pub struct MlxEngineStatusDto {
     /// nothing — an engine orphaned by a previous goosed. Unmount reclaims it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stray_listener_port: Option<u16>,
+    /// Memory a mount can take: free pages plus the file cache the OS reclaims on demand
+    /// (on macOS, Activity Monitor's physical-minus-used). 0 exactly when `memory_error`
+    /// is set.
     pub available_memory_gb: f64,
     pub total_memory_gb: f64,
+    /// The part of `available_memory_gb` that is reclaimable file cache. Absent where the
+    /// platform does not split it out (Linux folds it into its available figure).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reclaimable_cache_gb: Option<f64>,
+    /// The OS memory probe failed; the memory figures are 0 and must not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_error: Option<String>,
     /// True when the persisted settings would spawn the running engine differently
     /// (model, port, sampling): the engine keeps running with its old arguments until
     /// the user remounts.
@@ -3156,6 +3166,18 @@ mod mlx_engine_status_dto_tests {
             "an older agent's body is an absence, not 0"
         );
         assert_eq!(legacy.active_requests_error, None);
+        assert_eq!(legacy.reclaimable_cache_gb, None);
+        assert_eq!(legacy.memory_error, None);
+
+        let cached = MlxEngineStatusDto {
+            available_memory_gb: 59.3,
+            total_memory_gb: 128.0,
+            reclaimable_cache_gb: Some(24.6),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(&cached).unwrap();
+        assert_eq!(value["reclaimableCacheGb"], 24.6);
+        assert!(value.get("memoryError").is_none());
     }
 }
 

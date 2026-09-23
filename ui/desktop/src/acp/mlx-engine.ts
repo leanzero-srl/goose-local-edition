@@ -45,8 +45,16 @@ export interface MlxEngineStatus {
    * Optional defensively: older agents do not send it.
    */
   strayListenerPort?: number;
+  /**
+   * Memory a mount can take: free pages plus the file cache the OS reclaims on demand (on macOS,
+   * Activity Monitor's physical minus used). 0 exactly when `memoryError` is set.
+   */
   availableMemoryGb: number;
   totalMemoryGb: number;
+  /** The part of `availableMemoryGb` that is reclaimable file cache; absent where the OS does not split it out (Linux). */
+  reclaimableCacheGb?: number;
+  /** The OS memory probe failed; the memory figures are 0 and must not be read as a measurement. */
+  memoryError?: string;
   lastError?: string;
 }
 

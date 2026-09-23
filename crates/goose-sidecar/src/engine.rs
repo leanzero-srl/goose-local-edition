@@ -529,8 +529,15 @@ pub struct EngineStatus {
     /// Set when the manager supervises nothing but SOMETHING already listens on the
     /// configured port — an engine orphaned by a previous goosed. `unmount` reclaims it.
     pub stray_listener_port: Option<u16>,
+    /// Free pages plus reclaimable file cache (`memory::measure`); 0 exactly when
+    /// `memory_error` says the measurement failed.
     pub available_memory_gb: f64,
     pub total_memory_gb: f64,
+    /// The part of `available_memory_gb` that is file cache the OS reclaims on demand.
+    /// `None` where the platform source does not split it out (Linux).
+    pub reclaimable_cache_gb: Option<f64>,
+    /// Why the memory figures above are 0: the OS memory probe failed.
+    pub memory_error: Option<String>,
     pub restart_required: bool,
     pub last_error: Option<String>,
 }
@@ -651,8 +658,12 @@ impl MlxEngineManager {
             "model '{model_id}' is incomplete: a .part file remains or no .safetensors is present"
         );
 
-        let (available, total) = measure();
-        let gate = self.gate.evaluate(model.size_bytes, available, total);
+        let reading = measure()?;
+        let gate = self.gate.evaluate(
+            model.size_bytes,
+            reading.available_bytes,
+            reading.total_bytes,
+        );
         let blocked = gate.verdict == Verdict::Block;
         let block_message = gate.message.clone();
         *self.last_gate.lock().unwrap() = Some(gate);
@@ -776,7 +787,11 @@ impl MlxEngineManager {
 
     pub async fn status(&self) -> EngineStatus {
         let settings = self.settings();
-        let (available, total) = measure();
+        let (reading, memory_error) = match measure() {
+            Ok(reading) => (Some(reading), None),
+            Err(e) => (None, Some(format!("{e:#}"))),
+        };
+        let gib_of = |bytes: u64| bytes as f64 / GIB as f64;
         let (gate_message, gate_verdict) = match self.last_gate.lock().unwrap().clone() {
             Some(g) => (
                 Some(g.message),
@@ -805,8 +820,10 @@ impl MlxEngineManager {
             gate_message,
             gate_verdict,
             stray_listener_port: None,
-            available_memory_gb: available as f64 / GIB as f64,
-            total_memory_gb: total as f64 / GIB as f64,
+            available_memory_gb: reading.map_or(0.0, |r| gib_of(r.available_bytes)),
+            total_memory_gb: reading.map_or(0.0, |r| gib_of(r.total_bytes)),
+            reclaimable_cache_gb: reading.and_then(|r| r.reclaimable_cache_bytes.map(gib_of)),
+            memory_error,
             restart_required: false,
             last_error: None,
         };

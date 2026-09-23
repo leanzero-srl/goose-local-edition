@@ -33,7 +33,9 @@ mod model_parsers;
 mod subprocess;
 pub mod thinking;
 
-pub use memory::{dir_size_bytes, disk_space, measure, GateResult, MemoryGate, Verdict, GIB};
+pub use memory::{
+    dir_size_bytes, disk_space, measure, GateResult, MemoryGate, MemoryReading, Verdict, GIB,
+};
 
 use std::collections::{BTreeSet, VecDeque};
 use std::process::Stdio;
@@ -733,9 +735,9 @@ fn stderr_tail_string(tail: &Arc<StdMutex<VecDeque<String>>>) -> String {
 }
 
 /// Convenience: gate a model mount against live memory before asking the engine to load.
-pub fn gate_mount(model_bytes: u64, gate: &MemoryGate) -> GateResult {
-    let (available, total) = measure();
-    gate.evaluate(model_bytes, available, total)
+pub fn gate_mount(model_bytes: u64, gate: &MemoryGate) -> Result<GateResult> {
+    let reading = measure()?;
+    Ok(gate.evaluate(model_bytes, reading.available_bytes, reading.total_bytes))
 }
 
 pub fn mount_block_error(result: &GateResult) -> Option<anyhow::Error> {

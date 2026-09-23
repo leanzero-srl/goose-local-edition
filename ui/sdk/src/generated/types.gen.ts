@@ -2609,8 +2609,22 @@ export type MlxEngineStatusDto = {
      * nothing — an engine orphaned by a previous goosed. Unmount reclaims it.
      */
     strayListenerPort?: number | null;
+    /**
+     * Memory a mount can take: free pages plus the file cache the OS reclaims on demand
+     * (on macOS, Activity Monitor's physical-minus-used). 0 exactly when `memory_error`
+     * is set.
+     */
     availableMemoryGb: number;
     totalMemoryGb: number;
+    /**
+     * The part of `available_memory_gb` that is reclaimable file cache. Absent where the
+     * platform does not split it out (Linux folds it into its available figure).
+     */
+    reclaimableCacheGb?: number | null;
+    /**
+     * The OS memory probe failed; the memory figures are 0 and must not be read.
+     */
+    memoryError?: string | null;
     /**
      * True when the persisted settings would spawn the running engine differently
      * (model, port, sampling): the engine keeps running with its old arguments until

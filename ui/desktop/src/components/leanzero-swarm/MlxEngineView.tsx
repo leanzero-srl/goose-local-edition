@@ -681,8 +681,11 @@ function EngineSection(props: EngineSectionProps) {
       ? status.lastError
       : null;
 
+  // Available = free pages plus reclaimable file cache (the sidecar's measure), so a full file
+  // cache after a big download no longer reads as memory pressure.
   const memoryTight =
     status != null &&
+    status.memoryError == null &&
     status.totalMemoryGb > 0 &&
     status.availableMemoryGb / status.totalMemoryGb < 0.15;
 
@@ -869,7 +872,12 @@ function EngineSection(props: EngineSectionProps) {
               Probe failed: {status.probeError}
             </p>
           )}
-          {status && (
+          {status?.memoryError != null && (
+            <p className={cx('break-words text-lz-body', WEIGHT.semibold, TONE_TEXT.err)}>
+              Memory unmeasured: {status.memoryError}
+            </p>
+          )}
+          {status && status.memoryError == null && (
             <div className="flex min-w-0 flex-col gap-1.5">
               <span
                 className={cx(
@@ -878,7 +886,9 @@ function EngineSection(props: EngineSectionProps) {
                   memoryTight ? cx(WEIGHT.semibold, TONE_TEXT.warn) : 'text-lz-ink'
                 )}
               >
-                {`${status.availableMemoryGb.toFixed(1)} GB free of ${status.totalMemoryGb.toFixed(1)} GB`}
+                {`${status.availableMemoryGb.toFixed(1)} GB available of ${status.totalMemoryGb.toFixed(1)} GB`}
+                {status.reclaimableCacheGb != null &&
+                  ` (${status.reclaimableCacheGb.toFixed(1)} GB is reclaimable file cache)`}
               </span>
               <MemoryBar availableGb={status.availableMemoryGb} totalGb={status.totalMemoryGb} />
             </div>

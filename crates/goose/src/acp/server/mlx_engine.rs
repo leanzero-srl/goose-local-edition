@@ -265,6 +265,8 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         gate_verdict: status.gate_verdict,
         available_memory_gb: status.available_memory_gb,
         total_memory_gb: status.total_memory_gb,
+        reclaimable_cache_gb: status.reclaimable_cache_gb,
+        memory_error: status.memory_error,
         restart_required: status.restart_required,
         last_error: status.last_error,
     }

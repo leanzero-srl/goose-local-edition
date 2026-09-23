@@ -2800,6 +2800,14 @@ export const zMlxEngineStatusDto = z.object({
     ]).optional(),
     availableMemoryGb: z.number(),
     totalMemoryGb: z.number(),
+    reclaimableCacheGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    memoryError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     restartRequired: z.boolean(),
     lastError: z.union([
         z.string(),

@@ -6788,11 +6788,27 @@
         },
         "availableMemoryGb": {
           "type": "number",
-          "format": "double"
+          "format": "double",
+          "description": "Memory a mount can take: free pages plus the file cache the OS reclaims on demand\n(on macOS, Activity Monitor's physical-minus-used). 0 exactly when `memory_error`\nis set."
         },
         "totalMemoryGb": {
           "type": "number",
           "format": "double"
+        },
+        "reclaimableCacheGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "The part of `available_memory_gb` that is reclaimable file cache. Absent where the\nplatform does not split it out (Linux folds it into its available figure)."
+        },
+        "memoryError": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The OS memory probe failed; the memory figures are 0 and must not be read."
         },
         "restartRequired": {
           "type": "boolean",

@@ -614,7 +614,7 @@ describe('MlxEngineView status hero', () => {
     const tile = within(hero).getByTestId('mlx-state-badge');
     expect(tile.className).toContain('bg-lz-stopped-solid');
     expect(within(hero).getByText('no model mounted')).toBeInTheDocument();
-    expect(within(hero).getByText('96.6 GB free of 128.0 GB')).toBeInTheDocument();
+    expect(within(hero).getByText('96.6 GB available of 128.0 GB')).toBeInTheDocument();
     // The primary action and the model it acts on share the hero.
     expect(within(hero).getByRole('combobox', { name: 'Model to mount' })).toBeInTheDocument();
     await waitFor(() =>
@@ -629,6 +629,44 @@ describe('MlxEngineView status hero', () => {
     expect(screen.getByText('Spawn command')).toBeVisible();
     // The Engine tab's hero owns the state: no second badge in the tab row.
     expect(screen.getAllByTestId('mlx-state-badge')).toHaveLength(1);
+    unmount();
+  });
+
+  it('a full file cache reads as available, not pressure: the recorded 2026-09-23 case', async () => {
+    // vm_stat then: free 2,272,001 + file-backed 1,610,894 pages of 16 KiB = 59.3 GiB available,
+    // 24.6 GiB of it file cache — the page had read "0.0 GB free" in warning orange.
+    mockStatus.mockResolvedValue(
+      statusOf({
+        state: 'stopped',
+        availableMemoryGb: 59.3,
+        reclaimableCacheGb: 24.6,
+        totalMemoryGb: 128,
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    const line = await within(hero).findByText(
+      '59.3 GB available of 128.0 GB (24.6 GB is reclaimable file cache)'
+    );
+    expect(line.className).not.toContain('text-lz-warn');
+    unmount();
+  });
+
+  it('a failed memory probe says so instead of drawing 0 GB', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({
+        state: 'stopped',
+        availableMemoryGb: 0,
+        totalMemoryGb: 0,
+        memoryError: 'host_statistics64(HOST_VM_INFO64) failed with kern_return 5',
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    expect(
+      await within(hero).findByText(/Memory unmeasured: host_statistics64/)
+    ).toBeInTheDocument();
+    expect(within(hero).queryByText(/GB available of/)).toBeNull();
     unmount();
   });
 
