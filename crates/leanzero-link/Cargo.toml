@@ -22,13 +22,17 @@ futures = { workspace = true }
 gethostname = "1.1.0"
 hmac = "0.13"
 rand.workspace = true
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "socks"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2.workspace = true
 subtle = { version = "2.5", default-features = false, features = ["std"] }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["fs", "process", "time", "sync", "macros", "rt-multi-thread", "io-util", "net"] }
+# SOCKS5 CLIENT for the peer WebSocket: under --tun=userspace-networking the host has
+# no route to mesh IPs, so every peer dial goes through tailscaled's SOCKS5 listener
+# (peer_dial.rs). Already in the tree via async-wsocket; no new crate.
+tokio-socks = "0.5"
 # WebSocket CLIENT for the peer fabric (PeerRegistry subscribing to each peer's
 # /v1/swarm/stream): axum's ws is server-side only and reqwest 0.13 has no ws
 # feature. Pinned to the minor axum 0.8 already pulls in, so no new crate enters
