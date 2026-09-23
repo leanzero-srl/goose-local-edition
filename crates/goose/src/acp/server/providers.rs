@@ -310,6 +310,10 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
     })
 }
 
+/// `models` may be empty: an OpenAI-compatible endpoint added from the Cloud Providers tab is
+/// created first and then asked for its model list THROUGH THE ENGINE — the same provider object a
+/// chat session uses — so the listing, its URL derivation and its errors are the engine's own. The
+/// default chosen from that answer is written back as the first model.
 fn normalize_custom_provider_upsert(
     mut provider: CustomProviderUpsertDto,
     require_api_key: bool,
@@ -341,9 +345,6 @@ fn normalize_custom_provider_upsert(
             (!model.is_empty()).then_some(model)
         })
         .collect();
-    if provider.models.is_empty() {
-        return Err(agent_client_protocol::Error::invalid_params().data("models cannot be empty"));
-    }
 
     provider.headers = provider
         .headers
@@ -872,24 +873,26 @@ impl GooseAcpAgent {
         let statuses = Self::provider_config_statuses(&req.provider_ids).await;
         if req.check_connections {
             use futures::StreamExt;
-            futures::stream::iter(statuses.into_iter().filter(|status| {
-                status.is_configured
-                    && crate::providers::key_connection::requires_connection_check(
-                        &status.provider_id,
-                    )
-            }))
-            .map(|status| async move {
-                if let Ok(entry) = crate::providers::get_from_registry(&status.provider_id).await {
-                    let _ = crate::providers::key_connection::check_and_record(
-                        &status.provider_id,
-                        entry.metadata(),
-                    )
-                    .await;
-                }
-            })
-            .buffer_unordered(2)
-            .collect::<Vec<_>>()
-            .await;
+            futures::stream::iter(statuses.into_iter().filter(|status| status.is_configured))
+                .map(|status| async move {
+                    if let Ok(entry) =
+                        crate::providers::get_from_registry(&status.provider_id).await
+                    {
+                        if crate::providers::key_connection::requires_connection_check(
+                            &status.provider_id,
+                            entry.provider_type(),
+                        ) {
+                            let _ = crate::providers::key_connection::check_and_record(
+                                &status.provider_id,
+                                entry.metadata(),
+                            )
+                            .await;
+                        }
+                    }
+                })
+                .buffer_unordered(2)
+                .collect::<Vec<_>>()
+                .await;
         }
         Ok(ProviderConfigStatusResponse {
             statuses: Self::provider_config_statuses(&req.provider_ids).await,
@@ -961,7 +964,10 @@ impl GooseAcpAgent {
             .set_secret_values(&secret_updates)
             .internal_err_ctx("Failed to save provider secret fields")?;
 
-        if crate::providers::key_connection::requires_connection_check(&req.provider_id) {
+        if crate::providers::key_connection::requires_connection_check(
+            &req.provider_id,
+            entry.provider_type(),
+        ) {
             for (key, secret) in &field_keys {
                 let submitted = req
                     .fields

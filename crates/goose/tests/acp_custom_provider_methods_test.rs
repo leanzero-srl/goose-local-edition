@@ -166,6 +166,9 @@ fn acp_catalog_and_custom_provider_methods_use_core_provider_store() {
             Some(&serde_json::json!({
                 "providerId": "xai",
                 "isConfigured": true,
+                "connectionChecked": false,
+                "connectionError": null,
+                "testModel": null,
             })),
             "provider configured through core config should be configured through ACP"
         );
@@ -239,6 +242,9 @@ fn acp_catalog_and_custom_provider_methods_use_core_provider_store() {
             Some(&serde_json::json!({
                 "providerId": provider_id,
                 "isConfigured": true,
+                "connectionChecked": false,
+                "connectionError": null,
+                "testModel": null,
             })),
             "create should invalidate the secret cache before status checks"
         );
@@ -359,6 +365,9 @@ fn acp_catalog_and_custom_provider_methods_use_core_provider_store() {
             Some(&serde_json::json!({
                 "providerId": provider_id,
                 "isConfigured": true,
+                "connectionChecked": false,
+                "connectionError": null,
+                "testModel": null,
             })),
             "update should invalidate the secret cache before status checks"
         );
@@ -413,6 +422,9 @@ fn acp_catalog_and_custom_provider_methods_use_core_provider_store() {
             Some(&serde_json::json!({
                 "providerId": provider_id,
                 "isConfigured": true,
+                "connectionChecked": false,
+                "connectionError": null,
+                "testModel": null,
             })),
             "auth disable should invalidate the secret cache before status checks"
         );
@@ -504,6 +516,9 @@ fn acp_catalog_and_custom_provider_methods_use_core_provider_store() {
             Some(&serde_json::json!({
                 "providerId": provider_id,
                 "isConfigured": false,
+                "connectionChecked": false,
+                "connectionError": null,
+                "testModel": null,
             }))
         );
 
@@ -541,8 +556,6 @@ fn acp_catalog_and_custom_provider_methods_use_core_provider_store() {
                 serde_json::json!({ "apiUrl": "ftp://example.com" }),
             ),
             ("relative URL", serde_json::json!({ "apiUrl": "/v1" })),
-            ("empty models", serde_json::json!({ "models": [] })),
-            ("blank models", serde_json::json!({ "models": [" ", "\n"] })),
             (
                 "invalid header name",
                 serde_json::json!({ "headers": { "Bad Header": "value" } }),

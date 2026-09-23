@@ -4,24 +4,32 @@ use crate::providers::base::ProviderMetadata;
 use anyhow::{anyhow, Result};
 use goose_providers::model::ModelConfig;
 
-pub(crate) fn requires_connection_check(provider: &str) -> bool {
-    matches!(
-        provider,
-        "aws_bedrock"
-            | "azure_openai"
-            | "openai"
-            | "anthropic"
-            | "google"
-            | "alibaba"
-            | "openrouter"
-            | "ollama_cloud"
-            | "minimax"
-            | "mistral"
-            | "zai"
-            | "xai"
-            | "moonshot"
-            | "custom_deepseek"
-    )
+/// The providers whose saved settings must be proven before they stick: the supported cloud
+/// families by name, and every endpoint the user added themselves (`ProviderType::Custom` — an
+/// OpenAI-compatible server from the Cloud Providers tab), whose chosen default model is run once
+/// and saved exactly like a cloud family's.
+pub(crate) fn requires_connection_check(
+    provider: &str,
+    provider_type: crate::providers::base::ProviderType,
+) -> bool {
+    provider_type == crate::providers::base::ProviderType::Custom
+        || matches!(
+            provider,
+            "aws_bedrock"
+                | "azure_openai"
+                | "openai"
+                | "anthropic"
+                | "google"
+                | "alibaba"
+                | "openrouter"
+                | "ollama_cloud"
+                | "minimax"
+                | "mistral"
+                | "zai"
+                | "xai"
+                | "moonshot"
+                | "custom_deepseek"
+        )
 }
 
 /// What a check established. A model listing is NOT proof of a key — OpenRouter's `/models` is public
@@ -149,11 +157,9 @@ pub(crate) async fn check_and_record(provider: &str, metadata: &ProviderMetadata
 }
 
 /// The status a check leaves behind: `Proven` clears it, `ListedOnly` states what is still missing,
-/// an error carries the provider's own words.
+/// an error carries the provider's own words. Callers record only what `requires_connection_check`
+/// admitted.
 pub(crate) fn record(provider: &str, result: &Result<Verification>) {
-    if !requires_connection_check(provider) {
-        return;
-    }
     let status = match result {
         Ok(Verification::Proven) => None,
         Ok(Verification::ListedOnly) => Some(NO_DEFAULT_MODEL_YET.to_owned()),
@@ -298,8 +304,8 @@ mod tests {
             ("moonshot", "MOONSHOT_API_KEY"),
             ("custom_deepseek", "DEEPSEEK_API_KEY"),
         ] {
-            assert!(requires_connection_check(provider));
             let entry = crate::providers::get_from_registry(provider).await.unwrap();
+            assert!(requires_connection_check(provider, entry.provider_type()));
             assert!(
                 entry
                     .metadata()
