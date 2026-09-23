@@ -26,6 +26,7 @@
 //! `killpg` on a group the caller shares or has not proven; that is why the proof is not
 //! optional and why the SIGTERM leg stays per-pid.
 
+pub mod distributed;
 pub mod engine;
 pub mod hf;
 mod memory;
@@ -53,8 +54,8 @@ const STDERR_TAIL_LINES: usize = 200;
 
 /// The one grace window in this crate: SIGTERM → SIGKILL, and how long a released port
 /// is waited for. Every other wait here is bounded by it; no second seconds-literal exists.
-const GRACE_TICKS: u32 = 50;
-const GRACE_TICK: Duration = Duration::from_millis(100);
+pub(crate) const GRACE_TICKS: u32 = 50;
+pub(crate) const GRACE_TICK: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {

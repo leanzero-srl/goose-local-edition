@@ -548,7 +548,7 @@ pub struct EngineStatus {
 /// on 2026-08-31 (a cold hermit python install, then a nested bash chain that never served).
 /// A controlled environment makes resolution deterministic; if `uvx` is absent from these
 /// standard locations the spawn fails loudly with exactly that message.
-fn sidecar_spawn_path() -> String {
+pub(crate) fn sidecar_spawn_path() -> String {
     "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
 }
 

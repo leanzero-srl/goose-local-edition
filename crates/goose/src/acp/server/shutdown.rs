@@ -72,10 +72,26 @@ impl SupervisedResource for MlxEngine {
     }
 }
 
-/// The production sequence: the mesh daemon, then the engine sidecar.
+struct MlxDistributedEngine;
+
+#[async_trait]
+impl SupervisedResource for MlxDistributedEngine {
+    fn name(&self) -> &'static str {
+        "mlx distributed engine"
+    }
+    async fn teardown(&self) -> String {
+        super::mlx_distributed::shutdown_distributed_engine().await
+    }
+}
+
+/// The production sequence: the mesh daemon, then the engine sidecar, then the distributed
+/// engine's ranks (at most one of the two engines runs; the other reports it has nothing).
 pub async fn teardown_supervised() -> Vec<TeardownReport> {
-    let resources: Vec<Arc<dyn SupervisedResource>> =
-        vec![Arc::new(LinkMeshes), Arc::new(MlxEngine)];
+    let resources: Vec<Arc<dyn SupervisedResource>> = vec![
+        Arc::new(LinkMeshes),
+        Arc::new(MlxEngine),
+        Arc::new(MlxDistributedEngine),
+    ];
     teardown_in_order(&resources).await
 }
 
@@ -139,7 +155,10 @@ mod tests {
     async fn production_sequence_reports_both_steps_when_nothing_is_supervised() {
         let reports = teardown_supervised().await;
         let names: Vec<_> = reports.iter().map(|r| r.resource).collect();
-        assert_eq!(names, vec!["leanzero-link mesh", "mlx engine"]);
+        assert_eq!(
+            names,
+            vec!["leanzero-link mesh", "mlx engine", "mlx distributed engine"]
+        );
         assert!(
             reports[0].outcome.contains("no mesh daemon"),
             "{}",
@@ -149,6 +168,11 @@ mod tests {
             reports[1].outcome.contains("nothing supervised"),
             "{}",
             reports[1].outcome
+        );
+        assert!(
+            reports[2].outcome.contains("nothing supervised"),
+            "{}",
+            reports[2].outcome
         );
     }
 }
