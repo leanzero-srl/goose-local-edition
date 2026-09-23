@@ -2069,6 +2069,79 @@ fn send_status_message_update(
     Ok(())
 }
 
+/// The loading line for a response whose tool calls are still forming, built only from the counts
+/// the decoder has received (see `FormingProgress`). `None` until there is something to report.
+fn forming_progress_text(
+    progress: &goose_providers::formats::openai::FormingProgress,
+) -> Option<String> {
+    if progress.tool_calls == 0 {
+        return None;
+    }
+    let chars = |n: usize| {
+        if n < 1000 {
+            format!("{n} chars")
+        } else {
+            format!("{:.1}k chars", n as f64 / 1000.0)
+        }
+    };
+    let calls = if progress.tool_calls == 1 {
+        "1 tool call".to_string()
+    } else {
+        format!("{} tool calls", progress.tool_calls)
+    };
+    let mut parts = vec![format!("{} of arguments", chars(progress.argument_chars))];
+    if progress.reasoning_chars > 0 {
+        parts.push(format!("{} of reasoning", chars(progress.reasoning_chars)));
+    }
+    if progress.unplaced_text_chars > 0 {
+        parts.push(format!(
+            "{} of text not shown in the chat",
+            chars(progress.unplaced_text_chars)
+        ));
+    }
+    Some(format!("goose is writing {calls} — {}", parts.join(", ")))
+}
+
+/// Sends the forming line as a progress status whenever its text changes — the counts are the
+/// cadence, so nothing here reads a clock. A client without goose's custom notifications gets none.
+fn forming_progress_observer(
+    cx: &ConnectionTo<Client>,
+    session_id: &str,
+    supports_goose_custom_notifications: bool,
+) -> goose_providers::formats::openai::FormingProgressObserver {
+    let cx = cx.clone();
+    let session_id = session_id.to_string();
+    let last_sent = std::sync::Mutex::new(String::new());
+    std::sync::Arc::new(move |progress| {
+        if !supports_goose_custom_notifications {
+            return;
+        }
+        let Some(message) = forming_progress_text(&progress) else {
+            return;
+        };
+        let mut last = last_sent.lock().unwrap_or_else(|e| e.into_inner());
+        if *last == message {
+            return;
+        }
+        let notification = GooseSessionNotification {
+            session_id: session_id.clone(),
+            update: GooseSessionUpdate::StatusMessage(StatusMessageUpdate {
+                status: StatusMessage::Progress {
+                    message: message.clone(),
+                },
+            }),
+        };
+        match cx.send_notification(notification) {
+            Ok(()) => *last = message,
+            Err(e) => warn!(
+                session_id = %session_id,
+                error = ?e,
+                "the forming-progress status could not be sent to the client"
+            ),
+        }
+    })
+}
+
 fn status_message_from_system_notification(
     notification: &SystemNotificationContent,
 ) -> Option<StatusMessage> {
@@ -2582,6 +2655,8 @@ impl GooseAcpAgent {
         // are processed.
         let mut chain_buffer: Vec<(String, String)> = Vec::new();
         let mut stream_error = None;
+        let forming_observer =
+            forming_progress_observer(cx, &session_id, self.supports_goose_custom_notifications());
 
         loop {
             let event = tokio::select! {
@@ -2595,7 +2670,10 @@ impl GooseAcpAgent {
                     was_cancelled = true;
                     break;
                 }
-                maybe_event = stream.next() => match maybe_event {
+                // The provider stream is polled inside this future, so the scope reaches its
+                // decoder: a response still forming tool calls reports what it has received.
+                maybe_event = goose_providers::formats::openai::FORMING_PROGRESS_OBSERVER
+                    .scope(forming_observer.clone(), stream.next()) => match maybe_event {
                     Some(event) => event,
                     None => break,
                 },
@@ -3158,6 +3236,36 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::NamedTempFile;
     use test_case::test_case;
+
+    /// The measured response's end state (session 20260923_20): 36 calls, about 11k chars of arguments, and
+    /// the rest of 28,035 tokens as text that never reached the chat. The line says each as a count.
+    #[test]
+    fn forming_progress_text_states_each_channel_as_a_count() {
+        use goose_providers::formats::openai::FormingProgress;
+        assert_eq!(forming_progress_text(&FormingProgress::default()), None);
+        assert_eq!(
+            forming_progress_text(&FormingProgress {
+                tool_calls: 1,
+                argument_chars: 40,
+                ..Default::default()
+            })
+            .as_deref(),
+            Some("goose is writing 1 tool call — 40 chars of arguments")
+        );
+        assert_eq!(
+            forming_progress_text(&FormingProgress {
+                tool_calls: 36,
+                argument_chars: 11_046,
+                reasoning_chars: 2_100,
+                unplaced_text_chars: 82_400,
+            })
+            .as_deref(),
+            Some(
+                "goose is writing 36 tool calls — 11.0k chars of arguments, 2.1k chars of reasoning, \
+                 82.4k chars of text not shown in the chat"
+            )
+        );
+    }
 
     #[test_case(
         McpServer::Stdio(

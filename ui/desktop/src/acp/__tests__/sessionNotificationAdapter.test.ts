@@ -1,7 +1,7 @@
 import type { GooseSessionNotification_unstable } from '@aaif/goose-sdk';
 import type { RequestPermissionRequest, SessionNotification } from '@agentclientprotocol/sdk';
 import { describe, expect, it } from 'vitest';
-import type { Message, NotificationEvent } from '../../types/message';
+import { getThinkingMessage, type Message, type NotificationEvent } from '../../types/message';
 import {
   createAcpSessionNotificationAdapter,
   type AcpChatStateChange,
@@ -613,6 +613,58 @@ describe('createAcpSessionNotificationAdapter', () => {
         notificationType: 'thinkingMessage',
         msg: 'Still working',
       });
+    });
+  });
+
+  describe('forming progress', () => {
+    it('keeps one live progress line while a response forms tool calls', () => {
+      const adapter = createAcpSessionNotificationAdapter();
+      adapter.apply(agentText("It's set to GLOBAL now."));
+
+      const progress = (message: string) =>
+        adapter.applyGoose(
+          gooseUpdate({ sessionUpdate: 'status_message', status: { type: 'progress', message } })
+        );
+      progress('goose is writing 1 tool call — 40 chars of arguments');
+      progress('goose is writing 2 tool calls — 1.2k chars of arguments');
+      const messages = expectOnlyMessagesChange(
+        progress(
+          'goose is writing 36 tool calls — 11.0k chars of arguments, 82.4k chars of text not shown in the chat'
+        )
+      );
+
+      expect(messages).toHaveLength(2);
+      expect(firstContent(messages[0])).toMatchObject({
+        type: 'text',
+        text: "It's set to GLOBAL now.",
+      });
+      expect(getThinkingMessage(messages[1])).toBe(
+        'goose is writing 36 tool calls — 11.0k chars of arguments, 82.4k chars of text not shown in the chat'
+      );
+    });
+
+    it('does not fold a progress line into a notice', () => {
+      const adapter = createAcpSessionNotificationAdapter();
+      adapter.applyGoose(
+        gooseUpdate({
+          sessionUpdate: 'status_message',
+          status: { type: 'notice', message: 'Context near the cap' },
+        })
+      );
+      const messages = expectOnlyMessagesChange(
+        adapter.applyGoose(
+          gooseUpdate({
+            sessionUpdate: 'status_message',
+            status: {
+              type: 'progress',
+              message: 'goose is writing 1 tool call — 40 chars of arguments',
+            },
+          })
+        )
+      );
+      expect(messages).toHaveLength(2);
+      expect(firstContent(messages[0])).toMatchObject({ notificationType: 'inlineMessage' });
+      expect(firstContent(messages[1])).toMatchObject({ notificationType: 'thinkingMessage' });
     });
   });
 

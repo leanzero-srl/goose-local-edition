@@ -77,6 +77,58 @@ fn notify_tool_forming(event: ToolFormingEvent) {
     let _ = TOOL_FORMING_OBSERVER.try_with(|observer| observer(event));
 }
 
+/// What the decoder has RECEIVED but not yet yielded while it accumulates a response's tool calls.
+///
+/// Once the first `tool_calls` delta arrives the decoder reads the rest of the response before it
+/// yields anything, so a surface watching the yielded messages sees nothing until the terminal frame.
+/// MEASURED 2026-09-23 (chat session 20260923_20, rapid-mlx): one response streamed 28,035 tokens over
+/// ~26 minutes; the chat showed one 33-token sentence and a spinner. 3,862 of those tokens were the 36
+/// tool calls the response ended with; the rest arrived as `content` while the calls were forming.
+/// This reports the counts as they arrive — cumulative for the response, each value a fact from the
+/// stream — with no change to what the decoder yields.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FormingProgress {
+    /// Tool calls opened so far.
+    pub tool_calls: usize,
+    /// Characters of `function.arguments` received across them.
+    pub argument_chars: usize,
+    /// Characters of reasoning received while the calls formed (yielded with the calls).
+    pub reasoning_chars: usize,
+    /// Characters of `content` that arrived while a call was forming. The decoder does not place
+    /// this text in the message; it is counted here and logged when the calls are yielded.
+    pub unplaced_text_chars: usize,
+}
+
+pub type FormingProgressObserver = std::sync::Arc<dyn Fn(FormingProgress) + Send + Sync>;
+
+tokio::task_local! {
+    /// Set by a surface that shows live progress (the desktop's prompt loop) around the future that
+    /// polls the provider stream. Unset — every other caller, the swarm engine's workers included —
+    /// the decoder's output is identical.
+    pub static FORMING_PROGRESS_OBSERVER: FormingProgressObserver
+}
+
+fn notify_forming_progress(progress: FormingProgress) {
+    // Unset is the designed default, as with TOOL_FORMING_OBSERVER: a pure side channel.
+    let _ = FORMING_PROGRESS_OBSERVER.try_with(|observer| observer(progress));
+}
+
+/// The end of text that arrived while tool calls formed, for the warning that reports it: the log
+/// line stays readable while the full text goes to the debug line beside it.
+const UNPLACED_TEXT_TAIL_CHARS: usize = 400;
+
+fn text_tail(text: &str, max_chars: usize) -> &str {
+    let count = text.chars().count();
+    if count <= max_chars {
+        return text;
+    }
+    let skip = count - max_chars;
+    text.char_indices()
+        .nth(skip)
+        .and_then(|(start, _)| text.get(start..))
+        .unwrap_or(text)
+}
+
 fn deserialize_null_default_string<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -1228,6 +1280,8 @@ where
         // reasoning_content in a later chunk would produce duplicated reasoning.
         let mut pending_inline_thinking = String::new();
         let mut last_seen_model: Option<String> = None;
+        let mut forming = FormingProgress::default();
+        let mut unplaced_text = String::new();
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
@@ -1270,10 +1324,19 @@ where
             } else if chunk.choices[0].delta.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
                 let mut tool_call_data: ToolCallData = HashMap::new();
 
+                if let (Some(text), _) = extract_content_and_signature(chunk.choices[0].delta.content.as_ref()) {
+                    forming.unplaced_text_chars += text.chars().count();
+                    unplaced_text.push_str(&text);
+                }
+                if let Some(rc) = chunk.choices[0].delta.reasoning_text() {
+                    forming.reasoning_chars += rc.chars().count();
+                }
                 if let Some(tool_calls) = &chunk.choices[0].delta.tool_calls {
                     for (position, tool_call) in tool_calls.iter().enumerate() {
                         if let (Some(id), Some(name)) = (&tool_call.id, &tool_call.function.name) {
                             let index = tool_call.index.unwrap_or(position as i32);
+                            forming.tool_calls += 1;
+                            forming.argument_chars += tool_call.function.arguments.chars().count();
                             tool_call_data.insert(index, (id.clone(), name.clone(), tool_call.function.arguments.clone(), tool_call.extra.clone()));
                             notify_tool_forming(ToolFormingEvent::Forming {
                                 id: id.clone(),
@@ -1289,6 +1352,8 @@ where
                         }
                     }
                 }
+
+                notify_forming_progress(forming);
 
                 let is_complete = chunk.choices[0].finish_reason == Some("tool_calls".to_string());
 
@@ -1322,10 +1387,15 @@ where
                                     }
                                     if let Some(rc) = tool_chunk.choices[0].delta.reasoning_text() {
                                         accumulated_reasoning_content.push_str(rc);
+                                        forming.reasoning_chars += rc.chars().count();
                                         if !rc.is_empty() {
                                             saw_structured_reasoning = true;
                                             pending_inline_thinking.clear();
                                         }
+                                    }
+                                    if let (Some(text), _) = extract_content_and_signature(tool_chunk.choices[0].delta.content.as_ref()) {
+                                        forming.unplaced_text_chars += text.chars().count();
+                                        unplaced_text.push_str(&text);
                                     }
                                     if let Some(delta_tool_calls) = &tool_chunk.choices[0].delta.tool_calls {
                                         for delta_call in delta_tool_calls {
@@ -1337,6 +1407,7 @@ where
                                                             delta: delta_call.function.arguments.clone(),
                                                         });
                                                     }
+                                                    forming.argument_chars += delta_call.function.arguments.chars().count();
                                                     args.push_str(&delta_call.function.arguments);
                                                     if extra.is_none() && delta_call.extra.is_some() {
                                                         *extra = delta_call.extra.clone();
@@ -1346,6 +1417,8 @@ where
                                                         }
                                                     }
                                                 } else if let (Some(id), Some(name)) = (&delta_call.id, &delta_call.function.name) {
+                                                    forming.tool_calls += 1;
+                                                    forming.argument_chars += delta_call.function.arguments.chars().count();
                                                     tool_call_data.insert(index, (id.clone(), name.clone(), delta_call.function.arguments.clone(), delta_call.extra.clone()));
                                                     notify_tool_forming(ToolFormingEvent::Forming {
                                                         id: id.clone(),
@@ -1362,6 +1435,7 @@ where
                                             }
                                         }
                                     }
+                                    notify_forming_progress(forming);
                                     if tool_chunk.choices[0].finish_reason.is_some() {
                                         done = true;
                                     }
@@ -1373,6 +1447,17 @@ where
                             break;
                         }
                     }
+                }
+
+                if !unplaced_text.is_empty() {
+                    tracing::warn!(
+                        unplaced_text_chars = forming.unplaced_text_chars,
+                        tool_calls = forming.tool_calls,
+                        tail = %text_tail(&unplaced_text, UNPLACED_TEXT_TAIL_CHARS),
+                        "text streamed while tool calls were forming is not part of the yielded message"
+                    );
+                    tracing::debug!(text = %unplaced_text, "the full text streamed while tool calls were forming");
+                    unplaced_text.clear();
                 }
 
                 let _metadata: Option<ProviderMetadata> = if !accumulated_reasoning.is_empty() {
@@ -3324,6 +3409,125 @@ data: [DONE]
                 Ok(())
             })
             .await
+    }
+
+    /// The shape measured on 2026-09-23 (session 20260923_20): a sentence of content, then tool calls
+    /// whose stream carries more `content` between them. The chat saw the sentence and nothing else for
+    /// 26 minutes; the progress observer must see every call, argument and unplaced character as it
+    /// arrives, and the decoded output must be exactly what it is without the observer.
+    fn text_then_calls_with_interleaved_content() -> Vec<String> {
+        let chunk = |delta: serde_json::Value, finish: Option<&str>| {
+            format!(
+                "data: {}",
+                json!({
+                    "id": "chatcmpl-measured",
+                    "object": "chat.completion.chunk",
+                    "created": 1,
+                    "model": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+                    "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+                })
+            )
+        };
+        let call_open = |index: u32, id: &str, args: &str| {
+            json!({"tool_calls": [{"index": index, "id": id, "type": "function",
+                "function": {"name": "memory__remember_memory", "arguments": args}}]})
+        };
+        let args = |index: u32, args: &str| json!({"tool_calls": [{"index": index, "function": {"arguments": args}}]});
+        vec![
+            chunk(
+                json!({"role": "assistant", "content": "It's set to GLOBAL now."}),
+                None,
+            ),
+            chunk(call_open(0, "call_a", "{\"category\":"), None),
+            chunk(args(0, "\"releases\"}"), None),
+            chunk(json!({"content": "Let me verify it landed."}), None),
+            chunk(call_open(1, "call_b", "{\"category\":\"releases\"}"), None),
+            chunk(json!({"content": "Done."}), None),
+            chunk(json!({}), Some("tool_calls")),
+            "data: [DONE]".to_string(),
+        ]
+    }
+
+    #[tokio::test]
+    async fn test_forming_progress_counts_what_arrives_while_calls_form() -> anyhow::Result<()> {
+        let lines = text_then_calls_with_interleaved_content();
+        let without_observer = decode_all(lines.clone()).await?;
+
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<FormingProgress>::new()));
+        let sink = seen.clone();
+        let observer: FormingProgressObserver =
+            std::sync::Arc::new(move |progress| sink.lock().unwrap().push(progress));
+        let with_observer = FORMING_PROGRESS_OBSERVER
+            .scope(observer, decode_all(lines))
+            .await?;
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen.first().copied(),
+            Some(FormingProgress {
+                tool_calls: 1,
+                argument_chars: "{\"category\":".chars().count(),
+                reasoning_chars: 0,
+                unplaced_text_chars: 0,
+            }),
+            "the open frame is reported the moment it arrives"
+        );
+        assert_eq!(
+            seen.last().copied(),
+            Some(FormingProgress {
+                tool_calls: 2,
+                argument_chars: "{\"category\":\"releases\"}".chars().count() * 2,
+                reasoning_chars: 0,
+                unplaced_text_chars: "Let me verify it landed.Done.".chars().count(),
+            })
+        );
+        assert!(
+            seen.windows(2).all(|w| w[0].tool_calls <= w[1].tool_calls
+                && w[0].argument_chars <= w[1].argument_chars
+                && w[0].unplaced_text_chars <= w[1].unplaced_text_chars),
+            "counts are cumulative: {seen:?}"
+        );
+
+        let normalize = |decoded: &[(Option<Message>, Option<ProviderUsage>)]| -> String {
+            let cleaned: Vec<serde_json::Value> = decoded
+                .iter()
+                .map(|(message, usage)| {
+                    let mut message = message.clone();
+                    if let Some(m) = message.as_mut() {
+                        m.created = 0;
+                    }
+                    json!({ "message": message, "usage": usage })
+                })
+                .collect();
+            serde_json::to_string(&cleaned).unwrap()
+        };
+        assert_eq!(normalize(&with_observer), normalize(&without_observer));
+
+        let text: String = with_observer
+            .iter()
+            .filter_map(|(m, _)| m.as_ref())
+            .flat_map(|m| m.content.iter())
+            .filter_map(|c| c.as_text())
+            .collect();
+        assert_eq!(
+            text, "It's set to GLOBAL now.",
+            "text that streams while calls form stays out of the message (it is counted and logged)"
+        );
+        let calls = with_observer
+            .iter()
+            .filter_map(|(m, _)| m.as_ref())
+            .flat_map(|m| m.content.iter())
+            .filter(|c| matches!(c, MessageContent::ToolRequest(_)))
+            .count();
+        assert_eq!(calls, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn text_tail_keeps_the_end_on_a_char_boundary() {
+        assert_eq!(text_tail("short", 400), "short");
+        assert_eq!(text_tail("abcdef", 3), "def");
+        assert_eq!(text_tail("ééééé", 2), "éé");
     }
 
     #[tokio::test]
