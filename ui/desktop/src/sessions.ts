@@ -6,6 +6,9 @@ import type { FixedExtensionEntry } from './components/ConfigContext';
 import { AppEvents } from './constants/events';
 import { acpChatSessionController } from './acp/chatSessionController';
 import { getConfiguredGooseExtensions, gooseExtensionName } from './acp/extensions';
+import { acpRenameSession } from './acp/sessions';
+import { toastError } from './toasts';
+import { errorMessage } from './utils/conversionUtils';
 
 /** The engine's own stored placeholder for an unnamed session (acp/server/new_session.rs). The
  *  renderer never shows it verbatim — it normalizes to DEFAULT_CHAT_TITLE ("New Session"). */
@@ -99,7 +102,9 @@ async function createAcpSession(
       ? (await getConfiguredGooseExtensions())
           .filter((entry) => selectedNames.has(gooseExtensionName(entry.extension)))
           .map((entry) => entry.extension)
-      : selection === undefined ? undefined : [];
+      : selection === undefined
+        ? undefined
+        : [];
   return acpChatSessionController.createSession(workingDir, gooseExtensions, {
     recipeId: options?.recipeId,
     recipeDeeplink: options?.recipeDeeplink,
@@ -123,9 +128,27 @@ export async function startNewSession(
     allExtensions?: FixedExtensionEntry[];
     /** An explicit extension set for this session, overriding the enabled selection. */
     extensionConfigs?: ExtensionConfig[];
+    /**
+     * The session's name, set at creation through the rename API — stored as USER-set, so the
+     * model's auto-title (session_manager::maybe_update_name skips `user_set_name`) never
+     * replaces it. A failed rename is said, and the session still starts.
+     */
+    title?: string;
   }
 ): Promise<Session> {
-  const session = await createSession(workingDir, options);
+  let session = await createSession(workingDir, options);
+  const title = options?.title?.trim();
+  if (title) {
+    try {
+      await acpRenameSession(session.id, title);
+      session = { ...session, name: title, user_set_name: true };
+    } catch (error) {
+      toastError({
+        title: 'The session could not be named',
+        msg: `"${title}" — ${errorMessage(error, String(error))}`,
+      });
+    }
+  }
   window.dispatchEvent(new CustomEvent(AppEvents.SESSION_CREATED, { detail: { session } }));
 
   const initialMessage = initialText ? { msg: initialText, images: [] } : undefined;

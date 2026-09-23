@@ -33,8 +33,10 @@ export function formatExtensionErrorMessage(
 }
 
 /**
- * Shows toast notifications for extension load results.
- * Uses grouped toast for multiple extensions, individual error toast for single failed extension.
+ * Shows toast notifications for extension load results — FAILURES only. Every session open
+ * reports its extension set; an all-green load is the expected state and a toast saying so
+ * covered the transcript on every open (UX audit C6). A failure stays loud: a single failed
+ * extension gets its own error toast, several results with any failure get the grouped toast.
  * @param results - Array of extension load results from the backend
  */
 export function showExtensionLoadResults(results: ExtensionLoadResult[] | null | undefined): void {
@@ -43,6 +45,9 @@ export function showExtensionLoadResults(results: ExtensionLoadResult[] | null |
   }
 
   const failedExtensions = results.filter((r) => !r.success);
+  if (failedExtensions.length === 0) {
+    return;
+  }
 
   if (results.length === 1 && failedExtensions.length === 1) {
     const failed = failedExtensions[0];
