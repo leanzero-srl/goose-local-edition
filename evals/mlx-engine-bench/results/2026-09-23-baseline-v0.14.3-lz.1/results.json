@@ -1,0 +1,1151 @@
+{
+ "label": "baseline-v0.14.3-lz.1",
+ "nonce": "baseline-v0.14.3-lz.1-20260923T162113",
+ "started": "2026-09-23T16:21:14.511763",
+ "engine": {
+  "id": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+  "context_window": 262144,
+  "is_hybrid": true,
+  "tool_call_parser": "qwen3_coder_xml",
+  "reasoning_parser": "deepseek_r1",
+  "speculative_decoding": {
+   "configured": true,
+   "method": "mtp",
+   "runtime_state": "active",
+   "request_fallback_features": []
+  }
+ },
+ "sampling": {
+  "temperature": 0.0
+ },
+ "reps": 3,
+ "warmup": {
+  "ttft_s": 0.7684197909984505,
+  "total_s": 0.8417334999976447,
+  "prompt_tokens": 46,
+  "completion_tokens": 2,
+  "decode_tps": null,
+  "finish_reason": "stop",
+  "content_chars": 2,
+  "reasoning_chars": 0,
+  "tool_call_deltas": 0,
+  "request_metrics": null
+ },
+ "workloads": {
+  "a": [
+   [
+    {
+     "ttft_s": 1.007876916002715,
+     "total_s": 14.545165540999733,
+     "prompt_tokens": 217,
+     "completion_tokens": 300,
+     "decode_tps": 22.08799843803714,
+     "finish_reason": "length",
+     "content_chars": 1633,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 136,
+       "correction_tokens": 103,
+       "bonus_tokens": 33,
+       "accepted_by_depth": [
+        95,
+        44,
+        12
+       ],
+       "drafted_by_depth": [
+        136,
+        118,
+        94
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 8,
+      "current_memory_mb_after": 4720.31
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 350.0,
+      "accepts_total{method=\"mtp\"}": 151.0,
+      "tokens_saved_total{method=\"mtp\"}": 151.0,
+      "verify_calls_total{method=\"mtp\"}": 136.0,
+      "correction_tokens_total{method=\"mtp\"}": 103.0,
+      "bonus_tokens_total{method=\"mtp\"}": 33.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 136.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 118.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 94.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 95.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 44.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"3\"}": 12.0,
+      "park_total{method=\"mtp\"}": 11.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 11.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 18.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 24.0,
+      "k_chosen_total{method=\"mtp\",k=\"3\"}": 94.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 147.0
+     },
+     "uncached_prompt_tokens": 217,
+     "prefill_tps": 215.30406794177975
+    }
+   ],
+   [
+    {
+     "ttft_s": 1.1948485840039211,
+     "total_s": 14.477110416999494,
+     "prompt_tokens": 217,
+     "completion_tokens": 300,
+     "decode_tps": 22.512222056643328,
+     "finish_reason": "length",
+     "content_chars": 1571,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 129,
+       "correction_tokens": 100,
+       "bonus_tokens": 29,
+       "accepted_by_depth": [
+        95,
+        48,
+        22
+       ],
+       "drafted_by_depth": [
+        129,
+        123,
+        116
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 8,
+      "current_memory_mb_after": 5022.25
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 370.0,
+      "accepts_total{method=\"mtp\"}": 165.0,
+      "tokens_saved_total{method=\"mtp\"}": 165.0,
+      "verify_calls_total{method=\"mtp\"}": 129.0,
+      "correction_tokens_total{method=\"mtp\"}": 100.0,
+      "bonus_tokens_total{method=\"mtp\"}": 29.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 129.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 123.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 116.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 95.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 48.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"3\"}": 22.0,
+      "park_total{method=\"mtp\"}": 4.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 4.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 6.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 7.0,
+      "k_chosen_total{method=\"mtp\",k=\"3\"}": 116.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 133.0
+     },
+     "uncached_prompt_tokens": 217,
+     "prefill_tps": 181.61296996547964
+    }
+   ],
+   [
+    {
+     "ttft_s": 1.2557802500014077,
+     "total_s": 19.06334712500393,
+     "prompt_tokens": 217,
+     "completion_tokens": 300,
+     "decode_tps": 16.790991840658116,
+     "finish_reason": "length",
+     "content_chars": 1633,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 162,
+       "correction_tokens": 69,
+       "bonus_tokens": 93,
+       "accepted_by_depth": [
+        109,
+        16,
+        0
+       ],
+       "drafted_by_depth": [
+        162,
+        52,
+        8
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 8,
+      "current_memory_mb_after": 2430.5
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 222.0,
+      "accepts_total{method=\"mtp\"}": 125.0,
+      "tokens_saved_total{method=\"mtp\"}": 125.0,
+      "verify_calls_total{method=\"mtp\"}": 162.0,
+      "correction_tokens_total{method=\"mtp\"}": 69.0,
+      "bonus_tokens_total{method=\"mtp\"}": 93.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 162.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 52.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 8.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 109.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 16.0,
+      "park_total{method=\"mtp\"}": 13.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 13.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 110.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 44.0,
+      "k_chosen_total{method=\"mtp\",k=\"3\"}": 8.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 175.0
+     },
+     "uncached_prompt_tokens": 217,
+     "prefill_tps": 172.80093392116714
+    }
+   ]
+  ],
+  "b": [
+   [
+    {
+     "ttft_s": 196.95593070900213,
+     "total_s": 212.73410658400098,
+     "prompt_tokens": 31996,
+     "completion_tokens": 200,
+     "decode_tps": 12.612853913658977,
+     "finish_reason": "length",
+     "content_chars": 1140,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 103,
+       "correction_tokens": 65,
+       "bonus_tokens": 38,
+       "accepted_by_depth": [
+        61,
+        31,
+        0
+       ],
+       "drafted_by_depth": [
+        103,
+        84,
+        11
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 8,
+      "current_memory_mb_after": 7304.31
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 198.0,
+      "accepts_total{method=\"mtp\"}": 91.0,
+      "tokens_saved_total{method=\"mtp\"}": 91.0,
+      "verify_calls_total{method=\"mtp\"}": 103.0,
+      "correction_tokens_total{method=\"mtp\"}": 65.0,
+      "bonus_tokens_total{method=\"mtp\"}": 38.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 103.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 84.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"3\"}": 11.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 61.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 31.0,
+      "park_total{method=\"mtp\"}": 6.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 6.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 19.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 73.0,
+      "k_chosen_total{method=\"mtp\",k=\"3\"}": 11.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 109.0
+     },
+     "uncached_prompt_tokens": 31996,
+     "prefill_tps": 162.45258462043145
+    }
+   ],
+   [
+    {
+     "ttft_s": 182.36018499999773,
+     "total_s": 193.6471321249992,
+     "prompt_tokens": 31996,
+     "completion_tokens": 200,
+     "decode_tps": 17.63150519617217,
+     "finish_reason": "length",
+     "content_chars": 1028,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 97,
+       "correction_tokens": 61,
+       "bonus_tokens": 36,
+       "accepted_by_depth": [
+        64,
+        36
+       ],
+       "drafted_by_depth": [
+        97,
+        96
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 8,
+      "current_memory_mb_after": 12157.38
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 193.0,
+      "accepts_total{method=\"mtp\"}": 100.0,
+      "tokens_saved_total{method=\"mtp\"}": 100.0,
+      "verify_calls_total{method=\"mtp\"}": 97.0,
+      "correction_tokens_total{method=\"mtp\"}": 61.0,
+      "bonus_tokens_total{method=\"mtp\"}": 36.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 97.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 96.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 64.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 36.0,
+      "park_total{method=\"mtp\"}": 2.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 2.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 96.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 99.0
+     },
+     "uncached_prompt_tokens": 31996,
+     "prefill_tps": 175.45496567685757
+    }
+   ],
+   [
+    {
+     "ttft_s": 184.89831791599863,
+     "total_s": 197.314949874999,
+     "prompt_tokens": 31996,
+     "completion_tokens": 200,
+     "decode_tps": 16.027282138995403,
+     "finish_reason": "length",
+     "content_chars": 1101,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 0,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 104,
+       "correction_tokens": 67,
+       "bonus_tokens": 37,
+       "accepted_by_depth": [
+        58,
+        36
+       ],
+       "drafted_by_depth": [
+        104,
+        103
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 6,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 4,
+      "current_memory_mb_after": 10931.75
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 207.0,
+      "accepts_total{method=\"mtp\"}": 94.0,
+      "tokens_saved_total{method=\"mtp\"}": 94.0,
+      "verify_calls_total{method=\"mtp\"}": 104.0,
+      "correction_tokens_total{method=\"mtp\"}": 67.0,
+      "bonus_tokens_total{method=\"mtp\"}": 37.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 104.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 103.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 58.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 36.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"1\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 103.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 105.0
+     },
+     "uncached_prompt_tokens": 31996,
+     "prefill_tps": 173.04646337851565
+    }
+   ]
+  ],
+  "c": [
+   [
+    {
+     "ttft_s": 245.60030125000048,
+     "total_s": 247.12197741699492,
+     "prompt_tokens": 42238,
+     "completion_tokens": 39,
+     "decode_tps": 24.975343683469415,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 14,
+       "correction_tokens": 6,
+       "bonus_tokens": 8,
+       "accepted_by_depth": [
+        11,
+        8
+       ],
+       "drafted_by_depth": [
+        14,
+        14
+       ]
+      }
+     },
+     "cache": {
+      "hits": 0,
+      "misses": 1,
+      "tokens_saved": 0,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 4,
+      "current_memory_mb_after": 12211.88
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 32.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 14.0,
+      "correction_tokens_total{method=\"mtp\"}": 6.0,
+      "bonus_tokens_total{method=\"mtp\"}": 8.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 14.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 11.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 8.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 14.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 15.0
+     },
+     "uncached_prompt_tokens": 42238,
+     "prefill_tps": 171.978616414665,
+     "turn": 1
+    },
+    {
+     "ttft_s": 26.992212290999305,
+     "total_s": 28.458349665997957,
+     "prompt_tokens": 44601,
+     "completion_tokens": 34,
+     "decode_tps": 22.51173615596304,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 15,
+       "correction_tokens": 9,
+       "bonus_tokens": 6,
+       "accepted_by_depth": [
+        8,
+        6
+       ],
+       "drafted_by_depth": [
+        15,
+        15
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 40960,
+      "evictions": 3,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10415.62
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 32.0,
+      "accepts_total{method=\"mtp\"}": 16.0,
+      "tokens_saved_total{method=\"mtp\"}": 16.0,
+      "verify_calls_total{method=\"mtp\"}": 15.0,
+      "correction_tokens_total{method=\"mtp\"}": 9.0,
+      "bonus_tokens_total{method=\"mtp\"}": 6.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 15.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 15.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 8.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 6.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 15.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 16.0
+     },
+     "uncached_prompt_tokens": 3641,
+     "prefill_tps": 134.89075888804086,
+     "turn": 2
+    },
+    {
+     "ttft_s": 30.417148916996666,
+     "total_s": 32.8533727920003,
+     "prompt_tokens": 46879,
+     "completion_tokens": 40,
+     "decode_tps": 16.02444179344267,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 14,
+       "correction_tokens": 8,
+       "bonus_tokens": 6,
+       "accepted_by_depth": [
+        7,
+        6
+       ],
+       "drafted_by_depth": [
+        14,
+        14
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 43008,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10847.69
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 38.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 14.0,
+      "correction_tokens_total{method=\"mtp\"}": 8.0,
+      "bonus_tokens_total{method=\"mtp\"}": 6.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 14.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 7.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 6.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 14.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 15.0
+     },
+     "uncached_prompt_tokens": 3871,
+     "prefill_tps": 127.26373568289765,
+     "turn": 3
+    },
+    {
+     "ttft_s": 34.72011237499828,
+     "total_s": 36.859182708001754,
+     "prompt_tokens": 49260,
+     "completion_tokens": 45,
+     "decode_tps": 20.572858251448125,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 8,
+       "correction_tokens": 5,
+       "bonus_tokens": 3,
+       "accepted_by_depth": [
+        5,
+        3
+       ],
+       "drafted_by_depth": [
+        8,
+        8
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 45056,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 11288.69
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 69.0,
+      "accepts_total{method=\"mtp\"}": 29.0,
+      "tokens_saved_total{method=\"mtp\"}": 29.0,
+      "verify_calls_total{method=\"mtp\"}": 8.0,
+      "correction_tokens_total{method=\"mtp\"}": 5.0,
+      "bonus_tokens_total{method=\"mtp\"}": 3.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 8.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 8.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 5.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 3.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 8.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 9.0
+     },
+     "uncached_prompt_tokens": 4204,
+     "prefill_tps": 121.08255741209156,
+     "turn": 4
+    }
+   ],
+   [
+    {
+     "ttft_s": 167.81438058299682,
+     "total_s": 169.18770929099992,
+     "prompt_tokens": 42238,
+     "completion_tokens": 39,
+     "decode_tps": 27.67661046001506,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 13,
+       "correction_tokens": 4,
+       "bonus_tokens": 9,
+       "accepted_by_depth": [
+        12,
+        9
+       ],
+       "drafted_by_depth": [
+        13,
+        13
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 16384,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10558.81
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 30.0,
+      "accepts_total{method=\"mtp\"}": 22.0,
+      "tokens_saved_total{method=\"mtp\"}": 22.0,
+      "verify_calls_total{method=\"mtp\"}": 13.0,
+      "correction_tokens_total{method=\"mtp\"}": 4.0,
+      "bonus_tokens_total{method=\"mtp\"}": 9.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 13.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 13.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 12.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 9.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 13.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 14.0
+     },
+     "uncached_prompt_tokens": 25854,
+     "prefill_tps": 154.06307796853713,
+     "turn": 1
+    },
+    {
+     "ttft_s": 27.751082957998733,
+     "total_s": 30.12629412500246,
+     "prompt_tokens": 44601,
+     "completion_tokens": 41,
+     "decode_tps": 16.849377099574404,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 17,
+       "correction_tokens": 8,
+       "bonus_tokens": 9,
+       "accepted_by_depth": [
+        10,
+        9
+       ],
+       "drafted_by_depth": [
+        17,
+        17
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 40960,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10415.62
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 36.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 17.0,
+      "correction_tokens_total{method=\"mtp\"}": 8.0,
+      "bonus_tokens_total{method=\"mtp\"}": 9.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 17.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 17.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 10.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 9.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 17.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 18.0
+     },
+     "uncached_prompt_tokens": 3641,
+     "prefill_tps": 131.20208697839482,
+     "turn": 2
+    },
+    {
+     "ttft_s": 31.09408308300044,
+     "total_s": 33.4579153329978,
+     "prompt_tokens": 46879,
+     "completion_tokens": 40,
+     "decode_tps": 16.504011054231796,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 14,
+       "correction_tokens": 8,
+       "bonus_tokens": 6,
+       "accepted_by_depth": [
+        7,
+        6
+       ],
+       "drafted_by_depth": [
+        14,
+        14
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 43008,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10847.69
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 38.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 14.0,
+      "correction_tokens_total{method=\"mtp\"}": 8.0,
+      "bonus_tokens_total{method=\"mtp\"}": 6.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 14.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 7.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 6.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 14.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 15.0
+     },
+     "uncached_prompt_tokens": 3871,
+     "prefill_tps": 124.4931387642792,
+     "turn": 3
+    },
+    {
+     "ttft_s": 34.856131916996674,
+     "total_s": 37.759418708999874,
+     "prompt_tokens": 49260,
+     "completion_tokens": 45,
+     "decode_tps": 15.155656340674321,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 9,
+       "correction_tokens": 6,
+       "bonus_tokens": 3,
+       "accepted_by_depth": [
+        4,
+        3
+       ],
+       "drafted_by_depth": [
+        9,
+        9
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 45056,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 11288.69
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 71.0,
+      "accepts_total{method=\"mtp\"}": 28.0,
+      "tokens_saved_total{method=\"mtp\"}": 28.0,
+      "verify_calls_total{method=\"mtp\"}": 9.0,
+      "correction_tokens_total{method=\"mtp\"}": 6.0,
+      "bonus_tokens_total{method=\"mtp\"}": 3.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 9.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 9.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 4.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 3.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 9.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 10.0
+     },
+     "uncached_prompt_tokens": 4204,
+     "prefill_tps": 120.61005535585635,
+     "turn": 4
+    }
+   ],
+   [
+    {
+     "ttft_s": 174.04612091700255,
+     "total_s": 175.44191404199955,
+     "prompt_tokens": 42238,
+     "completion_tokens": 39,
+     "decode_tps": 27.227838806249483,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 13,
+       "correction_tokens": 4,
+       "bonus_tokens": 9,
+       "accepted_by_depth": [
+        12,
+        9
+       ],
+       "drafted_by_depth": [
+        13,
+        13
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 16384,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10558.81
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 30.0,
+      "accepts_total{method=\"mtp\"}": 22.0,
+      "tokens_saved_total{method=\"mtp\"}": 22.0,
+      "verify_calls_total{method=\"mtp\"}": 13.0,
+      "correction_tokens_total{method=\"mtp\"}": 4.0,
+      "bonus_tokens_total{method=\"mtp\"}": 9.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 13.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 13.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 12.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 9.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 13.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 14.0
+     },
+     "uncached_prompt_tokens": 25854,
+     "prefill_tps": 148.5468326658599,
+     "turn": 1
+    },
+    {
+     "ttft_s": 25.154260416995385,
+     "total_s": 26.78602604199841,
+     "prompt_tokens": 44601,
+     "completion_tokens": 41,
+     "decode_tps": 24.51751822644306,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 17,
+       "correction_tokens": 8,
+       "bonus_tokens": 9,
+       "accepted_by_depth": [
+        10,
+        9
+       ],
+       "drafted_by_depth": [
+        17,
+        17
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 40960,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10415.62
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 36.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 17.0,
+      "correction_tokens_total{method=\"mtp\"}": 8.0,
+      "bonus_tokens_total{method=\"mtp\"}": 9.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 17.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 17.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 10.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 9.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 17.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 18.0
+     },
+     "uncached_prompt_tokens": 3641,
+     "prefill_tps": 144.74685161245972,
+     "turn": 2
+    },
+    {
+     "ttft_s": 27.16747000000032,
+     "total_s": 28.86442654200073,
+     "prompt_tokens": 46879,
+     "completion_tokens": 40,
+     "decode_tps": 22.985028294584488,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 14,
+       "correction_tokens": 8,
+       "bonus_tokens": 6,
+       "accepted_by_depth": [
+        7,
+        6
+       ],
+       "drafted_by_depth": [
+        14,
+        14
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 43008,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 10847.69
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 38.0,
+      "accepts_total{method=\"mtp\"}": 21.0,
+      "tokens_saved_total{method=\"mtp\"}": 21.0,
+      "verify_calls_total{method=\"mtp\"}": 14.0,
+      "correction_tokens_total{method=\"mtp\"}": 8.0,
+      "bonus_tokens_total{method=\"mtp\"}": 6.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 14.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 14.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 7.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 6.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 14.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 15.0
+     },
+     "uncached_prompt_tokens": 3871,
+     "prefill_tps": 142.48658413904403,
+     "turn": 3
+    },
+    {
+     "ttft_s": 30.89258270800201,
+     "total_s": 32.88327204100642,
+     "prompt_tokens": 49260,
+     "completion_tokens": 45,
+     "decode_tps": 22.106187991388158,
+     "finish_reason": "tool_calls",
+     "content_chars": 0,
+     "reasoning_chars": 0,
+     "tool_call_deltas": 2,
+     "request_metrics": {
+      "speculative_decoding": {
+       "verify_calls": 8,
+       "correction_tokens": 5,
+       "bonus_tokens": 3,
+       "accepted_by_depth": [
+        5,
+        3
+       ],
+       "drafted_by_depth": [
+        8,
+        8
+       ]
+      }
+     },
+     "cache": {
+      "hits": 1,
+      "misses": 0,
+      "tokens_saved": 45056,
+      "evictions": 2,
+      "non_trimmable_skips": 0,
+      "load_skipped": 0,
+      "entry_count_after": 3,
+      "current_memory_mb_after": 11288.69
+     },
+     "spec_decode": {
+      "attempts_total{method=\"mtp\"}": 69.0,
+      "accepts_total{method=\"mtp\"}": 29.0,
+      "tokens_saved_total{method=\"mtp\"}": 29.0,
+      "verify_calls_total{method=\"mtp\"}": 8.0,
+      "correction_tokens_total{method=\"mtp\"}": 5.0,
+      "bonus_tokens_total{method=\"mtp\"}": 3.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"1\"}": 8.0,
+      "drafted_by_depth_total{method=\"mtp\",depth=\"2\"}": 8.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"1\"}": 5.0,
+      "accepted_by_depth_total{method=\"mtp\",depth=\"2\"}": 3.0,
+      "park_total{method=\"mtp\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"0\"}": 1.0,
+      "k_chosen_total{method=\"mtp\",k=\"2\"}": 8.0,
+      "k_chosen_rounds_total{method=\"mtp\"}": 9.0
+     },
+     "uncached_prompt_tokens": 4204,
+     "prefill_tps": 136.08444589228375,
+     "turn": 4
+    }
+   ]
+  ]
+ },
+ "finished": "2026-09-23T16:46:47.584658",
+ "status_after": {
+  "status": "idle",
+  "model": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+  "uptime_s": 1541.9,
+  "steps_executed": 2153,
+  "num_running": 0,
+  "num_waiting": 0,
+  "total_requests_processed": 20,
+  "total_prompt_tokens": 645672,
+  "total_completion_tokens": 1992,
+  "generation_tps": 18.05,
+  "prompt_tps": 1638.82,
+  "adaptive_prefill": {
+   "chunk_size": 2048,
+   "protected_chunks": 92,
+   "reduced_chunks": 0
+  },
+  "mtp_prompt_lookup": {
+   "vendored_steps": 1992,
+   "fallthrough_steps": 0,
+   "ft_batch_size": 0,
+   "ft_non_greedy": 0,
+   "ft_logits_processors": 0,
+   "ft_disabled": 0,
+   "gen_exhausted": 0,
+   "gen_raised": 0,
+   "invariant_violations": 0,
+   "prompt_lookup_proposals": 47.0,
+   "prompt_lookup_drafted_tokens": 217.0,
+   "prompt_lookup_matched_suffix_tokens": 549.0,
+   "prompt_lookup_accepted_tokens": 103.0,
+   "prompt_lookup_rejections": 16.0,
+   "prompt_lookup_cache_fallthroughs": 0.0,
+   "prompt_lookup_ev_declines": 0.0,
+   "prompt_lookup_mtp_sync_seconds": 0.3797178330278257,
+   "prompt_eval_seconds": 0.00011487597657833248,
+   "draft_seconds": 0.37381991706206463,
+   "verify_sync_seconds": 95.08996207400196,
+   "verify_calls": 931.0
+  },
+  "idle_cache_clear": {
+   "enabled": false,
+   "seconds": 0.0,
+   "clear_count": 0,
+   "last_clear_at": null
+  },
+  "metal": {
+   "active_memory_gb": 42.6,
+   "peak_memory_gb": 60.34,
+   "cache_memory_gb": 12.68
+  },
+  "cache": {
+   "hits": 11,
+   "misses": 9,
+   "hit_rate": 0.55,
+   "evictions": 42,
+   "tokens_saved": 419840,
+   "current_memory_mb": 11288.69,
+   "max_memory_mb": 14334.36,
+   "current_memory_bytes": 11837046784,
+   "max_memory_bytes": 15030668492,
+   "memory_utilization": 0.7875,
+   "entry_count": 3,
+   "load_skipped": 0,
+   "save_drift_drops": 0,
+   "non_trimmable_skips": 0,
+   "non_trimmable_entries": 3,
+   "radix": {
+    "hits": 0,
+    "misses": 20,
+    "inserts": 60,
+    "removes": 42,
+    "deduped_prefix_bytes_saved": 4584768,
+    "node_count": 49385,
+    "entry_count": 3,
+    "max_depth": 49260,
+    "lookup_p50_seconds": 0.002213583,
+    "lookup_p99_seconds": 0.004568834
+   }
+  },
+  "requests": []
+ }
+}

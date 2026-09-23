@@ -1,0 +1,8 @@
+{
+  "model_id": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+  "models_dir": "~/.goose/models",
+  "port": 8090,
+  "served_model_name": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+  "spawn_command": ["uvx", "--from", "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.1", "rapid-mlx"],
+  "model_profiles": {}
+}
