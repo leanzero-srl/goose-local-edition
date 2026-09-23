@@ -269,6 +269,11 @@ export interface DeskModel {
   liveness: Liveness;
   status: string;
   tick: number;
+  /** The tick the view shows (`?tick=N`, else the current one) — lanes and phases follow it. */
+  viewTick: number;
+  viewRecord: TickRecord | null;
+  /** Where the viewed tick's time went, from its `tick_phase` events; null when nothing recorded it. */
+  phases: PhaseSpan[] | null;
   phase: string;
   phaseElapsedMs: number | null;
   nextTickAt: number | null;
@@ -303,6 +308,155 @@ export const PHASES: readonly { key: string; label: string }[] = [
   { key: 'post', label: 'Post' },
   { key: 'close', label: 'Close' },
 ];
+
+export type PhaseState = 'done' | 'live' | 'failed' | 'interrupted' | 'next' | 'skipped';
+
+export interface PhaseSpan {
+  key: string;
+  label: string;
+  state: PhaseState;
+  /** Time spent in the phase; null when only the phase clock (not the events) says it passed. */
+  ms: number | null;
+  note?: string;
+}
+
+const PHASE_NOTE: Record<string, string> = {
+  poll_absent: 'no poll command',
+  synthesis_not_needed: 'report passed on as written',
+};
+
+/**
+ * The anatomy of one tick from the engine's own `tick_phase` events: every phase it ENTERED with the
+ * time it spent there (entry → next entry, the last one → `tick_done`, or → now while live), the
+ * phases it never entered as skipped, and — while it runs — what is still ahead. Direct delivery
+ * enters `handoff`, so it is named Handoff and synthesis is never invented. With no events for the
+ * tick, only a LIVE tick is drawn, from the state file's phase clock (no durations are guessed);
+ * a finished tick without events returns null and the view shows nothing rather than a guess.
+ */
+export function tickPhases(
+  events: AgentEvent[],
+  tick: number,
+  opts: {
+    live: boolean;
+    now: number;
+    phase: string;
+    phaseElapsedMs: number | null;
+    outcome?: string;
+  }
+): PhaseSpan[] | null {
+  const mine = events.filter((e) => e.tick === tick);
+  const entered = mine.filter((e) => e.event === 'tick_phase' && typeof e.phase === 'string');
+  const slot = (key: string) => (key === 'handoff' ? 'synthesis' : key);
+  const label = (key: string) =>
+    key === 'handoff' ? 'Handoff' : (PHASES.find((p) => p.key === key)?.label ?? key);
+  if (entered.length === 0) {
+    if (!opts.live) return null;
+    const current = phaseIndex(opts.phase);
+    if (current < 0) return null;
+    return PHASES.map((p, i) => {
+      const key = i === current && opts.phase === 'handoff' ? 'handoff' : p.key;
+      return {
+        key,
+        label: label(key),
+        state: i < current ? 'done' : i === current ? 'live' : 'next',
+        ms: i === current ? opts.phaseElapsedMs : null,
+      };
+    });
+  }
+  const done = mine.find((e) => e.event === 'tick_done');
+  const endMs = done?.ts ? Date.parse(done.ts) : opts.live ? opts.now : null;
+  const notes = new Map<string, string>();
+  let at = '';
+  for (const e of mine) {
+    if (e.event === 'tick_phase') at = String(e.phase);
+    else if (PHASE_NOTE[e.event] && at) notes.set(at, PHASE_NOTE[e.event]);
+  }
+  const spans: PhaseSpan[] = entered.map((e, i) => {
+    const key = String(e.phase);
+    const start = e.ts ? Date.parse(e.ts) : NaN;
+    const next = entered[i + 1];
+    const end = next?.ts ? Date.parse(next.ts) : endMs;
+    const last = i === entered.length - 1;
+    const state: PhaseState = !last
+      ? 'done'
+      : done
+        ? opts.outcome === 'failed' || done.outcome === 'failed'
+          ? 'failed'
+          : 'done'
+        : opts.live
+          ? 'live'
+          : 'interrupted';
+    return {
+      key,
+      label: label(key),
+      state,
+      ms:
+        end != null && Number.isFinite(start) && Number.isFinite(end)
+          ? Math.max(0, end - start)
+          : null,
+      note: notes.get(key),
+    };
+  });
+  const seen = new Set(entered.map((e) => slot(String(e.phase))));
+  const reached = Math.max(...entered.map((e) => phaseIndex(String(e.phase))));
+  const rest: PhaseSpan[] = PHASES.filter((p) => !seen.has(p.key)).map((p) => ({
+    key: p.key,
+    label: p.label,
+    state: opts.live && phaseIndex(p.key) > reached ? 'next' : 'skipped',
+    ms: null,
+  }));
+  return [...spans, ...rest].sort((a, b) => phaseIndex(a.key) - phaseIndex(b.key));
+}
+
+/** What a tick handed over, pulled apart for reading: the lead text, its sources, the evidence. */
+export interface TickReport {
+  /** `lane_report`: one worker's report delivered as written; `handoff`: the synthesis wrote it. */
+  mode: 'lane_report' | 'handoff' | 'none';
+  lead: string;
+  nextStep: string;
+  homework: string;
+  evidence: string[];
+  sources: string[];
+  confidence: number | null;
+  lane: Record<string, unknown> | null;
+}
+
+const URL_RE = /https?:\/\/[^\s<>"'`|\][()]+/g;
+
+/** Every distinct http(s) URL in the texts, in first-seen order, trailing punctuation trimmed. */
+export function sourceUrls(texts: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const t of texts) {
+    for (const m of t.match(URL_RE) ?? []) {
+      const url = m.replace(/[.,;:!?]+$/, '');
+      if (!out.includes(url)) out.push(url);
+    }
+  }
+  return out;
+}
+
+export function tickReport(tick: TickRecord): TickReport {
+  const source = tick.synthesis?.source;
+  const lane =
+    source?.mode === 'lane_report' ? (tick.lanes?.find((l) => l.key === source.key) ?? null) : null;
+  const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const finding = str(lane?.finding);
+  const evidence = Array.isArray(lane?.evidence)
+    ? (lane!.evidence as unknown[]).filter((e): e is string => typeof e === 'string')
+    : [];
+  const lead =
+    finding || str(tick.synthesis?.handoff) || str(tick.synthesis?.log_line) || str(tick.summary);
+  return {
+    mode: finding ? 'lane_report' : tick.synthesis?.handoff?.trim() ? 'handoff' : 'none',
+    lead,
+    nextStep: str(lane?.next_step),
+    homework: str(lane?.homework),
+    evidence,
+    sources: sourceUrls([str(lane?.item), lead, ...evidence]),
+    confidence: typeof lane?.confidence === 'number' ? lane.confidence : null,
+    lane,
+  };
+}
 
 export function phaseIndex(phase: string): number {
   return PHASES.findIndex((p) => p.key === (phase === 'handoff' ? 'synthesis' : phase));
@@ -376,15 +530,20 @@ export function classifyKey(
   return { tick, kind: 'lane', laneId: rest };
 }
 
-export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | null {
-  if (!read) return null;
+/**
+ * The lanes of ONE tick: seeded from that tick's events (queue → dispatched → done) and completed
+ * from the digests (words, calls, forming). The current tick reads the live phase clock; an earlier
+ * tick is settled — anything it never finished reads as interrupted, never as running.
+ */
+function foldLanes(
+  read: AgentWorkRead,
+  tick: number,
+  current: boolean,
+  live: Liveness,
+  now: number
+): DeskLane[] {
   const st = read.state;
-  const live = liveness(read.pid, read.heartbeatMs, now);
-  const tick = st?.tick ?? 0;
-  const events = read.events.filter((e) => (e.tick ?? tick) === tick);
-
-  // Lane rows of the current tick, seeded from the events (queue → dispatched → done) and
-  // completed from the digests (words, calls, forming).
+  const events = read.events.filter((e) => (current ? (e.tick ?? tick) : e.tick) === tick);
   const rows = new Map<string, DeskLane>();
   const ensure = (key: string): DeskLane | null => {
     const c = classifyKey(key);
@@ -457,10 +616,11 @@ export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | n
       const phase = st?.phase ?? 'idle';
       const done =
         events.some((e) => e.event === `${c.kind}_done`) ||
-        (c.kind === 'orient'
-          ? phaseIndex(phase) > phaseIndex('orient') || (phase === 'idle' && live !== 'stopped')
-          : (phase === 'idle' && live !== 'stopped') ||
-            phaseIndex(phase) > phaseIndex('synthesis'));
+        (current &&
+          (c.kind === 'orient'
+            ? phaseIndex(phase) > phaseIndex('orient') || (phase === 'idle' && live !== 'stopped')
+            : (phase === 'idle' && live !== 'stopped') ||
+              phaseIndex(phase) > phaseIndex('synthesis')));
       r.status = done ? 'done' : 'running';
       const completion = [...events].reverse().find((event) => event.event === `${c.kind}_done`);
       const summary = c.kind === 'orient' ? completion?.summary : completion?.log_line;
@@ -468,7 +628,7 @@ export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | n
       r.model = r.model || st?.planner_model || '';
     }
   }
-  // Objectives from the tick record's orient plan.
+  // Objectives from the tick record's orient plan; a finished lane speaks with its finding.
   const rec = read.ticks.find((t) => t.tick === tick);
   for (const report of rec?.lanes ?? []) {
     if (typeof report.key !== 'string' || typeof report.finding !== 'string') continue;
@@ -489,13 +649,32 @@ export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | n
   const lanes = Array.from(rows.values()).sort(
     (a, b) => order[a.kind] - order[b.kind] || a.key.localeCompare(b.key)
   );
-  if (live === 'stopped') {
+  if (live === 'stopped' || !current) {
     for (const lane of lanes) {
       if (lane.status === 'running' || lane.status === 'queued') lane.status = 'interrupted';
     }
   }
-  const queue = lanes.filter((l) => l.status === 'queued');
-  const running = lanes.filter((l) => l.status === 'running' && live === 'running');
+  return lanes;
+}
+
+/**
+ * `viewTick` is the tick the person opened (`?tick=N`); absent, the desk's current tick. The lanes
+ * and phases follow the viewed tick; the queue and the node occupancy are always the live tick's.
+ */
+export function foldDesk(
+  read: AgentWorkRead | null,
+  now: number,
+  viewTick?: number | null
+): DeskModel | null {
+  if (!read) return null;
+  const st = read.state;
+  const live = liveness(read.pid, read.heartbeatMs, now);
+  const tick = st?.tick ?? 0;
+  const shown = viewTick ?? tick;
+  const currentLanes = foldLanes(read, tick, true, live, now);
+  const lanes = shown === tick ? currentLanes : foldLanes(read, shown, false, live, now);
+  const queue = currentLanes.filter((l) => l.status === 'queued');
+  const running = currentLanes.filter((l) => l.status === 'running' && live === 'running');
   const nodes: NodeOccupancy[] = (st?.devices ?? []).map((d) => {
     const mine = running.filter((l) => l.model === d.model_id);
     return { ...d, running: mine, free: Math.max(0, d.weight - mine.length) };
@@ -533,15 +712,25 @@ export function foldDesk(read: AgentWorkRead | null, now: number): DeskModel | n
   const nextTickAt = st?.next_tick_at ? Date.parse(st.next_tick_at) : null;
   const phaseStarted = st?.phase_started_at ? Date.parse(st.phase_started_at) : null;
   const status = live === 'stopped' ? 'stopped' : (st?.status ?? 'unknown');
+  const phase = live === 'stopped' ? 'idle' : (st?.phase ?? 'idle');
+  const phaseElapsedMs =
+    phaseStarted != null && Number.isFinite(phaseStarted) ? Math.max(0, now - phaseStarted) : null;
+  const viewRecord = read.ticks.find((t) => t.tick === shown) ?? null;
   return {
     liveness: live,
     status,
     tick,
-    phase: live === 'stopped' ? 'idle' : (st?.phase ?? 'idle'),
-    phaseElapsedMs:
-      phaseStarted != null && Number.isFinite(phaseStarted)
-        ? Math.max(0, now - phaseStarted)
-        : null,
+    viewTick: shown,
+    viewRecord,
+    phases: tickPhases(read.events, shown, {
+      live: shown === tick && live === 'running',
+      now,
+      phase: shown === tick ? phase : 'idle',
+      phaseElapsedMs,
+      outcome: viewRecord?.outcome,
+    }),
+    phase,
+    phaseElapsedMs,
     nextTickAt:
       nextTickAt != null && Number.isFinite(nextTickAt) && live !== 'stopped' ? nextTickAt : null,
     nextTickInMs:

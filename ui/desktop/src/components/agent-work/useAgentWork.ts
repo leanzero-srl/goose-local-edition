@@ -33,8 +33,9 @@ export function useAgentRoster(intervalMs = 5_000) {
 /**
  * One desk, polled: fast while its engine is live (the lanes' digests rewrite ~2.5×/s), slow when
  * it is stopped. `now` ticks every second so the countdown and the phase clock move between polls.
+ * `viewTick` is the tick the URL opened; the model's lanes and phases follow it.
  */
-export function useDesk(dir: string | null) {
+export function useDesk(dir: string | null, viewTick: number | null = null) {
   const [read, setRead] = useState<AgentWorkRead | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +79,6 @@ export function useDesk(dir: string | null) {
     return () => clearInterval(id);
   }, []);
 
-  const model: DeskModel | null = read ? foldDesk(read, now) : null;
+  const model: DeskModel | null = read ? foldDesk(read, now, viewTick) : null;
   return { read, model, now, error, refresh };
 }
