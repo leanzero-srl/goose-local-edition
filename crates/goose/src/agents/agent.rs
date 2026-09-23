@@ -970,16 +970,19 @@ impl Agent {
         inspection_results: &[InspectionResult],
     ) {
         for request in &permission_check_result.denied {
-            let mut denials = inspection_results
+            let denials: Vec<&InspectionResult> = inspection_results
                 .iter()
                 .filter(|r| r.tool_request_id == request.id && r.action == InspectionAction::Deny)
-                .peekable();
-            let repeat_only = denials.peek().is_some()
-                && denials.all(|r| r.inspector_name == REPETITION_INSPECTOR_NAME);
-            let result = if repeat_only {
-                crate::tool_monitor::skipped_result()
-            } else {
-                CallToolResult::error(vec![rmcp::model::Content::text(DECLINED_RESPONSE)])
+                .collect();
+            let result = match denials.as_slice() {
+                [first, ..]
+                    if denials
+                        .iter()
+                        .all(|r| r.inspector_name == REPETITION_INSPECTOR_NAME) =>
+                {
+                    crate::tool_monitor::skipped_result(&first.reason)
+                }
+                _ => CallToolResult::error(vec![rmcp::model::Content::text(DECLINED_RESPONSE)]),
             };
             if let Some(response) = request_to_response_map.get_mut(&request.id) {
                 response.add_tool_response_with_metadata(

@@ -5532,10 +5532,10 @@
     "defaultMessage": "Saída"
   },
   "toolCallWithResponse.repeatSameOutput": {
-    "defaultMessage": "Mesma chamada e mesma saída da anterior — o modelo foi avisado"
+    "defaultMessage": "Mesma chamada e mesma saída de uma chamada anterior deste turno — o modelo foi avisado"
   },
   "toolCallWithResponse.repeatSkipped": {
-    "defaultMessage": "Ignorada — idêntica à chamada anterior, mesma saída"
+    "defaultMessage": "Ignorada — idêntica a uma chamada anterior deste turno, mesma saída"
   },
   "toolCallWithResponse.skipped": {
     "defaultMessage": "Ignorada"

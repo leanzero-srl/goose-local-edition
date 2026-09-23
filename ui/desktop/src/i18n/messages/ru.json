@@ -5532,10 +5532,10 @@
     "defaultMessage": "Вывод"
   },
   "toolCallWithResponse.repeatSameOutput": {
-    "defaultMessage": "Тот же вызов и тот же вывод, что и в прошлый раз — модели сообщено"
+    "defaultMessage": "Тот же вызов и тот же вывод, что у более раннего вызова в этом ходе — модели сообщено"
   },
   "toolCallWithResponse.repeatSkipped": {
-    "defaultMessage": "Пропущено — идентично предыдущему вызову, тот же вывод"
+    "defaultMessage": "Пропущено — идентично более раннему вызову в этом ходе, тот же вывод"
   },
   "toolCallWithResponse.skipped": {
     "defaultMessage": "Пропущено"

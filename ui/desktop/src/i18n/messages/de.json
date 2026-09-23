@@ -5532,10 +5532,10 @@
     "defaultMessage": "Ausgabe"
   },
   "toolCallWithResponse.repeatSameOutput": {
-    "defaultMessage": "Gleicher Aufruf und gleiche Ausgabe wie beim vorherigen — dem Modell wurde es mitgeteilt"
+    "defaultMessage": "Gleicher Aufruf und gleiche Ausgabe wie ein früherer Aufruf in diesem Durchgang — dem Modell wurde es mitgeteilt"
   },
   "toolCallWithResponse.repeatSkipped": {
-    "defaultMessage": "Übersprungen — identisch mit dem vorherigen Aufruf, gleiche Ausgabe"
+    "defaultMessage": "Übersprungen — identisch mit einem früheren Aufruf in diesem Durchgang, gleiche Ausgabe"
   },
   "toolCallWithResponse.skipped": {
     "defaultMessage": "Übersprungen"

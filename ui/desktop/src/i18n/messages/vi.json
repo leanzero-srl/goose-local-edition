@@ -5532,10 +5532,10 @@
     "defaultMessage": "Đầu ra"
   },
   "toolCallWithResponse.repeatSameOutput": {
-    "defaultMessage": "Cùng lệnh gọi và cùng đầu ra như lần trước — đã báo cho mô hình"
+    "defaultMessage": "Cùng lệnh gọi và cùng đầu ra như một lệnh gọi trước đó trong lượt này — đã báo cho mô hình"
   },
   "toolCallWithResponse.repeatSkipped": {
-    "defaultMessage": "Đã bỏ qua — giống hệt lệnh gọi trước, cùng đầu ra"
+    "defaultMessage": "Đã bỏ qua — giống hệt một lệnh gọi trước đó trong lượt này, cùng đầu ra"
   },
   "toolCallWithResponse.skipped": {
     "defaultMessage": "Đã bỏ qua"

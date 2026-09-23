@@ -5532,10 +5532,10 @@
     "defaultMessage": "Sortie"
   },
   "toolCallWithResponse.repeatSameOutput": {
-    "defaultMessage": "Même appel et même sortie que le précédent — le modèle en a été informé"
+    "defaultMessage": "Même appel et même sortie qu’un appel antérieur de ce tour — le modèle en a été informé"
   },
   "toolCallWithResponse.repeatSkipped": {
-    "defaultMessage": "Ignoré — identique à l’appel précédent, même sortie"
+    "defaultMessage": "Ignoré — identique à un appel antérieur de ce tour, même sortie"
   },
   "toolCallWithResponse.skipped": {
     "defaultMessage": "Ignoré"

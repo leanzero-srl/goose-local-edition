@@ -5532,10 +5532,10 @@
     "defaultMessage": "Keluaran"
   },
   "toolCallWithResponse.repeatSameOutput": {
-    "defaultMessage": "Panggilan dan keluaran sama dengan sebelumnya — model sudah diberi tahu"
+    "defaultMessage": "Panggilan dan keluaran sama dengan panggilan sebelumnya di giliran ini — model sudah diberi tahu"
   },
   "toolCallWithResponse.repeatSkipped": {
-    "defaultMessage": "Dilewati — identik dengan panggilan sebelumnya, keluaran sama"
+    "defaultMessage": "Dilewati — identik dengan panggilan sebelumnya di giliran ini, keluaran sama"
   },
   "toolCallWithResponse.skipped": {
     "defaultMessage": "Dilewati"

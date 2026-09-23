@@ -61,11 +61,11 @@ const i18n = defineMessages({
   },
   repeatSkipped: {
     id: 'toolCallWithResponse.repeatSkipped',
-    defaultMessage: 'Skipped — identical to the previous call, same output',
+    defaultMessage: 'Skipped — identical to an earlier call this turn, same output',
   },
   repeatSameOutput: {
     id: 'toolCallWithResponse.repeatSameOutput',
-    defaultMessage: 'Same call and same output as the previous one — the model was told',
+    defaultMessage: 'Same call and same output as an earlier call this turn — the model was told',
   },
 });
 

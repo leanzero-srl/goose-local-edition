@@ -5532,10 +5532,10 @@
     "defaultMessage": "आउटपुट"
   },
   "toolCallWithResponse.repeatSameOutput": {
-    "defaultMessage": "पिछले जैसा ही कॉल और वही आउटपुट — मॉडल को बताया गया"
+    "defaultMessage": "इस टर्न के एक पिछले कॉल जैसा ही कॉल और वही आउटपुट — मॉडल को बताया गया"
   },
   "toolCallWithResponse.repeatSkipped": {
-    "defaultMessage": "छोड़ा गया — पिछले कॉल जैसा ही, वही आउटपुट"
+    "defaultMessage": "छोड़ा गया — इस टर्न के एक पिछले कॉल जैसा ही, वही आउटपुट"
   },
   "toolCallWithResponse.skipped": {
     "defaultMessage": "छोड़ा गया"

@@ -43,7 +43,7 @@ describe('ToolCallWithResponse repeat guard line', () => {
   it('shows a declined repeat as Skipped with the plain reason, not as Failed', () => {
     renderCall(response('skipped', true));
     expect(
-      screen.getByText('Skipped — identical to the previous call, same output')
+      screen.getByText('Skipped — identical to an earlier call this turn, same output')
     ).toBeInTheDocument();
     expect(screen.getByText('Skipped')).toBeInTheDocument();
     expect(screen.queryByText('Failed')).not.toBeInTheDocument();
@@ -52,14 +52,16 @@ describe('ToolCallWithResponse repeat guard line', () => {
   it('shows a noted repeat without hiding its result', () => {
     renderCall(response('same_output'));
     expect(
-      screen.getByText('Same call and same output as the previous one — the model was told')
+      screen.getByText(
+        'Same call and same output as an earlier call this turn — the model was told'
+      )
     ).toBeInTheDocument();
     expect(screen.getByText('Completed')).toBeInTheDocument();
   });
 
   it('renders no repeat line for an ordinary call', () => {
     renderCall(response());
-    expect(screen.queryByText(/identical to the previous call/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/same output as the previous one/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/identical to an earlier call/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/same output as an earlier call/)).not.toBeInTheDocument();
   });
 });

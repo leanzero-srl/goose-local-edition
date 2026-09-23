@@ -5532,10 +5532,10 @@
     "defaultMessage": "Çıkış"
   },
   "toolCallWithResponse.repeatSameOutput": {
-    "defaultMessage": "Öncekiyle aynı çağrı ve aynı çıktı — modele bildirildi"
+    "defaultMessage": "Bu turdaki önceki bir çağrıyla aynı çağrı ve aynı çıktı — modele bildirildi"
   },
   "toolCallWithResponse.repeatSkipped": {
-    "defaultMessage": "Atlandı — önceki çağrıyla aynı, aynı çıktı"
+    "defaultMessage": "Atlandı — bu turdaki önceki bir çağrıyla aynı, aynı çıktı"
   },
   "toolCallWithResponse.skipped": {
     "defaultMessage": "Atlandı"
