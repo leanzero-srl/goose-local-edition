@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "Uji"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "Otomatis"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "Otomatis = mesin yang memutuskan (nonaktif saat alat digunakan)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "Upaya"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "Berpikir nonaktif, jadi level upaya tidak mengubah apa pun."
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "Level berasal dari templat chat model ini. Sesi mempertahankan level saat dimulai; perubahan berlaku untuk sesi baru."
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "Bawaan model"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "Bawaan model ({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "Templat chat model ini tidak mendeklarasikan kontrol berpikir."
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level} (tidak ada di templat)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "Kontrol berpikir memerlukan templat chat model, dan model ini tidak ada di folder model."
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "Mesin tidak melaporkan kontrol berpikir model ini."
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "Nonaktif"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "Aktif"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "Berpikir"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "Kontrol berpikir tidak tersedia: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Kemampuan modifikasi file penuh, edit, buat, dan hapus file dengan bebas."
   },

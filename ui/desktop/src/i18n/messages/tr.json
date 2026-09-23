@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "testi"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "Otomatik"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "Otomatik = motor karar verir (araç kullanıldığında kapalı)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "Çaba"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "Düşünme kapalı, bu yüzden çaba seviyesi hiçbir şeyi değiştirmez."
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "Seviyeler bu modelin sohbet şablonundan gelir. Bir oturum başladığı seviyeyi korur; değişiklik yeni oturumlara uygulanır."
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "Model varsayılanı"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "Model varsayılanı ({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "Bu modelin sohbet şablonu hiçbir düşünme denetimi bildirmiyor."
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level} (şablonda yok)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "Düşünme denetimleri modelin sohbet şablonuna ihtiyaç duyar ve bu model modeller klasöründe değil."
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "Motor bu modelin düşünme denetimlerini bildirmedi."
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "Kapalı"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "Açık"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "Düşünme"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "Düşünme denetimleri kullanılamıyor: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Tam dosya değiştirme yetenekleri, dosyaları özgürce düzenleyin, oluşturun ve silin."
   },

@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "परीक्षण"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "ऑटो"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "ऑटो = इंजन तय करता है (टूल इस्तेमाल होने पर बंद)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "प्रयास"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "सोचना बंद है, इसलिए प्रयास स्तर से कुछ नहीं बदलता।"
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "स्तर इस मॉडल के चैट टेम्पलेट से आते हैं। एक सत्र उसी स्तर पर रहता है जिससे वह शुरू हुआ; बदलाव नए सत्रों पर लागू होता है।"
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "मॉडल डिफ़ॉल्ट"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "मॉडल डिफ़ॉल्ट ({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "इस मॉडल का चैट टेम्पलेट कोई सोचने का नियंत्रण घोषित नहीं करता।"
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level} (टेम्पलेट में नहीं)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "सोचने के नियंत्रणों को मॉडल का चैट टेम्पलेट चाहिए, और यह मॉडल मॉडल फ़ोल्डर में नहीं है।"
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "इंजन ने इस मॉडल के सोचने के नियंत्रण नहीं बताए।"
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "बंद"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "चालू"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "सोचना"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "सोचने के नियंत्रण उपलब्ध नहीं: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "पूर्ण फ़ाइल संशोधन क्षमताएं, फ़ाइलों को स्वतंत्र रूप से संपादित करें, बनाएं और हटाएं।"
   },

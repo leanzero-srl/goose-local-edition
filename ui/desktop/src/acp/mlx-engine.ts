@@ -79,6 +79,17 @@ export interface MlxModelProfile {
    * text lane (`--text-only`). No effect on a checkpoint that declares no vision.
    */
   textOnly?: boolean;
+  /**
+   * Sent as `chat_template_kwargs.enable_thinking` on every turn a session routes to this model.
+   * Absent = auto: nothing is sent and the engine decides (off whenever the request carries
+   * tools). Captured once per session.
+   */
+  thinking?: 'on' | 'off';
+  /**
+   * One of the model's `thinking.effortLevels`, sent as `chat_template_kwargs.reasoning_effort`.
+   * Absent = the template's own default. Captured once per session.
+   */
+  reasoningEffort?: string;
 }
 
 export interface MlxEngineSettings {
@@ -106,6 +117,21 @@ export interface MlxEngineSettings {
   modelProfiles: Record<string, MlxModelProfile>;
 }
 
+/**
+ * What the model's own chat template lets a request steer about reasoning, proven on the
+ * template's Jinja AST with the engine's detection rules.
+ */
+export interface MlxThinkingCapabilities {
+  /** `enable_thinking` or `reasoning`; absent = the template has no on/off switch. */
+  thinkingSwitch?: string | null;
+  /** The template's own effort vocabulary in template order; empty = none declared. */
+  effortLevels: string[];
+  /** The level the template renders when a request names none; absent when not provable. */
+  defaultEffort?: string | null;
+  preserveThinking: boolean;
+  budgetForcible: boolean;
+}
+
 export interface MlxLocalModel {
   id: string;
   sizeBytes: number;
@@ -115,6 +141,9 @@ export interface MlxLocalModel {
    * that are absent/empty, plus `.part` leftovers. 0 when complete.
    */
   missingFiles: number;
+  /** Absent exactly when `thinkingError` says why. */
+  thinking?: MlxThinkingCapabilities | null;
+  thinkingError?: string | null;
 }
 
 export interface MlxModelsList {

@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "Probar"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "Auto = el motor decide (desactivado cuando se usan herramientas)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "Esfuerzo"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "El razonamiento está desactivado, así que el nivel de esfuerzo no cambia nada."
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "Los niveles provienen de la plantilla de chat de este modelo. Una sesión conserva el nivel con el que empezó; un cambio se aplica a las sesiones nuevas."
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "Predeterminado del modelo"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "Predeterminado del modelo ({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "La plantilla de chat de este modelo no declara controles de razonamiento."
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level} (no está en la plantilla)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "Los controles de razonamiento necesitan la plantilla de chat del modelo, y este modelo no está en la carpeta de modelos."
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "El motor no informó los controles de razonamiento de este modelo."
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "Desactivado"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "Activado"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "Razonamiento"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "Controles de razonamiento no disponibles: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Capacidades completas de modificación de archivos: edita, crea y elimina archivos libremente."
   },

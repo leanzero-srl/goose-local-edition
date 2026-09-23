@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "Tester"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "Auto = le moteur décide (désactivée quand des outils sont utilisés)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "Effort"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "La réflexion est désactivée, le niveau d’effort ne change donc rien."
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "Les niveaux viennent du modèle de chat de ce modèle. Une session garde le niveau avec lequel elle a commencé ; un changement s’applique aux nouvelles sessions."
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "Valeur par défaut du modèle"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "Valeur par défaut du modèle ({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "Le modèle de chat de ce modèle ne déclare aucun contrôle de réflexion."
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level} (absent du modèle de chat)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "Les contrôles de réflexion ont besoin du modèle de chat, et ce modèle n’est pas dans le dossier des modèles."
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "Le moteur n’a pas signalé les contrôles de réflexion de ce modèle."
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "Désactivée"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "Activée"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "Réflexion"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "Contrôles de réflexion indisponibles : {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Capacités complètes de modification de fichiers : modifier, créer et supprimer des fichiers librement."
   },

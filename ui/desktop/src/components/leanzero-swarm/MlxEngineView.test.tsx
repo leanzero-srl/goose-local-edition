@@ -318,6 +318,33 @@ describe('serving-lane profile fields', () => {
   });
 });
 
+describe('thinking profile fields', () => {
+  it('a profile without thinking choices drafts as auto and writes none back', () => {
+    const drafts = draftsFromProfile(SETTINGS.modelProfiles[QWEN]);
+    expect(drafts.thinking).toBe('');
+    expect(drafts.reasoningEffort).toBe('');
+    const profile = profileFromDrafts(drafts);
+    expect('thinking' in profile).toBe(false);
+    expect('reasoningEffort' in profile).toBe(false);
+  });
+
+  it('explicit choices round-trip and a thinking-only profile survives the save', () => {
+    const drafts = draftsFromProfile({ thinking: 'on', reasoningEffort: 'low' });
+    expect(drafts.thinking).toBe('on');
+    expect(drafts.reasoningEffort).toBe('low');
+    expect(profileFromDrafts(drafts)).toEqual({ thinking: 'on', reasoningEffort: 'low' });
+    const payload = settingsWithProfile(SETTINGS, HALF, draftsFromProfile({ thinking: 'off' }));
+    expect(payload.modelProfiles[HALF]).toEqual({ thinking: 'off' });
+  });
+
+  it('an unknown thinking draft is dropped, not sent', () => {
+    const drafts = draftsFromProfile(undefined);
+    drafts.thinking = 'maybe';
+    drafts.reasoningEffort = '  ';
+    expect(profileHasValues(profileFromDrafts(drafts))).toBe(false);
+  });
+});
+
 describe('formatGb', () => {
   it('shows sizes in GB with an honest unknown for zero', () => {
     expect(formatGb(17 * GB)).toBe('17 GB');
@@ -1068,6 +1095,110 @@ describe('MlxEngineView sampling tab', () => {
     expect('textOnly' in second.modelProfiles[QWEN]).toBe(false);
     expect(second.modelProfiles[QWEN].speculative).toBe('off');
     unmount();
+  });
+
+  it('thinking controls follow the template record and Save carries only explicit choices', async () => {
+    mockModelsList.mockResolvedValue(
+      listOf([
+        {
+          ...MODELS[0],
+          thinking: {
+            thinkingSwitch: 'enable_thinking',
+            effortLevels: ['xhigh', 'medium', 'low'],
+            defaultEffort: 'xhigh',
+            preserveThinking: true,
+            budgetForcible: true,
+          },
+        },
+        MODELS[1],
+      ])
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    const thinking = await screen.findByRole('radiogroup', { name: 'Thinking' });
+    expect(within(thinking).getByRole('radio', { name: 'Auto' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    expect(
+      screen.getByText('Auto = the engine decides (off when tools are used)')
+    ).toBeInTheDocument();
+    const effort = screen.getByRole('radiogroup', { name: 'Effort' });
+    expect(
+      within(effort)
+        .getAllByRole('radio')
+        .map((r) => r.textContent)
+    ).toEqual(['Model default (xhigh)', 'xhigh', 'medium', 'low']);
+    expect(screen.queryByText('unsaved')).not.toBeInTheDocument();
+
+    await userEvent.click(within(thinking).getByRole('radio', { name: 'On' }));
+    await userEvent.click(within(effort).getByRole('radio', { name: 'low' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(mockSettingsUpdate).toHaveBeenCalledTimes(1);
+    });
+    const payload = mockSettingsUpdate.mock.calls[0][0] as MlxEngineSettings;
+    expect(payload.modelProfiles[QWEN]).toEqual({
+      temperature: 0,
+      topK: 40,
+      thinking: 'on',
+      reasoningEffort: 'low',
+    });
+
+    // Off makes the effort strip inert and says why; Auto again drops the key.
+    await userEvent.click(within(thinking).getByRole('radio', { name: 'Off' }));
+    expect(
+      screen.getByText('Thinking is off, so the effort level changes nothing.')
+    ).toBeInTheDocument();
+    await userEvent.click(within(thinking).getByRole('radio', { name: 'Auto' }));
+    await userEvent.click(within(effort).getByRole('radio', { name: 'Model default (xhigh)' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(mockSettingsUpdate).toHaveBeenCalledTimes(2);
+    });
+    const second = mockSettingsUpdate.mock.calls[1][0] as MlxEngineSettings;
+    expect(second.modelProfiles[QWEN]).toEqual({ temperature: 0, topK: 40 });
+    unmount();
+  });
+
+  it('a template without thinking controls offers none, and a read failure is named', async () => {
+    mockModelsList.mockResolvedValue(
+      listOf([
+        {
+          ...MODELS[0],
+          thinking: {
+            thinkingSwitch: null,
+            effortLevels: [],
+            preserveThinking: false,
+            budgetForcible: false,
+          },
+        },
+        MODELS[1],
+      ])
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    await waitFor(() => {
+      expect(screen.getByTestId('mlx-thinking-notice')).toHaveTextContent(
+        "This model's chat template declares no thinking controls."
+      );
+    });
+    expect(screen.queryByRole('radiogroup', { name: 'Thinking' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: 'Effort' })).not.toBeInTheDocument();
+    unmount();
+
+    mockModelsList.mockResolvedValue(
+      listOf([{ ...MODELS[0], thinkingError: 'chat template does not parse: unexpected end' }])
+    );
+    const second = render(<MlxEngineView />);
+    await openSamplingTab();
+    await waitFor(() => {
+      expect(screen.getByTestId('mlx-thinking-notice')).toHaveTextContent(
+        'Thinking controls unavailable: chat template does not parse: unexpected end'
+      );
+    });
+    expect(screen.queryByRole('radiogroup', { name: 'Thinking' })).not.toBeInTheDocument();
+    second.unmount();
   });
 
   it('the per-model Sampling affordance on the Downloaded rows preselects that row model', async () => {

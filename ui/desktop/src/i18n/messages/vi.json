@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "Kiểm tra"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "Tự động"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "Tự động = engine quyết định (tắt khi dùng công cụ)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "Mức nỗ lực"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "Suy nghĩ đang tắt nên mức nỗ lực không thay đổi gì."
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "Các mức lấy từ mẫu trò chuyện của mô hình này. Một phiên giữ mức đã bắt đầu; thay đổi áp dụng cho các phiên mới."
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "Mặc định của mô hình"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "Mặc định của mô hình ({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "Mẫu trò chuyện của mô hình này không khai báo điều khiển suy nghĩ."
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level} (không có trong mẫu)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "Điều khiển suy nghĩ cần mẫu trò chuyện của mô hình, và mô hình này không nằm trong thư mục mô hình."
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "Engine không báo cáo điều khiển suy nghĩ của mô hình này."
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "Tắt"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "Bật"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "Suy nghĩ"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "Không có điều khiển suy nghĩ: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Khả năng chỉnh sửa tệp đầy đủ, chỉnh sửa, tạo và xóa tệp một cách tự do."
   },

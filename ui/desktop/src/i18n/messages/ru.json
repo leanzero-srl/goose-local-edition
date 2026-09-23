@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "Проверить"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "Авто"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "Авто = решает движок (выключено, когда используются инструменты)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "Усилие"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "Размышление выключено, поэтому уровень усилия ничего не меняет."
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "Уровни берутся из чат-шаблона этой модели. Сессия сохраняет уровень, с которым началась; изменение действует для новых сессий."
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "По умолчанию модели"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "По умолчанию модели ({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "Чат-шаблон этой модели не объявляет управления размышлением."
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level} (нет в шаблоне)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "Управлению размышлением нужен чат-шаблон модели, а этой модели нет в папке моделей."
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "Движок не сообщил об управлении размышлением для этой модели."
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "Выкл"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "Вкл"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "Размышление"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "Управление размышлением недоступно: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Полные возможности изменения файлов: свободное редактирование, создание и удаление файлов."
   },

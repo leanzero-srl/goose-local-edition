@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "測試"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "自動"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "自動 = 由引擎決定（使用工具時關閉）"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "力度"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "思考已關閉，因此力度級別不會產生任何影響。"
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "級別來自此模型的聊天範本。工作階段會保持開始時的級別；變更只對新工作階段生效。"
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "模型預設"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "模型預設（{level}）"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "此模型的聊天範本未宣告任何思考控制。"
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level}（不在範本中）"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "思考控制需要模型的聊天範本，而此模型不在模型資料夾中。"
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "引擎未回報此模型的思考控制。"
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "關"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "開"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "思考"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "思考控制無法使用：{reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "完整的檔案修改能力，可自由編輯、建立與刪除檔案。"
   },
