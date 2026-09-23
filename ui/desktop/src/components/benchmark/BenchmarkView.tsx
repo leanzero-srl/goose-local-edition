@@ -34,7 +34,7 @@ import { useSaveSamplingDefaults } from '../swarm/useSamplingDefaults';
 import { loadSamplingDefaults, sanitizeSampling, type SamplingSettings } from '../swarm/sampling';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { acpReadConfig } from '../../acp/config';
-import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
+import { deviceEnabled, type SwarmConfig, type SwarmDeviceRow } from '../settings/swarm/golden';
 import {
   Button,
   Chip,
@@ -73,7 +73,7 @@ type NodeChoice = (typeof NODE_CHOICES)[number];
 export function nodeCapFor(cfg: SwarmConfig | null): NodeChoice {
   const rows: SwarmDeviceRow[] = Array.isArray(cfg?.devices) ? cfg.devices : [];
   if (rows.length === 0) return NODE_CHOICES[NODE_CHOICES.length - 1];
-  const enabled = rows.filter((d) => d.enabled !== false).length;
+  const enabled = rows.filter((d) => deviceEnabled(d)).length;
   const max = NODE_CHOICES[NODE_CHOICES.length - 1];
   const capped = Math.max(1, Math.min(max, enabled));
   return (NODE_CHOICES.find((n) => n === capped) ?? max) as NodeChoice;

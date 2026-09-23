@@ -1,6 +1,6 @@
 import { acpReadConfig } from '../../acp/config';
 import { mlxEngineStatus, type MlxEngineStatus } from '../../acp/mlx-engine';
-import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
+import { deviceEnabled, type SwarmConfig, type SwarmDeviceRow } from '../settings/swarm/golden';
 import { fetchSwarmContextLimit } from './useFleet';
 
 /**
@@ -21,7 +21,7 @@ export interface SwarmPoolLimitDeps {
 /** Which engines the configured pool spans. No/empty devices is the legacy LM Studio discovery pool. */
 export function poolEngines(cfg: SwarmConfig | null): { lmStudio: boolean; localMlx: boolean } {
   const rows: SwarmDeviceRow[] = Array.isArray(cfg?.devices) ? cfg.devices : [];
-  const enabled = rows.filter((d) => d.enabled !== false);
+  const enabled = rows.filter((d) => deviceEnabled(d));
   return {
     lmStudio: enabled.length === 0 || enabled.some((d) => d.engine !== 'mlx-sidecar'),
     localMlx: enabled.some((d) => d.engine === 'mlx-sidecar' && !d.host),
@@ -47,7 +47,9 @@ export async function swarmPoolContextLimit(deps: SwarmPoolLimitDeps): Promise<n
         .catch(() => null)
     );
   }
-  const limits = (await Promise.all(reads)).filter((n): n is number => typeof n === 'number' && n > 0);
+  const limits = (await Promise.all(reads)).filter(
+    (n): n is number => typeof n === 'number' && n > 0
+  );
   return limits.length ? Math.min(...limits) : null;
 }
 

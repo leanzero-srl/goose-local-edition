@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { acpReadConfig } from '../../acp/config';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
-import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
+import { deviceEnabled, type SwarmConfig, type SwarmDeviceRow } from '../settings/swarm/golden';
 import { deviceFromModelId, useFleetStatus } from './useFleet';
 
 /**
@@ -58,7 +58,7 @@ const BUSY_STATES: ReadonlySet<string> = new Set(['generating', 'processingPromp
 
 function localSidecarRows(cfg: SwarmConfig | null): SwarmDeviceRow[] {
   const rows: SwarmDeviceRow[] = Array.isArray(cfg?.devices) ? cfg.devices : [];
-  return rows.filter((d) => d.engine === 'mlx-sidecar' && d.enabled !== false && !d.host);
+  return rows.filter((d) => d.engine === 'mlx-sidecar' && deviceEnabled(d) && !d.host);
 }
 
 /**
@@ -69,7 +69,7 @@ function localSidecarRows(cfg: SwarmConfig | null): SwarmDeviceRow[] {
  */
 export function lmStudioFeedWanted(cfg: SwarmConfig | null): boolean {
   const rows: SwarmDeviceRow[] = Array.isArray(cfg?.devices) ? cfg.devices : [];
-  const enabled = rows.filter((d) => d.enabled !== false);
+  const enabled = rows.filter((d) => deviceEnabled(d));
   return enabled.length === 0 || enabled.some((d) => d.engine !== 'mlx-sidecar');
 }
 

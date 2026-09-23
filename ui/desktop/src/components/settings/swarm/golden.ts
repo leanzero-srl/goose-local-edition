@@ -13,6 +13,15 @@ export type ResearchMode = (typeof RESEARCH_MODES)[number];
  *  Bedrock model/inference-profile id. The desktop MUTATES cloud devices only through the engine CLI
  *  (`goose swarm bedrock add/rm` over IPC) and re-reads the config after — never by upserting devices
  *  itself, so the CLI and the panel can never fight over the list. */
+/**
+ * Whether a device row is a node. The engine reads `enabled` as required (goose-cli `SwarmDevice`)
+ * and the chat router defaults a missing one to false (`PoolDevice`), so a row without `enabled: true`
+ * serves nothing — every UI reader asks this, never its own `!== false`.
+ */
+export function deviceEnabled(d: Pick<SwarmDeviceRow, 'enabled'>): boolean {
+  return d.enabled === true;
+}
+
 export interface SwarmDeviceRow {
   id: string;
   model_id: string;

@@ -1,6 +1,6 @@
 /** Provider visibility follows the engine registry; local engines are selected through Swarm. */
 import { SWARM_PROVIDER_ID } from '../../../branding';
-import type { Edition } from '../../../contexts/EditionContext';
+import { providerIsLocal, type Edition } from '../../../contexts/EditionContext';
 
 /** The provider id the MLX engine serves chat through (sessions on it still exist; the bottom bar
  *  keeps them truthful — the picker never offers it). */
@@ -15,15 +15,12 @@ export const SWARM_CHAT_MODEL_ID = 'swarm';
 export const SWARM_BUILD_MODEL_ID = 'swarm-build';
 
 /**
- * Mirrors `LOCAL_PROVIDER_FRAGMENTS` in crates/goose-cli/src/edition.rs, plus the exact
- * built-in `local` inference provider (which the fragment list does not match by design).
- * Used ONLY for edition/brand derivation (mainBrand.ts) — never to decide what a picker shows.
+ * A local backend by name: the edition's fragment list (`providerIsLocal`, which mirrors
+ * `LOCAL_PROVIDER_FRAGMENTS` in crates/goose-cli/src/edition.rs — ONE list, never a copy) plus the
+ * exact built-in `local` inference provider, which the fragment list does not match by design.
  */
-const LOCAL_PROVIDER_FRAGMENTS = ['lmstudio', 'ollama', 'swarm', 'llama', 'localai', 'mlx'];
-
 export function isLocalProviderName(name: string): boolean {
-  const p = name.toLowerCase();
-  return p === 'local' || LOCAL_PROVIDER_FRAGMENTS.some((frag) => p.includes(frag));
+  return name.toLowerCase() === 'local' || providerIsLocal(name);
 }
 
 /** Only the supported key-based cloud providers appear in the Goose Swarm edition. */
