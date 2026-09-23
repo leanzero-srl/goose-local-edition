@@ -5,11 +5,7 @@ import { ChatState } from '../types/chatState';
 import type { Session } from '../types/session';
 import { errorMessage } from '../utils/conversionUtils';
 import { showExtensionLoadResults } from '../utils/extensionErrorUtils';
-import {
-  createUserMessage,
-  getPendingToolConfirmationIds,
-  type Message,
-} from '../types/message';
+import { createUserMessage, getPendingToolConfirmationIds, type Message } from '../types/message';
 import {
   acpChatSessionActions,
   acpChatSessionStore,
@@ -201,6 +197,12 @@ async function submitMessage(
     ) {
       void options.onFinish(submitError);
     }
+  } finally {
+    // A turn may have changed the config (the agent can add an MCP, a skill, a memory): whoever
+    // caches config state re-reads it when any turn ends — finished, failed or cancelled.
+    window.dispatchEvent(
+      new CustomEvent(AppEvents.MESSAGE_STREAM_FINISHED, { detail: { sessionId } })
+    );
   }
 }
 

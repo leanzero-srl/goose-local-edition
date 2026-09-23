@@ -10,6 +10,7 @@ import {
 import { pruneDeprecatedBundledExtensions, syncBundledExtensions } from './settings/extensions';
 import { nameToKey } from './settings/extensions/utils';
 import type { ExtensionConfig } from '../types/extensions';
+import { AppEvents } from '../constants/events';
 import type { ProviderDetails } from '../types/providers';
 
 export type { ExtensionConfig } from '../types/extensions';
@@ -94,6 +95,22 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
     setExtensionWarnings(warnings || []);
     return extensions;
   }, []);
+
+  // The extension list is a cache of config.yaml, and config.yaml changes outside this context: an
+  // agent turn can add or enable an MCP (measured 2026-09-23: an AI-installed `fetch` extension was
+  // missing from the MCPs page and from new sessions until the app reloaded). Re-read it when a
+  // turn ends and when the window regains focus.
+  useEffect(() => {
+    const reread = () => {
+      refreshExtensions().catch((error) => console.warn('Failed to re-read extensions:', error));
+    };
+    window.addEventListener(AppEvents.MESSAGE_STREAM_FINISHED, reread);
+    window.addEventListener('focus', reread);
+    return () => {
+      window.removeEventListener(AppEvents.MESSAGE_STREAM_FINISHED, reread);
+      window.removeEventListener('focus', reread);
+    };
+  }, [refreshExtensions]);
 
   const addExtension = useCallback(
     async (_name: string, config: ExtensionConfig, enabled: boolean) => {
