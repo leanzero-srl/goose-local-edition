@@ -646,6 +646,36 @@
       "responseType": "EmptyResponse"
     },
     {
+      "method": "_goose/unstable/mlxEngine/linkFacts",
+      "requestType": "MlxEngineLinkFactsRequest_unstable",
+      "responseType": "MlxEngineLinkFactsResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/replicaTargets",
+      "requestType": "MlxEngineReplicaTargetsRequest_unstable",
+      "responseType": "MlxEngineReplicaTargetsResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/replicate",
+      "requestType": "MlxEngineReplicateRequest_unstable",
+      "responseType": "MlxEngineReplicateResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/replicaPull",
+      "requestType": "MlxEngineReplicaPullRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/replicaProgress",
+      "requestType": "MlxEngineReplicaProgressRequest_unstable",
+      "responseType": "MlxEngineReplicaProgressResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/replicaCancel",
+      "requestType": "MlxEngineReplicaCancelRequest_unstable",
+      "responseType": "EmptyResponse"
+    },
+    {
       "method": "_goose/unstable/leanzeroLink/health",
       "requestType": "LeanzeroLinkHealthRequest_unstable",
       "responseType": "LeanzeroLinkHealthResponse_unstable"

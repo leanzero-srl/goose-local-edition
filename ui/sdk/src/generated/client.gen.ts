@@ -161,12 +161,22 @@ import type {
   MlxEngineDownloadResumeRequest_unstable,
   MlxEngineHfSearchRequest_unstable,
   MlxEngineHfSearchResponse_unstable,
+  MlxEngineLinkFactsRequest_unstable,
+  MlxEngineLinkFactsResponse_unstable,
   MlxEngineModelCardRequest_unstable,
   MlxEngineModelCardResponse_unstable,
   MlxEngineModelDeleteRequest_unstable,
   MlxEngineModelsListRequest_unstable,
   MlxEngineModelsListResponse_unstable,
   MlxEngineMountRequest_unstable,
+  MlxEngineReplicaCancelRequest_unstable,
+  MlxEngineReplicaProgressRequest_unstable,
+  MlxEngineReplicaProgressResponse_unstable,
+  MlxEngineReplicaPullRequest_unstable,
+  MlxEngineReplicaTargetsRequest_unstable,
+  MlxEngineReplicaTargetsResponse_unstable,
+  MlxEngineReplicateRequest_unstable,
+  MlxEngineReplicateResponse_unstable,
   MlxEngineSettingsReadRequest_unstable,
   MlxEngineSettingsResponse_unstable,
   MlxEngineSettingsUpdateRequest_unstable,
@@ -308,8 +318,12 @@ import {
   zMlxEngineBrowseResponse_unstable,
   zMlxEngineDownloadProgressResponse_unstable,
   zMlxEngineHfSearchResponse_unstable,
+  zMlxEngineLinkFactsResponse_unstable,
   zMlxEngineModelCardResponse_unstable,
   zMlxEngineModelsListResponse_unstable,
+  zMlxEngineReplicaProgressResponse_unstable,
+  zMlxEngineReplicaTargetsResponse_unstable,
+  zMlxEngineReplicateResponse_unstable,
   zMlxEngineSettingsResponse_unstable,
   zMlxEngineStatusResponse_unstable,
   zOnboardingImportApplyResponse_unstable,
@@ -1680,6 +1694,69 @@ export class GooseExtClient {
   ): Promise<void> {
     await this.conn.extMethod(
       "_goose/unstable/mlxEngine/downloadCancel",
+      params,
+    );
+  }
+
+  async mlxEngineLinkFacts_unstable(
+    params: MlxEngineLinkFactsRequest_unstable,
+  ): Promise<MlxEngineLinkFactsResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/linkFacts",
+      params,
+    );
+    return zMlxEngineLinkFactsResponse_unstable.parse(
+      raw,
+    ) as MlxEngineLinkFactsResponse_unstable;
+  }
+
+  async mlxEngineReplicaTargets_unstable(
+    params: MlxEngineReplicaTargetsRequest_unstable,
+  ): Promise<MlxEngineReplicaTargetsResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/replicaTargets",
+      params,
+    );
+    return zMlxEngineReplicaTargetsResponse_unstable.parse(
+      raw,
+    ) as MlxEngineReplicaTargetsResponse_unstable;
+  }
+
+  async mlxEngineReplicate_unstable(
+    params: MlxEngineReplicateRequest_unstable,
+  ): Promise<MlxEngineReplicateResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/replicate",
+      params,
+    );
+    return zMlxEngineReplicateResponse_unstable.parse(
+      raw,
+    ) as MlxEngineReplicateResponse_unstable;
+  }
+
+  async mlxEngineReplicaPull_unstable(
+    params: MlxEngineReplicaPullRequest_unstable,
+  ): Promise<void> {
+    await this.conn.extMethod("_goose/unstable/mlxEngine/replicaPull", params);
+  }
+
+  async mlxEngineReplicaProgress_unstable(
+    params: MlxEngineReplicaProgressRequest_unstable,
+  ): Promise<MlxEngineReplicaProgressResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/replicaProgress",
+      params,
+    );
+    return zMlxEngineReplicaProgressResponse_unstable.parse(
+      raw,
+    ) as MlxEngineReplicaProgressResponse_unstable;
+  }
+
+  async mlxEngineReplicaCancel_unstable(
+    params: MlxEngineReplicaCancelRequest_unstable,
+  ): Promise<void> {
+    await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/replicaCancel",
       params,
     );
   }
