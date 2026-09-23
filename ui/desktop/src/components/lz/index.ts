@@ -16,3 +16,6 @@ export { EmptyState, type EmptyStateProps } from './EmptyState';
 export { KeyValue, type KeyValueItem, type KeyValueProps } from './KeyValue';
 export { Toolbar, type ToolbarProps, type ToolbarSearch } from './Toolbar';
 export { Panel, type PanelProps } from './Panel';
+export { Checkbox, type CheckboxProps } from './Checkbox';
+export { Disclosure, type DisclosureProps } from './Disclosure';
+export { Combobox, type ComboboxOption, type ComboboxProps } from './Combobox';

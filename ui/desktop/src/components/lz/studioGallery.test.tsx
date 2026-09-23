@@ -2,7 +2,10 @@ import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import {
   Button,
+  Checkbox,
   Chip,
+  Combobox,
+  Disclosure,
   DataTable,
   EmptyState,
   KeyValue,
@@ -67,6 +70,32 @@ function Gallery() {
           { value: 'b', label: 'B' },
         ]}
         value="b"
+        onChange={() => {}}
+      />
+      <Segmented
+        variant="underline"
+        aria-label="seg-underline"
+        options={[
+          { value: 'a', label: 'A' },
+          { value: 'b', label: 'B', disabled: true },
+        ]}
+        value="a"
+        onChange={() => {}}
+      />
+      <Checkbox checked label="On" description="Described" onChange={() => {}} />
+      <Checkbox checked={false} label="Off" onChange={() => {}} disabled />
+      <Checkbox checked variant="card" label="Card on" onChange={() => {}} />
+      <Checkbox checked={false} variant="card" label="Card off" onChange={() => {}} />
+      <Disclosure title="Open" defaultOpen meta={<Chip>m</Chip>}>
+        body
+      </Disclosure>
+      <Disclosure title="Plain" variant="plain">
+        body
+      </Disclosure>
+      <Combobox
+        aria-label="combo"
+        options={[{ value: 'a', hint: 'h' }]}
+        value="a"
         onChange={() => {}}
       />
       <Button variant="primary" icon={<svg />}>

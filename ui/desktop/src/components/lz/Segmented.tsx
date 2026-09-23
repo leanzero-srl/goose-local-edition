@@ -66,6 +66,14 @@ export interface SegmentedProps<V extends string> extends Omit<
   disabled?: boolean;
   /** `tabs` mode: render each segment yourself (a Radix `Tabs.Trigger`) on the recipe handed in. */
   renderOption?: (args: SegmentedRenderOption<V>) => ReactNode;
+  /**
+   * `solid` (default): the outlined strip whose active segment is the accent fill — a view's own
+   * switch. `underline`: a SUBORDINATE section switch nested under a page that already has a solid
+   * strip — plain text segments, the active one in ink with a 2px accent bar under it. It draws no
+   * hairline of its own: it sits at the bottom of a row that carries `border-b`, and the active
+   * bar overlaps that hairline (`-mb-px`).
+   */
+  variant?: 'solid' | 'underline';
 }
 
 const SIZE = { sm: 'h-6 px-2 text-[11px]', md: 'h-7 px-2.5 text-[12px]' } as const;
@@ -80,7 +88,17 @@ const ROLE: Record<SegmentedMode, string> = {
  * The segment recipe. A locked strip keeps its selection readable: the active segment stays the
  * accent fill and only the others take the solid disabled neutral — never an opacity.
  */
-function segmentClass(active: boolean, size: 'sm' | 'md'): string {
+function segmentClass(active: boolean, size: 'sm' | 'md', variant: 'solid' | 'underline'): string {
+  if (variant === 'underline') {
+    return cx(
+      'inline-flex h-9 items-center gap-1.5 whitespace-nowrap border-b-2 px-0.5 text-lz-body [&_svg]:size-3.5 [&_svg]:shrink-0',
+      active
+        ? 'border-lz-accent font-lz-semibold text-lz-ink'
+        : 'border-transparent font-lz-medium text-lz-ink-2 hover:border-lz-border-strong hover:text-lz-ink disabled:pointer-events-none disabled:text-lz-ink-3',
+      FOCUS,
+      MOTION
+    );
+  }
   return cx(
     'inline-flex items-center gap-1.5 whitespace-nowrap rounded-[4px] font-lz-medium [&_svg]:size-3.5 [&_svg]:shrink-0',
     SIZE[size],
@@ -108,6 +126,7 @@ function SegmentedInner<V extends string>(
     as: mode = 'radiogroup',
     disabled = false,
     renderOption,
+    variant = 'solid',
     role,
     onKeyDown: onKeyDownProp,
     ...rest
@@ -143,17 +162,22 @@ function SegmentedInner<V extends string>(
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
       data-testid="lz-segmented"
+      data-variant={variant}
       className={cx(
-        'inline-flex items-center gap-0.5 bg-lz-surface p-0.5',
-        SURFACE.outline,
-        RADIUS.control,
+        variant === 'underline'
+          ? '-mb-px inline-flex items-end gap-5'
+          : cx(
+              'inline-flex items-center gap-0.5 bg-lz-surface p-0.5',
+              SURFACE.outline,
+              RADIUS.control
+            ),
         className
       )}
     >
       {options.map((o) => {
         const active = o.value === value;
         const locked = disabled || Boolean(o.disabled);
-        const recipe = segmentClass(active, size);
+        const recipe = segmentClass(active, size, variant);
         const content = (
           <>
             {o.icon != null && <span aria-hidden>{o.icon}</span>}
