@@ -2638,12 +2638,12 @@ impl Agent {
 
                             if compaction_attempts >= 2 {
                                 error!("Context limit exceeded after compaction - prompt too large");
-                                yield AgentEvent::Message(
-                                    Message::assistant().with_system_notification(
-                                        SystemNotificationType::InlineMessage,
-                                        "Unable to continue: Context limit still exceeded after compaction. Try using a shorter message, a model with a larger context window, or start a new session."
-                                    )
-                                );
+                                let message = Message::assistant().with_system_notification(
+                                    SystemNotificationType::InlineMessage,
+                                    "Unable to continue: Context limit still exceeded after compaction. Try using a shorter message, a model with a larger context window, or start a new session."
+                                ).user_only();
+                                messages_to_add.push(message.clone());
+                                yield AgentEvent::Message(message);
                                 break;
                             }
 
@@ -2681,11 +2681,11 @@ impl Agent {
                                     #[cfg(feature = "telemetry")]
                                     crate::posthog::emit_error("compaction_failed", &e.to_string());
                                     error!("Compaction failed: {}", e);
-                                    yield AgentEvent::Message(
-                                        Message::assistant().with_text(
-                                            format!("Ran into this error trying to compact: {e}.\n\nPlease try again or create a new session")
-                                        )
-                                    );
+                                    let message = Message::assistant().with_text(
+                                        format!("Ran into this error trying to compact: {e}.\n\nPlease try again or create a new session")
+                                    ).user_only();
+                                    messages_to_add.push(message.clone());
+                                    yield AgentEvent::Message(message);
                                     break;
                                 }
                             }
@@ -2706,13 +2706,13 @@ impl Agent {
                                 "top_up_url": top_up_url,
                             });
 
-                            yield AgentEvent::Message(
-                                Message::assistant().with_system_notification_with_data(
-                                    SystemNotificationType::CreditsExhausted,
-                                    user_msg,
-                                    notification_data,
-                                )
-                            );
+                            let message = Message::assistant().with_system_notification_with_data(
+                                SystemNotificationType::CreditsExhausted,
+                                user_msg,
+                                notification_data,
+                            ).user_only();
+                            messages_to_add.push(message.clone());
+                            yield AgentEvent::Message(message);
                             break;
                         }
                         Err(ref provider_err @ ProviderError::Refusal { ref details, ref category }) => {
@@ -2722,9 +2722,11 @@ impl Agent {
                             error!("Error: {}", provider_err);
 
                             let category = category.as_deref().map(|c| format!("\n\nCategory: {c}")).unwrap_or_default();
-                            yield AgentEvent::Message(Message::assistant().with_text(format!(
+                            let message = Message::assistant().with_text(format!(
                                 "The provider refused this request.\n\n{details}{category}\n\nPlease start a new session to continue — resending this conversation is likely to be refused again."
-                            )));
+                            )).user_only();
+                            messages_to_add.push(message.clone());
+                            yield AgentEvent::Message(message);
                             // A refusal is terminal: skip goal/grind nudges and
                             // recipe retry_config, which would resend the same
                             // refused conversation.
@@ -2736,11 +2738,11 @@ impl Agent {
                             #[cfg(feature = "telemetry")]
                             crate::posthog::emit_error(provider_err.telemetry_type(), &provider_err.to_string());
                             error!("Error: {}", provider_err);
-                            yield AgentEvent::Message(
-                                Message::assistant().with_text(
-                                    format!("{provider_err}\n\nPlease resend your message to try again.")
-                                )
-                            );
+                            let message = Message::assistant().with_text(
+                                format!("{provider_err}\n\nPlease resend your message to try again.")
+                            ).user_only();
+                            messages_to_add.push(message.clone());
+                            yield AgentEvent::Message(message);
                             break;
                         }
                         Err(ref provider_err) => {
@@ -2748,11 +2750,11 @@ impl Agent {
                             #[cfg(feature = "telemetry")]
                             crate::posthog::emit_error(provider_err.telemetry_type(), &provider_err.to_string());
                             error!("Error: {}", provider_err);
-                            yield AgentEvent::Message(
-                                Message::assistant().with_text(
-                                    format!("Ran into this error: {provider_err}.\n\nPlease retry if you think this is a transient or recoverable error.")
-                                )
-                            );
+                            let message = Message::assistant().with_text(
+                                format!("Ran into this error: {provider_err}.\n\nPlease retry if you think this is a transient or recoverable error.")
+                            ).user_only();
+                            messages_to_add.push(message.clone());
+                            yield AgentEvent::Message(message);
                             break;
                         }
                     }
@@ -4092,6 +4094,96 @@ echo start >> "$PLUGIN_ROOT/hook.log"
             provider.call_count.load(Ordering::SeqCst),
             1,
             "a refused request must not be resent"
+        );
+        Ok(())
+    }
+
+    /// Fails every turn with the swarm router's refusal and records what each call was shown.
+    struct NoNodeProvider {
+        seen: std::sync::Mutex<Vec<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::base::Provider for NoNodeProvider {
+        async fn stream(
+            &self,
+            _model_config: &goose_providers::model::ModelConfig,
+            _system_prompt: &str,
+            messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push(messages.iter().map(Message::as_concat_text).collect());
+            Ok(Box::pin(futures::stream::once(async {
+                Err(ProviderError::ExecutionError(
+                    "swarm chat: no node can serve this turn — mihai-mlx: MLX engine is not listening on http://127.0.0.1:8090".to_string(),
+                ))
+            })))
+        }
+
+        fn get_name(&self) -> &str {
+            "no-node"
+        }
+    }
+
+    /// A failed turn is part of the session: reopening it must show the failure, not the user's
+    /// message followed by silence. It is persisted USER-ONLY, so the next provider call never
+    /// sees the agent's own error text as something the assistant said.
+    #[tokio::test]
+    async fn a_provider_failure_is_persisted_for_the_user_and_hidden_from_the_model() -> Result<()>
+    {
+        let temp_dir = tempfile::tempdir()?;
+        let provider = Arc::new(NoNodeProvider {
+            seen: std::sync::Mutex::new(Vec::new()),
+        });
+        let hook_manager = crate::hooks::HookManager::from_plugins_for_test(vec![]);
+        let (agent, session_id) =
+            create_test_agent(temp_dir.path().join("data"), hook_manager, provider.clone()).await?;
+
+        for text in ["first", "second"] {
+            let session_config = SessionConfig {
+                id: session_id.clone(),
+                schedule_id: None,
+                max_turns: Some(10),
+                retry_config: None,
+            };
+            let reply_stream = agent
+                .reply(Message::user().with_text(text), session_config, None)
+                .await?;
+            tokio::pin!(reply_stream);
+            while let Some(event) = reply_stream.next().await {
+                event?;
+            }
+        }
+
+        let session = agent
+            .config
+            .session_manager
+            .get_session(&session_id, true)
+            .await?;
+        let stored = session.conversation.expect("conversation loaded");
+        let failures: Vec<&Message> = stored
+            .messages()
+            .iter()
+            .filter(|m| m.as_concat_text().contains("no node can serve this turn"))
+            .collect();
+        assert_eq!(failures.len(), 2, "each failed turn leaves its reply");
+        for failure in &failures {
+            assert_eq!(failure.role, rmcp::model::Role::Assistant);
+            assert!(failure.metadata.user_visible);
+            assert!(!failure.metadata.agent_visible);
+        }
+
+        let seen = provider.seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert!(
+            seen[1]
+                .iter()
+                .all(|text| !text.contains("no node can serve this turn")),
+            "the second call was shown the first failure: {:?}",
+            seen[1]
         );
         Ok(())
     }
