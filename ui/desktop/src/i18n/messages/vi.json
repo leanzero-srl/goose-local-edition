@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "Thêm dự án"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "Tiếp tục một phiên gần đây, trả lời điều tác tử đang chờ, hoặc bắt đầu mới."
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "Tiếp tục từ chỗ bạn đã dừng"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "Không thể đọc bàn làm việc này: {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "Thêm một thư mục dự án, sau đó bắt đầu phiên từ thanh bên."
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "Bắt đầu từ một dự án"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "Chọn một dự án trong thanh bên và dùng “+ Phiên mới tại đây” của nó."
+  "projectLanding.needsTitle": {
+    "defaultMessage": "Đang chờ bạn"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "Phiên mới trong {project}"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "Chưa có phiên nào. Bắt đầu phiên đầu tiên trong {project}."
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "Câu hỏi đang mở: {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "Bản nháp cần duyệt: {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "Phiên gần đây"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "Không thể tải các phiên của bạn: {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "Không thể bắt đầu phiên"
   },
   "projectsSection.addProject": {
     "defaultMessage": "Thêm thư mục dự án"

@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "प्रोजेक्ट जोड़ें"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "हाल का सत्र फिर से शुरू करें, किसी एजेंट के इंतज़ार का जवाब दें, या नया शुरू करें।"
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "जहाँ छोड़ा था वहीं से शुरू करें"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "यह डेस्क पढ़ी नहीं जा सकी: {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "एक प्रोजेक्ट फ़ोल्डर जोड़ें, फिर साइडबार से सत्र शुरू करें।"
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "किसी प्रोजेक्ट से शुरू करें"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "साइडबार में कोई प्रोजेक्ट चुनें और उसका “+ यहाँ नया सत्र” उपयोग करें।"
+  "projectLanding.needsTitle": {
+    "defaultMessage": "आपका इंतज़ार"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "{project} में नया सत्र"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "अभी कोई सत्र नहीं। पहला सत्र {project} में शुरू करें।"
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "खुले प्रश्न: {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "स्वीकृति के लिए ड्राफ़्ट: {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "हाल के सत्र"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "फिर कोशिश करें"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "आपके सत्र लोड नहीं हो सके: {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "सत्र शुरू नहीं हो सका"
   },
   "projectsSection.addProject": {
     "defaultMessage": "प्रोजेक्ट फ़ोल्डर जोड़ें"

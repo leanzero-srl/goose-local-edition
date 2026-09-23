@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "新增專案"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "繼續最近的工作階段、回應代理在等的事，或重新開始。"
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "從上次停下的地方繼續"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "無法讀取此工作台：{error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "新增一個專案資料夾，然後從側邊欄開始交談。"
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "從專案開始"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "在側邊欄選擇一個專案，使用它的「+ 在此新增交談」。"
+  "projectLanding.needsTitle": {
+    "defaultMessage": "等你處理"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "在 {project} 中新增工作階段"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "還沒有工作階段。在 {project} 中開始第一個。"
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "未回答的問題：{count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "待核准的草稿：{count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "最近的工作階段"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "重試"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "無法載入你的工作階段：{error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "無法開始工作階段"
   },
   "projectsSection.addProject": {
     "defaultMessage": "新增專案資料夾"

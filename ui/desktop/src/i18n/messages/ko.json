@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "프로젝트 추가"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "최근 세션을 이어 가거나, 에이전트가 기다리는 일에 답하거나, 새로 시작하세요."
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "하던 곳에서 이어서 하기"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "이 데스크를 읽을 수 없습니다: {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "프로젝트 폴더를 추가한 뒤 사이드바에서 세션을 시작하세요."
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "프로젝트에서 시작"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "사이드바에서 프로젝트를 선택하고 “+ 여기서 새 세션”을 사용하세요."
+  "projectLanding.needsTitle": {
+    "defaultMessage": "나를 기다리는 일"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "{project}에서 새 세션"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "아직 세션이 없습니다. {project}에서 첫 세션을 시작하세요."
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "열린 질문: {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "승인할 초안: {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "최근 세션"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "다시 시도"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "세션을 불러올 수 없습니다: {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "세션을 시작할 수 없습니다"
   },
   "projectsSection.addProject": {
     "defaultMessage": "프로젝트 폴더 추가"

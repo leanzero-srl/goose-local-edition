@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "Tambah projek"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "Sambung sesi terkini, jawab apa yang ditunggu ejen, atau mula semula."
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "Sambung dari tempat anda berhenti"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "Tidak dapat membaca meja ini: {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "Tambah folder projek, kemudian mulakan sesi dari bar sisi."
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "Mula daripada projek"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "Pilih projek di bar sisi dan gunakan “+ Sesi baharu di sini” miliknya."
+  "projectLanding.needsTitle": {
+    "defaultMessage": "Menunggu anda"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "Sesi baharu dalam {project}"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "Belum ada sesi. Mulakan yang pertama dalam {project}."
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "Soalan terbuka: {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "Draf untuk diluluskan: {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "Sesi terkini"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "Cuba lagi"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "Tidak dapat memuatkan sesi anda: {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "Tidak dapat memulakan sesi"
   },
   "projectsSection.addProject": {
     "defaultMessage": "Tambah folder projek"

@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "Proje ekle"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "Son bir oturuma devam edin, bir ajanın beklediğini yanıtlayın ya da yeniden başlayın."
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "Kaldığınız yerden devam edin"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "Bu masa okunamadı: {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "Bir proje klasörü ekleyin, ardından oturumları kenar çubuğundan başlatın."
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "Bir projeden başlayın"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "Kenar çubuğundan bir proje seçin ve onun “+ Burada yeni oturum” seçeneğini kullanın."
+  "projectLanding.needsTitle": {
+    "defaultMessage": "Sizi bekliyor"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "{project} içinde yeni oturum"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "Henüz oturum yok. İlkini {project} içinde başlatın."
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "Açık sorular: {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "Onay bekleyen taslaklar: {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "Son oturumlar"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "Yeniden dene"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "Oturumlarınız yüklenemedi: {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "Oturum başlatılamadı"
   },
   "projectsSection.addProject": {
     "defaultMessage": "Proje klasörü ekle"

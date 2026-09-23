@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "Add a project"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "Resume a recent session, answer what an agent is waiting on, or start fresh."
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "Pick up where you left off"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "Could not read this desk: {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "Add a project folder, then start sessions from it in the sidebar."
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "Start from a project"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "Pick a project in the sidebar and use its “+ New session here”."
+  "projectLanding.needsTitle": {
+    "defaultMessage": "Waiting on you"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "New session in {project}"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "No sessions yet. Start the first one in {project}."
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "Open questions: {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "Drafts to approve: {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "Recent sessions"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "Retry"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "Could not load your sessions: {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "Could not start a session"
   },
   "projectsSection.addProject": {
     "defaultMessage": "Add a project folder"

@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "添加项目"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "继续最近的会话、回应代理在等的事，或重新开始。"
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "从上次停下的地方继续"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "无法读取此工作台：{error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "添加一个项目文件夹，然后从侧边栏开始会话。"
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "从项目开始"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "在侧边栏选择一个项目，使用它的“+ 在此新建会话”。"
+  "projectLanding.needsTitle": {
+    "defaultMessage": "等你处理"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "在 {project} 中新建会话"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "还没有会话。在 {project} 中开始第一个。"
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "未回答的问题：{count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "待批准的草稿：{count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "最近的会话"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "重试"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "无法加载你的会话：{error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "无法开始会话"
   },
   "projectsSection.addProject": {
     "defaultMessage": "添加项目文件夹"

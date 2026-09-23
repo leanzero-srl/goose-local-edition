@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "Добавить проект"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "Продолжите недавний сеанс, ответьте на то, чего ждёт агент, или начните заново."
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "Продолжите с того места, где остановились"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "Не удалось прочитать этот стол: {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "Добавьте папку проекта, затем запускайте сессии из боковой панели."
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "Начните с проекта"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "Выберите проект в боковой панели и используйте его «+ Новая сессия здесь»."
+  "projectLanding.needsTitle": {
+    "defaultMessage": "Ждут вас"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "Новый сеанс в {project}"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "Сеансов пока нет. Начните первый в {project}."
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "Открытые вопросы: {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "Черновики на утверждение: {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "Недавние сеансы"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "Не удалось загрузить ваши сеансы: {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "Не удалось начать сеанс"
   },
   "projectsSection.addProject": {
     "defaultMessage": "Добавить папку проекта"

@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "Projekt hinzufügen"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "Setze eine letzte Sitzung fort, beantworte, worauf ein Agent wartet, oder fang neu an."
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "Mach dort weiter, wo du aufgehört hast"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "Dieser Schreibtisch konnte nicht gelesen werden: {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "Füge einen Projektordner hinzu und starte Sitzungen dann aus der Seitenleiste."
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "Mit einem Projekt beginnen"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "Wähle ein Projekt in der Seitenleiste und nutze dessen „+ Neue Sitzung hier“."
+  "projectLanding.needsTitle": {
+    "defaultMessage": "Wartet auf dich"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "Neue Sitzung in {project}"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "Noch keine Sitzungen. Starte die erste in {project}."
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "Offene Fragen: {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "Entwürfe zur Freigabe: {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "Letzte Sitzungen"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "Erneut versuchen"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "Deine Sitzungen konnten nicht geladen werden: {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "Sitzung konnte nicht gestartet werden"
   },
   "projectsSection.addProject": {
     "defaultMessage": "Projektordner hinzufügen"

@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "Ajouter un projet"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "Reprenez une session récente, répondez à ce qu’un agent attend, ou repartez de zéro."
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "Reprenez là où vous vous êtes arrêté"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "Impossible de lire ce bureau : {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "Ajoutez un dossier de projet, puis démarrez des sessions depuis la barre latérale."
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "Commencer depuis un projet"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "Choisissez un projet dans la barre latérale et utilisez son « + Nouvelle session ici »."
+  "projectLanding.needsTitle": {
+    "defaultMessage": "En attente de vous"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "Nouvelle session dans {project}"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "Aucune session pour l’instant. Démarrez la première dans {project}."
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "Questions ouvertes : {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "Brouillons à approuver : {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "Sessions récentes"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "Réessayer"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "Impossible de charger vos sessions : {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "Impossible de démarrer une session"
   },
   "projectsSection.addProject": {
     "defaultMessage": "Ajouter un dossier de projet"

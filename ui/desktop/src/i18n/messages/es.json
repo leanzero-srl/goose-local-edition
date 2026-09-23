@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "Añadir un proyecto"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "Retoma una sesión reciente, responde lo que espera un agente o empieza de cero."
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "Retoma donde lo dejaste"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "No se pudo leer este escritorio: {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "Añade una carpeta de proyecto y luego inicia sesiones desde la barra lateral."
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "Empieza desde un proyecto"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "Elige un proyecto en la barra lateral y usa su «+ Nueva sesión aquí»."
+  "projectLanding.needsTitle": {
+    "defaultMessage": "Te esperan"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "Nueva sesión en {project}"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "Aún no hay sesiones. Empieza la primera en {project}."
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "Preguntas abiertas: {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "Borradores por aprobar: {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "Sesiones recientes"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "Reintentar"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "No se pudieron cargar tus sesiones: {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "No se pudo iniciar una sesión"
   },
   "projectsSection.addProject": {
     "defaultMessage": "Añadir una carpeta de proyecto"

@@ -3143,6 +3143,15 @@
   "projectLanding.addProject": {
     "defaultMessage": "プロジェクトを追加"
   },
+  "projectLanding.continueSubtitle": {
+    "defaultMessage": "最近のセッションを再開するか、エージェントが待っていることに答えるか、新しく始めましょう。"
+  },
+  "projectLanding.continueTitle": {
+    "defaultMessage": "前回の続きから"
+  },
+  "projectLanding.deskUnreadable": {
+    "defaultMessage": "このデスクを読み込めませんでした: {error}"
+  },
   "projectLanding.emptyHint": {
     "defaultMessage": "プロジェクトフォルダーを追加し、サイドバーからセッションを開始してください。"
   },
@@ -3170,8 +3179,32 @@
   "projectLanding.headline": {
     "defaultMessage": "プロジェクトから始める"
   },
-  "projectLanding.pickHint": {
-    "defaultMessage": "サイドバーでプロジェクトを選び、その「+ ここで新しいセッション」を使ってください。"
+  "projectLanding.needsTitle": {
+    "defaultMessage": "あなたを待っています"
+  },
+  "projectLanding.newSessionIn": {
+    "defaultMessage": "{project} で新しいセッション"
+  },
+  "projectLanding.noSessionsYet": {
+    "defaultMessage": "まだセッションがありません。{project} で最初のセッションを始めましょう。"
+  },
+  "projectLanding.openAsks": {
+    "defaultMessage": "未回答の質問: {count}"
+  },
+  "projectLanding.pendingDrafts": {
+    "defaultMessage": "承認待ちの下書き: {count}"
+  },
+  "projectLanding.recentTitle": {
+    "defaultMessage": "最近のセッション"
+  },
+  "projectLanding.retry": {
+    "defaultMessage": "再試行"
+  },
+  "projectLanding.sessionsFailed": {
+    "defaultMessage": "セッションを読み込めませんでした: {error}"
+  },
+  "projectLanding.startFailed": {
+    "defaultMessage": "セッションを開始できませんでした"
   },
   "projectsSection.addProject": {
     "defaultMessage": "プロジェクトフォルダを追加"
