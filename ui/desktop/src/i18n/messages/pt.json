@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "Testar"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "Auto = o motor decide (desligado quando ferramentas são usadas)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "Esforço"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "O raciocínio está desligado, então o nível de esforço não muda nada."
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "Os níveis vêm do template de chat deste modelo. Uma sessão mantém o nível com que começou; uma alteração vale para novas sessões."
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "Padrão do modelo"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "Padrão do modelo ({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "O template de chat deste modelo não declara controles de raciocínio."
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level} (não está no template)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "Os controles de raciocínio precisam do template de chat do modelo, e este modelo não está na pasta de modelos."
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "O motor não informou os controles de raciocínio deste modelo."
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "Desligado"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "Ligado"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "Raciocínio"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "Controles de raciocínio indisponíveis: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Capacidades completas de modificação de arquivos: edite, crie e exclua arquivos livremente."
   },

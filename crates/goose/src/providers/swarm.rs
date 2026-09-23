@@ -79,6 +79,8 @@ pub struct SwarmProvider {
     command: String,
     /// The directory a run scaffolds into. `None` → the goose process cwd.
     working_dir: Option<PathBuf>,
+    /// This session's MLX thinking choices, captured per served model on its first routed turn.
+    mlx_template_kwargs: super::swarm_router::SessionTemplateKwargs,
 }
 
 /// What the engine's OWN event log says about a run. Read after the child exits, so a failed run can be
@@ -369,6 +371,7 @@ impl ProviderDef for SwarmProvider {
                 build_route_seen: std::sync::atomic::AtomicBool::new(false),
                 command: Self::resolve_command(),
                 working_dir: None,
+                mlx_template_kwargs: Default::default(),
             })
         })
     }
@@ -384,6 +387,7 @@ impl ProviderDef for SwarmProvider {
                 build_route_seen: std::sync::atomic::AtomicBool::new(false),
                 command: Self::resolve_command(),
                 working_dir: Some(working_dir),
+                mlx_template_kwargs: Default::default(),
             })
         })
     }
@@ -625,7 +629,13 @@ impl Provider for SwarmProvider {
         if super::cli_common::is_session_description_request(system) {
             if ai_session_name_enabled() {
                 return session_title_stream(
-                    super::swarm_router::route_chat(model_config, system, messages, tools),
+                    super::swarm_router::route_chat(
+                        model_config,
+                        system,
+                        messages,
+                        tools,
+                        &self.mlx_template_kwargs,
+                    ),
                     &model_config.model_name,
                     messages,
                 )
@@ -640,7 +650,14 @@ impl Provider for SwarmProvider {
 
         match route {
             Route::Chat => {
-                super::swarm_router::route_chat(model_config, system, messages, tools).await
+                super::swarm_router::route_chat(
+                    model_config,
+                    system,
+                    messages,
+                    tools,
+                    &self.mlx_template_kwargs,
+                )
+                .await
             }
             Route::Build => self.run_build(model_config, messages).await,
         }
@@ -1093,6 +1110,7 @@ mod tests {
             build_route_seen: std::sync::atomic::AtomicBool::new(false),
             command: "/no/such/goose/binary".into(),
             working_dir: None,
+            mlx_template_kwargs: Default::default(),
         };
         assert!(
             !p.manages_own_context(),
@@ -1131,6 +1149,7 @@ mod tests {
             build_route_seen: std::sync::atomic::AtomicBool::new(true),
             command: "/no/such/goose/binary".into(),
             working_dir: None,
+            mlx_template_kwargs: Default::default(),
         };
         assert!(p.manages_own_context());
         let chat = ModelConfig::new(SWARM_CHAT_MODEL);
@@ -1158,6 +1177,7 @@ mod tests {
             build_route_seen: std::sync::atomic::AtomicBool::new(false),
             command: "goose".into(),
             working_dir: Some(std::env::temp_dir().join("goose_no_such_run_dir")),
+            mlx_template_kwargs: Default::default(),
         };
         let noisy = "▶  EXECUTE   subtasks run IN PARALLEL across the fleet\n\
                      idle-model judge: on (GOOSE_SWARM_JUDGE=0 to disable)\n\

@@ -2280,6 +2280,43 @@ pub struct MlxModelProfileDto {
     /// the text lane (`--text-only`). No effect on a checkpoint that declares no vision.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_only: Option<bool>,
+    /// Sent as `chat_template_kwargs.enable_thinking` on every turn a session routes to this
+    /// model: `"on"` | `"off"`. Absent = auto — nothing is sent and the engine decides (Rapid-MLX
+    /// turns thinking off whenever the request carries tools). Captured once per session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<MlxThinkingModeDto>,
+    /// One of the model's `MlxThinkingCapabilitiesDto::effort_levels`, sent as
+    /// `chat_template_kwargs.reasoning_effort`. Absent = the template's own default. Captured once
+    /// per session (it rewrites the system prompt, so a mid-session change would void the cache).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MlxThinkingModeDto {
+    On,
+    Off,
+}
+
+/// What the model's own chat template lets a request steer about reasoning, proven on the
+/// template's Jinja AST with the engine's detection rules.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxThinkingCapabilitiesDto {
+    /// `"enable_thinking"` or `"reasoning"`; absent = the template has no on/off switch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_switch: Option<String>,
+    /// The template's own effort vocabulary in template order; empty = none declared.
+    pub effort_levels: Vec<String>,
+    /// The level the template renders when a request names none; absent when not provable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+    /// The template reads `preserve_thinking` (history rows keep their think block).
+    pub preserve_thinking: bool,
+    /// The template renders a `<think>`…`</think>` span, the shape a reasoning token budget can
+    /// force-close (necessary, not sufficient — the engine skips it on tool requests).
+    pub budget_forcible: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
@@ -2378,6 +2415,12 @@ pub struct MlxLocalModelDto {
     /// Files provably missing or unfinished — shards the model's safetensors index
     /// names that are absent/empty, plus `.part` leftovers. 0 when complete.
     pub missing_files: u32,
+    /// The reasoning controls the model's chat template declares; absent exactly when
+    /// `thinking_error` says why (no template in the directory, unreadable, unparseable).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<MlxThinkingCapabilitiesDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_error: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]

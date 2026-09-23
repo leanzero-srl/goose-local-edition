@@ -52,6 +52,7 @@ import {
   type Tone,
 } from '../lz';
 import { mlxErrorMessage } from './mlxErrorMessage';
+import { MlxThinkingFields } from './MlxThinkingFields';
 import {
   mlxEngineBrowse,
   mlxEngineBrowseFilters,
@@ -173,7 +174,9 @@ export const CONTEXT_LIMIT_FIELD: NumericFieldSpec = {
  * ''; `textOnly` is '' (auto = text lane) | 'true' | 'false'.
  */
 export type LaneSettingKey = 'speculative' | 'adapterPath' | 'textOnly';
-export type ProfileDraftKey = NumericSettingKey | LaneSettingKey;
+/** `thinking` is '' (auto) | 'on' | 'off'; `reasoningEffort` is '' (template default) | a level. */
+export type ThinkingSettingKey = 'thinking' | 'reasoningEffort';
+export type ProfileDraftKey = NumericSettingKey | LaneSettingKey | ThinkingSettingKey;
 
 export type NumericDrafts = Record<ProfileDraftKey, string>;
 
@@ -181,7 +184,8 @@ const NUMERIC_KEYS: NumericSettingKey[] = [...SAMPLING_FIELDS, CONTEXT_LIMIT_FIE
   (f) => f.key
 );
 const LANE_KEYS: LaneSettingKey[] = ['speculative', 'adapterPath', 'textOnly'];
-const PROFILE_KEYS: ProfileDraftKey[] = [...NUMERIC_KEYS, ...LANE_KEYS];
+const THINKING_KEYS: ThinkingSettingKey[] = ['thinking', 'reasoningEffort'];
+const PROFILE_KEYS: ProfileDraftKey[] = [...NUMERIC_KEYS, ...LANE_KEYS, ...THINKING_KEYS];
 
 export function draftsFromProfile(profile: MlxModelProfile | undefined): NumericDrafts {
   const drafts = {} as NumericDrafts;
@@ -192,6 +196,8 @@ export function draftsFromProfile(profile: MlxModelProfile | undefined): Numeric
   drafts.speculative = profile?.speculative ?? '';
   drafts.adapterPath = profile?.adapterPath ?? '';
   drafts.textOnly = profile?.textOnly == null ? '' : String(profile.textOnly);
+  drafts.thinking = profile?.thinking ?? '';
+  drafts.reasoningEffort = profile?.reasoningEffort ?? '';
   return drafts;
 }
 
@@ -211,6 +217,9 @@ export function profileFromDrafts(drafts: NumericDrafts): MlxModelProfile {
   if (adapterPath !== '') profile.adapterPath = adapterPath;
   if (drafts.textOnly === 'true') profile.textOnly = true;
   else if (drafts.textOnly === 'false') profile.textOnly = false;
+  if (drafts.thinking === 'on' || drafts.thinking === 'off') profile.thinking = drafts.thinking;
+  const effort = drafts.reasoningEffort.trim();
+  if (effort !== '') profile.reasoningEffort = effort;
   return profile;
 }
 
@@ -1028,6 +1037,11 @@ function SamplingSection(props: SamplingSectionProps) {
                 onText={(v) => setDraft('contextLimit', v)}
               />
               <LaneFields drafts={drafts} setDraft={setDraft} />
+              <MlxThinkingFields
+                model={models.find((m) => m.id === selectedModelId)}
+                drafts={drafts}
+                setDraft={setDraft}
+              />
             </div>
           )}
           <p className={TYPE.meta}>

@@ -5297,6 +5297,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "libc",
+ "minijinja",
  "reqwest 0.13.4",
  "serde",
  "serde_json",

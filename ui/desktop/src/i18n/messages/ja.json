@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "テスト"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "自動"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "自動 = エンジンが判断します（ツール使用時はオフ）"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "労力"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "思考がオフのため、労力レベルは何も変えません。"
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "レベルはこのモデルのチャットテンプレートから取得されます。セッションは開始時のレベルを保ち、変更は新しいセッションに適用されます。"
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "モデルの既定値"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "モデルの既定値（{level}）"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "このモデルのチャットテンプレートは思考の制御を宣言していません。"
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level}（テンプレートにありません）"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "思考の制御にはモデルのチャットテンプレートが必要ですが、このモデルはモデルフォルダーにありません。"
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "エンジンはこのモデルの思考の制御を報告しませんでした。"
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "オフ"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "オン"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "思考"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "思考の制御を利用できません: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "ファイルを自由に編集、作成、削除できる完全なファイル変更権限。"
   },

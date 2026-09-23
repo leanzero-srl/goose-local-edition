@@ -108,6 +108,24 @@ pub struct ModelProfile {
     /// `None`/`Some(true)` pin it to the text lane (`--text-only`). No effect on a
     /// checkpoint whose config.json declares no vision.
     pub text_only: Option<bool>,
+    /// Request-side reasoning switch, sent as `chat_template_kwargs.enable_thinking` on every turn
+    /// of a session routed to this model. `None` = auto: nothing is sent and the engine decides
+    /// (Rapid-MLX turns thinking OFF whenever a request carries tools). No argv effect.
+    pub thinking: Option<ThinkingMode>,
+    /// A level from the template's own effort vocabulary (`thinking::ThinkingCapabilities::
+    /// effort_levels`), sent as `chat_template_kwargs.reasoning_effort`. `None` = the template's
+    /// default. Locked per session: it rewrites the system prompt, so changing it mid-session
+    /// would void the prefix cache. No argv effect.
+    pub reasoning_effort: Option<String>,
+}
+
+/// The explicit thinking choices; auto is the ABSENCE of a choice (`Option::None`), never a variant,
+/// so a profile that never touched the switch sends exactly what it sent before the switch existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThinkingMode {
+    On,
+    Off,
 }
 
 impl ModelProfile {
@@ -1393,6 +1411,30 @@ mod tests {
         assert_eq!(full.adapter_path.as_deref(), Some("~/lora"));
         assert_eq!(full.text_only, Some(false));
         assert!(!full.is_empty());
+        assert_eq!(profile.thinking, None);
+        assert_eq!(profile.reasoning_effort, None);
+    }
+
+    #[test]
+    fn thinking_fields_round_trip_and_never_touch_the_argv() {
+        let profile: ModelProfile =
+            serde_json::from_str(r#"{"thinking":"on","reasoning_effort":"low"}"#).unwrap();
+        assert_eq!(profile.thinking, Some(ThinkingMode::On));
+        assert_eq!(profile.reasoning_effort.as_deref(), Some("low"));
+        assert_eq!(
+            serde_json::to_value(&profile).unwrap()["thinking"],
+            serde_json::json!("on")
+        );
+        assert!(serde_json::from_str::<ModelProfile>(r#"{"thinking":"auto"}"#).is_err());
+
+        let model = "pub/model";
+        let mut settings = EngineSettings {
+            model_id: Some(model.to_string()),
+            ..Default::default()
+        };
+        let before = build_serve_command(&settings, model).unwrap();
+        settings.model_profiles.insert(model.to_string(), profile);
+        assert_eq!(build_serve_command(&settings, model).unwrap(), before);
     }
 
     /// `status()` computes `restart_required = build_serve_command(&settings, mounted) != running_argv`;

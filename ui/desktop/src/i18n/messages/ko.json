@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "테스트"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "자동"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "자동 = 엔진이 결정합니다(도구 사용 시 꺼짐)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "노력"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "사고가 꺼져 있어 노력 수준은 아무것도 바꾸지 않습니다."
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "수준은 이 모델의 채팅 템플릿에서 가져옵니다. 세션은 시작할 때의 수준을 유지하며, 변경 사항은 새 세션에 적용됩니다."
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "모델 기본값"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "모델 기본값({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "이 모델의 채팅 템플릿은 사고 제어를 선언하지 않습니다."
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level}(템플릿에 없음)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "사고 제어에는 모델의 채팅 템플릿이 필요하지만 이 모델은 모델 폴더에 없습니다."
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "엔진이 이 모델의 사고 제어를 보고하지 않았습니다."
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "끄기"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "켜기"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "사고"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "사고 제어를 사용할 수 없음: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "파일을 자유롭게 편집, 생성, 삭제할 수 있습니다."
   },

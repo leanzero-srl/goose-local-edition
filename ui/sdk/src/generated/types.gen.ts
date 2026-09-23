@@ -2719,7 +2719,21 @@ export type MlxModelProfileDto = {
      * the text lane (`--text-only`). No effect on a checkpoint that declares no vision.
      */
     textOnly?: boolean | null;
+    /**
+     * Sent as `chat_template_kwargs.enable_thinking` on every turn a session routes to this
+     * model: `"on"` | `"off"`. Absent = auto — nothing is sent and the engine decides (Rapid-MLX
+     * turns thinking off whenever the request carries tools). Captured once per session.
+     */
+    thinking?: MlxThinkingModeDto | null;
+    /**
+     * One of the model's `MlxThinkingCapabilitiesDto::effort_levels`, sent as
+     * `chat_template_kwargs.reasoning_effort`. Absent = the template's own default. Captured once
+     * per session (it rewrites the system prompt, so a mid-session change would void the cache).
+     */
+    reasoningEffort?: string | null;
 };
+
+export type MlxThinkingModeDto = 'on' | 'off';
 
 /**
  * Persist MLX engine settings. A running engine keeps its old arguments; status reports
@@ -2763,6 +2777,40 @@ export type MlxLocalModelDto = {
      * names that are absent/empty, plus `.part` leftovers. 0 when complete.
      */
     missingFiles: number;
+    /**
+     * The reasoning controls the model's chat template declares; absent exactly when
+     * `thinking_error` says why (no template in the directory, unreadable, unparseable).
+     */
+    thinking?: MlxThinkingCapabilitiesDto | null;
+    thinkingError?: string | null;
+};
+
+/**
+ * What the model's own chat template lets a request steer about reasoning, proven on the
+ * template's Jinja AST with the engine's detection rules.
+ */
+export type MlxThinkingCapabilitiesDto = {
+    /**
+     * `"enable_thinking"` or `"reasoning"`; absent = the template has no on/off switch.
+     */
+    thinkingSwitch?: string | null;
+    /**
+     * The template's own effort vocabulary in template order; empty = none declared.
+     */
+    effortLevels: Array<string>;
+    /**
+     * The level the template renders when a request names none; absent when not provable.
+     */
+    defaultEffort?: string | null;
+    /**
+     * The template reads `preserve_thinking` (history rows keep their think block).
+     */
+    preserveThinking: boolean;
+    /**
+     * The template renders a `<think>`…`</think>` span, the shape a reasoning token budget can
+     * force-close (necessary, not sufficient — the engine skips it on tool requests).
+     */
+    budgetForcible: boolean;
 };
 
 /**

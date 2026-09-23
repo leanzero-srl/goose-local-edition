@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "Testen"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "Auto = die Engine entscheidet (aus, wenn Tools verwendet werden)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "Aufwand"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "Denken ist aus, daher ändert die Aufwandsstufe nichts."
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "Die Stufen stammen aus dem Chat-Template dieses Modells. Eine Sitzung behält die Stufe, mit der sie begonnen hat; eine Änderung gilt für neue Sitzungen."
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "Modellstandard"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "Modellstandard ({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "Das Chat-Template dieses Modells deklariert keine Denk-Steuerung."
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level} (nicht im Template)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "Die Denk-Steuerung braucht das Chat-Template des Modells, und dieses Modell liegt nicht im Modellordner."
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "Die Engine hat die Denk-Steuerung dieses Modells nicht gemeldet."
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "Aus"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "Ein"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "Denken"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "Denk-Steuerung nicht verfügbar: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Vollständige Dateiänderungsfunktionen, Dateien frei bearbeiten, erstellen und löschen."
   },

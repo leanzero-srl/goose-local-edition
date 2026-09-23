@@ -2714,6 +2714,51 @@
   "microphoneSelector.test": {
     "defaultMessage": "Uji"
   },
+  "mlxThinking.auto": {
+    "defaultMessage": "Auto"
+  },
+  "mlxThinking.autoNote": {
+    "defaultMessage": "Auto = enjin yang menentukan (mati apabila alat digunakan)"
+  },
+  "mlxThinking.effort": {
+    "defaultMessage": "Usaha"
+  },
+  "mlxThinking.effortIdle": {
+    "defaultMessage": "Berfikir dimatikan, jadi tahap usaha tidak mengubah apa-apa."
+  },
+  "mlxThinking.effortNote": {
+    "defaultMessage": "Tahap datang daripada templat sembang model ini. Sesi mengekalkan tahap semasa ia bermula; perubahan terpakai pada sesi baharu."
+  },
+  "mlxThinking.modelDefault": {
+    "defaultMessage": "Lalai model"
+  },
+  "mlxThinking.modelDefaultNamed": {
+    "defaultMessage": "Lalai model ({level})"
+  },
+  "mlxThinking.noControls": {
+    "defaultMessage": "Templat sembang model ini tidak mengisytiharkan kawalan berfikir."
+  },
+  "mlxThinking.notInTemplate": {
+    "defaultMessage": "{level} (tiada dalam templat)"
+  },
+  "mlxThinking.notLocal": {
+    "defaultMessage": "Kawalan berfikir memerlukan templat sembang model, dan model ini tiada dalam folder model."
+  },
+  "mlxThinking.notReported": {
+    "defaultMessage": "Enjin tidak melaporkan kawalan berfikir model ini."
+  },
+  "mlxThinking.off": {
+    "defaultMessage": "Mati"
+  },
+  "mlxThinking.on": {
+    "defaultMessage": "Hidup"
+  },
+  "mlxThinking.thinking": {
+    "defaultMessage": "Berfikir"
+  },
+  "mlxThinking.unavailable": {
+    "defaultMessage": "Kawalan berfikir tidak tersedia: {reason}"
+  },
   "modeSelectionItem.autonomousDescription": {
     "defaultMessage": "Keupayaan pengubahsuaian fail penuh, sunting, cipta dan padam fail secara bebas."
   },

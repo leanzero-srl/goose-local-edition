@@ -2843,6 +2843,8 @@ export const zMlxEngineSettingsReadRequest_unstable = z.object({
     ]).optional()
 });
 
+export const zMlxThinkingModeDto = z.enum(['on', 'off']);
+
 /**
  * Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each
  * mounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`.
@@ -2890,6 +2892,14 @@ export const zMlxModelProfileDto = z.object({
     ]).optional(),
     textOnly: z.union([
         z.boolean(),
+        z.null()
+    ]).optional(),
+    thinking: z.union([
+        zMlxThinkingModeDto,
+        z.null()
+    ]).optional(),
+    reasoningEffort: z.union([
+        z.string(),
         z.null()
     ]).optional()
 });
@@ -2967,11 +2977,37 @@ export const zMlxEngineModelsListRequest_unstable = z.object({
     ]).optional()
 });
 
+/**
+ * What the model's own chat template lets a request steer about reasoning, proven on the
+ * template's Jinja AST with the engine's detection rules.
+ */
+export const zMlxThinkingCapabilitiesDto = z.object({
+    thinkingSwitch: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    effortLevels: z.array(z.string()),
+    defaultEffort: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    preserveThinking: z.boolean(),
+    budgetForcible: z.boolean()
+});
+
 export const zMlxLocalModelDto = z.object({
     id: z.string(),
     sizeBytes: z.number().int().gte(0),
     complete: z.boolean(),
-    missingFiles: z.number().int().gte(0)
+    missingFiles: z.number().int().gte(0),
+    thinking: z.union([
+        zMlxThinkingCapabilitiesDto,
+        z.null()
+    ]).optional(),
+    thinkingError: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 export const zMlxEngineModelsListResponse_unstable = z.object({
