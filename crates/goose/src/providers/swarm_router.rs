@@ -23,6 +23,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use rmcp::model::{Role, Tool};
 use serde::Deserialize;
+use serde_json::{Map, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::base::{MessageStream, Provider};
@@ -30,7 +31,7 @@ use crate::config::{Config, ConfigError};
 use crate::conversation::message::Message;
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
-use goose_sidecar::engine::{EngineSettings, EngineStatus};
+use goose_sidecar::engine::{served_model_id, EngineSettings, EngineStatus};
 
 const SWARM_CONFIG_KEY: &str = "swarm";
 const LMSTUDIO_HOST_ENV: &str = "LMSTUDIO_HOST";
@@ -695,6 +696,120 @@ pub(crate) struct Turn<'a> {
     pub system: &'a str,
     pub messages: &'a [Message],
     pub tools: &'a [Tool],
+    /// The session's captured MLX thinking choices (see [`SessionTemplateKwargs`]).
+    pub session: &'a SessionTemplateKwargs,
+}
+
+/// Where an MLX sidecar node's per-model thinking choices come from: the model profile of the HF
+/// directory the node serves. `Ok(None)` = nothing to send.
+pub(crate) trait TemplateKwargsSource: Send + Sync {
+    fn template_kwargs(&self, served_model_id: &str) -> Result<Option<Map<String, Value>>, String>;
+}
+
+/// The live source: the persisted `mlx_engine` block the MLX window writes.
+struct ConfiguredTemplateKwargs;
+
+impl TemplateKwargsSource for ConfiguredTemplateKwargs {
+    fn template_kwargs(&self, served_model_id: &str) -> Result<Option<Map<String, Value>>, String> {
+        match Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY) {
+            Ok(settings) => profile_template_kwargs(&settings, served_model_id),
+            // No block: no profile exists, so there is no choice to send.
+            Err(ConfigError::NotFound(_)) => Ok(None),
+            Err(e) => Err(format!(
+                "the `mlx_engine` config block could not be read ({e}), so the thinking choices for '{served_model_id}' are unknown; nothing was routed"
+            )),
+        }
+    }
+}
+
+/// The served id names its HF directory through the settings: the configured model when its
+/// served id matches (an alias via `served_model_name` included), else the served id itself when
+/// no alias is configured. A served id no profile can be tied to sends nothing — unless some
+/// profile DOES carry thinking choices, which would then be silently dropped: that is an error.
+fn profile_template_kwargs(
+    settings: &EngineSettings,
+    served: &str,
+) -> Result<Option<Map<String, Value>>, String> {
+    let hf_id = settings
+        .model_id
+        .as_deref()
+        .filter(|id| served_model_id(settings, id) == served)
+        .or_else(|| settings.served_model_name.is_none().then_some(served));
+    if let Some(hf_id) = hf_id {
+        return Ok(settings
+            .model_profiles
+            .get(hf_id)
+            .and_then(goose_sidecar::thinking::chat_template_kwargs));
+    }
+    let configured: Vec<&str> = settings
+        .model_profiles
+        .iter()
+        .filter(|(_, profile)| goose_sidecar::thinking::chat_template_kwargs(profile).is_some())
+        .map(|(id, _)| id.as_str())
+        .collect();
+    if configured.is_empty() {
+        return Ok(None);
+    }
+    Err(format!(
+        "the MLX engine serves '{served}', which no model profile can be tied to (configured model {:?}, served name {:?}), while {} carry thinking choices that would be dropped",
+        settings.model_id,
+        settings.served_model_name,
+        configured.join(", ")
+    ))
+}
+
+/// One session's MLX thinking choices, captured the first time the session routes a turn to a
+/// given served model and reused for every later turn. Effort rewrites the system prompt and the
+/// switch changes both it and the generation prompt, so a profile edited mid-session must not
+/// reach a running conversation — it would void the engine's prefix cache. A new session reads
+/// the profile afresh.
+#[derive(Default)]
+pub(crate) struct SessionTemplateKwargs {
+    captured: StdMutex<HashMap<String, Option<Map<String, Value>>>>,
+}
+
+impl SessionTemplateKwargs {
+    fn for_model(
+        &self,
+        served_model_id: &str,
+        source: &dyn TemplateKwargsSource,
+    ) -> Result<Option<Map<String, Value>>, ProviderError> {
+        let mut captured = self
+            .captured
+            .lock()
+            .expect("session template kwargs poisoned");
+        if let Some(kwargs) = captured.get(served_model_id) {
+            return Ok(kwargs.clone());
+        }
+        let kwargs = source
+            .template_kwargs(served_model_id)
+            .map_err(|e| ProviderError::ExecutionError(format!("swarm chat: {e}")))?;
+        captured.insert(served_model_id.to_string(), kwargs.clone());
+        Ok(kwargs)
+    }
+}
+
+/// Adds the kwargs under `request_params.chat_template_kwargs`, which the OpenAI format copies into
+/// the body verbatim. A key the session's own request params already set wins.
+fn add_template_kwargs(
+    cfg: &mut ModelConfig,
+    kwargs: Map<String, Value>,
+) -> Result<(), ProviderError> {
+    let params = cfg.request_params.get_or_insert_with(HashMap::new);
+    match params
+        .entry("chat_template_kwargs".to_string())
+        .or_insert_with(|| Value::Object(Map::new()))
+    {
+        Value::Object(existing) => {
+            for (key, value) in kwargs {
+                existing.entry(key).or_insert(value);
+            }
+            Ok(())
+        }
+        other => Err(ProviderError::ExecutionError(format!(
+            "swarm chat: request_params.chat_template_kwargs is {other}, not an object, so the MLX model's thinking choices cannot be added"
+        ))),
+    }
 }
 
 pub(crate) async fn route_stream(
@@ -702,6 +817,7 @@ pub(crate) async fn route_stream(
     nodes: &[Node],
     probe: &dyn NodeProbe,
     providers: &dyn ProviderSource,
+    kwargs_source: &dyn TemplateKwargsSource,
     turn: Turn<'_>,
 ) -> Result<MessageStream, ProviderError> {
     let Turn {
@@ -709,6 +825,7 @@ pub(crate) async fn route_stream(
         system,
         messages,
         tools,
+        session,
     } = turn;
     let key = Router::conversation_key(system, messages);
     let mut saturated = HashSet::new();
@@ -724,6 +841,11 @@ pub(crate) async fn route_stream(
             .map_err(ProviderError::ExecutionError)?;
         let mut node_cfg = model_config.clone();
         node_cfg.model_name = lease.node.model_id.clone();
+        if matches!(lease.node.kind, NodeKind::MlxSidecar) {
+            if let Some(kwargs) = session.for_model(&lease.node.model_id, kwargs_source)? {
+                add_template_kwargs(&mut node_cfg, kwargs)?;
+            }
+        }
         match provider.stream(&node_cfg, system, messages, tools).await {
             Ok(inner) => return Ok(leased_stream(inner, lease)),
             Err(e) if is_admission_refusal(&e) => {
@@ -782,6 +904,7 @@ pub(crate) async fn route_chat(
     system: &str,
     messages: &[Message],
     tools: &[Tool],
+    session: &SessionTemplateKwargs,
 ) -> Result<MessageStream, ProviderError> {
     let cfg = load_pool()?;
     let nodes = nodes_from_config(&cfg);
@@ -806,11 +929,13 @@ pub(crate) async fn route_chat(
         &nodes,
         &*PROBE,
         providers,
+        &ConfiguredTemplateKwargs,
         Turn {
             model_config,
             system,
             messages,
             tools,
+            session,
         },
     )
     .await
@@ -1120,6 +1245,312 @@ devices:
         ));
     }
 
+    /// No MLX profile carries a choice — what every node saw before thinking choices existed.
+    struct NoKwargs;
+
+    impl TemplateKwargsSource for NoKwargs {
+        fn template_kwargs(&self, _: &str) -> Result<Option<Map<String, Value>>, String> {
+            Ok(None)
+        }
+    }
+
+    /// Resolves through the real profile lookup against in-memory settings.
+    struct SettingsKwargs(StdMutex<EngineSettings>);
+
+    impl TemplateKwargsSource for SettingsKwargs {
+        fn template_kwargs(&self, served: &str) -> Result<Option<Map<String, Value>>, String> {
+            profile_template_kwargs(&self.0.lock().unwrap(), served)
+        }
+    }
+
+    /// Records the exact config each turn reached the node provider with.
+    #[derive(Default)]
+    struct RecordingProviders(StdMutex<Vec<ModelConfig>>);
+
+    struct RecordingProvider(Arc<RecordingProviders>);
+
+    #[async_trait]
+    impl Provider for RecordingProvider {
+        fn get_name(&self) -> &str {
+            "recording"
+        }
+        async fn stream(
+            &self,
+            model_config: &ModelConfig,
+            _: &str,
+            _: &[Message],
+            _: &[Tool],
+        ) -> Result<MessageStream, ProviderError> {
+            self.0 .0.lock().unwrap().push(model_config.clone());
+            Ok(stream_from_single_message(
+                Message::assistant().with_text("ok"),
+                ProviderUsage::new(model_config.model_name.clone(), Usage::default()),
+            ))
+        }
+    }
+
+    struct RecordingSource(Arc<RecordingProviders>);
+
+    #[async_trait]
+    impl ProviderSource for RecordingSource {
+        async fn provider_for(&self, _: &Node) -> Result<Arc<dyn Provider>, String> {
+            Ok(Arc::new(RecordingProvider(self.0.clone())))
+        }
+    }
+
+    const SERVED: &str = "workhorse-qwen3.8-27b";
+    const HF_ID: &str = "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx";
+
+    fn mlx_node() -> Node {
+        Node {
+            id: "mlx".to_string(),
+            model_id: SERVED.to_string(),
+            weight: 1,
+            capacity: 1,
+            kind: NodeKind::MlxSidecar,
+        }
+    }
+
+    fn engine_settings(profile: goose_sidecar::engine::ModelProfile) -> EngineSettings {
+        EngineSettings {
+            model_id: Some(HF_ID.to_string()),
+            served_model_name: Some(SERVED.to_string()),
+            model_profiles: std::collections::BTreeMap::from([(HF_ID.to_string(), profile)]),
+            ..Default::default()
+        }
+    }
+
+    fn agent_tool() -> Tool {
+        Tool::new(
+            "developer__shell",
+            "run a command",
+            serde_json::json!({"type":"object","properties":{"command":{"type":"string"}}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+    }
+
+    /// Routes one turn to `node` and returns the config the node's provider received.
+    async fn routed_config(
+        node: Node,
+        source: &dyn TemplateKwargsSource,
+        session: &SessionTemplateKwargs,
+        model_config: &ModelConfig,
+    ) -> ModelConfig {
+        let recorded = Arc::new(RecordingProviders::default());
+        let nodes = vec![node];
+        let probe = FakeProbe::all_idle(&nodes);
+        let messages = vec![Message::user().with_text("hi")];
+        let tools = vec![agent_tool()];
+        let stream = route_stream(
+            &Router::new(),
+            &nodes,
+            &probe,
+            &RecordingSource(recorded.clone()),
+            source,
+            Turn {
+                model_config,
+                system: "sys",
+                messages: &messages,
+                tools: &tools,
+                session,
+            },
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        let configs = recorded.0.lock().unwrap();
+        assert_eq!(configs.len(), 1);
+        configs[0].clone()
+    }
+
+    /// The OpenAI chat body the `omlx` provider would send for `cfg`, as bytes.
+    fn request_bytes(cfg: &ModelConfig) -> String {
+        let body = goose_providers::formats::openai::create_request(
+            cfg,
+            "sys",
+            &[Message::user().with_text("hi")],
+            &[agent_tool()],
+            &goose_providers::images::ImageFormat::OpenAi,
+            true,
+        )
+        .unwrap();
+        serde_json::to_string(&body).unwrap()
+    }
+
+    /// THE ISOLATION PROOF. With the thinking choices at their defaults (auto, template default) —
+    /// including a profile that carries sampling values — the config a node receives and the
+    /// request bytes built from it equal what route_stream produced before the choices existed
+    /// (`model_config.clone()` with the node's model name, nothing else).
+    #[tokio::test]
+    async fn default_choices_leave_the_mlx_request_byte_identical() {
+        let mut session_params = ModelConfig::new("swarm");
+        session_params.request_params = Some(HashMap::from([(
+            "top_k".to_string(),
+            serde_json::json!(20),
+        )]));
+        for model_config in [ModelConfig::new("swarm"), session_params] {
+            let mut before = model_config.clone();
+            before.model_name = SERVED.to_string();
+            for profile in [
+                goose_sidecar::engine::ModelProfile::default(),
+                goose_sidecar::engine::ModelProfile {
+                    temperature: Some(0.6),
+                    top_k: Some(20),
+                    ..Default::default()
+                },
+            ] {
+                let source = SettingsKwargs(StdMutex::new(engine_settings(profile)));
+                let after = routed_config(
+                    mlx_node(),
+                    &source,
+                    &SessionTemplateKwargs::default(),
+                    &model_config,
+                )
+                .await;
+                assert_eq!(
+                    serde_json::to_string(&after).unwrap(),
+                    serde_json::to_string(&before).unwrap()
+                );
+                assert_eq!(request_bytes(&after), request_bytes(&before));
+                assert!(!request_bytes(&after).contains("chat_template_kwargs"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn thinking_on_puts_the_kwargs_on_mlx_requests_and_nowhere_else() {
+        let profile = goose_sidecar::engine::ModelProfile {
+            thinking: Some(goose_sidecar::engine::ThinkingMode::On),
+            reasoning_effort: Some("low".to_string()),
+            ..Default::default()
+        };
+        let source = SettingsKwargs(StdMutex::new(engine_settings(profile)));
+        let mlx = routed_config(
+            mlx_node(),
+            &source,
+            &SessionTemplateKwargs::default(),
+            &ModelConfig::new("swarm"),
+        )
+        .await;
+        let body: Value = serde_json::from_str(&request_bytes(&mlx)).unwrap();
+        assert_eq!(
+            body["chat_template_kwargs"],
+            serde_json::json!({"enable_thinking": true, "reasoning_effort": "low"})
+        );
+        assert!(body.get("reasoning_effort").is_none());
+
+        let mut lm = node("lm", 1, 1);
+        lm.model_id = SERVED.to_string();
+        let lm = routed_config(
+            lm,
+            &source,
+            &SessionTemplateKwargs::default(),
+            &ModelConfig::new("swarm"),
+        )
+        .await;
+        assert!(!request_bytes(&lm).contains("chat_template_kwargs"));
+    }
+
+    #[tokio::test]
+    async fn a_session_keeps_the_choices_it_started_with() {
+        let on = goose_sidecar::engine::ModelProfile {
+            thinking: Some(goose_sidecar::engine::ThinkingMode::On),
+            reasoning_effort: Some("xhigh".to_string()),
+            ..Default::default()
+        };
+        let source = SettingsKwargs(StdMutex::new(engine_settings(on)));
+        let session = SessionTemplateKwargs::default();
+        let cfg = ModelConfig::new("swarm");
+        let kwargs = |c: &ModelConfig| {
+            serde_json::from_str::<Value>(&request_bytes(c)).unwrap()["chat_template_kwargs"]
+                .clone()
+        };
+        let first = routed_config(mlx_node(), &source, &session, &cfg).await;
+        *source.0.lock().unwrap() = engine_settings(goose_sidecar::engine::ModelProfile {
+            thinking: Some(goose_sidecar::engine::ThinkingMode::Off),
+            ..Default::default()
+        });
+        let later = routed_config(mlx_node(), &source, &session, &cfg).await;
+        assert_eq!(
+            kwargs(&first),
+            kwargs(&later),
+            "the running session is locked"
+        );
+        assert_eq!(
+            kwargs(&first),
+            serde_json::json!({"enable_thinking": true, "reasoning_effort": "xhigh"})
+        );
+        let fresh =
+            routed_config(mlx_node(), &source, &SessionTemplateKwargs::default(), &cfg).await;
+        assert_eq!(
+            kwargs(&fresh),
+            serde_json::json!({"enable_thinking": false}),
+            "a new session reads the edited profile"
+        );
+    }
+
+    #[test]
+    fn a_served_id_resolves_to_its_profile_or_names_why_it_cannot() {
+        let on = goose_sidecar::engine::ModelProfile {
+            thinking: Some(goose_sidecar::engine::ThinkingMode::On),
+            ..Default::default()
+        };
+        let aliased = engine_settings(on.clone());
+        assert!(profile_template_kwargs(&aliased, SERVED).unwrap().is_some());
+        let err = profile_template_kwargs(&aliased, "something-else").unwrap_err();
+        assert!(
+            err.contains(HF_ID) && err.contains("something-else"),
+            "{err}"
+        );
+
+        let unaliased = EngineSettings {
+            served_model_name: None,
+            model_id: None,
+            ..aliased.clone()
+        };
+        assert!(profile_template_kwargs(&unaliased, HF_ID)
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            profile_template_kwargs(&unaliased, "pub/other").unwrap(),
+            None
+        );
+
+        let no_choices = engine_settings(goose_sidecar::engine::ModelProfile::default());
+        assert_eq!(
+            profile_template_kwargs(&no_choices, "something-else").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn session_request_params_win_and_a_non_object_is_refused() {
+        let on = || {
+            let mut map = Map::new();
+            map.insert("enable_thinking".to_string(), Value::Bool(true));
+            map.insert("reasoning_effort".to_string(), Value::String("low".into()));
+            map
+        };
+        let mut cfg = ModelConfig::new("m");
+        cfg.request_params = Some(HashMap::from([(
+            "chat_template_kwargs".to_string(),
+            serde_json::json!({"enable_thinking": false}),
+        )]));
+        add_template_kwargs(&mut cfg, on()).unwrap();
+        assert_eq!(
+            cfg.request_params.unwrap()["chat_template_kwargs"],
+            serde_json::json!({"enable_thinking": false, "reasoning_effort": "low"})
+        );
+        let mut bad = ModelConfig::new("m");
+        bad.request_params = Some(HashMap::from([(
+            "chat_template_kwargs".to_string(),
+            serde_json::json!("x"),
+        )]));
+        assert!(add_template_kwargs(&mut bad, on()).is_err());
+    }
+
     /// A fake node provider: `a` refuses admission the way the sidecar does, `b` answers.
     struct FakeProviders;
 
@@ -1185,11 +1616,13 @@ devices:
             &nodes,
             &probe,
             &FakeProviders,
+            &NoKwargs,
             Turn {
                 model_config: &ModelConfig::new("swarm"),
                 system: "sys",
                 messages: &messages,
                 tools: &[],
+                session: &SessionTemplateKwargs::default(),
             },
         )
         .await
@@ -1240,11 +1673,13 @@ devices:
             &nodes,
             &probe,
             &AllRefuse,
+            &NoKwargs,
             Turn {
                 model_config: &ModelConfig::new("swarm"),
                 system: "sys",
                 messages: &[],
                 tools: &[],
+                session: &SessionTemplateKwargs::default(),
             },
         )
         .await

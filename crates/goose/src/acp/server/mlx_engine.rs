@@ -6,9 +6,10 @@
 use super::*;
 use crate::config::ConfigError;
 use goose_sidecar::engine::{
-    expand_tilde, global_manager, EngineSettings, MlxEngineManager, ModelProfile,
+    expand_tilde, global_manager, EngineSettings, MlxEngineManager, ModelProfile, ThinkingMode,
 };
 use goose_sidecar::hf::{self, DownloadTracker};
+use goose_sidecar::thinking::{self, ThinkingCapabilities};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::sync::{LazyLock, Mutex as StdMutex, OnceLock};
@@ -136,6 +137,11 @@ fn profile_to_dto(profile: ModelProfile) -> MlxModelProfileDto {
         speculative: profile.speculative,
         adapter_path: profile.adapter_path,
         text_only: profile.text_only,
+        thinking: profile.thinking.map(|mode| match mode {
+            ThinkingMode::On => MlxThinkingModeDto::On,
+            ThinkingMode::Off => MlxThinkingModeDto::Off,
+        }),
+        reasoning_effort: profile.reasoning_effort,
     }
 }
 
@@ -152,7 +158,48 @@ fn profile_from_dto(dto: MlxModelProfileDto) -> ModelProfile {
         speculative: dto.speculative,
         adapter_path: dto.adapter_path,
         text_only: dto.text_only,
+        thinking: dto.thinking.map(|mode| match mode {
+            MlxThinkingModeDto::On => ThinkingMode::On,
+            MlxThinkingModeDto::Off => ThinkingMode::Off,
+        }),
+        reasoning_effort: dto.reasoning_effort,
     }
+}
+
+fn thinking_to_dto(capabilities: ThinkingCapabilities) -> MlxThinkingCapabilitiesDto {
+    MlxThinkingCapabilitiesDto {
+        thinking_switch: capabilities.thinking_switch,
+        effort_levels: capabilities.effort_levels,
+        default_effort: capabilities.default_effort,
+        preserve_thinking: capabilities.preserve_thinking,
+        budget_forcible: capabilities.budget_forcible,
+    }
+}
+
+/// Every profile whose thinking choices CHANGED against what is persisted must be honourable by
+/// its model's template. Unchanged profiles are not re-checked, so a profile left behind by a
+/// deleted model never blocks an unrelated edit.
+fn validate_changed_thinking_choices(
+    previous: &EngineSettings,
+    next: &EngineSettings,
+) -> anyhow::Result<()> {
+    let models_dir = expand_tilde(&next.models_dir);
+    for (model_id, profile) in &next.model_profiles {
+        let before = previous.model_profiles.get(model_id);
+        let unchanged = before.is_some_and(|before| {
+            before.thinking == profile.thinking
+                && before.reasoning_effort == profile.reasoning_effort
+        });
+        if unchanged {
+            continue;
+        }
+        thinking::validate_thinking_choices(
+            profile,
+            thinking::model_thinking_capabilities(&models_dir.join(model_id)),
+        )
+        .map_err(|e| anyhow::anyhow!("model profile '{model_id}': {e:#}"))?;
+    }
+    Ok(())
 }
 
 fn settings_to_dto(settings: EngineSettings) -> MlxEngineSettingsDto {
@@ -289,6 +336,7 @@ async fn core_settings_update(
     // A legacy UI state may still send flat sampling fields — same migration,
     // so what persists is always profile truth.
     settings.migrate_legacy();
+    validate_changed_thinking_choices(&load_engine_settings()?, &settings).invalid_params_err()?;
     Config::global()
         .set_param(MLX_ENGINE_CONFIG_KEY, &settings)
         .internal_err_ctx("persisting mlx_engine config")?;
@@ -309,11 +357,20 @@ async fn core_models_list(
     Ok(MlxEngineModelsListResponse {
         models: models
             .into_iter()
-            .map(|m| MlxLocalModelDto {
-                id: m.id,
-                size_bytes: m.size_bytes,
-                complete: m.complete,
-                missing_files: m.missing_files,
+            .map(|m| {
+                let (thinking, thinking_error) =
+                    match thinking::model_thinking_capabilities(&models_dir.join(&m.id)) {
+                        Ok(capabilities) => (Some(thinking_to_dto(capabilities)), None),
+                        Err(e) => (None, Some(format!("{e:#}"))),
+                    };
+                MlxLocalModelDto {
+                    id: m.id,
+                    size_bytes: m.size_bytes,
+                    complete: m.complete,
+                    missing_files: m.missing_files,
+                    thinking,
+                    thinking_error,
+                }
             })
             .collect(),
         disk_available_bytes,
@@ -796,5 +853,72 @@ impl MlxControl for GoosedMlxControl {
                 mlx_response_to_value(core_download_cancel(mlx_req_from_value(request)?).await)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    const QWEN38: &str =
+        include_str!("../../../../goose-sidecar/tests/fixtures/chat_templates/qwen3.8.jinja");
+
+    fn settings(root: &std::path::Path, profile: ModelProfile) -> EngineSettings {
+        EngineSettings {
+            models_dir: root.to_string_lossy().into_owned(),
+            model_profiles: BTreeMap::from([("pub/qwen".to_string(), profile)]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_changed_effort_must_be_one_of_the_templates_levels() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("pub/qwen")).unwrap();
+        std::fs::write(root.path().join("pub/qwen/chat_template.jinja"), QWEN38).unwrap();
+        let before = settings(root.path(), ModelProfile::default());
+        let effort = |level: &str| {
+            settings(
+                root.path(),
+                ModelProfile {
+                    thinking: Some(ThinkingMode::On),
+                    reasoning_effort: Some(level.to_string()),
+                    ..Default::default()
+                },
+            )
+        };
+        validate_changed_thinking_choices(&before, &effort("medium")).unwrap();
+        let err = validate_changed_thinking_choices(&before, &effort("high")).unwrap_err();
+        let err = err.to_string();
+        assert!(
+            err.contains("pub/qwen") && err.contains("xhigh, medium, low"),
+            "{err}"
+        );
+
+        // A persisted choice whose model is gone never blocks an unrelated edit.
+        std::fs::remove_dir_all(root.path().join("pub")).unwrap();
+        validate_changed_thinking_choices(&effort("low"), &effort("low")).unwrap();
+        assert!(validate_changed_thinking_choices(&before, &effort("low")).is_err());
+    }
+
+    #[test]
+    fn profile_thinking_fields_survive_the_dto_round_trip() {
+        let profile = ModelProfile {
+            thinking: Some(ThinkingMode::Off),
+            reasoning_effort: Some("low".to_string()),
+            ..Default::default()
+        };
+        let wire = serde_json::to_value(profile_to_dto(profile.clone())).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({"thinking": "off", "reasoningEffort": "low"})
+        );
+        let back = profile_from_dto(serde_json::from_value(wire).unwrap());
+        assert_eq!(back, profile);
+        assert_eq!(
+            serde_json::to_value(profile_to_dto(ModelProfile::default())).unwrap(),
+            serde_json::json!({})
+        );
     }
 }

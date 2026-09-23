@@ -7057,9 +7057,34 @@
             "null"
           ],
           "description": "`false` lets a vision-bearing checkpoint take the engine's MLLM lane; absent/`true` pins\nthe text lane (`--text-only`). No effect on a checkpoint that declares no vision."
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxThinkingModeDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Sent as `chat_template_kwargs.enable_thinking` on every turn a session routes to this\nmodel: `\"on\"` | `\"off\"`. Absent = auto — nothing is sent and the engine decides (Rapid-MLX\nturns thinking off whenever the request carries tools). Captured once per session."
+        },
+        "reasoningEffort": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "One of the model's `MlxThinkingCapabilitiesDto::effort_levels`, sent as\n`chat_template_kwargs.reasoning_effort`. Absent = the template's own default. Captured once\nper session (it rewrites the system prompt, so a mid-session change would void the cache)."
         }
       },
       "description": "Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each\nmounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`."
+    },
+    "MlxThinkingModeDto": {
+      "type": "string",
+      "enum": [
+        "on",
+        "off"
+      ]
     },
     "MlxEngineSettingsUpdateRequest_unstable": {
       "type": "object",
@@ -7141,6 +7166,23 @@
           "type": "integer",
           "description": "Files provably missing or unfinished — shards the model's safetensors index\nnames that are absent/empty, plus `.part` leftovers. 0 when complete.",
           "minimum": 0
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxThinkingCapabilitiesDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The reasoning controls the model's chat template declares; absent exactly when\n`thinking_error` says why (no template in the directory, unreadable, unparseable)."
+        },
+        "thinkingError": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -7149,6 +7191,46 @@
         "complete",
         "missingFiles"
       ]
+    },
+    "MlxThinkingCapabilitiesDto": {
+      "type": "object",
+      "properties": {
+        "thinkingSwitch": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "`\"enable_thinking\"` or `\"reasoning\"`; absent = the template has no on/off switch."
+        },
+        "effortLevels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The template's own effort vocabulary in template order; empty = none declared."
+        },
+        "defaultEffort": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The level the template renders when a request names none; absent when not provable."
+        },
+        "preserveThinking": {
+          "type": "boolean",
+          "description": "The template reads `preserve_thinking` (history rows keep their think block)."
+        },
+        "budgetForcible": {
+          "type": "boolean",
+          "description": "The template renders a `<think>`…`</think>` span, the shape a reasoning token budget can\nforce-close (necessary, not sufficient — the engine skips it on tool requests)."
+        }
+      },
+      "required": [
+        "effortLevels",
+        "preserveThinking",
+        "budgetForcible"
+      ],
+      "description": "What the model's own chat template lets a request steer about reasoning, proven on the\ntemplate's Jinja AST with the engine's detection rules."
     },
     "MlxEngineModelDeleteRequest_unstable": {
       "type": "object",

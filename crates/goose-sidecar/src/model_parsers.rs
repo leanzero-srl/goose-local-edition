@@ -47,6 +47,24 @@ fn embedded_template(path: &Path) -> Result<Option<String>> {
         .map(str::to_owned))
 }
 
+/// The chat template the engine renders a TOOL-bearing request with (every goose agent turn
+/// carries tools): a standalone `additional_chat_templates/tool_use.jinja`, then
+/// `chat_template.jinja`, then the one embedded in `tokenizer_config.json` / `chat_template.json`
+/// (a named-template list or dict prefers `tool_use`, as Transformers does when tools are
+/// supplied). `None` when the directory carries no template at all.
+pub(crate) fn tool_use_chat_template(dir: &Path) -> Result<Option<String>> {
+    if let Some(template) = read_optional(&dir.join("additional_chat_templates/tool_use.jinja"))? {
+        return Ok(Some(template));
+    }
+    if let Some(template) = read_optional(&dir.join("chat_template.jinja"))? {
+        return Ok(Some(template));
+    }
+    if let Some(template) = embedded_template(&dir.join("tokenizer_config.json"))? {
+        return Ok(Some(template));
+    }
+    embedded_template(&dir.join("chat_template.json"))
+}
+
 pub(crate) fn append_checkpoint_parser_flags(dir: &Path, argv: &mut Vec<String>) -> Result<()> {
     let Some(config) = read_optional(&dir.join("config.json"))? else {
         return Ok(());
@@ -60,22 +78,8 @@ pub(crate) fn append_checkpoint_parser_flags(dir: &Path, argv: &mut Vec<String>)
     ) {
         return Ok(());
     }
-    let standalone = match read_optional(&dir.join("additional_chat_templates/tool_use.jinja"))? {
-        Some(template) => Some(template),
-        None => read_optional(&dir.join("chat_template.jinja"))?,
-    };
-    let template = match standalone {
-        Some(template) => template,
-        None => {
-            let template = match embedded_template(&dir.join("tokenizer_config.json"))? {
-                Some(template) => Some(template),
-                None => embedded_template(&dir.join("chat_template.json"))?,
-            };
-            let Some(template) = template else {
-                return Ok(());
-            };
-            template
-        }
+    let Some(template) = tool_use_chat_template(dir)? else {
+        return Ok(());
     };
     let xml_contract = [
         "tool_calls",
