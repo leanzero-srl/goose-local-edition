@@ -401,3 +401,67 @@ describe('the view wires ?tick from the URL', () => {
     window.location.hash = '';
   });
 });
+
+describe('UX audit A1 (2026-09-23): phases coloured by who worked, and a lane card that does not repeat the Result', () => {
+  it('model phases are violet, engine steps slate, zero-time phases quiet (not faded) — with a legend; every class compiles', async () => {
+    const model = foldDesk(read, NOW, 1)!;
+    const { container } = render(<TickAnatomy model={model} onOpenTick={vi.fn()} />);
+    const block = (key: string) => container.querySelector(`[data-phase="${key}"]`) as HTMLElement;
+    // The real tick 1: orient 52s and lanes 2m 11s are model work; guard/poll/handoff/post/close 0s.
+    expect(block('orient').className).toContain('bg-lz-secondary');
+    expect(block('lanes').className).toContain('bg-lz-secondary');
+    for (const key of ['guard', 'poll', 'handoff', 'post', 'close']) {
+      expect(block(key).className).toContain('bg-lz-surface-2');
+      expect(block(key).className).toContain('text-lz-ink-2');
+    }
+    expect(screen.getByTestId('phase-legend').textContent).toContain('a model worked');
+    expect(screen.getByTestId('phase-legend').textContent).toContain('engine step');
+    assertStudioClean(container);
+    const { missingUtilities } = await import('../lz/compileStudioCss');
+    const classes = new Set<string>();
+    container
+      .querySelectorAll('[data-phase], [data-testid="phase-legend"] *')
+      .forEach((el) => el.classList.forEach((c) => classes.add(c)));
+    expect(await missingUtilities([...classes])).toEqual([]);
+  });
+
+  it('an engine step that took time is solid slate, a live phase keeps its role with an ink ring and the pulse', async () => {
+    const { phaseFill } = await import('./TickAnatomy');
+    expect(phaseFill({ key: 'poll', label: 'Poll', state: 'done', ms: 4000 })).toContain(
+      'bg-lz-stopped-solid'
+    );
+    const live = phaseFill({ key: 'lanes', label: 'Lanes', state: 'live', ms: 1000 });
+    expect(live).toContain('bg-lz-secondary');
+    expect(live).toContain('ring-lz-ink');
+    expect(live).not.toContain('bg-lz-accent');
+    expect(phaseFill({ key: 'lanes', label: 'Lanes', state: 'failed', ms: 1 })).toContain(
+      'bg-lz-err-solid'
+    );
+  });
+
+  it('the researcher lane whose report the tick delivered shows its brief and ONE outcome line, not the report again', async () => {
+    const { LaneBoard } = await import('./LaneBoard');
+    const model = foldDesk(read, NOW, 1)!;
+    const { container } = render(
+      <LaneBoard model={model} dir={read.dir} selected={null} onSelect={vi.fn()} />
+    );
+    assertStudioClean(container);
+    const row = screen.getByTestId('lane-row');
+    expect(row.textContent).toContain('Report the exact title, purpose and source URL.');
+    const outcome = screen.getByTestId('lane-outcome');
+    expect(outcome.textContent).toBe('Its report is this tick’s result, shown above.');
+    expect(outcome.className).toContain('line-clamp-1');
+    expect(row.textContent).not.toContain('JavaScript | MDN');
+  });
+
+  it('a settled lane that was not delivered leads with its first sentence only', async () => {
+    const { outcomeOf } = await import('./LaneBoard');
+    const lane = foldDesk(read, NOW, 1)!.lanes[0];
+    expect(
+      outcomeOf({ ...lane, liveLine: 'The title is X. It also covers Y and Z at length.' }, false)
+    ).toBe('The title is X.');
+    expect(outcomeOf({ ...lane, status: 'failed', error: 'provider 500' }, false)).toBe(
+      'provider 500'
+    );
+  });
+});

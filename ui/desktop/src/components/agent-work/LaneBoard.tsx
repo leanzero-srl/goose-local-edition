@@ -75,6 +75,10 @@ export function LaneBoard({
 }) {
   const running = model.lanes.filter((l) => l.status === 'running').length;
   const liveTick = model.viewTick === model.tick && model.liveness === 'running';
+  // The lane whose report the tick delivered as written: the Result panel above already prints
+  // it whole, so its card says so in one line instead of repeating it.
+  const source = model.viewRecord?.synthesis?.source;
+  const deliveredKey = source?.mode === 'lane_report' ? source.key : null;
   return (
     <section data-testid="lane-board" aria-labelledby="lane-board-heading" className="min-w-0">
       <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -99,6 +103,7 @@ export function LaneBoard({
             <LaneRow
               key={l.key}
               lane={l}
+              delivered={l.key === deliveredKey}
               node={nodeIndexOf(model, l.model)}
               active={selected === l.key}
               onClick={() => onSelect(selected === l.key ? null : l.key)}
@@ -120,11 +125,13 @@ export function LaneBoard({
 
 function LaneRow({
   lane,
+  delivered,
   node,
   active,
   onClick,
 }: {
   lane: DeskLane;
+  delivered: boolean;
   node: NodeIndex;
   active: boolean;
   onClick: () => void;
@@ -181,16 +188,29 @@ function LaneRow({
           {lane.objective && (
             <span className={cx(TYPE.bodyMuted, 'line-clamp-2')}>{lane.objective}</span>
           )}
-          <span
-            className={cx(TYPE.body, 'line-clamp-3 [overflow-wrap:anywhere]')}
-            data-testid="lane-live-line"
-          >
-            {lane.status === 'interrupted'
-              ? 'Stopped before completion · open activity to inspect the last recorded output'
-              : lane.status === 'queued'
-                ? 'waiting for a free node'
-                : lane.liveLine || (lane.status === 'done' ? summaryOf(lane) : '(no words yet)')}
-          </span>
+          {settled ? (
+            <span
+              className={cx(
+                TYPE.body,
+                lane.objective ? 'line-clamp-1' : 'line-clamp-2',
+                '[overflow-wrap:anywhere]'
+              )}
+              data-testid="lane-outcome"
+            >
+              {outcomeOf(lane, delivered)}
+            </span>
+          ) : (
+            <span
+              className={cx(TYPE.body, 'line-clamp-3 [overflow-wrap:anywhere]')}
+              data-testid="lane-live-line"
+            >
+              {lane.status === 'interrupted'
+                ? 'Stopped before completion · open activity to inspect the last recorded output'
+                : lane.status === 'queued'
+                  ? 'waiting for a free node'
+                  : lane.liveLine || '(no words yet)'}
+            </span>
+          )}
           {settled && (
             <span className="mt-1 flex flex-wrap gap-1.5">
               {lane.confidence != null && (
@@ -219,6 +239,20 @@ function LaneRow({
 function summaryOf(l: DeskLane): string {
   if (l.error) return l.error;
   return l.answerTail || l.thinkingTail || 'done';
+}
+
+/**
+ * A settled lane's card carries its brief (the objective) and ONE outcome line — the words live in
+ * the Result panel and the inspector. The lane the tick delivered as written points at the Result
+ * rather than printing the same report a second time; any other lane leads with its first sentence
+ * (the card clamps it).
+ */
+export function outcomeOf(l: DeskLane, delivered: boolean): string {
+  if (l.status === 'failed') return l.error || 'Failed — open the lane to read its last output.';
+  if (delivered) return 'Its report is this tick’s result, shown above.';
+  const words = (l.liveLine || summaryOf(l)).slice(0, 600).replace(/\s+/g, ' ').trim();
+  const sentence = words.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? words;
+  return sentence;
 }
 
 /**

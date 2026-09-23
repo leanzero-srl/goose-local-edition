@@ -1,15 +1,50 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { Button, TNUM, TONE_TEXT, TYPE, WEIGHT, cx, type Tone } from '../lz';
-import { fmtDuration, type DeskModel, type PhaseSpan, type PhaseState } from './agentWorkModel';
+import { Button, TNUM, TONE_FILL, TONE_TEXT, TYPE, WEIGHT, cx, type Tone } from '../lz';
+import { fmtDuration, type DeskModel, type PhaseSpan } from './agentWorkModel';
 
-const PHASE_FILL: Record<PhaseState, string> = {
-  done: 'bg-lz-stopped-solid text-white',
-  live: 'bg-lz-accent text-lz-accent-ink',
-  failed: 'bg-lz-err-solid text-white',
-  interrupted: 'bg-lz-warn-solid text-white',
-  next: 'border border-lz-border-strong bg-lz-surface text-lz-ink-2',
-  skipped: '',
-};
+/**
+ * A phase's colour says WHO did the work, so the ribbon reads at a glance: the phases where a model
+ * reasons (orient, lanes, review, synthesis) are the secondary violet — DESIGN.md reserves it for the
+ * reasoning channel — and the engine's own steps (guard, poll, handoff, post, close) are solid slate.
+ * State overrides role: a failed phase is err, an interrupted one warn, what is still ahead is an
+ * outline, and a finished phase whose time reads 0s is the quiet surface-2 step with full ink-2 text
+ * (quiet, never faded). The live phase keeps its role colour and carries the pulse and an ink ring —
+ * no accent in the ribbon, so the one accent on the page stays the desk's primary action.
+ */
+export const MODEL_PHASES: ReadonlySet<string> = new Set([
+  'orient',
+  'lanes',
+  'review',
+  'synthesis',
+]);
+
+const ROLE_FILL = {
+  model: TONE_FILL.secondary,
+  engine: TONE_FILL.stopped,
+} as const;
+
+const QUIET_FILL = 'bg-lz-surface-2 text-lz-ink-2';
+const NEXT_FILL = 'border border-lz-border-strong bg-lz-surface text-lz-ink-2';
+const LIVE_RING = 'ring-2 ring-lz-ink ring-offset-2 ring-offset-lz-bg';
+
+export function phaseFill(phase: PhaseSpan): string {
+  const role = MODEL_PHASES.has(phase.key) ? ROLE_FILL.model : ROLE_FILL.engine;
+  switch (phase.state) {
+    case 'failed':
+      return TONE_FILL.err;
+    case 'interrupted':
+      return TONE_FILL.warn;
+    case 'next':
+      return NEXT_FILL;
+    case 'live':
+      return cx(role, LIVE_RING);
+    case 'done':
+      // "Took no time" is what the block itself prints: a duration that reads as 0s.
+      return phase.ms != null && fmtDuration(phase.ms) === fmtDuration(0) ? QUIET_FILL : role;
+    default:
+      return '';
+  }
+}
 
 const OUTCOME_TONE: Record<string, Tone> = {
   done: 'ok',
@@ -110,11 +145,22 @@ export function TickAnatomy({
               <PhaseBlock key={p.key} phase={p} total={total} />
             ))}
           </ol>
-          {skipped.length > 0 && (
-            <p className={TYPE.meta} data-testid="phase-skipped">
-              Skipped: {skipped.map((p) => p.label).join(', ')}
-            </p>
-          )}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className={cx(TYPE.meta, 'flex items-center gap-1.5')} data-testid="phase-legend">
+              <span aria-hidden className="size-2.5 shrink-0 rounded-[3px] bg-lz-secondary" />
+              a model worked
+              <span
+                aria-hidden
+                className="ml-2 size-2.5 shrink-0 rounded-[3px] bg-lz-stopped-solid"
+              />
+              engine step
+            </span>
+            {skipped.length > 0 && (
+              <p className={TYPE.meta} data-testid="phase-skipped">
+                Skipped: {skipped.map((p) => p.label).join(', ')}
+              </p>
+            )}
+          </div>
         </>
       )}
     </section>
@@ -134,7 +180,7 @@ function PhaseBlock({ phase, total }: { phase: PhaseSpan; total: number }) {
       title={phase.note}
       className={cx(
         'flex flex-col justify-center gap-0.5 whitespace-nowrap rounded-lz-control px-2.5 py-2',
-        PHASE_FILL[phase.state]
+        phaseFill(phase)
       )}
     >
       <span className={cx('flex min-w-[52px] items-center gap-1.5 text-[12px]', WEIGHT.semibold)}>
