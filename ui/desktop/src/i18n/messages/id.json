@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "Konfigurasikan Ekstensi {name}"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "Detail koneksi"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "Mulai sesi AI tentang MCP ini"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "Hapus"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "Nonaktif"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "Aktif"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "Memperbarui"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Aktifkan atau Nonaktifkan ekstensi {name}"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "Ekstensi Tersedia ({count})"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "Ekstensi tersedia"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "Ekstensi bawaan"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "Ekstensi Bawaan ({count})"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "Ekstensi bawaan"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "Tidak ada ekstensi yang tersedia"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "Jelajahi ekstensi"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "Ekstensi yang diaktifkan di sini digunakan sebagai bawaan untuk obrolan baru. Anda juga dapat mengaktifkan ekstensi aktif selama obrolan."
-  },
-  "extensionsView.description": {
-    "defaultMessage": "Ekstensi ini menggunakan Model Context Protocol (MCP). Mereka dapat memperluas kemampuan Goose menggunakan tiga komponen utama: Prompt, Sumber Daya, dan Alat. {searchShortcut} untuk mencari."
-  },
   "extensionsView.heading": {
     "defaultMessage": "Ekstensi"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Cari ekstensi..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "Alat yang dapat digunakan agen Anda. Ekstensi yang diaktifkan di sini dimuat di setiap obrolan baru."
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Sidik Jari Sertifikat (opsional)"

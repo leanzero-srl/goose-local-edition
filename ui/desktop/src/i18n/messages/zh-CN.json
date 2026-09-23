@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "配置 {name} 扩展"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "连接详情"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "开始一个关于此 MCP 的 AI 会话"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "移除"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "已关闭"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "已启用"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "正在更新"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "启用或禁用 {name} 扩展"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "可用扩展（{count}）"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "可用扩展"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "内置扩展"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "默认扩展（{count}）"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "默认扩展"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "暂无可用扩展"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "浏览扩展"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "在此启用的扩展将作为新聊天的默认扩展。你也可以在聊天过程中切换活跃的扩展。"
-  },
-  "extensionsView.description": {
-    "defaultMessage": "这些扩展使用模型上下文协议（MCP）。它们可以通过三大组件扩展 Goose 的能力：Prompts、Resources 和 Tools。按 {searchShortcut} 搜索。"
-  },
   "extensionsView.heading": {
     "defaultMessage": "扩展"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "搜索扩展…"
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "你的智能体可以使用的工具。在此开启的扩展会在每个新聊天中加载。"
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "证书指纹（可选）"

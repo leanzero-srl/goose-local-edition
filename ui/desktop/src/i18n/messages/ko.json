@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "{name} 익스텐션 구성"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "연결 세부정보"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "이 MCP에 대한 AI 세션 시작"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "제거"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "꺼짐"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "사용"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "업데이트 중"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "{name} 익스텐션 켜기/끄기"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "사용 가능한 익스텐션({count})"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "사용 가능한 확장 프로그램"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "내장 익스텐션"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "기본 익스텐션({count})"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "기본 확장 프로그램"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "사용 가능한 익스텐션이 없습니다."
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "익스텐션 찾아보기"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "여기에서 켠 익스텐션은 새 채팅의 기본값으로 사용됩니다. 채팅 중에도 익스텐션을 켜거나 끌 수 있습니다."
-  },
-  "extensionsView.description": {
-    "defaultMessage": "이 익스텐션은 Model Context Protocol(MCP)을 사용합니다. 프롬프트, 리소스, 도구의 세 가지 주요 구성 요소로 goose의 기능을 확장합니다. {searchShortcut}로 검색할 수 있습니다."
-  },
   "extensionsView.heading": {
     "defaultMessage": "익스텐션"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "익스텐션 검색..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "에이전트가 사용할 수 있는 도구입니다. 여기서 켠 확장 프로그램은 새 채팅마다 로드됩니다."
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "인증서 지문(선택 사항)"

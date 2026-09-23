@@ -3,7 +3,7 @@ import { View, ViewOptions } from '../../utils/navigationUtils';
 import ExtensionsSection from '../settings/extensions/ExtensionsSection';
 import type { ExtensionConfig } from '../../types/extensions';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
-import { Button } from '../ui/button';
+import { Button, PageHeader } from '../lz';
 import { Plus } from 'lucide-react';
 import { GPSIcon } from '../ui/icons';
 import { useState, useEffect } from 'react';
@@ -17,7 +17,6 @@ import {
 import { activateExtensionDefault } from '../settings/extensions';
 import { useConfig } from '../ConfigContext';
 import { SearchView } from '../conversation/SearchView';
-import { getSearchShortcutText } from '../../utils/keyboardShortcuts';
 import { defineMessages, useIntl } from '../../i18n';
 
 const i18n = defineMessages({
@@ -25,15 +24,10 @@ const i18n = defineMessages({
     id: 'extensionsView.heading',
     defaultMessage: 'MCPs',
   },
-  description: {
-    id: 'extensionsView.description',
+  subtitle: {
+    id: 'extensionsView.subtitle',
     defaultMessage:
-      "These extensions use the Model Context Protocol (MCP). They can expand Goose's capabilities using three main components: Prompts, Resources, and Tools. {searchShortcut} to search.",
-  },
-  defaultNote: {
-    id: 'extensionsView.defaultNote',
-    defaultMessage:
-      'Extensions enabled here are used as the default for new chats. You can also toggle active extensions during chat.',
+      'Tools your agents can use. Extensions switched on here load in every new chat.',
   },
   addCustomExtension: {
     id: 'extensionsView.addCustomExtension',
@@ -86,10 +80,11 @@ export default function ExtensionsView({
           behavior: 'smooth',
           block: 'center',
         });
-        // Add a subtle highlight effect
-        element.style.boxShadow = '0 0 0 2px rgba(59, 130, 246, 0.5)';
+        // Mark the card it scrolled to with the solid accent ring (never an alpha glow).
+        const ring = ['ring-2', 'ring-lz-accent'];
+        element.classList.add(...ring);
         setTimeout(() => {
-          element.style.boxShadow = '';
+          element.classList.remove(...ring);
         }, 2000);
       }
     }, 200);
@@ -122,45 +117,39 @@ export default function ExtensionsView({
       >
         <div className="bg-lz-bg px-6 pb-4 pt-8">
           <div className="flex flex-col page-transition">
-            <div className="flex justify-between items-center mb-1">
-              <h1 className="text-3xl font-semibold">{intl.formatMessage(i18n.heading)}</h1>
-            </div>
-            <p className="text-sm text-lz-ink-2 mb-2">
-              {intl.formatMessage(i18n.description, { searchShortcut: getSearchShortcutText() })}
-            </p>
-            <p className="text-sm text-lz-ink-2 mb-6">{intl.formatMessage(i18n.defaultNote)}</p>
-
+            <PageHeader
+              className="mb-6"
+              title={intl.formatMessage(i18n.heading)}
+              subtitle={intl.formatMessage(i18n.subtitle)}
+              actions={
+                <>
+                  <Button
+                    variant="secondary"
+                    icon={<GPSIcon size={12} />}
+                    onClick={() => window.open('https://goose-docs.ai/v1/extensions/', '_blank')}
+                  >
+                    {intl.formatMessage(i18n.browseExtensions)}
+                  </Button>
+                  <Button variant="primary" icon={<Plus />} onClick={() => setIsAddModalOpen(true)}>
+                    {intl.formatMessage(i18n.addCustomExtension)}
+                  </Button>
+                </>
+              }
+            />
             <div className="mb-6">
               <BundledMcps />
             </div>
             <label className="mb-5 block">
-              <span className="mb-2 block text-sm font-medium">Find an extension</span>
+              <span className="mb-1.5 block text-lz-meta font-lz-medium text-lz-ink-2">
+                Find an extension
+              </span>
               <input
-                className="w-full rounded-lg border border-lz-border-strong bg-lz-surface px-3 py-2 text-sm"
+                className="h-8 w-full rounded-lz-control border border-lz-border-strong bg-lz-surface px-3 text-lz-body text-lz-ink placeholder:text-lz-ink-4"
                 value={searchTerm}
                 onChange={(event) => setSearchTerm(event.target.value)}
                 placeholder="Search installed extensions"
               />
             </label>
-            {/* Action Buttons */}
-            <div className="flex gap-4 mb-8">
-              <Button
-                className="flex items-center gap-2 justify-center"
-                variant="default"
-                onClick={() => setIsAddModalOpen(true)}
-              >
-                <Plus className="h-4 w-4" />
-                {intl.formatMessage(i18n.addCustomExtension)}
-              </Button>
-              <Button
-                className="flex items-center gap-2 justify-center"
-                variant="secondary"
-                onClick={() => window.open('https://goose-docs.ai/v1/extensions/', '_blank')}
-              >
-                <GPSIcon size={12} />
-                {intl.formatMessage(i18n.browseExtensions)}
-              </Button>
-            </div>
           </div>
         </div>
 

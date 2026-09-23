@@ -8,7 +8,7 @@ import { Card, CardHeader, CardTitle, CardContent, CardAction } from '../../../u
 import { defineMessages, useIntl } from '../../../../i18n';
 import { inspectConfigExtension } from '../../../../acp/extensions';
 import { McpCapabilities } from '../../../extensions/McpCapabilities';
-import { Button } from '../../../lz';
+import { Button, Chip, Disclosure } from '../../../lz';
 import { TreeContextMenu } from '../../../Layout/tree';
 import { useStartChatAbout } from '../../../Layout/useStartChatAbout';
 import { Pencil, Power, Sparkles, Trash2 } from 'lucide-react';
@@ -31,6 +31,13 @@ const i18n = defineMessages({
   menuConfirmRemove: {
     id: 'extensionItem.menuConfirmRemove',
     defaultMessage: 'Confirm remove {name}',
+  },
+  statusEnabled: { id: 'extensionItem.statusEnabled', defaultMessage: 'Enabled' },
+  statusDisabled: { id: 'extensionItem.statusDisabled', defaultMessage: 'Off' },
+  statusUpdating: { id: 'extensionItem.statusUpdating', defaultMessage: 'Updating' },
+  connectionDetails: {
+    id: 'extensionItem.connectionDetails',
+    defaultMessage: 'Connection details',
   },
   menuNotEditable: {
     id: 'extensionItem.menuNotEditable',
@@ -118,10 +125,13 @@ export default function ExtensionItem({
       <>
         {description && <span>{description}</span>}
         {command && (
-          <details className="mt-3">
-            <summary className="cursor-pointer text-xs font-medium">Connection details</summary>
-            <code className="mt-2 block break-all text-xs">{command}</code>
-          </details>
+          <Disclosure
+            variant="plain"
+            className="mt-2"
+            title={intl.formatMessage(i18n.connectionDetails)}
+          >
+            <code className="block break-all font-mono text-lz-mono text-lz-ink">{command}</code>
+          </Disclosure>
         )}
       </>
     );
@@ -144,10 +154,26 @@ export default function ExtensionItem({
         e.preventDefault();
         setMenu({ x: e.clientX, y: e.clientY });
       }}
-      className="transition-colors duration-200 min-h-[120px] overflow-hidden border-lz-border bg-lz-surface text-lz-ink"
+      className="transition-colors duration-200 min-h-[120px] overflow-hidden rounded-lz-card border-lz-border bg-lz-surface text-lz-ink shadow-none"
     >
       <CardHeader>
-        <CardTitle>{getFriendlyTitle(extension)}</CardTitle>
+        <CardTitle className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 truncate text-lz-h2 text-lz-ink">{title}</span>
+          {/* The state as a solid chip beside the name: the switch is the control, the chip is
+              the fact — and while a toggle is in flight it says so instead of guessing. */}
+          <Chip
+            tone={isToggling ? 'accent' : visuallyEnabled ? 'ok' : 'stopped'}
+            className="shrink-0"
+          >
+            {intl.formatMessage(
+              isToggling
+                ? i18n.statusUpdating
+                : visuallyEnabled
+                  ? i18n.statusEnabled
+                  : i18n.statusDisabled
+            )}
+          </Chip>
+        </CardTitle>
 
         <CardAction>
           <div className="flex items-center justify-end gap-2">

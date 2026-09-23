@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "Konfigurasikan Sambungan {name}"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "Butiran sambungan"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "Mulakan sesi AI tentang MCP ini"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "Buang"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "Mati"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "Didayakan"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "Mengemas kini"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Togol sambungan {name} Hidup atau Mati"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "Sambungan Tersedia ({count})"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "Sambungan tersedia"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "Sambungan terbina dalam"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "Sambungan Lalai ({count})"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "Sambungan lalai"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "Tiada sambungan tersedia"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "Layari sambungan"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "Sambungan yang didayakan di sini digunakan sebagai lalai untuk sembang baharu. Anda juga boleh menogol sambungan aktif semasa sembang."
-  },
-  "extensionsView.description": {
-    "defaultMessage": "Sambungan ini menggunakan Model Context Protocol (MCP). Ia boleh mengembangkan keupayaan Goose menggunakan tiga komponen utama: Prompts, Resources, dan Tools. {searchShortcut} untuk mencari."
-  },
   "extensionsView.heading": {
     "defaultMessage": "Sambungan"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Cari sambungan..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "Alat yang boleh digunakan oleh ejen anda. Sambungan yang dihidupkan di sini dimuatkan dalam setiap sembang baharu."
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Cap Jari Sijil (pilihan)"

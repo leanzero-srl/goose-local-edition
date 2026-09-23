@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "{name}拡張機能を設定"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "接続の詳細"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "この MCP についてAIセッションを開始"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "削除"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "オフ"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "有効"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "更新中"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "{name}拡張機能のオン/オフを切り替え"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "利用可能な拡張機能（{count}）"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "利用可能な拡張機能"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "組み込み拡張機能"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "デフォルト拡張機能（{count}）"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "デフォルトの拡張機能"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "利用可能な拡張機能はありません"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "拡張機能を参照"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "ここで有効にした拡張機能は、新しいチャットのデフォルトとして使用されます。チャット中にアクティブな拡張機能を切り替えることもできます。"
-  },
-  "extensionsView.description": {
-    "defaultMessage": "これらの拡張機能は Model Context Protocol（MCP）を使用します。Prompts、Resources、Tools の3つの主要コンポーネントで Goose の機能を拡張できます。検索するには {searchShortcut}。"
-  },
   "extensionsView.heading": {
     "defaultMessage": "拡張機能"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "拡張機能を検索..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "エージェントが使えるツールです。ここで有効にした拡張機能は、新しいチャットごとに読み込まれます。"
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "証明書フィンガープリント（任意）"

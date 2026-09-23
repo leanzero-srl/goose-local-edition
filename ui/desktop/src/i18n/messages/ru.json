@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "Настроить расширение {name}"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "Сведения о подключении"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "Начать ИИ-сессию об этом MCP"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "Удалить"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "Выключено"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "Включено"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "Обновление"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Включить или отключить расширение {name}"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "Доступные расширения ({count})"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "Доступные расширения"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "Встроенное расширение"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "Расширения по умолчанию ({count})"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "Расширения по умолчанию"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "Нет доступных расширений"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "Просмотреть расширения"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "Расширения, включенные здесь, используются по умолчанию для новых чатов. Активные расширения также можно переключать во время чата."
-  },
-  "extensionsView.description": {
-    "defaultMessage": "Эти расширения используют Model Context Protocol (MCP). Они расширяют возможности Goose с помощью трех основных компонентов: промптов, ресурсов и инструментов. {searchShortcut} для поиска."
-  },
   "extensionsView.heading": {
     "defaultMessage": "Расширения"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Поиск расширений..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "Инструменты, которыми могут пользоваться ваши агенты. Включённые здесь расширения загружаются в каждом новом чате."
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Отпечаток сертификата (необязательно)"

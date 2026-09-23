@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "Configure {name} Extension"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "Connection details"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "Start an AI session about this MCP"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "Remove"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "Off"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "Enabled"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "Updating"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Toggle {name} extension On or Off"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "Available Extensions ({count})"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "Available extensions"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "Built-in extension"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "Default Extensions ({count})"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "Default extensions"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "No extensions available"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "Browse extensions"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "Extensions enabled here are used as the default for new chats. You can also toggle active extensions during chat."
-  },
-  "extensionsView.description": {
-    "defaultMessage": "These extensions use the Model Context Protocol (MCP). They can expand Goose's capabilities using three main components: Prompts, Resources, and Tools. {searchShortcut} to search."
-  },
   "extensionsView.heading": {
     "defaultMessage": "MCPs"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Search extensions..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "Tools your agents can use. Extensions switched on here load in every new chat."
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Certificate Fingerprint (optional)"

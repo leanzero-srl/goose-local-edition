@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "{name} Uzantısını Yapılandırın"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "Bağlantı ayrıntıları"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "Bu MCP hakkında bir AI oturumu başlat"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "Kaldır"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "Kapalı"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "Etkin"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "Güncelleniyor"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "{name} uzantısını Açık veya Kapalı duruma getirin"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "Kullanılabilir Uzantılar ({count})"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "Kullanılabilir uzantılar"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "Yerleşik uzantı"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "Varsayılan Uzantılar ({count})"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "Varsayılan uzantılar"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "Uzantı yok"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "Uzantılara göz atın"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "Burada etkinleştirilen uzantılar, yeni sohbetler için varsayılan olarak kullanılır. Ayrıca sohbet sırasında etkin uzantıları da değiştirebilirsiniz."
-  },
-  "extensionsView.description": {
-    "defaultMessage": "Bu uzantılar Model Bağlam Protokolünü (MCP) kullanır. Üç ana bileşeni kullanarak Goose'nin yeteneklerini genişletebilirler: İstemler, Kaynaklar ve Araçlar. Aramak için {searchShortcut}."
-  },
   "extensionsView.heading": {
     "defaultMessage": "Uzantılar"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Uzantıları ara..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "Ajanlarınızın kullanabileceği araçlar. Burada açılan uzantılar her yeni sohbette yüklenir."
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Sertifika Parmak İzi (isteğe bağlı)"

@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "{name} एक्सटेंशन कॉन्फ़िगर करें"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "कनेक्शन विवरण"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "इस MCP के बारे में एआई सत्र शुरू करें"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "हटाएँ"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "बंद"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "सक्षम"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "अपडेट हो रहा है"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "{name} एक्सटेंशन को चालू या बंद टॉगल करें"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "उपलब्ध एक्सटेंशन ({count})"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "उपलब्ध एक्सटेंशन"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "अंतर्निहित विस्तार"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "डिफ़ॉल्ट एक्सटेंशन ({count})"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "डिफ़ॉल्ट एक्सटेंशन"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "कोई एक्सटेंशन उपलब्ध नहीं है"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "एक्सटेंशन ब्राउज़ करें"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "यहां सक्षम एक्सटेंशन नई चैट के लिए डिफ़ॉल्ट के रूप में उपयोग किए जाते हैं। आप चैट के दौरान सक्रिय एक्सटेंशन भी टॉगल कर सकते हैं।"
-  },
-  "extensionsView.description": {
-    "defaultMessage": "ये एक्सटेंशन मॉडल कॉन्टेक्स्ट प्रोटोकॉल (MCP) का उपयोग करते हैं। वे तीन मुख्य घटकों का उपयोग करके Goose की क्षमताओं का विस्तार कर सकते हैं: संकेत, संसाधन और उपकरण। {searchShortcut} खोजने के लिए."
-  },
   "extensionsView.heading": {
     "defaultMessage": "एक्सटेंशन"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "एक्सटेंशन खोजें..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "वे टूल जिनका आपके एजेंट उपयोग कर सकते हैं। यहाँ चालू किए गए एक्सटेंशन हर नई चैट में लोड होते हैं।"
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "प्रमाणपत्र फ़िंगरप्रिंट (वैकल्पिक)"

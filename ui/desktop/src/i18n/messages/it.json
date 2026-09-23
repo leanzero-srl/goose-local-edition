@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "Configura l'estensione {name}"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "Dettagli di connessione"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "Avvia una sessione IA su questo MCP"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "Rimuovi"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "Disattivata"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "Attiva"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "Aggiornamento"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Attiva o disattiva l'estensione {name}"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "Estensioni disponibili ({count})"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "Estensioni disponibili"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "Estensione integrata"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "Estensioni predefinite ({count})"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "Estensioni predefinite"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "Nessuna estensione disponibile"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "Sfoglia le estensioni"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "Le estensioni abilitate qui vengono usate come predefinite per le nuove chat. Puoi anche attivare o disattivare le estensioni attive durante una chat."
-  },
-  "extensionsView.description": {
-    "defaultMessage": "Queste estensioni usano il Model Context Protocol (MCP). Possono ampliare le capacità di Goose tramite tre componenti principali: Prompt, Risorse e Strumenti. {searchShortcut} per cercare."
-  },
   "extensionsView.heading": {
     "defaultMessage": "Estensioni"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Cerca estensioni..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "Gli strumenti che i tuoi agenti possono usare. Le estensioni attivate qui vengono caricate in ogni nuova chat."
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Impronta del certificato (facoltativa)"

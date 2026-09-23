@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "Cấu hình tiện ích mở rộng {name}"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "Chi tiết kết nối"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "Bắt đầu phiên AI về MCP này"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "Xóa"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "Tắt"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "Đã bật"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "Đang cập nhật"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Bật hoặc tắt tiện ích mở rộng {name}"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "Tiện ích mở rộng khả dụng ({count})"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "Tiện ích có sẵn"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "Tiện ích mở rộng tích hợp sẵn"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "Tiện ích mở rộng mặc định ({count})"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "Tiện ích mặc định"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "Không có tiện ích mở rộng nào khả dụng"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "Duyệt tiện ích mở rộng"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "Các tiện ích mở rộng được bật ở đây sẽ được dùng làm mặc định cho các cuộc trò chuyện mới. Bạn cũng có thể bật/tắt các tiện ích mở rộng đang hoạt động trong khi trò chuyện."
-  },
-  "extensionsView.description": {
-    "defaultMessage": "Các tiện ích mở rộng này sử dụng Model Context Protocol (MCP). Chúng có thể mở rộng khả năng của Goose bằng ba thành phần chính: Lời nhắc, Tài nguyên và Công cụ. {searchShortcut} để tìm kiếm."
-  },
   "extensionsView.heading": {
     "defaultMessage": "Tiện ích mở rộng"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Tìm kiếm tiện ích mở rộng..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "Các công cụ mà tác nhân của bạn có thể dùng. Tiện ích được bật ở đây sẽ tải trong mọi cuộc trò chuyện mới."
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Dấu vân tay chứng chỉ (tùy chọn)"

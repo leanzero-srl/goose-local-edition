@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "設定 {name} 擴充功能"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "連線詳細資料"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "開始一個關於此 MCP 的 AI 工作階段"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "移除"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "已關閉"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "已啟用"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "正在更新"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "開啟或關閉 {name} 擴充功能"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "可用的擴充功能（{count}）"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "可用擴充功能"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "內建擴充功能"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "預設擴充功能（{count}）"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "預設擴充功能"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "沒有可用的擴充功能"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "瀏覽擴充功能"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "在此啟用的擴充功能會作為新聊天的預設值。您也可以在聊天期間切換使用中的擴充功能。"
-  },
-  "extensionsView.description": {
-    "defaultMessage": "這些擴充功能使用模型內容協定 (MCP)。它們可透過三個主要元件擴充 Goose 的能力：提示、資源與工具。{searchShortcut} 即可搜尋。"
-  },
   "extensionsView.heading": {
     "defaultMessage": "擴充功能"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "搜尋擴充功能…"
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "你的代理可以使用的工具。在此開啟的擴充功能會在每個新聊天中載入。"
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "憑證指紋（選填）"

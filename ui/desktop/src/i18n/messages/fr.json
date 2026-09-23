@@ -1451,6 +1451,9 @@
   "extensionItem.configureExtension": {
     "defaultMessage": "Configurer l'extension {name}"
   },
+  "extensionItem.connectionDetails": {
+    "defaultMessage": "Détails de connexion"
+  },
   "extensionItem.menuAsk": {
     "defaultMessage": "Démarrer une session IA à propos de ce MCP"
   },
@@ -1472,17 +1475,26 @@
   "extensionItem.menuRemove": {
     "defaultMessage": "Retirer"
   },
+  "extensionItem.statusDisabled": {
+    "defaultMessage": "Désactivée"
+  },
+  "extensionItem.statusEnabled": {
+    "defaultMessage": "Activée"
+  },
+  "extensionItem.statusUpdating": {
+    "defaultMessage": "Mise à jour"
+  },
   "extensionItem.toggleExtension": {
     "defaultMessage": "Activer ou désactiver l'extension {name}"
   },
-  "extensionList.availableExtensions": {
-    "defaultMessage": "Extensions disponibles ({count})"
+  "extensionList.availableExtensionsTitle": {
+    "defaultMessage": "Extensions disponibles"
   },
   "extensionList.builtInExtension": {
     "defaultMessage": "Extension intégrée"
   },
-  "extensionList.defaultExtensions": {
-    "defaultMessage": "Extensions par défaut ({count})"
+  "extensionList.defaultExtensionsTitle": {
+    "defaultMessage": "Extensions par défaut"
   },
   "extensionList.noExtensions": {
     "defaultMessage": "Aucune extension disponible"
@@ -1541,17 +1553,14 @@
   "extensionsView.browseExtensions": {
     "defaultMessage": "Parcourir les extensions"
   },
-  "extensionsView.defaultNote": {
-    "defaultMessage": "Les extensions activées ici sont utilisées par défaut pour les nouvelles discussions. Vous pouvez également activer ou désactiver les extensions actives pendant une discussion."
-  },
-  "extensionsView.description": {
-    "defaultMessage": "Ces extensions utilisent le protocole Model Context Protocol (MCP). Elles peuvent étendre les capacités de Goose à l'aide de trois composants principaux : Invites, Ressources et Outils. {searchShortcut} pour rechercher."
-  },
   "extensionsView.heading": {
     "defaultMessage": "Extensions"
   },
   "extensionsView.searchPlaceholder": {
     "defaultMessage": "Rechercher des extensions..."
+  },
+  "extensionsView.subtitle": {
+    "defaultMessage": "Les outils que vos agents peuvent utiliser. Les extensions activées ici se chargent dans chaque nouveau chat."
   },
   "externalBackendSection.certFingerprint": {
     "defaultMessage": "Empreinte du certificat (facultatif)"

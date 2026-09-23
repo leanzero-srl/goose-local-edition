@@ -4,15 +4,16 @@ import type { ExtensionConfig } from '../../../../types/extensions';
 import { FixedExtensionEntry } from '../../../ConfigContext';
 import { combineCmdAndArgs } from '../utils';
 import { defineMessages, useIntl } from '../../../../i18n';
+import { SectionHeader } from '../../../lz';
 
 const i18n = defineMessages({
-  defaultExtensions: {
-    id: 'extensionList.defaultExtensions',
-    defaultMessage: 'Default Extensions ({count})',
+  defaultExtensionsTitle: {
+    id: 'extensionList.defaultExtensionsTitle',
+    defaultMessage: 'Default extensions',
   },
-  availableExtensions: {
-    id: 'extensionList.availableExtensions',
-    defaultMessage: 'Available Extensions ({count})',
+  availableExtensionsTitle: {
+    id: 'extensionList.availableExtensionsTitle',
+    defaultMessage: 'Available extensions',
   },
   noExtensions: {
     id: 'extensionList.noExtensions',
@@ -75,10 +76,11 @@ export default function ExtensionList({
     <div className="space-y-8">
       {sortedEnabledExtensions.length > 0 && (
         <div>
-          <h2 className="text-lg font-medium text-lz-ink mb-4 flex items-center gap-2">
-            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-            {intl.formatMessage(i18n.defaultExtensions, { count: sortedEnabledExtensions.length })}
-          </h2>
+          <SectionHeader
+            className="mb-3"
+            title={intl.formatMessage(i18n.defaultExtensionsTitle)}
+            count={sortedEnabledExtensions.length}
+          />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {sortedEnabledExtensions.map((extension) => (
               <ExtensionItem
@@ -96,12 +98,11 @@ export default function ExtensionList({
 
       {sortedDisabledExtensions.length > 0 && (
         <div>
-          <h2 className="text-lg font-medium text-lz-ink-2 mb-4 flex items-center gap-2">
-            <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
-            {intl.formatMessage(i18n.availableExtensions, {
-              count: sortedDisabledExtensions.length,
-            })}
-          </h2>
+          <SectionHeader
+            className="mb-3"
+            title={intl.formatMessage(i18n.availableExtensionsTitle)}
+            count={sortedDisabledExtensions.length}
+          />
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {sortedDisabledExtensions.map((extension) => (
               <ExtensionItem
@@ -135,10 +136,16 @@ export function formatExtensionName(name: string): string {
 }
 
 export function getFriendlyTitle(extension: FixedExtensionEntry): string {
-  const name =
-    ((extension.type === 'builtin' || extension.type === 'platform') && extension.display_name) ||
-    extension.name;
-  return formatExtensionName(name);
+  const builtin = extension.type === 'builtin' || extension.type === 'platform';
+  if (builtin && extension.display_name) return formatExtensionName(extension.display_name);
+  // A builtin entry written without display_name still has a real name in the bundled catalogue
+  // ("computercontroller" is "Computer Controller") — never title-case the internal id instead.
+  const known = builtin
+    ? builtInExtensionsData.find(
+        (ext) => normalizeExtensionName(ext.id) === normalizeExtensionName(extension.name)
+      )
+    : undefined;
+  return formatExtensionName(known?.name ?? extension.name);
 }
 
 function normalizeExtensionName(name: string): string {
