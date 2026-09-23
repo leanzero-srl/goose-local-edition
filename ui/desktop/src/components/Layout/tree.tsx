@@ -1,7 +1,13 @@
-import React, { useEffect, useState, type ReactNode } from 'react';
+import React, { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Check } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { FOCUS, MOTION, RADIUS, ROW, SURFACE, TONE_FILL, TYPE, cx } from '../lz';
+import { defineMessages } from '../../i18n';
+
+export const sectionFoldMessages = defineMessages({
+  collapse: { id: 'sidebarSection.collapse', defaultMessage: 'Collapse {section}' },
+  expand: { id: 'sidebarSection.expand', defaultMessage: 'Expand {section}' },
+});
 
 /**
  * The sidebar tree register shared by every tree in the navigation — Projects, Agent Work and
@@ -54,7 +60,7 @@ export const SectionTitleLink: React.FC<{
     aria-current={active ? 'page' : undefined}
     data-testid={testId}
     className={cx(
-      'no-drag uppercase',
+      'uppercase',
       RADIUS.control,
       FOCUS,
       MOTION,
@@ -62,6 +68,62 @@ export const SectionTitleLink: React.FC<{
     )}
   >
     {label}
+  </button>
+);
+
+const SECTION_COLLAPSED_KEY = (section: string) => `sidebar_section_collapsed:${section}`;
+
+function readCollapsed(section: string): boolean {
+  try {
+    return localStorage.getItem(SECTION_COLLAPSED_KEY(section)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a sidebar section (Projects, Agent Work, Benchmark) is folded to its header — the owner
+ * (2026-09-23): with many sessions under Projects, Agent Work and Benchmark fell out of reach. A
+ * per-viewer convenience, so it lives in localStorage and a storage failure means "open".
+ */
+export function useSectionCollapsed(section: string): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(() => readCollapsed(section));
+  const toggle = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SECTION_COLLAPSED_KEY(section), next ? '1' : '0');
+      } catch {
+        // the fold still applies for this window
+      }
+      return next;
+    });
+  }, [section]);
+  return [collapsed, toggle];
+}
+
+/** The chevron that folds a sidebar section; it sits before the section's title. */
+export const SectionFoldToggle: React.FC<{
+  collapsed: boolean;
+  onToggle: () => void;
+  label: string;
+  testId: string;
+}> = ({ collapsed, onToggle, label, testId }) => (
+  <button
+    type="button"
+    onClick={onToggle}
+    aria-expanded={!collapsed}
+    aria-label={label}
+    title={label}
+    data-testid={testId}
+    className={cx(
+      '-ml-1 flex size-5 items-center justify-center text-lz-ink-3 hover:text-lz-ink',
+      RADIUS.control,
+      FOCUS,
+      MOTION
+    )}
+  >
+    {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
   </button>
 );
 

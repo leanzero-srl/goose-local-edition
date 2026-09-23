@@ -4871,6 +4871,12 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
+  "sidebarSection.collapse": {
+    "defaultMessage": "Kuncupkan {section}"
+  },
+  "sidebarSection.expand": {
+    "defaultMessage": "Kembangkan {section}"
+  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "Cuba laraskan terma carian anda"
   },

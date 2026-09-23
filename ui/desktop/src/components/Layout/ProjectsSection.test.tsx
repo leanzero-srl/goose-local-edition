@@ -122,7 +122,10 @@ describe('ProjectsSection', () => {
     ];
     renderSection();
 
-    const rows = await screen.findAllByRole('button', { expanded: true });
+    // The section header's fold controls are expanded buttons too; the folder rows are the ones under it.
+    const rows = (await screen.findAllByRole('button', { expanded: true })).filter(
+      (r) => !r.closest('[data-testid="lz-section-header"]')
+    );
     expect(rows.map((r) => r.textContent)).toEqual(['goose', 'lz-ppm-forge']);
     expect(screen.queryByText('Unfiled')).not.toBeInTheDocument();
 

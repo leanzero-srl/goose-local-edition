@@ -7,12 +7,15 @@ import type { BenchSession, CatalogBenchmark } from '../benchmark/bridge';
 import { fmtWhen, OutcomeChip } from '../benchmark/outcome';
 import {
   SectionTitleLink,
+  SectionFoldToggle,
   TreeChildren,
   TreeContextMenu,
   treeParentClass,
   treeRowClass,
   treeStateRowClass,
   TREE_PREVIEW_COUNT,
+  sectionFoldMessages,
+  useSectionCollapsed,
 } from './tree';
 import { defineMessages, useIntl } from '../../i18n';
 import { useStartChatAbout } from './useStartChatAbout';
@@ -215,6 +218,7 @@ const RunLeafRow: React.FC<{
 export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }) => {
   const startChat = useStartChatAbout();
   const intl = useIntl();
+  const [collapsed, toggleCollapsed] = useSectionCollapsed('benchmark');
   const navigate = useNavigate();
   const location = useLocation();
   const [params] = useSearchParams();
@@ -277,12 +281,22 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
     <div className={cx('flex min-h-0 flex-col', className)} data-testid="benchmark-section">
       <SectionHeader
         title={
-          <SectionTitleLink
-            label={intl.formatMessage(i18n.title)}
-            active={onBenchmark}
-            onClick={() => navigate(BENCHMARK_PATH)}
-            testId="benchmark-title"
-          />
+          <span className="flex items-center gap-1">
+            <SectionFoldToggle
+              collapsed={collapsed}
+              onToggle={toggleCollapsed}
+              label={intl.formatMessage(sectionFoldMessages[collapsed ? 'expand' : 'collapse'], {
+                section: intl.formatMessage(i18n.title),
+              })}
+              testId="benchmark-fold"
+            />
+            <SectionTitleLink
+              label={intl.formatMessage(i18n.title)}
+              active={onBenchmark}
+              onClick={() => navigate(BENCHMARK_PATH)}
+              testId="benchmark-title"
+            />
+          </span>
         }
         count={runsCount}
         className="px-4"
@@ -297,95 +311,97 @@ export const BenchmarkSection: React.FC<{ className?: string }> = ({ className }
           />
         }
       />
-      <div className="flex flex-col gap-px px-2 pb-2">
-        {loaded && eras.length === 0 ? (
-          <div className={cx('px-2 py-2', TYPE.bodyMuted)}>{intl.formatMessage(i18n.empty)}</div>
-        ) : (
-          eras.map((era) => {
-            const defaultOpen =
-              era.current ||
-              (activeRun != null && era.sessions.some((r) => benchRunKey(r) === activeRun));
-            const expanded = toggled.has(era.scorerVersion) ? !defaultOpen : defaultOpen;
-            const all = showAll.has(era.scorerVersion);
-            const shown = all ? era.sessions : era.sessions.slice(0, TREE_PREVIEW_COUNT);
-            return (
-              <div key={era.scorerVersion} data-testid={`bench-era-${era.scorerVersion}`}>
-                <button
-                  onClick={() =>
-                    setToggled((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(era.scorerVersion)) next.delete(era.scorerVersion);
-                      else next.add(era.scorerVersion);
-                      return next;
-                    })
-                  }
-                  aria-expanded={expanded}
-                  title={era.title}
-                  className={treeParentClass}
-                >
-                  {expanded ? (
-                    <ChevronDown className="size-3.5 shrink-0 text-lz-ink-3" />
-                  ) : (
-                    <ChevronRight className="size-3.5 shrink-0 text-lz-ink-3" />
-                  )}
-                  <Gauge className="size-4 shrink-0 text-lz-ink-2" />
-                  <span className={cx('truncate text-lz-body text-lz-ink', WEIGHT.medium)}>
-                    {era.scorerVersion}
-                  </span>
-                  {era.current ? (
-                    <Chip tone="ok">{intl.formatMessage(i18n.current)}</Chip>
-                  ) : era.frozen ? (
-                    <Chip tone="warn">{intl.formatMessage(i18n.frozen)}</Chip>
-                  ) : null}
-                  <span className={cx('ml-auto', TYPE.meta, TNUM)}>{era.sessions.length}</span>
-                </button>
-                {expanded && (
-                  <TreeChildren>
-                    {shown.map((run) => (
-                      <RunLeafRow
-                        key={benchRunKey(run)}
-                        era={era}
-                        run={run}
-                        active={activeRun === benchRunKey(run)}
-                        onOpen={() => navigate(benchRunHref(era.scorerVersion, benchRunKey(run)))}
-                        onAsk={() => void startChat(askAboutRunPrompt(era, run))}
-                        onDelete={() => void remove(run)}
-                      />
-                    ))}
-                    {era.sessions.length === 0 ? (
-                      <div className={treeStateRowClass}>{intl.formatMessage(i18n.noRuns)}</div>
-                    ) : era.sessions.length > shown.length ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="self-start"
-                        onClick={() => setShowAll((prev) => new Set(prev).add(era.scorerVersion))}
-                      >
-                        {intl.formatMessage(i18n.showMore)}
-                      </Button>
-                    ) : all && era.sessions.length > TREE_PREVIEW_COUNT ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="self-start"
-                        onClick={() =>
-                          setShowAll((prev) => {
-                            const next = new Set(prev);
-                            next.delete(era.scorerVersion);
-                            return next;
-                          })
-                        }
-                      >
-                        {intl.formatMessage(i18n.showLess)}
-                      </Button>
+      {!collapsed && (
+        <div className="flex flex-col gap-px px-2 pb-2">
+          {loaded && eras.length === 0 ? (
+            <div className={cx('px-2 py-2', TYPE.bodyMuted)}>{intl.formatMessage(i18n.empty)}</div>
+          ) : (
+            eras.map((era) => {
+              const defaultOpen =
+                era.current ||
+                (activeRun != null && era.sessions.some((r) => benchRunKey(r) === activeRun));
+              const expanded = toggled.has(era.scorerVersion) ? !defaultOpen : defaultOpen;
+              const all = showAll.has(era.scorerVersion);
+              const shown = all ? era.sessions : era.sessions.slice(0, TREE_PREVIEW_COUNT);
+              return (
+                <div key={era.scorerVersion} data-testid={`bench-era-${era.scorerVersion}`}>
+                  <button
+                    onClick={() =>
+                      setToggled((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(era.scorerVersion)) next.delete(era.scorerVersion);
+                        else next.add(era.scorerVersion);
+                        return next;
+                      })
+                    }
+                    aria-expanded={expanded}
+                    title={era.title}
+                    className={treeParentClass}
+                  >
+                    {expanded ? (
+                      <ChevronDown className="size-3.5 shrink-0 text-lz-ink-3" />
+                    ) : (
+                      <ChevronRight className="size-3.5 shrink-0 text-lz-ink-3" />
+                    )}
+                    <Gauge className="size-4 shrink-0 text-lz-ink-2" />
+                    <span className={cx('truncate text-lz-body text-lz-ink', WEIGHT.medium)}>
+                      {era.scorerVersion}
+                    </span>
+                    {era.current ? (
+                      <Chip tone="ok">{intl.formatMessage(i18n.current)}</Chip>
+                    ) : era.frozen ? (
+                      <Chip tone="warn">{intl.formatMessage(i18n.frozen)}</Chip>
                     ) : null}
-                  </TreeChildren>
-                )}
-              </div>
-            );
-          })
-        )}
-      </div>
+                    <span className={cx('ml-auto', TYPE.meta, TNUM)}>{era.sessions.length}</span>
+                  </button>
+                  {expanded && (
+                    <TreeChildren>
+                      {shown.map((run) => (
+                        <RunLeafRow
+                          key={benchRunKey(run)}
+                          era={era}
+                          run={run}
+                          active={activeRun === benchRunKey(run)}
+                          onOpen={() => navigate(benchRunHref(era.scorerVersion, benchRunKey(run)))}
+                          onAsk={() => void startChat(askAboutRunPrompt(era, run))}
+                          onDelete={() => void remove(run)}
+                        />
+                      ))}
+                      {era.sessions.length === 0 ? (
+                        <div className={treeStateRowClass}>{intl.formatMessage(i18n.noRuns)}</div>
+                      ) : era.sessions.length > shown.length ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="self-start"
+                          onClick={() => setShowAll((prev) => new Set(prev).add(era.scorerVersion))}
+                        >
+                          {intl.formatMessage(i18n.showMore)}
+                        </Button>
+                      ) : all && era.sessions.length > TREE_PREVIEW_COUNT ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="self-start"
+                          onClick={() =>
+                            setShowAll((prev) => {
+                              const next = new Set(prev);
+                              next.delete(era.scorerVersion);
+                              return next;
+                            })
+                          }
+                        >
+                          {intl.formatMessage(i18n.showLess)}
+                        </Button>
+                      ) : null}
+                    </TreeChildren>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
     </div>
   );
 };

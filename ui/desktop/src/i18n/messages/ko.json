@@ -4871,6 +4871,12 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
+  "sidebarSection.collapse": {
+    "defaultMessage": "{section} 접기"
+  },
+  "sidebarSection.expand": {
+    "defaultMessage": "{section} 펼치기"
+  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "검색어를 조정해 보세요."
   },

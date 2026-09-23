@@ -4871,6 +4871,12 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
+  "sidebarSection.collapse": {
+    "defaultMessage": "折叠{section}"
+  },
+  "sidebarSection.expand": {
+    "defaultMessage": "展开{section}"
+  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "尝试调整搜索关键词"
   },

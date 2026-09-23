@@ -48,6 +48,7 @@ import {
   cx,
 } from '../lz';
 import {
+  SectionFoldToggle,
   TreeChildren,
   TreeContextMenu,
   rowActionClass,
@@ -56,6 +57,8 @@ import {
   treeRowClass,
   treeStateRowClass,
   TREE_PREVIEW_COUNT,
+  sectionFoldMessages,
+  useSectionCollapsed,
 } from './tree';
 import { defineMessages, useIntl } from '../../i18n';
 import { RenameDialog } from './RenameDialog';
@@ -715,6 +718,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
  */
 export const ProjectsSection: React.FC<{ className?: string }> = ({ className }) => {
   const intl = useIntl();
+  const [collapsed, toggleCollapsed] = useSectionCollapsed('projects');
   const setView = useNavigation();
   const { extensionsList } = useConfig();
   const { recentSessions, activeSessionId, fetchSessions, handleSessionClick } =
@@ -932,7 +936,26 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
   return (
     <div className={cx('flex min-h-0 flex-col', className)}>
       <SectionHeader
-        title={intl.formatMessage(i18n.projects)}
+        title={
+          <span className="flex items-center gap-1">
+            <SectionFoldToggle
+              collapsed={collapsed}
+              onToggle={toggleCollapsed}
+              label={intl.formatMessage(sectionFoldMessages[collapsed ? 'expand' : 'collapse'], {
+                section: intl.formatMessage(i18n.projects),
+              })}
+              testId="projects-fold"
+            />
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-expanded={!collapsed}
+              className="uppercase hover:text-lz-ink"
+            >
+              {intl.formatMessage(i18n.projects)}
+            </button>
+          </span>
+        }
         count={listed.length}
         className="px-4"
         right={
@@ -947,72 +970,76 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
         }
       />
 
-      {projects.length > 0 && (
-        <div
-          className="px-2 pb-1"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape' && query !== '') {
-              e.stopPropagation();
-              setQuery('');
-            }
-          }}
-        >
-          <Toolbar
-            className="px-1"
-            aria-label={intl.formatMessage(i18n.filterLabel)}
-            search={{
-              value: query,
-              onChange: setQuery,
-              placeholder: intl.formatMessage(i18n.filterPlaceholder),
-              'aria-label': intl.formatMessage(i18n.filterLabel),
-              fill: true,
-            }}
-          />
-        </div>
-      )}
+      {!collapsed && (
+        <>
+          {projects.length > 0 && (
+            <div
+              className="px-2 pb-1"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && query !== '') {
+                  e.stopPropagation();
+                  setQuery('');
+                }
+              }}
+            >
+              <Toolbar
+                className="px-1"
+                aria-label={intl.formatMessage(i18n.filterLabel)}
+                search={{
+                  value: query,
+                  onChange: setQuery,
+                  placeholder: intl.formatMessage(i18n.filterPlaceholder),
+                  'aria-label': intl.formatMessage(i18n.filterLabel),
+                  fill: true,
+                }}
+              />
+            </div>
+          )}
 
-      <div className="flex flex-col gap-px px-2 pb-2">
-        {projects.length === 0 ? (
-          <div className={cx('px-2 py-2', TYPE.bodyMuted)}>
-            {intl.formatMessage(i18n.emptyState)}
+          <div className="flex flex-col gap-px px-2 pb-2">
+            {projects.length === 0 ? (
+              <div className={cx('px-2 py-2', TYPE.bodyMuted)}>
+                {intl.formatMessage(i18n.emptyState)}
+              </div>
+            ) : listed.length === 0 ? (
+              <div className={cx('px-2 py-2', TYPE.bodyMuted)} data-testid="projects-filter-empty">
+                {intl.formatMessage(i18n.filterNoMatch, { query: query.trim() })}
+              </div>
+            ) : (
+              listed.map(({ project, sessions: matches }, index) => (
+                <ProjectRow
+                  key={project.path}
+                  project={project}
+                  matches={matches}
+                  expanded={
+                    filtering || toggled.has(`open:${project.path}`) || isExpanded(project, index)
+                  }
+                  state={sessionsByProject[project.path]}
+                  showAll={showAll.has(project.path)}
+                  activeSessionId={activeSessionId}
+                  onToggle={() => toggleProject(project.path)}
+                  onNewSession={() => void handleNewSession(project.path)}
+                  onRemove={
+                    project.registered && project.sessions.length === 0
+                      ? () => void handleRemoveProject(project.path)
+                      : undefined
+                  }
+                  onOpenSession={handleSessionClick}
+                  onAskSession={(session) => void startChat(askAboutSessionPrompt(session))}
+                  onShowMore={() => showMore(project)}
+                  onShowLess={() => showLess(project.path)}
+                  onRetry={() =>
+                    void loadProjectSessions(
+                      project.path,
+                      sessionsByProject[project.path]?.nextCursor ?? null
+                    )
+                  }
+                />
+              ))
+            )}
           </div>
-        ) : listed.length === 0 ? (
-          <div className={cx('px-2 py-2', TYPE.bodyMuted)} data-testid="projects-filter-empty">
-            {intl.formatMessage(i18n.filterNoMatch, { query: query.trim() })}
-          </div>
-        ) : (
-          listed.map(({ project, sessions: matches }, index) => (
-            <ProjectRow
-              key={project.path}
-              project={project}
-              matches={matches}
-              expanded={
-                filtering || toggled.has(`open:${project.path}`) || isExpanded(project, index)
-              }
-              state={sessionsByProject[project.path]}
-              showAll={showAll.has(project.path)}
-              activeSessionId={activeSessionId}
-              onToggle={() => toggleProject(project.path)}
-              onNewSession={() => void handleNewSession(project.path)}
-              onRemove={
-                project.registered && project.sessions.length === 0
-                  ? () => void handleRemoveProject(project.path)
-                  : undefined
-              }
-              onOpenSession={handleSessionClick}
-              onAskSession={(session) => void startChat(askAboutSessionPrompt(session))}
-              onShowMore={() => showMore(project)}
-              onShowLess={() => showLess(project.path)}
-              onRetry={() =>
-                void loadProjectSessions(
-                  project.path,
-                  sessionsByProject[project.path]?.nextCursor ?? null
-                )
-              }
-            />
-          ))
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 };

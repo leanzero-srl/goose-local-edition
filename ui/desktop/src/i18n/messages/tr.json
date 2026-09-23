@@ -4871,6 +4871,12 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
+  "sidebarSection.collapse": {
+    "defaultMessage": "{section} daralt"
+  },
+  "sidebarSection.expand": {
+    "defaultMessage": "{section} genişlet"
+  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "Arama terimlerinizi ayarlamayı deneyin"
   },

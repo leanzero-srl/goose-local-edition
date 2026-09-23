@@ -4871,6 +4871,12 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
+  "sidebarSection.collapse": {
+    "defaultMessage": "{section} を折りたたむ"
+  },
+  "sidebarSection.expand": {
+    "defaultMessage": "{section} を展開"
+  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "検索条件を変更してみてください"
   },

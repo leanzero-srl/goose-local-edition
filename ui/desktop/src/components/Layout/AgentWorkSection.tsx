@@ -12,6 +12,7 @@ import {
 import { useAgentRoster } from '../agent-work/useAgentWork';
 import {
   SectionTitleLink,
+  SectionFoldToggle,
   TreeChildren,
   TreeContextMenu,
   timeAgo,
@@ -19,6 +20,8 @@ import {
   treeRowClass,
   treeStateRowClass,
   TREE_PREVIEW_COUNT,
+  sectionFoldMessages,
+  useSectionCollapsed,
 } from './tree';
 import { defineMessages, useIntl } from '../../i18n';
 import { useStartChatAbout } from './useStartChatAbout';
@@ -305,6 +308,7 @@ const DeskRow: React.FC<{
 export const AgentWorkSection: React.FC<{ className?: string }> = ({ className }) => {
   const startChat = useStartChatAbout();
   const intl = useIntl();
+  const [collapsed, toggleCollapsed] = useSectionCollapsed('agent-work');
   const navigate = useNavigate();
   const location = useLocation();
   const [params] = useSearchParams();
@@ -396,12 +400,22 @@ export const AgentWorkSection: React.FC<{ className?: string }> = ({ className }
     <div className={cx('flex min-h-0 flex-col', className)} data-testid="agent-work-section">
       <SectionHeader
         title={
-          <SectionTitleLink
-            label={intl.formatMessage(i18n.title)}
-            active={onAgentWork}
-            onClick={() => navigate(AGENT_WORK_PATH)}
-            testId="agent-work-title"
-          />
+          <span className="flex items-center gap-1">
+            <SectionFoldToggle
+              collapsed={collapsed}
+              onToggle={toggleCollapsed}
+              label={intl.formatMessage(sectionFoldMessages[collapsed ? 'expand' : 'collapse'], {
+                section: intl.formatMessage(i18n.title),
+              })}
+              testId="agent-work-fold"
+            />
+            <SectionTitleLink
+              label={intl.formatMessage(i18n.title)}
+              active={onAgentWork}
+              onClick={() => navigate(AGENT_WORK_PATH)}
+              testId="agent-work-title"
+            />
+          </span>
         }
         count={rows.length}
         className="px-4"
@@ -416,37 +430,39 @@ export const AgentWorkSection: React.FC<{ className?: string }> = ({ className }
           />
         }
       />
-      <div className="flex flex-col gap-px px-2 pb-2">
-        {roster.loaded && rows.length === 0 ? (
-          <div className={cx('px-2 py-2', TYPE.bodyMuted)}>{intl.formatMessage(i18n.empty)}</div>
-        ) : (
-          rows.map((row) => (
-            <DeskRow
-              key={row.dir}
-              row={row}
-              now={now}
-              expanded={expanded.has(row.dir)}
-              active={activeDesk === row.dir}
-              activeTick={activeTick}
-              ticks={ticksByDesk[row.dir]}
-              showAll={showAll.has(row.dir)}
-              onToggle={() => toggle(row.dir)}
-              onOpen={(tick) => navigate(deskHref(row.dir, tick))}
-              onAsk={() => void startChat(askAboutAgentPrompt(row))}
-              onRemove={() => void remove(row.dir)}
-              onRetry={() => void loadTicks(row.dir)}
-              onShowMore={() => setShowAll((prev) => new Set(prev).add(row.dir))}
-              onShowLess={() =>
-                setShowAll((prev) => {
-                  const next = new Set(prev);
-                  next.delete(row.dir);
-                  return next;
-                })
-              }
-            />
-          ))
-        )}
-      </div>
+      {!collapsed && (
+        <div className="flex flex-col gap-px px-2 pb-2">
+          {roster.loaded && rows.length === 0 ? (
+            <div className={cx('px-2 py-2', TYPE.bodyMuted)}>{intl.formatMessage(i18n.empty)}</div>
+          ) : (
+            rows.map((row) => (
+              <DeskRow
+                key={row.dir}
+                row={row}
+                now={now}
+                expanded={expanded.has(row.dir)}
+                active={activeDesk === row.dir}
+                activeTick={activeTick}
+                ticks={ticksByDesk[row.dir]}
+                showAll={showAll.has(row.dir)}
+                onToggle={() => toggle(row.dir)}
+                onOpen={(tick) => navigate(deskHref(row.dir, tick))}
+                onAsk={() => void startChat(askAboutAgentPrompt(row))}
+                onRemove={() => void remove(row.dir)}
+                onRetry={() => void loadTicks(row.dir)}
+                onShowMore={() => setShowAll((prev) => new Set(prev).add(row.dir))}
+                onShowLess={() =>
+                  setShowAll((prev) => {
+                    const next = new Set(prev);
+                    next.delete(row.dir);
+                    return next;
+                  })
+                }
+              />
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 };

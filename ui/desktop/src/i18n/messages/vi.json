@@ -4871,6 +4871,12 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
+  "sidebarSection.collapse": {
+    "defaultMessage": "Thu gọn {section}"
+  },
+  "sidebarSection.expand": {
+    "defaultMessage": "Mở rộng {section}"
+  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "Hãy thử điều chỉnh từ khóa tìm kiếm của bạn"
   },

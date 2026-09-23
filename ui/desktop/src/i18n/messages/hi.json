@@ -4871,6 +4871,12 @@
   "shortcutRefused.titleSessionRun": {
     "defaultMessage": "Shortcut ignored while a session run is live"
   },
+  "sidebarSection.collapse": {
+    "defaultMessage": "{section} संक्षिप्त करें"
+  },
+  "sidebarSection.expand": {
+    "defaultMessage": "{section} विस्तृत करें"
+  },
   "skillsView.adjustSearchTerms": {
     "defaultMessage": "अपने खोज शब्दों को समायोजित करने का प्रयास करें"
   },
