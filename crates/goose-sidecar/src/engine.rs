@@ -510,6 +510,17 @@ fn sidecar_spawn_path() -> String {
     "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string()
 }
 
+/// The engine's spawn environment, layered over what goosed inherits: the fixed PATH and the
+/// telemetry kill switches Rapid-MLX honours (telemetry/state.py: `RAPID_MLX_TELEMETRY` falsy
+/// or `DO_NOT_TRACK` truthy forces it OFF — a local-edition engine reports to no one).
+fn sidecar_spawn_env() -> Vec<(String, String)> {
+    vec![
+        ("PATH".to_string(), sidecar_spawn_path()),
+        ("DO_NOT_TRACK".to_string(), "1".to_string()),
+        ("RAPID_MLX_TELEMETRY".to_string(), "0".to_string()),
+    ]
+}
+
 /// Terminate whatever LISTENS on `port` — per-pid (never a group: the orphan's group is not
 /// provably ours), SIGTERM then SIGKILL. Reaching for `lsof` is deliberate: the orphan is not
 /// our child, so there is no handle; the port is OUR configured port, which is the authority
@@ -664,7 +675,7 @@ impl MlxEngineManager {
                 None => {
                     let mut config =
                         SidecarConfig::new("mlx-engine", argv.clone(), base_url, expected_model_id);
-                    config.env = vec![("PATH".to_string(), sidecar_spawn_path())];
+                    config.env = sidecar_spawn_env();
                     Sidecar::start(config).await.map(Box::new)
                 }
             };
@@ -1216,6 +1227,14 @@ mod tests {
             "{argv:?}"
         );
         assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
+    }
+
+    #[test]
+    fn the_spawn_env_turns_engine_telemetry_off() {
+        let env: BTreeMap<String, String> = sidecar_spawn_env().into_iter().collect();
+        assert_eq!(env["PATH"], sidecar_spawn_path());
+        assert_eq!(env["DO_NOT_TRACK"], "1");
+        assert_eq!(env["RAPID_MLX_TELEMETRY"], "0");
     }
 
     #[test]
