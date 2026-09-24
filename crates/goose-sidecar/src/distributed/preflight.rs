@@ -16,7 +16,7 @@ use super::local_network::{self, PeerAnswer, PingLine};
 use super::plan::{self, PipelinePlan, PipelineRatios, RankPlan};
 use super::probe::{self, Pressure};
 use super::provision::{EnvSpec, PIPELINE_FORK_COMMIT};
-use super::{DERIVED_CONTEXT_MARGIN_RATIO, PIPELINE_MAX_BATCH};
+use super::PIPELINE_MAX_BATCH;
 use crate::GIB;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1231,6 +1231,13 @@ async fn plan_pipeline(
     plans: &mut [Option<RankPlan>],
 ) -> Option<PipelineRatios> {
     let python = config.nodes[0].pipeline_python.as_deref()?;
+    let mut planned = match run_fork_planner(config, exec, python, budgets, config.context).await {
+        Ok(plan) => plan,
+        Err(e) => {
+            report.checks.push(Check::fail("plan", format!("{e:#}")));
+            return None;
+        }
+    };
     report.context_source = Some(
         if config.context.is_some() {
             "requested"
@@ -1239,38 +1246,13 @@ async fn plan_pipeline(
         }
         .to_string(),
     );
-    let planned = if let Some(context) = config.context {
-        match run_fork_planner(config, exec, python, budgets, Some(context)).await {
-            Ok(plan) => plan,
-            Err(e) => {
-                report.checks.push(Check::fail("plan", format!("{e:#}")));
-                return None;
-            }
-        }
-    } else {
-        // The walk runs on margin budgets (DERIVED_CONTEXT_MARGIN_RATIO); the chosen context is
-        // then planned once more on the real ones, so the report and the pinned split carry the
-        // measured budgets while the ranks keep room for what memory does between now and load.
-        let margin: Vec<(u64, u64, u64)> = budgets
-            .iter()
-            .map(|(available, total, budget)| {
-                let reserve = (*total as f64 * DERIVED_CONTEXT_MARGIN_RATIO) as u64;
-                (available.saturating_sub(reserve), *total, *budget)
-            })
-            .collect();
-        let mut derived = match run_fork_planner(config, exec, python, &margin, None).await {
-            Ok(plan) => plan,
-            Err(e) => {
-                report.checks.push(Check::fail("plan", format!("{e:#}")));
-                return None;
-            }
-        };
-        let mut tried = std::collections::BTreeSet::from([derived.context]);
-        while let Some(ceiling) = derived
+    if config.context.is_none() {
+        let mut tried = std::collections::BTreeSet::from([planned.context]);
+        while let Some(ceiling) = planned
             .max_context
-            .filter(|c| (*c > derived.context || !derived.fits) && tried.insert(*c))
+            .filter(|c| (*c > planned.context || !planned.fits) && tried.insert(*c))
         {
-            derived = match run_fork_planner(config, exec, python, &margin, Some(ceiling)).await {
+            planned = match run_fork_planner(config, exec, python, budgets, Some(ceiling)).await {
                 Ok(plan) => plan,
                 Err(e) => {
                     report.checks.push(Check::fail("plan", format!("{e:#}")));
@@ -1278,18 +1260,7 @@ async fn plan_pipeline(
                 }
             };
         }
-        if !derived.fits {
-            derived
-        } else {
-            match run_fork_planner(config, exec, python, budgets, Some(derived.context)).await {
-                Ok(plan) => plan,
-                Err(e) => {
-                    report.checks.push(Check::fail("plan", format!("{e:#}")));
-                    return None;
-                }
-            }
-        }
-    };
+    }
     report.context_limit = Some(planned.context);
     report.max_context_fits = planned.max_context;
     if planned.stages.len() != config.size() {
@@ -1575,39 +1546,6 @@ mod tests {
             check.message
         );
         assert_eq!(plans[1].as_ref().unwrap().budget_bytes, 50_294_067_037);
-    }
-
-    #[tokio::test]
-    async fn a_derived_context_is_walked_on_margin_budgets_and_reported_on_the_real_ones() {
-        let planner = Arc::new(ScriptedPlanner {
-            seen: Default::default(),
-            answer: |context| match context {
-                None => flash_answer(262_144, 16_308, false),
-                Some(16_308) => flash_answer(16_308, 73_216, true),
-                Some(73_216) => flash_answer(73_216, 73_216, true),
-                other => panic!("unexpected context {other:?}"),
-            },
-        });
-        let exec: Arc<dyn NodeExec> = planner.clone();
-        let config = pipeline_config();
-        let mut report = empty_report(&config);
-        let mut plans = vec![None; 2];
-        plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
-        let seen = planner.seen.lock().unwrap();
-        // 2% of 128 GiB = 2.56 GiB and of 96 GiB = 1.92 GiB off each node's available figure.
-        let margin = "--node 'MacBook-Pro:128.0000:87.4400' --node 'workhorse:96.0000:65.0800'";
-        let real = "--node 'MacBook-Pro:128.0000:90.0000' --node 'workhorse:96.0000:67.0000'";
-        let (last, walk) = seen.split_last().unwrap();
-        assert_eq!(walk.len(), 3, "{seen:?}");
-        assert!(
-            walk.iter().all(|script| script.contains(margin)),
-            "{seen:?}"
-        );
-        assert!(
-            last.contains(real) && last.ends_with("--context 73216"),
-            "{last}"
-        );
-        assert_eq!(report.context_limit, Some(73_216));
     }
 
     #[tokio::test]

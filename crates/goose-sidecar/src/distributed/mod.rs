@@ -69,13 +69,6 @@ pub const RUNTIME_OVERHEAD_RATIO: f64 = 1.10;
 // measured: the fork's `serve` proves 2 rows bit-exact against single-process batches
 // (pipeline_qwen4_serve.py); the plan is made for the batch the ranks are launched with.
 pub const PIPELINE_MAX_BATCH: u32 = 2;
-// measured: a DERIVED pipeline context is planned against every node's available memory minus
-// this share of its RAM. The derivation's own ceiling sits at 100% of budget, and the ranks
-// re-check against LIVE memory at load: on 2026-09-24 (Flash, 16 s after a passing preflight) the
-// rank-0 budget read 62.55 GiB against preflight's 63.30 (−0.75 GiB = 0.6% of 128 GiB RAM) and
-// rank 1's 48.74 against 49.21 (−0.47 GiB = 0.5% of 96), so both ranks refused at 101%. 2% of RAM
-// is 3.4x the larger drift; a REQUESTED context is planned as asked, without it.
-pub const DERIVED_CONTEXT_MARGIN_RATIO: f64 = 0.02;
 // ratio: the soak's hang rule (STEP1b REPORT: "no progress for 10x the running median of that
 // measure"); the worst healthy ratio observed across 326 requests was 2.73x.
 pub const HANG_MEDIAN_MULTIPLE: f64 = 10.0;
