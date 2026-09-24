@@ -34,6 +34,14 @@ In flight: P1–2 + benchmark (facts, planner, measurement store, card, badges);
 memory compaction + budget = each Mac's GPU ceiling (owner: M3 Ultra should reach ~76 GB); KV-cache compression
 (v0.14.3-lz.3 pin landed); Flash image input DONE across the split (app chat pending memory). P4 (one copy per Mac)
 after P3. Then one release with all of it, installed on both Macs.
+UPDATE 2026-09-24 ~18:00 — 3.0.25 PUBLISHED, installed on both Macs, verified live (Link auto-reconnect, idle Flash stays
+up 3+2 min, card reads the workhorse M3 Ultra over Link and recommends it for the 27B). Clean Flash run at the ceiling
+rule: pressure normal in every sample. CLEANUP done: 13 stale worktrees removed (5 merged session branches deleted,
+unmerged branches kept), ~100 GB freed on the MacBook (150 GB free), workhorse test folder removed and its 27B moved to
+~/.goose/models/Mihai-LeanZero (identical to the MacBook's), manual venvs + /tmp links gone, workhorse uv cache pruned
+(MacBook's is locked by the running 27B — left), stale debug `goose serve :3399` stopped, mcp-doc-processor updated to
+54e371f + restarted via launchd. LOAD-BEARING on the workhorse (never clean): headscale :8790 + Link worker :8791 +
+mcp-web-search :8443 + mcp-doc-processor :10000 behind the owner's Tailscale Funnel.
 OPEN (each has an agent or a slot): (a) Flash full-model reference by layer streaming + batch-vs-single mismatch (52/260) —
 split agent; (b) live trigger of hang rule + watchdog — backend agent; (c) Engine-tab/tile/tray distributed UI — panel-surgeon;
 (d) qwen4_exp OpenAI server entry in the fork so goose can START a Flash split — QUEUED behind: (a)'s agent; (e) remount the
