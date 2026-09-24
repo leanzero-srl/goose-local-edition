@@ -2738,6 +2738,12 @@
   "mlxDistributed.admissionOpen": {
     "defaultMessage": "リクエスト受付中"
   },
+  "mlxDistributed.advanced": {
+    "defaultMessage": "詳細設定"
+  },
+  "mlxDistributed.advancedMeta": {
+    "defaultMessage": "保存済み構成のすべての項目"
+  },
   "mlxDistributed.apply": {
     "defaultMessage": "適用"
   },
@@ -2770,6 +2776,9 @@
   },
   "mlxDistributed.contextLine": {
     "defaultMessage": "コンテキスト {limit}（{source}）· 収まる最大値 {max}"
+  },
+  "mlxDistributed.detectAgain": {
+    "defaultMessage": "再検出"
   },
   "mlxDistributed.editNode": {
     "defaultMessage": "{name} を編集"
@@ -3002,6 +3011,9 @@
   "mlxDistributed.nodes": {
     "defaultMessage": "ノード"
   },
+  "mlxDistributed.notConfigured": {
+    "defaultMessage": "未構成"
+  },
   "mlxDistributed.notMeasured": {
     "defaultMessage": "未測定"
   },
@@ -3052,6 +3064,24 @@
   },
   "mlxDistributed.pressure.warn": {
     "defaultMessage": "メモリ圧迫: 警告"
+  },
+  "mlxDistributed.provision.done": {
+    "defaultMessage": "準備完了"
+  },
+  "mlxDistributed.provision.elapsed": {
+    "defaultMessage": "{seconds} 秒"
+  },
+  "mlxDistributed.provision.failed": {
+    "defaultMessage": "失敗"
+  },
+  "mlxDistributed.provision.running": {
+    "defaultMessage": "準備中"
+  },
+  "mlxDistributed.provision.skipped": {
+    "defaultMessage": "独自の Python"
+  },
+  "mlxDistributed.provisionTitle": {
+    "defaultMessage": "各ノードの Python"
   },
   "mlxDistributed.ranAt": {
     "defaultMessage": "{time} に実行"
@@ -3122,6 +3152,9 @@
   "mlxDistributed.stopVerified": {
     "defaultMessage": "停止済み（確認済み）"
   },
+  "mlxDistributed.summaryNode": {
+    "defaultMessage": "ランク {rank} · {name} · {where}"
+  },
   "mlxDistributed.thisMac": {
     "defaultMessage": "この Mac"
   },
@@ -3160,6 +3193,135 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "警告"
+  },
+  "mlxDistributedSetup.advanced": {
+    "defaultMessage": "詳細設定"
+  },
+  "mlxDistributedSetup.advancedMeta": {
+    "defaultMessage": "すべての項目を編集可能 — 独自の Python、別のモデルフォルダー、ポート"
+  },
+  "mlxDistributedSetup.answering": {
+    "defaultMessage": "~/.ssh/config から応答"
+  },
+  "mlxDistributedSetup.apiPort": {
+    "defaultMessage": "API ポート"
+  },
+  "mlxDistributedSetup.backend": {
+    "defaultMessage": "バックエンド"
+  },
+  "mlxDistributedSetup.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "mlxDistributedSetup.coordinatorPort": {
+    "defaultMessage": "コーディネーターポート"
+  },
+  "mlxDistributedSetup.detect": {
+    "defaultMessage": "検出"
+  },
+  "mlxDistributedSetup.detecting": {
+    "defaultMessage": "この Mac と {peer} を ssh で調査中…"
+  },
+  "mlxDistributedSetup.differsOn": {
+    "defaultMessage": "{nodes} で不一致"
+  },
+  "mlxDistributedSetup.env.absent": {
+    "defaultMessage": "保存時に作成"
+  },
+  "mlxDistributedSetup.env.broken": {
+    "defaultMessage": "保存時に再作成"
+  },
+  "mlxDistributedSetup.env.noUv": {
+    "defaultMessage": "uv なし"
+  },
+  "mlxDistributedSetup.env.ready": {
+    "defaultMessage": "準備完了"
+  },
+  "mlxDistributedSetup.error.candidates": {
+    "defaultMessage": "ssh エイリアスを読み取れません"
+  },
+  "mlxDistributedSetup.error.detect": {
+    "defaultMessage": "検出に失敗しました"
+  },
+  "mlxDistributedSetup.error.save": {
+    "defaultMessage": "保存に失敗しました"
+  },
+  "mlxDistributedSetup.everyNode": {
+    "defaultMessage": "すべてのノードにあり"
+  },
+  "mlxDistributedSetup.field.modelDir": {
+    "defaultMessage": "モデルフォルダー"
+  },
+  "mlxDistributedSetup.field.pipelinePython": {
+    "defaultMessage": "パイプライン用 Python"
+  },
+  "mlxDistributedSetup.field.python": {
+    "defaultMessage": "Python"
+  },
+  "mlxDistributedSetup.field.rdmaDevice": {
+    "defaultMessage": "RDMA デバイス"
+  },
+  "mlxDistributedSetup.field.tbInterface": {
+    "defaultMessage": "インターフェース"
+  },
+  "mlxDistributedSetup.field.tbIp": {
+    "defaultMessage": "リンク IPv4"
+  },
+  "mlxDistributedSetup.field.tbNetmask": {
+    "defaultMessage": "ネットマスク"
+  },
+  "mlxDistributedSetup.field.tbService": {
+    "defaultMessage": "ネットワークサービス"
+  },
+  "mlxDistributedSetup.gapsTitle": {
+    "defaultMessage": "{count, plural, other {# 件の値が見つかりません}}"
+  },
+  "mlxDistributedSetup.intro": {
+    "defaultMessage": "もう一台の Mac を一度だけ指定してください。goose がこの Mac と相手を ssh で調べ、リンク、RDMA、バックエンド、モデル、ポート、Python を入力します。"
+  },
+  "mlxDistributedSetup.manifestAgree": {
+    "defaultMessage": "SHA256SUMS 一致"
+  },
+  "mlxDistributedSetup.manifestDiffer": {
+    "defaultMessage": "SHA256SUMS 不一致"
+  },
+  "mlxDistributedSetup.memory": {
+    "defaultMessage": "{total} GiB 中 {available} GiB 利用可能"
+  },
+  "mlxDistributedSetup.missingOn": {
+    "defaultMessage": "{nodes} にありません"
+  },
+  "mlxDistributedSetup.model": {
+    "defaultMessage": "モデル"
+  },
+  "mlxDistributedSetup.modelPick": {
+    "defaultMessage": "モデルを選択"
+  },
+  "mlxDistributedSetup.noneAnswering": {
+    "defaultMessage": "~/.ssh/config のどのエイリアスも非対話型 ssh に応答しませんでした。"
+  },
+  "mlxDistributedSetup.peer": {
+    "defaultMessage": "もう一台の Mac(ssh エイリアスまたはホスト)"
+  },
+  "mlxDistributedSetup.peerPlaceholder": {
+    "defaultMessage": "workhorse"
+  },
+  "mlxDistributedSetup.probed": {
+    "defaultMessage": "{count, plural, other {{ms} ms で # ノードを調査}}"
+  },
+  "mlxDistributedSetup.save": {
+    "defaultMessage": "保存して準備"
+  },
+  "mlxDistributedSetup.stillEmpty": {
+    "defaultMessage": "保存には上のすべての値が必要です。赤い項目を解決するか、詳細設定で指定してください。"
+  },
+  "mlxDistributedSetup.thisMac": {
+    "defaultMessage": "この Mac"
+  },
+  "mlxDistributedSetup.title": {
+    "defaultMessage": "分散エンジンのセットアップ"
+  },
+  "mlxDistributedSetup.unreachable": {
+    "defaultMessage": "到達不能"
   },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "分散"

@@ -2738,6 +2738,12 @@
   "mlxDistributed.admissionOpen": {
     "defaultMessage": "अनुरोध स्वीकार हो रहे हैं"
   },
+  "mlxDistributed.advanced": {
+    "defaultMessage": "उन्नत"
+  },
+  "mlxDistributed.advancedMeta": {
+    "defaultMessage": "सहेजे गए कॉन्फ़िगरेशन के सभी फ़ील्ड"
+  },
   "mlxDistributed.apply": {
     "defaultMessage": "लागू करें"
   },
@@ -2770,6 +2776,9 @@
   },
   "mlxDistributed.contextLine": {
     "defaultMessage": "संदर्भ {limit} ({source}) · सबसे बड़ा जो समाए: {max}"
+  },
+  "mlxDistributed.detectAgain": {
+    "defaultMessage": "फिर से पहचानें"
   },
   "mlxDistributed.editNode": {
     "defaultMessage": "{name} संपादित करें"
@@ -3002,6 +3011,9 @@
   "mlxDistributed.nodes": {
     "defaultMessage": "नोड"
   },
+  "mlxDistributed.notConfigured": {
+    "defaultMessage": "कॉन्फ़िगर नहीं"
+  },
   "mlxDistributed.notMeasured": {
     "defaultMessage": "मापा नहीं गया"
   },
@@ -3052,6 +3064,24 @@
   },
   "mlxDistributed.pressure.warn": {
     "defaultMessage": "दबाव अधिक"
+  },
+  "mlxDistributed.provision.done": {
+    "defaultMessage": "तैयार"
+  },
+  "mlxDistributed.provision.elapsed": {
+    "defaultMessage": "{seconds} से"
+  },
+  "mlxDistributed.provision.failed": {
+    "defaultMessage": "विफल"
+  },
+  "mlxDistributed.provision.running": {
+    "defaultMessage": "तैयार किया जा रहा है"
+  },
+  "mlxDistributed.provision.skipped": {
+    "defaultMessage": "आपका अपना Python"
+  },
+  "mlxDistributed.provisionTitle": {
+    "defaultMessage": "हर नोड पर Python"
   },
   "mlxDistributed.ranAt": {
     "defaultMessage": "{time} पर चला"
@@ -3122,6 +3152,9 @@
   "mlxDistributed.stopVerified": {
     "defaultMessage": "रुका, सत्यापित"
   },
+  "mlxDistributed.summaryNode": {
+    "defaultMessage": "रैंक {rank} · {name} · {where}"
+  },
   "mlxDistributed.thisMac": {
     "defaultMessage": "यह Mac"
   },
@@ -3160,6 +3193,135 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "चेतावनी"
+  },
+  "mlxDistributedSetup.advanced": {
+    "defaultMessage": "उन्नत"
+  },
+  "mlxDistributedSetup.advancedMeta": {
+    "defaultMessage": "सभी फ़ील्ड, संपादन योग्य — आपका अपना Python, दूसरा मॉडल फ़ोल्डर, पोर्ट"
+  },
+  "mlxDistributedSetup.answering": {
+    "defaultMessage": "~/.ssh/config से जवाब देने वाले"
+  },
+  "mlxDistributedSetup.apiPort": {
+    "defaultMessage": "API पोर्ट"
+  },
+  "mlxDistributedSetup.backend": {
+    "defaultMessage": "बैकएंड"
+  },
+  "mlxDistributedSetup.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "mlxDistributedSetup.coordinatorPort": {
+    "defaultMessage": "कोऑर्डिनेटर पोर्ट"
+  },
+  "mlxDistributedSetup.detect": {
+    "defaultMessage": "पहचानें"
+  },
+  "mlxDistributedSetup.detecting": {
+    "defaultMessage": "इस Mac और {peer} को ssh से जाँचा जा रहा है…"
+  },
+  "mlxDistributedSetup.differsOn": {
+    "defaultMessage": "{nodes} पर अलग"
+  },
+  "mlxDistributedSetup.env.absent": {
+    "defaultMessage": "सहेजने पर बनाया जाएगा"
+  },
+  "mlxDistributedSetup.env.broken": {
+    "defaultMessage": "सहेजने पर फिर से बनाया जाएगा"
+  },
+  "mlxDistributedSetup.env.noUv": {
+    "defaultMessage": "uv नहीं"
+  },
+  "mlxDistributedSetup.env.ready": {
+    "defaultMessage": "तैयार"
+  },
+  "mlxDistributedSetup.error.candidates": {
+    "defaultMessage": "ssh उपनाम पढ़े नहीं जा सके"
+  },
+  "mlxDistributedSetup.error.detect": {
+    "defaultMessage": "पहचान विफल"
+  },
+  "mlxDistributedSetup.error.save": {
+    "defaultMessage": "सहेजना विफल"
+  },
+  "mlxDistributedSetup.everyNode": {
+    "defaultMessage": "हर नोड पर"
+  },
+  "mlxDistributedSetup.field.modelDir": {
+    "defaultMessage": "मॉडल फ़ोल्डर"
+  },
+  "mlxDistributedSetup.field.pipelinePython": {
+    "defaultMessage": "पाइपलाइन Python"
+  },
+  "mlxDistributedSetup.field.python": {
+    "defaultMessage": "Python"
+  },
+  "mlxDistributedSetup.field.rdmaDevice": {
+    "defaultMessage": "RDMA डिवाइस"
+  },
+  "mlxDistributedSetup.field.tbInterface": {
+    "defaultMessage": "इंटरफ़ेस"
+  },
+  "mlxDistributedSetup.field.tbIp": {
+    "defaultMessage": "लिंक IPv4"
+  },
+  "mlxDistributedSetup.field.tbNetmask": {
+    "defaultMessage": "नेटमास्क"
+  },
+  "mlxDistributedSetup.field.tbService": {
+    "defaultMessage": "नेटवर्क सेवा"
+  },
+  "mlxDistributedSetup.gapsTitle": {
+    "defaultMessage": "{count, plural, one {# मान नहीं मिला} other {# मान नहीं मिले}}"
+  },
+  "mlxDistributedSetup.intro": {
+    "defaultMessage": "दूसरे Mac का नाम एक बार दें। goose इस Mac और उसे ssh से जाँचता है और लिंक, RDMA, बैकएंड, मॉडल, पोर्ट और Python भर देता है।"
+  },
+  "mlxDistributedSetup.manifestAgree": {
+    "defaultMessage": "SHA256SUMS मेल खाते हैं"
+  },
+  "mlxDistributedSetup.manifestDiffer": {
+    "defaultMessage": "SHA256SUMS अलग हैं"
+  },
+  "mlxDistributedSetup.memory": {
+    "defaultMessage": "{total} GiB में से {available} GiB उपलब्ध"
+  },
+  "mlxDistributedSetup.missingOn": {
+    "defaultMessage": "{nodes} पर नहीं है"
+  },
+  "mlxDistributedSetup.model": {
+    "defaultMessage": "मॉडल"
+  },
+  "mlxDistributedSetup.modelPick": {
+    "defaultMessage": "मॉडल चुनें"
+  },
+  "mlxDistributedSetup.noneAnswering": {
+    "defaultMessage": "~/.ssh/config के किसी भी उपनाम ने गैर-इंटरैक्टिव ssh का जवाब नहीं दिया।"
+  },
+  "mlxDistributedSetup.peer": {
+    "defaultMessage": "दूसरा Mac (ssh उपनाम या होस्ट)"
+  },
+  "mlxDistributedSetup.peerPlaceholder": {
+    "defaultMessage": "workhorse"
+  },
+  "mlxDistributedSetup.probed": {
+    "defaultMessage": "{count, plural, one {{ms} ms में # नोड जाँचा गया} other {{ms} ms में # नोड जाँचे गए}}"
+  },
+  "mlxDistributedSetup.save": {
+    "defaultMessage": "सहेजें और तैयार करें"
+  },
+  "mlxDistributedSetup.stillEmpty": {
+    "defaultMessage": "सहेजने के लिए ऊपर के सभी मान चाहिए; लाल वाले ठीक करें या उन्हें उन्नत में सेट करें।"
+  },
+  "mlxDistributedSetup.thisMac": {
+    "defaultMessage": "यह Mac"
+  },
+  "mlxDistributedSetup.title": {
+    "defaultMessage": "वितरित इंजन सेट करें"
+  },
+  "mlxDistributedSetup.unreachable": {
+    "defaultMessage": "पहुँच योग्य नहीं"
   },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "वितरित"

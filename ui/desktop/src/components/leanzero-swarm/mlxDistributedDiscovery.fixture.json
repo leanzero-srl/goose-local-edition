@@ -1,0 +1,460 @@
+{
+  "unchosen": {
+    "config": {
+      "modelId": "",
+      "backend": "jaccl",
+      "port": 8091,
+      "coordinatorPort": 8092,
+      "restartOnFailure": false,
+      "hangRatioOnly": false,
+      "nodes": [
+        {
+          "name": "Mihai Macbook",
+          "tbIp": "192.168.0.1",
+          "tbNetmask": "255.255.255.252",
+          "tbInterface": "en3",
+          "tbService": "EXO Thunderbolt 3",
+          "rdmaDevice": "rdma_en3",
+          "python": "/Users/mihaiperdum/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+          "modelDir": ""
+        },
+        {
+          "name": "Work’s Mac Studio",
+          "ssh": "workhorse",
+          "tbIp": "192.168.0.2",
+          "tbNetmask": "255.255.255.252",
+          "tbInterface": "en3",
+          "tbService": "EXO Thunderbolt 2",
+          "rdmaDevice": "rdma_en3",
+          "python": "/Users/workhorse/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+          "modelDir": ""
+        }
+      ]
+    },
+    "backendReason": "JACCL: every node has an active RDMA device on the shared Thunderbolt link (Mihai Macbook rdma_en3 80 Gb/s, Work’s Mac Studio rdma_en3 80 Gb/s)",
+    "evidence": [
+      {
+        "node": 0,
+        "field": "name",
+        "value": "Mihai Macbook",
+        "evidence": "scutil --get ComputerName on this Mac (hostname -s: Mihai-Macbook-2)"
+      },
+      {
+        "node": 1,
+        "field": "name",
+        "value": "Work’s Mac Studio",
+        "evidence": "scutil --get ComputerName on workhorse (hostname -s: WorksMacStudio)"
+      },
+      {
+        "node": 0,
+        "field": "tbInterface",
+        "value": "en3",
+        "evidence": "networksetup: en3 is hardware port 'Thunderbolt 3'"
+      },
+      {
+        "node": 0,
+        "field": "tbIp",
+        "value": "192.168.0.1",
+        "evidence": "ifconfig en3: inet 192.168.0.1/30, sharing its /30 with 192.168.0.2"
+      },
+      {
+        "node": 0,
+        "field": "tbNetmask",
+        "value": "255.255.255.252",
+        "evidence": "prefix /30 on en3"
+      },
+      {
+        "node": 0,
+        "field": "tbService",
+        "value": "EXO Thunderbolt 3",
+        "evidence": "networksetup -listnetworkserviceorder: 'EXO Thunderbolt 3' on Thunderbolt 3 (en3), enabled"
+      },
+      {
+        "node": 1,
+        "field": "tbInterface",
+        "value": "en3",
+        "evidence": "networksetup: en3 is hardware port 'Thunderbolt 2'"
+      },
+      {
+        "node": 1,
+        "field": "tbIp",
+        "value": "192.168.0.2",
+        "evidence": "ifconfig en3: inet 192.168.0.2/30, sharing its /30 with 192.168.0.1"
+      },
+      {
+        "node": 1,
+        "field": "tbNetmask",
+        "value": "255.255.255.252",
+        "evidence": "prefix /30 on en3"
+      },
+      {
+        "node": 1,
+        "field": "tbService",
+        "value": "EXO Thunderbolt 2",
+        "evidence": "networksetup -listnetworkserviceorder: 'EXO Thunderbolt 2' on Thunderbolt 2 (en3), enabled"
+      },
+      {
+        "node": 0,
+        "field": "rdmaDevice",
+        "value": "rdma_en3",
+        "evidence": "ibv_devinfo -v: rdma_en3 PORT_ACTIVE, GID[1] = ::ffff:192.168.0.1"
+      },
+      {
+        "node": 1,
+        "field": "rdmaDevice",
+        "value": "rdma_en3",
+        "evidence": "ibv_devinfo -v: rdma_en3 PORT_ACTIVE, GID[1] = ::ffff:192.168.0.2"
+      },
+      {
+        "field": "backend",
+        "value": "jaccl",
+        "evidence": "JACCL: every node has an active RDMA device on the shared Thunderbolt link (Mihai Macbook rdma_en3 80 Gb/s, Work’s Mac Studio rdma_en3 80 Gb/s)"
+      },
+      {
+        "node": 0,
+        "field": "python",
+        "value": "/Users/mihaiperdum/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+        "evidence": "goose-managed env (uv, Python 3.12): not provisioned yet — Save builds it with /opt/homebrew/bin/uv (uv 0.11.28 (Homebrew 2026-07-07 aarch64-apple-darwin))"
+      },
+      {
+        "node": 1,
+        "field": "python",
+        "value": "/Users/workhorse/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+        "evidence": "goose-managed env (uv, Python 3.12): not provisioned yet — Save builds it with /opt/homebrew/bin/uv (uv 0.11.7 (Homebrew 2026-04-15 aarch64-apple-darwin))"
+      },
+      {
+        "field": "port",
+        "value": "8091",
+        "evidence": "the first port above the single engine's 8090 with no listener on this Mac (lsof)"
+      },
+      {
+        "field": "coordinatorPort",
+        "value": "8092",
+        "evidence": "free on this Mac (lsof), below every node's ephemeral range (net.inet.ip.portrange.first = 49152)"
+      }
+    ],
+    "gaps": [
+      {
+        "field": "modelId",
+        "reason": "2 models are on every node: Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx, rapid-mlx/Qwen3.8-Flash-Next-4bit — pick one"
+      }
+    ],
+    "nodes": [
+      {
+        "rank": 0,
+        "name": "Mihai Macbook",
+        "reachable": true,
+        "home": "/Users/mihaiperdum",
+        "totalBytes": 137438953472,
+        "availableBytes": 52644511744,
+        "pressure": "normal",
+        "uv": "/opt/homebrew/bin/uv · uv 0.11.28 (Homebrew 2026-07-07 aarch64-apple-darwin)",
+        "env": {
+          "python": "/Users/mihaiperdum/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+          "state": "absent",
+          "detail": "not provisioned yet — Save builds it with /opt/homebrew/bin/uv (uv 0.11.28 (Homebrew 2026-07-07 aarch64-apple-darwin))"
+        },
+        "linkSpeed": "80 Gb/s"
+      },
+      {
+        "rank": 1,
+        "name": "Work’s Mac Studio",
+        "host": "workhorse",
+        "reachable": true,
+        "home": "/Users/workhorse",
+        "totalBytes": 103079215104,
+        "availableBytes": 75743756288,
+        "pressure": "normal",
+        "uv": "/opt/homebrew/bin/uv · uv 0.11.7 (Homebrew 2026-04-15 aarch64-apple-darwin)",
+        "env": {
+          "python": "/Users/workhorse/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+          "state": "absent",
+          "detail": "not provisioned yet — Save builds it with /opt/homebrew/bin/uv (uv 0.11.7 (Homebrew 2026-04-15 aarch64-apple-darwin))"
+        },
+        "linkSpeed": "80 Gb/s"
+      }
+    ],
+    "models": [
+      {
+        "id": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+        "modelType": "qwen3_5",
+        "runner": "mlxLmTensor",
+        "weightsBytes": 31898126357,
+        "onEveryNode": true,
+        "manifest": "absent",
+        "nodes": [
+          {
+            "rank": 0,
+            "state": "match",
+            "dir": "/Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+            "detail": "10 files, 29.7 GiB"
+          },
+          {
+            "rank": 1,
+            "state": "match",
+            "dir": "/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx",
+            "detail": "same 10 loaded files at the same sizes; identical copies also at /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx"
+          }
+        ]
+      },
+      {
+        "id": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+        "modelType": "qwen4_exp",
+        "runner": "pipelineQwen4",
+        "weightsBytes": 104695599262,
+        "onEveryNode": true,
+        "manifest": "agree",
+        "nodes": [
+          {
+            "rank": 0,
+            "state": "match",
+            "dir": "/Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit",
+            "detail": "32 files, 97.5 GiB"
+          },
+          {
+            "rank": 1,
+            "state": "match",
+            "dir": "/Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit",
+            "detail": "same 32 loaded files at the same sizes; SHA256SUMS identical"
+          }
+        ]
+      }
+    ],
+    "probeMs": 0
+  },
+  "chosen27b": {
+    "config": {
+      "modelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "backend": "jaccl",
+      "port": 8091,
+      "coordinatorPort": 8092,
+      "restartOnFailure": false,
+      "hangRatioOnly": false,
+      "nodes": [
+        {
+          "name": "Mihai Macbook",
+          "tbIp": "192.168.0.1",
+          "tbNetmask": "255.255.255.252",
+          "tbInterface": "en3",
+          "tbService": "EXO Thunderbolt 3",
+          "rdmaDevice": "rdma_en3",
+          "python": "/Users/mihaiperdum/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+          "modelDir": "/Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx"
+        },
+        {
+          "name": "Work’s Mac Studio",
+          "ssh": "workhorse",
+          "tbIp": "192.168.0.2",
+          "tbNetmask": "255.255.255.252",
+          "tbInterface": "en3",
+          "tbService": "EXO Thunderbolt 2",
+          "rdmaDevice": "rdma_en3",
+          "python": "/Users/workhorse/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+          "modelDir": "/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx"
+        }
+      ]
+    },
+    "backendReason": "JACCL: every node has an active RDMA device on the shared Thunderbolt link (Mihai Macbook rdma_en3 80 Gb/s, Work’s Mac Studio rdma_en3 80 Gb/s)",
+    "evidence": [
+      {
+        "node": 0,
+        "field": "name",
+        "value": "Mihai Macbook",
+        "evidence": "scutil --get ComputerName on this Mac (hostname -s: Mihai-Macbook-2)"
+      },
+      {
+        "node": 1,
+        "field": "name",
+        "value": "Work’s Mac Studio",
+        "evidence": "scutil --get ComputerName on workhorse (hostname -s: WorksMacStudio)"
+      },
+      {
+        "node": 0,
+        "field": "tbInterface",
+        "value": "en3",
+        "evidence": "networksetup: en3 is hardware port 'Thunderbolt 3'"
+      },
+      {
+        "node": 0,
+        "field": "tbIp",
+        "value": "192.168.0.1",
+        "evidence": "ifconfig en3: inet 192.168.0.1/30, sharing its /30 with 192.168.0.2"
+      },
+      {
+        "node": 0,
+        "field": "tbNetmask",
+        "value": "255.255.255.252",
+        "evidence": "prefix /30 on en3"
+      },
+      {
+        "node": 0,
+        "field": "tbService",
+        "value": "EXO Thunderbolt 3",
+        "evidence": "networksetup -listnetworkserviceorder: 'EXO Thunderbolt 3' on Thunderbolt 3 (en3), enabled"
+      },
+      {
+        "node": 1,
+        "field": "tbInterface",
+        "value": "en3",
+        "evidence": "networksetup: en3 is hardware port 'Thunderbolt 2'"
+      },
+      {
+        "node": 1,
+        "field": "tbIp",
+        "value": "192.168.0.2",
+        "evidence": "ifconfig en3: inet 192.168.0.2/30, sharing its /30 with 192.168.0.1"
+      },
+      {
+        "node": 1,
+        "field": "tbNetmask",
+        "value": "255.255.255.252",
+        "evidence": "prefix /30 on en3"
+      },
+      {
+        "node": 1,
+        "field": "tbService",
+        "value": "EXO Thunderbolt 2",
+        "evidence": "networksetup -listnetworkserviceorder: 'EXO Thunderbolt 2' on Thunderbolt 2 (en3), enabled"
+      },
+      {
+        "node": 0,
+        "field": "rdmaDevice",
+        "value": "rdma_en3",
+        "evidence": "ibv_devinfo -v: rdma_en3 PORT_ACTIVE, GID[1] = ::ffff:192.168.0.1"
+      },
+      {
+        "node": 1,
+        "field": "rdmaDevice",
+        "value": "rdma_en3",
+        "evidence": "ibv_devinfo -v: rdma_en3 PORT_ACTIVE, GID[1] = ::ffff:192.168.0.2"
+      },
+      {
+        "field": "backend",
+        "value": "jaccl",
+        "evidence": "JACCL: every node has an active RDMA device on the shared Thunderbolt link (Mihai Macbook rdma_en3 80 Gb/s, Work’s Mac Studio rdma_en3 80 Gb/s)"
+      },
+      {
+        "node": 0,
+        "field": "python",
+        "value": "/Users/mihaiperdum/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+        "evidence": "goose-managed env (uv, Python 3.12): not provisioned yet — Save builds it with /opt/homebrew/bin/uv (uv 0.11.28 (Homebrew 2026-07-07 aarch64-apple-darwin))"
+      },
+      {
+        "node": 1,
+        "field": "python",
+        "value": "/Users/workhorse/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+        "evidence": "goose-managed env (uv, Python 3.12): not provisioned yet — Save builds it with /opt/homebrew/bin/uv (uv 0.11.7 (Homebrew 2026-04-15 aarch64-apple-darwin))"
+      },
+      {
+        "field": "modelId",
+        "value": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+        "evidence": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx (qwen3_5, 29.7 GiB loaded) is on every node — the one asked for, of 2 candidates"
+      },
+      {
+        "node": 0,
+        "field": "modelDir",
+        "value": "/Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+        "evidence": "10 files, 29.7 GiB"
+      },
+      {
+        "node": 1,
+        "field": "modelDir",
+        "value": "/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx",
+        "evidence": "same 10 loaded files at the same sizes; identical copies also at /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx"
+      },
+      {
+        "field": "port",
+        "value": "8091",
+        "evidence": "the first port above the single engine's 8090 with no listener on this Mac (lsof)"
+      },
+      {
+        "field": "coordinatorPort",
+        "value": "8092",
+        "evidence": "free on this Mac (lsof), below every node's ephemeral range (net.inet.ip.portrange.first = 49152)"
+      }
+    ],
+    "gaps": [],
+    "nodes": [
+      {
+        "rank": 0,
+        "name": "Mihai Macbook",
+        "reachable": true,
+        "home": "/Users/mihaiperdum",
+        "totalBytes": 137438953472,
+        "availableBytes": 52644511744,
+        "pressure": "normal",
+        "uv": "/opt/homebrew/bin/uv · uv 0.11.28 (Homebrew 2026-07-07 aarch64-apple-darwin)",
+        "env": {
+          "python": "/Users/mihaiperdum/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+          "state": "absent",
+          "detail": "not provisioned yet — Save builds it with /opt/homebrew/bin/uv (uv 0.11.28 (Homebrew 2026-07-07 aarch64-apple-darwin))"
+        },
+        "linkSpeed": "80 Gb/s"
+      },
+      {
+        "rank": 1,
+        "name": "Work’s Mac Studio",
+        "host": "workhorse",
+        "reachable": true,
+        "home": "/Users/workhorse",
+        "totalBytes": 103079215104,
+        "availableBytes": 75743756288,
+        "pressure": "normal",
+        "uv": "/opt/homebrew/bin/uv · uv 0.11.7 (Homebrew 2026-04-15 aarch64-apple-darwin)",
+        "env": {
+          "python": "/Users/workhorse/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python",
+          "state": "absent",
+          "detail": "not provisioned yet — Save builds it with /opt/homebrew/bin/uv (uv 0.11.7 (Homebrew 2026-04-15 aarch64-apple-darwin))"
+        },
+        "linkSpeed": "80 Gb/s"
+      }
+    ],
+    "models": [
+      {
+        "id": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+        "modelType": "qwen3_5",
+        "runner": "mlxLmTensor",
+        "weightsBytes": 31898126357,
+        "onEveryNode": true,
+        "manifest": "absent",
+        "nodes": [
+          {
+            "rank": 0,
+            "state": "match",
+            "dir": "/Users/mihaiperdum/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+            "detail": "10 files, 29.7 GiB"
+          },
+          {
+            "rank": 1,
+            "state": "match",
+            "dir": "/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx",
+            "detail": "same 10 loaded files at the same sizes; identical copies also at /Users/workhorse/.lmstudio/models/leanzero/Qwen3.8-27B-Atlassian-Q8-mlx"
+          }
+        ]
+      },
+      {
+        "id": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+        "modelType": "qwen4_exp",
+        "runner": "pipelineQwen4",
+        "weightsBytes": 104695599262,
+        "onEveryNode": true,
+        "manifest": "agree",
+        "nodes": [
+          {
+            "rank": 0,
+            "state": "match",
+            "dir": "/Users/mihaiperdum/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit",
+            "detail": "32 files, 97.5 GiB"
+          },
+          {
+            "rank": 1,
+            "state": "match",
+            "dir": "/Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit",
+            "detail": "same 32 loaded files at the same sizes; SHA256SUMS identical"
+          }
+        ]
+      }
+    ],
+    "probeMs": 0
+  }
+}

@@ -2738,6 +2738,12 @@
   "mlxDistributed.admissionOpen": {
     "defaultMessage": "Accepte les requêtes"
   },
+  "mlxDistributed.advanced": {
+    "defaultMessage": "Avancé"
+  },
+  "mlxDistributed.advancedMeta": {
+    "defaultMessage": "tous les champs de la configuration enregistrée"
+  },
   "mlxDistributed.apply": {
     "defaultMessage": "Appliquer"
   },
@@ -2770,6 +2776,9 @@
   },
   "mlxDistributed.contextLine": {
     "defaultMessage": "contexte {limit} ({source}) · le plus grand qui tient : {max}"
+  },
+  "mlxDistributed.detectAgain": {
+    "defaultMessage": "Détecter à nouveau"
   },
   "mlxDistributed.editNode": {
     "defaultMessage": "Modifier {name}"
@@ -3002,6 +3011,9 @@
   "mlxDistributed.nodes": {
     "defaultMessage": "Nœuds"
   },
+  "mlxDistributed.notConfigured": {
+    "defaultMessage": "Non configuré"
+  },
   "mlxDistributed.notMeasured": {
     "defaultMessage": "non mesuré"
   },
@@ -3052,6 +3064,24 @@
   },
   "mlxDistributed.pressure.warn": {
     "defaultMessage": "Pression élevée"
+  },
+  "mlxDistributed.provision.done": {
+    "defaultMessage": "Prêt"
+  },
+  "mlxDistributed.provision.elapsed": {
+    "defaultMessage": "{seconds} s"
+  },
+  "mlxDistributed.provision.failed": {
+    "defaultMessage": "Échec"
+  },
+  "mlxDistributed.provision.running": {
+    "defaultMessage": "Préparation"
+  },
+  "mlxDistributed.provision.skipped": {
+    "defaultMessage": "Votre propre Python"
+  },
+  "mlxDistributed.provisionTitle": {
+    "defaultMessage": "Python sur chaque nœud"
   },
   "mlxDistributed.ranAt": {
     "defaultMessage": "exécuté à {time}"
@@ -3122,6 +3152,9 @@
   "mlxDistributed.stopVerified": {
     "defaultMessage": "Arrêté, vérifié"
   },
+  "mlxDistributed.summaryNode": {
+    "defaultMessage": "rang {rank} · {name} · {where}"
+  },
   "mlxDistributed.thisMac": {
     "defaultMessage": "ce Mac"
   },
@@ -3160,6 +3193,135 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "alerte"
+  },
+  "mlxDistributedSetup.advanced": {
+    "defaultMessage": "Avancé"
+  },
+  "mlxDistributedSetup.advancedMeta": {
+    "defaultMessage": "tous les champs, modifiables — votre propre Python, un autre dossier de modèles, des ports"
+  },
+  "mlxDistributedSetup.answering": {
+    "defaultMessage": "Répondent depuis ~/.ssh/config"
+  },
+  "mlxDistributedSetup.apiPort": {
+    "defaultMessage": "Port de l’API"
+  },
+  "mlxDistributedSetup.backend": {
+    "defaultMessage": "Backend"
+  },
+  "mlxDistributedSetup.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "mlxDistributedSetup.coordinatorPort": {
+    "defaultMessage": "Port du coordinateur"
+  },
+  "mlxDistributedSetup.detect": {
+    "defaultMessage": "Détecter"
+  },
+  "mlxDistributedSetup.detecting": {
+    "defaultMessage": "Sondage de ce Mac et de {peer} via ssh…"
+  },
+  "mlxDistributedSetup.differsOn": {
+    "defaultMessage": "diffère sur {nodes}"
+  },
+  "mlxDistributedSetup.env.absent": {
+    "defaultMessage": "créé à l’enregistrement"
+  },
+  "mlxDistributedSetup.env.broken": {
+    "defaultMessage": "recréé à l’enregistrement"
+  },
+  "mlxDistributedSetup.env.noUv": {
+    "defaultMessage": "pas de uv"
+  },
+  "mlxDistributedSetup.env.ready": {
+    "defaultMessage": "prêt"
+  },
+  "mlxDistributedSetup.error.candidates": {
+    "defaultMessage": "alias ssh illisibles"
+  },
+  "mlxDistributedSetup.error.detect": {
+    "defaultMessage": "La détection a échoué"
+  },
+  "mlxDistributedSetup.error.save": {
+    "defaultMessage": "L’enregistrement a échoué"
+  },
+  "mlxDistributedSetup.everyNode": {
+    "defaultMessage": "sur chaque nœud"
+  },
+  "mlxDistributedSetup.field.modelDir": {
+    "defaultMessage": "Dossier du modèle"
+  },
+  "mlxDistributedSetup.field.pipelinePython": {
+    "defaultMessage": "Python du pipeline"
+  },
+  "mlxDistributedSetup.field.python": {
+    "defaultMessage": "Python"
+  },
+  "mlxDistributedSetup.field.rdmaDevice": {
+    "defaultMessage": "Périphérique RDMA"
+  },
+  "mlxDistributedSetup.field.tbInterface": {
+    "defaultMessage": "Interface"
+  },
+  "mlxDistributedSetup.field.tbIp": {
+    "defaultMessage": "IPv4 du lien"
+  },
+  "mlxDistributedSetup.field.tbNetmask": {
+    "defaultMessage": "Masque de sous-réseau"
+  },
+  "mlxDistributedSetup.field.tbService": {
+    "defaultMessage": "Service réseau"
+  },
+  "mlxDistributedSetup.gapsTitle": {
+    "defaultMessage": "{count, plural, one {# valeur introuvable} other {# valeurs introuvables}}"
+  },
+  "mlxDistributedSetup.intro": {
+    "defaultMessage": "Nommez l’autre Mac une seule fois. goose sonde ce Mac et l’autre via ssh et renseigne le lien, RDMA, le backend, les modèles, les ports et Python."
+  },
+  "mlxDistributedSetup.manifestAgree": {
+    "defaultMessage": "SHA256SUMS concordent"
+  },
+  "mlxDistributedSetup.manifestDiffer": {
+    "defaultMessage": "SHA256SUMS diffèrent"
+  },
+  "mlxDistributedSetup.memory": {
+    "defaultMessage": "{available} Gio disponibles sur {total}"
+  },
+  "mlxDistributedSetup.missingOn": {
+    "defaultMessage": "absent sur {nodes}"
+  },
+  "mlxDistributedSetup.model": {
+    "defaultMessage": "Modèle"
+  },
+  "mlxDistributedSetup.modelPick": {
+    "defaultMessage": "Choisir un modèle"
+  },
+  "mlxDistributedSetup.noneAnswering": {
+    "defaultMessage": "Aucun alias de ~/.ssh/config n’a répondu à un ssh non interactif."
+  },
+  "mlxDistributedSetup.peer": {
+    "defaultMessage": "Autre Mac (alias ssh ou hôte)"
+  },
+  "mlxDistributedSetup.peerPlaceholder": {
+    "defaultMessage": "workhorse"
+  },
+  "mlxDistributedSetup.probed": {
+    "defaultMessage": "{count, plural, one {# nœud sondé en {ms} ms} other {# nœuds sondés en {ms} ms}}"
+  },
+  "mlxDistributedSetup.save": {
+    "defaultMessage": "Enregistrer et préparer"
+  },
+  "mlxDistributedSetup.stillEmpty": {
+    "defaultMessage": "L’enregistrement exige toutes les valeurs ci-dessus ; résolvez celles en rouge ou définissez-les dans Avancé."
+  },
+  "mlxDistributedSetup.thisMac": {
+    "defaultMessage": "ce Mac"
+  },
+  "mlxDistributedSetup.title": {
+    "defaultMessage": "Configurer le moteur distribué"
+  },
+  "mlxDistributedSetup.unreachable": {
+    "defaultMessage": "injoignable"
   },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Distribué"

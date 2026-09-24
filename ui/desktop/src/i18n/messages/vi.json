@@ -2738,6 +2738,12 @@
   "mlxDistributed.admissionOpen": {
     "defaultMessage": "Đang nhận yêu cầu"
   },
+  "mlxDistributed.advanced": {
+    "defaultMessage": "Nâng cao"
+  },
+  "mlxDistributed.advancedMeta": {
+    "defaultMessage": "mọi trường của cấu hình đã lưu"
+  },
   "mlxDistributed.apply": {
     "defaultMessage": "Áp dụng"
   },
@@ -2770,6 +2776,9 @@
   },
   "mlxDistributed.contextLine": {
     "defaultMessage": "ngữ cảnh {limit} ({source}) · lớn nhất vừa đủ: {max}"
+  },
+  "mlxDistributed.detectAgain": {
+    "defaultMessage": "Phát hiện lại"
   },
   "mlxDistributed.editNode": {
     "defaultMessage": "Sửa {name}"
@@ -3002,6 +3011,9 @@
   "mlxDistributed.nodes": {
     "defaultMessage": "Các node"
   },
+  "mlxDistributed.notConfigured": {
+    "defaultMessage": "Chưa cấu hình"
+  },
   "mlxDistributed.notMeasured": {
     "defaultMessage": "chưa đo"
   },
@@ -3052,6 +3064,24 @@
   },
   "mlxDistributed.pressure.warn": {
     "defaultMessage": "Áp lực cao"
+  },
+  "mlxDistributed.provision.done": {
+    "defaultMessage": "Sẵn sàng"
+  },
+  "mlxDistributed.provision.elapsed": {
+    "defaultMessage": "{seconds} giây"
+  },
+  "mlxDistributed.provision.failed": {
+    "defaultMessage": "Thất bại"
+  },
+  "mlxDistributed.provision.running": {
+    "defaultMessage": "Đang chuẩn bị"
+  },
+  "mlxDistributed.provision.skipped": {
+    "defaultMessage": "Python của riêng bạn"
+  },
+  "mlxDistributed.provisionTitle": {
+    "defaultMessage": "Python trên mọi nút"
   },
   "mlxDistributed.ranAt": {
     "defaultMessage": "chạy lúc {time}"
@@ -3122,6 +3152,9 @@
   "mlxDistributed.stopVerified": {
     "defaultMessage": "Đã dừng, đã xác minh"
   },
+  "mlxDistributed.summaryNode": {
+    "defaultMessage": "hạng {rank} · {name} · {where}"
+  },
   "mlxDistributed.thisMac": {
     "defaultMessage": "máy Mac này"
   },
@@ -3160,6 +3193,135 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "cảnh báo"
+  },
+  "mlxDistributedSetup.advanced": {
+    "defaultMessage": "Nâng cao"
+  },
+  "mlxDistributedSetup.advancedMeta": {
+    "defaultMessage": "mọi trường, có thể sửa — Python của riêng bạn, thư mục mô hình khác, cổng"
+  },
+  "mlxDistributedSetup.answering": {
+    "defaultMessage": "Phản hồi từ ~/.ssh/config"
+  },
+  "mlxDistributedSetup.apiPort": {
+    "defaultMessage": "Cổng API"
+  },
+  "mlxDistributedSetup.backend": {
+    "defaultMessage": "Backend"
+  },
+  "mlxDistributedSetup.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "mlxDistributedSetup.coordinatorPort": {
+    "defaultMessage": "Cổng điều phối"
+  },
+  "mlxDistributedSetup.detect": {
+    "defaultMessage": "Phát hiện"
+  },
+  "mlxDistributedSetup.detecting": {
+    "defaultMessage": "Đang thăm dò máy Mac này và {peer} qua ssh…"
+  },
+  "mlxDistributedSetup.differsOn": {
+    "defaultMessage": "khác trên {nodes}"
+  },
+  "mlxDistributedSetup.env.absent": {
+    "defaultMessage": "tạo khi Lưu"
+  },
+  "mlxDistributedSetup.env.broken": {
+    "defaultMessage": "tạo lại khi Lưu"
+  },
+  "mlxDistributedSetup.env.noUv": {
+    "defaultMessage": "không có uv"
+  },
+  "mlxDistributedSetup.env.ready": {
+    "defaultMessage": "sẵn sàng"
+  },
+  "mlxDistributedSetup.error.candidates": {
+    "defaultMessage": "không đọc được bí danh ssh"
+  },
+  "mlxDistributedSetup.error.detect": {
+    "defaultMessage": "Phát hiện thất bại"
+  },
+  "mlxDistributedSetup.error.save": {
+    "defaultMessage": "Lưu thất bại"
+  },
+  "mlxDistributedSetup.everyNode": {
+    "defaultMessage": "có trên mọi nút"
+  },
+  "mlxDistributedSetup.field.modelDir": {
+    "defaultMessage": "Thư mục mô hình"
+  },
+  "mlxDistributedSetup.field.pipelinePython": {
+    "defaultMessage": "Python cho pipeline"
+  },
+  "mlxDistributedSetup.field.python": {
+    "defaultMessage": "Python"
+  },
+  "mlxDistributedSetup.field.rdmaDevice": {
+    "defaultMessage": "Thiết bị RDMA"
+  },
+  "mlxDistributedSetup.field.tbInterface": {
+    "defaultMessage": "Giao diện"
+  },
+  "mlxDistributedSetup.field.tbIp": {
+    "defaultMessage": "IPv4 liên kết"
+  },
+  "mlxDistributedSetup.field.tbNetmask": {
+    "defaultMessage": "Mặt nạ mạng"
+  },
+  "mlxDistributedSetup.field.tbService": {
+    "defaultMessage": "Dịch vụ mạng"
+  },
+  "mlxDistributedSetup.gapsTitle": {
+    "defaultMessage": "{count, plural, other {# giá trị không tìm thấy}}"
+  },
+  "mlxDistributedSetup.intro": {
+    "defaultMessage": "Chỉ cần nêu tên máy Mac kia một lần. goose thăm dò máy Mac này và máy kia qua ssh rồi điền liên kết, RDMA, backend, mô hình, cổng và Python."
+  },
+  "mlxDistributedSetup.manifestAgree": {
+    "defaultMessage": "SHA256SUMS khớp"
+  },
+  "mlxDistributedSetup.manifestDiffer": {
+    "defaultMessage": "SHA256SUMS khác nhau"
+  },
+  "mlxDistributedSetup.memory": {
+    "defaultMessage": "{available} trên {total} GiB khả dụng"
+  },
+  "mlxDistributedSetup.missingOn": {
+    "defaultMessage": "thiếu trên {nodes}"
+  },
+  "mlxDistributedSetup.model": {
+    "defaultMessage": "Mô hình"
+  },
+  "mlxDistributedSetup.modelPick": {
+    "defaultMessage": "Chọn mô hình"
+  },
+  "mlxDistributedSetup.noneAnswering": {
+    "defaultMessage": "Không bí danh nào trong ~/.ssh/config phản hồi ssh không tương tác."
+  },
+  "mlxDistributedSetup.peer": {
+    "defaultMessage": "Máy Mac khác (bí danh ssh hoặc máy chủ)"
+  },
+  "mlxDistributedSetup.peerPlaceholder": {
+    "defaultMessage": "workhorse"
+  },
+  "mlxDistributedSetup.probed": {
+    "defaultMessage": "{count, plural, other {Đã thăm dò # nút trong {ms} ms}}"
+  },
+  "mlxDistributedSetup.save": {
+    "defaultMessage": "Lưu và chuẩn bị"
+  },
+  "mlxDistributedSetup.stillEmpty": {
+    "defaultMessage": "Để lưu cần mọi giá trị ở trên; hãy xử lý các mục màu đỏ hoặc đặt chúng trong Nâng cao."
+  },
+  "mlxDistributedSetup.thisMac": {
+    "defaultMessage": "máy Mac này"
+  },
+  "mlxDistributedSetup.title": {
+    "defaultMessage": "Thiết lập engine phân tán"
+  },
+  "mlxDistributedSetup.unreachable": {
+    "defaultMessage": "không truy cập được"
   },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Phân tán"

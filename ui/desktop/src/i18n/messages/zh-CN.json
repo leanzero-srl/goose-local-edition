@@ -2738,6 +2738,12 @@
   "mlxDistributed.admissionOpen": {
     "defaultMessage": "正在接收请求"
   },
+  "mlxDistributed.advanced": {
+    "defaultMessage": "高级"
+  },
+  "mlxDistributed.advancedMeta": {
+    "defaultMessage": "已保存配置的所有字段"
+  },
   "mlxDistributed.apply": {
     "defaultMessage": "应用"
   },
@@ -2770,6 +2776,9 @@
   },
   "mlxDistributed.contextLine": {
     "defaultMessage": "上下文 {limit}（{source}）· 可容纳的最大值 {max}"
+  },
+  "mlxDistributed.detectAgain": {
+    "defaultMessage": "重新检测"
   },
   "mlxDistributed.editNode": {
     "defaultMessage": "编辑 {name}"
@@ -3002,6 +3011,9 @@
   "mlxDistributed.nodes": {
     "defaultMessage": "节点"
   },
+  "mlxDistributed.notConfigured": {
+    "defaultMessage": "未配置"
+  },
   "mlxDistributed.notMeasured": {
     "defaultMessage": "未测量"
   },
@@ -3052,6 +3064,24 @@
   },
   "mlxDistributed.pressure.warn": {
     "defaultMessage": "内存压力：警告"
+  },
+  "mlxDistributed.provision.done": {
+    "defaultMessage": "就绪"
+  },
+  "mlxDistributed.provision.elapsed": {
+    "defaultMessage": "{seconds} 秒"
+  },
+  "mlxDistributed.provision.failed": {
+    "defaultMessage": "失败"
+  },
+  "mlxDistributed.provision.running": {
+    "defaultMessage": "正在准备"
+  },
+  "mlxDistributed.provision.skipped": {
+    "defaultMessage": "你自己的 Python"
+  },
+  "mlxDistributed.provisionTitle": {
+    "defaultMessage": "每个节点上的 Python"
   },
   "mlxDistributed.ranAt": {
     "defaultMessage": "运行于 {time}"
@@ -3122,6 +3152,9 @@
   "mlxDistributed.stopVerified": {
     "defaultMessage": "已停止，已确认"
   },
+  "mlxDistributed.summaryNode": {
+    "defaultMessage": "序号 {rank} · {name} · {where}"
+  },
   "mlxDistributed.thisMac": {
     "defaultMessage": "这台 Mac"
   },
@@ -3160,6 +3193,135 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "警告"
+  },
+  "mlxDistributedSetup.advanced": {
+    "defaultMessage": "高级"
+  },
+  "mlxDistributedSetup.advancedMeta": {
+    "defaultMessage": "所有字段均可编辑 — 你自己的 Python、其他模型文件夹、端口"
+  },
+  "mlxDistributedSetup.answering": {
+    "defaultMessage": "来自 ~/.ssh/config 的可响应主机"
+  },
+  "mlxDistributedSetup.apiPort": {
+    "defaultMessage": "API 端口"
+  },
+  "mlxDistributedSetup.backend": {
+    "defaultMessage": "后端"
+  },
+  "mlxDistributedSetup.cancel": {
+    "defaultMessage": "取消"
+  },
+  "mlxDistributedSetup.coordinatorPort": {
+    "defaultMessage": "协调器端口"
+  },
+  "mlxDistributedSetup.detect": {
+    "defaultMessage": "检测"
+  },
+  "mlxDistributedSetup.detecting": {
+    "defaultMessage": "正在通过 ssh 探测本机和 {peer}…"
+  },
+  "mlxDistributedSetup.differsOn": {
+    "defaultMessage": "在 {nodes} 上不同"
+  },
+  "mlxDistributedSetup.env.absent": {
+    "defaultMessage": "保存时创建"
+  },
+  "mlxDistributedSetup.env.broken": {
+    "defaultMessage": "保存时重建"
+  },
+  "mlxDistributedSetup.env.noUv": {
+    "defaultMessage": "没有 uv"
+  },
+  "mlxDistributedSetup.env.ready": {
+    "defaultMessage": "就绪"
+  },
+  "mlxDistributedSetup.error.candidates": {
+    "defaultMessage": "无法读取 ssh 别名"
+  },
+  "mlxDistributedSetup.error.detect": {
+    "defaultMessage": "检测失败"
+  },
+  "mlxDistributedSetup.error.save": {
+    "defaultMessage": "保存失败"
+  },
+  "mlxDistributedSetup.everyNode": {
+    "defaultMessage": "所有节点都有"
+  },
+  "mlxDistributedSetup.field.modelDir": {
+    "defaultMessage": "模型文件夹"
+  },
+  "mlxDistributedSetup.field.pipelinePython": {
+    "defaultMessage": "流水线 Python"
+  },
+  "mlxDistributedSetup.field.python": {
+    "defaultMessage": "Python"
+  },
+  "mlxDistributedSetup.field.rdmaDevice": {
+    "defaultMessage": "RDMA 设备"
+  },
+  "mlxDistributedSetup.field.tbInterface": {
+    "defaultMessage": "接口"
+  },
+  "mlxDistributedSetup.field.tbIp": {
+    "defaultMessage": "链路 IPv4"
+  },
+  "mlxDistributedSetup.field.tbNetmask": {
+    "defaultMessage": "子网掩码"
+  },
+  "mlxDistributedSetup.field.tbService": {
+    "defaultMessage": "网络服务"
+  },
+  "mlxDistributedSetup.gapsTitle": {
+    "defaultMessage": "{count, plural, other {有 # 个值未找到}}"
+  },
+  "mlxDistributedSetup.intro": {
+    "defaultMessage": "只需填写另一台 Mac 一次。goose 会通过 ssh 探测本机和对方,并填写链路、RDMA、后端、模型、端口和 Python。"
+  },
+  "mlxDistributedSetup.manifestAgree": {
+    "defaultMessage": "SHA256SUMS 一致"
+  },
+  "mlxDistributedSetup.manifestDiffer": {
+    "defaultMessage": "SHA256SUMS 不一致"
+  },
+  "mlxDistributedSetup.memory": {
+    "defaultMessage": "{total} GiB 中可用 {available} GiB"
+  },
+  "mlxDistributedSetup.missingOn": {
+    "defaultMessage": "{nodes} 上缺失"
+  },
+  "mlxDistributedSetup.model": {
+    "defaultMessage": "模型"
+  },
+  "mlxDistributedSetup.modelPick": {
+    "defaultMessage": "选择模型"
+  },
+  "mlxDistributedSetup.noneAnswering": {
+    "defaultMessage": "~/.ssh/config 中没有别名响应非交互式 ssh。"
+  },
+  "mlxDistributedSetup.peer": {
+    "defaultMessage": "另一台 Mac(ssh 别名或主机)"
+  },
+  "mlxDistributedSetup.peerPlaceholder": {
+    "defaultMessage": "workhorse"
+  },
+  "mlxDistributedSetup.probed": {
+    "defaultMessage": "{count, plural, other {{ms} 毫秒内探测了 # 个节点}}"
+  },
+  "mlxDistributedSetup.save": {
+    "defaultMessage": "保存并准备"
+  },
+  "mlxDistributedSetup.stillEmpty": {
+    "defaultMessage": "保存需要以上所有值;请解决红色项,或在高级中设置。"
+  },
+  "mlxDistributedSetup.thisMac": {
+    "defaultMessage": "本机"
+  },
+  "mlxDistributedSetup.title": {
+    "defaultMessage": "设置分布式引擎"
+  },
+  "mlxDistributedSetup.unreachable": {
+    "defaultMessage": "无法连接"
   },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "分布式"

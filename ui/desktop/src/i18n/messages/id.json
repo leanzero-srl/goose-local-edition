@@ -2738,6 +2738,12 @@
   "mlxDistributed.admissionOpen": {
     "defaultMessage": "Menerima permintaan"
   },
+  "mlxDistributed.advanced": {
+    "defaultMessage": "Lanjutan"
+  },
+  "mlxDistributed.advancedMeta": {
+    "defaultMessage": "semua kolom konfigurasi yang tersimpan"
+  },
   "mlxDistributed.apply": {
     "defaultMessage": "Terapkan"
   },
@@ -2770,6 +2776,9 @@
   },
   "mlxDistributed.contextLine": {
     "defaultMessage": "konteks {limit} ({source}) · terbesar yang muat: {max}"
+  },
+  "mlxDistributed.detectAgain": {
+    "defaultMessage": "Deteksi lagi"
   },
   "mlxDistributed.editNode": {
     "defaultMessage": "Edit {name}"
@@ -3002,6 +3011,9 @@
   "mlxDistributed.nodes": {
     "defaultMessage": "Node"
   },
+  "mlxDistributed.notConfigured": {
+    "defaultMessage": "Belum dikonfigurasi"
+  },
   "mlxDistributed.notMeasured": {
     "defaultMessage": "tidak terukur"
   },
@@ -3052,6 +3064,24 @@
   },
   "mlxDistributed.pressure.warn": {
     "defaultMessage": "Tekanan tinggi"
+  },
+  "mlxDistributed.provision.done": {
+    "defaultMessage": "Siap"
+  },
+  "mlxDistributed.provision.elapsed": {
+    "defaultMessage": "{seconds} dtk"
+  },
+  "mlxDistributed.provision.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "mlxDistributed.provision.running": {
+    "defaultMessage": "Menyiapkan"
+  },
+  "mlxDistributed.provision.skipped": {
+    "defaultMessage": "Python Anda sendiri"
+  },
+  "mlxDistributed.provisionTitle": {
+    "defaultMessage": "Python di setiap node"
   },
   "mlxDistributed.ranAt": {
     "defaultMessage": "dijalankan pukul {time}"
@@ -3122,6 +3152,9 @@
   "mlxDistributed.stopVerified": {
     "defaultMessage": "Berhenti, terverifikasi"
   },
+  "mlxDistributed.summaryNode": {
+    "defaultMessage": "peringkat {rank} · {name} · {where}"
+  },
   "mlxDistributed.thisMac": {
     "defaultMessage": "Mac ini"
   },
@@ -3160,6 +3193,135 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "peringatan"
+  },
+  "mlxDistributedSetup.advanced": {
+    "defaultMessage": "Lanjutan"
+  },
+  "mlxDistributedSetup.advancedMeta": {
+    "defaultMessage": "semua kolom, dapat diedit — Python Anda sendiri, folder model lain, port"
+  },
+  "mlxDistributedSetup.answering": {
+    "defaultMessage": "Merespons dari ~/.ssh/config"
+  },
+  "mlxDistributedSetup.apiPort": {
+    "defaultMessage": "Port API"
+  },
+  "mlxDistributedSetup.backend": {
+    "defaultMessage": "Backend"
+  },
+  "mlxDistributedSetup.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "mlxDistributedSetup.coordinatorPort": {
+    "defaultMessage": "Port koordinator"
+  },
+  "mlxDistributedSetup.detect": {
+    "defaultMessage": "Deteksi"
+  },
+  "mlxDistributedSetup.detecting": {
+    "defaultMessage": "Memeriksa Mac ini dan {peer} lewat ssh…"
+  },
+  "mlxDistributedSetup.differsOn": {
+    "defaultMessage": "berbeda di {nodes}"
+  },
+  "mlxDistributedSetup.env.absent": {
+    "defaultMessage": "dibuat saat Simpan"
+  },
+  "mlxDistributedSetup.env.broken": {
+    "defaultMessage": "dibuat ulang saat Simpan"
+  },
+  "mlxDistributedSetup.env.noUv": {
+    "defaultMessage": "tanpa uv"
+  },
+  "mlxDistributedSetup.env.ready": {
+    "defaultMessage": "siap"
+  },
+  "mlxDistributedSetup.error.candidates": {
+    "defaultMessage": "alias ssh tidak terbaca"
+  },
+  "mlxDistributedSetup.error.detect": {
+    "defaultMessage": "Deteksi gagal"
+  },
+  "mlxDistributedSetup.error.save": {
+    "defaultMessage": "Gagal menyimpan"
+  },
+  "mlxDistributedSetup.everyNode": {
+    "defaultMessage": "di setiap node"
+  },
+  "mlxDistributedSetup.field.modelDir": {
+    "defaultMessage": "Folder model"
+  },
+  "mlxDistributedSetup.field.pipelinePython": {
+    "defaultMessage": "Python pipeline"
+  },
+  "mlxDistributedSetup.field.python": {
+    "defaultMessage": "Python"
+  },
+  "mlxDistributedSetup.field.rdmaDevice": {
+    "defaultMessage": "Perangkat RDMA"
+  },
+  "mlxDistributedSetup.field.tbInterface": {
+    "defaultMessage": "Antarmuka"
+  },
+  "mlxDistributedSetup.field.tbIp": {
+    "defaultMessage": "IPv4 tautan"
+  },
+  "mlxDistributedSetup.field.tbNetmask": {
+    "defaultMessage": "Netmask"
+  },
+  "mlxDistributedSetup.field.tbService": {
+    "defaultMessage": "Layanan jaringan"
+  },
+  "mlxDistributedSetup.gapsTitle": {
+    "defaultMessage": "{count, plural, other {# nilai tidak ditemukan}}"
+  },
+  "mlxDistributedSetup.intro": {
+    "defaultMessage": "Sebut Mac lain sekali saja. goose memeriksa Mac ini dan Mac itu lewat ssh lalu mengisi tautan, RDMA, backend, model, port, dan Python."
+  },
+  "mlxDistributedSetup.manifestAgree": {
+    "defaultMessage": "SHA256SUMS cocok"
+  },
+  "mlxDistributedSetup.manifestDiffer": {
+    "defaultMessage": "SHA256SUMS berbeda"
+  },
+  "mlxDistributedSetup.memory": {
+    "defaultMessage": "{available} dari {total} GiB tersedia"
+  },
+  "mlxDistributedSetup.missingOn": {
+    "defaultMessage": "tidak ada di {nodes}"
+  },
+  "mlxDistributedSetup.model": {
+    "defaultMessage": "Model"
+  },
+  "mlxDistributedSetup.modelPick": {
+    "defaultMessage": "Pilih model"
+  },
+  "mlxDistributedSetup.noneAnswering": {
+    "defaultMessage": "Tidak ada alias di ~/.ssh/config yang merespons ssh non-interaktif."
+  },
+  "mlxDistributedSetup.peer": {
+    "defaultMessage": "Mac lain (alias ssh atau host)"
+  },
+  "mlxDistributedSetup.peerPlaceholder": {
+    "defaultMessage": "workhorse"
+  },
+  "mlxDistributedSetup.probed": {
+    "defaultMessage": "{count, plural, other {# node diperiksa dalam {ms} ms}}"
+  },
+  "mlxDistributedSetup.save": {
+    "defaultMessage": "Simpan dan siapkan"
+  },
+  "mlxDistributedSetup.stillEmpty": {
+    "defaultMessage": "Simpan membutuhkan semua nilai di atas; selesaikan yang merah atau atur di Lanjutan."
+  },
+  "mlxDistributedSetup.thisMac": {
+    "defaultMessage": "Mac ini"
+  },
+  "mlxDistributedSetup.title": {
+    "defaultMessage": "Siapkan mesin terdistribusi"
+  },
+  "mlxDistributedSetup.unreachable": {
+    "defaultMessage": "tidak terjangkau"
   },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Terdistribusi"

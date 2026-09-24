@@ -2738,6 +2738,12 @@
   "mlxDistributed.admissionOpen": {
     "defaultMessage": "Принимает запросы"
   },
+  "mlxDistributed.advanced": {
+    "defaultMessage": "Дополнительно"
+  },
+  "mlxDistributed.advancedMeta": {
+    "defaultMessage": "все поля сохранённой конфигурации"
+  },
   "mlxDistributed.apply": {
     "defaultMessage": "Применить"
   },
@@ -2770,6 +2776,9 @@
   },
   "mlxDistributed.contextLine": {
     "defaultMessage": "контекст {limit} ({source}) · наибольший, что помещается: {max}"
+  },
+  "mlxDistributed.detectAgain": {
+    "defaultMessage": "Определить снова"
   },
   "mlxDistributed.editNode": {
     "defaultMessage": "Изменить {name}"
@@ -3002,6 +3011,9 @@
   "mlxDistributed.nodes": {
     "defaultMessage": "Узлы"
   },
+  "mlxDistributed.notConfigured": {
+    "defaultMessage": "Не настроено"
+  },
   "mlxDistributed.notMeasured": {
     "defaultMessage": "не измерено"
   },
@@ -3052,6 +3064,24 @@
   },
   "mlxDistributed.pressure.warn": {
     "defaultMessage": "Давление повышенное"
+  },
+  "mlxDistributed.provision.done": {
+    "defaultMessage": "Готово"
+  },
+  "mlxDistributed.provision.elapsed": {
+    "defaultMessage": "{seconds} с"
+  },
+  "mlxDistributed.provision.failed": {
+    "defaultMessage": "Ошибка"
+  },
+  "mlxDistributed.provision.running": {
+    "defaultMessage": "Подготовка"
+  },
+  "mlxDistributed.provision.skipped": {
+    "defaultMessage": "Свой Python"
+  },
+  "mlxDistributed.provisionTitle": {
+    "defaultMessage": "Python на каждом узле"
   },
   "mlxDistributed.ranAt": {
     "defaultMessage": "выполнено в {time}"
@@ -3122,6 +3152,9 @@
   "mlxDistributed.stopVerified": {
     "defaultMessage": "Остановлено, подтверждено"
   },
+  "mlxDistributed.summaryNode": {
+    "defaultMessage": "ранг {rank} · {name} · {where}"
+  },
   "mlxDistributed.thisMac": {
     "defaultMessage": "этот Mac"
   },
@@ -3160,6 +3193,135 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "внимание"
+  },
+  "mlxDistributedSetup.advanced": {
+    "defaultMessage": "Дополнительно"
+  },
+  "mlxDistributedSetup.advancedMeta": {
+    "defaultMessage": "все поля, редактируемые — свой Python, другая папка моделей, порты"
+  },
+  "mlxDistributedSetup.answering": {
+    "defaultMessage": "Отвечают из ~/.ssh/config"
+  },
+  "mlxDistributedSetup.apiPort": {
+    "defaultMessage": "Порт API"
+  },
+  "mlxDistributedSetup.backend": {
+    "defaultMessage": "Бэкенд"
+  },
+  "mlxDistributedSetup.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "mlxDistributedSetup.coordinatorPort": {
+    "defaultMessage": "Порт координатора"
+  },
+  "mlxDistributedSetup.detect": {
+    "defaultMessage": "Определить"
+  },
+  "mlxDistributedSetup.detecting": {
+    "defaultMessage": "Опрос этого Mac и {peer} по ssh…"
+  },
+  "mlxDistributedSetup.differsOn": {
+    "defaultMessage": "отличается на {nodes}"
+  },
+  "mlxDistributedSetup.env.absent": {
+    "defaultMessage": "создаётся при сохранении"
+  },
+  "mlxDistributedSetup.env.broken": {
+    "defaultMessage": "пересоздаётся при сохранении"
+  },
+  "mlxDistributedSetup.env.noUv": {
+    "defaultMessage": "нет uv"
+  },
+  "mlxDistributedSetup.env.ready": {
+    "defaultMessage": "готово"
+  },
+  "mlxDistributedSetup.error.candidates": {
+    "defaultMessage": "псевдонимы ssh не читаются"
+  },
+  "mlxDistributedSetup.error.detect": {
+    "defaultMessage": "Определение не удалось"
+  },
+  "mlxDistributedSetup.error.save": {
+    "defaultMessage": "Сохранение не удалось"
+  },
+  "mlxDistributedSetup.everyNode": {
+    "defaultMessage": "на каждом узле"
+  },
+  "mlxDistributedSetup.field.modelDir": {
+    "defaultMessage": "Папка модели"
+  },
+  "mlxDistributedSetup.field.pipelinePython": {
+    "defaultMessage": "Python для конвейера"
+  },
+  "mlxDistributedSetup.field.python": {
+    "defaultMessage": "Python"
+  },
+  "mlxDistributedSetup.field.rdmaDevice": {
+    "defaultMessage": "Устройство RDMA"
+  },
+  "mlxDistributedSetup.field.tbInterface": {
+    "defaultMessage": "Интерфейс"
+  },
+  "mlxDistributedSetup.field.tbIp": {
+    "defaultMessage": "IPv4 канала"
+  },
+  "mlxDistributedSetup.field.tbNetmask": {
+    "defaultMessage": "Маска сети"
+  },
+  "mlxDistributedSetup.field.tbService": {
+    "defaultMessage": "Сетевая служба"
+  },
+  "mlxDistributedSetup.gapsTitle": {
+    "defaultMessage": "{count, plural, one {# значение не найдено} few {# значения не найдены} many {# значений не найдено} other {# значения не найдено}}"
+  },
+  "mlxDistributedSetup.intro": {
+    "defaultMessage": "Укажите другой Mac один раз. goose опрашивает этот Mac и его по ssh и заполняет канал, RDMA, бэкенд, модели, порты и Python."
+  },
+  "mlxDistributedSetup.manifestAgree": {
+    "defaultMessage": "SHA256SUMS совпадают"
+  },
+  "mlxDistributedSetup.manifestDiffer": {
+    "defaultMessage": "SHA256SUMS различаются"
+  },
+  "mlxDistributedSetup.memory": {
+    "defaultMessage": "доступно {available} из {total} ГиБ"
+  },
+  "mlxDistributedSetup.missingOn": {
+    "defaultMessage": "нет на {nodes}"
+  },
+  "mlxDistributedSetup.model": {
+    "defaultMessage": "Модель"
+  },
+  "mlxDistributedSetup.modelPick": {
+    "defaultMessage": "Выберите модель"
+  },
+  "mlxDistributedSetup.noneAnswering": {
+    "defaultMessage": "Ни один псевдоним из ~/.ssh/config не ответил на неинтерактивный ssh."
+  },
+  "mlxDistributedSetup.peer": {
+    "defaultMessage": "Другой Mac (псевдоним ssh или хост)"
+  },
+  "mlxDistributedSetup.peerPlaceholder": {
+    "defaultMessage": "workhorse"
+  },
+  "mlxDistributedSetup.probed": {
+    "defaultMessage": "{count, plural, one {Опрошен # узел за {ms} мс} few {Опрошено # узла за {ms} мс} many {Опрошено # узлов за {ms} мс} other {Опрошено # узла за {ms} мс}}"
+  },
+  "mlxDistributedSetup.save": {
+    "defaultMessage": "Сохранить и подготовить"
+  },
+  "mlxDistributedSetup.stillEmpty": {
+    "defaultMessage": "Для сохранения нужны все значения выше; исправьте красные или задайте их в разделе «Дополнительно»."
+  },
+  "mlxDistributedSetup.thisMac": {
+    "defaultMessage": "этот Mac"
+  },
+  "mlxDistributedSetup.title": {
+    "defaultMessage": "Настройка распределённого движка"
+  },
+  "mlxDistributedSetup.unreachable": {
+    "defaultMessage": "недоступен"
   },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Распределённо"

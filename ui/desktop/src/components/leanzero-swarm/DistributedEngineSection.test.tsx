@@ -17,16 +17,34 @@ import {
   STOPPED_WITH_CONFIG,
 } from './mlxDistributed.fixtures';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
+import type { MlxDistributedDiscovery, MlxDistributedStatus } from '../../acp/mlx-distributed';
+// What the backend's Detect returned for the real pair (exported by the goose crate's
+// `export_discovery_ui_fixture` from the captured probe answers of both Macs).
+import DISCOVERY from './mlxDistributedDiscovery.fixture.json';
+
+const UNCHOSEN = DISCOVERY.unchosen as MlxDistributedDiscovery;
+const CHOSEN_27B = DISCOVERY.chosen27b as MlxDistributedDiscovery;
+const MODEL_27B = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';
+
+async function openAdvanced() {
+  await userEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+}
 
 const mockPreflight = vi.fn();
 const mockStart = vi.fn();
 const mockStop = vi.fn();
 const mockConfigUpdate = vi.fn();
+const mockCandidates = vi.fn();
+const mockDiscover = vi.fn();
+const mockProvision = vi.fn();
 vi.mock('../../acp/mlx-distributed', () => ({
   mlxDistributedPreflight: (...a: unknown[]) => mockPreflight(...a),
   mlxDistributedStart: (...a: unknown[]) => mockStart(...a),
   mlxDistributedStop: (...a: unknown[]) => mockStop(...a),
   mlxDistributedConfigUpdate: (...a: unknown[]) => mockConfigUpdate(...a),
+  mlxDistributedPeerCandidates: (...a: unknown[]) => mockCandidates(...a),
+  mlxDistributedDiscover: (...a: unknown[]) => mockDiscover(...a),
+  mlxDistributedProvision: (...a: unknown[]) => mockProvision(...a),
 }));
 const mockUnmount = vi.fn();
 vi.mock('../../acp/mlx-engine', () => ({
@@ -74,6 +92,16 @@ beforeEach(() => {
   mockStart.mockReset();
   mockStop.mockReset();
   mockConfigUpdate.mockReset();
+  mockCandidates.mockReset().mockResolvedValue([
+    { alias: 'workhorse', answered: true, detail: 'WorksMacStudio' },
+    {
+      alias: 'old-box',
+      answered: false,
+      detail: 'ssh: connect to host old-box: Operation timed out',
+    },
+  ]);
+  mockDiscover.mockReset();
+  mockProvision.mockReset();
   mockUnmount.mockReset().mockResolvedValue(undefined);
   onRefresh.mockClear();
   onSingleChanged.mockClear();
@@ -197,6 +225,7 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     });
     section();
     expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
+    await openAdvanced();
     expect(screen.getByRole('combobox', { name: 'Backend' })).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
     expect(mockStop).not.toHaveBeenCalled();
@@ -232,7 +261,10 @@ describe('DistributedEngineSection — starting', () => {
       preflight: FLASH_PREFLIGHT_REFUSED,
     });
     const { container } = section({ status: STOPPED_WITH_CONFIG });
-    expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent('Single · this Mac');
+    // The section names the engine it configures, even while the Mac belongs to the single one.
+    expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
+      'Distributed · 2 nodes · JACCL'
+    );
     await userEvent.click(screen.getByRole('button', { name: 'Start' }));
     expect(mockStart).toHaveBeenCalledWith(null);
     expect(await screen.findByTestId('mlx-dist-refusal')).toHaveTextContent(
@@ -325,6 +357,7 @@ describe('DistributedEngineSection — configuration', () => {
     mockConfigUpdate.mockImplementation(async (c: unknown) => c);
     const persisted = { ...FLASH_CONFIG, hangRatioOnly: true, watchdogWarnRatio: 0.05 };
     section({ status: { ...STOPPED_WITH_CONFIG, config: persisted } });
+    await openAdvanced();
     await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
     await userEvent.click(screen.getByTestId('mlx-dist-model-org/other-model'));
     await userEvent.click(screen.getByRole('button', { name: 'Save configuration' }));
@@ -341,6 +374,7 @@ describe('DistributedEngineSection — configuration', () => {
   it('an edited draft is what Start sends', async () => {
     mockStart.mockResolvedValue({ started: true, preflight: FLASH_PREFLIGHT_OK });
     section({ status: STOPPED_WITH_CONFIG });
+    await openAdvanced();
     await userEvent.click(screen.getByRole('combobox', { name: 'Backend' }));
     await userEvent.click(screen.getByTestId('mlx-dist-backend-ring'));
     await userEvent.click(screen.getByRole('button', { name: 'Start' }));
@@ -350,6 +384,7 @@ describe('DistributedEngineSection — configuration', () => {
 
   it('a node is edited in a dialog; an empty required field blocks Save and Start and is named', async () => {
     section({ status: STOPPED_WITH_CONFIG });
+    await openAdvanced();
     await userEvent.click(screen.getByRole('button', { name: 'Edit workhorse' }));
     const dialog = await screen.findByRole('dialog');
     const ssh = within(dialog).getByRole('textbox', { name: 'ssh alias' });
@@ -362,12 +397,171 @@ describe('DistributedEngineSection — configuration', () => {
     expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
   });
 
-  it('no saved config: Set up drafts two empty nodes and names every empty field', async () => {
-    section({ status: { ...STOPPED_WITH_CONFIG, config: null } });
-    expect(screen.getByText('No distributed configuration is saved yet.')).toBeInTheDocument();
+  it('a saved but stopped config: the headline is the configured engine, not the single one', () => {
+    section({ status: STOPPED_WITH_CONFIG });
+    expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
+      'Distributed · 2 nodes · JACCL'
+    );
+    expect(within(screen.getByTestId('mlx-dist-mode')).getByText('Stopped')).toBeInTheDocument();
+    expect(screen.queryByText('Single · this Mac')).toBeNull();
+    expect(screen.getByTestId('mlx-dist-config-summary')).toHaveTextContent(
+      'rank 1 · workhorse · workhorse · 192.168.0.2'
+    );
+  });
+});
+
+describe('DistributedEngineSection — Set up detects everything from one peer name', () => {
+  const NONE: MlxDistributedStatus = { ...STOPPED_WITH_CONFIG, config: null };
+
+  it('nothing configured: the headline says so, and Set up asks for ONE field', async () => {
+    const { container } = section({ status: NONE });
+    expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent('Not configured');
+    expect(screen.queryByText('Single · this Mac')).toBeNull();
+    expect(screen.queryByText('Stopped')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
-    expect(screen.getAllByTestId('mlx-dist-config-node')).toHaveLength(2);
-    expect(screen.getByTestId('mlx-dist-missing')).toHaveTextContent('Model, Backend, API port');
+    const setup = screen.getByTestId('mlx-dist-setup');
+    expect(within(setup).getAllByRole('textbox')).toHaveLength(1);
+    // Only the aliases that answered are offered.
+    const offered = await within(setup).findAllByTestId('mlx-dist-setup-candidate');
+    expect(offered.map((b) => b.textContent)).toEqual(['workhorse· WorksMacStudio']);
+    expect(within(setup).getByRole('button', { name: 'Detect' })).toBeDisabled();
+    await expectDesigned(container);
+  });
+
+  it('Detect fills every field with its evidence and names the choice it could not make', async () => {
+    mockDiscover.mockResolvedValue(UNCHOSEN);
+    section({ status: NONE });
+    await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    await userEvent.click(await screen.findByTestId('mlx-dist-setup-candidate'));
+    await userEvent.click(screen.getByRole('button', { name: 'Detect' }));
+    expect(mockDiscover).toHaveBeenCalledWith(['workhorse'], null);
+    const result = await screen.findByTestId('mlx-dist-setup-result');
+
+    const field = (node: string, name: string) =>
+      result.querySelector(`[data-field="${name}"][data-node="${node}"]`) as HTMLElement;
+    expect(field('cluster', 'backend')).toHaveTextContent('JACCL');
+    expect(field('cluster', 'backend')).toHaveTextContent(
+      'every node has an active RDMA device on the shared Thunderbolt link'
+    );
+    expect(field('1', 'tbIp')).toHaveTextContent('192.168.0.2');
+    expect(field('1', 'tbIp')).toHaveTextContent('ifconfig en3: inet 192.168.0.2/30');
+    expect(field('1', 'tbService')).toHaveTextContent('EXO Thunderbolt 2');
+    expect(field('1', 'rdmaDevice')).toHaveTextContent('GID[1] = ::ffff:192.168.0.2');
+    expect(field('1', 'python')).toHaveTextContent(
+      '/Users/workhorse/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python'
+    );
+    expect(within(field('1', 'python')).getByText('built at Save')).toBeInTheDocument();
+    expect(field('cluster', 'port')).toHaveTextContent('8091');
+    expect(field('cluster', 'port')).toHaveTextContent("the single engine's 8090");
+    // Two models are on both Macs: the choice is a named gap, and Save waits for it.
+    expect(screen.getByTestId('mlx-dist-setup-gaps')).toHaveTextContent('pick one');
+    expect(field('cluster', 'modelId')).toHaveAttribute('data-found', 'false');
+    expect(screen.getByRole('button', { name: 'Save and provision' })).toBeDisabled();
+    // The raw fields are there, collapsed.
+    expect(screen.getByTestId('mlx-dist-setup-advanced')).toHaveAttribute('data-state', 'closed');
+  });
+
+  it('picking the 27B re-detects for it; Save persists the config and provisions every node', async () => {
+    mockDiscover.mockResolvedValueOnce(UNCHOSEN).mockResolvedValueOnce(CHOSEN_27B);
+    mockConfigUpdate.mockImplementation(async (c: unknown) => c);
+    mockProvision.mockResolvedValue({ state: 'running', startedMs: 1, nodes: [] });
+    section({ status: NONE });
+    await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    await userEvent.type(screen.getByTestId('mlx-dist-setup-peer'), 'workhorse');
+    await userEvent.click(screen.getByRole('button', { name: 'Detect' }));
+    await screen.findByTestId('mlx-dist-setup-result');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
+    const option = screen.getByTestId(`mlx-dist-setup-model-${MODEL_27B}`);
+    expect(option).toHaveTextContent('on every node');
+    await userEvent.click(option);
+    await waitFor(() => expect(mockDiscover).toHaveBeenLastCalledWith(['workhorse'], MODEL_27B));
+    await waitFor(() =>
+      expect(
+        screen
+          .getByTestId('mlx-dist-setup-result')
+          .querySelector('[data-field="modelDir"][data-node="1"]')
+      ).toHaveTextContent('/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx')
+    );
+    expect(screen.queryByTestId('mlx-dist-setup-gaps')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Save and provision' }));
+    await waitFor(() => expect(mockProvision).toHaveBeenCalledTimes(1));
+    const saved = mockConfigUpdate.mock.calls[0][0];
+    expect(saved).toMatchObject({ modelId: MODEL_27B, backend: 'jaccl', port: 8091 });
+    expect(saved.nodes[0].ssh).toBeUndefined();
+    expect(saved.nodes[1]).toMatchObject({
+      ssh: 'workhorse',
+      tbIp: '192.168.0.2',
+      rdmaDevice: 'rdma_en3',
+      modelDir: '/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx',
+    });
+    expect(mockProvision.mock.calls[0][0]).toEqual(saved);
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('a peer that does not answer is a red gap, never a filled node', async () => {
+    mockDiscover.mockResolvedValue({
+      ...UNCHOSEN,
+      config: { ...UNCHOSEN.config, backend: '', coordinatorPort: 0 },
+      gaps: [{ node: 1, field: 'reachable', reason: 'nas: ssh failed: Connection refused' }],
+      evidence: [],
+      nodes: [UNCHOSEN.nodes[0], { rank: 1, name: 'nas', host: 'nas', reachable: false }],
+      models: [],
+    });
+    section({ status: NONE });
+    await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    await userEvent.type(screen.getByTestId('mlx-dist-setup-peer'), 'nas');
+    await userEvent.click(screen.getByRole('button', { name: 'Detect' }));
+    expect(await screen.findByTestId('mlx-dist-setup-gaps')).toHaveTextContent(
+      'nas: ssh failed: Connection refused'
+    );
+    expect(screen.getByText('not reachable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save and provision' })).toBeDisabled();
+  });
+
+  it('provisioning progress: per node, the step, the last line, a failure in red', () => {
+    section({
+      status: {
+        ...STOPPED_WITH_CONFIG,
+        provision: {
+          state: 'failed',
+          startedMs: 1000,
+          finishedMs: 8100,
+          nodes: [
+            {
+              rank: 0,
+              name: 'MacBook Pro',
+              python: '/Users/me/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python',
+              state: 'done',
+              step: 'done',
+              detail: 'already /Users/me/.goose/distributed/… 0.32.2 0.31.3',
+              lines: [],
+              startedMs: 1000,
+              finishedMs: 2500,
+            },
+            {
+              rank: 1,
+              name: 'workhorse',
+              host: 'workhorse',
+              python: '/Users/workhorse/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python',
+              state: 'failed',
+              step: 'fail',
+              detail: 'uv not found on this node (looked: …)',
+              lines: [],
+              startedMs: 1000,
+              finishedMs: 1300,
+            },
+          ],
+        },
+      },
+    });
+    const rows = screen.getAllByTestId('mlx-dist-provision-node');
+    expect(rows.map((r) => r.getAttribute('data-state'))).toEqual(['done', 'failed']);
+    expect(within(rows[0]).getByText('Ready')).toHaveAttribute('data-tone', 'ok');
+    expect(within(rows[0]).getByText('1.5 s')).toBeInTheDocument();
+    expect(within(rows[1]).getByText('Failed')).toHaveAttribute('data-tone', 'err');
+    expect(within(rows[1]).getByText('uv not found on this node (looked: …)').className).toContain(
+      'text-lz-err'
+    );
   });
 });
 

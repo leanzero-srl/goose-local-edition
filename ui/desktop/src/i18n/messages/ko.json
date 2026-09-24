@@ -2738,6 +2738,12 @@
   "mlxDistributed.admissionOpen": {
     "defaultMessage": "요청 수락 중"
   },
+  "mlxDistributed.advanced": {
+    "defaultMessage": "고급"
+  },
+  "mlxDistributed.advancedMeta": {
+    "defaultMessage": "저장된 구성의 모든 항목"
+  },
   "mlxDistributed.apply": {
     "defaultMessage": "적용"
   },
@@ -2770,6 +2776,9 @@
   },
   "mlxDistributed.contextLine": {
     "defaultMessage": "컨텍스트 {limit}({source}) · 들어가는 최대값 {max}"
+  },
+  "mlxDistributed.detectAgain": {
+    "defaultMessage": "다시 감지"
   },
   "mlxDistributed.editNode": {
     "defaultMessage": "{name} 편집"
@@ -3002,6 +3011,9 @@
   "mlxDistributed.nodes": {
     "defaultMessage": "노드"
   },
+  "mlxDistributed.notConfigured": {
+    "defaultMessage": "구성되지 않음"
+  },
   "mlxDistributed.notMeasured": {
     "defaultMessage": "측정 안 됨"
   },
@@ -3052,6 +3064,24 @@
   },
   "mlxDistributed.pressure.warn": {
     "defaultMessage": "메모리 압박 경고"
+  },
+  "mlxDistributed.provision.done": {
+    "defaultMessage": "준비됨"
+  },
+  "mlxDistributed.provision.elapsed": {
+    "defaultMessage": "{seconds}초"
+  },
+  "mlxDistributed.provision.failed": {
+    "defaultMessage": "실패"
+  },
+  "mlxDistributed.provision.running": {
+    "defaultMessage": "준비 중"
+  },
+  "mlxDistributed.provision.skipped": {
+    "defaultMessage": "직접 지정한 Python"
+  },
+  "mlxDistributed.provisionTitle": {
+    "defaultMessage": "모든 노드의 Python"
   },
   "mlxDistributed.ranAt": {
     "defaultMessage": "{time}에 실행"
@@ -3122,6 +3152,9 @@
   "mlxDistributed.stopVerified": {
     "defaultMessage": "중지됨, 확인됨"
   },
+  "mlxDistributed.summaryNode": {
+    "defaultMessage": "순위 {rank} · {name} · {where}"
+  },
   "mlxDistributed.thisMac": {
     "defaultMessage": "이 Mac"
   },
@@ -3160,6 +3193,135 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "경고"
+  },
+  "mlxDistributedSetup.advanced": {
+    "defaultMessage": "고급"
+  },
+  "mlxDistributedSetup.advancedMeta": {
+    "defaultMessage": "모든 항목 편집 가능 — 직접 지정한 Python, 다른 모델 폴더, 포트"
+  },
+  "mlxDistributedSetup.answering": {
+    "defaultMessage": "~/.ssh/config에서 응답함"
+  },
+  "mlxDistributedSetup.apiPort": {
+    "defaultMessage": "API 포트"
+  },
+  "mlxDistributedSetup.backend": {
+    "defaultMessage": "백엔드"
+  },
+  "mlxDistributedSetup.cancel": {
+    "defaultMessage": "취소"
+  },
+  "mlxDistributedSetup.coordinatorPort": {
+    "defaultMessage": "코디네이터 포트"
+  },
+  "mlxDistributedSetup.detect": {
+    "defaultMessage": "감지"
+  },
+  "mlxDistributedSetup.detecting": {
+    "defaultMessage": "이 Mac과 {peer}을(를) ssh로 조사하는 중…"
+  },
+  "mlxDistributedSetup.differsOn": {
+    "defaultMessage": "{nodes}에서 다름"
+  },
+  "mlxDistributedSetup.env.absent": {
+    "defaultMessage": "저장 시 생성"
+  },
+  "mlxDistributedSetup.env.broken": {
+    "defaultMessage": "저장 시 다시 생성"
+  },
+  "mlxDistributedSetup.env.noUv": {
+    "defaultMessage": "uv 없음"
+  },
+  "mlxDistributedSetup.env.ready": {
+    "defaultMessage": "준비됨"
+  },
+  "mlxDistributedSetup.error.candidates": {
+    "defaultMessage": "ssh 별칭을 읽을 수 없음"
+  },
+  "mlxDistributedSetup.error.detect": {
+    "defaultMessage": "감지 실패"
+  },
+  "mlxDistributedSetup.error.save": {
+    "defaultMessage": "저장 실패"
+  },
+  "mlxDistributedSetup.everyNode": {
+    "defaultMessage": "모든 노드에 있음"
+  },
+  "mlxDistributedSetup.field.modelDir": {
+    "defaultMessage": "모델 폴더"
+  },
+  "mlxDistributedSetup.field.pipelinePython": {
+    "defaultMessage": "파이프라인 Python"
+  },
+  "mlxDistributedSetup.field.python": {
+    "defaultMessage": "Python"
+  },
+  "mlxDistributedSetup.field.rdmaDevice": {
+    "defaultMessage": "RDMA 장치"
+  },
+  "mlxDistributedSetup.field.tbInterface": {
+    "defaultMessage": "인터페이스"
+  },
+  "mlxDistributedSetup.field.tbIp": {
+    "defaultMessage": "링크 IPv4"
+  },
+  "mlxDistributedSetup.field.tbNetmask": {
+    "defaultMessage": "넷마스크"
+  },
+  "mlxDistributedSetup.field.tbService": {
+    "defaultMessage": "네트워크 서비스"
+  },
+  "mlxDistributedSetup.gapsTitle": {
+    "defaultMessage": "{count, plural, other {값 #개를 찾지 못함}}"
+  },
+  "mlxDistributedSetup.intro": {
+    "defaultMessage": "다른 Mac을 한 번만 지정하세요. goose가 이 Mac과 상대를 ssh로 조사해 링크, RDMA, 백엔드, 모델, 포트, Python을 채웁니다."
+  },
+  "mlxDistributedSetup.manifestAgree": {
+    "defaultMessage": "SHA256SUMS 일치"
+  },
+  "mlxDistributedSetup.manifestDiffer": {
+    "defaultMessage": "SHA256SUMS 불일치"
+  },
+  "mlxDistributedSetup.memory": {
+    "defaultMessage": "{total} GiB 중 {available} GiB 사용 가능"
+  },
+  "mlxDistributedSetup.missingOn": {
+    "defaultMessage": "{nodes}에 없음"
+  },
+  "mlxDistributedSetup.model": {
+    "defaultMessage": "모델"
+  },
+  "mlxDistributedSetup.modelPick": {
+    "defaultMessage": "모델 선택"
+  },
+  "mlxDistributedSetup.noneAnswering": {
+    "defaultMessage": "~/.ssh/config의 어떤 별칭도 비대화형 ssh에 응답하지 않았습니다."
+  },
+  "mlxDistributedSetup.peer": {
+    "defaultMessage": "다른 Mac (ssh 별칭 또는 호스트)"
+  },
+  "mlxDistributedSetup.peerPlaceholder": {
+    "defaultMessage": "workhorse"
+  },
+  "mlxDistributedSetup.probed": {
+    "defaultMessage": "{count, plural, other {{ms} ms 동안 노드 #개 조사함}}"
+  },
+  "mlxDistributedSetup.save": {
+    "defaultMessage": "저장 및 준비"
+  },
+  "mlxDistributedSetup.stillEmpty": {
+    "defaultMessage": "저장하려면 위의 모든 값이 필요합니다. 빨간 항목을 해결하거나 고급에서 지정하세요."
+  },
+  "mlxDistributedSetup.thisMac": {
+    "defaultMessage": "이 Mac"
+  },
+  "mlxDistributedSetup.title": {
+    "defaultMessage": "분산 엔진 설정"
+  },
+  "mlxDistributedSetup.unreachable": {
+    "defaultMessage": "연결할 수 없음"
   },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "분산"

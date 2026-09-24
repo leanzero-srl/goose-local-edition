@@ -2738,6 +2738,12 @@
   "mlxDistributed.admissionOpen": {
     "defaultMessage": "Menerima permintaan"
   },
+  "mlxDistributed.advanced": {
+    "defaultMessage": "Lanjutan"
+  },
+  "mlxDistributed.advancedMeta": {
+    "defaultMessage": "semua medan konfigurasi yang disimpan"
+  },
   "mlxDistributed.apply": {
     "defaultMessage": "Guna"
   },
@@ -2770,6 +2776,9 @@
   },
   "mlxDistributed.contextLine": {
     "defaultMessage": "konteks {limit} ({source}) · terbesar yang muat: {max}"
+  },
+  "mlxDistributed.detectAgain": {
+    "defaultMessage": "Kesan semula"
   },
   "mlxDistributed.editNode": {
     "defaultMessage": "Sunting {name}"
@@ -3002,6 +3011,9 @@
   "mlxDistributed.nodes": {
     "defaultMessage": "Nod"
   },
+  "mlxDistributed.notConfigured": {
+    "defaultMessage": "Belum dikonfigurasi"
+  },
   "mlxDistributed.notMeasured": {
     "defaultMessage": "tidak diukur"
   },
@@ -3052,6 +3064,24 @@
   },
   "mlxDistributed.pressure.warn": {
     "defaultMessage": "Tekanan tinggi"
+  },
+  "mlxDistributed.provision.done": {
+    "defaultMessage": "Sedia"
+  },
+  "mlxDistributed.provision.elapsed": {
+    "defaultMessage": "{seconds} saat"
+  },
+  "mlxDistributed.provision.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "mlxDistributed.provision.running": {
+    "defaultMessage": "Menyediakan"
+  },
+  "mlxDistributed.provision.skipped": {
+    "defaultMessage": "Python anda sendiri"
+  },
+  "mlxDistributed.provisionTitle": {
+    "defaultMessage": "Python pada setiap nod"
   },
   "mlxDistributed.ranAt": {
     "defaultMessage": "dijalankan pada {time}"
@@ -3122,6 +3152,9 @@
   "mlxDistributed.stopVerified": {
     "defaultMessage": "Dihentikan, disahkan"
   },
+  "mlxDistributed.summaryNode": {
+    "defaultMessage": "kedudukan {rank} · {name} · {where}"
+  },
   "mlxDistributed.thisMac": {
     "defaultMessage": "Mac ini"
   },
@@ -3160,6 +3193,135 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "amaran"
+  },
+  "mlxDistributedSetup.advanced": {
+    "defaultMessage": "Lanjutan"
+  },
+  "mlxDistributedSetup.advancedMeta": {
+    "defaultMessage": "semua medan, boleh disunting — Python anda sendiri, folder model lain, port"
+  },
+  "mlxDistributedSetup.answering": {
+    "defaultMessage": "Membalas daripada ~/.ssh/config"
+  },
+  "mlxDistributedSetup.apiPort": {
+    "defaultMessage": "Port API"
+  },
+  "mlxDistributedSetup.backend": {
+    "defaultMessage": "Backend"
+  },
+  "mlxDistributedSetup.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "mlxDistributedSetup.coordinatorPort": {
+    "defaultMessage": "Port penyelaras"
+  },
+  "mlxDistributedSetup.detect": {
+    "defaultMessage": "Kesan"
+  },
+  "mlxDistributedSetup.detecting": {
+    "defaultMessage": "Memeriksa Mac ini dan {peer} melalui ssh…"
+  },
+  "mlxDistributedSetup.differsOn": {
+    "defaultMessage": "berbeza pada {nodes}"
+  },
+  "mlxDistributedSetup.env.absent": {
+    "defaultMessage": "dibina semasa Simpan"
+  },
+  "mlxDistributedSetup.env.broken": {
+    "defaultMessage": "dibina semula semasa Simpan"
+  },
+  "mlxDistributedSetup.env.noUv": {
+    "defaultMessage": "tiada uv"
+  },
+  "mlxDistributedSetup.env.ready": {
+    "defaultMessage": "sedia"
+  },
+  "mlxDistributedSetup.error.candidates": {
+    "defaultMessage": "alias ssh tidak dapat dibaca"
+  },
+  "mlxDistributedSetup.error.detect": {
+    "defaultMessage": "Pengesanan gagal"
+  },
+  "mlxDistributedSetup.error.save": {
+    "defaultMessage": "Gagal menyimpan"
+  },
+  "mlxDistributedSetup.everyNode": {
+    "defaultMessage": "pada setiap nod"
+  },
+  "mlxDistributedSetup.field.modelDir": {
+    "defaultMessage": "Folder model"
+  },
+  "mlxDistributedSetup.field.pipelinePython": {
+    "defaultMessage": "Python saluran paip"
+  },
+  "mlxDistributedSetup.field.python": {
+    "defaultMessage": "Python"
+  },
+  "mlxDistributedSetup.field.rdmaDevice": {
+    "defaultMessage": "Peranti RDMA"
+  },
+  "mlxDistributedSetup.field.tbInterface": {
+    "defaultMessage": "Antara muka"
+  },
+  "mlxDistributedSetup.field.tbIp": {
+    "defaultMessage": "IPv4 pautan"
+  },
+  "mlxDistributedSetup.field.tbNetmask": {
+    "defaultMessage": "Topeng rangkaian"
+  },
+  "mlxDistributedSetup.field.tbService": {
+    "defaultMessage": "Perkhidmatan rangkaian"
+  },
+  "mlxDistributedSetup.gapsTitle": {
+    "defaultMessage": "{count, plural, other {# nilai tidak ditemui}}"
+  },
+  "mlxDistributedSetup.intro": {
+    "defaultMessage": "Namakan Mac yang satu lagi sekali sahaja. goose memeriksa Mac ini dan Mac itu melalui ssh dan mengisi pautan, RDMA, backend, model, port dan Python."
+  },
+  "mlxDistributedSetup.manifestAgree": {
+    "defaultMessage": "SHA256SUMS sepadan"
+  },
+  "mlxDistributedSetup.manifestDiffer": {
+    "defaultMessage": "SHA256SUMS berbeza"
+  },
+  "mlxDistributedSetup.memory": {
+    "defaultMessage": "{available} daripada {total} GiB tersedia"
+  },
+  "mlxDistributedSetup.missingOn": {
+    "defaultMessage": "tiada pada {nodes}"
+  },
+  "mlxDistributedSetup.model": {
+    "defaultMessage": "Model"
+  },
+  "mlxDistributedSetup.modelPick": {
+    "defaultMessage": "Pilih model"
+  },
+  "mlxDistributedSetup.noneAnswering": {
+    "defaultMessage": "Tiada alias dalam ~/.ssh/config membalas ssh bukan interaktif."
+  },
+  "mlxDistributedSetup.peer": {
+    "defaultMessage": "Mac lain (alias ssh atau hos)"
+  },
+  "mlxDistributedSetup.peerPlaceholder": {
+    "defaultMessage": "workhorse"
+  },
+  "mlxDistributedSetup.probed": {
+    "defaultMessage": "{count, plural, other {# nod diperiksa dalam {ms} ms}}"
+  },
+  "mlxDistributedSetup.save": {
+    "defaultMessage": "Simpan dan sediakan"
+  },
+  "mlxDistributedSetup.stillEmpty": {
+    "defaultMessage": "Simpan memerlukan semua nilai di atas; selesaikan yang merah atau tetapkan di bawah Lanjutan."
+  },
+  "mlxDistributedSetup.thisMac": {
+    "defaultMessage": "Mac ini"
+  },
+  "mlxDistributedSetup.title": {
+    "defaultMessage": "Sediakan enjin teragih"
+  },
+  "mlxDistributedSetup.unreachable": {
+    "defaultMessage": "tidak dapat dicapai"
   },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Teragih"

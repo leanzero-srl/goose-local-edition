@@ -2738,6 +2738,12 @@
   "mlxDistributed.admissionOpen": {
     "defaultMessage": "İstekleri kabul ediyor"
   },
+  "mlxDistributed.advanced": {
+    "defaultMessage": "Gelişmiş"
+  },
+  "mlxDistributed.advancedMeta": {
+    "defaultMessage": "kayıtlı yapılandırmanın tüm alanları"
+  },
   "mlxDistributed.apply": {
     "defaultMessage": "Uygula"
   },
@@ -2770,6 +2776,9 @@
   },
   "mlxDistributed.contextLine": {
     "defaultMessage": "bağlam {limit} ({source}) · sığan en büyük: {max}"
+  },
+  "mlxDistributed.detectAgain": {
+    "defaultMessage": "Yeniden algıla"
   },
   "mlxDistributed.editNode": {
     "defaultMessage": "{name} düzenle"
@@ -3002,6 +3011,9 @@
   "mlxDistributed.nodes": {
     "defaultMessage": "Düğümler"
   },
+  "mlxDistributed.notConfigured": {
+    "defaultMessage": "Yapılandırılmadı"
+  },
   "mlxDistributed.notMeasured": {
     "defaultMessage": "ölçülmedi"
   },
@@ -3052,6 +3064,24 @@
   },
   "mlxDistributed.pressure.warn": {
     "defaultMessage": "Baskı yüksek"
+  },
+  "mlxDistributed.provision.done": {
+    "defaultMessage": "Hazır"
+  },
+  "mlxDistributed.provision.elapsed": {
+    "defaultMessage": "{seconds} sn"
+  },
+  "mlxDistributed.provision.failed": {
+    "defaultMessage": "Başarısız"
+  },
+  "mlxDistributed.provision.running": {
+    "defaultMessage": "Hazırlanıyor"
+  },
+  "mlxDistributed.provision.skipped": {
+    "defaultMessage": "Kendi Python'unuz"
+  },
+  "mlxDistributed.provisionTitle": {
+    "defaultMessage": "Her düğümde Python"
   },
   "mlxDistributed.ranAt": {
     "defaultMessage": "{time} saatinde çalıştı"
@@ -3122,6 +3152,9 @@
   "mlxDistributed.stopVerified": {
     "defaultMessage": "Durduruldu, doğrulandı"
   },
+  "mlxDistributed.summaryNode": {
+    "defaultMessage": "sıra {rank} · {name} · {where}"
+  },
   "mlxDistributed.thisMac": {
     "defaultMessage": "bu Mac"
   },
@@ -3160,6 +3193,135 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "uyarı"
+  },
+  "mlxDistributedSetup.advanced": {
+    "defaultMessage": "Gelişmiş"
+  },
+  "mlxDistributedSetup.advancedMeta": {
+    "defaultMessage": "tüm alanlar, düzenlenebilir — kendi Python'unuz, başka bir model klasörü, portlar"
+  },
+  "mlxDistributedSetup.answering": {
+    "defaultMessage": "~/.ssh/config içinden yanıt verenler"
+  },
+  "mlxDistributedSetup.apiPort": {
+    "defaultMessage": "API portu"
+  },
+  "mlxDistributedSetup.backend": {
+    "defaultMessage": "Arka uç"
+  },
+  "mlxDistributedSetup.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "mlxDistributedSetup.coordinatorPort": {
+    "defaultMessage": "Koordinatör portu"
+  },
+  "mlxDistributedSetup.detect": {
+    "defaultMessage": "Algıla"
+  },
+  "mlxDistributedSetup.detecting": {
+    "defaultMessage": "Bu Mac ve {peer} ssh ile yoklanıyor…"
+  },
+  "mlxDistributedSetup.differsOn": {
+    "defaultMessage": "{nodes} üzerinde farklı"
+  },
+  "mlxDistributedSetup.env.absent": {
+    "defaultMessage": "Kaydet'te oluşturulur"
+  },
+  "mlxDistributedSetup.env.broken": {
+    "defaultMessage": "Kaydet'te yeniden oluşturulur"
+  },
+  "mlxDistributedSetup.env.noUv": {
+    "defaultMessage": "uv yok"
+  },
+  "mlxDistributedSetup.env.ready": {
+    "defaultMessage": "hazır"
+  },
+  "mlxDistributedSetup.error.candidates": {
+    "defaultMessage": "ssh takma adları okunamadı"
+  },
+  "mlxDistributedSetup.error.detect": {
+    "defaultMessage": "Algılama başarısız"
+  },
+  "mlxDistributedSetup.error.save": {
+    "defaultMessage": "Kaydetme başarısız"
+  },
+  "mlxDistributedSetup.everyNode": {
+    "defaultMessage": "her düğümde"
+  },
+  "mlxDistributedSetup.field.modelDir": {
+    "defaultMessage": "Model klasörü"
+  },
+  "mlxDistributedSetup.field.pipelinePython": {
+    "defaultMessage": "Pipeline Python'u"
+  },
+  "mlxDistributedSetup.field.python": {
+    "defaultMessage": "Python"
+  },
+  "mlxDistributedSetup.field.rdmaDevice": {
+    "defaultMessage": "RDMA aygıtı"
+  },
+  "mlxDistributedSetup.field.tbInterface": {
+    "defaultMessage": "Arayüz"
+  },
+  "mlxDistributedSetup.field.tbIp": {
+    "defaultMessage": "Bağlantı IPv4"
+  },
+  "mlxDistributedSetup.field.tbNetmask": {
+    "defaultMessage": "Ağ maskesi"
+  },
+  "mlxDistributedSetup.field.tbService": {
+    "defaultMessage": "Ağ hizmeti"
+  },
+  "mlxDistributedSetup.gapsTitle": {
+    "defaultMessage": "{count, plural, one {# değer bulunamadı} other {# değer bulunamadı}}"
+  },
+  "mlxDistributedSetup.intro": {
+    "defaultMessage": "Diğer Mac'i bir kez adlandırın. goose bu Mac'i ve onu ssh ile yoklar; bağlantıyı, RDMA'yı, arka ucu, modelleri, portları ve Python'u doldurur."
+  },
+  "mlxDistributedSetup.manifestAgree": {
+    "defaultMessage": "SHA256SUMS eşleşiyor"
+  },
+  "mlxDistributedSetup.manifestDiffer": {
+    "defaultMessage": "SHA256SUMS farklı"
+  },
+  "mlxDistributedSetup.memory": {
+    "defaultMessage": "{total} GiB'ın {available} GiB'ı kullanılabilir"
+  },
+  "mlxDistributedSetup.missingOn": {
+    "defaultMessage": "{nodes} üzerinde yok"
+  },
+  "mlxDistributedSetup.model": {
+    "defaultMessage": "Model"
+  },
+  "mlxDistributedSetup.modelPick": {
+    "defaultMessage": "Bir model seçin"
+  },
+  "mlxDistributedSetup.noneAnswering": {
+    "defaultMessage": "~/.ssh/config içindeki hiçbir takma ad etkileşimsiz ssh'a yanıt vermedi."
+  },
+  "mlxDistributedSetup.peer": {
+    "defaultMessage": "Diğer Mac (ssh takma adı veya ana makine)"
+  },
+  "mlxDistributedSetup.peerPlaceholder": {
+    "defaultMessage": "workhorse"
+  },
+  "mlxDistributedSetup.probed": {
+    "defaultMessage": "{count, plural, one {# düğüm {ms} ms'de yoklandı} other {# düğüm {ms} ms'de yoklandı}}"
+  },
+  "mlxDistributedSetup.save": {
+    "defaultMessage": "Kaydet ve hazırla"
+  },
+  "mlxDistributedSetup.stillEmpty": {
+    "defaultMessage": "Kaydetmek için yukarıdaki tüm değerler gerekir; kırmızı olanları çözün veya Gelişmiş altında ayarlayın."
+  },
+  "mlxDistributedSetup.thisMac": {
+    "defaultMessage": "bu Mac"
+  },
+  "mlxDistributedSetup.title": {
+    "defaultMessage": "Dağıtık motoru kur"
+  },
+  "mlxDistributedSetup.unreachable": {
+    "defaultMessage": "erişilemiyor"
   },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Dağıtık"
