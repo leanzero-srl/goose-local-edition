@@ -33,8 +33,8 @@ use crate::identity::{Identity, IdentityError, IdentityStore};
 use crate::mesh::{MeshConfig, MeshEngine, MeshError, MeshPeer, MeshStatus};
 use crate::peer_dial::{peer_http_client, MeshProxy, PeerDialError, PeerTimeout};
 use crate::state::{
-    ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp,
-    PeerRegistry, RemoteExecutor, SwarmStateSource,
+    DistributedNode, DistributedNodeError, ExecuteAccepted, ExecuteError, ExecuteRequest,
+    MlxControl, MlxControlError, MlxOp, PeerRegistry, RemoteExecutor, SwarmStateSource,
 };
 use crate::token::node_token_from_secret;
 use crate::wire::NodeStatus;
@@ -199,6 +199,14 @@ pub enum LinkError {
     MlxControl(#[from] MlxControlError),
     #[error("mlx proxy request to a peer failed: {0}")]
     MlxProxy(String),
+    /// A peer's `/v1/swarm/distributed/*` answered with one of its classes (403 its switch is
+    /// off, 404, 400, 409 a named refusal, 500) — carried verbatim.
+    #[error(transparent)]
+    DistributedNode(#[from] DistributedNodeError),
+    /// The distributed request never got a classed answer: the peer was unreachable, answered
+    /// `501` (not wired), or answered outside the contract.
+    #[error("distributed request to a peer failed: {0}")]
+    DistributedProxy(String),
     #[error(transparent)]
     PeerDial(#[from] PeerDialError),
     #[error("mesh joined but reported no IP — cannot compose a Connected state")]
@@ -321,6 +329,9 @@ pub struct LinkManager {
     /// self short-circuit in [`Self::mlx_proxy`] is unavailable). goose supplies the real
     /// one (`GoosedMlxControl`) before the manager is built.
     mlx_control: Option<Arc<dyn MlxControl>>,
+    /// This node as a node of a peer's distributed MLX engine. `None` → its
+    /// `/v1/swarm/distributed/*` routes answer `501`.
+    distributed_node: Option<Arc<dyn DistributedNode>>,
     /// Shared with the connection's poll loop as a `Weak`, so the loop can drop a
     /// connection whose daemon died and a dropped manager ends the loop.
     inner: Arc<Mutex<Inner>>,
@@ -358,6 +369,7 @@ impl LinkManager {
             source,
             executor: None,
             mlx_control: None,
+            distributed_node: None,
             inner: Arc::new(Mutex::new(Inner {
                 auth,
                 last_error: None,
@@ -383,6 +395,13 @@ impl LinkManager {
     /// existing construction paths (and their tests) stay unchanged.
     pub fn with_mlx_control(mut self, mlx_control: Arc<dyn MlxControl>) -> Self {
         self.mlx_control = Some(mlx_control);
+        self
+    }
+
+    /// Attach this node's distributed-engine node side (goose's). A builder-style setter, like
+    /// [`Self::with_mlx_control`].
+    pub fn with_distributed_node(mut self, node: Arc<dyn DistributedNode>) -> Self {
+        self.distributed_node = Some(node);
         self
     }
 
@@ -637,6 +656,7 @@ impl LinkManager {
             self.source.clone(),
             self.executor.clone(),
             self.mlx_control.clone(),
+            self.distributed_node.clone(),
         )
         .await
         {
@@ -857,6 +877,40 @@ impl LinkManager {
             self.config.control.connect_timeout,
             op,
             &body,
+        )
+        .await
+    }
+
+    /// Forward one distributed-engine op to peer `target_node_id`: `POST
+    /// <peer>/v1/swarm/distributed/<op>` with the bearer node token, through the mesh proxy.
+    /// `body`/`Ok` are the op's JSON (goose types them). The peer's classed answers come back as
+    /// [`LinkError::DistributedNode`]; everything else as [`LinkError::DistributedProxy`].
+    pub async fn distributed_proxy(
+        &self,
+        target_node_id: &str,
+        op: &str,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, LinkError> {
+        let (base_url, token, proxy) = {
+            let inner = self.inner.lock().await;
+            let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+            let base_url = active
+                .registry
+                .peer_base_url(target_node_id)
+                .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
+            (
+                base_url,
+                active.node_token.clone(),
+                active.registry.peer_proxy(),
+            )
+        };
+        post_peer_distributed(
+            proxy,
+            &base_url,
+            &token,
+            self.config.control.connect_timeout,
+            op,
+            body,
         )
         .await
     }
@@ -1114,6 +1168,63 @@ async fn post_peer_mlx(
         400 => LinkError::MlxControl(MlxControlError::BadRequest(text)),
         500 => LinkError::MlxControl(MlxControlError::Failed(text)),
         code => LinkError::MlxProxy(format!("peer returned {code}: {text}")),
+    })
+}
+
+/// `POST <base_url>/v1/swarm/distributed/<op>`, mapping the peer's status back to its class:
+/// `2xx` → the op's JSON; `403` → [`DistributedNodeError::Disabled`]; `404` →
+/// [`DistributedNodeError::UnknownOp`]; `400` → [`DistributedNodeError::BadRequest`]; `409` →
+/// [`DistributedNodeError::Refused`] from its `{code, message}` body; `500` →
+/// [`DistributedNodeError::Failed`]; anything else (a `501`, a `401`) and any transport failure
+/// → [`LinkError::DistributedProxy`] with the code and body. `connect_timeout` is the only
+/// timeout: a verified rank stop takes its grace windows on the peer.
+async fn post_peer_distributed(
+    proxy: Option<MeshProxy>,
+    base_url: &str,
+    token: &str,
+    connect_timeout: Duration,
+    op: &str,
+    body: &serde_json::Value,
+) -> Result<serde_json::Value, LinkError> {
+    let client = peer_http_client(proxy, PeerTimeout::ConnectOnly(connect_timeout))?;
+    let response = client
+        .post(format!("{base_url}/v1/swarm/distributed/{op}"))
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .await
+        .map_err(|err| LinkError::DistributedProxy(err.to_string()))?;
+
+    let status = response.status();
+    if status.is_success() {
+        return response.json::<serde_json::Value>().await.map_err(|err| {
+            LinkError::DistributedProxy(format!("peer responded but its body did not parse: {err}"))
+        });
+    }
+    let text = response.text().await.unwrap_or_default();
+    Err(match status.as_u16() {
+        403 => DistributedNodeError::Disabled(text).into(),
+        404 => DistributedNodeError::UnknownOp(text).into(),
+        400 => DistributedNodeError::BadRequest(text).into(),
+        409 => {
+            #[derive(Deserialize)]
+            struct Refusal {
+                code: String,
+                message: String,
+            }
+            match serde_json::from_str::<Refusal>(&text) {
+                Ok(r) => DistributedNodeError::Refused {
+                    code: r.code,
+                    message: r.message,
+                }
+                .into(),
+                Err(_) => LinkError::DistributedProxy(format!(
+                    "peer refused (409) outside the {{code, message}} contract: {text}"
+                )),
+            }
+        }
+        500 => DistributedNodeError::Failed(text).into(),
+        code => LinkError::DistributedProxy(format!("peer returned {code}: {text}")),
     })
 }
 

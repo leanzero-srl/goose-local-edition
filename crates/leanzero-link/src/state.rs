@@ -278,6 +278,44 @@ pub trait MlxControl: Send + Sync + 'static {
     ) -> Result<serde_json::Value, MlxControlError>;
 }
 
+/// Why a `/v1/swarm/distributed/<op>` call did not run. Each variant is one HTTP class of the
+/// route, so the requester reconstructs it exactly ([`crate::control::distributed_node_error_status`]):
+/// [`Self::Disabled`] `403` (the node's own switch is off), [`Self::UnknownOp`] `404`,
+/// [`Self::BadRequest`] `400`, [`Self::Refused`] `409` with a JSON `{code, message}` body (a
+/// named refusal the requester acts on — `alreadyHosting`, `singleEngineMounted`,
+/// `interpreterNotManaged`, …), [`Self::Failed`] `500`.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum DistributedNodeError {
+    #[error("{0}")]
+    Disabled(String),
+    #[error("{0}")]
+    UnknownOp(String),
+    #[error("{0}")]
+    BadRequest(String),
+    #[error("{code}: {message}")]
+    Refused { code: String, message: String },
+    #[error("{0}")]
+    Failed(String),
+}
+
+/// THIS node as a node of another node's distributed MLX engine: the seam goose implements
+/// over `goose_sidecar::distributed::link_host` (and its discovery probe). The op names, the
+/// request/response bodies and the rank lifecycle are goose's (opaque JSON here — this crate
+/// never types them and never touches `goose_sidecar`). Injected into the control service
+/// beside the [`MlxControl`]; `None` there means the route answers `501`.
+#[async_trait::async_trait]
+pub trait DistributedNode: Send + Sync + 'static {
+    /// The node owner's switch ("Allow this Mac to serve as a distributed node"), read on
+    /// EVERY request so a change applies at once, not at the next connect. `false` → `403`.
+    fn serving_allowed(&self) -> bool;
+
+    async fn dispatch(
+        &self,
+        op: &str,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, DistributedNodeError>;
+}
+
 /// One mesh peer as a polling/subscription target. `mesh_ip: None` (tailscaled
 /// knows the peer but reports no IP) yields a permanently `Offline` row — shown
 /// loudly, never silently skipped.
