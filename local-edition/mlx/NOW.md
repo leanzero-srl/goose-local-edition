@@ -18,6 +18,9 @@ verified live except the in-app copy — Link sign-in is owner-only email code),
 with numbers, per-rank memory caps, supervisor: no-[DONE]=failure, progress-ratio hang rule, per-pid stop + remote verify,
 watchdog). 27B JACCL soak 275/275 (REPORT: ~/goose-builds/jaccl-smoke/STEP1b-soak/REPORT.md). Flash (qwen4_exp) pipeline on
 fork branch lz/pipeline-qwen4: 8-layer + placement parity bit-identical, 683–716 tok/s prefill, 21–24 decode.
+UPDATE 2026-09-24 04:xx — 3.0.20 PUBLISHED + installed (Detect, chat routing incl. other windows, Mach-O UUID + Local Network).
+Waiting on the OWNER: Allow "Goose Swarm" in the Local Network alert (screen was locked) — then re-run Preflight → Start → chat
+from the installed app opened normally (ppid 1), which is the last unverified link. Flash word-for-word reference still running.
 OPEN (each has an agent or a slot): (a) Flash full-model reference by layer streaming + batch-vs-single mismatch (52/260) —
 split agent; (b) live trigger of hang rule + watchdog — backend agent; (c) Engine-tab/tile/tray distributed UI — panel-surgeon;
 (d) qwen4_exp OpenAI server entry in the fork so goose can START a Flash split — QUEUED behind: (a)'s agent; (e) remount the
