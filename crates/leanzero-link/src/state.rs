@@ -316,6 +316,21 @@ pub trait DistributedNode: Send + Sync + 'static {
     ) -> Result<serde_json::Value, DistributedNodeError>;
 }
 
+/// THIS node's chat engine, served to same-account peers through the control service's
+/// inference proxy (`/v1/swarm/inference/v1/*`, see [`crate::inference`]). goose implements it
+/// over its single MLX engine; this crate never touches `goose_sidecar` and NEVER mounts: the
+/// proxy forwards to whatever listens at [`Self::engine_base_url`], and nothing listening is the
+/// proxy's loud `502`. Injected beside the [`DistributedNode`]; `None` → the routes answer `501`.
+pub trait ChatServing: Send + Sync + 'static {
+    /// The node owner's switch ("Allow this Mac to serve chat to linked devices"), read on EVERY
+    /// request so turning it off stops the next request, not the next connect. `false` → `403`.
+    fn serving_allowed(&self) -> bool;
+
+    /// The engine's loopback base URL (`http://127.0.0.1:<port>`, no trailing slash). `Err(why)`
+    /// when this node cannot name it (its engine config is unreadable) → `503`, never a guess.
+    fn engine_base_url(&self) -> Result<String, String>;
+}
+
 /// One mesh peer as a polling/subscription target. `mesh_ip: None` (tailscaled
 /// knows the peer but reports no IP) yields a permanently `Offline` row — shown
 /// loudly, never silently skipped.

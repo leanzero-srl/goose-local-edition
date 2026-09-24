@@ -1424,6 +1424,7 @@ async fn remote_execute_posts_to_a_peer_execute_route() {
         Some(b_executor.clone()),
         None,
         None,
+        None,
     )
     .await
     .expect("node B starts");
@@ -1569,6 +1570,7 @@ async fn mlx_proxy_posts_to_a_peer_mlx_route_and_surfaces_its_payload_and_errors
         None,
         Some(b_control.clone()),
         None,
+        None,
     )
     .await
     .expect("node B starts");
@@ -1652,6 +1654,7 @@ async fn mlx_proxy_surfaces_a_peer_failure_verbatim() {
         None,
         Some(b_control.clone()),
         None,
+        None,
     )
     .await
     .expect("node B starts");
@@ -1723,6 +1726,7 @@ async fn mlx_proxy_waits_past_the_fabric_request_timeout_for_a_slow_peer() {
         }),
         None,
         Some(b_control.clone()),
+        None,
         None,
     )
     .await
@@ -1924,6 +1928,7 @@ async fn distributed_proxy_carries_every_class_of_a_peers_answer() {
         None,
         None,
         Some(node.clone()),
+        None,
     )
     .await
     .expect("node B starts");
@@ -1995,6 +2000,7 @@ async fn distributed_proxy_carries_every_class_of_a_peers_answer() {
         None,
         None,
         None,
+        None,
     )
     .await
     .expect("node C starts");
@@ -2012,4 +2018,110 @@ async fn distributed_proxy_carries_every_class_of_a_peers_answer() {
     b.shutdown();
     c.shutdown();
     manager.logout(false).await.unwrap();
+}
+
+/// The chat relay resolves its peer through the CONNECTED manager: B's mesh address from the live
+/// registry, the bearer derived from the account secret, the mesh proxy the daemon reported — and
+/// a peer the registry does not know is the relay's named 502, never a guess.
+#[tokio::test]
+async fn the_chat_relay_reaches_a_peer_through_the_connected_managers_registry() {
+    use leanzero_link::inference::{InferenceRelay, PeerCallResolver, RELAY_FAILED};
+    use leanzero_link::state::ChatServing;
+
+    let engine = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"data":[{"id":"m"}]}"#))
+        .mount(&engine)
+        .await;
+    struct Serving(String);
+    impl ChatServing for Serving {
+        fn serving_allowed(&self) -> bool {
+            true
+        }
+        fn engine_base_url(&self) -> Result<String, String> {
+            Ok(self.0.clone())
+        }
+    }
+    let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
+    b_config.port = 0;
+    let b = ControlService::start(
+        b_config,
+        Arc::new(NamedIdleSource {
+            node_id: "node-b".to_string(),
+        }),
+        None,
+        None,
+        None,
+        Some(Arc::new(Serving(engine.uri()))),
+    )
+    .await
+    .expect("node B starts");
+    let b_port = b.local_addr().port();
+
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = Arc::new(h.manager(&server, false));
+    manager.connect().await.expect("A connects");
+    let registry = manager.active_registry().await.expect("a live registry");
+    let target = PeerTarget {
+        hostname: "node-b".to_string(),
+        mesh_ip: Some(support::fake_tailnet().expose(b_port)),
+        port: b_port,
+    };
+
+    let relay = InferenceRelay::start(
+        "node-b".to_string(),
+        manager.clone() as Arc<dyn PeerCallResolver>,
+    )
+    .await
+    .expect("relay starts");
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let body = loop {
+        registry.set_peers(vec![target.clone()]);
+        let response = client
+            .get(format!("{}/v1/models", relay.base_url()))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap();
+        if status == 200 {
+            break text;
+        }
+        assert!(
+            text.starts_with(RELAY_FAILED) && tokio::time::Instant::now() < deadline,
+            "{status}: {text}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
+    assert_eq!(body, r#"{"data":[{"id":"m"}]}"#, "B's engine answered A's relay");
+
+    let stranger = InferenceRelay::start(
+        "node-nobody".to_string(),
+        manager.clone() as Arc<dyn PeerCallResolver>,
+    )
+    .await
+    .unwrap();
+    let response = client
+        .get(format!("{}/v1/models", stranger.base_url()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 502);
+    let text = response.text().await.unwrap();
+    assert!(
+        text.contains("no known mesh peer with node id 'node-nobody'"),
+        "{text}"
+    );
 }

@@ -25,6 +25,7 @@
 pub mod control;
 pub mod discovery;
 pub mod identity;
+pub mod inference;
 pub mod manager;
 pub mod mesh;
 pub mod netpath;

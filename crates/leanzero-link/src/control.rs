@@ -39,6 +39,14 @@
 //!   `settingsUpdate`, `unmount`) log at `warn` on the executing node. A peer's own
 //!   failure (memory-gate BLOCK, disk-full, its 501) surfaces verbatim as `400`/`500`,
 //!   never swallowed or faked.
+//! - `POST /v1/swarm/inference/v1/chat/completions`, `GET /v1/swarm/inference/v1/models`,
+//!   `GET /v1/swarm/inference/v1/status` → the CHAT INFERENCE PROXY: a same-account device's
+//!   chat answered by THIS node's own loopback engine, streamed through byte for byte. Its own
+//!   switch (the injected [`ChatServing`], read per request) gates it: off → `403`
+//!   [`crate::inference::chat_serving_disabled`]; none injected → `501`; nothing listening →
+//!   `502`. It never mounts. Separate from `allow_remote_execution` and from the distributed
+//!   switch: serving chat lets a peer neither run prompts here nor reshape the engine. Detail in
+//!   [`crate::inference`].
 //!
 //! Listeners: 127.0.0.1 always (the local desktop), plus the mesh IP when one is
 //! up. Under `--tun=userspace-networking` (this crate's only tailscaled mode) the
@@ -55,10 +63,11 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::ws::{CloseFrame, Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -73,10 +82,11 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
+use crate::inference::{self, EnginePath};
 use crate::peer_dial::{MeshProxy, PeerDialError};
 use crate::pubsub::{EventOrigin, PubSub, StampedEvent, SubscribeError};
 use crate::state::{
-    DistributedNode, DistributedNodeError, ExecuteError, ExecuteRequest, MlxControl,
+    ChatServing, DistributedNode, DistributedNodeError, ExecuteError, ExecuteRequest, MlxControl,
     MlxControlError, MlxOp, PeerRegistry, PeerRegistryConfig, PeerTarget, RemoteExecutor,
     SwarmStateSource,
 };
@@ -103,6 +113,8 @@ pub enum ControlError {
     },
     #[error("cannot build the peer-fabric HTTP client: {0}")]
     HttpClient(#[from] PeerDialError),
+    #[error("cannot build the inference proxy's loopback engine client: {0}")]
+    EngineClient(reqwest::Error),
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +209,10 @@ struct Ctx {
     /// `None` → the `/v1/swarm/distributed/*` routes answer `501`. The seam goose implements
     /// over its distributed engine's node side; its own switch gates every call (`403`).
     distributed_node: Option<Arc<dyn DistributedNode>>,
+    /// `None` → the `/v1/swarm/inference/*` routes answer `501`. Its own switch gates every call.
+    chat_serving: Option<Arc<dyn ChatServing>>,
+    /// Loopback-only, CONNECT-timeout-only client to this node's own engine.
+    engine_http: reqwest::Client,
     allow_remote_execution: bool,
 }
 
@@ -214,6 +230,7 @@ impl ControlService {
         executor: Option<Arc<dyn RemoteExecutor>>,
         mlx_control: Option<Arc<dyn MlxControl>>,
         distributed_node: Option<Arc<dyn DistributedNode>>,
+        chat_serving: Option<Arc<dyn ChatServing>>,
     ) -> Result<ControlHandle, ControlError> {
         if config.node_token.trim().is_empty() {
             return Err(ControlError::EmptyToken);
@@ -240,6 +257,9 @@ impl ControlService {
             executor,
             mlx_control,
             distributed_node,
+            chat_serving,
+            engine_http: inference::engine_client(config.connect_timeout)
+                .map_err(ControlError::EngineClient)?,
             allow_remote_execution: config.allow_remote_execution,
         };
         let router = swarm_router(ctx, Arc::new(config.node_token));
@@ -377,6 +397,12 @@ fn swarm_router(ctx: Ctx, token: Arc<String>) -> Router {
         // The distributed MLX engine's node side; `{op}` is interpreted by the injected
         // `DistributedNode` (an unknown op is its loud `404`).
         .route("/v1/swarm/distributed/{op}", post(distributed_proxy))
+        .route(
+            &EnginePath::ChatCompletions.control_route(),
+            post(inference_chat_completions),
+        )
+        .route(&EnginePath::Models.control_route(), get(inference_models))
+        .route(&EnginePath::Status.control_route(), get(inference_status))
         .layer(axum::middleware::from_fn_with_state(token, require_token))
         .with_state(ctx)
 }
@@ -710,6 +736,35 @@ async fn distributed_proxy(
         Ok(value) => (StatusCode::OK, Json(value)).into_response(),
         Err(error) => distributed_node_error_response(error),
     }
+}
+
+async fn inference(ctx: Ctx, path: EnginePath, headers: HeaderMap, body: Body) -> Response {
+    let source = ctx.source.clone();
+    inference::serve(
+        ctx.chat_serving.as_ref(),
+        &ctx.engine_http,
+        async move { source.local_node().await.hostname },
+        path,
+        headers,
+        body,
+    )
+    .await
+}
+
+async fn inference_chat_completions(
+    State(ctx): State<Ctx>,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    inference(ctx, EnginePath::ChatCompletions, headers, body).await
+}
+
+async fn inference_models(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
+    inference(ctx, EnginePath::Models, headers, Body::empty()).await
+}
+
+async fn inference_status(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
+    inference(ctx, EnginePath::Status, headers, Body::empty()).await
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]

@@ -30,11 +30,13 @@ use tokio::task::JoinHandle;
 
 use crate::control::{ControlConfig, ControlError, ControlHandle, ControlService};
 use crate::identity::{Identity, IdentityError, IdentityStore};
+use crate::inference::{PeerCall, PeerCallResolver};
 use crate::mesh::{MeshConfig, MeshEngine, MeshError, MeshPeer, MeshStatus};
 use crate::peer_dial::{peer_http_client, MeshProxy, PeerDialError, PeerTimeout};
 use crate::state::{
-    DistributedNode, DistributedNodeError, ExecuteAccepted, ExecuteError, ExecuteRequest,
-    MlxControl, MlxControlError, MlxOp, PeerRegistry, RemoteExecutor, SwarmStateSource,
+    ChatServing, DistributedNode, DistributedNodeError, ExecuteAccepted, ExecuteError,
+    ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerRegistry, RemoteExecutor,
+    SwarmStateSource,
 };
 use crate::token::node_token_from_secret;
 use crate::wire::NodeStatus;
@@ -332,6 +334,9 @@ pub struct LinkManager {
     /// This node as a node of a peer's distributed MLX engine. `None` → its
     /// `/v1/swarm/distributed/*` routes answer `501`.
     distributed_node: Option<Arc<dyn DistributedNode>>,
+    /// This node's chat engine served to peers (the inference proxy). `None` → its
+    /// `/v1/swarm/inference/*` routes answer `501`.
+    chat_serving: Option<Arc<dyn ChatServing>>,
     /// Shared with the connection's poll loop as a `Weak`, so the loop can drop a
     /// connection whose daemon died and a dropped manager ends the loop.
     inner: Arc<Mutex<Inner>>,
@@ -370,6 +375,7 @@ impl LinkManager {
             executor: None,
             mlx_control: None,
             distributed_node: None,
+            chat_serving: None,
             inner: Arc::new(Mutex::new(Inner {
                 auth,
                 last_error: None,
@@ -402,6 +408,13 @@ impl LinkManager {
     /// [`Self::with_mlx_control`].
     pub fn with_distributed_node(mut self, node: Arc<dyn DistributedNode>) -> Self {
         self.distributed_node = Some(node);
+        self
+    }
+
+    /// Attach this node's chat engine for the inference proxy (goose's). A builder-style
+    /// setter, like [`Self::with_distributed_node`].
+    pub fn with_chat_serving(mut self, serving: Arc<dyn ChatServing>) -> Self {
+        self.chat_serving = Some(serving);
         self
     }
 
@@ -657,6 +670,7 @@ impl LinkManager {
             self.executor.clone(),
             self.mlx_control.clone(),
             self.distributed_node.clone(),
+            self.chat_serving.clone(),
         )
         .await
         {
@@ -913,6 +927,23 @@ impl LinkManager {
             body,
         )
         .await
+    }
+
+    /// How to reach peer `target_node_id`'s control service right now — its base URL, the
+    /// bearer, the mesh proxy — for callers that stream their own request (the inference relay).
+    pub async fn peer_call(&self, target_node_id: &str) -> Result<PeerCall, LinkError> {
+        let inner = self.inner.lock().await;
+        let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+        let base_url = active
+            .registry
+            .peer_base_url(target_node_id)
+            .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
+        Ok(PeerCall {
+            base_url,
+            token: active.node_token.clone(),
+            proxy: active.registry.peer_proxy(),
+            connect_timeout: self.config.control.connect_timeout,
+        })
     }
 
     /// Tear down the connection (per-pid), clear the stored identity, and drop to
@@ -1226,6 +1257,15 @@ async fn post_peer_distributed(
         500 => DistributedNodeError::Failed(text).into(),
         code => LinkError::DistributedProxy(format!("peer returned {code}: {text}")),
     })
+}
+
+#[async_trait::async_trait]
+impl PeerCallResolver for LinkManager {
+    async fn peer_call(&self, peer: &str) -> Result<PeerCall, String> {
+        LinkManager::peer_call(self, peer)
+            .await
+            .map_err(|err| err.to_string())
+    }
 }
 
 /// `1 + peers that are not Offline`: a peer that answers (even wrongly) is present; an
