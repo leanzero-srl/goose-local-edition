@@ -14,6 +14,7 @@ import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
 import type { MlxEngineReport, MlxEngineSnapshot } from './utils/mlxEngineMonitor';
 import type { MlxDistributedReport } from './utils/mlxDistributedReport';
 import type { MlxRemoteReport } from './utils/mlxRemoteReport';
+import type { LinkTrayReport } from './utils/linkTrayReport';
 import type { LocalNetworkTouch } from './localNetwork';
 
 // Mapping from settings keys to their old localStorage keys for lazy migration
@@ -495,6 +496,7 @@ type ElectronAPI = {
   mlxDistributedReport: (report: MlxDistributedReport) => void;
   /** Hand MAIN where MLX chat goes (`remoteSingleStatus`); null = this Mac's own engine. */
   mlxRemoteReport: (report: MlxRemoteReport | null) => void;
+  linkReport: (report: LinkTrayReport | null) => void;
 };
 
 type AppConfigAPI = {
@@ -573,6 +575,7 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.send('mlx-distributed-report', report),
   mlxRemoteReport: (report: MlxRemoteReport | null) =>
     ipcRenderer.send('mlx-remote-report', report),
+  linkReport: (report: LinkTrayReport | null) => ipcRenderer.send('link-report', report),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
   swarmAddNote: (workingDir: string, text: string) =>

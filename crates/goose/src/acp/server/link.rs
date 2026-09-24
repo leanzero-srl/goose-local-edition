@@ -47,9 +47,10 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use leanzero_link::control::{ControlConfig, DEFAULT_CONTROL_PORT};
 use leanzero_link::identity;
+use leanzero_link::intent::{IntentCause, IntentRecord, LinkIntent};
 use leanzero_link::manager::{
     AuthState, LinkError, LinkManager, LinkManagerConfig, LinkState, Mesh, MeshFactory,
-    RealMeshFactory,
+    RealMeshFactory, ReconnectState,
 };
 use leanzero_link::mesh::{MeshConfig, MeshStatus};
 use leanzero_link::state::SwarmStateSource;
@@ -754,6 +755,38 @@ pub(super) async fn shutdown_started_meshes() -> String {
     STARTED_MESHES.shutdown_live().await
 }
 
+// ---------------------------------------------------------------------------
+// The launch reconnect: armed by the process's boot path, fired once by the first agent.
+// ---------------------------------------------------------------------------
+
+static RECONNECT_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static RECONNECT_FIRED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Ask this process to honour the persisted Link intent once, at the first agent it
+/// builds. Only a real goosed boot path arms it (`goose serve`'s `handle_serve_command`,
+/// beside [`super::wire_link_for_serve`] — deliberately NOT inside it, which unit tests
+/// call); a process that never arms it — every test that builds an `AcpServer` — never
+/// touches the mesh or `~/.leanzero` on its own.
+pub fn arm_link_reconnect_at_boot() {
+    RECONNECT_ARMED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Called by `AcpServer::create_agent` for every agent it builds. The FIRST agent of an
+/// armed process runs the launch reconnect in the background: the Link manager is built
+/// from an agent's session managers (its busy set is the idle guard's), and the desktop's
+/// first ACP connection is made at app launch — and again against every restarted
+/// goosed, which is a new process and so re-arms. Fires at most once per process: a
+/// failed reconnect is a named state with a Retry (Connect), never a retry loop.
+pub(crate) fn reconnect_link_on_first_agent(agent: &Arc<GooseAcpAgent>) {
+    if !RECONNECT_ARMED.load(std::sync::atomic::Ordering::SeqCst)
+        || RECONNECT_FIRED.swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return;
+    }
+    let agent = Arc::clone(agent);
+    tokio::spawn(async move { agent.run_link_reconnect().await });
+}
+
 /// Resolve the worker base URL from the env override, else the crate default; logs which.
 fn resolve_worker_base_url() -> String {
     match std::env::var("LEANZERO_LINK_WORKER_URL") {
@@ -904,6 +937,41 @@ fn auth_state_to_dto(auth: AuthState) -> LeanzeroLinkAuthStateDto {
     }
 }
 
+fn intent_to_dto(record: IntentRecord) -> LeanzeroLinkIntentDto {
+    LeanzeroLinkIntentDto {
+        intent: match record.intent {
+            LinkIntent::Connected => LeanzeroLinkIntentValueDto::Connected,
+            LinkIntent::Disconnected => LeanzeroLinkIntentValueDto::Disconnected,
+        },
+        cause: match record.cause {
+            IntentCause::UserConnect => LeanzeroLinkIntentCauseDto::UserConnect,
+            IntentCause::UserDisconnect => LeanzeroLinkIntentCauseDto::UserDisconnect,
+            IntentCause::UserLogout => LeanzeroLinkIntentCauseDto::UserLogout,
+            IntentCause::Migrated => LeanzeroLinkIntentCauseDto::Migrated,
+            IntentCause::NoRecord => LeanzeroLinkIntentCauseDto::NoRecord,
+        },
+        updated_at: record.updated_at.to_rfc3339(),
+    }
+}
+
+fn reconnect_to_dto(reconnect: ReconnectState) -> LeanzeroLinkReconnectDto {
+    match reconnect {
+        ReconnectState::Idle => LeanzeroLinkReconnectDto::Idle,
+        ReconnectState::Skipped { reason } => LeanzeroLinkReconnectDto::Skipped { reason },
+        ReconnectState::Reconnecting { started_at } => LeanzeroLinkReconnectDto::Reconnecting {
+            started_at: started_at.to_rfc3339(),
+        },
+        ReconnectState::Reconnected { at, mesh_ip } => LeanzeroLinkReconnectDto::Reconnected {
+            at: at.to_rfc3339(),
+            mesh_ip,
+        },
+        ReconnectState::Failed { reason, at } => LeanzeroLinkReconnectDto::Failed {
+            reason,
+            at: at.to_rfc3339(),
+        },
+    }
+}
+
 fn mesh_status_to_dto(mesh: MeshStatus) -> LeanzeroLinkMeshStatusDto {
     LeanzeroLinkMeshStatusDto {
         self_ip: mesh.self_ip,
@@ -949,6 +1017,9 @@ fn link_state_to_dto(state: LinkState, view: &HolderView) -> LeanzeroLinkStateRe
         // Shown so the panel can say "not wired" instead of discovering a 501 on use.
         remote_execution_wired: current_executor().is_some(),
         mlx_control_wired: current_mlx_control().is_some(),
+        intent: state.intent.map(intent_to_dto),
+        intent_error: state.intent_error,
+        reconnect: reconnect_to_dto(state.reconnect),
     }
 }
 
@@ -1297,6 +1368,46 @@ impl GooseAcpAgent {
         Ok(self.status_response(&manager).await)
     }
 
+    pub(super) async fn on_leanzero_link_disconnect(
+        &self,
+        _req: LeanzeroLinkDisconnectRequest,
+    ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
+        let manager = self.link_manager().await?;
+        manager.disconnect().await.map_err(link_err)?;
+        // A connect refusal recorded by this layer described a connect the user has now
+        // turned away from.
+        record_connect_refusal(None);
+        Ok(self.status_response(&manager).await)
+    }
+
+    /// The launch reconnect ([`LinkManager::auto_reconnect`]) run through the same
+    /// gates as the Connect button: the manager this process serves, binary discovery
+    /// re-run and its refusal passed as the preflight, a failure described with the same
+    /// actionable text. Its outcome rides the status DTO's `reconnect`.
+    async fn run_link_reconnect(&self) {
+        let manager = match self.link_manager().await {
+            Ok(manager) => manager,
+            Err(error) => {
+                error!(
+                    ?error,
+                    "leanzero_link_reconnect: failed: the Link manager could not be built"
+                );
+                return;
+            }
+        };
+        let manager = match self.refresh_mesh_binaries(manager).await {
+            Ok(manager) => manager,
+            Err(error) => {
+                error!(?error, "leanzero_link_reconnect: failed: rebuilding the Link manager for fresh mesh binaries");
+                return;
+            }
+        };
+        let preflight = holder_view().mesh_binaries.paths().map(|_| ());
+        manager
+            .auto_reconnect(preflight, connect_failure_text)
+            .await;
+    }
+
     pub(super) async fn on_leanzero_link_nodes(
         &self,
         _req: LeanzeroLinkNodesRequest,
@@ -1563,8 +1674,23 @@ mod tests {
             .to_dto(),
             remote_execution_wired: false,
             mlx_control_wired: true,
+            intent: Some(intent_to_dto(IntentRecord::new(
+                LinkIntent::Disconnected,
+                IntentCause::UserDisconnect,
+            ))),
+            intent_error: None,
+            reconnect: reconnect_to_dto(ReconnectState::Failed {
+                reason: "mesh join failed".to_string(),
+                at: Utc::now(),
+            }),
         };
         let value = serde_json::to_value(&state).unwrap();
+        assert_eq!(value["intent"]["intent"], "disconnected");
+        assert_eq!(value["intent"]["cause"], "userDisconnect");
+        assert!(value["intent"]["updatedAt"].is_string());
+        assert_eq!(value["reconnect"]["state"], "failed");
+        assert_eq!(value["reconnect"]["reason"], "mesh join failed");
+        assert!(value["reconnect"]["at"].is_string());
         assert_eq!(value["auth"]["state"], "loggedIn");
         assert_eq!(value["nodeCount"], 2);
         assert_eq!(value["lastError"], "boom");
@@ -1609,6 +1735,9 @@ mod tests {
                 node_count: 0,
                 mesh_poll_failures: 0,
                 last_error: None,
+                intent: None,
+                intent_error: None,
+                reconnect: ReconnectState::Idle,
             },
             &view,
         );
@@ -1648,11 +1777,38 @@ mod tests {
                 node_count: 0,
                 mesh_poll_failures: 0,
                 last_error: None,
+                intent: None,
+                intent_error: None,
+                reconnect: ReconnectState::Idle,
             },
             &view,
         );
         assert!(dto.remote_execution_wired);
         assert!(dto.mlx_control_wired);
+    }
+
+    /// The launch reconnect's wire shape is what the desktop's `ReconnectState` reads:
+    /// tagged on `state`, camelCase payload keys.
+    #[test]
+    fn reconnect_dto_is_tagged_and_camelcase() {
+        let at = Utc::now();
+        let reconnected = serde_json::to_value(reconnect_to_dto(ReconnectState::Reconnected {
+            at,
+            mesh_ip: "100.64.0.3".to_string(),
+        }))
+        .unwrap();
+        assert_eq!(reconnected["state"], "reconnected");
+        assert_eq!(reconnected["meshIp"], "100.64.0.3");
+        let reconnecting = serde_json::to_value(reconnect_to_dto(ReconnectState::Reconnecting {
+            started_at: at,
+        }))
+        .unwrap();
+        assert_eq!(reconnecting["state"], "reconnecting");
+        assert!(reconnecting["startedAt"].is_string());
+        assert_eq!(
+            serde_json::to_value(reconnect_to_dto(ReconnectState::Idle)).unwrap()["state"],
+            "idle"
+        );
     }
 
     /// A binary that appears (installed, chmod-ed) after the manager was built is a

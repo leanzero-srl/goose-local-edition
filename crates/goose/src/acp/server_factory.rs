@@ -119,6 +119,8 @@ impl AcpServer {
         .await?;
         info!("Created new ACP agent");
 
-        Ok(Arc::new(agent))
+        let agent = Arc::new(agent);
+        crate::acp::server::reconnect_link_on_first_agent(&agent);
+        Ok(agent)
     }
 }

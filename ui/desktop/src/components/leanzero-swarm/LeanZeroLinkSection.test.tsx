@@ -14,6 +14,7 @@ const mockRequestCode = vi.fn();
 const mockVerify = vi.fn();
 const mockConnect = vi.fn();
 const mockLogout = vi.fn();
+const mockDisconnect = vi.fn();
 const mockNodes = vi.fn();
 const mockHealth = vi.fn();
 
@@ -26,6 +27,7 @@ vi.mock('../../acp/leanzero-link', async (importActual) => {
     leanzeroLinkVerify: (...a: unknown[]) => mockVerify(...a),
     leanzeroLinkConnect: (...a: unknown[]) => mockConnect(...a),
     leanzeroLinkLogout: (...a: unknown[]) => mockLogout(...a),
+    leanzeroLinkDisconnect: (...a: unknown[]) => mockDisconnect(...a),
     leanzeroLinkNodes: (...a: unknown[]) => mockNodes(...a),
     leanzeroLinkHealth: (...a: unknown[]) => mockHealth(...a),
   };
@@ -371,6 +373,113 @@ describe('LeanZeroLinkSection — connected dashboard', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Log out' }));
 
     expect(mockLogout).toHaveBeenCalledWith(false);
+  });
+});
+
+describe('LeanZeroLinkSection — the persisted intent and the launch reconnect', () => {
+  const CONNECTED_INTENT = {
+    intent: 'connected' as const,
+    cause: 'userConnect' as const,
+    updatedAt: '2026-09-24T10:00:00Z',
+  };
+
+  it('a failed launch reconnect is named with its reason and a Retry — not a bare "not connected"', async () => {
+    currentState = {
+      ...LOGGED_IN,
+      intent: CONNECTED_INTENT,
+      lastError: 'mesh join failed: control plane unreachable',
+      reconnect: {
+        state: 'failed',
+        reason: 'mesh join failed: control plane unreachable',
+        at: '2026-09-24T10:00:05Z',
+      },
+    };
+    render();
+    const banner = await screen.findByTestId('link-reconnect-failed');
+    expect(banner).toHaveTextContent(/did not come back: mesh join failed: control plane unreachable/);
+    expect(screen.getByTestId('link-mesh-state')).toHaveTextContent('reconnect failed');
+    // The same text is not shown twice as a second "Connect failed" banner.
+    expect(screen.queryByText('Connect failed')).not.toBeInTheDocument();
+
+    mockConnect.mockResolvedValue(CONNECTED);
+    await userEvent.click(screen.getByTestId('link-connect'));
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('a reconnect that found no credential says so above the sign-in card', async () => {
+    currentState = {
+      ...LOGGED_OUT,
+      reconnect: { state: 'failed', reason: 'not signed in: sign in again', at: 'x' },
+    };
+    render();
+    expect(await screen.findByTestId('link-reconnect-failed')).toHaveTextContent(
+      'not signed in: sign in again'
+    );
+    expect(screen.getByTestId('link-login-card')).toBeInTheDocument();
+  });
+
+  it('the reconnect in flight reads as Reconnecting', async () => {
+    currentState = {
+      auth: { state: 'connecting', email: 'user@example.com' },
+      nodeCount: 0,
+      reconnect: { state: 'reconnecting', startedAt: 'x' },
+    };
+    render();
+    expect(await screen.findByText(/bringing this mac back onto your private mesh/i)).toBeInTheDocument();
+  });
+
+  it('Disconnect keeps the account signed in and the card says the Mac stays off', async () => {
+    currentState = CONNECTED;
+    mockNodes.mockResolvedValue(NODES_WITH_PEERS);
+    const off: LinkState = {
+      ...LOGGED_IN,
+      intent: { intent: 'disconnected', cause: 'userDisconnect', updatedAt: 'x' },
+      reconnect: { state: 'idle' },
+    };
+    mockDisconnect.mockResolvedValue(off);
+    render();
+    await screen.findByTestId('link-connected');
+
+    currentState = off;
+    await userEvent.click(screen.getByTestId('link-disconnect'));
+    expect(mockDisconnect).toHaveBeenCalledTimes(1);
+    expect(mockLogout).not.toHaveBeenCalled();
+    expect(await screen.findByTestId('link-connect-card')).toBeInTheDocument();
+    expect(screen.getByTestId('link-mesh-state')).toHaveTextContent(
+      'disconnected · stays off until you connect'
+    );
+    expect(screen.getByText(/stays off the mesh — across restarts too/)).toBeInTheDocument();
+  });
+
+  it('a reconnect left to another window\'s backend says so; a fresh sign-in gets the plain card', async () => {
+    currentState = {
+      ...LOGGED_IN,
+      intent: CONNECTED_INTENT,
+      reconnect: { state: 'skipped', reason: 'another goose on this Mac already holds the mesh' },
+    };
+    render();
+    expect(await screen.findByTestId('link-reconnect-skipped')).toHaveTextContent(
+      'another goose on this Mac already holds the mesh'
+    );
+    cleanup();
+
+    currentState = {
+      ...LOGGED_IN,
+      intent: { intent: 'disconnected', cause: 'noRecord', updatedAt: 'x' },
+      reconnect: { state: 'skipped', reason: 'this Mac has never been connected under this sign-in' },
+    };
+    render();
+    expect(await screen.findByTestId('link-mesh-state')).toHaveTextContent('not connected');
+    expect(screen.queryByTestId('link-reconnect-skipped')).not.toBeInTheDocument();
+    expect(screen.getByText(/reconnects by itself whenever the app starts/)).toBeInTheDocument();
+  });
+
+  it('an unreadable intent is shown as itself', async () => {
+    currentState = { ...LOGGED_IN, intentError: 'the Link intent file is malformed' };
+    render();
+    expect(await screen.findByTestId('link-intent-error')).toHaveTextContent(
+      'the Link intent file is malformed'
+    );
   });
 });
 

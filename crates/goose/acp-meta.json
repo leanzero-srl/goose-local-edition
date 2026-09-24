@@ -781,6 +781,11 @@
       "responseType": "LeanzeroLinkStateResponse_unstable"
     },
     {
+      "method": "_goose/unstable/leanzeroLink/disconnect",
+      "requestType": "LeanzeroLinkDisconnectRequest_unstable",
+      "responseType": "LeanzeroLinkStateResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/leanzeroLink/nodes",
       "requestType": "LeanzeroLinkNodesRequest_unstable",
       "responseType": "LeanzeroLinkNodesResponse_unstable"

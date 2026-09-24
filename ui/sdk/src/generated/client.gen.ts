@@ -100,6 +100,7 @@ import type {
   KillRunningJobRequest_unstable,
   KillRunningJobResponse_unstable,
   LeanzeroLinkConnectRequest_unstable,
+  LeanzeroLinkDisconnectRequest_unstable,
   LeanzeroLinkHealthRequest_unstable,
   LeanzeroLinkHealthResponse_unstable,
   LeanzeroLinkLogoutRequest_unstable,
@@ -2051,6 +2052,18 @@ export class GooseExtClient {
   ): Promise<LeanzeroLinkStateResponse_unstable> {
     const raw = await this.conn.extMethod(
       "_goose/unstable/leanzeroLink/logout",
+      params,
+    );
+    return zLeanzeroLinkStateResponse_unstable.parse(
+      raw,
+    ) as LeanzeroLinkStateResponse_unstable;
+  }
+
+  async leanzeroLinkDisconnect_unstable(
+    params: LeanzeroLinkDisconnectRequest_unstable,
+  ): Promise<LeanzeroLinkStateResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/leanzeroLink/disconnect",
       params,
     );
     return zLeanzeroLinkStateResponse_unstable.parse(

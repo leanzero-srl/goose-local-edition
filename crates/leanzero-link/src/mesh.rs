@@ -868,6 +868,84 @@ fn child_exit(
     })
 }
 
+/// Who holds the goose-owned mesh socket right now, read WITHOUT spawning anything: the
+/// pid the kernel reports behind it ([`listener_pid`]) and that process's parent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SocketHolder {
+    pub listener_pid: u32,
+    /// `None` when the parent could not be read (the listener exited meanwhile, or the
+    /// platform has no reader). A parent of `1` is launchd/init: whoever spawned the
+    /// daemon is gone — an orphan a goosed left behind.
+    pub parent_pid: Option<u32>,
+}
+
+impl SocketHolder {
+    /// The daemon's spawner is still alive (its parent is a live process other than
+    /// launchd/init) — another goose on this machine holds the mesh, not a leftover.
+    pub fn spawner_alive(&self) -> bool {
+        self.parent_pid
+            .is_some_and(|parent| parent > 1 && process_exists(parent))
+    }
+}
+
+/// Who listens behind `socket_path`. `Ok(None)` = nobody: no socket file (ENOENT) or a
+/// dead daemon's leftover file (ECONNREFUSED) — the same two errnos the CLI classifier
+/// reads as "nothing is listening" ([`is_connect_failure`]). Every other errno (EACCES,
+/// ENOTSOCK, EINVAL for a too-long path) stays an error.
+pub fn socket_holder(socket_path: &Path) -> std::io::Result<Option<SocketHolder>> {
+    match listener_pid(socket_path) {
+        Ok(pid) => Ok(Some(SocketHolder {
+            listener_pid: pid,
+            parent_pid: parent_pid(pid),
+        })),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// The parent pid of `pid`: macOS `proc_pidinfo(PROC_PIDTBSDINFO)`, Linux
+/// `/proc/<pid>/stat` field 4. `None` when the process is gone or unreadable.
+#[cfg(target_os = "macos")]
+fn parent_pid(pid: u32) -> Option<u32> {
+    let pid = libc::c_int::try_from(pid).ok().filter(|pid| *pid > 0)?;
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            &mut info as *mut libc::proc_bsdinfo as *mut libc::c_void,
+            size,
+        )
+    };
+    (written == size).then_some(info.pbi_ppid)
+}
+
+#[cfg(target_os = "linux")]
+fn parent_pid(pid: u32) -> Option<u32> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // `pid (comm) state ppid …` — comm may hold spaces/parens, so split after the last ')'.
+    stat.rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn parent_pid(_pid: u32) -> Option<u32> {
+    None
+}
+
 /// The pid of the process LISTENING behind `socket_path`, read from the kernel's peer
 /// credentials on a fresh (never accepted) connection: macOS `LOCAL_PEERPID` (measured
 /// on 26.6: an un-accepted connection reports the listener's pid), Linux `SO_PEERCRED`.
@@ -1278,6 +1356,49 @@ mod tests {
     const PROSE: &str = "failed to connect to local tailscaled (which appears to be running as \
         tailscaled, pid 323). Got error: Failed to connect to local Tailscale daemon for \
         /localapi/v0/status; not running? Error: dial unix /tmp/lzp/sock: connect: ";
+
+    #[cfg(unix)]
+    #[test]
+    fn socket_holder_names_the_listener_and_its_live_spawner() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("t.sock");
+        assert_eq!(
+            super::socket_holder(&socket).unwrap(),
+            None,
+            "no socket file: nobody listens"
+        );
+
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let holder = super::socket_holder(&socket)
+            .unwrap()
+            .expect("a listener is held");
+        assert_eq!(holder.listener_pid, std::process::id());
+        assert!(
+            holder.spawner_alive(),
+            "this test's own parent is alive: {holder:?}"
+        );
+
+        drop(listener);
+        assert_eq!(
+            super::socket_holder(&socket).unwrap(),
+            None,
+            "a leftover socket file with nobody behind it (ECONNREFUSED) is nobody"
+        );
+    }
+
+    #[test]
+    fn a_holder_whose_parent_is_launchd_is_an_orphan() {
+        let orphan = super::SocketHolder {
+            listener_pid: 4242,
+            parent_pid: Some(1),
+        };
+        assert!(!orphan.spawner_alive());
+        let unknown = super::SocketHolder {
+            listener_pid: 4242,
+            parent_pid: None,
+        };
+        assert!(!unknown.spawner_alive());
+    }
 
     #[test]
     fn only_enoent_and_econnrefused_mean_nothing_is_listening() {

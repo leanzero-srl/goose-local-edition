@@ -5087,6 +5087,64 @@ export const zLeanzeroLinkMeshBinariesDto = z.object({
 });
 
 /**
+ * Whether the user wants this node on the mesh.
+ */
+export const zLeanzeroLinkIntentValueDto = z.union([
+    z.literal('connected'),
+    z.literal('disconnected')
+]);
+
+/**
+ * Which action produced the intent.
+ */
+export const zLeanzeroLinkIntentCauseDto = z.union([
+    z.literal('userConnect'),
+    z.literal('userDisconnect'),
+    z.literal('userLogout'),
+    z.literal('migrated'),
+    z.literal('noRecord')
+]);
+
+/**
+ * The user's persisted mesh intent (`~/.leanzero/link-intent.json`).
+ */
+export const zLeanzeroLinkIntentDto = z.object({
+    intent: zLeanzeroLinkIntentValueDto,
+    cause: zLeanzeroLinkIntentCauseDto,
+    updatedAt: z.string()
+});
+
+/**
+ * What goosed did about a `connected` intent without the user — the reconnect it runs
+ * once per launch. Internally tagged on `state`:
+ * `idle | skipped | reconnecting | reconnected | failed`. `failed` is the loud one: the
+ * mesh should be up and is not, `reason` says why, and Retry is `connect`.
+ */
+export const zLeanzeroLinkReconnectDto = z.union([
+    z.object({
+        state: z.literal('idle')
+    }),
+    z.object({
+        reason: z.string(),
+        state: z.literal('skipped')
+    }),
+    z.object({
+        startedAt: z.string(),
+        state: z.literal('reconnecting')
+    }),
+    z.object({
+        at: z.string(),
+        meshIp: z.string(),
+        state: z.literal('reconnected')
+    }),
+    z.object({
+        reason: z.string(),
+        at: z.string(),
+        state: z.literal('failed')
+    })
+]);
+
+/**
  * What goosed surfaces for the Link tab: auth + live mesh + total node count
  * (self + reachable peers) + the last error (never swallowed).
  */
@@ -5108,7 +5166,16 @@ export const zLeanzeroLinkStateResponse_unstable = z.object({
     ]).optional(),
     meshBinaries: zLeanzeroLinkMeshBinariesDto,
     remoteExecutionWired: z.boolean().optional().default(false),
-    mlxControlWired: z.boolean().optional().default(false)
+    mlxControlWired: z.boolean().optional().default(false),
+    intent: z.union([
+        zLeanzeroLinkIntentDto,
+        z.null()
+    ]).optional(),
+    intentError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    reconnect: zLeanzeroLinkReconnectDto.optional().default({ state: 'idle' })
 });
 
 /**
@@ -5123,6 +5190,13 @@ export const zLeanzeroLinkStatusRequest_unstable = z.record(z.unknown());
 export const zLeanzeroLinkLogoutRequest_unstable = z.object({
     wipe: z.boolean().optional().default(false)
 });
+
+/**
+ * Take this node off the mesh and KEEP it off across launches; the account stays
+ * signed in (`loggedIn`). Records the intent `disconnected`, so no launch reconnects
+ * until the user connects again. `connect` is the way back.
+ */
+export const zLeanzeroLinkDisconnectRequest_unstable = z.record(z.unknown());
 
 /**
  * The swarm node view (`self` + peers). Proxies the local control service's
@@ -5461,6 +5535,7 @@ export const zExtRequest = z.object({
             zLeanzeroLinkConnectRequest_unstable,
             zLeanzeroLinkStatusRequest_unstable,
             zLeanzeroLinkLogoutRequest_unstable,
+            zLeanzeroLinkDisconnectRequest_unstable,
             zLeanzeroLinkNodesRequest_unstable,
             zListMemoryProposalsRequest_unstable,
             zAnswerMemoryProposalRequest_unstable,

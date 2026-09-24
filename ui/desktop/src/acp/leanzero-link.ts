@@ -1,5 +1,6 @@
 import { getAcpClient } from './acpConnection';
 import { errorMessage } from '../utils/conversionUtils';
+import { toLinkTrayReport } from '../utils/linkTrayReport';
 
 /**
  * Client surface for LeanZero Link — passwordless account identity + a goose-owned
@@ -66,12 +67,40 @@ export interface MeshStatus {
   peers: MeshPeer[];
 }
 
+/**
+ * The user's persisted mesh intent: `connected` = goosed brings the mesh back at every launch
+ * with no click; `disconnected` = it stays off until the user connects. Written only by the
+ * user's Connect / Disconnect / Log out (`migrated` = derived once from an install that predates
+ * the record; `noRecord` = never connected here, not persisted).
+ */
+export interface LinkIntent {
+  intent: 'connected' | 'disconnected';
+  cause: 'userConnect' | 'userDisconnect' | 'userLogout' | 'migrated' | 'noRecord';
+  updatedAt: string;
+}
+
+/**
+ * What goosed did about a `connected` intent at launch, with no user action. `failed` is the
+ * loud one — the mesh should be up and is not; `reason` is shown verbatim and Retry = connect.
+ */
+export type ReconnectState =
+  | { state: 'idle' }
+  | { state: 'skipped'; reason: string }
+  | { state: 'reconnecting'; startedAt: string }
+  | { state: 'reconnected'; at: string; meshIp: string }
+  | { state: 'failed'; reason: string; at: string };
+
 /** The composed auth + live mesh state goosed surfaces for the Link tab. */
 export interface LinkState {
   auth: AuthState;
   mesh?: MeshStatus;
   nodeCount: number;
   lastError?: string;
+  /** Absent only when the intent record is unreadable (`intentError` says why) or goosed predates it. */
+  intent?: LinkIntent;
+  intentError?: string;
+  /** Absent only from a goosed that predates the launch reconnect. */
+  reconnect?: ReconnectState;
 }
 
 export interface RequestCodeResult {
@@ -122,6 +151,20 @@ async function call<T>(method: string, params: Record<string, unknown>): Promise
   return (await client.extMethod(method, params)) as unknown as T;
 }
 
+/**
+ * Every Link state this window reads goes to MAIN too (main owns no ACP client), so the menu-bar
+ * tray says whether the mesh is up — and says it loudly when a launch reconnect failed.
+ */
+function reportToMain(state: LinkState): LinkState {
+  const report = (
+    window as unknown as {
+      electron?: { linkReport?: (r: unknown) => void };
+    }
+  ).electron?.linkReport;
+  report?.(toLinkTrayReport(state));
+  return state;
+}
+
 export async function leanzeroLinkHealth(): Promise<LinkHealth> {
   return await call<LinkHealth>('_goose/unstable/leanzeroLink/health', {});
 }
@@ -139,18 +182,29 @@ export async function leanzeroLinkVerify(email: string, code: string): Promise<V
   return await call<VerifyResult>('_goose/unstable/leanzeroLink/verify', { email, code });
 }
 
-/** Bring up the mesh + control service; returns the state after the attempt. */
+/**
+ * Bring up the mesh + control service; returns the state after the attempt. Records the intent
+ * `connected`, so every later launch reconnects on its own.
+ */
 export async function leanzeroLinkConnect(): Promise<LinkState> {
-  return await call<LinkState>('_goose/unstable/leanzeroLink/connect', {});
+  return reportToMain(await call<LinkState>('_goose/unstable/leanzeroLink/connect', {}));
 }
 
 export async function leanzeroLinkStatus(): Promise<LinkState> {
-  return await call<LinkState>('_goose/unstable/leanzeroLink/status', {});
+  return reportToMain(await call<LinkState>('_goose/unstable/leanzeroLink/status', {}));
+}
+
+/**
+ * Take this Mac off the mesh and keep it off across launches; the account stays signed in
+ * (`loggedIn`). Connect is the way back.
+ */
+export async function leanzeroLinkDisconnect(): Promise<LinkState> {
+  return reportToMain(await call<LinkState>('_goose/unstable/leanzeroLink/disconnect', {}));
 }
 
 /** Tear down + clear identity. `wipe` also removes the mesh state dir (slower re-login). */
 export async function leanzeroLinkLogout(wipe: boolean): Promise<LinkState> {
-  return await call<LinkState>('_goose/unstable/leanzeroLink/logout', { wipe });
+  return reportToMain(await call<LinkState>('_goose/unstable/leanzeroLink/logout', { wipe }));
 }
 
 export async function leanzeroLinkNodes(): Promise<NodesResponse> {
