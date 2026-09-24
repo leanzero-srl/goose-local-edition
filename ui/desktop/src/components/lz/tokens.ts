@@ -58,6 +58,76 @@ export const TONE_DOT: Record<Tone, string> = {
   secondary: 'bg-lz-secondary',
 };
 
+/**
+ * THE ENGINE-PHASE PALETTE — one colour per thing an MLX engine (single, distributed, or a rank this
+ * Mac serves for another) can be doing, used by EVERY surface that shows one: the state tile, the
+ * distributed node cards, the per-node start strip, the placement card and the menu-bar tray
+ * (`PHASE_HEX`, whose values main.css carries and studioTokens.test.ts pins). Each is a SOLID fill
+ * that carries its ink; no two are the same hue family, so the state reads at a glance.
+ *   unloaded — no model in memory: dark neutral, OUTLINED (the one hollow-looking register)
+ *   idle     — loaded, nothing running: grey
+ *   loading  — weights going in / making room / provisioning: amber (dark ink)
+ *   reading  — prefill, the prompt tok/s: blue
+ *   writing  — decode, the tok/s: green
+ *   held     — queued, or admission held by the watchdog: orange
+ *   failed   — red
+ */
+export type EnginePhase =
+  | 'unloaded'
+  | 'idle'
+  | 'loading'
+  | 'reading'
+  | 'writing'
+  | 'held'
+  | 'failed';
+
+export const ENGINE_PHASES: readonly EnginePhase[] = [
+  'unloaded',
+  'idle',
+  'loading',
+  'reading',
+  'writing',
+  'held',
+  'failed',
+];
+
+/** The phase as a solid FILL with its ink — tiles, chips, strips. `unloaded` also draws its outline. */
+export const PHASE_FILL: Record<EnginePhase, string> = {
+  unloaded:
+    'bg-lz-phase-unloaded text-lz-phase-unloaded-ink border-2 border-lz-phase-unloaded-line',
+  idle: 'bg-lz-phase-idle text-lz-phase-idle-ink',
+  loading: 'bg-lz-phase-loading text-lz-phase-loading-ink',
+  reading: 'bg-lz-phase-reading text-lz-phase-reading-ink',
+  writing: 'bg-lz-phase-writing text-lz-phase-writing-ink',
+  held: 'bg-lz-phase-held text-lz-phase-held-ink',
+  failed: 'bg-lz-phase-failed text-lz-phase-failed-ink',
+};
+
+/** The phase as a MARK — dots and progress fills on a surface. */
+export const PHASE_DOT: Record<EnginePhase, string> = {
+  unloaded: 'bg-lz-phase-unloaded ring-2 ring-inset ring-lz-phase-unloaded-line',
+  idle: 'bg-lz-phase-idle',
+  loading: 'bg-lz-phase-loading',
+  reading: 'bg-lz-phase-reading',
+  writing: 'bg-lz-phase-writing',
+  held: 'bg-lz-phase-held',
+  failed: 'bg-lz-phase-failed',
+};
+
+/**
+ * The fills as hex for surfaces that cannot read a CSS token — main's menu-bar tray draws its dot
+ * from these. main.css carries the same values (studioTokens.test.ts refuses a drift).
+ */
+export const PHASE_HEX: Record<EnginePhase, string> = {
+  unloaded: '#27272a',
+  idle: '#71717a',
+  loading: '#f59e0b',
+  reading: '#2563eb',
+  writing: '#15803d',
+  held: '#c2410c',
+  failed: '#dc2626',
+};
+
 /** Node identity — the 6-hue ramp with the ink each hue was measured to carry. IDENTITY ONLY. */
 export const NODE_FILL: Record<NodeIndex, string> = {
   1: 'bg-lz-node-1 text-lz-node-1-ink',

@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
-import { RADIUS, TNUM, TONE_FILL, WEIGHT, cx, type Tone } from '../lz';
+import { PHASE_FILL, RADIUS, TNUM, WEIGHT, cx, type EnginePhase } from '../lz';
 import type { MlxEngineState } from '../../acp/mlx-engine';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import {
@@ -25,11 +25,13 @@ import {
   gib,
   layerSpan,
   layerSpanShort,
+  nodeLoadProgress,
   ownsTheMac,
   planForRank,
   runStateInFlight,
-  runStateTone,
+  type LoadProgress,
 } from './mlxDistributed';
+import { hostingPhase, nodePhase, runPhase, singlePhase } from './mlxPhase';
 import { distributedStateWord } from './mlxModeLabel';
 import type { MlxClient, MlxServing } from '../../utils/mlxServing';
 import {
@@ -40,7 +42,6 @@ import {
   mlxActivity,
   sparklinePoints,
   type LastRates,
-  type MlxActivity,
   type MlxLiveRead,
   type MlxLiveRequest,
   type MlxLiveStats,
@@ -51,14 +52,15 @@ import {
 
 /**
  * The Engine hero's state tile — ONE solid fill that is the engine's state, and a live INSTRUMENT
- * for it. While RUNNING the fill follows what the engine is DOING, from its own request phases:
- * solid slate while idle (the last measured rates stay as plain facts), the accent while it reads a
- * prompt, the ok green while it writes. Every figure is measured (mlxLiveStats.ts): the writing
+ * for it, in the ENGINE-PHASE palette every MLX surface shares (lz/tokens.ts PHASE_FILL, mapped by
+ * mlxPhase.ts): dark outlined with no model, grey idle (the last measured rates stay as plain
+ * facts), amber while weights load, blue while it reads a prompt, green while it writes, orange
+ * when requests are queued or admission is held, red when it failed. Every figure is measured (mlxLiveStats.ts): the writing
  * rate from the generating requests' own rates, the reading rate from a request's computed prompt
  * tokens over its time to first token, the lifetime counters from the engine's own totals, and WHO
  * it serves from goose's in-flight list read by main (utils/mlxServing.ts) — work neither goose
- * door explains is counted, never named. White ink on every fill; tracks are hollow white outlines
- * with a solid white fill — no tint, no opacity. The spinner is the only motion.
+ * door explains is counted, never named. The ink is the phase's own; tracks are hollow outlines
+ * in that ink with a solid fill of it — no tint, no opacity. The spinner is the only motion.
  */
 
 const i18n = defineMessages({
@@ -202,6 +204,19 @@ const i18n = defineMessages({
     defaultMessage: "for {requester}'s distributed engine over LeanZero Link",
   },
   hostingPid: { id: 'mlxStateTile.hosting.pid', defaultMessage: 'rank pid {pid}' },
+  hostingLoading: {
+    id: 'mlxStateTile.hosting.loading',
+    defaultMessage: 'Loading rank {rank} for {requester}',
+  },
+  loadingIndeterminate: { id: 'mlxStateTile.loadingIndeterminate', defaultMessage: 'Loading' },
+  loadBytes: { id: 'mlxStateTile.load.bytes', defaultMessage: '{done} of {total} GB' },
+  loadLayers: { id: 'mlxStateTile.load.layers', defaultMessage: '{done} of {total} layers' },
+  loadBar: { id: 'mlxStateTile.load.bar', defaultMessage: 'Weights loaded on {node}' },
+  thisMacNode: { id: 'mlxStateTile.thisMacNode', defaultMessage: 'this Mac' },
+  distStarting: {
+    id: 'mlxStateTile.dist.starting',
+    defaultMessage: 'Each Mac, as it loads its part',
+  },
   hostingSingleRefused: {
     id: 'mlxStateTile.hosting.singleRefused',
     defaultMessage: 'The single engine here is refused while this Mac serves the rank.',
@@ -224,6 +239,12 @@ function HostingInstrument({ hosting }: { hosting: NonNullable<MlxDistributedSta
       <span className={cx('break-all font-mono text-lz-mono', WEIGHT.semibold)}>
         {hosting.modelId}
       </span>
+      {hostingPhase(hosting.state) === 'loading' && (
+        <LoadBar
+          progress={nodeLoadProgress(hosting)}
+          label={intl.formatMessage(i18n.loadBar, { node: intl.formatMessage(i18n.thisMacNode) })}
+        />
+      )}
       {hosting.pid != null && (
         <span className={LINE}>{intl.formatMessage(i18n.hostingPid, { pid: hosting.pid })}</span>
       )}
@@ -231,22 +252,6 @@ function HostingInstrument({ hosting }: { hosting: NonNullable<MlxDistributedSta
     </div>
   );
 }
-
-const STATE_TONE: Record<MlxEngineState, Tone> = {
-  running: 'ok',
-  mounting: 'accent',
-  failed: 'err',
-  stopped: 'stopped',
-};
-
-/** While running, the fill is what the engine is DOING: slate at rest, blue reading, green writing. */
-const ACTIVITY_TONE: Record<MlxActivity, Tone> = {
-  generating: 'ok',
-  prefill: 'accent',
-  queued: 'accent',
-  idle: 'stopped',
-  not_loaded: 'stopped',
-};
 
 const ACTIVITY_WORD = {
   generating: i18n.generating,
@@ -316,6 +321,45 @@ function TileBar({ fraction, label }: { fraction: number; label: string }) {
       className={cx('h-2.5 w-full overflow-hidden border border-current', RADIUS.pill)}
     >
       <div className="h-full bg-current" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+/**
+ * A load with no measured figure yet: the same hollow track, a solid third of it, and no number —
+ * "loading" is the claim, never a percentage it did not measure.
+ */
+function IndeterminateBar({ label }: { label: string }) {
+  return (
+    <div
+      role="progressbar"
+      aria-label={label}
+      aria-valuetext={label}
+      data-testid="mlx-load-indeterminate"
+      className={cx('relative h-2.5 w-full overflow-hidden border border-current', RADIUS.pill)}
+    >
+      <div className="absolute inset-y-0 left-0 w-1/3 animate-lz-indeterminate bg-current" />
+    </div>
+  );
+}
+
+/** A load's progress: the measured bar with its figure, or the indeterminate track. */
+function LoadBar({ progress, label }: { progress: LoadProgress | null; label: string }) {
+  const intl = useIntl();
+  if (progress == null) return <IndeterminateBar label={label} />;
+  const figure =
+    progress.unit === 'bytes'
+      ? intl.formatMessage(i18n.loadBytes, {
+          done: gb1(gib(progress.done)),
+          total: gb1(gib(progress.total)),
+        })
+      : intl.formatMessage(i18n.loadLayers, { done: progress.done, total: progress.total });
+  return (
+    <div className="flex flex-col gap-1">
+      <TileBar fraction={progress.done / progress.total} label={label} />
+      <span data-testid="mlx-load-figure" className={cx(LABEL, TNUM)}>
+        {figure}
+      </span>
     </div>
   );
 }
@@ -714,13 +758,19 @@ function MountingInstrument({ mount }: { mount: MountFill | null }) {
   const gb = (n: number) =>
     intl.formatNumber(n, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   if (mount == null) {
-    return <p className="text-lz-h2">{intl.formatMessage(i18n.loadingWeights)}</p>;
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-lz-h2">{intl.formatMessage(i18n.loadingWeights)}</p>
+        <IndeterminateBar label={intl.formatMessage(i18n.loadingWeights)} />
+      </div>
+    );
   }
   if (mount.fraction == null) {
     // No baseline (the view opened mid-mount): the size is a fact, a percentage would be a guess.
     return (
-      <div data-testid="mlx-mount-fill" data-measured="false" className="flex flex-col gap-1">
+      <div data-testid="mlx-mount-fill" data-measured="false" className="flex flex-col gap-2">
         <span className={HERO}>{gb(mount.modelGb)} GB</span>
+        <IndeterminateBar label={intl.formatMessage(i18n.loadingWeights)} />
         <span className={LINE}>{intl.formatMessage(i18n.loadingWeights)}</span>
       </div>
     );
@@ -775,9 +825,80 @@ function StoppedInstrument({ cost }: { cost: MountCost | null }) {
   );
 }
 
+/**
+ * While the distributed run starts, each Mac as it loads its part: its own phase colour, its layer
+ * range and its load progress (the backend's per-node figure, else the indeterminate track). Every
+ * row sits inside a border in the tile's ink so a node in the tile's own colour still reads apart.
+ */
+function NodeStrip({ status }: { status: MlxDistributedStatus }) {
+  const intl = useIntl();
+  const rows =
+    status.nodes.length > 0
+      ? status.nodes.map((node) => ({
+          key: `${node.rank}|${node.name}`,
+          name: node.name,
+          state: node.state,
+          span: layerSpanShort(layerSpan(node)),
+          progress: nodeLoadProgress(node),
+        }))
+      : // Preflight lists no ranks yet: the configured Macs are what it is checking.
+        (status.config?.nodes ?? []).map((node) => ({
+          key: node.name,
+          name: node.name,
+          state: status.state,
+          span: null,
+          progress: null,
+        }));
+  if (rows.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      <span className={LABEL}>{intl.formatMessage(i18n.distStarting)}</span>
+      <ul data-testid="mlx-dist-strip" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {rows.map((row) => {
+          const phase = nodePhase(row.state);
+          return (
+            <li key={row.key} className={cx('border-2 border-current', RADIUS.control)}>
+              <div
+                data-testid="mlx-dist-strip-node"
+                data-node={row.name}
+                data-phase={phase}
+                className={cx('flex h-full flex-col gap-1.5 p-2.5', PHASE_FILL[phase])}
+              >
+                <div className={cx('flex items-baseline justify-between gap-2', LINE)}>
+                  <span className={cx('min-w-0 truncate', WEIGHT.semibold)}>{row.name}</span>
+                  <span className="shrink-0">{distributedStateWord(intl, row.state)}</span>
+                </div>
+                {row.span && <span className={cx(LABEL, TNUM)}>{row.span}</span>}
+                {phase === 'loading' && (
+                  <LoadBar
+                    progress={row.progress}
+                    label={intl.formatMessage(i18n.loadBar, { node: row.name })}
+                  />
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 /** The distributed run on the tile: requests in flight, then every rank's peak against its budget. */
 function DistributedInstrument({ status }: { status: MlxDistributedStatus }) {
   const intl = useIntl();
+  if (status.state === 'preflight' || status.state === 'starting') {
+    return (
+      <div data-testid="mlx-dist-tile" className="flex flex-col gap-4">
+        {status.modelId && (
+          <span className={cx('break-all font-mono text-lz-mono', WEIGHT.semibold)}>
+            {status.modelId}
+          </span>
+        )}
+        <NodeStrip status={status} />
+      </div>
+    );
+  }
   // Pipeline slots and the queue from rank 0's /v1/status; the tensor runner reports no slots.
   const load = [
     status.slots != null && status.slotsInUse != null
@@ -873,31 +994,28 @@ export function MlxStateTile(props: MlxStateTileProps) {
   );
   const remote = remoteRouteUp(remoteStatus) ? remoteStatus : null;
   const activity = !dist && state === 'running' && live?.ok ? mlxActivity(live.stats) : null;
-  const tone: Tone = dist
-    ? dist.admissionOpen
-      ? runStateTone(dist.state)
-      : 'warn'
+  const phase: EnginePhase = dist
+    ? runPhase(dist.state, dist.admissionOpen)
     : hosting
-      ? hosting.state === 'serving'
-        ? 'ok'
-        : 'accent'
-      : state === null
-        ? unreachable
-          ? 'err'
-          : 'stopped'
-        : state === 'running'
-          ? activity
-            ? ACTIVITY_TONE[activity]
-            : 'stopped'
-          : STATE_TONE[state];
+      ? hostingPhase(hosting.state)
+      : singlePhase(state, unreachable, activity);
   const word = state ?? (unreachable ? 'unreachable' : 'checking');
   const wordText = dist
     ? distributedStateWord(intl, dist.state)
     : hosting
-      ? distributedStateWord(intl, hosting.state)
+      ? hosting.state === 'loading'
+        ? intl.formatMessage(i18n.hostingLoading, {
+            rank: hosting.rank,
+            requester: hosting.requesterName,
+          })
+        : distributedStateWord(intl, hosting.state)
       : intl.formatMessage(STATE_WORD[word]);
   const icon = hosting ? (
-    <Network />
+    hosting.state === 'loading' ? (
+      <Loader2 className="animate-spin" />
+    ) : (
+      <Network />
+    )
   ) : dist ? (
     runStateInFlight(dist.state) ? (
       <Loader2 className="animate-spin" />
@@ -919,13 +1037,14 @@ export function MlxStateTile(props: MlxStateTileProps) {
       data-state={dist ? dist.state : word}
       data-mode={dist ? 'distributed' : hosting ? 'hosting' : 'single'}
       data-activity={activity ?? undefined}
+      data-phase={phase}
       role="group"
       aria-label={intl.formatMessage(i18n.groupLabel, { state: wordText })}
       className={cx(
         'flex w-full shrink-0 flex-col gap-5 p-4 [&_svg]:shrink-0',
         state === 'running' || dist ? 'lg:w-[32rem]' : 'lg:w-80',
         RADIUS.card,
-        TONE_FILL[tone]
+        PHASE_FILL[phase]
       )}
     >
       <div className="flex flex-col gap-1">

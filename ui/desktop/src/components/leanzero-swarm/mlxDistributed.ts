@@ -127,6 +127,32 @@ export function layerSpanShort(span: LayerSpan | null): string | null {
     : `shard ${span.index}/${span.count}`;
 }
 
+/** A load measured by the backend: `done` of `total` bytes (weights read) or layers (built). */
+export interface LoadProgress {
+  unit: 'bytes' | 'layers';
+  done: number;
+  total: number;
+}
+
+/**
+ * THE BINDING POINT for a rank's load progress while it starts — a distributed node
+ * (`MlxDistributedNodeStatusDto`) or the rank this Mac hosts for another
+ * (`MlxDistributedHostedRankDto`). Bytes win over layers (finer); `null` = the backend reported no
+ * figure, and the surface draws the indeterminate track rather than a number it did not measure.
+ */
+export function nodeLoadProgress(fields: object): LoadProgress | null {
+  const f = fields as Record<string, unknown>;
+  const pair = (done: unknown, total: unknown) =>
+    typeof done === 'number' && typeof total === 'number' && total > 0 && done >= 0
+      ? { done: Math.min(done, total), total }
+      : null;
+  const bytes = pair(f.loadedBytes, f.loadTotalBytes);
+  if (bytes) return { unit: 'bytes', ...bytes };
+  const layers = pair(f.layersLoaded, f.layersTotal);
+  if (layers) return { unit: 'layers', ...layers };
+  return null;
+}
+
 /** The rank's plan from the last preflight — the only place a memory BUDGET is reported. */
 export function planForRank(
   status: Pick<MlxDistributedStatusDto, 'lastPreflight'> | null,

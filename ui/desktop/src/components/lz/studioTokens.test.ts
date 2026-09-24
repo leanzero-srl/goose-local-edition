@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ENGINE_PHASES, PHASE_HEX } from './tokens';
 
 /**
  * The LeanZero Studio token contract (ui/desktop/DESIGN.md), refused mechanically: every surface
@@ -44,6 +45,8 @@ const SURFACE_TOKENS = [
   '--color-lz-syntax-string',
   '--color-lz-syntax-number',
   '--color-lz-syntax-bool',
+  ...ENGINE_PHASES.flatMap((p) => [`--color-lz-phase-${p}`, `--color-lz-phase-${p}-ink`]),
+  '--color-lz-phase-unloaded-line',
 ];
 
 function luminance(hex: string): number {
@@ -117,6 +120,23 @@ describe('LeanZero Studio surfaces — the token contract in main.css', () => {
       }
     }
     expect(contrast('#ffffff', '#1d4ed8')).toBeGreaterThan(4.5);
+  });
+
+  it('the engine-phase palette: seven distinct solid fills, readable ink, the tray hex in sync', () => {
+    for (const theme of [light, dark]) {
+      for (const phase of ENGINE_PHASES) {
+        const fill = theme[`--color-lz-phase-${phase}`];
+        expect(fill, phase).toBe(PHASE_HEX[phase]);
+        expect(contrast(theme[`--color-lz-phase-${phase}-ink`], fill), phase).toBeGreaterThan(4.5);
+      }
+      // the unloaded tile is OUTLINED: its line must stand off the page it sits on (3:1, UI AA)
+      expect(
+        contrast(theme['--color-lz-phase-unloaded-line'], theme['--color-lz-surface'])
+      ).toBeGreaterThan(3);
+    }
+    expect(new Set(Object.values(PHASE_HEX)).size).toBe(ENGINE_PHASES.length);
+    // grey idle must not read as the dark not-loaded tile
+    expect(contrast(PHASE_HEX.idle, PHASE_HEX.unloaded)).toBeGreaterThan(2);
   });
 
   it('the type scale carries weight and tracking inside the utility, and the family is Inter', () => {

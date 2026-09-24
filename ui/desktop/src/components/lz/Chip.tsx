@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
 import {
   NODE_FILL,
+  PHASE_FILL,
   RADIUS,
   SURFACE,
   TNUM,
   TONE_FILL,
   cx,
+  type EnginePhase,
   type NodeIndex,
   type Tone,
 } from './tokens';
@@ -15,6 +17,8 @@ export interface ChipProps {
   tone?: Tone;
   /** Node identity — the 6-hue ramp with its measured ink. Identity ONLY; never for state. */
   node?: NodeIndex;
+  /** An engine phase (lz tokens PHASE_FILL): the MLX engine surfaces' one palette. */
+  phase?: EnginePhase;
   icon?: ReactNode;
   children: ReactNode;
   title?: string;
@@ -26,12 +30,14 @@ export interface ChipProps {
  * not as a pile of stickers. FILLED (`tone` or `node`): a solid colour that MEANS something.
  * 11px, normal case, tabular figures; uppercase belongs to zone headers only.
  */
-export function Chip({ tone, node, icon, children, title, className }: ChipProps) {
-  const filled = node != null || tone != null;
+export function Chip({ tone, node, phase, icon, children, title, className }: ChipProps) {
+  const filled = node != null || tone != null || phase != null;
   const register =
     node != null
       ? NODE_FILL[node]
-      : tone != null
+      : phase != null
+        ? PHASE_FILL[phase]
+        : tone != null
         ? TONE_FILL[tone]
         : cx(SURFACE.outline, 'text-lz-ink-3');
   return (
@@ -40,6 +46,7 @@ export function Chip({ tone, node, icon, children, title, className }: ChipProps
       data-testid="lz-chip"
       data-tone={tone}
       data-node={node}
+      data-phase={phase}
       className={cx(
         'inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap px-1.5 text-lz-meta [&_svg]:size-3',
         filled && 'font-lz-semibold',
