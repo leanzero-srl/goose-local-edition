@@ -211,6 +211,10 @@ pub struct DistributedStatus {
     pub backend: Option<Backend>,
     pub runner: Option<Runner>,
     pub model_id: Option<String>,
+    /// The id the ranks serve on `/v1/models` and accept in requests — derived by the SAME
+    /// `engine::served_model_id` the single engine's `--served-model-name` comes from, so a swarm
+    /// node names one id whichever engine owns this Mac.
+    pub served_model_id: Option<String>,
     pub base_url: Option<String>,
     pub context_limit: Option<u64>,
     pub admission_open: bool,
@@ -231,6 +235,7 @@ impl DistributedStatus {
             backend: None,
             runner: None,
             model_id: None,
+            served_model_id: None,
             base_url: None,
             context_limit: None,
             admission_open: true,
@@ -689,6 +694,7 @@ struct RunContext {
     http: reqwest::Client,
     stream_http: reqwest::Client,
     config: DistributedConfig,
+    served_id: String,
 }
 
 impl RunContext {
@@ -818,7 +824,7 @@ async fn wait_ready(
             ping = Some(tokio::spawn(readiness_ping(
                 ctx.stream_http.clone(),
                 base.clone(),
-                ctx.config.model_id.clone(),
+                ctx.served_id.clone(),
             )));
         }
         if ping.as_ref().is_some_and(JoinHandle::is_finished) {
@@ -1160,7 +1166,13 @@ async fn supervise(
             });
             return StopReport::default();
         };
-        let specs = launch::rank_specs(&ctx.config, &bytes, context, POLL_INTERVAL.as_secs_f64());
+        let specs = launch::rank_specs(
+            &ctx.config,
+            &ctx.served_id,
+            &bytes,
+            context,
+            POLL_INTERVAL.as_secs_f64(),
+        );
         ctx.update(|s| {
             s.status.state = RunState::Starting;
             s.status.admission_open = true;
@@ -1436,16 +1448,22 @@ impl DistributedManager {
 
     /// Preflight (repairing the TB link when needed), then launch under supervision. Refused —
     /// with a code the UI acts on — while the single engine is mounted, while a run is live, or
-    /// when a preflight check fails.
-    pub async fn start(&self, config: DistributedConfig) -> Result<StartOutcome> {
+    /// when a preflight check fails. `served_id` is `engine::served_model_id(settings,
+    /// config.model_id)` over the single engine's saved settings — the caller reads them.
+    pub async fn start(
+        &self,
+        config: DistributedConfig,
+        served_id: String,
+    ) -> Result<StartOutcome> {
         let single = crate::engine::global_manager().status().await;
-        self.start_with_single_state(config, &single.state, single.model_id.as_deref())
+        self.start_with_single_state(config, served_id, &single.state, single.model_id.as_deref())
             .await
     }
 
     pub(crate) async fn start_with_single_state(
         &self,
         config: DistributedConfig,
+        served_id: String,
         single_state: &str,
         single_model: Option<&str>,
     ) -> Result<StartOutcome> {
@@ -1484,6 +1502,7 @@ impl DistributedManager {
             shared.status.config = Some(config.clone());
             shared.status.backend = Some(config.backend);
             shared.status.model_id = Some(config.model_id.clone());
+            shared.status.served_model_id = Some(served_id.clone());
             shared.event(EventKind::Preflight, None, "preflight before launch");
         }
         let report = match preflight::run_preflight(&config, Arc::clone(&self.exec), true).await {
@@ -1571,6 +1590,7 @@ impl DistributedManager {
                 .build()
                 .expect("reqwest client with static configuration"),
             config,
+            served_id,
         };
         shared.stop_tx = Some(stop_tx);
         shared.task = Some(tokio::spawn(supervise(ctx, report.clone(), stop_rx)));
@@ -1901,7 +1921,12 @@ mod tests {
     async fn start_is_refused_while_the_single_engine_is_mounted() {
         let manager = DistributedManager::new(Arc::new(LocalAsPeer));
         let outcome = manager
-            .start_with_single_state(two_mac_config(), "running", Some("org/model"))
+            .start_with_single_state(
+                two_mac_config(),
+                "node-alias".to_string(),
+                "running",
+                Some("org/model"),
+            )
             .await
             .unwrap();
         match outcome {

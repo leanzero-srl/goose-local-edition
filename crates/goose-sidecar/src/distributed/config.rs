@@ -98,7 +98,9 @@ impl NodeConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DistributedConfig {
-    /// The id the engine serves on `/v1/models` and the id chat requests must send.
+    /// The model every rank loads (its HF id; each node's `model_dir` holds it). The id served on
+    /// `/v1/models` is NOT this field: it is `engine::served_model_id` over the single engine's
+    /// settings, the one rule both engines serve under.
     pub model_id: String,
     pub backend: Backend,
     /// The OpenAI API port on this Mac (loopback). Never the single engine's port.

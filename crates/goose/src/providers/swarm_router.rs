@@ -1841,6 +1841,93 @@ devices:
         assert!(down.contains("this process's manager: stopped"), "{down}");
     }
 
+    /// Live 2026-09-24 (3.0.19): the distributed engine served the HF id while the `mihai-mlx` node
+    /// names the single engine's alias, so the router refused the node. The rank specs now carry
+    /// the id `engine::served_model_id` derives — the single engine's `--served-model-name` — and
+    /// the wrapper's /v1/models answer (its exact shape, `owned_by: goose-distributed`) passes the
+    /// same probe the single engine passes.
+    #[tokio::test]
+    async fn the_distributed_engine_serves_the_nodes_id_and_the_router_accepts_it() {
+        use goose_sidecar::distributed::{launch::rank_specs, DistributedConfig};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        const HF: &str = "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx";
+        const NODE_MODEL: &str = "mihai-qwen3.8-27b-atlassian-q8-mlx";
+        let settings = EngineSettings {
+            model_id: Some(HF.to_string()),
+            served_model_name: Some(NODE_MODEL.to_string()),
+            ..EngineSettings::default()
+        };
+        let config: DistributedConfig = serde_json::from_value(serde_json::json!({
+            "model_id": HF, "backend": "jaccl", "port": 8091, "coordinator_port": 8092,
+            "nodes": [
+                {"name": "a", "tb_ip": "192.168.0.1", "tb_netmask": "255.255.255.252",
+                 "tb_interface": "en3", "tb_service": "TB", "rdma_device": "rdma_en3",
+                 "python": "/p", "model_dir": "/m"},
+                {"name": "b", "ssh": "peer", "tb_ip": "192.168.0.2", "tb_netmask": "255.255.255.252",
+                 "tb_interface": "en3", "tb_service": "TB", "rdma_device": "rdma_en3",
+                 "python": "/p", "model_dir": "/m"}
+            ]
+        }))
+        .unwrap();
+        let served = served_model_id(&settings, &config.model_id);
+        let specs = rank_specs(&config, &served, &[(1, 1), (1, 1)], 65_536, 2.0);
+        assert!(specs.iter().all(|s| s.served_id == NODE_MODEL), "{specs:?}");
+
+        let wrapper = |id: &str| {
+            format!(
+                r#"{{"object":"list","data":[{{"id":"{id}","object":"model","owned_by":"goose-distributed","context_window":65536}}]}}"#
+            )
+        };
+        let probe = LiveProbe {
+            http: reqwest::Client::new(),
+            providers: Arc::new(LiveProviders::new()),
+        };
+        let engine = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(wrapper(&specs[0].served_id)))
+            .mount(&engine)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/status"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"num_running":0,"num_waiting":0,"status":"ok"}"#),
+            )
+            .mount(&engine)
+            .await;
+        let facts = probe
+            .probe_mlx_at(
+                &engine.uri(),
+                NODE_MODEL,
+                "the distributed MLX engine owns this Mac",
+            )
+            .await
+            .unwrap();
+        assert_eq!(facts.context_window, Some(65_536));
+        assert_eq!(facts.live_in_flight, Some(0));
+
+        let before = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(wrapper(HF)))
+            .mount(&before)
+            .await;
+        let refused = probe
+            .probe_mlx_at(
+                &before.uri(),
+                NODE_MODEL,
+                "the distributed MLX engine owns this Mac",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            refused.contains(&format!("serves '{HF}', the device wants '{NODE_MODEL}'")),
+            "{refused}"
+        );
+    }
+
     #[test]
     fn conversation_key_is_stable_across_turns_of_one_conversation() {
         let first = vec![Message::user().with_text("build me a ledger")];

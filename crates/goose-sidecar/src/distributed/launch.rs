@@ -60,6 +60,7 @@ pub struct RankSpec {
 /// gives rank r the port `coordinator_port + r` on its TB IP.
 pub fn rank_specs(
     config: &DistributedConfig,
+    served_id: &str,
     per_rank: &[(u64, u64)],
     context_window: u64,
     memory_report_seconds: f64,
@@ -101,7 +102,7 @@ pub fn rank_specs(
                 coordinator: (config.backend == Backend::Jaccl)
                     .then(|| format!("{}:{}", config.nodes[0].tb_ip, config.coordinator_port)),
                 ring_hosts: (config.backend == Backend::Ring).then(|| ring_hosts.clone()),
-                served_id: config.model_id.clone(),
+                served_id: served_id.to_string(),
                 context_window,
                 model_dir: node.model_dir.clone(),
                 port: config.port,
@@ -274,7 +275,7 @@ mod tests {
     #[test]
     fn jaccl_specs_reproduce_the_proven_hostfile() {
         let config = two_mac_config();
-        let specs = rank_specs(&config, &[(20, 1), (21, 2)], 65_536, 2.0);
+        let specs = rank_specs(&config, "node-alias", &[(20, 1), (21, 2)], 65_536, 2.0);
         // hostfile-jaccl.json: rdma [null,"rdma_en3"] / ["rdma_en3",null], coordinator hosts[0].ips[0].
         let devices = specs[0].ibv_devices.as_ref().unwrap();
         assert_eq!(devices[0], vec![None, Some("rdma_en3".to_string())]);
@@ -286,13 +287,18 @@ mod tests {
             (21, 2)
         );
         assert!(specs[0].ring_hosts.is_none());
+        assert!(
+            specs.iter().all(|s| s.served_id == "node-alias"),
+            "every rank serves the id it was given, never the HF id {}",
+            config.model_id
+        );
     }
 
     #[test]
     fn ring_specs_give_each_rank_its_own_port() {
         let mut config = two_mac_config();
         config.backend = Backend::Ring;
-        let specs = rank_specs(&config, &[(1, 1), (1, 1)], 8_192, 2.0);
+        let specs = rank_specs(&config, "node-alias", &[(1, 1), (1, 1)], 8_192, 2.0);
         assert_eq!(
             specs[0].ring_hosts.as_ref().unwrap(),
             &vec![
@@ -306,7 +312,7 @@ mod tests {
     #[test]
     fn the_remote_command_prints_the_pid_then_execs_the_marked_rank() {
         let config = two_mac_config();
-        let spec = &rank_specs(&config, &[(1, 1), (1, 1)], 8_192, 2.0)[1];
+        let spec = &rank_specs(&config, "node-alias", &[(1, 1), (1, 1)], 8_192, 2.0)[1];
         let args = python_args(spec).unwrap();
         let script = remote_script(&config.nodes[1].python, &args);
         assert!(script
