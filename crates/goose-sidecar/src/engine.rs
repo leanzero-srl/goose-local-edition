@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::hf::{self, LocalModel};
+use crate::kv_cache::{self, KvCacheMode};
 use crate::{
     listening_pids, measure, port_has_listener, MemoryGate, Sidecar, SidecarConfig, Verdict, GIB,
 };
@@ -127,6 +128,10 @@ pub struct ModelProfile {
     /// default. Locked per session: it rewrites the system prompt, so changing it mid-session
     /// would void the prefix cache. No argv effect.
     pub reasoning_effort: Option<String>,
+    /// Compressed live KV cache (`--kv-cache-dtype int8|int4`). `None` = off: no flag, the
+    /// engine's bf16 cache. Refused at argv build when the model's KV cannot take it
+    /// (`kv_cache::check_mode_applies`); the engine refuses architectures it cannot quantize.
+    pub kv_cache: Option<KvCacheMode>,
 }
 
 /// The explicit thinking choices; auto is the ABSENCE of a choice (`Option::None`), never a variant,
@@ -381,7 +386,8 @@ fn validated_adapter_dir(raw: &str) -> Result<Option<PathBuf>> {
 
 /// The engine argv for `model_id` under `settings`, read together with the model
 /// directory (`inspect_model_dir`). Fails only when the profile names an adapter directory
-/// that is not one, or when checkpoint parser metadata cannot be read.
+/// that is not one, when checkpoint parser metadata cannot be read, or when the profile asks for
+/// a compressed KV cache the model's KV layout cannot take.
 pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Result<Vec<String>> {
     let model_path = expand_tilde(&settings.models_dir).join(model_id);
     let mut argv = settings.spawn_command.clone();
@@ -460,6 +466,11 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Result<
             argv.push("--adapter-path".to_string());
             argv.push(dir.to_string_lossy().into_owned());
         }
+    }
+    if let Some(mode) = profile.kv_cache {
+        kv_cache::check_mode_applies(&model_path, mode)?;
+        argv.push("--kv-cache-dtype".to_string());
+        argv.push(mode.engine_dtype().to_string());
     }
     Ok(argv)
 }
@@ -1468,6 +1479,61 @@ mod tests {
         let before = build_serve_command(&settings, model).unwrap();
         settings.model_profiles.insert(model.to_string(), profile);
         assert_eq!(build_serve_command(&settings, model).unwrap(), before);
+    }
+
+    /// The owner's 27B shape as far as the KV facts read it: 16 of 64 layers full attention.
+    const QWEN3_5_KV_CONFIG: &str = r#"{"model_type":"qwen3_5","text_config":{"num_hidden_layers":64,"num_attention_heads":24,"num_key_value_heads":4,"head_dim":256,"full_attention_interval":4,"dtype":"bfloat16"}}"#;
+
+    #[test]
+    fn a_kv_cache_choice_reaches_the_argv_as_the_engine_dtype_and_off_sends_nothing() {
+        let (_root, mut settings) = model_dir_with(QWEN3_5_KV_CONFIG, &[]);
+        let off = build_serve_command(&settings, "pub/model").unwrap();
+        assert!(!off.iter().any(|a| a == "--kv-cache-dtype"), "{off:?}");
+        for (mode, dtype) in [(KvCacheMode::Int8, "int8"), (KvCacheMode::Int4, "int4")] {
+            settings.model_profiles.insert(
+                "pub/model".to_string(),
+                ModelProfile {
+                    kv_cache: Some(mode),
+                    ..Default::default()
+                },
+            );
+            let argv = build_serve_command(&settings, "pub/model").unwrap();
+            assert_eq!(
+                flag_value(&argv, "--kv-cache-dtype").as_deref(),
+                Some(dtype)
+            );
+            assert_eq!(&argv[..off.len()], &off[..], "the flag only appends");
+        }
+    }
+
+    #[test]
+    fn a_kv_cache_the_model_cannot_take_fails_the_build_naming_why() {
+        let (_root, mut settings) = model_dir_with(
+            r#"{"num_hidden_layers":2,"num_attention_heads":4,"num_key_value_heads":4,"head_dim":80,"dtype":"bfloat16"}"#,
+            &[],
+        );
+        settings.model_profiles.insert(
+            "pub/model".to_string(),
+            ModelProfile {
+                kv_cache: Some(KvCacheMode::Int8),
+                ..Default::default()
+            },
+        );
+        let err = build_serve_command(&settings, "pub/model").unwrap_err();
+        assert!(format!("{err:#}").contains("head_dim 80"), "{err:#}");
+    }
+
+    #[test]
+    fn kv_cache_round_trips_lowercase_and_a_profile_without_it_loads_as_off() {
+        let profile: ModelProfile = serde_json::from_str(r#"{"kv_cache":"int4"}"#).unwrap();
+        assert_eq!(profile.kv_cache, Some(KvCacheMode::Int4));
+        assert_eq!(
+            serde_json::to_value(&profile).unwrap()["kv_cache"],
+            serde_json::json!("int4")
+        );
+        assert!(serde_json::from_str::<ModelProfile>(r#"{"kv_cache":"bf16"}"#).is_err());
+        let legacy: ModelProfile = serde_json::from_str(r#"{"temperature":0.7}"#).unwrap();
+        assert_eq!(legacy.kv_cache, None);
     }
 
     /// `status()` computes `restart_required = build_serve_command(&settings, mounted) != running_argv`;

@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "여러 Mac에서 제공 중"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}: 토큰당 {bf16} KiB 대신 {bytes} KiB — 같은 메모리에 {ratio}×의 컨텍스트가 들어갑니다."
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4비트"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8비트"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "KV 캐시"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "이 모델에서 측정 ({date}): bf16과의 토큰 일치율 {agreement}%, 동일한 답변 {identical}/{prompts}, 숨겨 둔 사실: {retrieval}; bf16 자체 비교: {floor}%."
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "일치율 {agreement}%"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "가장 긴 컨텍스트에서의 디코딩 속도: bf16의 {ratio}%."
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "측정 기록을 읽을 수 없습니다: {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "이 모델에는 풀 어텐션 레이어가 없어 압축할, 커지는 KV가 없습니다."
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "이 모델의 헤드 크기({headDim})는 엔진의 어떤 양자화 그룹에도 맞지 않아 KV를 압축할 수 없습니다."
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "KV 캐시 압축에는 모델의 config.json이 필요한데, 이 모델은 모델 폴더에 없습니다."
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "이 모델의 품질은 측정되지 않았습니다 — 의존하기 전에 답변을 비교하세요."
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "끔 (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "끔: 엔진의 bf16 캐시, 컨텍스트 토큰당 {bytes} KiB."
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "찾음"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "놓침"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "컨텍스트와 함께 커지고 압축되는 것은 {attention}개의 풀 어텐션 레이어뿐입니다. {state}개의 선형 어텐션 레이어는 고정 크기 상태를 유지합니다. 다음 마운트부터 적용됩니다. 분산 실행은 bf16 캐시를 유지합니다."
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "KV 캐시 압축을 사용할 수 없습니다: {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {분산 · 노드 #개 · {backend}}}"
   },

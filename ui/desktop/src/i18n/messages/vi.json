@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Phục vụ trên nhiều máy Mac"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}: {bytes} KiB mỗi token thay vì {bf16} KiB — cùng bộ nhớ chứa được {ratio}× ngữ cảnh."
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4 bit"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8 bit"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "Bộ nhớ đệm KV"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "Đo trên mô hình này ({date}): khớp token với bf16 {agreement}%, {identical}/{prompts} câu trả lời giống hệt, dữ kiện ẩn: {retrieval}; bf16 so với chính nó: {floor}%."
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "khớp {agreement}%"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "Tốc độ giải mã ở ngữ cảnh dài nhất: {ratio}% so với bf16."
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "Không đọc được bản ghi đo: {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "Mô hình này không có lớp chú ý đầy đủ, nên không có KV tăng trưởng để nén."
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "Kích thước head của mô hình này ({headDim}) không khớp nhóm lượng tử hóa nào của engine, nên KV của nó không thể nén."
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "Nén bộ nhớ đệm KV cần config.json của mô hình, và mô hình này không nằm trong thư mục mô hình."
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "Chưa đo chất lượng trên mô hình này — hãy so sánh câu trả lời trước khi dựa vào nó."
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "Tắt (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "Tắt: bộ nhớ đệm bf16 của engine, {bytes} KiB cho mỗi token ngữ cảnh."
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "tìm thấy"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "BỎ SÓT"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "Chỉ {attention} lớp chú ý đầy đủ tăng theo ngữ cảnh và được nén; {state} lớp chú ý tuyến tính giữ trạng thái kích thước cố định. Áp dụng ở lần gắn tiếp theo. Các lần chạy phân tán giữ bộ nhớ đệm bf16."
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "Không thể nén bộ nhớ đệm KV: {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {Phân tán · # node · {backend}}}"
   },

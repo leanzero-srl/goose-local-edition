@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "कई Mac पर परोसा जा रहा है"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}: हर टोकन पर {bf16} KiB की जगह {bytes} KiB — उसी मेमोरी में {ratio}× संदर्भ आता है।"
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4-बिट"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8-बिट"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "KV कैश"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "इस मॉडल पर मापा गया ({date}): bf16 से टोकन मेल {agreement}%, {prompts} में से {identical} उत्तर एक जैसे, छिपा तथ्य: {retrieval}; bf16 बनाम स्वयं: {floor}%।"
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "{agreement}% मेल"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "सबसे लंबे संदर्भ पर डिकोड गति: bf16 का {ratio}%।"
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "माप रिकॉर्ड पढ़ा नहीं जा सकता: {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "इस मॉडल में कोई फुल-अटेंशन लेयर नहीं है, इसलिए संपीड़ित करने के लिए बढ़ता KV नहीं है।"
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "इस मॉडल का हेड आकार ({headDim}) इंजन के किसी क्वांटाइज़ेशन समूह में नहीं बैठता, इसलिए इसका KV संपीड़ित नहीं हो सकता।"
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "KV कैश संपीड़न के लिए मॉडल की config.json चाहिए, और यह मॉडल मॉडल फ़ोल्डर में नहीं है।"
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "इस मॉडल पर गुणवत्ता नहीं मापी गई — भरोसा करने से पहले इसके उत्तरों की तुलना करें।"
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "बंद (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "बंद: इंजन का bf16 कैश, संदर्भ के हर टोकन पर {bytes} KiB।"
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "मिला"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "छूटा"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "केवल {attention} फुल-अटेंशन लेयर संदर्भ के साथ बढ़ती हैं और संपीड़ित होती हैं; {state} लीनियर-अटेंशन लेयर स्थिर आकार की स्थिति रखती हैं। अगले माउंट पर लागू होता है। वितरित रन bf16 कैश ही रखते हैं।"
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "KV कैश संपीड़न उपलब्ध नहीं: {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {वितरित · # नोड · {backend}} other {वितरित · # नोड · {backend}}}"
   },

@@ -396,6 +396,20 @@ describe('thinking profile fields', () => {
   });
 });
 
+describe('KV cache profile field', () => {
+  it('absent drafts as off and writes nothing; explicit modes round-trip; junk is dropped', () => {
+    const drafts = draftsFromProfile(SETTINGS.modelProfiles[QWEN]);
+    expect(drafts.kvCache).toBe('');
+    expect('kvCache' in profileFromDrafts(drafts)).toBe(false);
+    expect(profileFromDrafts(draftsFromProfile({ kvCache: 'int4' }))).toEqual({ kvCache: 'int4' });
+    const payload = settingsWithProfile(SETTINGS, HALF, draftsFromProfile({ kvCache: 'int8' }));
+    expect(payload.modelProfiles[HALF]).toEqual({ kvCache: 'int8' });
+    const junk = draftsFromProfile(undefined);
+    junk.kvCache = 'int2';
+    expect(profileHasValues(profileFromDrafts(junk))).toBe(false);
+  });
+});
+
 describe('formatGb', () => {
   it('shows sizes in GB with an honest unknown for zero', () => {
     expect(formatGb(17 * GB)).toBe('17 GB');
@@ -1330,6 +1344,117 @@ describe('MlxEngineView sampling tab', () => {
       );
     });
     expect(screen.queryByRole('radiogroup', { name: 'Thinking' })).not.toBeInTheDocument();
+    second.unmount();
+  });
+
+  it('the KV cache row shows what each setting buys on this model and saves only a choice', async () => {
+    mockModelsList.mockResolvedValue(
+      listOf([
+        {
+          ...MODELS[0],
+          kvCache: {
+            attentionLayers: 16,
+            stateLayers: 48,
+            slidingLayers: 0,
+            kvHeads: 4,
+            headDim: 256,
+            groupSize: 64,
+            bf16BytesPerToken: 65536,
+            int8BytesPerToken: 34816,
+            int4BytesPerToken: 18432,
+          },
+          kvCacheMeasurement: {
+            measuredAt: '2026-09-24',
+            engine: 'Rapid-MLX v0.14.3-lz.3',
+            prompts: 15,
+            noiseFloor: { agreement: 1, identicalAnswers: 15, retrievalFound: true },
+            int8: {
+              agreement: 0.912,
+              identicalAnswers: 9,
+              retrievalFound: true,
+              decodeTpsRatio: 0.94,
+            },
+            source: 'evals/mlx-engine-bench/results/2026-09-24-kv-quant',
+          },
+        },
+        MODELS[1],
+      ])
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    const kv = await screen.findByRole('radiogroup', { name: 'KV cache' });
+    expect(within(kv).getByRole('radio', { name: 'Off (bf16)' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    expect(
+      screen.getByText("Off: the engine's bf16 cache, 64 KiB per token of context.")
+    ).toBeInTheDocument();
+
+    await userEvent.click(within(kv).getByRole('radio', { name: '8-bit' }));
+    expect(
+      screen.getByText(
+        '8-bit: 34 KiB per token instead of 64 KiB — the same memory holds 1.9× the context.'
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/91\.2% token agreement with bf16, 9 of 15 answers/)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Decode speed at the longest context: 94% of bf16.')
+    ).toBeInTheDocument();
+    expect(screen.getByText('91.2% agreement')).toBeInTheDocument();
+
+    // int4 has no record: the row says so instead of inventing a number.
+    await userEvent.click(within(kv).getByRole('radio', { name: '4-bit' }));
+    expect(screen.getByText(/the same memory holds 3\.6× the context/)).toBeInTheDocument();
+    expect(screen.getByText(/Quality not measured on this model/)).toBeInTheDocument();
+
+    await userEvent.click(within(kv).getByRole('radio', { name: '8-bit' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(mockSettingsUpdate).toHaveBeenCalledTimes(1);
+    });
+    const payload = mockSettingsUpdate.mock.calls[0][0] as MlxEngineSettings;
+    expect(payload.modelProfiles[QWEN]).toEqual({ temperature: 0, topK: 40, kvCache: 'int8' });
+    unmount();
+  });
+
+  it('a model whose KV cannot be compressed locks the modes and a read failure is named', async () => {
+    mockModelsList.mockResolvedValue(
+      listOf([
+        {
+          ...MODELS[0],
+          kvCache: {
+            attentionLayers: 2,
+            stateLayers: 0,
+            slidingLayers: 0,
+            kvHeads: 4,
+            headDim: 80,
+            bf16BytesPerToken: 2560,
+          },
+        },
+        MODELS[1],
+      ])
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    const kv = await screen.findByRole('radiogroup', { name: 'KV cache' });
+    expect(within(kv).getByRole('radio', { name: '8-bit' })).toBeDisabled();
+    expect(within(kv).getByRole('radio', { name: '4-bit' })).toBeDisabled();
+    expect(screen.getByText(/head size \(80\) fits none/)).toBeInTheDocument();
+    unmount();
+
+    mockModelsList.mockResolvedValue(
+      listOf([{ ...MODELS[0], kvCacheError: 'config.json declares no `dtype`/`torch_dtype`' }])
+    );
+    const second = render(<MlxEngineView />);
+    await openSamplingTab();
+    await waitFor(() => {
+      expect(screen.getByTestId('mlx-kv-notice')).toHaveTextContent(
+        'KV cache compression unavailable: config.json declares no `dtype`/`torch_dtype`'
+      );
+    });
     second.unmount();
   });
 
