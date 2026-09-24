@@ -11849,6 +11849,30 @@
           "type": "boolean",
           "description": "Whether this goosed injected the local MLX control at boot. `false` means every\n`/v1/swarm/mlx/*` op answers `501`.",
           "default": false
+        },
+        "intent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LeanzeroLinkIntentDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The user's persisted mesh intent; absent only when the record is unreadable, and\nthen `intentError` says why."
+        },
+        "intentError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reconnect": {
+          "$ref": "#/$defs/LeanzeroLinkReconnectDto",
+          "description": "The launch reconnect's outcome.",
+          "default": {
+            "state": "idle"
+          }
         }
       },
       "required": [
@@ -12064,6 +12088,155 @@
       ],
       "description": "One mesh binary as discovered when the Link manager was built: `found` at `path`, or\n`missing` with the full text of where discovery looked (the env override, every PATH\ndirectory, the known install locations) — so the UI can show a broken bundle BEFORE\nthe connect click, and `connect` is refused with the same text."
     },
+    "LeanzeroLinkIntentDto": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "$ref": "#/$defs/LeanzeroLinkIntentValueDto"
+        },
+        "cause": {
+          "$ref": "#/$defs/LeanzeroLinkIntentCauseDto"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "RFC3339."
+        }
+      },
+      "required": [
+        "intent",
+        "cause",
+        "updatedAt"
+      ],
+      "description": "The user's persisted mesh intent (`~/.leanzero/link-intent.json`)."
+    },
+    "LeanzeroLinkIntentValueDto": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "connected",
+          "description": "Reconnect at every launch with no user action."
+        },
+        {
+          "type": "string",
+          "const": "disconnected",
+          "description": "Stay off until the user connects."
+        }
+      ],
+      "description": "Whether the user wants this node on the mesh."
+    },
+    "LeanzeroLinkIntentCauseDto": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "userConnect",
+            "userDisconnect",
+            "userLogout"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "migrated",
+          "description": "No record existed; derived from a stored identity + the goose-owned mesh state a\nprevious connect left."
+        },
+        {
+          "type": "string",
+          "const": "noRecord",
+          "description": "No record and nothing on disk shows a previous connect."
+        }
+      ],
+      "description": "Which action produced the intent."
+    },
+    "LeanzeroLinkReconnectDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "idle"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "description": "No launch reconnect ran, or the user connected/disconnected by hand since."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "skipped"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "startedAt": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "reconnecting"
+            }
+          },
+          "required": [
+            "state",
+            "startedAt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "meshIp": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "reconnected"
+            }
+          },
+          "required": [
+            "state",
+            "at",
+            "meshIp"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "at": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "at"
+          ]
+        }
+      ],
+      "description": "What goosed did about a `connected` intent without the user — the reconnect it runs\nonce per launch. Internally tagged on `state`:\n`idle | skipped | reconnecting | reconnected | failed`. `failed` is the loud one: the\nmesh should be up and is not, `reason` says why, and Retry is `connect`."
+    },
     "LeanzeroLinkStatusRequest_unstable": {
       "type": "object",
       "description": "The composed auth + mesh state.",
@@ -12081,6 +12254,12 @@
       "description": "Tear down the connection, clear the stored identity, drop to `loggedOut`.\n`wipe` also removes the mesh state dir (slower re-login).",
       "x-side": "agent",
       "x-method": "_goose/unstable/leanzeroLink/logout"
+    },
+    "LeanzeroLinkDisconnectRequest_unstable": {
+      "type": "object",
+      "description": "Take this node off the mesh and KEEP it off across launches; the account stays\nsigned in (`loggedIn`). Records the intent `disconnected`, so no launch reconnects\nuntil the user connects again. `connect` is the way back.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/leanzeroLink/disconnect"
     },
     "LeanzeroLinkNodesRequest_unstable": {
       "type": "object",
@@ -13927,6 +14106,15 @@
                   ],
                   "description": "Params for _goose/unstable/leanzeroLink/logout",
                   "title": "LeanzeroLinkLogoutRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/LeanzeroLinkDisconnectRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/leanzeroLink/disconnect",
+                  "title": "LeanzeroLinkDisconnectRequest_unstable"
                 },
                 {
                   "allOf": [

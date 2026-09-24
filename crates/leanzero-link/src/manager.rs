@@ -31,6 +31,7 @@ use tokio::task::JoinHandle;
 use crate::control::{ControlConfig, ControlError, ControlHandle, ControlService};
 use crate::identity::{Identity, IdentityError, IdentityStore};
 use crate::inference::{PeerCall, PeerCallResolver};
+use crate::intent::{IntentCause, IntentError, IntentRecord, IntentStore, LinkIntent};
 use crate::mesh::{MeshConfig, MeshEngine, MeshError, MeshPeer, MeshStatus};
 use crate::peer_dial::{peer_http_client, MeshProxy, PeerDialError, PeerTimeout};
 use crate::state::{
@@ -143,6 +144,27 @@ pub enum AuthState {
     },
 }
 
+/// What the manager did about a `connected` [`LinkIntent`] WITHOUT the user — the
+/// reconnect goosed runs once at launch ([`LinkManager::auto_reconnect`]). Every outcome
+/// is a named state: a launch that could not bring the mesh back is `Failed` with the
+/// reason, never a quiet "not connected". Serde tag `state`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state")]
+pub enum ReconnectState {
+    /// No reconnect has run on this manager: the embedding process has not asked for one,
+    /// or the user has since connected or disconnected by hand (their action supersedes it).
+    #[default]
+    Idle,
+    /// The intent says stay off (or there is nothing to reconnect); `reason` says which.
+    Skipped { reason: String },
+    /// The reconnect is bringing the mesh up now (auth reads `Connecting`).
+    Reconnecting { started_at: DateTime<Utc> },
+    /// The mesh came back with no user action.
+    Reconnected { at: DateTime<Utc>, mesh_ip: String },
+    /// The mesh did not come back; `reason` is what the user needs to act (Retry = Connect).
+    Failed { reason: String, at: DateTime<Utc> },
+}
+
 /// What goosed surfaces to the desktop: the auth state, live mesh status while
 /// connected, the node count, the mesh-poll health, and the last error — the error is
 /// never swallowed, it rides here for the UI to show honestly.
@@ -162,6 +184,15 @@ pub struct LinkState {
     #[serde(default)]
     pub mesh_poll_failures: u32,
     pub last_error: Option<String>,
+    /// The user's persisted mesh intent (see [`crate::intent`]); `None` only when the
+    /// record is unreadable, and then `intent_error` says why.
+    #[serde(default)]
+    pub intent: Option<IntentRecord>,
+    #[serde(default)]
+    pub intent_error: Option<String>,
+    /// The launch reconnect's outcome.
+    #[serde(default)]
+    pub reconnect: ReconnectState,
 }
 
 #[derive(Debug, Error)]
@@ -174,6 +205,8 @@ pub enum LinkError {
     Control(#[from] ControlError),
     #[error(transparent)]
     Identity(#[from] IdentityError),
+    #[error(transparent)]
+    Intent(#[from] IntentError),
     #[error("not logged in — verify an email code first")]
     NotLoggedIn,
     #[error("the auth worker did not issue a node secret; update the worker and sign in again")]
@@ -185,6 +218,11 @@ pub enum LinkError {
          fresh connection was logged out of the tailnet and shut down per-pid"
     )]
     ConnectAborted,
+    #[error(
+        "connect cancelled: the mesh was disconnected while it was coming up; the fresh \
+         connection was shut down per-pid"
+    )]
+    ConnectCancelled,
     #[error("remote execution is not wired on this node")]
     ExecutorUnavailable,
     #[error("not connected to the mesh — cannot reach peers for remote execution")]
@@ -265,6 +303,26 @@ struct Inner {
     active: Option<Active>,
     next_generation: u64,
     mesh_poll_failures: u32,
+    /// The resolved intent, or the text of why it could not be read.
+    intent: Result<IntentRecord, String>,
+    reconnect: ReconnectState,
+}
+
+impl Inner {
+    fn intent_fields(&self) -> (Option<IntentRecord>, Option<String>) {
+        match &self.intent {
+            Ok(record) => (Some(record.clone()), None),
+            Err(reason) => (None, Some(reason.clone())),
+        }
+    }
+}
+
+/// Who asked for a connect. Only the USER's connect records intent; the launch reconnect
+/// acts on the intent and never rewrites it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectOrigin {
+    User,
+    Reconnect,
 }
 
 /// Distinguishes a connect failure that should drop to `LoggedOut` (the token is dead)
@@ -318,6 +376,7 @@ impl From<ControlError> for ConnectFailure {
 pub struct LinkManager {
     config: LinkManagerConfig,
     identity: IdentityStore,
+    intent: IntentStore,
     worker: WorkerClient,
     mesh_factory: Arc<dyn MeshFactory>,
     source: Arc<dyn SwarmStateSource>,
@@ -344,8 +403,11 @@ pub struct LinkManager {
 
 impl LinkManager {
     /// Construct with the production mesh factory. Loads any persisted identity:
-    /// present → `LoggedIn` (it does NOT auto-connect; goosed calls [`Self::connect`]);
-    /// absent → `LoggedOut`; malformed → a loud error (never silently logged-out).
+    /// present → `LoggedIn` (it does NOT connect by itself; the embedding process calls
+    /// [`Self::auto_reconnect`] at launch, which honours the persisted intent); absent →
+    /// `LoggedOut`; malformed → a loud error (never silently logged-out). The intent is
+    /// resolved here too ([`IntentStore::resolve`]); an unreadable one does not refuse
+    /// construction — logout and Connect must stay possible — it rides `intent_error`.
     pub fn new(
         config: LinkManagerConfig,
         source: Arc<dyn SwarmStateSource>,
@@ -366,9 +428,20 @@ impl LinkManager {
             Some(id) => AuthState::LoggedIn { email: id.email },
             None => AuthState::LoggedOut,
         };
+        let intent = IntentStore::beside(&identity.path()?);
+        let resolved = intent
+            .resolve(
+                matches!(auth, AuthState::LoggedIn { .. }),
+                &config.mesh.state_dir.join("tailscaled.state"),
+            )
+            .map_err(|err| {
+                tracing::error!(error = %err, "leanzero-link: the Link intent is unreadable");
+                err.to_string()
+            });
         Ok(Self {
             config,
             identity,
+            intent,
             worker,
             mesh_factory,
             source,
@@ -382,6 +455,8 @@ impl LinkManager {
                 active: None,
                 next_generation: 0,
                 mesh_poll_failures: 0,
+                intent: resolved,
+                reconnect: ReconnectState::Idle,
             })),
         })
     }
@@ -490,7 +565,16 @@ impl LinkManager {
     /// the identity and drops to `LoggedOut`. A `401` with any other body (a proxy's
     /// HTML, a truncated body) is an ordinary failure: `LoggedIn` + `last_error`, the
     /// credential untouched.
+    ///
+    /// This is the USER's connect: before anything starts it records the intent
+    /// `connected` (so every later launch reconnects) and supersedes any launch-reconnect
+    /// outcome. A record that cannot be written refuses the connect loudly — a mesh the
+    /// next launch would silently not bring back is the defect this record exists to end.
     pub async fn connect(&self) -> Result<(), LinkError> {
+        self.connect_as(ConnectOrigin::User).await
+    }
+
+    async fn connect_as(&self, origin: ConnectOrigin) -> Result<(), LinkError> {
         let email = {
             let mut inner = self.inner.lock().await;
             let email = match &inner.auth {
@@ -502,6 +586,12 @@ impl LinkManager {
                     return Err(LinkError::NotLoggedIn)
                 }
             };
+            if origin == ConnectOrigin::User {
+                let record = IntentRecord::new(LinkIntent::Connected, IntentCause::UserConnect);
+                self.intent.save(&record)?;
+                inner.intent = Ok(record);
+                inner.reconnect = ReconnectState::Idle;
+            }
             inner.auth = AuthState::Connecting {
                 email: email.clone(),
             };
@@ -517,17 +607,24 @@ impl LinkManager {
                     AuthState::Connecting { email: current } if *current == email
                 );
                 if !still_connecting {
-                    // `logout()` raced us: the credential is already gone and auth has
-                    // moved on. The fresh connection is torn down exactly as a logout
-                    // would tear it down — `tailscale logout` (expire the node key on
-                    // the control plane), then per-pid shutdown — and logout's state
-                    // stands. Installing it would show `Connected` over no identity.
+                    // `logout()` or `disconnect()` raced us and auth has moved on. The
+                    // fresh connection is torn down exactly as that action tears one
+                    // down — after a logout, `tailscale logout` (expire the node key on
+                    // the control plane) then per-pid shutdown; after a disconnect, the
+                    // per-pid shutdown alone — and that action's state stands.
+                    // Installing it would show `Connected` over a choice to be off.
+                    let logged_out = matches!(inner.auth, AuthState::LoggedOut);
                     drop(inner);
                     tracing::warn!(
-                        "leanzero-link: logout raced the connect; tearing the fresh connection down"
+                        logged_out,
+                        "leanzero-link: a logout/disconnect raced the connect; tearing the fresh connection down"
                     );
-                    teardown_active(active, true).await;
-                    return Err(LinkError::ConnectAborted);
+                    teardown_active(active, logged_out).await;
+                    return Err(if logged_out {
+                        LinkError::ConnectAborted
+                    } else {
+                        LinkError::ConnectCancelled
+                    });
                 }
                 inner.auth = AuthState::Connected {
                     email,
@@ -713,7 +810,7 @@ impl LinkManager {
     /// here (see [`drop_active_after_daemon_exit`]) and reports the demoted state, so
     /// the UI never shows `Connected` over a dead daemon.
     pub async fn status(&self) -> LinkState {
-        let (auth, persisted_error, poll_failures, live) = {
+        let (auth, persisted_error, poll_failures, live, (intent, intent_error), reconnect) = {
             let inner = self.inner.lock().await;
             let live = inner.active.as_ref().map(|active| {
                 (
@@ -727,6 +824,8 @@ impl LinkManager {
                 inner.last_error.clone(),
                 inner.mesh_poll_failures,
                 live,
+                inner.intent_fields(),
+                inner.reconnect.clone(),
             )
         };
 
@@ -737,6 +836,9 @@ impl LinkManager {
                 node_count: 0,
                 mesh_poll_failures: poll_failures,
                 last_error: persisted_error,
+                intent,
+                intent_error,
+                reconnect,
             };
         };
 
@@ -747,6 +849,9 @@ impl LinkManager {
                 node_count: node_count(&registry),
                 mesh_poll_failures: poll_failures,
                 last_error: persisted_error,
+                intent,
+                intent_error,
+                reconnect,
             },
             Err(err @ MeshError::DaemonExited { .. }) => {
                 drop_active_after_daemon_fault(
@@ -757,12 +862,16 @@ impl LinkManager {
                 )
                 .await;
                 let inner = self.inner.lock().await;
+                let (intent, intent_error) = inner.intent_fields();
                 LinkState {
                     auth: inner.auth.clone(),
                     mesh: None,
                     node_count: 0,
                     mesh_poll_failures: inner.mesh_poll_failures,
                     last_error: inner.last_error.clone(),
+                    intent,
+                    intent_error,
+                    reconnect: inner.reconnect.clone(),
                 }
             }
             Err(err) => LinkState {
@@ -771,6 +880,9 @@ impl LinkManager {
                 node_count: node_count(&registry),
                 mesh_poll_failures: poll_failures,
                 last_error: Some(format!("mesh status read failed: {err}")),
+                intent,
+                intent_error,
+                reconnect,
             },
         }
     }
@@ -953,7 +1065,12 @@ impl LinkManager {
     /// the account out, but its text lands in `last_error` — never erased. A failed
     /// identity clear leaves the credential on disk, so auth returns to `LoggedIn`
     /// (the truthful state: mesh down, credential present) with the error recorded.
+    ///
+    /// The intent becomes `disconnected` first, so no later launch reconnects; a record
+    /// that cannot be written does not stop the logout, its text rides `last_error`.
     pub async fn logout(&self, wipe: bool) -> Result<(), LinkError> {
+        let record = IntentRecord::new(LinkIntent::Disconnected, IntentCause::UserLogout);
+        let intent_error = self.intent.save(&record).err();
         let (active, email) = {
             let mut inner = self.inner.lock().await;
             let email = match &inner.auth {
@@ -962,8 +1079,19 @@ impl LinkManager {
                 | AuthState::Connected { email, .. } => Some(email.clone()),
                 AuthState::LoggedOut | AuthState::CodeSent { .. } => None,
             };
+            match &intent_error {
+                None => inner.intent = Ok(record),
+                Some(err) => inner.intent = Err(err.to_string()),
+            }
+            inner.reconnect = ReconnectState::Idle;
             (inner.active.take(), email)
         };
+        let intent_note = intent_error.map(|err| {
+            format!(
+                "the intent record could not be set to disconnected ({err}); the next launch \
+                 reports a reconnect failure until you sign in again"
+            )
+        });
         let mesh_logout_error = match active {
             Some(active) => teardown_active(active, true).await,
             None => None,
@@ -993,13 +1121,135 @@ impl LinkManager {
 
         let mut inner = self.inner.lock().await;
         inner.auth = AuthState::LoggedOut;
-        inner.last_error = mesh_logout_error.map(|err| {
+        let mesh_note = mesh_logout_error.map(|err| {
             format!(
                 "logged out, but `tailscale logout` failed and the daemon was stopped per-pid \
                  instead (the node key may linger on the control plane until it expires): {err}"
             )
         });
+        inner.last_error = match (mesh_note, intent_note) {
+            (Some(mesh), Some(intent)) => Some(format!("{mesh}; {intent}")),
+            (mesh, intent) => mesh.or(intent),
+        };
         Ok(())
+    }
+
+    /// Take this node off the mesh and KEEP it off across launches, the account kept:
+    /// records the intent `disconnected` FIRST (a record that cannot be written refuses
+    /// the disconnect with the mesh untouched — otherwise the next launch would silently
+    /// undo it), then stops the connection per-pid (the poll loop, the control service,
+    /// the daemon — SIGTERM → grace → SIGKILL, our child only; no `tailscale logout`, the
+    /// state dir is kept for a fast Connect) and returns auth to `LoggedIn`. From
+    /// `Connecting`, the in-flight connect finds the state moved on and tears its fresh
+    /// connection down itself ([`LinkError::ConnectCancelled`]). Already `LoggedIn`: the
+    /// intent alone changes — that is how a user turns the launch reconnect off.
+    pub async fn disconnect(&self) -> Result<(), LinkError> {
+        let active = {
+            let mut inner = self.inner.lock().await;
+            let email = match &inner.auth {
+                AuthState::LoggedIn { email }
+                | AuthState::Connecting { email }
+                | AuthState::Connected { email, .. } => email.clone(),
+                AuthState::LoggedOut | AuthState::CodeSent { .. } => {
+                    return Err(LinkError::NotLoggedIn)
+                }
+            };
+            let record = IntentRecord::new(LinkIntent::Disconnected, IntentCause::UserDisconnect);
+            self.intent.save(&record)?;
+            inner.intent = Ok(record);
+            inner.reconnect = ReconnectState::Idle;
+            inner.auth = AuthState::LoggedIn { email };
+            inner.last_error = None;
+            inner.mesh_poll_failures = 0;
+            inner.active.take()
+        };
+        if let Some(active) = active {
+            teardown_active(active, false).await;
+        }
+        Ok(())
+    }
+
+    /// The launch reconnect: bring the mesh back with no user action when — and only
+    /// when — the persisted intent is `connected` and a credential is stored. The
+    /// embedding process calls it once per launch (goosed: when it boots); the user's
+    /// Connect / Disconnect / Log out supersede it at any point.
+    ///
+    /// `preflight` is the embedding layer's own refusal (goosed: mesh binaries missing),
+    /// evaluated only when a reconnect is due; `describe` turns a connect failure into
+    /// the text the user acts on. Every outcome is recorded in [`LinkState::reconnect`]
+    /// and returned: `Skipped` (intent `disconnected`, already connected), `Reconnected`,
+    /// or `Failed` with the reason — an unreadable intent, a gone credential, the
+    /// preflight's refusal, or the connect's own error. The credential is only ever
+    /// cleared by the worker's named dead-token verdict, exactly as a manual connect.
+    pub async fn auto_reconnect(
+        &self,
+        preflight: Result<(), String>,
+        describe: impl Fn(&LinkError) -> String,
+    ) -> ReconnectState {
+        let due = {
+            let mut inner = self.inner.lock().await;
+            let now = Utc::now();
+            let verdict = match (&inner.intent, &inner.auth) {
+                (Err(reason), _) => Err(ReconnectState::Failed {
+                    reason: format!("the Link intent could not be read: {reason}"),
+                    at: now,
+                }),
+                (Ok(record), _) if record.intent == LinkIntent::Disconnected => {
+                    Err(ReconnectState::Skipped {
+                        reason: skipped_reason(record.cause).to_string(),
+                    })
+                }
+                (Ok(_), AuthState::Connecting { .. } | AuthState::Connected { .. }) => {
+                    Err(ReconnectState::Skipped {
+                        reason: "the mesh is already connecting or connected".to_string(),
+                    })
+                }
+                (Ok(_), AuthState::LoggedOut | AuthState::CodeSent { .. }) => {
+                    Err(ReconnectState::Failed {
+                        reason: "not signed in: the mesh was on, but no account credential is \
+                                 stored on this Mac any more — sign in again to reconnect"
+                            .to_string(),
+                        at: now,
+                    })
+                }
+                (Ok(_), AuthState::LoggedIn { .. }) => match preflight {
+                    Err(reason) => Err(ReconnectState::Failed { reason, at: now }),
+                    Ok(()) => Ok(()),
+                },
+            };
+            inner.reconnect = match &verdict {
+                Err(state) => state.clone(),
+                Ok(()) => ReconnectState::Reconnecting { started_at: now },
+            };
+            verdict
+        };
+        if let Err(state) = due {
+            log_reconnect(&state);
+            return state;
+        }
+
+        let result = self.connect_as(ConnectOrigin::Reconnect).await;
+        let mut inner = self.inner.lock().await;
+        if !matches!(inner.reconnect, ReconnectState::Reconnecting { .. }) {
+            // The user acted meanwhile (Connect, Disconnect, Log out); theirs stands.
+            return inner.reconnect.clone();
+        }
+        inner.reconnect = match (result, &inner.auth) {
+            (Ok(()), AuthState::Connected { mesh_ip, .. }) => ReconnectState::Reconnected {
+                at: Utc::now(),
+                mesh_ip: mesh_ip.clone(),
+            },
+            (Ok(()), other) => ReconnectState::Failed {
+                reason: format!("the connect returned but auth reads {other:?}"),
+                at: Utc::now(),
+            },
+            (Err(err), _) => ReconnectState::Failed {
+                reason: describe(&err),
+                at: Utc::now(),
+            },
+        };
+        log_reconnect(&inner.reconnect);
+        inner.reconnect.clone()
     }
 
     async fn ensure_not_busy(&self) -> Result<(), LinkError> {
@@ -1030,6 +1280,30 @@ impl LinkManager {
         let base: String = sanitize_hostname(&raw).chars().take(56).collect();
         let base = base.trim_end_matches('-');
         Ok(format!("{base}-{suffix}"))
+    }
+}
+
+fn skipped_reason(cause: IntentCause) -> &'static str {
+    match cause {
+        IntentCause::UserDisconnect => "you disconnected this Mac; it stays off until you connect",
+        IntentCause::UserLogout => "you logged out of LeanZero Link on this Mac",
+        IntentCause::NoRecord => "this Mac has never been connected under this sign-in",
+        IntentCause::UserConnect | IntentCause::Migrated => "the intent is disconnected",
+    }
+}
+
+fn log_reconnect(state: &ReconnectState) {
+    match state {
+        ReconnectState::Failed { reason, .. } => {
+            tracing::error!(%reason, "leanzero_link_reconnect: failed")
+        }
+        ReconnectState::Skipped { reason } => {
+            tracing::info!(%reason, "leanzero_link_reconnect: skipped")
+        }
+        ReconnectState::Reconnected { mesh_ip, .. } => {
+            tracing::info!(%mesh_ip, "leanzero_link_reconnect: reconnected with no user action")
+        }
+        ReconnectState::Idle | ReconnectState::Reconnecting { .. } => {}
     }
 }
 

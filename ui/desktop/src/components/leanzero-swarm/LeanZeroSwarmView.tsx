@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import { ScrollArea } from '../ui/scroll-area';
 import MlxEngineView from './MlxEngineView';
@@ -34,10 +34,18 @@ type SwarmTab = 'mlx' | 'cloud' | 'swarm' | 'link';
  * LeanZero Studio register: a PageHeader with the section Segmented in its actions slot, the
  * page surface underneath. Solid colour with meaning, one accent, custom controls only.
  */
-const LeanZeroSwarmView: React.FC = () => {
+const SWARM_TABS: readonly SwarmTab[] = ['mlx', 'cloud', 'swarm', 'link'];
+
+const isSwarmTab = (value: string | null | undefined): value is SwarmTab =>
+  value != null && (SWARM_TABS as readonly string[]).includes(value);
+
+const LeanZeroSwarmView: React.FC<{ requestedTab?: string | null }> = ({ requestedTab }) => {
   const intl = useIntl();
   const { leanzeroLink } = useFeatures();
-  const [tab, setTab] = useState<SwarmTab>('mlx');
+  const [tab, setTab] = useState<SwarmTab>(isSwarmTab(requestedTab) ? requestedTab : 'mlx');
+  useEffect(() => {
+    if (isSwarmTab(requestedTab)) setTab(requestedTab);
+  }, [requestedTab]);
 
   const tabs: SegmentedOption<SwarmTab>[] = [
     { value: 'mlx', label: 'LeanZero MLX' },

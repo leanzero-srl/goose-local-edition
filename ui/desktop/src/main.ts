@@ -134,6 +134,11 @@ import {
 } from './utils/mlxTray';
 import { isMlxDistributedReport, type MlxDistributedReport } from './utils/mlxDistributedReport';
 import { isMlxRemoteReport, type MlxRemoteReport } from './utils/mlxRemoteReport';
+import {
+  isLinkTrayReport,
+  type LinkTrayAction,
+  type LinkTrayReport,
+} from './utils/linkTrayReport';
 import { MLX_STATUS_POLL_MS } from './components/leanzero-swarm/mlxLiveStats';
 import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
@@ -2144,6 +2149,37 @@ let mlxDistributedStaleTimer: ReturnType<typeof setTimeout> | null = null;
 // Where MLX chat goes when a window routed it to a LeanZero Link peer (remote single); null = here.
 let mlxRemote: MlxRemoteReport | null = null;
 
+// LeanZero Link's line in the tray, from the renderer's latest Link state read (utils/linkTrayReport):
+// connected, reconnecting, or — loudly — a launch reconnect that failed, with its Retry.
+let linkTray: LinkTrayReport | null = null;
+
+const runLinkTrayAction = (action: LinkTrayAction) => {
+  const win = mlxActionWindow();
+  if (!win) return;
+  if (action === 'open') {
+    if (!win.isVisible()) win.show();
+    win.focus();
+    win.webContents.send('set-view', 'leanzero-swarm', 'link');
+    return;
+  }
+  // Connect is an ACP call, and the ACP client lives in the renderer (useLinkTrayReporter).
+  win.webContents.send('link-tray-action', action);
+};
+
+const linkTrayMenuItems = (): MenuItemConstructorOptions[] => {
+  if (!linkTray) return [];
+  const { line, action, actionLabel } = linkTray;
+  const items: MenuItemConstructorOptions[] = [{ label: line, enabled: false }];
+  if (action && actionLabel) {
+    items.push({
+      label: actionLabel,
+      enabled: mlxActionWindow() != null,
+      click: () => runLinkTrayAction(action),
+    });
+  }
+  return items;
+};
+
 let lastMlxTrayMenu = '';
 const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   if (!tray) return;
@@ -2170,10 +2206,16 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
     tray.setTitle(silent ? '' : model.title, { fontType: 'monospacedDigit' });
   }
   const items = silent ? [] : model.items;
-  const key = JSON.stringify(items);
+  const key = JSON.stringify({ items, linkTray, canAct: mlxActionWindow() != null });
   if (key === lastMlxTrayMenu) return;
   lastMlxTrayMenu = key;
-  setTrayEngineSection(items.map(mlxTrayMenuItem), () => {
+  const linkItems = linkTrayMenuItems();
+  const engineItems = items.map(mlxTrayMenuItem);
+  const section =
+    linkItems.length > 0 && engineItems.length > 0
+      ? [...linkItems, { type: 'separator' as const }, ...engineItems]
+      : [...linkItems, ...engineItems];
+  setTrayEngineSection(section, () => {
     mlxMonitor.wake();
     mlxActionWindow()?.webContents.send('mlx-distributed-wake');
   });
@@ -2181,6 +2223,11 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
 
 ipcMain.on('mlx-engine-report', (_event, report: unknown) => {
   if (isMlxEngineReport(report)) mlxMonitor.reportFromRenderer(report);
+});
+ipcMain.on('link-report', (_event, report: unknown) => {
+  if (!isLinkTrayReport(report)) return;
+  linkTray = report;
+  renderMlxTray(mlxMonitor.current());
 });
 ipcMain.on('mlx-remote-report', (_event, report: unknown) => {
   if (!isMlxRemoteReport(report)) return;

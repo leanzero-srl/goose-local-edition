@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   Check,
   Link2,
+  Link2Off,
   Loader2,
   LogOut,
   Mail,
@@ -36,6 +37,7 @@ import {
 import { FIELD_LABEL, INPUT, ToneBanner, nodeHue } from './studio';
 import {
   leanzeroLinkConnect,
+  leanzeroLinkDisconnect,
   leanzeroLinkHealth,
   leanzeroLinkLogout,
   leanzeroLinkNodes,
@@ -50,6 +52,7 @@ import {
   type NodeState,
   type NodeStatus,
   type NodesResponse,
+  type ReconnectState,
 } from '../../acp/leanzero-link';
 
 const i18n = defineMessages({
@@ -397,15 +400,27 @@ function ConnectCard({
   email,
   connecting,
   error,
+  reconnect,
+  stayingOff,
   audienceSyncFailed,
   onConnect,
 }: {
   email: string;
   connecting: boolean;
   error: string | null;
+  /** The launch reconnect's outcome — `failed` is shown as itself, never as "not connected". */
+  reconnect: ReconnectState | undefined;
+  /** The user disconnected this Mac: it stays off across launches until Connect. */
+  stayingOff: boolean;
   audienceSyncFailed: boolean;
   onConnect: () => void;
 }) {
+  const reconnectFailed = reconnect?.state === 'failed' ? reconnect : null;
+  const meshLine = reconnectFailed
+    ? { tone: 'err' as Tone, text: 'reconnect failed' }
+    : stayingOff
+      ? { tone: 'stopped' as Tone, text: 'disconnected · stays off until you connect' }
+      : { tone: 'stopped' as Tone, text: 'not connected' };
   return (
     <div className="mx-auto w-full max-w-md" data-testid="link-connect-card">
       <Panel title="Signed in">
@@ -418,9 +433,9 @@ function ConnectCard({
                 key: 'mesh',
                 label: 'Mesh',
                 value: (
-                  <span className="inline-flex items-center gap-1.5">
-                    <StatusDot tone="stopped" label="not connected" />
-                    not connected
+                  <span className="inline-flex items-center gap-1.5" data-testid="link-mesh-state">
+                    <StatusDot tone={meshLine.tone} label={meshLine.text} />
+                    {meshLine.text}
                   </span>
                 ),
               },
@@ -436,10 +451,21 @@ function ConnectCard({
             />
           )}
 
+          {reconnectFailed && (
+            <ToneBanner
+              tone="err"
+              label="Reconnect failed"
+              text={`The mesh was on when this app last ran and did not come back: ${reconnectFailed.reason}`}
+              testId="link-reconnect-failed"
+            />
+          )}
+
           {error && <ToneBanner tone="err" label="Connect failed" text={error} />}
 
           <p className={TYPE.bodyMuted}>
-            Bring this Mac onto your private mesh so your linked devices can see each other.
+            {stayingOff
+              ? 'You disconnected this Mac. It stays off the mesh — across restarts too — until you connect.'
+              : 'Bring this Mac onto your private mesh so your linked devices can see each other. It reconnects by itself whenever the app starts, until you disconnect.'}
           </p>
 
           <Button
@@ -451,7 +477,7 @@ function ConnectCard({
             className="w-full"
             icon={connecting ? <Loader2 className="animate-spin" /> : <Link2 />}
           >
-            {error ? 'Retry connect' : 'Connect to mesh'}
+            {error || reconnectFailed ? 'Retry connect' : 'Connect to mesh'}
           </Button>
         </div>
       </Panel>
@@ -459,13 +485,17 @@ function ConnectCard({
   );
 }
 
-function ConnectingCard({ email }: { email: string }) {
+function ConnectingCard({ email, reconnecting }: { email: string; reconnecting: boolean }) {
   return (
     <div className="mx-auto w-full max-w-md" data-testid="link-connecting">
-      <Panel title="Connecting">
+      <Panel title={reconnecting ? 'Reconnecting' : 'Connecting'}>
         <div className="flex flex-col items-center gap-3 py-6 text-center">
           <Loader2 className="size-8 animate-spin text-lz-accent" />
-          <span className={cx(TYPE.body, WEIGHT.semibold)}>Joining your private mesh</span>
+          <span className={cx(TYPE.body, WEIGHT.semibold)}>
+            {reconnecting
+              ? 'Bringing this Mac back onto your private mesh'
+              : 'Joining your private mesh'}
+          </span>
           <span className={TYPE.meta}>{email}</span>
         </div>
       </Panel>
@@ -518,6 +548,8 @@ function ConnectedView({
   nodes,
   now,
   stale,
+  disconnecting,
+  onDisconnect,
   onLogout,
 }: {
   email: string;
@@ -525,6 +557,8 @@ function ConnectedView({
   nodes: NodesResponse | null;
   now: number;
   stale: boolean;
+  disconnecting: boolean;
+  onDisconnect: () => void;
   onLogout: () => void;
 }) {
   const mesh = linkState.mesh;
@@ -547,16 +581,29 @@ function ConnectedView({
       <Panel
         title="Account"
         headerRight={
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            data-testid="link-logout"
-            onClick={onLogout}
-            icon={<LogOut />}
-          >
-            Log out / Switch account
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              data-testid="link-disconnect"
+              disabled={disconnecting}
+              onClick={onDisconnect}
+              icon={disconnecting ? <Loader2 className="animate-spin" /> : <Link2Off />}
+            >
+              Disconnect
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              data-testid="link-logout"
+              onClick={onLogout}
+              icon={<LogOut />}
+            >
+              Log out / Switch account
+            </Button>
+          </div>
         }
       >
         <KeyValue
@@ -655,6 +702,7 @@ const LeanZeroLinkSection: React.FC = () => {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [audienceSyncFailed, setAudienceSyncFailed] = useState(false);
 
+  const [disconnecting, setDisconnecting] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [wipe, setWipe] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -821,6 +869,21 @@ const LeanZeroLinkSection: React.FC = () => {
     }
   }, [refresh]);
 
+  const disconnect = useCallback(async (): Promise<void> => {
+    setDisconnecting(true);
+    try {
+      const next = await leanzeroLinkDisconnect();
+      if (disposedRef.current) return;
+      setLinkState(next);
+      setNodes(null);
+      setConnectError(null);
+    } catch (e) {
+      if (!disposedRef.current) setStatusError(linkErrorText(e));
+    } finally {
+      if (!disposedRef.current) setDisconnecting(false);
+    }
+  }, []);
+
   const doLogout = useCallback(async () => {
     setLoggingOut(true);
     try {
@@ -854,6 +917,7 @@ const LeanZeroLinkSection: React.FC = () => {
   }, [health]);
 
   const auth = linkState?.auth ?? null;
+  const reconnect = linkState?.reconnect;
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -862,6 +926,22 @@ const LeanZeroLinkSection: React.FC = () => {
       )}
       {statusError && auth == null && (
         <ToneBanner tone="err" label="Link status" text={statusError} />
+      )}
+      {linkState?.intentError && (
+        <ToneBanner
+          tone="err"
+          label="Link intent"
+          text={linkState.intentError}
+          testId="link-intent-error"
+        />
+      )}
+      {auth?.state === 'loggedOut' && reconnect?.state === 'failed' && (
+        <ToneBanner
+          tone="err"
+          label="Reconnect failed"
+          text={reconnect.reason}
+          testId="link-reconnect-failed"
+        />
       )}
 
       {auth == null && !statusError ? (
@@ -889,13 +969,18 @@ const LeanZeroLinkSection: React.FC = () => {
         <ConnectCard
           email={auth.email}
           connecting={connecting}
-          error={connectError ?? linkState?.lastError ?? null}
+          // A failed launch reconnect is shown as itself; its text also sits in lastError.
+          error={connectError ?? (reconnect?.state === 'failed' ? null : linkState?.lastError) ?? null}
+          reconnect={reconnect}
+          stayingOff={linkState?.intent?.intent === 'disconnected'}
           audienceSyncFailed={audienceSyncFailed}
           onConnect={() => void connect()}
         />
       )}
 
-      {auth?.state === 'connecting' && <ConnectingCard email={auth.email} />}
+      {auth?.state === 'connecting' && (
+        <ConnectingCard email={auth.email} reconnecting={reconnect?.state === 'reconnecting'} />
+      )}
 
       {auth?.state === 'connected' && linkState && (
         <ConnectedView
@@ -904,6 +989,8 @@ const LeanZeroLinkSection: React.FC = () => {
           nodes={nodes}
           now={now}
           stale={staleFailures >= STALE_POLL_THRESHOLD}
+          disconnecting={disconnecting}
+          onDisconnect={() => void disconnect()}
           onLogout={() => setLogoutOpen(true)}
         />
       )}
