@@ -66,6 +66,7 @@ import { View, ViewOptions } from './utils/navigationUtils';
 import { useNavigation } from './hooks/useNavigation';
 import { useMlxTrayActions } from './hooks/useMlxTrayActions';
 import { useLinkTrayReporter } from './hooks/useLinkTrayReporter';
+import { useMlxRestore } from './hooks/useMlxRestore';
 import { useFeatures } from './contexts/FeaturesContext';
 import { errorMessage } from './utils/conversionUtils';
 import { getInitialWorkingDir } from './utils/workingDir';
@@ -423,6 +424,7 @@ export function AppInner() {
   useMlxTrayActions();
   const { leanzeroLink } = useFeatures();
   useLinkTrayReporter(leanzeroLink);
+  useMlxRestore();
 
   const [chat, setChat] = useState<ChatType>({
     sessionId: '',

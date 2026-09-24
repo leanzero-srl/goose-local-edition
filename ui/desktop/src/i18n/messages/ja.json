@@ -3821,6 +3821,33 @@
   "mlxReplica.verifying": {
     "defaultMessage": "{file} を検証中"
   },
+  "mlxRestore.dismiss": {
+    "defaultMessage": "閉じる"
+  },
+  "mlxRestore.failed": {
+    "defaultMessage": "{model} を {kind, select, single {この Mac で} split {あなたの Mac 全体で} other {{peer} で}} 復元できませんでした: {reason}"
+  },
+  "mlxRestore.label": {
+    "defaultMessage": "復元"
+  },
+  "mlxRestore.linkDown": {
+    "defaultMessage": "LeanZero Link が接続されていません ({detail})"
+  },
+  "mlxRestore.otherMac": {
+    "defaultMessage": "もう一方の Mac"
+  },
+  "mlxRestore.restoring": {
+    "defaultMessage": "{model} を {kind, select, single {この Mac で} split {あなたの Mac 全体で} other {{peer} で}} 復元中…"
+  },
+  "mlxRestore.stoppedEarly": {
+    "defaultMessage": "提供を始める前に停止しました"
+  },
+  "mlxRestore.tryAgain": {
+    "defaultMessage": "再試行"
+  },
+  "mlxRestore.unreadable": {
+    "defaultMessage": "再起動前に何を提供していたか読み取れませんでした: {reason}"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "書き込み中"
   },

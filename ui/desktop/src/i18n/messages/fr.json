@@ -3821,6 +3821,33 @@
   "mlxReplica.verifying": {
     "defaultMessage": "vérification de {file}"
   },
+  "mlxRestore.dismiss": {
+    "defaultMessage": "Ignorer"
+  },
+  "mlxRestore.failed": {
+    "defaultMessage": "Impossible de restaurer {model} {kind, select, single {sur ce Mac} split {sur vos Mac} other {sur {peer}}} : {reason}"
+  },
+  "mlxRestore.label": {
+    "defaultMessage": "Restauration"
+  },
+  "mlxRestore.linkDown": {
+    "defaultMessage": "LeanZero Link n’est pas connecté ({detail})"
+  },
+  "mlxRestore.otherMac": {
+    "defaultMessage": "l’autre Mac"
+  },
+  "mlxRestore.restoring": {
+    "defaultMessage": "Restauration de {model} {kind, select, single {sur ce Mac} split {sur vos Mac} other {sur {peer}}}…"
+  },
+  "mlxRestore.stoppedEarly": {
+    "defaultMessage": "il s’est arrêté avant de servir"
+  },
+  "mlxRestore.tryAgain": {
+    "defaultMessage": "Réessayer"
+  },
+  "mlxRestore.unreadable": {
+    "defaultMessage": "Impossible de lire ce qui était servi avant le redémarrage : {reason}"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Écrit"
   },

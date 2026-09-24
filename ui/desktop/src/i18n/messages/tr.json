@@ -3821,6 +3821,33 @@
   "mlxReplica.verifying": {
     "defaultMessage": "{file} denetleniyor"
   },
+  "mlxRestore.dismiss": {
+    "defaultMessage": "Kapat"
+  },
+  "mlxRestore.failed": {
+    "defaultMessage": "{model} {kind, select, single {bu Mac’te} split {Mac’lerinizde} other {{peer} üzerinde}} geri yüklenemedi: {reason}"
+  },
+  "mlxRestore.label": {
+    "defaultMessage": "Geri yükleme"
+  },
+  "mlxRestore.linkDown": {
+    "defaultMessage": "LeanZero Link bağlı değil ({detail})"
+  },
+  "mlxRestore.otherMac": {
+    "defaultMessage": "diğer Mac"
+  },
+  "mlxRestore.restoring": {
+    "defaultMessage": "{model} {kind, select, single {bu Mac’te} split {Mac’lerinizde} other {{peer} üzerinde}} geri yükleniyor…"
+  },
+  "mlxRestore.stoppedEarly": {
+    "defaultMessage": "hizmet vermeden önce durdu"
+  },
+  "mlxRestore.tryAgain": {
+    "defaultMessage": "Tekrar dene"
+  },
+  "mlxRestore.unreadable": {
+    "defaultMessage": "Yeniden başlatmadan önce neyin sunulduğu okunamadı: {reason}"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Yazıyor"
   },

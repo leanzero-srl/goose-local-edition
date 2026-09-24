@@ -3821,6 +3821,33 @@
   "mlxReplica.verifying": {
     "defaultMessage": "menyemak {file}"
   },
+  "mlxRestore.dismiss": {
+    "defaultMessage": "Tutup"
+  },
+  "mlxRestore.failed": {
+    "defaultMessage": "Tidak dapat memulihkan {model} {kind, select, single {pada Mac ini} split {merentas Mac anda} other {pada {peer}}}: {reason}"
+  },
+  "mlxRestore.label": {
+    "defaultMessage": "Pemulihan"
+  },
+  "mlxRestore.linkDown": {
+    "defaultMessage": "LeanZero Link tidak bersambung ({detail})"
+  },
+  "mlxRestore.otherMac": {
+    "defaultMessage": "Mac lain"
+  },
+  "mlxRestore.restoring": {
+    "defaultMessage": "Memulihkan {model} {kind, select, single {pada Mac ini} split {merentas Mac anda} other {pada {peer}}}…"
+  },
+  "mlxRestore.stoppedEarly": {
+    "defaultMessage": "ia berhenti sebelum menghidangkan"
+  },
+  "mlxRestore.tryAgain": {
+    "defaultMessage": "Cuba lagi"
+  },
+  "mlxRestore.unreadable": {
+    "defaultMessage": "Tidak dapat membaca apa yang dihidangkan sebelum pelancaran semula: {reason}"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Menulis"
   },

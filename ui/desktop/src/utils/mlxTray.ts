@@ -32,6 +32,7 @@ import type {
 } from './mlxDistributedReport';
 import type { MlxClient, MlxServing } from './mlxServing';
 import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
+import { restoreTrayLine, type MlxRestoreReport } from './mlxRestoreReport';
 
 /**
  * The menu-bar presence of the local LeanZero MLX engine, as a PURE function of main's snapshot:
@@ -118,6 +119,8 @@ export interface MlxTrayOptions {
    * single); null when chat stays here or no window has reported a route.
    */
   remote?: MlxRemoteReport | null;
+  /** What the launch is bringing back, or why it could not; null = nothing to say. */
+  restore?: MlxRestoreReport | null;
 }
 
 /**
@@ -497,10 +500,28 @@ export function hostingLine(hosting: MlxDistributedReportHosting): string {
   );
 }
 
+/**
+ * The tray model with the restore's line on top: amber while the launch brings back what served,
+ * red with goose's reason when it could not. A title that says nothing yet says so.
+ */
 export function buildMlxTrayModel(
   snapshot: MlxEngineSnapshot,
   options: MlxTrayOptions
 ): MlxTrayModel {
+  const model = buildEngineTrayModel(snapshot, options);
+  const restore = options.restore ?? null;
+  if (!restore) return model;
+  const phase: EnginePhase = restore.phase === 'restoring' ? 'loading' : 'failed';
+  const line: MlxTrayItem = { type: 'info', label: clip(restoreTrayLine(restore)), phase };
+  if (model.title) return { ...model, items: [line, ...model.items] };
+  return {
+    title: restore.phase === 'restoring' ? 'Restoring…' : 'Restore failed',
+    phase,
+    items: [line, ...model.items],
+  };
+}
+
+function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptions): MlxTrayModel {
   const distributed = options.distributed;
   const hosting = distributed?.report.mode === 'single' ? distributed.report.hosting : null;
   if (hosting && distributed) {

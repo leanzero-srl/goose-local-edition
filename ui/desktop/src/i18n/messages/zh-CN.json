@@ -3821,6 +3821,33 @@
   "mlxReplica.verifying": {
     "defaultMessage": "正在校验 {file}"
   },
+  "mlxRestore.dismiss": {
+    "defaultMessage": "关闭"
+  },
+  "mlxRestore.failed": {
+    "defaultMessage": "无法{kind, select, single {在这台 Mac 上} split {在你的多台 Mac 上} other {在 {peer} 上}}恢复 {model}：{reason}"
+  },
+  "mlxRestore.label": {
+    "defaultMessage": "恢复"
+  },
+  "mlxRestore.linkDown": {
+    "defaultMessage": "LeanZero Link 未连接（{detail}）"
+  },
+  "mlxRestore.otherMac": {
+    "defaultMessage": "另一台 Mac"
+  },
+  "mlxRestore.restoring": {
+    "defaultMessage": "正在{kind, select, single {在这台 Mac 上} split {在你的多台 Mac 上} other {在 {peer} 上}}恢复 {model}…"
+  },
+  "mlxRestore.stoppedEarly": {
+    "defaultMessage": "它在提供服务前就停止了"
+  },
+  "mlxRestore.tryAgain": {
+    "defaultMessage": "重试"
+  },
+  "mlxRestore.unreadable": {
+    "defaultMessage": "无法读取重新启动前正在提供的内容：{reason}"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "正在生成"
   },

@@ -3821,6 +3821,33 @@
   "mlxReplica.verifying": {
     "defaultMessage": "{file} 확인 중"
   },
+  "mlxRestore.dismiss": {
+    "defaultMessage": "닫기"
+  },
+  "mlxRestore.failed": {
+    "defaultMessage": "{model}을(를) {kind, select, single {이 Mac에서} split {내 Mac 전체에서} other {{peer}에서}} 복원할 수 없습니다: {reason}"
+  },
+  "mlxRestore.label": {
+    "defaultMessage": "복원"
+  },
+  "mlxRestore.linkDown": {
+    "defaultMessage": "LeanZero Link가 연결되어 있지 않습니다 ({detail})"
+  },
+  "mlxRestore.otherMac": {
+    "defaultMessage": "다른 Mac"
+  },
+  "mlxRestore.restoring": {
+    "defaultMessage": "{model}을(를) {kind, select, single {이 Mac에서} split {내 Mac 전체에서} other {{peer}에서}} 복원하는 중…"
+  },
+  "mlxRestore.stoppedEarly": {
+    "defaultMessage": "제공하기 전에 중지되었습니다"
+  },
+  "mlxRestore.tryAgain": {
+    "defaultMessage": "다시 시도"
+  },
+  "mlxRestore.unreadable": {
+    "defaultMessage": "다시 시작하기 전에 무엇을 제공했는지 읽을 수 없습니다: {reason}"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "작성 중"
   },

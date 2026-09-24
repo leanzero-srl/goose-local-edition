@@ -14,6 +14,7 @@ import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
 import type { MlxEngineReport, MlxEngineSnapshot } from './utils/mlxEngineMonitor';
 import type { MlxDistributedReport } from './utils/mlxDistributedReport';
 import type { MlxRemoteReport } from './utils/mlxRemoteReport';
+import type { MlxRestoreReport } from './utils/mlxRestoreReport';
 import type { MacsTrayReport } from './utils/macsTrayReport';
 import type { LinkTrayReport } from './utils/linkTrayReport';
 import type { LocalNetworkTouch } from './localNetwork';
@@ -497,6 +498,10 @@ type ElectronAPI = {
   mlxDistributedReport: (report: MlxDistributedReport) => void;
   /** Hand MAIN where MLX chat goes (`remoteSingleStatus`); null = this Mac's own engine. */
   mlxRemoteReport: (report: MlxRemoteReport | null) => void;
+  /** true for the ONE window per app launch that brings back what served before the relaunch. */
+  mlxRestoreClaim: () => Promise<boolean>;
+  /** Hand MAIN the restore's line (restoring / failed); null = nothing to say. */
+  mlxRestoreReport: (report: MlxRestoreReport | null) => void;
   linkReport: (report: LinkTrayReport | null) => void;
   /** Hand MAIN one line per linked Mac (My Macs's words and colours); null = not on the mesh. */
   macsReport: (report: MacsTrayReport | null) => void;
@@ -578,6 +583,9 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.send('mlx-distributed-report', report),
   mlxRemoteReport: (report: MlxRemoteReport | null) =>
     ipcRenderer.send('mlx-remote-report', report),
+  mlxRestoreClaim: () => ipcRenderer.invoke('mlx-restore-claim'),
+  mlxRestoreReport: (report: MlxRestoreReport | null) =>
+    ipcRenderer.send('mlx-restore-report', report),
   linkReport: (report: LinkTrayReport | null) => ipcRenderer.send('link-report', report),
   macsReport: (report: MacsTrayReport | null) => ipcRenderer.send('macs-report', report),
   writeFile: (filePath: string, content: string) =>

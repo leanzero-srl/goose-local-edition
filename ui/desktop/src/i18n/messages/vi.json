@@ -3821,6 +3821,33 @@
   "mlxReplica.verifying": {
     "defaultMessage": "đang kiểm tra {file}"
   },
+  "mlxRestore.dismiss": {
+    "defaultMessage": "Bỏ qua"
+  },
+  "mlxRestore.failed": {
+    "defaultMessage": "Không thể khôi phục {model} {kind, select, single {trên Mac này} split {trên các Mac của bạn} other {trên {peer}}}: {reason}"
+  },
+  "mlxRestore.label": {
+    "defaultMessage": "Khôi phục"
+  },
+  "mlxRestore.linkDown": {
+    "defaultMessage": "LeanZero Link chưa được kết nối ({detail})"
+  },
+  "mlxRestore.otherMac": {
+    "defaultMessage": "Mac kia"
+  },
+  "mlxRestore.restoring": {
+    "defaultMessage": "Đang khôi phục {model} {kind, select, single {trên Mac này} split {trên các Mac của bạn} other {trên {peer}}}…"
+  },
+  "mlxRestore.stoppedEarly": {
+    "defaultMessage": "nó đã dừng trước khi phục vụ"
+  },
+  "mlxRestore.tryAgain": {
+    "defaultMessage": "Thử lại"
+  },
+  "mlxRestore.unreadable": {
+    "defaultMessage": "Không thể đọc những gì đã phục vụ trước khi khởi động lại: {reason}"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Đang viết"
   },

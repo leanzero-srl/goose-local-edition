@@ -90,6 +90,7 @@ import { ModelMatrix, matrixRowCount } from './ModelMatrix';
 import { SELF_KEY, macTarget, peerRefuses, routePeerName, type Mac } from './macs';
 import { WithMacs, useMacs } from './useMacs';
 import { MlxStateTile } from './MlxStateTile';
+import { MlxRestoreBanner } from './MlxRestoreLine';
 import type { MlxServing } from '../../utils/mlxServing';
 import {
   NO_RATES,
@@ -884,6 +885,7 @@ function EngineSection(props: EngineSectionProps) {
 
   return (
     <div className="flex flex-col gap-4 pb-8">
+      <MlxRestoreBanner />
       {statusError && <ToneBanner tone="err" label="Engine unreachable" text={statusError} />}
       {banners.gateBlock && (
         <ToneBanner

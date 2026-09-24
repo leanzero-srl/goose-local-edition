@@ -18,7 +18,8 @@ import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
 import { defineMessages, useIntl } from '../../i18n';
-import { Button, RADIUS, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
+import { Button, PHASE_FILL, RADIUS, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
+import { RestoreActions, restoreLineText, useRestoreLine } from '../leanzero-swarm/MlxRestoreLine';
 import {
   distributedFact,
   distributedProblem,
@@ -216,6 +217,8 @@ export function ComposerReadinessStrip({ provider }: { provider: string | null |
   const distributed = useLatestMlxDistributedStatus();
   const remote = useSyncExternalStore(subscribeMlxRemoteSingleStatus, latestMlxRemoteSingleStatus);
   const { requestingNodeId, mountErrors, mount } = useMlxMount(status);
+  const restore = useRestoreLine();
+  const restoreText = restoreLineText(intl, restore);
 
   const readiness: ComposerReadiness = isSwarm
     ? swarmReadiness(lookup, status, distributed, remote)
@@ -229,6 +232,29 @@ export function ComposerReadinessStrip({ provider }: { provider: string | null |
         )
       : UNKNOWN;
 
+  // A relaunch bringing back what served: that is the line, not "No model is mounted" + Mount.
+  if (armed && restoreText != null && readiness.kind !== 'ready') {
+    return (
+      <div
+        role={restore.phase === 'failed' ? 'alert' : 'status'}
+        data-testid="composer-readiness"
+        data-readiness={`restore-${restore.phase}`}
+        className={cx(
+          'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
+          RADIUS.control,
+          restore.phase === 'failed' ? PHASE_FILL.failed : PHASE_FILL.loading
+        )}
+      >
+        {restore.phase === 'restoring' && (
+          <Loader2 aria-hidden className="size-4 shrink-0 animate-spin" />
+        )}
+        <span className={cx('min-w-0 flex-1 break-words text-lz-body', WEIGHT.semibold)}>
+          {restoreText}
+        </span>
+        {restore.phase === 'failed' && <RestoreActions />}
+      </div>
+    );
+  }
   if (readiness.kind === 'unknown' || readiness.kind === 'ready') return null;
   return (
     <ReadinessStripBody

@@ -3821,6 +3821,33 @@
   "mlxReplica.verifying": {
     "defaultMessage": "{file} जाँची जा रही है"
   },
+  "mlxRestore.dismiss": {
+    "defaultMessage": "खारिज करें"
+  },
+  "mlxRestore.failed": {
+    "defaultMessage": "{model} {kind, select, single {इस Mac पर} split {आपके Macs पर} other {{peer} पर}} पुनर्स्थापित नहीं हो सका: {reason}"
+  },
+  "mlxRestore.label": {
+    "defaultMessage": "पुनर्स्थापना"
+  },
+  "mlxRestore.linkDown": {
+    "defaultMessage": "LeanZero Link कनेक्ट नहीं है ({detail})"
+  },
+  "mlxRestore.otherMac": {
+    "defaultMessage": "दूसरे Mac"
+  },
+  "mlxRestore.restoring": {
+    "defaultMessage": "{model} {kind, select, single {इस Mac पर} split {आपके Macs पर} other {{peer} पर}} पुनर्स्थापित हो रहा है…"
+  },
+  "mlxRestore.stoppedEarly": {
+    "defaultMessage": "यह सर्व करने से पहले रुक गया"
+  },
+  "mlxRestore.tryAgain": {
+    "defaultMessage": "फिर से कोशिश करें"
+  },
+  "mlxRestore.unreadable": {
+    "defaultMessage": "रीलॉन्च से पहले क्या सर्व हो रहा था, यह पढ़ा नहीं जा सका: {reason}"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "लिख रहा है"
   },

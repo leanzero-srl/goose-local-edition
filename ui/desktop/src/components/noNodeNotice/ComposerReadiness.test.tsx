@@ -11,6 +11,7 @@ import type { MountLookup } from './mlxMount';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
 import { mlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
+import { publishRestoreLine } from '../leanzero-swarm/mlxRestore';
 
 const mockStatus = vi.fn<() => Promise<MlxEngineStatus>>();
 const mockMount = vi.fn<(modelId: string) => Promise<void>>();
@@ -282,6 +283,38 @@ beforeEach(() => {
   mockMount.mockResolvedValue(undefined);
   mockSettings.mockResolvedValue(SETTINGS);
   mockReadConfig.mockResolvedValue({ devices: [MLX_NODE] });
+});
+
+describe('ComposerReadinessStrip — a relaunch bringing back what served', () => {
+  it('says what comes back and where instead of "No model is mounted" + Mount; a failure says why', async () => {
+    wrap('swarm');
+    await screen.findByTestId('composer-readiness-mount');
+    act(() =>
+      publishRestoreLine({
+        phase: 'restoring',
+        what: { kind: 'single', modelId: HF, peerName: null },
+      })
+    );
+    const strip = await screen.findByTestId('composer-readiness');
+    expect(strip).toHaveAttribute('data-readiness', 'restore-restoring');
+    expect(strip.textContent).toContain('Restoring Qwen3.8-27B-Atlassian-Q8-mlx on this Mac…');
+    expect(strip.className).toContain('bg-lz-phase-loading');
+    expect(screen.queryByTestId('composer-readiness-mount')).toBeNull();
+
+    act(() =>
+      publishRestoreLine({
+        phase: 'failed',
+        what: { kind: 'single', modelId: HF, peerName: null },
+        reason: { code: 'said', text: 'model needs 30.6 GB, 12.0 GB free' },
+      })
+    );
+    expect(screen.getByTestId('composer-readiness').textContent).toContain(
+      'Could not restore Qwen3.8-27B-Atlassian-Q8-mlx on this Mac: model needs 30.6 GB, 12.0 GB free'
+    );
+    expect(screen.getByTestId('mlx-restore-retry')).toBeInTheDocument();
+    act(() => publishRestoreLine({ phase: 'idle' }));
+    expect(await screen.findByTestId('composer-readiness-mount')).toBeInTheDocument();
+  });
 });
 
 describe('ComposerReadinessStrip — a route to another Mac', () => {

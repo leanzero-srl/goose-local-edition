@@ -143,6 +143,7 @@ import {
 import { PHASE_HEX, type EnginePhase } from './components/lz/tokens';
 import { phaseDotBitmap } from './utils/phaseDot';
 import { isMlxRemoteReport, remoteLiveBase, type MlxRemoteReport } from './utils/mlxRemoteReport';
+import { isMlxRestoreReport, type MlxRestoreReport } from './utils/mlxRestoreReport';
 import {
   isLinkTrayReport,
   pickLinkTrayReport,
@@ -2195,6 +2196,11 @@ let mlxDistributed: { report: MlxDistributedReport; atMs: number } | null = null
 let mlxDistributedStaleTimer: ReturnType<typeof setTimeout> | null = null;
 // Where MLX chat goes when a window routed it to a LeanZero Link peer (remote single); null = here.
 let mlxRemote: MlxRemoteReport | null = null;
+// What the launch is bringing back (components/leanzero-swarm/mlxRestore.ts); null = nothing to say.
+let mlxRestore: MlxRestoreReport | null = null;
+// ONE restore per app launch: the first window to ask runs it, every later window (or a reload) is
+// told no — each window runs its own goosed, and two restores would start the thing twice.
+let mlxRestoreClaimed = false;
 
 // LeanZero Link's line in the tray, from the renderer's latest Link state read (utils/linkTrayReport):
 // connected, reconnecting, or — loudly — a launch reconnect that failed, with its Retry.
@@ -2262,7 +2268,8 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
     snapshot.baseUrl == null &&
     distributed?.report.mode !== 'distributed' &&
     distributed?.report.hosting == null &&
-    mlxRemote == null;
+    mlxRemote == null &&
+    mlxRestore == null;
   const model = buildMlxTrayModel(snapshot, {
     canAct: mlxActionWindow() != null,
     mountModelId:
@@ -2271,6 +2278,7 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
         : mlxEngineConfig().modelId,
     distributed,
     remote: mlxRemote,
+    restore: mlxRestore,
   });
   if (process.platform === 'darwin') {
     tray.setTitle(silent ? '' : trayTitleText(model), { fontType: 'monospacedDigit' });
@@ -2320,6 +2328,16 @@ ipcMain.on('macs-report', (event, report: unknown) => {
   }
   macsTrayByWindow.set(sender.id, report);
   macsTray = pickMacsTrayReport(macsTrayByWindow.values());
+  renderMlxTray(mlxMonitor.current());
+});
+ipcMain.handle('mlx-restore-claim', () => {
+  if (mlxRestoreClaimed) return false;
+  mlxRestoreClaimed = true;
+  return true;
+});
+ipcMain.on('mlx-restore-report', (_event, report: unknown) => {
+  if (!isMlxRestoreReport(report)) return;
+  mlxRestore = report;
   renderMlxTray(mlxMonitor.current());
 });
 ipcMain.on('mlx-remote-report', (_event, report: unknown) => {
