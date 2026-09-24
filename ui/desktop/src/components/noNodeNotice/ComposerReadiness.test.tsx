@@ -106,6 +106,24 @@ const ready = (devices: SwarmDeviceRow[]): MountLookup => ({
 });
 
 describe('swarmReadiness — only what the renderer can know', () => {
+  it('a remote-single route is where chat goes: said even while it serves, before any local fact', () => {
+    const remote = {
+      state: 'ready',
+      peer: 'worksmacstudio-lan-9c1e2a',
+      peerHostname: 'worksmacstudio-lan-9c1e2a',
+      modelId: HF,
+      servedModelId: ALIAS,
+    };
+    expect(swarmReadiness(ready([MLX_NODE]), STOPPED, null, remote)).toEqual({
+      kind: 'remote',
+      status: remote,
+    });
+    expect(swarmReadiness(ready([]), null, null, remote).kind).toBe('remote');
+    expect(swarmReadiness(ready([MLX_NODE]), STOPPED, null, { state: 'off' }).kind).toBe(
+      'unmounted'
+    );
+  });
+
   it('the audit case: the only enabled node is an unmounted local MLX node → unmounted, with its mount target', () => {
     expect(swarmReadiness(ready([MLX_NODE]), STOPPED, null)).toEqual({
       kind: 'unmounted',

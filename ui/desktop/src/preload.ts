@@ -13,6 +13,7 @@ import type { FleetChatResult, FleetProbeResult } from './utils/fleetProbe';
 import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
 import type { MlxEngineReport, MlxEngineSnapshot } from './utils/mlxEngineMonitor';
 import type { MlxDistributedReport } from './utils/mlxDistributedReport';
+import type { MlxRemoteReport } from './utils/mlxRemoteReport';
 import type { LocalNetworkTouch } from './localNetwork';
 
 // Mapping from settings keys to their old localStorage keys for lazy migration
@@ -492,6 +493,8 @@ type ElectronAPI = {
   mlxEngineActivity: () => Promise<MlxEngineSnapshot>;
   /** Hand MAIN what goose's ACP `distributedStatus` just said (the tray has no ACP client). */
   mlxDistributedReport: (report: MlxDistributedReport) => void;
+  /** Hand MAIN where MLX chat goes (`remoteSingleStatus`); null = this Mac's own engine. */
+  mlxRemoteReport: (report: MlxRemoteReport | null) => void;
 };
 
 type AppConfigAPI = {
@@ -568,6 +571,8 @@ const electronAPI: ElectronAPI = {
   mlxEngineActivity: () => ipcRenderer.invoke('mlx-engine-activity'),
   mlxDistributedReport: (report: MlxDistributedReport) =>
     ipcRenderer.send('mlx-distributed-report', report),
+  mlxRemoteReport: (report: MlxRemoteReport | null) =>
+    ipcRenderer.send('mlx-remote-report', report),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
   swarmAddNote: (workingDir: string, text: string) =>

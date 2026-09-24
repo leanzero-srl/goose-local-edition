@@ -731,6 +731,9 @@
   "composerReadiness.openProviders": {
     "defaultMessage": "Открыть Providers"
   },
+  "composerReadiness.remote": {
+    "defaultMessage": "Обслуживается с {peer} · {state}"
+  },
   "composerReadiness.unmounted": {
     "defaultMessage": "Модель не смонтирована — {nodes}"
   },
@@ -3899,6 +3902,9 @@
   "mlxStateTile.serving": {
     "defaultMessage": "Обслуживает"
   },
+  "mlxStateTile.servingFrom": {
+    "defaultMessage": "Чат: обслуживается с {peer} · {state}"
+  },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Не удалось прочитать, кто его использует: {detail}"
   },
@@ -4310,8 +4316,14 @@
   "noNodeNotice.ready": {
     "defaultMessage": "Узел готов — повторите, чтобы снова отправить сообщение."
   },
+  "noNodeNotice.remoteDown": {
+    "defaultMessage": "Обслуживается с {peer}, но его движок не отвечает через LeanZero Link."
+  },
   "noNodeNotice.retry": {
     "defaultMessage": "Повторить"
+  },
+  "noNodeNotice.routedRemote": {
+    "defaultMessage": "Обслуживается с {peer} — собственный движок этого Mac не используется, пока чат идёт туда."
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Swarm проверил каждый активный узел, и ни один не смог принять это сообщение."

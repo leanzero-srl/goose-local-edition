@@ -731,6 +731,9 @@
   "composerReadiness.openProviders": {
     "defaultMessage": "Providers’ı aç"
   },
+  "composerReadiness.remote": {
+    "defaultMessage": "{peer} üzerinden sunuluyor · {state}"
+  },
   "composerReadiness.unmounted": {
     "defaultMessage": "Takılı model yok — {nodes}"
   },
@@ -3899,6 +3902,9 @@
   "mlxStateTile.serving": {
     "defaultMessage": "Hizmet veriyor"
   },
+  "mlxStateTile.servingFrom": {
+    "defaultMessage": "Sohbet: {peer} üzerinden sunuluyor · {state}"
+  },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Kimin kullandığı okunamadı: {detail}"
   },
@@ -4310,8 +4316,14 @@
   "noNodeNotice.ready": {
     "defaultMessage": "Düğüm hazır — mesajınızı yeniden göndermek için tekrar deneyin."
   },
+  "noNodeNotice.remoteDown": {
+    "defaultMessage": "{peer} üzerinden sunuluyor, ancak motoru LeanZero Link üzerinden yanıt vermiyor."
+  },
   "noNodeNotice.retry": {
     "defaultMessage": "Yeniden dene"
+  },
+  "noNodeNotice.routedRemote": {
+    "defaultMessage": "{peer} üzerinden sunuluyor — sohbet oraya gittiği sürece bu Mac'in kendi motoru devre dışı."
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Swarm her etkin düğümü denetledi, hiçbiri bu mesajı alamadı."

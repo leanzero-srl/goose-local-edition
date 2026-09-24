@@ -731,6 +731,9 @@
   "composerReadiness.openProviders": {
     "defaultMessage": "Mở Providers"
   },
+  "composerReadiness.remote": {
+    "defaultMessage": "Đang phục vụ từ {peer} · {state}"
+  },
   "composerReadiness.unmounted": {
     "defaultMessage": "Chưa gắn mô hình nào — {nodes}"
   },
@@ -3899,6 +3902,9 @@
   "mlxStateTile.serving": {
     "defaultMessage": "Đang phục vụ"
   },
+  "mlxStateTile.servingFrom": {
+    "defaultMessage": "Trò chuyện: đang phục vụ từ {peer} · {state}"
+  },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Không đọc được ai đang dùng: {detail}"
   },
@@ -4310,8 +4316,14 @@
   "noNodeNotice.ready": {
     "defaultMessage": "Nút đã sẵn sàng — thử lại để gửi lại tin nhắn của bạn."
   },
+  "noNodeNotice.remoteDown": {
+    "defaultMessage": "Đang phục vụ từ {peer}, nhưng engine của máy đó không phản hồi qua LeanZero Link."
+  },
   "noNodeNotice.retry": {
     "defaultMessage": "Thử lại"
+  },
+  "noNodeNotice.routedRemote": {
+    "defaultMessage": "Đang phục vụ từ {peer} — engine của chính Mac này được tạm gác lại khi trò chuyện đi tới đó."
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Swarm đã kiểm tra mọi nút đang bật và không nút nào nhận được tin nhắn này."

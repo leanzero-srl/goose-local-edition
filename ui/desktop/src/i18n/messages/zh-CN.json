@@ -731,6 +731,9 @@
   "composerReadiness.openProviders": {
     "defaultMessage": "打开 Providers"
   },
+  "composerReadiness.remote": {
+    "defaultMessage": "由 {peer} 提供 · {state}"
+  },
   "composerReadiness.unmounted": {
     "defaultMessage": "没有已挂载的模型 — {nodes}"
   },
@@ -3899,6 +3902,9 @@
   "mlxStateTile.serving": {
     "defaultMessage": "正在服务"
   },
+  "mlxStateTile.servingFrom": {
+    "defaultMessage": "聊天：由 {peer} 提供 · {state}"
+  },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "无法读取使用方：{detail}"
   },
@@ -4310,8 +4316,14 @@
   "noNodeNotice.ready": {
     "defaultMessage": "节点已就绪 — 重试即可再次发送你的消息。"
   },
+  "noNodeNotice.remoteDown": {
+    "defaultMessage": "由 {peer} 提供，但其引擎未通过 LeanZero Link 响应。"
+  },
   "noNodeNotice.retry": {
     "defaultMessage": "重试"
+  },
+  "noNodeNotice.routedRemote": {
+    "defaultMessage": "由 {peer} 提供 — 聊天发往那里期间，这台 Mac 自己的引擎不参与。"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Swarm 检查了每个已启用的节点，没有一个能接收这条消息。"

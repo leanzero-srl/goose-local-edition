@@ -39,6 +39,15 @@ const i18n = defineMessages({
     id: 'noNodeNotice.mlxWrongModel',
     defaultMessage: 'The MLX engine serves {served}, but this node is set to {wanted}.',
   },
+  routedRemote: {
+    id: 'noNodeNotice.routedRemote',
+    defaultMessage:
+      'Serving from {peer} — this Mac’s own engine is set aside while chat goes there.',
+  },
+  remoteDown: {
+    id: 'noNodeNotice.remoteDown',
+    defaultMessage: 'Serving from {peer}, but its engine is not answering through LeanZero Link.',
+  },
   lmUnreachable: {
     id: 'noNodeNotice.lmUnreachable',
     defaultMessage: 'Nothing answers at {url} — LM Studio may not be running.',
@@ -91,6 +100,10 @@ function reasonText(intl: ReturnType<typeof useIntl>, reason: NodeReason): strin
         served: reason.served,
         wanted: reason.wanted,
       });
+    case 'mlx-routed-remote':
+      return intl.formatMessage(i18n.routedRemote, { peer: reason.peer });
+    case 'mlx-remote-down':
+      return intl.formatMessage(i18n.remoteDown, { peer: reason.peer });
     case 'lm-unreachable':
       return intl.formatMessage(i18n.lmUnreachable, { url: reason.url });
     case 'lm-not-listed':

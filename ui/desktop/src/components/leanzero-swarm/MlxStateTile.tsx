@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useSyncExternalStore, type ReactNode } from 'react';
 import {
   Bot,
   CircleHelp,
@@ -15,6 +15,11 @@ import { defineMessages, useIntl } from '../../i18n';
 import { RADIUS, TNUM, TONE_FILL, WEIGHT, cx, type Tone } from '../lz';
 import type { MlxEngineState } from '../../acp/mlx-engine';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
+import {
+  latestMlxRemoteSingleStatus,
+  remoteRouteUp,
+  subscribeMlxRemoteSingleStatus,
+} from '../../acp/mlx-remote-single';
 import {
   gb1,
   gib,
@@ -58,6 +63,10 @@ import {
 
 const i18n = defineMessages({
   running: { id: 'mlxStateTile.state.running', defaultMessage: 'Running' },
+  servingFrom: {
+    id: 'mlxStateTile.servingFrom',
+    defaultMessage: 'Chat: serving from {peer} · {state}',
+  },
   mounting: { id: 'mlxStateTile.state.mounting', defaultMessage: 'Mounting' },
   failed: { id: 'mlxStateTile.state.failed', defaultMessage: 'Failed' },
   stopped: { id: 'mlxStateTile.state.stopped', defaultMessage: 'Stopped' },
@@ -858,6 +867,11 @@ export function MlxStateTile(props: MlxStateTileProps) {
   } = props;
   const dist = ownsTheMac(distributed) ? distributed : null;
   const hosting = !dist ? (distributed?.hosting ?? null) : null;
+  const remoteStatus = useSyncExternalStore(
+    subscribeMlxRemoteSingleStatus,
+    latestMlxRemoteSingleStatus
+  );
+  const remote = remoteRouteUp(remoteStatus) ? remoteStatus : null;
   const activity = !dist && state === 'running' && live?.ok ? mlxActivity(live.stats) : null;
   const tone: Tone = dist
     ? dist.admissionOpen
@@ -931,6 +945,19 @@ export function MlxStateTile(props: MlxStateTileProps) {
         <span data-testid="mlx-mode" className={cx(LINE, WEIGHT.semibold)}>
           {modeLabel}
         </span>
+        {remote && (
+          <span
+            data-testid="mlx-remote"
+            data-state={remote.state}
+            title={remote.lastError ?? remote.modelId ?? undefined}
+            className={cx(LINE, WEIGHT.semibold)}
+          >
+            {intl.formatMessage(i18n.servingFrom, {
+              peer: remote.peerHostname ?? remote.peer ?? '',
+              state: remote.state,
+            })}
+          </span>
+        )}
       </div>
       {dist && <DistributedInstrument status={dist} />}
       {hosting && <HostingInstrument hosting={hosting} />}

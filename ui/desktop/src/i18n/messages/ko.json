@@ -731,6 +731,9 @@
   "composerReadiness.openProviders": {
     "defaultMessage": "Providers 열기"
   },
+  "composerReadiness.remote": {
+    "defaultMessage": "{peer}에서 제공 중 · {state}"
+  },
   "composerReadiness.unmounted": {
     "defaultMessage": "마운트된 모델이 없습니다 — {nodes}"
   },
@@ -3899,6 +3902,9 @@
   "mlxStateTile.serving": {
     "defaultMessage": "처리 중"
   },
+  "mlxStateTile.servingFrom": {
+    "defaultMessage": "채팅: {peer}에서 제공 중 · {state}"
+  },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "사용 주체를 읽을 수 없음: {detail}"
   },
@@ -4310,8 +4316,14 @@
   "noNodeNotice.ready": {
     "defaultMessage": "노드가 준비되었습니다 — 다시 시도하면 메시지를 한 번 더 보냅니다."
   },
+  "noNodeNotice.remoteDown": {
+    "defaultMessage": "{peer}에서 제공 중이지만 해당 엔진이 LeanZero Link를 통해 응답하지 않습니다."
+  },
   "noNodeNotice.retry": {
     "defaultMessage": "다시 시도"
+  },
+  "noNodeNotice.routedRemote": {
+    "defaultMessage": "{peer}에서 제공 중 — 채팅이 그쪽으로 가는 동안 이 Mac의 자체 엔진은 사용되지 않습니다."
   },
   "noNodeNotice.summary": {
     "defaultMessage": "스웜이 활성화된 모든 노드를 확인했지만 이 메시지를 받을 수 있는 노드가 없었습니다."

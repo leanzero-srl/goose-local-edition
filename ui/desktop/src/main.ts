@@ -133,6 +133,7 @@ import {
   type MlxTrayItem,
 } from './utils/mlxTray';
 import { isMlxDistributedReport, type MlxDistributedReport } from './utils/mlxDistributedReport';
+import { isMlxRemoteReport, type MlxRemoteReport } from './utils/mlxRemoteReport';
 import { MLX_STATUS_POLL_MS } from './components/leanzero-swarm/mlxLiveStats';
 import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
@@ -2140,6 +2141,8 @@ const mlxTrayMenuItem = (item: MlxTrayItem): MenuItemConstructorOptions => {
 // along so an old read is SAID to be old (MLX_DISTRIBUTED_STALE_MS), never shown as live.
 let mlxDistributed: { report: MlxDistributedReport; atMs: number } | null = null;
 let mlxDistributedStaleTimer: ReturnType<typeof setTimeout> | null = null;
+// Where MLX chat goes when a window routed it to a LeanZero Link peer (remote single); null = here.
+let mlxRemote: MlxRemoteReport | null = null;
 
 let lastMlxTrayMenu = '';
 const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
@@ -2152,7 +2155,8 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
     snapshot.mode === 'unknown' &&
     snapshot.baseUrl == null &&
     distributed?.report.mode !== 'distributed' &&
-    distributed?.report.hosting == null;
+    distributed?.report.hosting == null &&
+    mlxRemote == null;
   const model = buildMlxTrayModel(snapshot, {
     canAct: mlxActionWindow() != null,
     mountModelId:
@@ -2160,6 +2164,7 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
         ? null
         : mlxEngineConfig().modelId,
     distributed,
+    remote: mlxRemote,
   });
   if (process.platform === 'darwin') {
     tray.setTitle(silent ? '' : model.title, { fontType: 'monospacedDigit' });
@@ -2176,6 +2181,11 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
 
 ipcMain.on('mlx-engine-report', (_event, report: unknown) => {
   if (isMlxEngineReport(report)) mlxMonitor.reportFromRenderer(report);
+});
+ipcMain.on('mlx-remote-report', (_event, report: unknown) => {
+  if (!isMlxRemoteReport(report)) return;
+  mlxRemote = report;
+  renderMlxTray(mlxMonitor.current());
 });
 ipcMain.on('mlx-distributed-report', (_event, report: unknown) => {
   if (!isMlxDistributedReport(report)) return;

@@ -731,6 +731,9 @@
   "composerReadiness.openProviders": {
     "defaultMessage": "Abrir Providers"
   },
+  "composerReadiness.remote": {
+    "defaultMessage": "Servido a partir de {peer} · {state}"
+  },
   "composerReadiness.unmounted": {
     "defaultMessage": "Nenhum modelo montado — {nodes}"
   },
@@ -3899,6 +3902,9 @@
   "mlxStateTile.serving": {
     "defaultMessage": "Atendendo"
   },
+  "mlxStateTile.servingFrom": {
+    "defaultMessage": "Chat: servido a partir de {peer} · {state}"
+  },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Não foi possível ler quem o usa: {detail}"
   },
@@ -4310,8 +4316,14 @@
   "noNodeNotice.ready": {
     "defaultMessage": "O nó está pronto — tente novamente para reenviar sua mensagem."
   },
+  "noNodeNotice.remoteDown": {
+    "defaultMessage": "Servido a partir de {peer}, mas o motor dele não responde pelo LeanZero Link."
+  },
   "noNodeNotice.retry": {
     "defaultMessage": "Tentar novamente"
+  },
+  "noNodeNotice.routedRemote": {
+    "defaultMessage": "Servido a partir de {peer} — o motor deste Mac fica de lado enquanto o chat vai para lá."
   },
   "noNodeNotice.summary": {
     "defaultMessage": "O swarm verificou cada nó ativo e nenhum pôde receber esta mensagem."

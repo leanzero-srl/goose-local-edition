@@ -16,6 +16,7 @@ import type {
   MlxDistributedReportNode,
 } from './mlxDistributedReport';
 import type { MlxClient, MlxServing } from './mlxServing';
+import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
 
 /**
  * The menu-bar presence of the local LeanZero MLX engine, as a PURE function of main's snapshot:
@@ -47,6 +48,20 @@ export interface MlxTrayOptions {
    * reported one (a backend without the `mlxDistributed` capability, or no window yet).
    */
   distributed: { report: MlxDistributedReport; ageMs: number } | null;
+  /**
+   * Where this Mac's MLX chat goes when it is routed to a LeanZero Link peer's engine (remote
+   * single); null when chat stays here or no window has reported a route.
+   */
+  remote?: MlxRemoteReport | null;
+}
+
+function remoteTrayTitle(report: MlxRemoteReport): string {
+  if (report.state === 'ready') {
+    return report.generationTps != null && report.generationTps > 0
+      ? `Remote · ${formatRate(report.generationTps)} tok/s`
+      : 'Remote';
+  }
+  return report.state === 'failed' ? 'Remote failed' : `Remote · ${report.state}`;
 }
 
 /**
@@ -397,7 +412,14 @@ export function buildMlxTrayModel(
       ],
     };
   }
-  const items: MlxTrayItem[] = [{ type: 'info', label: headline(snapshot) }];
+  const remote = options.remote ?? null;
+  const items: MlxTrayItem[] = [];
+  if (remote) {
+    // Chat goes to a peer's engine: that is the line that matters; this Mac's own engine follows.
+    items.push({ type: 'info', label: clip(remoteTrayLine(remote)) });
+    if (remote.lastError) items.push({ type: 'info', label: clip(`Error: ${remote.lastError}`) });
+  }
+  items.push({ type: 'info', label: headline(snapshot) });
   if (distributed) items.push({ type: 'info', label: 'Single · this Mac' });
   if (snapshot.modelId && snapshot.mode !== 'off') {
     items.push({ type: 'info', label: clip(`Model: ${snapshot.modelId}`) });
@@ -440,5 +462,6 @@ export function buildMlxTrayModel(
     });
   }
   const single = mlxTrayTitle(snapshot);
+  if (remote) return { title: remoteTrayTitle(remote), items };
   return { title: single || (distributedFailed ? 'Dist failed' : ''), items };
 }

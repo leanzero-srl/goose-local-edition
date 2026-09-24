@@ -731,6 +731,9 @@
   "composerReadiness.openProviders": {
     "defaultMessage": "Providers खोलें"
   },
+  "composerReadiness.remote": {
+    "defaultMessage": "{peer} से सर्व हो रहा है · {state}"
+  },
   "composerReadiness.unmounted": {
     "defaultMessage": "कोई मॉडल माउंट नहीं है — {nodes}"
   },
@@ -3899,6 +3902,9 @@
   "mlxStateTile.serving": {
     "defaultMessage": "सेवा दे रहा है"
   },
+  "mlxStateTile.servingFrom": {
+    "defaultMessage": "चैट: {peer} से सर्व हो रहा है · {state}"
+  },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "कौन उपयोग कर रहा है, यह पढ़ा नहीं जा सका: {detail}"
   },
@@ -4310,8 +4316,14 @@
   "noNodeNotice.ready": {
     "defaultMessage": "नोड तैयार है — अपना संदेश फिर भेजने के लिए दोबारा कोशिश करें।"
   },
+  "noNodeNotice.remoteDown": {
+    "defaultMessage": "{peer} से सर्व हो रहा है, लेकिन उसका इंजन LeanZero Link के ज़रिए जवाब नहीं दे रहा।"
+  },
   "noNodeNotice.retry": {
     "defaultMessage": "फिर से कोशिश करें"
+  },
+  "noNodeNotice.routedRemote": {
+    "defaultMessage": "{peer} से सर्व हो रहा है — जब तक चैट वहाँ जाती है, इस Mac का अपना इंजन अलग रखा गया है।"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "स्वॉर्म ने हर सक्रिय नोड जाँचा, कोई भी यह संदेश नहीं ले सका।"
