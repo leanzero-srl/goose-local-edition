@@ -28,6 +28,12 @@ alert came only for bundle id net.leanzero.goose-swarm (kept, 8b885e6f6; 3.0.20-
 Macs, mtplx from the MacBook (still on the workhorse — owner scoped it to this Mac). 43 upstream GitHub workflows
 disabled (gh -R leanzero-srl/goose-local-edition); CI being made green. In flight: idle-rank CPU spin fix, Link as the
 discovery/control plane (owner must sign both Macs into Link for the live test). NEXT: 3.0.22 from a CLEAN worktree.
+UPDATE 2026-09-24 ~12:30 — PLACEMENT PLANNER approved by the owner ("I like your design seriously!"), spec in
+local-edition/mlx/DESIGN-PLACEMENT.md; default goal = chat speed + a "Measure speed" benchmark (~2k prompt + 256 tokens).
+In flight: P1–2 + benchmark (facts, planner, measurement store, card, badges); P3 remote single via a Link chat proxy;
+memory compaction + budget = each Mac's GPU ceiling (owner: M3 Ultra should reach ~76 GB); KV-cache compression
+(v0.14.3-lz.3 pin landed); Flash image input DONE across the split (app chat pending memory). P4 (one copy per Mac)
+after P3. Then one release with all of it, installed on both Macs.
 OPEN (each has an agent or a slot): (a) Flash full-model reference by layer streaming + batch-vs-single mismatch (52/260) —
 split agent; (b) live trigger of hang rule + watchdog — backend agent; (c) Engine-tab/tile/tray distributed UI — panel-surgeon;
 (d) qwen4_exp OpenAI server entry in the fork so goose can START a Flash split — QUEUED behind: (a)'s agent; (e) remount the
