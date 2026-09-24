@@ -30,7 +30,7 @@ pub(super) fn align_omlx_host_env() {
     }
     // The explicit switch: while the distributed engine owns this Mac, the omlx provider targets
     // ITS port; the moment it stops, the single engine's port below is restored.
-    if let Some(base) = goose_sidecar::distributed::global_manager().active_base_url() {
+    if let Some(base) = crate::providers::mlx_distributed_owner::own_active_base_url() {
         std::env::set_var("OMLX_HOST", base);
         return;
     }

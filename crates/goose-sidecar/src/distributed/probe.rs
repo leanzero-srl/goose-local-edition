@@ -387,7 +387,6 @@ pub fn sse_verdict(body: &str) -> SseVerdict {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GIB;
 
     /// Recorded on this MacBook (M4 Max 128 GB) 2026-09-24 with `vm_stat`.
     const VM_STAT_MACBOOK: &str = "Mach Virtual Memory Statistics: (page size of 16384 bytes)
@@ -445,7 +444,7 @@ Pages occupied by compressor:                 649325.
             parse_vm_stat(&String::from_utf8_lossy(&out.stdout), measured.total_bytes).unwrap();
         let diff = parsed.available_bytes.abs_diff(measured.available_bytes);
         assert!(
-            diff < GIB,
+            diff < crate::GIB,
             "vm_stat and host_statistics64 differ by {diff} bytes"
         );
     }

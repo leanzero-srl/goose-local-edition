@@ -123,10 +123,12 @@ mod tests {
     // Measured 2026-09-24 on the MacBook (rank 0, 192.168.0.1) ↔ Mac Studio (192.168.0.2, ssh
     // `workhorse` over Tailscale): the app opened from Finder failed `ping` to 192.168.0.2 while
     // the Studio's probe (over ssh) answered `192.168.0.1 ok`.
+    #[cfg(target_os = "macos")]
     fn blocked_here() -> Vec<PingLine> {
         parse_ping_lines("192.168.0.2 fail ping: sendto: No route to host\n")
     }
 
+    #[cfg(target_os = "macos")]
     fn studio_pings() -> Vec<PingLine> {
         parse_ping_lines("192.168.0.1 ok\n")
     }

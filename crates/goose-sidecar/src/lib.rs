@@ -26,6 +26,9 @@
 //! `killpg` on a group the caller shares or has not proven; that is why the proof is not
 //! optional and why the SIGTERM leg stays per-pid.
 
+// The distributed engine drives ranks over `/bin/sh`, `ssh` and POSIX signals; it has no
+// Windows shape, and its ACP surface answers that platform with a named refusal instead.
+#[cfg(unix)]
 pub mod distributed;
 pub mod engine;
 pub mod hf;
@@ -447,38 +450,7 @@ impl Sidecar {
             );
             return;
         };
-        let (residue, foreign): (Vec<u32>, Vec<u32>) = listeners
-            .into_iter()
-            .partition(|pid| process_group_of(*pid) == Some(group));
-        if !foreign.is_empty() {
-            tracing::warn!(
-                port,
-                ?foreign,
-                group,
-                "listeners outside the engine's process group hold the port; left alone"
-            );
-        }
-        if residue.is_empty() {
-            return;
-        }
-        tracing::warn!(
-            port,
-            ?residue,
-            group,
-            "engine residue still listens after the wrapper exited; SIGTERM per-pid"
-        );
-        signal_each(&residue, libc::SIGTERM);
-        if wait_port_clear(port).await {
-            return;
-        }
-        tracing::warn!(port, ?residue, "grace expired; SIGKILL per-pid");
-        signal_each(&residue, libc::SIGKILL);
-        if !wait_port_clear(port).await {
-            tracing::warn!(
-                port,
-                "port still occupied after reclaiming the engine's residue"
-            );
-        }
+        reclaim_group_residue(port, group, listeners).await;
     }
 }
 
@@ -551,6 +523,54 @@ pub fn sigkill_owned_group(pid: u32) -> bool {
         return false;
     }
     unsafe { libc::killpg(pid as libc::pid_t, libc::SIGKILL) == 0 }
+}
+
+/// Terminate, per-pid, the listeners on `port` that belong to the engine's own process
+/// `group`; listeners outside it are logged and left alone.
+#[cfg(unix)]
+async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
+    let (residue, foreign): (Vec<u32>, Vec<u32>) = listeners
+        .into_iter()
+        .partition(|pid| process_group_of(*pid) == Some(group));
+    if !foreign.is_empty() {
+        tracing::warn!(
+            port,
+            ?foreign,
+            group,
+            "listeners outside the engine's process group hold the port; left alone"
+        );
+    }
+    if residue.is_empty() {
+        return;
+    }
+    tracing::warn!(
+        port,
+        ?residue,
+        group,
+        "engine residue still listens after the wrapper exited; SIGTERM per-pid"
+    );
+    signal_each(&residue, libc::SIGTERM);
+    if wait_port_clear(port).await {
+        return;
+    }
+    tracing::warn!(port, ?residue, "grace expired; SIGKILL per-pid");
+    signal_each(&residue, libc::SIGKILL);
+    if !wait_port_clear(port).await {
+        tracing::warn!(
+            port,
+            "port still occupied after reclaiming the engine's residue"
+        );
+    }
+}
+
+#[cfg(not(unix))]
+async fn reclaim_group_residue(port: u16, group: u32, listeners: Vec<u32>) {
+    tracing::warn!(
+        port,
+        ?listeners,
+        group,
+        "port still occupied; reclaiming by process group needs Unix signals, left alone"
+    );
 }
 
 #[cfg(unix)]

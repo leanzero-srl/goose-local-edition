@@ -379,7 +379,7 @@ impl LiveProbe {
     /// port; the local manager only enriches the reason when nothing listens.
     async fn probe_mlx(&self, model_id: &str) -> Result<Servable, String> {
         let stale = match distributed_target(
-            goose_sidecar::distributed::global_manager().active_base_url(),
+            mlx_distributed_owner::own_active_base_url(),
             mlx_distributed_owner::read(),
         )? {
             DistributedTarget::At { base, diagnostic } => {
@@ -1900,6 +1900,7 @@ devices:
     /// the id `engine::served_model_id` derives — the single engine's `--served-model-name` — and
     /// the wrapper's /v1/models answer (its exact shape, `owned_by: goose-distributed`) passes the
     /// same probe the single engine passes.
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_distributed_engine_serves_the_nodes_id_and_the_router_accepts_it() {
         use goose_sidecar::distributed::{launch::rank_specs, DistributedConfig};

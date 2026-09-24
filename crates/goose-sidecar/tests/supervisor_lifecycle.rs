@@ -1,5 +1,7 @@
 //! Lifecycle tests against a real child process: a python3 stdlib HTTP server standing in
 //! for an engine (macOS ships python3; the repo's test suites already shell out freely).
+#![cfg(unix)]
+
 use std::net::TcpListener;
 use std::time::Duration;
 
@@ -132,7 +134,6 @@ async fn a_silent_engine_that_never_serves_fails_by_stall() {
     );
 }
 
-#[cfg(unix)]
 fn process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }

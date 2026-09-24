@@ -104,7 +104,12 @@ mod list_sessions;
 mod load_session;
 mod local_inference;
 mod manage_sessions;
+#[cfg(unix)]
 mod mlx_distributed;
+#[cfg(not(unix))]
+#[path = "server/mlx_distributed_unsupported.rs"]
+mod mlx_distributed;
+#[cfg(unix)]
 mod mlx_distributed_discover;
 mod mlx_engine;
 mod mlx_replica;

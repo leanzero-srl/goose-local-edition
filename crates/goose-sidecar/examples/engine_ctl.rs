@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use goose_sidecar::engine::{build_serve_command, EngineSettings, MlxEngineManager};
-use tokio::signal::unix::{signal, SignalKind};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,11 +43,17 @@ async fn main() -> Result<()> {
         }
     }
 
-    let mut term = signal(SignalKind::terminate())?;
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {},
-        _ = term.recv() => {},
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate())?;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = term.recv() => {},
+        }
     }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c().await?;
     let started = std::time::Instant::now();
     manager.unmount().await;
     println!(

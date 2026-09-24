@@ -104,6 +104,19 @@ pub(crate) fn read_at(path: &Path, self_pid: u32, alive: impl Fn(u32) -> bool) -
     }
 }
 
+/// The base URL of the distributed engine THIS goosed supervises, when it serves.
+#[cfg(unix)]
+pub fn own_active_base_url() -> Option<String> {
+    goose_sidecar::distributed::global_manager().active_base_url()
+}
+
+/// `goose_sidecar::distributed` compiles only on Unix, so no goosed on this platform can
+/// supervise a distributed engine: there is no URL to report.
+#[cfg(not(unix))]
+pub fn own_active_base_url() -> Option<String> {
+    None
+}
+
 #[cfg(unix)]
 fn pid_alive(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {

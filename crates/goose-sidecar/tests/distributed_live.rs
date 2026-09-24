@@ -8,6 +8,8 @@
 //! GOOSE_DIST_LOCAL_PYTHON, GOOSE_DIST_REMOTE_PYTHON, GOOSE_DIST_LOCAL_MODEL, GOOSE_DIST_REMOTE_MODEL,
 //! GOOSE_DIST_BACKEND (jaccl|ring), GOOSE_DIST_PORT.
 
+#![cfg(unix)]
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

@@ -17,8 +17,7 @@ use tokio::sync::Mutex;
 
 use crate::hf::{self, LocalModel};
 use crate::{
-    listening_pids, measure, port_has_listener, wait_port_clear, MemoryGate, Sidecar,
-    SidecarConfig, Verdict, GIB,
+    listening_pids, measure, port_has_listener, MemoryGate, Sidecar, SidecarConfig, Verdict, GIB,
 };
 
 /// Rapid-MLX's `--max-concurrent-requests` is a HARD ADMISSION CAP, not a queue: the request past
@@ -579,17 +578,17 @@ async fn reclaim_port(port: u16) {
     if pids.is_empty() {
         return;
     }
-    tracing::warn!(
-        port,
-        ?pids,
-        "reclaiming port from unsupervised engine (SIGTERM)"
-    );
     #[cfg(unix)]
     {
+        tracing::warn!(
+            port,
+            ?pids,
+            "reclaiming port from unsupervised engine (SIGTERM)"
+        );
         for pid in &pids {
             unsafe { libc::kill(*pid as libc::pid_t, libc::SIGTERM) };
         }
-        if wait_port_clear(port).await {
+        if crate::wait_port_clear(port).await {
             return;
         }
         tracing::warn!(port, ?pids, "reclaim: grace window expired (SIGKILL)");
@@ -597,6 +596,12 @@ async fn reclaim_port(port: u16) {
             unsafe { libc::kill(*pid as libc::pid_t, libc::SIGKILL) };
         }
     }
+    #[cfg(not(unix))]
+    tracing::warn!(
+        port,
+        ?pids,
+        "reclaim: signal delivery needs Unix; port left occupied"
+    );
 }
 
 pub struct MlxEngineManager {
@@ -1833,6 +1838,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     /// IDENTICAL configuration keeps the supervisor (a healthy engine is verified, not
     /// restarted); after the engine is killed, the same mount restarts it through
     /// `ensure_running`; a crash loop trips the breaker into a NAMED Failed state.
+    #[cfg(unix)]
     #[tokio::test]
     async fn identical_mount_reuses_the_supervisor_and_a_crash_loop_trips_the_breaker() {
         let port = {
@@ -1908,6 +1914,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     /// alias, driven to Running by the progress terminator, the alias checked in the
     /// catalog, then unmounted — port free, the wrapper's whole group gone. Reads a model
     /// from `GOOSE_SIDECAR_LIVE_MODELS_DIR` / `GOOSE_SIDECAR_LIVE_MODEL_ID` (never deletes).
+    #[cfg(unix)]
     #[tokio::test]
     #[ignore = "spawns the real uvx/rapid-mlx engine; set GOOSE_SIDECAR_LIVE_MODELS_DIR and GOOSE_SIDECAR_LIVE_MODEL_ID"]
     async fn live_mount_of_the_real_engine_runs_and_unmounts_clean() {
