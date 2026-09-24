@@ -111,6 +111,8 @@ mod mlx_distributed;
 mod mlx_distributed;
 #[cfg(unix)]
 mod mlx_distributed_discover;
+#[cfg(unix)]
+mod mlx_distributed_link;
 mod mlx_engine;
 mod mlx_replica;
 pub use mlx_engine::GoosedMlxControl;

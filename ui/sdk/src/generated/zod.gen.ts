@@ -3645,6 +3645,28 @@ export const zMlxDistributedOwnerDto = z.object({
     ]).optional()
 });
 
+/**
+ * The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link.
+ */
+export const zMlxDistributedHostedRankDto = z.object({
+    rank: z.number().int().gte(0),
+    size: z.number().int().gte(0),
+    requesterName: z.string(),
+    requesterNodeId: z.string(),
+    requesterHostname: z.string(),
+    modelId: z.string(),
+    servedModelId: z.string(),
+    backend: z.string(),
+    runner: z.string(),
+    pid: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    state: z.string(),
+    startedMs: z.number().int().gte(0),
+    lastPollMs: z.number().int().gte(0)
+});
+
 export const zMlxDistributedStatusDto = z.object({
     mode: z.string(),
     state: z.string(),
@@ -3723,7 +3745,12 @@ export const zMlxDistributedStatusDto = z.object({
     owner: z.union([
         zMlxDistributedOwnerDto,
         z.null()
-    ]).optional()
+    ]).optional(),
+    hosting: z.union([
+        zMlxDistributedHostedRankDto,
+        z.null()
+    ]).optional(),
+    allowDistributedNode: z.boolean().optional().default(false)
 });
 
 export const zMlxEngineDistributedStatusResponse_unstable = z.object({
@@ -3816,9 +3843,94 @@ export const zMlxDistributedPeerCandidateDto = z.object({
     detail: z.string()
 });
 
+/**
+ * One Thunderbolt port a Link peer reported (LeanZero Link's path detector over its own
+ * `ifconfig` / hardware ports / `system_profiler`).
+ */
+export const zMlxDistributedLinkPortDto = z.object({
+    device: z.string(),
+    hardwarePort: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    ipv4: z.string(),
+    prefixLen: z.number().int().gte(0).lte(255),
+    speed: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * One RDMA device a Link peer reported (`ibv_devinfo -v`).
+ */
+export const zMlxDistributedLinkRdmaDto = z.object({
+    device: z.string(),
+    active: z.boolean(),
+    ipv4GidIndex: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * One model directory on a Link peer (a `config.json` with a `model_type`).
+ */
+export const zMlxDistributedLinkPeerModelDto = z.object({
+    dir: z.string(),
+    modelType: z.string(),
+    weightsBytes: z.number().int().gte(0)
+});
+
+/**
+ * A same-account Mac on LeanZero Link, as its own goosed described itself.
+ */
+export const zMlxDistributedLinkPeerDto = z.object({
+    nodeId: z.string(),
+    hostname: z.string(),
+    host: z.string(),
+    state: z.string(),
+    detail: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    name: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    totalBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    availableBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    pressure: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    thunderbolt: z.array(zMlxDistributedLinkPortDto).optional().default([]),
+    rdma: z.array(zMlxDistributedLinkRdmaDto).optional().default([]),
+    models: z.array(zMlxDistributedLinkPeerModelDto).optional().default([])
+});
+
+/**
+ * LeanZero Link's side of the peer candidates.
+ */
+export const zMlxDistributedLinkDiscoveryDto = z.object({
+    state: z.string(),
+    detail: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    peers: z.array(zMlxDistributedLinkPeerDto).optional().default([])
+});
+
 export const zMlxEngineDistributedPeerCandidatesResponse_unstable = z.object({
     candidates: z.array(zMlxDistributedPeerCandidateDto),
-    source: z.string()
+    source: z.string(),
+    link: zMlxDistributedLinkDiscoveryDto.optional().default({ state: '', peers: [] })
 });
 
 /**

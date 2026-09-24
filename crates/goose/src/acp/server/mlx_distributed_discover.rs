@@ -31,6 +31,7 @@ use goose_sdk_types::custom_requests::{
     MlxDistributedNodeConfigDto,
 };
 use goose_sidecar::distributed::exec::{sh_quote, NodeExec};
+use goose_sidecar::distributed::link_control;
 use goose_sidecar::distributed::preflight::loaded_files;
 use goose_sidecar::distributed::probe::{self, Pressure};
 use goose_sidecar::distributed::provision::{self, EnvSpec};
@@ -1082,11 +1083,18 @@ pub(super) async fn discover(
         let roots = extra_roots.get(host).cloned().unwrap_or_default();
         let script = discover_script(&roots);
         async move {
-            let script = match host {
-                None => script,
-                Some(_) => format!("/bin/sh -c {}", sh_quote(&script)),
+            // A LeanZero Link Mac runs goose's probe itself (its own goosed builds the script).
+            let answer = match link_control::link_peer(host.as_deref()) {
+                Some(peer) => link_control::discover(peer, &roots).await,
+                None => {
+                    let script = match host {
+                        None => script,
+                        Some(_) => format!("/bin/sh -c {}", sh_quote(&script)),
+                    };
+                    exec.run(host.as_deref(), &script).await
+                }
             };
-            match exec.run(host.as_deref(), &script).await {
+            match answer {
                 Ok(out) if out.ssh_failed() => Err(format!("ssh failed: {}", out.stderr.trim())),
                 Ok(out) => parse_node(&out.stdout),
                 Err(e) => Err(format!("{e:#}")),
