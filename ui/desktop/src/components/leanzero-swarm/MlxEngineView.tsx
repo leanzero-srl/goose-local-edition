@@ -719,7 +719,10 @@ function EngineSection(props: EngineSectionProps) {
     modeLabel,
   } = props;
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const badges = usePlacementBadges(models.map((m) => m.id).join('\n'));
+  // Re-planned whenever the model list or what this Mac serves changes: a mount moves every fit.
+  const badges = usePlacementBadges(
+    [...models.map((m) => m.id), status?.state ?? '', status?.modelId ?? ''].join('\n')
+  );
   // goose refuses a single mount while the distributed engine owns the Mac, so none is offered.
   const distributedOwns = ownsTheMac(distributed);
 

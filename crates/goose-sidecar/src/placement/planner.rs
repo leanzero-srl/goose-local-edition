@@ -122,6 +122,10 @@ pub struct PlanInput<'a> {
     pub records: &'a [SpeedRecord],
     pub calibration: &'a Calibration,
     pub gate: &'a MemoryGate,
+    /// The placement serving THIS model right now (by candidate id) and its context window: it
+    /// fits by construction — its memory is already in use, so this Mac's available figure cannot
+    /// judge it.
+    pub running: Option<(String, Option<u64>)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,8 +259,16 @@ impl Candidate {
         }
     }
 
+    /// Startable by [Use this] as things stand: not an unavailable one, and not a split whose saved
+    /// setup names another model (Set up must pick this one first).
     fn runnable(&self) -> bool {
-        !matches!(self.action, Action::Unavailable { .. })
+        !matches!(
+            self.action,
+            Action::Unavailable { .. }
+                | Action::StartSplit {
+                    setup_matches: false
+                }
+        )
     }
 }
 
@@ -954,6 +966,18 @@ pub fn plan(input: &PlanInput) -> Plan {
         }
     }
 
+    if let Some((id, context)) = &input.running {
+        if let Some(c) = candidates.iter_mut().find(|c| &c.id == id) {
+            c.fit = Fit {
+                status: FitStatus::Fits,
+                context: context.or(c.fit.context),
+                short_bytes: None,
+                short_node: None,
+                nodes: c.fit.nodes.clone(),
+                detail: "running now — its memory is already in use".to_string(),
+            };
+        }
+    }
     let (best, best_available) = pick(&mut candidates, input.goal);
     let badge = badge(&candidates);
     Plan {
@@ -1294,6 +1318,7 @@ mod tests {
         bytes_on_disk: u64,
         cal: Calibration,
         gate: MemoryGate,
+        running: Option<(String, Option<u64>)>,
     }
 
     impl Fixture {
@@ -1312,6 +1337,7 @@ mod tests {
                 records: &self.records,
                 calibration: &self.cal,
                 gate: &self.gate,
+                running: self.running.clone(),
             })
         }
     }
@@ -1327,6 +1353,7 @@ mod tests {
             bytes_on_disk: 32_800_000_000,
             cal: Calibration::fit(&BTreeMap::new()),
             gate: MemoryGate::default(),
+            running: None,
         }
     }
 
@@ -1395,6 +1422,11 @@ mod tests {
             Some("tensor:jaccl:local+link:worksmacstudio"),
             "{plan:#?}"
         );
+        // The saved setup names another model, so the split is not startable as things stand.
+        assert_eq!(
+            plan.best_available.as_deref(),
+            Some("single:link:worksmacstudio")
+        );
         let prefill = by_id(&plan, &plan.best.clone().unwrap())
             .speed
             .prefill
@@ -1462,6 +1494,7 @@ mod tests {
             bytes_on_disk: 104_700_000_000,
             cal: Calibration::fit(&BTreeMap::new()),
             gate: MemoryGate::default(),
+            running: None,
         };
         let plan = f.plan(Goal::Chat);
         assert_eq!(
@@ -1526,6 +1559,7 @@ mod tests {
             bytes_on_disk: gib(420.0),
             cal: Calibration::fit(&BTreeMap::new()),
             gate: MemoryGate::default(),
+            running: None,
         };
         let plan = f.plan(Goal::Chat);
         assert_eq!(plan.best, None);
@@ -1570,6 +1604,27 @@ mod tests {
         let throughput = plan.candidates[0].speed.throughput.as_ref().unwrap();
         let decode = plan.candidates[0].speed.decode.as_ref().unwrap();
         assert!(throughput.estimate.value > decode.estimate.value);
+    }
+
+    #[test]
+    fn the_running_placement_fits_although_its_memory_is_in_use() {
+        let mut f = the_27b();
+        // Measured 2026-09-24 in the packaged app: with the 27B mounted here the MacBook read
+        // ~39 GiB available and the planner called the RUNNING model "short 10.5 GB".
+        f.nodes[0].memory = Ok(NodeMemory {
+            total_bytes: gib(128.0),
+            available_bytes: gib(39.0),
+            ceiling_bytes: Ok(M4_CEILING),
+        });
+        let before = f.plan(Goal::Chat);
+        assert_eq!(by_id(&before, "single:local").fit.status, FitStatus::Short);
+        f.running = Some(("single:local".into(), Some(262_144)));
+        let plan = f.plan(Goal::Chat);
+        let here = by_id(&plan, "single:local");
+        assert_eq!(here.fit.status, FitStatus::Fits);
+        assert_eq!(here.fit.context, Some(262_144));
+        assert!(here.fit.detail.starts_with("running now"));
+        assert_eq!(plan.badge, Badge::FitsThisMac);
     }
 
     #[test]

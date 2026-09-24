@@ -368,7 +368,81 @@ mod imp {
         }))
     }
 
+    /// What is serving on this Mac right now, so the planner neither calls the running model
+    /// "short" (its memory is in use) nor forgets that every other placement gets that memory back.
+    pub(super) struct Serving {
+        /// (model id, candidate id, context window) of the running placement.
+        pub running: Vec<(String, String, Option<u64>)>,
+        /// The single engine's resident bytes when a model is mounted here, and whose.
+        pub single_footprint: Option<(String, u64)>,
+        pub notes: Vec<String>,
+    }
+
+    async fn serving(settings: &EngineSettings) -> Serving {
+        let mut out = Serving {
+            running: Vec::new(),
+            single_footprint: None,
+            notes: Vec::new(),
+        };
+        let single = global_manager().status().await;
+        if let (true, Some(model)) = (single.state == "running", single.model_id.clone()) {
+            out.running.push((
+                model.clone(),
+                PlacementKey::single(LOCAL).id(),
+                single.context_window,
+            ));
+            match goose_sidecar::placement::engine_resident_bytes(settings.port).await {
+                Ok(bytes) => out.single_footprint = Some((model, bytes)),
+                Err(e) => out.notes.push(format!(
+                    "{model} is mounted here but its memory could not be read ({e:#}); this Mac's \
+                     figures do not count it as free for other placements"
+                )),
+            }
+        }
+        let dist = goose_sidecar::distributed::global_manager().status();
+        if dist.state.owns_the_mac() {
+            if let (Some(config), Some(model), Some(runner)) =
+                (dist.config.clone(), dist.model_id.clone(), dist.runner)
+            {
+                let key = PlacementKey {
+                    kind: match runner {
+                        Runner::MlxLmTensor => PlacementKind::Tensor,
+                        Runner::PipelineQwen4 => PlacementKind::Pipeline,
+                    },
+                    nodes: config
+                        .nodes
+                        .iter()
+                        .map(|n| n.ssh.clone().unwrap_or_else(|| LOCAL.to_string()))
+                        .collect(),
+                    link: Some(backend_name(config.backend).to_string()),
+                };
+                out.running
+                    .push((model.clone(), key.id(), dist.context_limit));
+                out.notes.push(format!(
+                    "the distributed engine is running {model}; its ranks' memory is not counted as \
+                     free for other placements"
+                ));
+            }
+        }
+        if let Some(route) = crate::providers::mlx_remote::read().live() {
+            out.running.push((
+                route.model_id,
+                PlacementKey::single(&format!("link:{}", route.peer)).id(),
+                None,
+            ));
+        }
+        out
+    }
+
+    fn backend_name(backend: goose_sidecar::distributed::Backend) -> &'static str {
+        match backend {
+            goose_sidecar::distributed::Backend::Jaccl => "jaccl",
+            goose_sidecar::distributed::Backend::Ring => "ring",
+        }
+    }
+
     pub(super) struct Context {
+        pub serving: Serving,
         pub settings: EngineSettings,
         pub models_dir: PathBuf,
         pub config: Option<DistributedConfig>,
@@ -381,11 +455,20 @@ mod imp {
         let settings = load_engine_settings()?;
         let models_dir = expand_tilde(&settings.models_dir);
         let config = persisted_config()?;
-        let measured = measure_nodes(config.as_ref()).await;
+        let (mut measured, serving) =
+            tokio::join!(measure_nodes(config.as_ref()), serving(&settings));
+        if let Some((_, bytes)) = &serving.single_footprint {
+            if let Some(local) = measured.iter_mut().find(|m| m.input.id == LOCAL) {
+                if let Ok(memory) = local.input.memory.as_mut() {
+                    memory.available_bytes += bytes;
+                }
+            }
+        }
         let read = speed_store()
             .read()
             .map_err(|e| agent_client_protocol::Error::internal_error().data(format!("{e:#}")))?;
         Ok(Context {
+            serving,
             settings,
             models_dir,
             config,
@@ -440,10 +523,7 @@ mod imp {
             _ => None,
         };
         let cluster = ctx.config.as_ref().map(|c| ClusterInput {
-            link: match c.backend {
-                goose_sidecar::distributed::Backend::Jaccl => "jaccl".to_string(),
-                goose_sidecar::distributed::Backend::Ring => "ring".to_string(),
-            },
+            link: backend_name(c.backend).to_string(),
             slots: c.slots(),
             config_model_id: c.model_id.clone(),
         });
@@ -465,8 +545,25 @@ mod imp {
             records: &ctx.records,
             calibration,
             gate: &MemoryGate::default(),
+            running: ctx
+                .serving
+                .running
+                .iter()
+                .find(|(model, _, _)| model == model_id)
+                .map(|(_, id, context)| (id.clone(), *context)),
         });
-        mirror(&plan)
+        let mut dto: MlxPlacementPlanDto = mirror(&plan)?;
+        if let Some((mounted, bytes)) = &ctx.serving.single_footprint {
+            if mounted != model_id {
+                dto.notes.push(format!(
+                    "{mounted} is mounted here: its {:.1} GiB count as free on this Mac, because \
+                     [Use this] replaces it",
+                    *bytes as f64 / goose_sidecar::GIB as f64
+                ));
+            }
+        }
+        dto.notes.extend(ctx.serving.notes.iter().cloned());
+        Ok(dto)
     }
 
     pub(super) async fn placement_plan(
