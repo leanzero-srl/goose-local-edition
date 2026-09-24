@@ -136,7 +136,7 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   range up to 0.51 (published MoE share); rapid-mlx batch gain ×1.785 at 8 (experiments.jsonl). The SINGLE engine's
   Rapid-MLX/MTP gain over the mlx_lm formula is recalibrated PER MODEL from goose's own measurements
   (`single_engine_factor`). Estimates are labelled with a range; any measured (model, placement, backend, bucket) wins.
-- RULE: fit = `plan::budget_bytes` (min(avail − 7% RAM, ceiling)) + the single mount gate verbatim on this Mac; tensor via
+- RULE: fit = `plan::budget_bytes` (min(avail − RAM × distributed::AVAILABLE_MARGIN_RATIO, ceiling) — 9.3% since 20ef879e6) + the single mount gate verbatim on this Mac; tensor via
   plan.rs arithmetic (JACCL only, even divisor), pipeline via the fork's `plan --json` (`run_fork_planner`, fixed-point
   walk) or a labelled aggregate estimate; goal pick with tie (overlapping ranges) → fewer Macs; `best` vs `bestAvailable`.
 - STORE: `<data dir>/mlx-speed-measurements.jsonl` (`Paths::in_data_dir`), one record per benchmark workload / chat turn;
@@ -148,6 +148,12 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   then `node <scratchpad>/live/acp.mjs ws://127.0.0.1:18790/acp _goose/unstable/mlxEngine/placementPlan '{"goal":"chat"}'`
   — 5.4 s with both Macs + the fork planner. TRAP: never benchmark while the KV agent's :8093 decode phase runs (GPU/CPU
   contention poisons both numbers); cargo/vitest during it contaminates their tok/s too.
+- LIVE UI (packaged app, isolated GOOSE_PATH_ROOT + GOOSE_USER_DATA_DIR, CDP 9461): a shell-launched window
+  reads `document.visibilityState == "hidden"` (screen locked / occluded) and the Engine view's status poll never starts —
+  the hero sat on "Mounting" for 7 min while goose said running. Drive it by overriding visibility over CDP
+  (`Object.defineProperty(document,"visibilityState",{get:()=>"visible"}); document.dispatchEvent(new Event("visibilitychange"))`).
+  MEASURED 27B single on the M4 Max (rapid-mlx lz.3, MTP, "Windows App" at 110–235% CPU beside it): 1,962 + 256 tokens,
+  cold 165.6 / warm 226.6 tok/s reading, 16.7 tok/s writing both runs.
 
 ## Thinking controls (2026-09-23 — per model, OFF by default = send nothing)
 - WHY: Rapid-MLX turns thinking OFF on every tool-bearing request (`service/helpers.py`
