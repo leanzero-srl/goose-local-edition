@@ -112,16 +112,22 @@ const PLAN_LINK: PlacementPlan = {
   ...PLAN_27B,
   candidates: (PLAN_27B.candidates ?? []).map((c) =>
     c.id === 'single:workhorse'
-      ? { ...c, id: 'single:link:wh', key: { ...c.key, nodes: ['link:wh'] }, action: { kind: 'remoteSingle' } }
+      ? {
+          ...c,
+          id: 'single:link:wh',
+          key: { ...c.key, nodes: ['link:wh'] },
+          action: { kind: 'remoteSingle' },
+        }
       : c
   ),
   best: 'single:link:wh',
   bestAvailable: 'single:link:wh',
 };
 
-function renderCard(
-  props: Partial<Parameters<typeof PlacementCard>[0]> = {}
-): { onMountHere: ReturnType<typeof vi.fn>; onStopHere: ReturnType<typeof vi.fn> } {
+function renderCard(props: Partial<Parameters<typeof PlacementCard>[0]> = {}): {
+  onMountHere: ReturnType<typeof vi.fn>;
+  onStopHere: ReturnType<typeof vi.fn>;
+} {
   const onMountHere = vi.fn();
   const onStopHere = vi.fn();
   render(
@@ -181,7 +187,9 @@ describe('Run it on the real 27B plan', () => {
 
     const local = screen.getByTestId('placement-way-local');
     expect(within(local).getByText('Run on this Mac')).toBeInTheDocument();
-    expect(within(local).getByText(/Does not fit: short 10\.8 GB on Mihai Macbook/)).toBeInTheDocument();
+    expect(
+      within(local).getByText(/Does not fit: short 10\.8 GB on Mihai Macbook/)
+    ).toBeInTheDocument();
 
     const peer = screen.getByTestId('placement-way-peer');
     expect(within(peer).getByText('Run on Work’s Mac Studio')).toBeInTheDocument();
@@ -438,10 +446,14 @@ describe('Run it follows the engine it started, in the engine-phase palette', ()
       within(screen.getByTestId('placement-way-split')).getByTestId('placement-live')
     ).toHaveAttribute('data-phase', 'writing');
     // The Studio's single engine is not what runs: no live chip on it.
-    expect(within(screen.getByTestId('placement-way-peer')).queryByTestId('placement-live')).toBeNull();
+    expect(
+      within(screen.getByTestId('placement-way-peer')).queryByTestId('placement-live')
+    ).toBeNull();
 
     mockDistributedStop.mockResolvedValue({ stop: { verified: true, steps: [] } });
-    await userEvent.click(within(screen.getByTestId('placement-way-split')).getByTestId('placement-stop-split'));
+    await userEvent.click(
+      within(screen.getByTestId('placement-way-split')).getByTestId('placement-stop-split')
+    );
     expect(mockDistributedStop).not.toHaveBeenCalled();
     expect(
       screen.getByText(/Every part on Mihai Macbook, Work’s Mac Studio is stopped/)

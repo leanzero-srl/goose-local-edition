@@ -406,22 +406,22 @@ describe('LeanZeroLinkSection — My Macs', () => {
     });
     const bridge = window.electron as unknown as Record<string, unknown>;
     bridge.mlxLiveStatus = async () => ({
-        ok: true,
-        body: {
-          status: 'running',
-          uptime_s: 12,
-          num_running: 1,
-          num_waiting: 0,
-          requests: [
-            {
-              request_id: 'r1',
-              phase: 'generation',
-              status: 'running',
-              completion_tokens: 40,
-              tokens_per_second: 21.9,
-            },
-          ],
-        },
+      ok: true,
+      body: {
+        status: 'running',
+        uptime_s: 12,
+        num_running: 1,
+        num_waiting: 0,
+        requests: [
+          {
+            request_id: 'r1',
+            phase: 'generation',
+            status: 'running',
+            completion_tokens: 40,
+            tokens_per_second: 21.9,
+          },
+        ],
+      },
     });
     render();
     const self = await macCard('self');

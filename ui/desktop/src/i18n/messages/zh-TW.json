@@ -2231,8 +2231,8 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "雲端提供方"
   },
-  "leanzeroSwarm.tabLink": {
-    "defaultMessage": "LeanZero Link"
+  "leanzeroSwarm.tabMacs": {
+    "defaultMessage": "我的 Mac"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "蜂群設定"
@@ -2494,6 +2494,126 @@
   },
   "loopView.stopCheck": {
     "defaultMessage": "Stop check: {command}"
+  },
+  "macs.cancelDownloadFailed": {
+    "defaultMessage": "取消失敗。"
+  },
+  "macs.cancelFailed": {
+    "defaultMessage": "無法取消拷貝。"
+  },
+  "macs.copyFailed": {
+    "defaultMessage": "拷貝未能開始。"
+  },
+  "macs.downloadFailed": {
+    "defaultMessage": "下載未能開始。"
+  },
+  "macs.line.checking": {
+    "defaultMessage": "正在讀取其引擎…"
+  },
+  "macs.line.failed": {
+    "defaultMessage": "{model} 失敗：{reason}"
+  },
+  "macs.line.failedNoModel": {
+    "defaultMessage": "引擎失敗：{reason}"
+  },
+  "macs.line.hosting": {
+    "defaultMessage": "{model} · {requester} 分割的一部分"
+  },
+  "macs.line.loading": {
+    "defaultMessage": "正在載入 {model}"
+  },
+  "macs.line.notLoaded": {
+    "defaultMessage": "未載入模型"
+  },
+  "macs.line.offline": {
+    "defaultMessage": "無法透過 LeanZero Link 連線"
+  },
+  "macs.line.running": {
+    "defaultMessage": "{model}"
+  },
+  "macs.line.split": {
+    "defaultMessage": "{count,plural,one{{model} · 分割到 # 台 Mac} other{{model} · 分割到 # 台 Mac}}"
+  },
+  "macs.line.writing": {
+    "defaultMessage": "{model} · {tps} tok/s"
+  },
+  "macs.linksFailed": {
+    "defaultMessage": "無法讀取連線。"
+  },
+  "macs.listFailed": {
+    "defaultMessage": "無法讀取模型資料夾。"
+  },
+  "macs.offThere": {
+    "defaultMessage": "{name} 上的{what}已關閉 — 請在那台 Mac 上開啟「允許我的其他 Mac 使用這台 Mac」（供應商 › 我的 Mac）"
+  },
+  "macs.pauseFailed": {
+    "defaultMessage": "暫停失敗。"
+  },
+  "macs.permission.chat": {
+    "defaultMessage": "回覆聊天"
+  },
+  "macs.permission.manage": {
+    "defaultMessage": "載入與下載模型"
+  },
+  "macs.permission.split": {
+    "defaultMessage": "執行分割模型的一部分"
+  },
+  "macs.resumeFailed": {
+    "defaultMessage": "繼續失敗。"
+  },
+  "macs.state.checking": {
+    "defaultMessage": "檢查中"
+  },
+  "macs.state.failed": {
+    "defaultMessage": "失敗"
+  },
+  "macs.state.held": {
+    "defaultMessage": "已暫留"
+  },
+  "macs.state.hosting": {
+    "defaultMessage": "分割的一部分"
+  },
+  "macs.state.idle": {
+    "defaultMessage": "閒置"
+  },
+  "macs.state.loading": {
+    "defaultMessage": "載入中"
+  },
+  "macs.state.notLoaded": {
+    "defaultMessage": "未載入"
+  },
+  "macs.state.off": {
+    "defaultMessage": "已關閉"
+  },
+  "macs.state.offline": {
+    "defaultMessage": "離線"
+  },
+  "macs.state.reading": {
+    "defaultMessage": "讀取中"
+  },
+  "macs.state.split": {
+    "defaultMessage": "分割"
+  },
+  "macs.state.unreadable": {
+    "defaultMessage": "無法讀取"
+  },
+  "macs.state.writing": {
+    "defaultMessage": "輸出中"
+  },
+  "macs.statusFailed": {
+    "defaultMessage": "無法讀取引擎。"
+  },
+  "macs.thisMac": {
+    "defaultMessage": "這台 Mac"
+  },
+  "macs.trackingFailed": {
+    "defaultMessage": "無法重新連接進行中的下載。"
+  },
+  "macs.tray.line": {
+    "defaultMessage": "{name} — {what}"
+  },
+  "macs.tray.open": {
+    "defaultMessage": "打開我的 Mac"
   },
   "markdownContent.cancel": {
     "defaultMessage": "取消"
@@ -2783,6 +2903,9 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "取消"
   },
+  "mlxDistributed.checksPassed": {
+    "defaultMessage": "{count,plural,one{# 項檢查通過} other{# 項檢查通過}}"
+  },
   "mlxDistributed.clusterChecks": {
     "defaultMessage": "叢集檢查"
   },
@@ -2969,15 +3092,6 @@
   "mlxDistributed.fits": {
     "defaultMessage": "可容納"
   },
-  "mlxDistributed.hosting.label": {
-    "defaultMessage": "這台 Mac 正在負責一個 rank"
-  },
-  "mlxDistributed.hosting.loading": {
-    "defaultMessage": "正在為 {requester} 載入 rank {rank}"
-  },
-  "mlxDistributed.hosting.text": {
-    "defaultMessage": "{line} — rank PID {pid}。在 {requester} 停止執行之前，單機引擎和這台 Mac 自己的分散式引擎都會被拒絕。"
-  },
   "mlxDistributed.inflight": {
     "defaultMessage": "處理中"
   },
@@ -3104,12 +3218,6 @@
   "mlxDistributed.peakOf": {
     "defaultMessage": "GiB 峰值，預算 {budget} GiB"
   },
-  "mlxDistributed.peerBody": {
-    "defaultMessage": "你正在管理 {host}。要設定、預檢、啟動或停止它，請將「Manage on」切回「This device」。"
-  },
-  "mlxDistributed.peerTitle": {
-    "defaultMessage": "分散式引擎由這台 Mac 監督"
-  },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
   },
@@ -3226,15 +3334,6 @@
   },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {批次中 # 個序列}}"
-  },
-  "mlxDistributed.serveNode": {
-    "defaultMessage": "允許這台 Mac 作為分散式節點"
-  },
-  "mlxDistributed.serveNodeError": {
-    "defaultMessage": "無法變更此設定"
-  },
-  "mlxDistributed.serveNodeHint": {
-    "defaultMessage": "LeanZero Link 上你的其他 Mac 之後可以在這裡執行其分散式引擎的一個 rank——只執行 goose 自己的 rank 程式和探測，絕不執行任意指令。預設關閉。"
   },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "伺服器狀態無法讀取：{error}"
@@ -3417,28 +3516,10 @@
     "defaultMessage": "無介面（ssh）"
   },
   "mlxDistributedSetup.intro": {
-    "defaultMessage": "只需填寫另一台 Mac 一次。goose 會透過 ssh 探測本機與對方,並填入連結、RDMA、後端、模型、連接埠與 Python。"
+    "defaultMessage": "選擇你的另一台 Mac。goose 會透過 LeanZero Link 詢問兩台 Mac，並填好連線、RDMA、後端、模型、連接埠和 Python。"
   },
-  "mlxDistributedSetup.link.gid": {
-    "defaultMessage": "IPv4 GID {index}"
-  },
-  "mlxDistributedSetup.link.intro": {
-    "defaultMessage": "已登入同一帳號。每台都透過網格描述了自己；選擇一台，goose 會透過它自己的 goose 控制——不需要 ssh。"
-  },
-  "mlxDistributedSetup.link.memory": {
-    "defaultMessage": "{total} GiB 中可用 {available} GiB"
-  },
-  "mlxDistributedSetup.link.models": {
-    "defaultMessage": "{count, plural, other {# 個模型}}"
-  },
-  "mlxDistributedSetup.link.noGid": {
-    "defaultMessage": "無 IPv4 GID"
-  },
-  "mlxDistributedSetup.link.noRdma": {
-    "defaultMessage": "無 RDMA 裝置"
-  },
-  "mlxDistributedSetup.link.noThunderbolt": {
-    "defaultMessage": "無 Thunderbolt 位址"
+  "mlxDistributedSetup.link.detectWith": {
+    "defaultMessage": "用這台 Mac 偵測"
   },
   "mlxDistributedSetup.link.none": {
     "defaultMessage": "目前 LeanZero Link 上沒有此帳號的其他 Mac。"
@@ -3446,14 +3527,11 @@
   "mlxDistributedSetup.link.notConnected": {
     "defaultMessage": "LeanZero Link 未連線"
   },
-  "mlxDistributedSetup.link.rdmaActive": {
-    "defaultMessage": "作用中"
+  "mlxDistributedSetup.link.pick": {
+    "defaultMessage": "另一台 Mac"
   },
-  "mlxDistributedSetup.link.rdmaDownCount": {
-    "defaultMessage": "{count, plural, other {另有 # 個裝置連接埠關閉}}"
-  },
-  "mlxDistributedSetup.link.servingOff": {
-    "defaultMessage": "在 {name} 上開啟「允許這台 Mac 作為分散式節點」（供應商 › LeanZero MLX › 引擎 › 分散式）。"
+  "mlxDistributedSetup.link.servingOffMyMacs": {
+    "defaultMessage": "請在 {name} 上開啟「允許我的其他 Mac 使用這台 Mac › 執行分割模型的一部分」（在那台 Mac 的供應商 › 我的 Mac）。"
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "它的 goose 無法提供服務"
@@ -3472,12 +3550,6 @@
   },
   "mlxDistributedSetup.link.state.unreadable": {
     "defaultMessage": "已回應，無法讀取"
-  },
-  "mlxDistributedSetup.link.title": {
-    "defaultMessage": "你在 LeanZero Link 上的 Mac"
-  },
-  "mlxDistributedSetup.link.use": {
-    "defaultMessage": "使用這台 Mac"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS 一致"
@@ -3500,11 +3572,17 @@
   "mlxDistributedSetup.noneAnswering": {
     "defaultMessage": "~/.ssh/config 中沒有別名回應非互動式 ssh。"
   },
+  "mlxDistributedSetup.overSsh": {
+    "defaultMessage": "進階：透過 ssh 連線的 Mac"
+  },
+  "mlxDistributedSetup.overSshMeta": {
+    "defaultMessage": "用於不在 LeanZero Link 上的 Mac"
+  },
   "mlxDistributedSetup.peer": {
     "defaultMessage": "另一台 Mac(ssh 別名或主機)"
   },
   "mlxDistributedSetup.peerPlaceholder": {
-    "defaultMessage": "workhorse"
+    "defaultMessage": "ssh 別名"
   },
   "mlxDistributedSetup.probed": {
     "defaultMessage": "{count, plural, other {{ms} 毫秒內探測了 # 個節點}}"
@@ -3539,20 +3617,17 @@
   "mlxEngineView.mountFailed": {
     "defaultMessage": "掛載失敗"
   },
-  "mlxEngineView.refusedUnnamed": {
-    "defaultMessage": "已拒絕，goose 未提供原因"
+  "mlxEngineView.pickThenRun": {
+    "defaultMessage": "選擇一個模型，然後在下方「執行」中啟動 — 在這台 Mac、你的另一台 Mac 上，或分割到多台 Mac。"
+  },
+  "mlxEngineView.samplingOn": {
+    "defaultMessage": "設定檔所在"
   },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "跨多台 Mac 提供服務"
   },
-  "mlxEngineView.startFailed": {
-    "defaultMessage": "啟動失敗"
-  },
-  "mlxEngineView.startRefused": {
-    "defaultMessage": "啟動被拒絕"
-  },
-  "mlxEngineView.switchNeedsUnmount": {
-    "defaultMessage": "此模型無法僅在這台 Mac 上運行 — 請先卸載，再從卡片啟動。"
+  "mlxEngineView.settingsFailed": {
+    "defaultMessage": "無法讀取引擎設定。"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}：每個 token {bytes} KiB，而不是 {bf16} KiB — 同樣的記憶體可容納 {ratio}× 的上下文。"
@@ -3650,6 +3725,39 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "停止中"
   },
+  "mlxModels.cancelMessage": {
+    "defaultMessage": "取消在 {name} 上下載 {model}，並刪除那裡的部分檔案？"
+  },
+  "mlxModels.cancelTitle": {
+    "defaultMessage": "取消下載"
+  },
+  "mlxModels.downloadTo": {
+    "defaultMessage": "下載到"
+  },
+  "mlxModels.edit": {
+    "defaultMessage": "編輯"
+  },
+  "mlxModels.folderUnread": {
+    "defaultMessage": "無法讀取：{reason}"
+  },
+  "mlxModels.folders": {
+    "defaultMessage": "模型資料夾"
+  },
+  "mlxModels.foldersHint": {
+    "defaultMessage": "每台 Mac 一個資料夾，下載、拷貝和載入都使用它；長條是其所在宗卷的可用空間。"
+  },
+  "mlxModels.huggingFace": {
+    "defaultMessage": "Hugging Face"
+  },
+  "mlxModels.keep": {
+    "defaultMessage": "保留"
+  },
+  "mlxModels.onYourMacs": {
+    "defaultMessage": "你的 Mac 上"
+  },
+  "mlxModels.settingsFailed": {
+    "defaultMessage": "無法讀取引擎設定。"
+  },
   "mlxMount.foreignAnswering": {
     "defaultMessage": "就緒 · 由另一個視窗擁有"
   },
@@ -3659,23 +3767,8 @@
   "mlxReplica.cancel": {
     "defaultMessage": "取消"
   },
-  "mlxReplica.cancelConfirmMessage": {
-    "defaultMessage": "要停止將 {model} 複製到 {host} 嗎？{host} 上的部分副本將被刪除。"
-  },
-  "mlxReplica.cancelConfirmTitle": {
-    "defaultMessage": "取消複製"
-  },
-  "mlxReplica.cancelFailed": {
-    "defaultMessage": "無法取消複製。"
-  },
   "mlxReplica.cancelTitle": {
     "defaultMessage": "停止複製並刪除 {host} 上的部分副本"
-  },
-  "mlxReplica.checkLinks": {
-    "defaultMessage": "檢查連線"
-  },
-  "mlxReplica.checking": {
-    "defaultMessage": "正在檢查連線…"
   },
   "mlxReplica.copiedTo": {
     "defaultMessage": "已複製到 {host}"
@@ -3686,15 +3779,6 @@
   "mlxReplica.copyFailed": {
     "defaultMessage": "複製到 {host} 失敗"
   },
-  "mlxReplica.copyTitleNetwork": {
-    "defaultMessage": "與 {host} 之間沒有 Thunderbolt 連線，因此透過區域網路複製：{local} → {peer}"
-  },
-  "mlxReplica.copyTitleThunderbolt": {
-    "defaultMessage": "透過 Thunderbolt 線材複製：{local} → {peer}"
-  },
-  "mlxReplica.copyTo": {
-    "defaultMessage": "{kind,select,thunderbolt{複製到 {host} · Thunderbolt} other{複製到 {host} · 網路}}"
-  },
   "mlxReplica.copyingTo": {
     "defaultMessage": "{kind,select,thunderbolt{正在透過 Thunderbolt 複製到 {host}} other{正在透過網路複製到 {host}}}"
   },
@@ -3703,39 +3787,6 @@
   },
   "mlxReplica.files": {
     "defaultMessage": "{done} / {total} 個檔案"
-  },
-  "mlxReplica.keepCopying": {
-    "defaultMessage": "繼續複製"
-  },
-  "mlxReplica.linkNetwork": {
-    "defaultMessage": "網路"
-  },
-  "mlxReplica.linkThunderbolt": {
-    "defaultMessage": "Thunderbolt"
-  },
-  "mlxReplica.linkThunderboltSpeed": {
-    "defaultMessage": "Thunderbolt · {speed}"
-  },
-  "mlxReplica.linksError": {
-    "defaultMessage": "無法檢查與其他裝置的連線：{reason}"
-  },
-  "mlxReplica.linksFailed": {
-    "defaultMessage": "無法讀取連線。"
-  },
-  "mlxReplica.linksNote": {
-    "defaultMessage": "此裝置上的模型可以複製到已連結的裝置，而不必重新下載。每個檔案在使用前都會與原始檔案核對。"
-  },
-  "mlxReplica.linksTitle": {
-    "defaultMessage": "已連結的裝置"
-  },
-  "mlxReplica.networkNote": {
-    "defaultMessage": "沒有 Thunderbolt 連線，因此透過區域網路複製。"
-  },
-  "mlxReplica.offerLabel": {
-    "defaultMessage": "已下載"
-  },
-  "mlxReplica.offerText": {
-    "defaultMessage": "{model} 現在已在此裝置上。{host} 以 Thunderbolt 連結：請複製過去，而不要重新下載。"
   },
   "mlxReplica.progressLabel": {
     "defaultMessage": "{model} 複製到 {host} 的進度"
@@ -3751,9 +3802,6 @@
   },
   "mlxReplica.resumed": {
     "defaultMessage": "{count,plural,one{從部分副本繼續：# 個檔案} other{從部分副本繼續：# 個檔案}}"
-  },
-  "mlxReplica.startFailed": {
-    "defaultMessage": "複製未開始。"
   },
   "mlxReplica.starting": {
     "defaultMessage": "正在開始複製到 {host}…"
@@ -4112,6 +4160,123 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "供應商名稱查詢"
   },
+  "modelMatrix.cancel": {
+    "defaultMessage": "取消"
+  },
+  "modelMatrix.cancelCopyMessage": {
+    "defaultMessage": "停止將 {model} 拷貝到 {name}？{name} 上的部分副本會被刪除。"
+  },
+  "modelMatrix.cancelCopyTitle": {
+    "defaultMessage": "取消拷貝"
+  },
+  "modelMatrix.cancelDownloadMessage": {
+    "defaultMessage": "取消在 {name} 上下載 {model}，並刪除那裡的部分檔案？"
+  },
+  "modelMatrix.cancelDownloadTitle": {
+    "defaultMessage": "取消下載"
+  },
+  "modelMatrix.cantRead": {
+    "defaultMessage": "無法讀取"
+  },
+  "modelMatrix.checking": {
+    "defaultMessage": "檢查中…"
+  },
+  "modelMatrix.copyFailed": {
+    "defaultMessage": "拷貝失敗"
+  },
+  "modelMatrix.copyFrom": {
+    "defaultMessage": "{kind,select,thunderbolt{從 {name} 拷貝 · Thunderbolt} other{從 {name} 拷貝 · 網路}}"
+  },
+  "modelMatrix.copyFromTitle": {
+    "defaultMessage": "{kind,select,thunderbolt{透過 Thunderbolt 線材直接拷貝 {name} 的檔案；每個檔案都會與原檔核對。} other{透過區域網路直接拷貝 {name} 的檔案；每個檔案都會與原檔核對。}}"
+  },
+  "modelMatrix.copyStarting": {
+    "defaultMessage": "正在開始拷貝"
+  },
+  "modelMatrix.copying": {
+    "defaultMessage": "拷貝中 {pct}%"
+  },
+  "modelMatrix.delete": {
+    "defaultMessage": "從 {name} 刪除"
+  },
+  "modelMatrix.deleteConfirm": {
+    "defaultMessage": "刪除"
+  },
+  "modelMatrix.deleteFailed": {
+    "defaultMessage": "無法刪除 {model}。"
+  },
+  "modelMatrix.deleteMessage": {
+    "defaultMessage": "從 {name} 刪除 {model}（{size}）？其檔案將從那台 Mac 的磁碟上移除。"
+  },
+  "modelMatrix.deleteTitle": {
+    "defaultMessage": "刪除模型"
+  },
+  "modelMatrix.dismiss": {
+    "defaultMessage": "關閉"
+  },
+  "modelMatrix.downloadFailed": {
+    "defaultMessage": "下載失敗"
+  },
+  "modelMatrix.downloadHere": {
+    "defaultMessage": "下載到這裡"
+  },
+  "modelMatrix.downloadHereTitle": {
+    "defaultMessage": "從 Hugging Face 將 {model} 下載到 {name}"
+  },
+  "modelMatrix.downloading": {
+    "defaultMessage": "下載中 {pct}%"
+  },
+  "modelMatrix.empty": {
+    "defaultMessage": "你的 Mac 上還沒有模型 — 請在 Hugging Face 分頁下載一個。"
+  },
+  "modelMatrix.free": {
+    "defaultMessage": "可用 {free}"
+  },
+  "modelMatrix.incomplete": {
+    "defaultMessage": "{count,plural,one{不完整 · 缺少 # 個檔案} other{不完整 · 缺少 # 個檔案}}"
+  },
+  "modelMatrix.keep": {
+    "defaultMessage": "保留"
+  },
+  "modelMatrix.keepCopying": {
+    "defaultMessage": "繼續拷貝"
+  },
+  "modelMatrix.loaded": {
+    "defaultMessage": "已載入"
+  },
+  "modelMatrix.loading": {
+    "defaultMessage": "載入中"
+  },
+  "modelMatrix.model": {
+    "defaultMessage": "模型"
+  },
+  "modelMatrix.noCopyPath": {
+    "defaultMessage": "無法從 {name} 拷貝：{reason}"
+  },
+  "modelMatrix.notHere": {
+    "defaultMessage": "不在這裡"
+  },
+  "modelMatrix.offline": {
+    "defaultMessage": "離線"
+  },
+  "modelMatrix.onDisk": {
+    "defaultMessage": "在磁碟上"
+  },
+  "modelMatrix.pause": {
+    "defaultMessage": "暫停"
+  },
+  "modelMatrix.paused": {
+    "defaultMessage": "已暫停 {pct}%"
+  },
+  "modelMatrix.queued": {
+    "defaultMessage": "排隊中"
+  },
+  "modelMatrix.resume": {
+    "defaultMessage": "繼續"
+  },
+  "modelMatrix.sampling": {
+    "defaultMessage": "{name} 上的取樣"
+  },
   "modelSettingsButtons.configureProviders": {
     "defaultMessage": "設定供應商"
   },
@@ -4309,6 +4474,111 @@
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "重設供應商與模型"
+  },
+  "myMacs.account": {
+    "defaultMessage": "帳號"
+  },
+  "myMacs.applyOnReconnect": {
+    "defaultMessage": "「載入與下載模型」會在這台 Mac 重新連線 LeanZero Link 後生效。"
+  },
+  "myMacs.cantRead": {
+    "defaultMessage": "無法讀取：{reason}"
+  },
+  "myMacs.chatHint": {
+    "defaultMessage": "這裡載入的模型會回覆在你其他 Mac 上開始的聊天。"
+  },
+  "myMacs.chip": {
+    "defaultMessage": "晶片"
+  },
+  "myMacs.chipCores": {
+    "defaultMessage": "{brand} · {cores} 核心 GPU"
+  },
+  "myMacs.details": {
+    "defaultMessage": "詳細資訊"
+  },
+  "myMacs.disconnect": {
+    "defaultMessage": "中斷連線"
+  },
+  "myMacs.disk": {
+    "defaultMessage": "磁碟"
+  },
+  "myMacs.diskFree": {
+    "defaultMessage": "{total} 中可用 {free}"
+  },
+  "myMacs.hostname": {
+    "defaultMessage": "主機名稱"
+  },
+  "myMacs.intro": {
+    "defaultMessage": "所有登入你 LeanZero Link 帳號的 Mac。在「模型」分頁將模型載入任一台，並在「引擎」分頁選擇模型在哪裡執行。"
+  },
+  "myMacs.lastPoll": {
+    "defaultMessage": "上次讀取失敗"
+  },
+  "myMacs.lets": {
+    "defaultMessage": "允許你的其他 Mac"
+  },
+  "myMacs.letsUnknown": {
+    "defaultMessage": "它的 goose 沒有說明允許什麼 — 請在那台 Mac 上更新 goose。"
+  },
+  "myMacs.logout": {
+    "defaultMessage": "登出 / 切換帳號"
+  },
+  "myMacs.manageHint": {
+    "defaultMessage": "你的其他 Mac 可以檢視、下載、拷貝和刪除這台 Mac 上的模型。"
+  },
+  "myMacs.master": {
+    "defaultMessage": "允許我的其他 Mac 使用這台 Mac"
+  },
+  "myMacs.masterHint": {
+    "defaultMessage": "僅限登入你 LeanZero Link 帳號的 Mac。每個開關只開放 goose 自身的操作 — 絕不是任意指令。"
+  },
+  "myMacs.memory": {
+    "defaultMessage": "記憶體"
+  },
+  "myMacs.memoryFree": {
+    "defaultMessage": "{total} GB 中可用 {free} GB"
+  },
+  "myMacs.mesh": {
+    "defaultMessage": "網格"
+  },
+  "myMacs.meshIp": {
+    "defaultMessage": "網格 IP"
+  },
+  "myMacs.meshLine": {
+    "defaultMessage": "{online,select,true{{count,plural,one{{state} · 上線 · # 台 Mac} other{{state} · 上線 · # 台 Mac}}} other{{count,plural,one{{state} · 離線 · # 台 Mac} other{{state} · 離線 · # 台 Mac}}}}"
+  },
+  "myMacs.models": {
+    "defaultMessage": "模型"
+  },
+  "myMacs.none": {
+    "defaultMessage": "你的 LeanZero Link 帳號中還沒有其他 Mac — 在那台 Mac 上登入後就會顯示在這裡。"
+  },
+  "myMacs.off": {
+    "defaultMessage": "關"
+  },
+  "myMacs.on": {
+    "defaultMessage": "開"
+  },
+  "myMacs.reconnect": {
+    "defaultMessage": "立即重新連線"
+  },
+  "myMacs.reconnecting": {
+    "defaultMessage": "正在重新連線…（與這台 Mac 的 goose 失去聯繫）"
+  },
+  "myMacs.saveFailed": {
+    "defaultMessage": "開關未儲存"
+  },
+  "myMacs.sessions": {
+    "defaultMessage": "作用中的工作階段"
+  },
+  "myMacs.splitHint": {
+    "defaultMessage": "這台 Mac 存放一個對單台 Mac 來說過大的模型的一部分，由另一台 Mac 執行。"
+  },
+  "myMacs.thisMac": {
+    "defaultMessage": "這台 Mac"
+  },
+  "myMacs.title": {
+    "defaultMessage": "我的 Mac"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -4625,6 +4895,30 @@
   "placementCard.context": {
     "defaultMessage": "{tokens} 上下文"
   },
+  "placementCard.copyFirst": {
+    "defaultMessage": "{kind,select,thunderbolt{先拷貝到 {name} · Thunderbolt} other{先拷貝到 {name} · 網路}}"
+  },
+  "placementCard.copyFirstMinutes": {
+    "defaultMessage": "{kind,select,thunderbolt{先拷貝到 {name}（透過 Thunderbolt 約 {minutes} 分鐘）} other{先拷貝到 {name}（透過網路約 {minutes} 分鐘）}}"
+  },
+  "placementCard.copyFirstWhy": {
+    "defaultMessage": "{model}（{size}）尚未在 {name} 上；拷貝完成後會自動繼續啟動。"
+  },
+  "placementCard.copyThenFailed": {
+    "defaultMessage": "拷貝到 {name} 未完成，因此沒有啟動任何項目：{reason}"
+  },
+  "placementCard.copyingThen": {
+    "defaultMessage": "正在拷貝到 {name} — {pct}% · 拷貝完成後啟動"
+  },
+  "placementCard.details": {
+    "defaultMessage": "詳細資訊"
+  },
+  "placementCard.detailsMeta": {
+    "defaultMessage": "設定、預檢、檢查、事件"
+  },
+  "placementCard.distributedOwns": {
+    "defaultMessage": "分割正在佔用這台 Mac — 停止它才能在這裡單獨執行模型。"
+  },
   "placementCard.estimated": {
     "defaultMessage": "估算"
   },
@@ -4643,8 +4937,8 @@
   "placementCard.goalMany": {
     "defaultMessage": "大量請求"
   },
-  "placementCard.gpuCores": {
-    "defaultMessage": "{brand} · {cores} 核 GPU"
+  "placementCard.keepRunning": {
+    "defaultMessage": "繼續執行"
   },
   "placementCard.live.failed": {
     "defaultMessage": "失敗"
@@ -4661,9 +4955,6 @@
   "placementCard.measureFirst": {
     "defaultMessage": "正在執行且尚未測量 — 測量速度會用這台 Mac 自己的數值取代估算。"
   },
-  "placementCard.measureLater": {
-    "defaultMessage": "執行後即可測量速度。"
-  },
   "placementCard.measured": {
     "defaultMessage": "{runs, plural, other {已測量 · # 次}}"
   },
@@ -4673,26 +4964,17 @@
   "placementCard.measuring": {
     "defaultMessage": "測量中：約 2k token 的提示，然後 256 個 token…"
   },
-  "placementCard.noFigure": {
-    "defaultMessage": "無速度資料"
-  },
   "placementCard.noFigureReason": {
     "defaultMessage": "無速度資料"
   },
-  "placementCard.nodeGap": {
-    "defaultMessage": "{name}：{reason}"
-  },
-  "placementCard.nodeLine": {
-    "defaultMessage": "{name}：{chip} · {bandwidth} GB/s · GPU 上限 {ceiling}"
-  },
-  "placementCard.nothingFits": {
-    "defaultMessage": "目前放不下任何方案"
+  "placementCard.noPlanWays": {
+    "defaultMessage": "沒有計畫就沒有速度數字 — 但每種方式仍然可以啟動。"
   },
   "placementCard.others": {
-    "defaultMessage": "{count, plural, other {另外 # 種方式}}"
+    "defaultMessage": "{count,plural,one{另外 # 種分割} other{另外 # 種分割}}"
   },
-  "placementCard.pipeline": {
-    "defaultMessage": "{count, plural, other {# 台 Mac · 管線拆分 · {link}}}"
+  "placementCard.pipelineKind": {
+    "defaultMessage": "管線分割 · {link}"
   },
   "placementCard.planFailed": {
     "defaultMessage": "無法規劃"
@@ -4712,17 +4994,32 @@
   "placementCard.refusedUnnamed": {
     "defaultMessage": "已拒絕，goose 未提供原因"
   },
+  "placementCard.run": {
+    "defaultMessage": "執行"
+  },
+  "placementCard.runAcross": {
+    "defaultMessage": "{count,plural,=2{在兩台 Mac 上執行} other{在 # 台 Mac 上執行}}"
+  },
+  "placementCard.runAcrossAny": {
+    "defaultMessage": "在你的多台 Mac 上執行"
+  },
+  "placementCard.runHere": {
+    "defaultMessage": "在這台 Mac 上執行"
+  },
+  "placementCard.runIt": {
+    "defaultMessage": "執行"
+  },
+  "placementCard.runOn": {
+    "defaultMessage": "在 {name} 上執行"
+  },
   "placementCard.setupFirst": {
-    "defaultMessage": "分散式設定指定的是另一個模型 — 請在 分散式 › 設定 中選擇此模型，然後啟動。"
+    "defaultMessage": "分割使用的是另一個模型 — 打開 詳細資訊 › 設定，選擇這個模型，然後執行。"
   },
   "placementCard.short": {
     "defaultMessage": "放不下：{node} 上還差 {gb}"
   },
   "placementCard.shortSplit": {
     "defaultMessage": "放不下：還差 {gb}"
-  },
-  "placementCard.single": {
-    "defaultMessage": "僅 {name}"
   },
   "placementCard.slower": {
     "defaultMessage": "對此較慢：~{mine} 對 ~{best} tok/s"
@@ -4736,50 +5033,26 @@
   "placementCard.starting": {
     "defaultMessage": "正在啟動…"
   },
+  "placementCard.stop": {
+    "defaultMessage": "停止"
+  },
+  "placementCard.stopSplitMessage": {
+    "defaultMessage": "{nodes} 上的每個部分都會停止並確認已結束。進行中的請求會被中斷。"
+  },
+  "placementCard.stopSplitTitle": {
+    "defaultMessage": "停止分割？"
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "測量儲存中有無法讀取的行"
   },
-  "placementCard.tensor": {
-    "defaultMessage": "{count, plural, other {# 台 Mac · 張量拆分 · {link}}}"
-  },
-  "placementCard.thisMac": {
-    "defaultMessage": "這台 Mac"
+  "placementCard.tensorKind": {
+    "defaultMessage": "張量分割 · {link}"
   },
   "placementCard.tied": {
     "defaultMessage": "在誤差範圍內同樣快（~{mine} 對 ~{best} tok/s），但需要更多 Mac"
   },
-  "placementCard.tile.mount": {
-    "defaultMessage": "掛載"
-  },
-  "placementCard.tile.nothing": {
-    "defaultMessage": "對這台 Mac 來說太大，goose 能啟動的任何方式都放不下：{reason}"
-  },
-  "placementCard.tile.peerWhy": {
-    "defaultMessage": "對這台 Mac 來說太大 — 它能放在 {name} 上，聊天透過 Link 傳到那裡。"
-  },
-  "placementCard.tile.retry": {
-    "defaultMessage": "重試"
-  },
-  "placementCard.tile.short": {
-    "defaultMessage": "你的任何 Mac 都放不下：即使分到所有 Mac 上也差 {gb}。"
-  },
-  "placementCard.tile.splitWhy": {
-    "defaultMessage": "僅這台 Mac 放不下 — 它分散在 {names} 上運行。"
-  },
-  "placementCard.tile.startAcross": {
-    "defaultMessage": "{count,plural,=2{在兩台 Mac 上啟動} other{在 # 台 Mac 上啟動}}"
-  },
-  "placementCard.tile.startOn": {
-    "defaultMessage": "在 {name} 上啟動"
-  },
-  "placementCard.title": {
-    "defaultMessage": "在哪裡執行"
-  },
   "placementCard.total": {
     "defaultMessage": "同時 {concurrency} 個時總計 ~{value} tok/s"
-  },
-  "placementCard.useThis": {
-    "defaultMessage": "使用此方案"
   },
   "placementCard.writes": {
     "defaultMessage": "寫入 ~{value} tok/s"

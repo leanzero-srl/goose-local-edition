@@ -2231,8 +2231,8 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Bulut Sağlayıcıları"
   },
-  "leanzeroSwarm.tabLink": {
-    "defaultMessage": "LeanZero Link"
+  "leanzeroSwarm.tabMacs": {
+    "defaultMessage": "Mac’lerim"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Sürü Ayarları"
@@ -2494,6 +2494,126 @@
   },
   "loopView.stopCheck": {
     "defaultMessage": "Stop check: {command}"
+  },
+  "macs.cancelDownloadFailed": {
+    "defaultMessage": "İptal edilemedi."
+  },
+  "macs.cancelFailed": {
+    "defaultMessage": "Kopyalama iptal edilemedi."
+  },
+  "macs.copyFailed": {
+    "defaultMessage": "Kopyalama başlamadı."
+  },
+  "macs.downloadFailed": {
+    "defaultMessage": "İndirme başlamadı."
+  },
+  "macs.line.checking": {
+    "defaultMessage": "Motoru okunuyor…"
+  },
+  "macs.line.failed": {
+    "defaultMessage": "{model} başarısız: {reason}"
+  },
+  "macs.line.failedNoModel": {
+    "defaultMessage": "Motor başarısız: {reason}"
+  },
+  "macs.line.hosting": {
+    "defaultMessage": "{model} · {requester} bölmesinin parçası"
+  },
+  "macs.line.loading": {
+    "defaultMessage": "{model} yükleniyor"
+  },
+  "macs.line.notLoaded": {
+    "defaultMessage": "Yüklü model yok"
+  },
+  "macs.line.offline": {
+    "defaultMessage": "LeanZero Link üzerinden erişilemiyor"
+  },
+  "macs.line.running": {
+    "defaultMessage": "{model}"
+  },
+  "macs.line.split": {
+    "defaultMessage": "{count,plural,one{{model} · # Mac’e bölündü} other{{model} · # Mac’e bölündü}}"
+  },
+  "macs.line.writing": {
+    "defaultMessage": "{model} · {tps} tok/sn"
+  },
+  "macs.linksFailed": {
+    "defaultMessage": "Bağlantılar okunamadı."
+  },
+  "macs.listFailed": {
+    "defaultMessage": "Model klasörü okunamadı."
+  },
+  "macs.offThere": {
+    "defaultMessage": "{name} üzerinde {what} kapalı — orada “Diğer Mac’lerim bu Mac’i kullanabilsin” seçeneğini açın (Sağlayıcılar › Mac’lerim)"
+  },
+  "macs.pauseFailed": {
+    "defaultMessage": "Duraklatılamadı."
+  },
+  "macs.permission.chat": {
+    "defaultMessage": "Sohbetleri yanıtlama"
+  },
+  "macs.permission.manage": {
+    "defaultMessage": "Model yükleme ve indirme"
+  },
+  "macs.permission.split": {
+    "defaultMessage": "Bölünmüş bir modelin parçasını çalıştırma"
+  },
+  "macs.resumeFailed": {
+    "defaultMessage": "Devam ettirilemedi."
+  },
+  "macs.state.checking": {
+    "defaultMessage": "Denetleniyor"
+  },
+  "macs.state.failed": {
+    "defaultMessage": "Başarısız"
+  },
+  "macs.state.held": {
+    "defaultMessage": "Bekletiliyor"
+  },
+  "macs.state.hosting": {
+    "defaultMessage": "Bölmenin parçası"
+  },
+  "macs.state.idle": {
+    "defaultMessage": "Boşta"
+  },
+  "macs.state.loading": {
+    "defaultMessage": "Yükleniyor"
+  },
+  "macs.state.notLoaded": {
+    "defaultMessage": "Yüklenmedi"
+  },
+  "macs.state.off": {
+    "defaultMessage": "Kapalı"
+  },
+  "macs.state.offline": {
+    "defaultMessage": "Çevrimdışı"
+  },
+  "macs.state.reading": {
+    "defaultMessage": "Okuyor"
+  },
+  "macs.state.split": {
+    "defaultMessage": "Bölünmüş"
+  },
+  "macs.state.unreadable": {
+    "defaultMessage": "Okunamıyor"
+  },
+  "macs.state.writing": {
+    "defaultMessage": "Yazıyor"
+  },
+  "macs.statusFailed": {
+    "defaultMessage": "Motor okunamadı."
+  },
+  "macs.thisMac": {
+    "defaultMessage": "Bu Mac"
+  },
+  "macs.trackingFailed": {
+    "defaultMessage": "Süren indirmelere yeniden bağlanılamadı."
+  },
+  "macs.tray.line": {
+    "defaultMessage": "{name} — {what}"
+  },
+  "macs.tray.open": {
+    "defaultMessage": "Mac’lerimi Aç"
   },
   "markdownContent.cancel": {
     "defaultMessage": "İptal"
@@ -2783,6 +2903,9 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "İptal"
   },
+  "mlxDistributed.checksPassed": {
+    "defaultMessage": "{count,plural,one{# denetim geçti} other{# denetim geçti}}"
+  },
   "mlxDistributed.clusterChecks": {
     "defaultMessage": "Küme denetimleri"
   },
@@ -2969,15 +3092,6 @@
   "mlxDistributed.fits": {
     "defaultMessage": "sığar"
   },
-  "mlxDistributed.hosting.label": {
-    "defaultMessage": "Bu Mac bir rank hizmeti veriyor"
-  },
-  "mlxDistributed.hosting.loading": {
-    "defaultMessage": "{requester} için rank {rank} yükleniyor"
-  },
-  "mlxDistributed.hosting.text": {
-    "defaultMessage": "{line} — rank PID {pid}. {requester} çalıştırmayı durdurana kadar tekli motor ve bu Mac’in kendi dağıtık motoru reddedilir."
-  },
   "mlxDistributed.inflight": {
     "defaultMessage": "İşlenen"
   },
@@ -3104,12 +3218,6 @@
   "mlxDistributed.peakOf": {
     "defaultMessage": "GiB tepe, {budget} GiB bütçeden"
   },
-  "mlxDistributed.peerBody": {
-    "defaultMessage": "{host} cihazını yönetiyorsunuz. Yapılandırmak, denetlemek, başlatmak veya durdurmak için “Manage on” seçeneğini yeniden “This device” yapın."
-  },
-  "mlxDistributed.peerTitle": {
-    "defaultMessage": "Dağıtık motor bu Mac'ten denetlenir"
-  },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
   },
@@ -3226,15 +3334,6 @@
   },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {Toplu işte # dizi} other {Toplu işte # dizi}}"
-  },
-  "mlxDistributed.serveNode": {
-    "defaultMessage": "Bu Mac’in dağıtık düğüm olarak hizmet vermesine izin ver"
-  },
-  "mlxDistributed.serveNodeError": {
-    "defaultMessage": "Ayar değiştirilemedi"
-  },
-  "mlxDistributed.serveNodeHint": {
-    "defaultMessage": "LeanZero Link’teki diğer Mac’leriniz burada dağıtık motorlarının bir rankını çalıştırabilir — yalnızca goose’un kendi rank programları ve yoklamaları, asla rastgele bir komut değil. Varsayılan olarak kapalı."
   },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "Sunucu durumu okunamıyor: {error}"
@@ -3417,28 +3516,10 @@
     "defaultMessage": "Arayüzsüz (ssh)"
   },
   "mlxDistributedSetup.intro": {
-    "defaultMessage": "Diğer Mac'i bir kez adlandırın. goose bu Mac'i ve onu ssh ile yoklar; bağlantıyı, RDMA'yı, arka ucu, modelleri, portları ve Python'u doldurur."
+    "defaultMessage": "Diğer Mac’inizi seçin. goose iki Mac’e de LeanZero Link üzerinden sorar ve bağlantıyı, RDMA’yı, arka ucu, modelleri, portları ve Python’u doldurur."
   },
-  "mlxDistributedSetup.link.gid": {
-    "defaultMessage": "IPv4 GID {index}"
-  },
-  "mlxDistributedSetup.link.intro": {
-    "defaultMessage": "Aynı hesapla oturum açılmış. Her biri kendini mesh üzerinden tanımladı; birini seçin, goose onu kendi goose’u üzerinden yönetsin — ssh olmadan."
-  },
-  "mlxDistributedSetup.link.memory": {
-    "defaultMessage": "{total} GiB içinden {available} GiB kullanılabilir"
-  },
-  "mlxDistributedSetup.link.models": {
-    "defaultMessage": "{count, plural, other {# model}}"
-  },
-  "mlxDistributedSetup.link.noGid": {
-    "defaultMessage": "IPv4 GID yok"
-  },
-  "mlxDistributedSetup.link.noRdma": {
-    "defaultMessage": "RDMA aygıtı yok"
-  },
-  "mlxDistributedSetup.link.noThunderbolt": {
-    "defaultMessage": "Thunderbolt adresi yok"
+  "mlxDistributedSetup.link.detectWith": {
+    "defaultMessage": "Bu Mac ile algıla"
   },
   "mlxDistributedSetup.link.none": {
     "defaultMessage": "Şu anda bu hesabın başka bir Mac’i LeanZero Link’te değil."
@@ -3446,14 +3527,11 @@
   "mlxDistributedSetup.link.notConnected": {
     "defaultMessage": "LeanZero Link bağlı değil"
   },
-  "mlxDistributedSetup.link.rdmaActive": {
-    "defaultMessage": "etkin"
+  "mlxDistributedSetup.link.pick": {
+    "defaultMessage": "Diğer Mac"
   },
-  "mlxDistributedSetup.link.rdmaDownCount": {
-    "defaultMessage": "{count, plural, other {# aygıt daha, bağlantı noktası kapalı}}"
-  },
-  "mlxDistributedSetup.link.servingOff": {
-    "defaultMessage": "{name} üzerinde “Bu Mac’in dağıtık düğüm olarak hizmet vermesine izin ver” seçeneğini açın (Sağlayıcılar › LeanZero MLX › Motor › Dağıtık)."
+  "mlxDistributedSetup.link.servingOffMyMacs": {
+    "defaultMessage": "{name} üzerinde “Diğer Mac’lerim bu Mac’i kullanabilsin › Bölünmüş bir modelin parçasını çalıştırma” seçeneğini açın (oradaki Sağlayıcılar › Mac’lerim)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "Oradaki goose hizmet veremiyor"
@@ -3472,12 +3550,6 @@
   },
   "mlxDistributedSetup.link.state.unreadable": {
     "defaultMessage": "Yanıt verdi, okunamıyor"
-  },
-  "mlxDistributedSetup.link.title": {
-    "defaultMessage": "LeanZero Link’teki Mac’leriniz"
-  },
-  "mlxDistributedSetup.link.use": {
-    "defaultMessage": "Bu Mac’i kullan"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS eşleşiyor"
@@ -3500,11 +3572,17 @@
   "mlxDistributedSetup.noneAnswering": {
     "defaultMessage": "~/.ssh/config içindeki hiçbir takma ad etkileşimsiz ssh'a yanıt vermedi."
   },
+  "mlxDistributedSetup.overSsh": {
+    "defaultMessage": "Gelişmiş: ssh üzerinden bir Mac"
+  },
+  "mlxDistributedSetup.overSshMeta": {
+    "defaultMessage": "LeanZero Link’te olmayan bir Mac için"
+  },
   "mlxDistributedSetup.peer": {
     "defaultMessage": "Diğer Mac (ssh takma adı veya ana makine)"
   },
   "mlxDistributedSetup.peerPlaceholder": {
-    "defaultMessage": "workhorse"
+    "defaultMessage": "ssh takma adı"
   },
   "mlxDistributedSetup.probed": {
     "defaultMessage": "{count, plural, one {# düğüm {ms} ms'de yoklandı} other {# düğüm {ms} ms'de yoklandı}}"
@@ -3539,20 +3617,17 @@
   "mlxEngineView.mountFailed": {
     "defaultMessage": "Bağlama başarısız"
   },
-  "mlxEngineView.refusedUnnamed": {
-    "defaultMessage": "Reddedildi ve goose bir neden belirtmedi"
+  "mlxEngineView.pickThenRun": {
+    "defaultMessage": "Bir model seçin, ardından aşağıdaki “Çalıştır” bölümünde başlatın — bu Mac’te, diğer bir Mac’inizde ya da aralarında bölünerek."
+  },
+  "mlxEngineView.samplingOn": {
+    "defaultMessage": "Profillerin yeri"
   },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Birden çok Mac üzerinde sunuluyor"
   },
-  "mlxEngineView.startFailed": {
-    "defaultMessage": "Başlatma başarısız"
-  },
-  "mlxEngineView.startRefused": {
-    "defaultMessage": "Başlatma reddedildi"
-  },
-  "mlxEngineView.switchNeedsUnmount": {
-    "defaultMessage": "Bu model yalnızca bu Mac’te çalışmaz — bağlantıyı kaldırın, sonra kutucuktan başlatın."
+  "mlxEngineView.settingsFailed": {
+    "defaultMessage": "Motor ayarları okunamadı."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: token başına {bf16} KiB yerine {bytes} KiB — aynı bellek {ratio}× bağlam tutar."
@@ -3650,6 +3725,39 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "Durduruluyor"
   },
+  "mlxModels.cancelMessage": {
+    "defaultMessage": "{name} üzerindeki {model} indirmesi iptal edilip oradaki yarım dosyalar silinsin mi?"
+  },
+  "mlxModels.cancelTitle": {
+    "defaultMessage": "İndirmeyi iptal et"
+  },
+  "mlxModels.downloadTo": {
+    "defaultMessage": "İndirme yeri"
+  },
+  "mlxModels.edit": {
+    "defaultMessage": "Düzenle"
+  },
+  "mlxModels.folderUnread": {
+    "defaultMessage": "Okunamıyor: {reason}"
+  },
+  "mlxModels.folders": {
+    "defaultMessage": "Model klasörleri"
+  },
+  "mlxModels.foldersHint": {
+    "defaultMessage": "Her Mac için indirmeler, kopyalar ve yüklemeler tarafından ortak kullanılan bir klasör; çubuk, birimindeki boş alandır."
+  },
+  "mlxModels.huggingFace": {
+    "defaultMessage": "Hugging Face"
+  },
+  "mlxModels.keep": {
+    "defaultMessage": "Sakla"
+  },
+  "mlxModels.onYourMacs": {
+    "defaultMessage": "Mac’lerinizde"
+  },
+  "mlxModels.settingsFailed": {
+    "defaultMessage": "Motor ayarları okunamadı."
+  },
   "mlxMount.foreignAnswering": {
     "defaultMessage": "Hazır · başka bir pencereye ait"
   },
@@ -3659,23 +3767,8 @@
   "mlxReplica.cancel": {
     "defaultMessage": "İptal"
   },
-  "mlxReplica.cancelConfirmMessage": {
-    "defaultMessage": "{model} modelinin {host} cihazına kopyalanması durdurulsun mu? {host} üzerindeki kısmi kopya silinir."
-  },
-  "mlxReplica.cancelConfirmTitle": {
-    "defaultMessage": "Kopyalamayı iptal et"
-  },
-  "mlxReplica.cancelFailed": {
-    "defaultMessage": "Kopyalama iptal edilemedi."
-  },
   "mlxReplica.cancelTitle": {
     "defaultMessage": "Kopyalamayı durdur ve {host} üzerindeki kısmi kopyayı sil"
-  },
-  "mlxReplica.checkLinks": {
-    "defaultMessage": "Bağlantıları denetle"
-  },
-  "mlxReplica.checking": {
-    "defaultMessage": "Bağlantılar denetleniyor…"
   },
   "mlxReplica.copiedTo": {
     "defaultMessage": "{host} cihazına kopyalandı"
@@ -3686,15 +3779,6 @@
   "mlxReplica.copyFailed": {
     "defaultMessage": "{host} cihazına kopyalama başarısız oldu"
   },
-  "mlxReplica.copyTitleNetwork": {
-    "defaultMessage": "{host} ile Thunderbolt bağlantısı yok, bu yüzden kopya yerel ağdan gider: {local} → {peer}"
-  },
-  "mlxReplica.copyTitleThunderbolt": {
-    "defaultMessage": "Thunderbolt kablosu üzerinden kopyalar: {local} → {peer}"
-  },
-  "mlxReplica.copyTo": {
-    "defaultMessage": "{kind,select,thunderbolt{{host} cihazına kopyala · Thunderbolt} other{{host} cihazına kopyala · ağ}}"
-  },
   "mlxReplica.copyingTo": {
     "defaultMessage": "{kind,select,thunderbolt{Thunderbolt ile {host} cihazına kopyalanıyor} other{Ağ üzerinden {host} cihazına kopyalanıyor}}"
   },
@@ -3703,39 +3787,6 @@
   },
   "mlxReplica.files": {
     "defaultMessage": "{total} dosyadan {done} tanesi"
-  },
-  "mlxReplica.keepCopying": {
-    "defaultMessage": "Kopyalamaya devam et"
-  },
-  "mlxReplica.linkNetwork": {
-    "defaultMessage": "ağ"
-  },
-  "mlxReplica.linkThunderbolt": {
-    "defaultMessage": "Thunderbolt"
-  },
-  "mlxReplica.linkThunderboltSpeed": {
-    "defaultMessage": "Thunderbolt · {speed}"
-  },
-  "mlxReplica.linksError": {
-    "defaultMessage": "Diğer cihazlarınızla olan bağlantılar denetlenemedi: {reason}"
-  },
-  "mlxReplica.linksFailed": {
-    "defaultMessage": "Bağlantılar okunamadı."
-  },
-  "mlxReplica.linksNote": {
-    "defaultMessage": "Bu cihazdaki bir model yeniden indirilmek yerine bağlı bir cihaza kopyalanabilir. Her dosya kullanılmadan önce asıl dosyayla karşılaştırılır."
-  },
-  "mlxReplica.linksTitle": {
-    "defaultMessage": "Bağlı cihazlar"
-  },
-  "mlxReplica.networkNote": {
-    "defaultMessage": "Thunderbolt bağlantısı yok, bu yüzden kopyalar yerel ağdan gider."
-  },
-  "mlxReplica.offerLabel": {
-    "defaultMessage": "İndirildi"
-  },
-  "mlxReplica.offerText": {
-    "defaultMessage": "{model} artık bu cihazda. {host} Thunderbolt ile bağlı: yeniden indirmek yerine oraya kopyalayın."
   },
   "mlxReplica.progressLabel": {
     "defaultMessage": "{model} modelinin {host} cihazına kopyalanma ilerlemesi"
@@ -3751,9 +3802,6 @@
   },
   "mlxReplica.resumed": {
     "defaultMessage": "{count,plural,one{kısmi kopyadan devam edildi: # dosya} other{kısmi kopyadan devam edildi: # dosya}}"
-  },
-  "mlxReplica.startFailed": {
-    "defaultMessage": "Kopyalama başlamadı."
   },
   "mlxReplica.starting": {
     "defaultMessage": "{host} cihazına kopyalama başlatılıyor…"
@@ -4112,6 +4160,123 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Sağlayıcı adı araması"
   },
+  "modelMatrix.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "modelMatrix.cancelCopyMessage": {
+    "defaultMessage": "{model} modelinin {name} konumuna kopyalanması durdurulsun mu? {name} üzerindeki yarım kopya silinir."
+  },
+  "modelMatrix.cancelCopyTitle": {
+    "defaultMessage": "Kopyalamayı iptal et"
+  },
+  "modelMatrix.cancelDownloadMessage": {
+    "defaultMessage": "{name} üzerindeki {model} indirmesi iptal edilip oradaki yarım dosyalar silinsin mi?"
+  },
+  "modelMatrix.cancelDownloadTitle": {
+    "defaultMessage": "İndirmeyi iptal et"
+  },
+  "modelMatrix.cantRead": {
+    "defaultMessage": "Okunamıyor"
+  },
+  "modelMatrix.checking": {
+    "defaultMessage": "Denetleniyor…"
+  },
+  "modelMatrix.copyFailed": {
+    "defaultMessage": "Kopyalama başarısız"
+  },
+  "modelMatrix.copyFrom": {
+    "defaultMessage": "{kind,select,thunderbolt{{name} konumundan kopyala · Thunderbolt} other{{name} konumundan kopyala · ağ}}"
+  },
+  "modelMatrix.copyFromTitle": {
+    "defaultMessage": "{kind,select,thunderbolt{{name} dosyalarını doğrudan Thunderbolt kablosuyla kopyalar; her dosya orijinaliyle karşılaştırılır.} other{{name} dosyalarını doğrudan yerel ağ üzerinden kopyalar; her dosya orijinaliyle karşılaştırılır.}}"
+  },
+  "modelMatrix.copyStarting": {
+    "defaultMessage": "Kopyalama başlatılıyor"
+  },
+  "modelMatrix.copying": {
+    "defaultMessage": "Kopyalanıyor %{pct}"
+  },
+  "modelMatrix.delete": {
+    "defaultMessage": "{name} konumundan sil"
+  },
+  "modelMatrix.deleteConfirm": {
+    "defaultMessage": "Sil"
+  },
+  "modelMatrix.deleteFailed": {
+    "defaultMessage": "{model} silinemedi."
+  },
+  "modelMatrix.deleteMessage": {
+    "defaultMessage": "{model} ({size}) {name} konumundan silinsin mi? Dosyaları o Mac’in diskinden kaldırılır."
+  },
+  "modelMatrix.deleteTitle": {
+    "defaultMessage": "Modeli sil"
+  },
+  "modelMatrix.dismiss": {
+    "defaultMessage": "Kapat"
+  },
+  "modelMatrix.downloadFailed": {
+    "defaultMessage": "İndirme başarısız"
+  },
+  "modelMatrix.downloadHere": {
+    "defaultMessage": "Buraya indir"
+  },
+  "modelMatrix.downloadHereTitle": {
+    "defaultMessage": "{model} modelini Hugging Face’ten {name} konumuna indir"
+  },
+  "modelMatrix.downloading": {
+    "defaultMessage": "İndiriliyor %{pct}"
+  },
+  "modelMatrix.empty": {
+    "defaultMessage": "Mac’lerinizde henüz model yok — Hugging Face sekmesinden bir tane indirin."
+  },
+  "modelMatrix.free": {
+    "defaultMessage": "{free} boş"
+  },
+  "modelMatrix.incomplete": {
+    "defaultMessage": "{count,plural,one{Eksik · # dosya yok} other{Eksik · # dosya yok}}"
+  },
+  "modelMatrix.keep": {
+    "defaultMessage": "Sakla"
+  },
+  "modelMatrix.keepCopying": {
+    "defaultMessage": "Kopyalamaya devam et"
+  },
+  "modelMatrix.loaded": {
+    "defaultMessage": "Yüklendi"
+  },
+  "modelMatrix.loading": {
+    "defaultMessage": "Yükleniyor"
+  },
+  "modelMatrix.model": {
+    "defaultMessage": "Model"
+  },
+  "modelMatrix.noCopyPath": {
+    "defaultMessage": "{name} konumundan kopya yok: {reason}"
+  },
+  "modelMatrix.notHere": {
+    "defaultMessage": "Burada değil"
+  },
+  "modelMatrix.offline": {
+    "defaultMessage": "Çevrimdışı"
+  },
+  "modelMatrix.onDisk": {
+    "defaultMessage": "Diskte"
+  },
+  "modelMatrix.pause": {
+    "defaultMessage": "Duraklat"
+  },
+  "modelMatrix.paused": {
+    "defaultMessage": "Duraklatıldı %{pct}"
+  },
+  "modelMatrix.queued": {
+    "defaultMessage": "Sırada"
+  },
+  "modelMatrix.resume": {
+    "defaultMessage": "Devam et"
+  },
+  "modelMatrix.sampling": {
+    "defaultMessage": "{name} üzerinde örnekleme"
+  },
   "modelSettingsButtons.configureProviders": {
     "defaultMessage": "Sağlayıcıları yapılandırma"
   },
@@ -4309,6 +4474,111 @@
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "Sağlayıcıyı ve Modeli Sıfırla"
+  },
+  "myMacs.account": {
+    "defaultMessage": "Hesap"
+  },
+  "myMacs.applyOnReconnect": {
+    "defaultMessage": "“Model yükleme ve indirme”, bu Mac LeanZero Link’e yeniden bağlandığında geçerli olur."
+  },
+  "myMacs.cantRead": {
+    "defaultMessage": "Okunamıyor: {reason}"
+  },
+  "myMacs.chatHint": {
+    "defaultMessage": "Burada yüklenen bir model, diğer Mac’lerinizde başlatılan sohbetleri yanıtlar."
+  },
+  "myMacs.chip": {
+    "defaultMessage": "Çip"
+  },
+  "myMacs.chipCores": {
+    "defaultMessage": "{brand} · {cores} çekirdekli GPU"
+  },
+  "myMacs.details": {
+    "defaultMessage": "Ayrıntılar"
+  },
+  "myMacs.disconnect": {
+    "defaultMessage": "Bağlantıyı kes"
+  },
+  "myMacs.disk": {
+    "defaultMessage": "Disk"
+  },
+  "myMacs.diskFree": {
+    "defaultMessage": "{total} içinde {free} boş"
+  },
+  "myMacs.hostname": {
+    "defaultMessage": "Ana bilgisayar adı"
+  },
+  "myMacs.intro": {
+    "defaultMessage": "LeanZero Link hesabınızda oturum açmış her Mac. Modeller sekmesinden herhangi birine model yükleyin, bir modelin nerede çalışacağını Motor sekmesinden seçin."
+  },
+  "myMacs.lastPoll": {
+    "defaultMessage": "Son okuma başarısız"
+  },
+  "myMacs.lets": {
+    "defaultMessage": "Diğer Mac’lerinize izin verir"
+  },
+  "myMacs.letsUnknown": {
+    "defaultMessage": "Oradaki goose neye izin verdiğini söylemiyor — oradaki goose’u güncelleyin."
+  },
+  "myMacs.logout": {
+    "defaultMessage": "Çıkış yap / Hesap değiştir"
+  },
+  "myMacs.manageHint": {
+    "defaultMessage": "Diğer Mac’leriniz bu Mac’teki modelleri görür, indirir, kopyalar ve siler."
+  },
+  "myMacs.master": {
+    "defaultMessage": "Diğer Mac’lerim bu Mac’i kullanabilsin"
+  },
+  "myMacs.masterHint": {
+    "defaultMessage": "Yalnızca LeanZero Link hesabınızda oturum açmış Mac’ler. Her anahtar yalnızca goose’un kendi işlemlerini açar — asla rastgele bir komutu değil."
+  },
+  "myMacs.memory": {
+    "defaultMessage": "Bellek"
+  },
+  "myMacs.memoryFree": {
+    "defaultMessage": "{total} GB içinde {free} GB boş"
+  },
+  "myMacs.mesh": {
+    "defaultMessage": "Ağ örgüsü"
+  },
+  "myMacs.meshIp": {
+    "defaultMessage": "Ağ örgüsü IP’si"
+  },
+  "myMacs.meshLine": {
+    "defaultMessage": "{online,select,true{{count,plural,one{{state} · çevrimiçi · # Mac} other{{state} · çevrimiçi · # Mac}}} other{{count,plural,one{{state} · çevrimdışı · # Mac} other{{state} · çevrimdışı · # Mac}}}}"
+  },
+  "myMacs.models": {
+    "defaultMessage": "Modeller"
+  },
+  "myMacs.none": {
+    "defaultMessage": "LeanZero Link hesabınızda henüz başka Mac yok — burada görmek için o Mac’te oturum açın."
+  },
+  "myMacs.off": {
+    "defaultMessage": "kapalı"
+  },
+  "myMacs.on": {
+    "defaultMessage": "açık"
+  },
+  "myMacs.reconnect": {
+    "defaultMessage": "Şimdi yeniden bağlan"
+  },
+  "myMacs.reconnecting": {
+    "defaultMessage": "Yeniden bağlanıyor… (bu Mac’in goose’u ile bağlantı koptu)"
+  },
+  "myMacs.saveFailed": {
+    "defaultMessage": "Anahtar kaydedilmedi"
+  },
+  "myMacs.sessions": {
+    "defaultMessage": "Etkin oturumlar"
+  },
+  "myMacs.splitHint": {
+    "defaultMessage": "Bu Mac, tek bir Mac için çok büyük olan ve başka bir Mac’ten çalıştırılan bir modelin parçasını tutar."
+  },
+  "myMacs.thisMac": {
+    "defaultMessage": "Bu Mac"
+  },
+  "myMacs.title": {
+    "defaultMessage": "Mac’lerim"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -4625,6 +4895,30 @@
   "placementCard.context": {
     "defaultMessage": "{tokens} bağlam"
   },
+  "placementCard.copyFirst": {
+    "defaultMessage": "{kind,select,thunderbolt{Önce {name} konumuna kopyala · Thunderbolt} other{Önce {name} konumuna kopyala · ağ}}"
+  },
+  "placementCard.copyFirstMinutes": {
+    "defaultMessage": "{kind,select,thunderbolt{Önce {name} konumuna kopyala (Thunderbolt ile ~{minutes} dk)} other{Önce {name} konumuna kopyala (ağ üzerinden ~{minutes} dk)}}"
+  },
+  "placementCard.copyFirstWhy": {
+    "defaultMessage": "{model} ({size}) henüz {name} üzerinde değil; kopya ulaşınca başlatma kendiliğinden sürer."
+  },
+  "placementCard.copyThenFailed": {
+    "defaultMessage": "{name} konumuna kopyalama bitmedi, bu yüzden hiçbir şey başlamadı: {reason}"
+  },
+  "placementCard.copyingThen": {
+    "defaultMessage": "{name} konumuna kopyalanıyor — %{pct} · kopya ulaşınca başlar"
+  },
+  "placementCard.details": {
+    "defaultMessage": "Ayrıntılar"
+  },
+  "placementCard.detailsMeta": {
+    "defaultMessage": "kurulum, ön denetim, denetimler, olaylar"
+  },
+  "placementCard.distributedOwns": {
+    "defaultMessage": "Bölme bu Mac’i kullanıyor — burada tek başına model çalıştırmak için durdurun."
+  },
   "placementCard.estimated": {
     "defaultMessage": "tahmini"
   },
@@ -4643,8 +4937,8 @@
   "placementCard.goalMany": {
     "defaultMessage": "Çok sayıda istek"
   },
-  "placementCard.gpuCores": {
-    "defaultMessage": "{brand} · {cores} çekirdekli GPU"
+  "placementCard.keepRunning": {
+    "defaultMessage": "Çalışmaya devam etsin"
   },
   "placementCard.live.failed": {
     "defaultMessage": "Başarısız"
@@ -4661,9 +4955,6 @@
   "placementCard.measureFirst": {
     "defaultMessage": "Çalışıyor ve henüz ölçülmedi — Hızı ölç, tahmini bu Mac’in kendi sayısıyla değiştirir."
   },
-  "placementCard.measureLater": {
-    "defaultMessage": "Hızı ölç, çalışmaya başlayınca kullanılabilir."
-  },
   "placementCard.measured": {
     "defaultMessage": "{runs, plural, one {ölçüldü} other {ölçüldü · # çalıştırma}}"
   },
@@ -4673,26 +4964,17 @@
   "placementCard.measuring": {
     "defaultMessage": "Ölçülüyor: ~2k token’lık bir istem, ardından 256 token…"
   },
-  "placementCard.noFigure": {
-    "defaultMessage": "hız verisi yok"
-  },
   "placementCard.noFigureReason": {
     "defaultMessage": "Hız verisi yok"
   },
-  "placementCard.nodeGap": {
-    "defaultMessage": "{name}: {reason}"
-  },
-  "placementCard.nodeLine": {
-    "defaultMessage": "{name}: {chip} · {bandwidth} GB/sn · GPU tavanı {ceiling}"
-  },
-  "placementCard.nothingFits": {
-    "defaultMessage": "Şu anda hiçbir şey sığmıyor"
+  "placementCard.noPlanWays": {
+    "defaultMessage": "Plan olmadan hız rakamı yok — yine de her yol başlatılabilir."
   },
   "placementCard.others": {
-    "defaultMessage": "{count, plural, one {# başka yol} other {# başka yol}}"
+    "defaultMessage": "{count,plural,one{# diğer bölme} other{# diğer bölme}}"
   },
-  "placementCard.pipeline": {
-    "defaultMessage": "{count, plural, one {# Mac · boru hattı bölme · {link}} other {# Mac · boru hattı bölme · {link}}}"
+  "placementCard.pipelineKind": {
+    "defaultMessage": "ardışık düzen bölmesi · {link}"
   },
   "placementCard.planFailed": {
     "defaultMessage": "Planlanamadı"
@@ -4712,17 +4994,32 @@
   "placementCard.refusedUnnamed": {
     "defaultMessage": "Reddedildi ve goose bir neden belirtmedi"
   },
+  "placementCard.run": {
+    "defaultMessage": "Çalıştır"
+  },
+  "placementCard.runAcross": {
+    "defaultMessage": "{count,plural,=2{İki Mac’te de çalıştır} other{# Mac’te çalıştır}}"
+  },
+  "placementCard.runAcrossAny": {
+    "defaultMessage": "Mac’lerinizde çalıştır"
+  },
+  "placementCard.runHere": {
+    "defaultMessage": "Bu Mac’te çalıştır"
+  },
+  "placementCard.runIt": {
+    "defaultMessage": "Çalıştır"
+  },
+  "placementCard.runOn": {
+    "defaultMessage": "{name} üzerinde çalıştır"
+  },
   "placementCard.setupFirst": {
-    "defaultMessage": "Dağıtık kurulum başka bir modeli adlandırıyor — bunu Dağıtık › Kur bölümünde seç, sonra başlat."
+    "defaultMessage": "Bölme başka bir modelle kurulmuş — Ayrıntılar › Kur’u açın, bunu seçin, sonra Çalıştır’a basın."
   },
   "placementCard.short": {
     "defaultMessage": "Sığmıyor: {node} üzerinde {gb} eksik"
   },
   "placementCard.shortSplit": {
     "defaultMessage": "Sığmıyor: {gb} eksik"
-  },
-  "placementCard.single": {
-    "defaultMessage": "Yalnızca {name}"
   },
   "placementCard.slower": {
     "defaultMessage": "Bunun için daha yavaş: ~{mine} ile ~{best} tok/sn"
@@ -4736,50 +5033,26 @@
   "placementCard.starting": {
     "defaultMessage": "Başlatılıyor…"
   },
+  "placementCard.stop": {
+    "defaultMessage": "Durdur"
+  },
+  "placementCard.stopSplitMessage": {
+    "defaultMessage": "{nodes} üzerindeki her parça durdurulur ve bittiği doğrulanır. Süren istekler kesilir."
+  },
+  "placementCard.stopSplitTitle": {
+    "defaultMessage": "Bölme durdurulsun mu?"
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Ölçüm deposunda okunamayan satırlar"
   },
-  "placementCard.tensor": {
-    "defaultMessage": "{count, plural, one {# Mac · tensör bölme · {link}} other {# Mac · tensör bölme · {link}}}"
-  },
-  "placementCard.thisMac": {
-    "defaultMessage": "bu Mac"
+  "placementCard.tensorKind": {
+    "defaultMessage": "tensör bölmesi · {link}"
   },
   "placementCard.tied": {
     "defaultMessage": "Hata payı içinde aynı hızda (~{mine} ile ~{best} tok/sn), ama daha fazla Mac gerekiyor"
   },
-  "placementCard.tile.mount": {
-    "defaultMessage": "Bağla"
-  },
-  "placementCard.tile.nothing": {
-    "defaultMessage": "Bu Mac için çok büyük ve goose’un başlatabileceği hiçbir şeye sığmıyor: {reason}"
-  },
-  "placementCard.tile.peerWhy": {
-    "defaultMessage": "Bu Mac için çok büyük — {name} üzerine sığıyor ve sohbet oraya Link üzerinden gidiyor."
-  },
-  "placementCard.tile.retry": {
-    "defaultMessage": "Yeniden dene"
-  },
-  "placementCard.tile.short": {
-    "defaultMessage": "Hiçbir Mac’inize sığmıyor: hepsine bölünse bile {gb} eksik."
-  },
-  "placementCard.tile.splitWhy": {
-    "defaultMessage": "Tek başına bu Mac için çok büyük — {names} üzerinde bölünerek çalışır."
-  },
-  "placementCard.tile.startAcross": {
-    "defaultMessage": "{count,plural,=2{İki Mac’te başlat} other{# Mac’te başlat}}"
-  },
-  "placementCard.tile.startOn": {
-    "defaultMessage": "{name} üzerinde başlat"
-  },
-  "placementCard.title": {
-    "defaultMessage": "Nerede çalıştırılsın"
-  },
   "placementCard.total": {
     "defaultMessage": "Aynı anda {concurrency} ile toplam ~{value} tok/sn"
-  },
-  "placementCard.useThis": {
-    "defaultMessage": "Bunu kullan"
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/sn yazma"

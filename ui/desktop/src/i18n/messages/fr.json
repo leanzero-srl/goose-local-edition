@@ -2231,8 +2231,8 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Fournisseurs cloud"
   },
-  "leanzeroSwarm.tabLink": {
-    "defaultMessage": "LeanZero Link"
+  "leanzeroSwarm.tabMacs": {
+    "defaultMessage": "Mes Mac"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Réglages de l'essaim"
@@ -2494,6 +2494,126 @@
   },
   "loopView.stopCheck": {
     "defaultMessage": "Stop check: {command}"
+  },
+  "macs.cancelDownloadFailed": {
+    "defaultMessage": "Échec de l’annulation."
+  },
+  "macs.cancelFailed": {
+    "defaultMessage": "La copie n’a pas pu être annulée."
+  },
+  "macs.copyFailed": {
+    "defaultMessage": "La copie n’a pas démarré."
+  },
+  "macs.downloadFailed": {
+    "defaultMessage": "Le téléchargement n’a pas démarré."
+  },
+  "macs.line.checking": {
+    "defaultMessage": "Lecture de son moteur…"
+  },
+  "macs.line.failed": {
+    "defaultMessage": "{model} a échoué : {reason}"
+  },
+  "macs.line.failedNoModel": {
+    "defaultMessage": "Le moteur a échoué : {reason}"
+  },
+  "macs.line.hosting": {
+    "defaultMessage": "{model} · partie de la répartition de {requester}"
+  },
+  "macs.line.loading": {
+    "defaultMessage": "Chargement de {model}"
+  },
+  "macs.line.notLoaded": {
+    "defaultMessage": "Aucun modèle chargé"
+  },
+  "macs.line.offline": {
+    "defaultMessage": "Injoignable via LeanZero Link"
+  },
+  "macs.line.running": {
+    "defaultMessage": "{model}"
+  },
+  "macs.line.split": {
+    "defaultMessage": "{count,plural,one{{model} · réparti sur # Mac} other{{model} · réparti sur # Mac}}"
+  },
+  "macs.line.writing": {
+    "defaultMessage": "{model} · {tps} tok/s"
+  },
+  "macs.linksFailed": {
+    "defaultMessage": "Les liaisons n’ont pas pu être lues."
+  },
+  "macs.listFailed": {
+    "defaultMessage": "Le dossier des modèles n’a pas pu être lu."
+  },
+  "macs.offThere": {
+    "defaultMessage": "{what} est désactivé sur {name} — activez « Autoriser mes autres Mac à utiliser ce Mac » sur celui-ci (Fournisseurs › Mes Mac)"
+  },
+  "macs.pauseFailed": {
+    "defaultMessage": "Échec de la pause."
+  },
+  "macs.permission.chat": {
+    "defaultMessage": "Répondre aux discussions"
+  },
+  "macs.permission.manage": {
+    "defaultMessage": "Charger et télécharger des modèles"
+  },
+  "macs.permission.split": {
+    "defaultMessage": "Exécuter une partie d’un modèle réparti"
+  },
+  "macs.resumeFailed": {
+    "defaultMessage": "Échec de la reprise."
+  },
+  "macs.state.checking": {
+    "defaultMessage": "Vérification"
+  },
+  "macs.state.failed": {
+    "defaultMessage": "Échec"
+  },
+  "macs.state.held": {
+    "defaultMessage": "Retenu"
+  },
+  "macs.state.hosting": {
+    "defaultMessage": "Partie d’une répartition"
+  },
+  "macs.state.idle": {
+    "defaultMessage": "Inactif"
+  },
+  "macs.state.loading": {
+    "defaultMessage": "Chargement"
+  },
+  "macs.state.notLoaded": {
+    "defaultMessage": "Non chargé"
+  },
+  "macs.state.off": {
+    "defaultMessage": "Désactivé"
+  },
+  "macs.state.offline": {
+    "defaultMessage": "Hors ligne"
+  },
+  "macs.state.reading": {
+    "defaultMessage": "Lecture"
+  },
+  "macs.state.split": {
+    "defaultMessage": "Réparti"
+  },
+  "macs.state.unreadable": {
+    "defaultMessage": "Illisible"
+  },
+  "macs.state.writing": {
+    "defaultMessage": "Écriture"
+  },
+  "macs.statusFailed": {
+    "defaultMessage": "Le moteur n’a pas pu être lu."
+  },
+  "macs.thisMac": {
+    "defaultMessage": "Ce Mac"
+  },
+  "macs.trackingFailed": {
+    "defaultMessage": "Les téléchargements en cours n’ont pas pu être reconnectés."
+  },
+  "macs.tray.line": {
+    "defaultMessage": "{name} — {what}"
+  },
+  "macs.tray.open": {
+    "defaultMessage": "Ouvrir Mes Mac"
   },
   "markdownContent.cancel": {
     "defaultMessage": "Annuler"
@@ -2783,6 +2903,9 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "Annuler"
   },
+  "mlxDistributed.checksPassed": {
+    "defaultMessage": "{count,plural,one{# vérification réussie} other{# vérifications réussies}}"
+  },
   "mlxDistributed.clusterChecks": {
     "defaultMessage": "Vérifications du cluster"
   },
@@ -2969,15 +3092,6 @@
   "mlxDistributed.fits": {
     "defaultMessage": "tient"
   },
-  "mlxDistributed.hosting.label": {
-    "defaultMessage": "Ce Mac sert un rang"
-  },
-  "mlxDistributed.hosting.loading": {
-    "defaultMessage": "Chargement du rang {rank} pour {requester}"
-  },
-  "mlxDistributed.hosting.text": {
-    "defaultMessage": "{line} — PID du rang {pid}. Le moteur unique et le moteur distribué propre à ce Mac sont refusés jusqu’à ce que {requester} arrête l’exécution."
-  },
   "mlxDistributed.inflight": {
     "defaultMessage": "En cours"
   },
@@ -3104,12 +3218,6 @@
   "mlxDistributed.peakOf": {
     "defaultMessage": "Gio de pic sur un budget de {budget} Gio"
   },
-  "mlxDistributed.peerBody": {
-    "defaultMessage": "Vous gérez {host}. Remettez « Manage on » sur « This device » pour le configurer, le vérifier, le démarrer ou l’arrêter."
-  },
-  "mlxDistributed.peerTitle": {
-    "defaultMessage": "Le moteur distribué est supervisé depuis ce Mac"
-  },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
   },
@@ -3226,15 +3334,6 @@
   },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {# séquence dans le lot} other {# séquences dans le lot}}"
-  },
-  "mlxDistributed.serveNode": {
-    "defaultMessage": "Autoriser ce Mac à servir de nœud distribué"
-  },
-  "mlxDistributed.serveNodeError": {
-    "defaultMessage": "Impossible de modifier le réglage"
-  },
-  "mlxDistributed.serveNodeHint": {
-    "defaultMessage": "Vos autres Mac sur LeanZero Link pourront alors exécuter ici un rang de leur moteur distribué — uniquement les programmes de rang et sondes de goose, jamais une commande arbitraire. Désactivé par défaut."
   },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "État du serveur illisible : {error}"
@@ -3417,28 +3516,10 @@
     "defaultMessage": "Sans interface (ssh)"
   },
   "mlxDistributedSetup.intro": {
-    "defaultMessage": "Nommez l’autre Mac une seule fois. goose sonde ce Mac et l’autre via ssh et renseigne le lien, RDMA, le backend, les modèles, les ports et Python."
+    "defaultMessage": "Choisissez votre autre Mac. goose interroge les deux Mac via LeanZero Link et renseigne la liaison, RDMA, le backend, les modèles, les ports et Python."
   },
-  "mlxDistributedSetup.link.gid": {
-    "defaultMessage": "GID IPv4 {index}"
-  },
-  "mlxDistributedSetup.link.intro": {
-    "defaultMessage": "Connectés au même compte. Chacun s’est décrit lui-même via le maillage ; choisissez-en un et goose le pilote via son propre goose — sans ssh."
-  },
-  "mlxDistributedSetup.link.memory": {
-    "defaultMessage": "{available} sur {total} Gio disponibles"
-  },
-  "mlxDistributedSetup.link.models": {
-    "defaultMessage": "{count, plural, one {# modèle} other {# modèles}}"
-  },
-  "mlxDistributedSetup.link.noGid": {
-    "defaultMessage": "aucun GID IPv4"
-  },
-  "mlxDistributedSetup.link.noRdma": {
-    "defaultMessage": "Aucun périphérique RDMA"
-  },
-  "mlxDistributedSetup.link.noThunderbolt": {
-    "defaultMessage": "Aucune adresse Thunderbolt"
+  "mlxDistributedSetup.link.detectWith": {
+    "defaultMessage": "Détecter avec ce Mac"
   },
   "mlxDistributedSetup.link.none": {
     "defaultMessage": "Aucun autre Mac de ce compte n’est sur LeanZero Link pour le moment."
@@ -3446,14 +3527,11 @@
   "mlxDistributedSetup.link.notConnected": {
     "defaultMessage": "LeanZero Link n’est pas connecté"
   },
-  "mlxDistributedSetup.link.rdmaActive": {
-    "defaultMessage": "actif"
+  "mlxDistributedSetup.link.pick": {
+    "defaultMessage": "L’autre Mac"
   },
-  "mlxDistributedSetup.link.rdmaDownCount": {
-    "defaultMessage": "{count, plural, one {# autre périphérique, port inactif} other {# autres périphériques, ports inactifs}}"
-  },
-  "mlxDistributedSetup.link.servingOff": {
-    "defaultMessage": "Activez « Autoriser ce Mac à servir de nœud distribué » sur {name} (Fournisseurs › LeanZero MLX › Moteur › Distribué)."
+  "mlxDistributedSetup.link.servingOffMyMacs": {
+    "defaultMessage": "Activez « Autoriser mes autres Mac à utiliser ce Mac › Exécuter une partie d’un modèle réparti » sur {name} (Fournisseurs › Mes Mac sur celui-ci)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "Son goose ne peut pas servir"
@@ -3472,12 +3550,6 @@
   },
   "mlxDistributedSetup.link.state.unreadable": {
     "defaultMessage": "A répondu, illisible"
-  },
-  "mlxDistributedSetup.link.title": {
-    "defaultMessage": "Vos Mac sur LeanZero Link"
-  },
-  "mlxDistributedSetup.link.use": {
-    "defaultMessage": "Utiliser ce Mac"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS concordent"
@@ -3500,11 +3572,17 @@
   "mlxDistributedSetup.noneAnswering": {
     "defaultMessage": "Aucun alias de ~/.ssh/config n’a répondu à un ssh non interactif."
   },
+  "mlxDistributedSetup.overSsh": {
+    "defaultMessage": "Avancé : un Mac via ssh"
+  },
+  "mlxDistributedSetup.overSshMeta": {
+    "defaultMessage": "pour un Mac qui n’est pas sur LeanZero Link"
+  },
   "mlxDistributedSetup.peer": {
     "defaultMessage": "Autre Mac (alias ssh ou hôte)"
   },
   "mlxDistributedSetup.peerPlaceholder": {
-    "defaultMessage": "workhorse"
+    "defaultMessage": "alias ssh"
   },
   "mlxDistributedSetup.probed": {
     "defaultMessage": "{count, plural, one {# nœud sondé en {ms} ms} other {# nœuds sondés en {ms} ms}}"
@@ -3539,20 +3617,17 @@
   "mlxEngineView.mountFailed": {
     "defaultMessage": "Échec du montage"
   },
-  "mlxEngineView.refusedUnnamed": {
-    "defaultMessage": "Refusé, et goose n’a donné aucune raison"
+  "mlxEngineView.pickThenRun": {
+    "defaultMessage": "Choisissez un modèle, puis lancez-le ci-dessous dans « Exécuter » — sur ce Mac, sur un autre de vos Mac ou réparti entre eux."
+  },
+  "mlxEngineView.samplingOn": {
+    "defaultMessage": "Profils sur"
   },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Sert sur plusieurs Mac"
   },
-  "mlxEngineView.startFailed": {
-    "defaultMessage": "Échec du démarrage"
-  },
-  "mlxEngineView.startRefused": {
-    "defaultMessage": "Démarrage refusé"
-  },
-  "mlxEngineView.switchNeedsUnmount": {
-    "defaultMessage": "Ce modèle ne tourne pas sur ce Mac seul — démontez-le, puis démarrez-le depuis la tuile."
+  "mlxEngineView.settingsFailed": {
+    "defaultMessage": "Impossible de lire les réglages du moteur."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode} : {bytes} Kio par jeton au lieu de {bf16} Kio — la même mémoire contient {ratio}× plus de contexte."
@@ -3650,6 +3725,39 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "Arrêt en cours"
   },
+  "mlxModels.cancelMessage": {
+    "defaultMessage": "Annuler le téléchargement de {model} sur {name} et y supprimer ses fichiers partiels ?"
+  },
+  "mlxModels.cancelTitle": {
+    "defaultMessage": "Annuler le téléchargement"
+  },
+  "mlxModels.downloadTo": {
+    "defaultMessage": "Télécharger sur"
+  },
+  "mlxModels.edit": {
+    "defaultMessage": "Modifier"
+  },
+  "mlxModels.folderUnread": {
+    "defaultMessage": "Illisible : {reason}"
+  },
+  "mlxModels.folders": {
+    "defaultMessage": "Dossiers des modèles"
+  },
+  "mlxModels.foldersHint": {
+    "defaultMessage": "Un dossier par Mac, utilisé pour les téléchargements, les copies et les chargements ; la barre indique l’espace libre de son volume."
+  },
+  "mlxModels.huggingFace": {
+    "defaultMessage": "Hugging Face"
+  },
+  "mlxModels.keep": {
+    "defaultMessage": "Conserver"
+  },
+  "mlxModels.onYourMacs": {
+    "defaultMessage": "Sur vos Mac"
+  },
+  "mlxModels.settingsFailed": {
+    "defaultMessage": "Les réglages du moteur n’ont pas pu être lus."
+  },
   "mlxMount.foreignAnswering": {
     "defaultMessage": "Prêt · appartient à une autre fenêtre"
   },
@@ -3659,23 +3767,8 @@
   "mlxReplica.cancel": {
     "defaultMessage": "Annuler"
   },
-  "mlxReplica.cancelConfirmMessage": {
-    "defaultMessage": "Arrêter la copie de {model} vers {host} ? La copie partielle sur {host} est supprimée."
-  },
-  "mlxReplica.cancelConfirmTitle": {
-    "defaultMessage": "Annuler la copie"
-  },
-  "mlxReplica.cancelFailed": {
-    "defaultMessage": "Impossible d'annuler la copie."
-  },
   "mlxReplica.cancelTitle": {
     "defaultMessage": "Arrêter la copie et supprimer la copie partielle sur {host}"
-  },
-  "mlxReplica.checkLinks": {
-    "defaultMessage": "Vérifier les liaisons"
-  },
-  "mlxReplica.checking": {
-    "defaultMessage": "Vérification des liaisons…"
   },
   "mlxReplica.copiedTo": {
     "defaultMessage": "Copié vers {host}"
@@ -3686,15 +3779,6 @@
   "mlxReplica.copyFailed": {
     "defaultMessage": "Échec de la copie vers {host}"
   },
-  "mlxReplica.copyTitleNetwork": {
-    "defaultMessage": "Pas de liaison Thunderbolt avec {host} : la copie passe par le réseau local : {local} → {peer}"
-  },
-  "mlxReplica.copyTitleThunderbolt": {
-    "defaultMessage": "Copie par le câble Thunderbolt : {local} → {peer}"
-  },
-  "mlxReplica.copyTo": {
-    "defaultMessage": "{kind,select,thunderbolt{Copier vers {host} · Thunderbolt} other{Copier vers {host} · réseau}}"
-  },
   "mlxReplica.copyingTo": {
     "defaultMessage": "{kind,select,thunderbolt{Copie vers {host} par Thunderbolt} other{Copie vers {host} par le réseau}}"
   },
@@ -3703,39 +3787,6 @@
   },
   "mlxReplica.files": {
     "defaultMessage": "{done} fichiers sur {total}"
-  },
-  "mlxReplica.keepCopying": {
-    "defaultMessage": "Continuer la copie"
-  },
-  "mlxReplica.linkNetwork": {
-    "defaultMessage": "réseau"
-  },
-  "mlxReplica.linkThunderbolt": {
-    "defaultMessage": "Thunderbolt"
-  },
-  "mlxReplica.linkThunderboltSpeed": {
-    "defaultMessage": "Thunderbolt · {speed}"
-  },
-  "mlxReplica.linksError": {
-    "defaultMessage": "Impossible de vérifier les liaisons avec vos autres appareils : {reason}"
-  },
-  "mlxReplica.linksFailed": {
-    "defaultMessage": "Impossible de lire les liaisons."
-  },
-  "mlxReplica.linksNote": {
-    "defaultMessage": "Un modèle présent sur cet appareil peut être copié vers un appareil lié au lieu d'être téléchargé à nouveau. Chaque fichier est vérifié par rapport à l'original avant d'être utilisé."
-  },
-  "mlxReplica.linksTitle": {
-    "defaultMessage": "Appareils liés"
-  },
-  "mlxReplica.networkNote": {
-    "defaultMessage": "Pas de liaison Thunderbolt : les copies passent par le réseau local."
-  },
-  "mlxReplica.offerLabel": {
-    "defaultMessage": "Téléchargé"
-  },
-  "mlxReplica.offerText": {
-    "defaultMessage": "{model} est maintenant sur cet appareil. {host} est lié en Thunderbolt : copiez-le là-bas au lieu de le télécharger à nouveau."
   },
   "mlxReplica.progressLabel": {
     "defaultMessage": "Progression de la copie de {model} vers {host}"
@@ -3751,9 +3802,6 @@
   },
   "mlxReplica.resumed": {
     "defaultMessage": "{count,plural,one{repris d'une copie partielle : # fichier} other{repris d'une copie partielle : # fichiers}}"
-  },
-  "mlxReplica.startFailed": {
-    "defaultMessage": "La copie n'a pas démarré."
   },
   "mlxReplica.starting": {
     "defaultMessage": "Démarrage de la copie vers {host}…"
@@ -4112,6 +4160,123 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Recherche du nom du fournisseur"
   },
+  "modelMatrix.cancel": {
+    "defaultMessage": "Annuler"
+  },
+  "modelMatrix.cancelCopyMessage": {
+    "defaultMessage": "Arrêter la copie de {model} vers {name} ? La copie partielle sur {name} est supprimée."
+  },
+  "modelMatrix.cancelCopyTitle": {
+    "defaultMessage": "Annuler la copie"
+  },
+  "modelMatrix.cancelDownloadMessage": {
+    "defaultMessage": "Annuler le téléchargement de {model} sur {name} et y supprimer ses fichiers partiels ?"
+  },
+  "modelMatrix.cancelDownloadTitle": {
+    "defaultMessage": "Annuler le téléchargement"
+  },
+  "modelMatrix.cantRead": {
+    "defaultMessage": "Illisible"
+  },
+  "modelMatrix.checking": {
+    "defaultMessage": "Vérification…"
+  },
+  "modelMatrix.copyFailed": {
+    "defaultMessage": "Échec de la copie"
+  },
+  "modelMatrix.copyFrom": {
+    "defaultMessage": "{kind,select,thunderbolt{Copier depuis {name} · Thunderbolt} other{Copier depuis {name} · réseau}}"
+  },
+  "modelMatrix.copyFromTitle": {
+    "defaultMessage": "{kind,select,thunderbolt{Copie les fichiers de {name} directement par le câble Thunderbolt ; chaque fichier est vérifié par rapport à l’original.} other{Copie les fichiers de {name} directement par le réseau local ; chaque fichier est vérifié par rapport à l’original.}}"
+  },
+  "modelMatrix.copyStarting": {
+    "defaultMessage": "Démarrage de la copie"
+  },
+  "modelMatrix.copying": {
+    "defaultMessage": "Copie {pct} %"
+  },
+  "modelMatrix.delete": {
+    "defaultMessage": "Supprimer de {name}"
+  },
+  "modelMatrix.deleteConfirm": {
+    "defaultMessage": "Supprimer"
+  },
+  "modelMatrix.deleteFailed": {
+    "defaultMessage": "Impossible de supprimer {model}."
+  },
+  "modelMatrix.deleteMessage": {
+    "defaultMessage": "Supprimer {model} ({size}) de {name} ? Ses fichiers sont effacés du disque de ce Mac."
+  },
+  "modelMatrix.deleteTitle": {
+    "defaultMessage": "Supprimer le modèle"
+  },
+  "modelMatrix.dismiss": {
+    "defaultMessage": "Ignorer"
+  },
+  "modelMatrix.downloadFailed": {
+    "defaultMessage": "Échec du téléchargement"
+  },
+  "modelMatrix.downloadHere": {
+    "defaultMessage": "Télécharger ici"
+  },
+  "modelMatrix.downloadHereTitle": {
+    "defaultMessage": "Télécharger {model} depuis Hugging Face sur {name}"
+  },
+  "modelMatrix.downloading": {
+    "defaultMessage": "Téléchargement {pct} %"
+  },
+  "modelMatrix.empty": {
+    "defaultMessage": "Aucun modèle sur vos Mac pour l’instant — téléchargez-en un depuis l’onglet Hugging Face."
+  },
+  "modelMatrix.free": {
+    "defaultMessage": "{free} libres"
+  },
+  "modelMatrix.incomplete": {
+    "defaultMessage": "{count,plural,one{Incomplet · # fichier manquant} other{Incomplet · # fichiers manquants}}"
+  },
+  "modelMatrix.keep": {
+    "defaultMessage": "Conserver"
+  },
+  "modelMatrix.keepCopying": {
+    "defaultMessage": "Continuer la copie"
+  },
+  "modelMatrix.loaded": {
+    "defaultMessage": "Chargé"
+  },
+  "modelMatrix.loading": {
+    "defaultMessage": "Chargement"
+  },
+  "modelMatrix.model": {
+    "defaultMessage": "Modèle"
+  },
+  "modelMatrix.noCopyPath": {
+    "defaultMessage": "Pas de copie depuis {name} : {reason}"
+  },
+  "modelMatrix.notHere": {
+    "defaultMessage": "Absent"
+  },
+  "modelMatrix.offline": {
+    "defaultMessage": "Hors ligne"
+  },
+  "modelMatrix.onDisk": {
+    "defaultMessage": "Sur le disque"
+  },
+  "modelMatrix.pause": {
+    "defaultMessage": "Pause"
+  },
+  "modelMatrix.paused": {
+    "defaultMessage": "En pause {pct} %"
+  },
+  "modelMatrix.queued": {
+    "defaultMessage": "En file d’attente"
+  },
+  "modelMatrix.resume": {
+    "defaultMessage": "Reprendre"
+  },
+  "modelMatrix.sampling": {
+    "defaultMessage": "Échantillonnage sur {name}"
+  },
   "modelSettingsButtons.configureProviders": {
     "defaultMessage": "Configurer les fournisseurs"
   },
@@ -4309,6 +4474,111 @@
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "Réinitialiser le fournisseur et le modèle"
+  },
+  "myMacs.account": {
+    "defaultMessage": "Compte"
+  },
+  "myMacs.applyOnReconnect": {
+    "defaultMessage": "« Charger et télécharger des modèles » s’applique quand ce Mac se reconnecte à LeanZero Link."
+  },
+  "myMacs.cantRead": {
+    "defaultMessage": "Illisible : {reason}"
+  },
+  "myMacs.chatHint": {
+    "defaultMessage": "Un modèle chargé ici répond aux discussions lancées sur vos autres Mac."
+  },
+  "myMacs.chip": {
+    "defaultMessage": "Puce"
+  },
+  "myMacs.chipCores": {
+    "defaultMessage": "{brand} · GPU {cores} cœurs"
+  },
+  "myMacs.details": {
+    "defaultMessage": "Détails"
+  },
+  "myMacs.disconnect": {
+    "defaultMessage": "Déconnecter"
+  },
+  "myMacs.disk": {
+    "defaultMessage": "Disque"
+  },
+  "myMacs.diskFree": {
+    "defaultMessage": "{free} libres sur {total}"
+  },
+  "myMacs.hostname": {
+    "defaultMessage": "Nom d’hôte"
+  },
+  "myMacs.intro": {
+    "defaultMessage": "Chaque Mac connecté à votre compte LeanZero Link. Chargez des modèles sur n’importe lequel depuis l’onglet Modèles, et choisissez où un modèle s’exécute depuis l’onglet Moteur."
+  },
+  "myMacs.lastPoll": {
+    "defaultMessage": "Dernière lecture échouée"
+  },
+  "myMacs.lets": {
+    "defaultMessage": "Autorise vos autres Mac à"
+  },
+  "myMacs.letsUnknown": {
+    "defaultMessage": "Son goose n’indique pas ce qu’il autorise — mettez goose à jour sur celui-ci."
+  },
+  "myMacs.logout": {
+    "defaultMessage": "Se déconnecter / Changer de compte"
+  },
+  "myMacs.manageHint": {
+    "defaultMessage": "Vos autres Mac voient, téléchargent, copient et suppriment les modèles de ce Mac."
+  },
+  "myMacs.master": {
+    "defaultMessage": "Autoriser mes autres Mac à utiliser ce Mac"
+  },
+  "myMacs.masterHint": {
+    "defaultMessage": "Uniquement les Mac connectés à votre compte LeanZero Link. Chaque interrupteur couvre des opérations propres à goose — jamais une commande arbitraire."
+  },
+  "myMacs.memory": {
+    "defaultMessage": "Mémoire"
+  },
+  "myMacs.memoryFree": {
+    "defaultMessage": "{free} Go libres sur {total} Go"
+  },
+  "myMacs.mesh": {
+    "defaultMessage": "Maillage"
+  },
+  "myMacs.meshIp": {
+    "defaultMessage": "IP du maillage"
+  },
+  "myMacs.meshLine": {
+    "defaultMessage": "{online,select,true{{count,plural,one{{state} · en ligne · # Mac} other{{state} · en ligne · # Mac}}} other{{count,plural,one{{state} · hors ligne · # Mac} other{{state} · hors ligne · # Mac}}}}"
+  },
+  "myMacs.models": {
+    "defaultMessage": "Modèles"
+  },
+  "myMacs.none": {
+    "defaultMessage": "Aucun autre Mac sur votre compte LeanZero Link pour l’instant — connectez-vous sur celui-ci pour le voir ici."
+  },
+  "myMacs.off": {
+    "defaultMessage": "désactivé"
+  },
+  "myMacs.on": {
+    "defaultMessage": "activé"
+  },
+  "myMacs.reconnect": {
+    "defaultMessage": "Reconnecter maintenant"
+  },
+  "myMacs.reconnecting": {
+    "defaultMessage": "Reconnexion… (contact perdu avec le goose de ce Mac)"
+  },
+  "myMacs.saveFailed": {
+    "defaultMessage": "L’interrupteur n’a pas été enregistré"
+  },
+  "myMacs.sessions": {
+    "defaultMessage": "Sessions actives"
+  },
+  "myMacs.splitHint": {
+    "defaultMessage": "Ce Mac détient une partie d’un modèle trop gros pour un seul Mac, lancé depuis un autre."
+  },
+  "myMacs.thisMac": {
+    "defaultMessage": "Ce Mac"
+  },
+  "myMacs.title": {
+    "defaultMessage": "Mes Mac"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -4625,6 +4895,30 @@
   "placementCard.context": {
     "defaultMessage": "contexte de {tokens}"
   },
+  "placementCard.copyFirst": {
+    "defaultMessage": "{kind,select,thunderbolt{Copier d’abord sur {name} · Thunderbolt} other{Copier d’abord sur {name} · réseau}}"
+  },
+  "placementCard.copyFirstMinutes": {
+    "defaultMessage": "{kind,select,thunderbolt{Copier d’abord sur {name} (~{minutes} min via Thunderbolt)} other{Copier d’abord sur {name} (~{minutes} min via le réseau)}}"
+  },
+  "placementCard.copyFirstWhy": {
+    "defaultMessage": "{model} ({size}) n’est pas encore sur {name} ; le démarrage reprend tout seul dès son arrivée."
+  },
+  "placementCard.copyThenFailed": {
+    "defaultMessage": "La copie vers {name} n’a pas abouti, donc rien n’a démarré : {reason}"
+  },
+  "placementCard.copyingThen": {
+    "defaultMessage": "Copie vers {name} — {pct} % · démarre dès que la copie arrive"
+  },
+  "placementCard.details": {
+    "defaultMessage": "Détails"
+  },
+  "placementCard.detailsMeta": {
+    "defaultMessage": "configuration, prévol, vérifications, événements"
+  },
+  "placementCard.distributedOwns": {
+    "defaultMessage": "La répartition occupe ce Mac — arrêtez-la pour exécuter un modèle ici seul."
+  },
   "placementCard.estimated": {
     "defaultMessage": "estimé"
   },
@@ -4643,8 +4937,8 @@
   "placementCard.goalMany": {
     "defaultMessage": "Nombreuses requêtes"
   },
-  "placementCard.gpuCores": {
-    "defaultMessage": "{brand} · GPU {cores} cœurs"
+  "placementCard.keepRunning": {
+    "defaultMessage": "Laisser tourner"
   },
   "placementCard.live.failed": {
     "defaultMessage": "Échec"
@@ -4661,9 +4955,6 @@
   "placementCard.measureFirst": {
     "defaultMessage": "En marche et pas encore mesuré — Mesurer la vitesse remplace l’estimation par le chiffre propre à ce Mac."
   },
-  "placementCard.measureLater": {
-    "defaultMessage": "Mesurer la vitesse devient disponible une fois lancé."
-  },
   "placementCard.measured": {
     "defaultMessage": "{runs, plural, one {mesuré} other {mesuré · # passes}}"
   },
@@ -4673,26 +4964,17 @@
   "placementCard.measuring": {
     "defaultMessage": "Mesure : un prompt d’environ 2k jetons, puis 256 jetons…"
   },
-  "placementCard.noFigure": {
-    "defaultMessage": "aucun chiffre de vitesse"
-  },
   "placementCard.noFigureReason": {
     "defaultMessage": "Aucun chiffre de vitesse"
   },
-  "placementCard.nodeGap": {
-    "defaultMessage": "{name} : {reason}"
-  },
-  "placementCard.nodeLine": {
-    "defaultMessage": "{name} : {chip} · {bandwidth} Go/s · plafond GPU {ceiling}"
-  },
-  "placementCard.nothingFits": {
-    "defaultMessage": "Rien ne tient pour l’instant"
+  "placementCard.noPlanWays": {
+    "defaultMessage": "Sans plan, pas de chiffre de vitesse — chaque option peut tout de même être lancée."
   },
   "placementCard.others": {
-    "defaultMessage": "{count, plural, one {# autre façon} other {# autres façons}}"
+    "defaultMessage": "{count,plural,one{# autre répartition} other{# autres répartitions}}"
   },
-  "placementCard.pipeline": {
-    "defaultMessage": "{count, plural, one {# Mac · découpage en pipeline · {link}} other {# Mac · découpage en pipeline · {link}}}"
+  "placementCard.pipelineKind": {
+    "defaultMessage": "répartition en pipeline · {link}"
   },
   "placementCard.planFailed": {
     "defaultMessage": "Planification impossible"
@@ -4712,17 +4994,32 @@
   "placementCard.refusedUnnamed": {
     "defaultMessage": "Refusé, et goose n’a donné aucune raison"
   },
+  "placementCard.run": {
+    "defaultMessage": "Exécuter"
+  },
+  "placementCard.runAcross": {
+    "defaultMessage": "{count,plural,=2{Exécuter sur les deux Mac} other{Exécuter sur # Mac}}"
+  },
+  "placementCard.runAcrossAny": {
+    "defaultMessage": "Exécuter sur vos Mac"
+  },
+  "placementCard.runHere": {
+    "defaultMessage": "Exécuter sur ce Mac"
+  },
+  "placementCard.runIt": {
+    "defaultMessage": "Exécuter"
+  },
+  "placementCard.runOn": {
+    "defaultMessage": "Exécuter sur {name}"
+  },
   "placementCard.setupFirst": {
-    "defaultMessage": "La configuration distribuée nomme un autre modèle — choisissez celui-ci dans Distribué › Configurer, puis lancez-le."
+    "defaultMessage": "La répartition est configurée avec un autre modèle — ouvrez Détails › Configurer, choisissez celui-ci, puis Exécuter."
   },
   "placementCard.short": {
     "defaultMessage": "Ne tient pas : il manque {gb} sur {node}"
   },
   "placementCard.shortSplit": {
     "defaultMessage": "Ne tient pas : il manque {gb}"
-  },
-  "placementCard.single": {
-    "defaultMessage": "{name} seul"
   },
   "placementCard.slower": {
     "defaultMessage": "Plus lent pour cela : ~{mine} contre ~{best} tok/s"
@@ -4736,50 +5033,26 @@
   "placementCard.starting": {
     "defaultMessage": "Démarrage…"
   },
+  "placementCard.stop": {
+    "defaultMessage": "Arrêter"
+  },
+  "placementCard.stopSplitMessage": {
+    "defaultMessage": "Chaque partie sur {nodes} est arrêtée et son arrêt vérifié. Les requêtes en cours sont interrompues."
+  },
+  "placementCard.stopSplitTitle": {
+    "defaultMessage": "Arrêter la répartition ?"
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Lignes illisibles dans le stockage des mesures"
   },
-  "placementCard.tensor": {
-    "defaultMessage": "{count, plural, one {# Mac · découpage tensoriel · {link}} other {# Mac · découpage tensoriel · {link}}}"
-  },
-  "placementCard.thisMac": {
-    "defaultMessage": "ce Mac"
+  "placementCard.tensorKind": {
+    "defaultMessage": "répartition des tenseurs · {link}"
   },
   "placementCard.tied": {
     "defaultMessage": "Aussi rapide à l’erreur près (~{mine} contre ~{best} tok/s), mais demande plus de Mac"
   },
-  "placementCard.tile.mount": {
-    "defaultMessage": "Monter"
-  },
-  "placementCard.tile.nothing": {
-    "defaultMessage": "Trop grand pour ce Mac, et rien de ce que goose peut démarrer ne le contient : {reason}"
-  },
-  "placementCard.tile.peerWhy": {
-    "defaultMessage": "Trop grand pour ce Mac — il tient sur {name}, et le chat y passe par Link."
-  },
-  "placementCard.tile.retry": {
-    "defaultMessage": "Réessayer"
-  },
-  "placementCard.tile.short": {
-    "defaultMessage": "Ne tient sur aucun de vos Mac : il manque {gb}, même réparti sur tous."
-  },
-  "placementCard.tile.splitWhy": {
-    "defaultMessage": "Trop grand pour ce Mac seul — il tourne réparti sur {names}."
-  },
-  "placementCard.tile.startAcross": {
-    "defaultMessage": "{count,plural,=2{Démarrer sur les deux Mac} other{Démarrer sur # Mac}}"
-  },
-  "placementCard.tile.startOn": {
-    "defaultMessage": "Démarrer sur {name}"
-  },
-  "placementCard.title": {
-    "defaultMessage": "Où le faire tourner"
-  },
   "placementCard.total": {
     "defaultMessage": "~{value} tok/s au total à {concurrency} en même temps"
-  },
-  "placementCard.useThis": {
-    "defaultMessage": "Utiliser ceci"
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/s en écriture"

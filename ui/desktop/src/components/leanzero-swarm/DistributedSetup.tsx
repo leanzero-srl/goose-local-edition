@@ -406,8 +406,7 @@ export function DistributedSetup({
     [discovery]
   );
   const answering = (candidates ?? []).filter((c) => c.answered);
-  const noLinkMac =
-    link != null && (link.state !== 'connected' || (link.peers ?? []).length === 0);
+  const noLinkMac = link != null && (link.state !== 'connected' || (link.peers ?? []).length === 0);
   const missing = draft ? missingFields(draft) : [];
 
   return (

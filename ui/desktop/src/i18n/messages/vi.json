@@ -2231,8 +2231,8 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Nhà cung cấp đám mây"
   },
-  "leanzeroSwarm.tabLink": {
-    "defaultMessage": "LeanZero Link"
+  "leanzeroSwarm.tabMacs": {
+    "defaultMessage": "Các Mac của tôi"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Cài đặt bầy"
@@ -2494,6 +2494,126 @@
   },
   "loopView.stopCheck": {
     "defaultMessage": "Stop check: {command}"
+  },
+  "macs.cancelDownloadFailed": {
+    "defaultMessage": "Không hủy được."
+  },
+  "macs.cancelFailed": {
+    "defaultMessage": "Không thể hủy bản sao."
+  },
+  "macs.copyFailed": {
+    "defaultMessage": "Bản sao chưa bắt đầu."
+  },
+  "macs.downloadFailed": {
+    "defaultMessage": "Tải xuống chưa bắt đầu."
+  },
+  "macs.line.checking": {
+    "defaultMessage": "Đang đọc động cơ…"
+  },
+  "macs.line.failed": {
+    "defaultMessage": "{model} thất bại: {reason}"
+  },
+  "macs.line.failedNoModel": {
+    "defaultMessage": "Động cơ thất bại: {reason}"
+  },
+  "macs.line.hosting": {
+    "defaultMessage": "{model} · một phần bản chia của {requester}"
+  },
+  "macs.line.loading": {
+    "defaultMessage": "Đang tải {model}"
+  },
+  "macs.line.notLoaded": {
+    "defaultMessage": "Chưa tải mô hình nào"
+  },
+  "macs.line.offline": {
+    "defaultMessage": "Không truy cập được qua LeanZero Link"
+  },
+  "macs.line.running": {
+    "defaultMessage": "{model}"
+  },
+  "macs.line.split": {
+    "defaultMessage": "{count,plural,one{{model} · chia trên # Mac} other{{model} · chia trên # Mac}}"
+  },
+  "macs.line.writing": {
+    "defaultMessage": "{model} · {tps} tok/giây"
+  },
+  "macs.linksFailed": {
+    "defaultMessage": "Không đọc được các kết nối."
+  },
+  "macs.listFailed": {
+    "defaultMessage": "Không đọc được thư mục mô hình."
+  },
+  "macs.offThere": {
+    "defaultMessage": "{what} đang tắt trên {name} — hãy bật “Cho các Mac khác của tôi dùng Mac này” ở đó (Nhà cung cấp › Các Mac của tôi)"
+  },
+  "macs.pauseFailed": {
+    "defaultMessage": "Không tạm dừng được."
+  },
+  "macs.permission.chat": {
+    "defaultMessage": "Trả lời trò chuyện"
+  },
+  "macs.permission.manage": {
+    "defaultMessage": "Tải lên và tải xuống mô hình"
+  },
+  "macs.permission.split": {
+    "defaultMessage": "Chạy một phần của mô hình được chia"
+  },
+  "macs.resumeFailed": {
+    "defaultMessage": "Không tiếp tục được."
+  },
+  "macs.state.checking": {
+    "defaultMessage": "Đang kiểm tra"
+  },
+  "macs.state.failed": {
+    "defaultMessage": "Thất bại"
+  },
+  "macs.state.held": {
+    "defaultMessage": "Bị giữ"
+  },
+  "macs.state.hosting": {
+    "defaultMessage": "Một phần bản chia"
+  },
+  "macs.state.idle": {
+    "defaultMessage": "Rảnh"
+  },
+  "macs.state.loading": {
+    "defaultMessage": "Đang tải"
+  },
+  "macs.state.notLoaded": {
+    "defaultMessage": "Chưa tải"
+  },
+  "macs.state.off": {
+    "defaultMessage": "Tắt"
+  },
+  "macs.state.offline": {
+    "defaultMessage": "Ngoại tuyến"
+  },
+  "macs.state.reading": {
+    "defaultMessage": "Đang đọc"
+  },
+  "macs.state.split": {
+    "defaultMessage": "Chia"
+  },
+  "macs.state.unreadable": {
+    "defaultMessage": "Không đọc được"
+  },
+  "macs.state.writing": {
+    "defaultMessage": "Đang viết"
+  },
+  "macs.statusFailed": {
+    "defaultMessage": "Không đọc được động cơ."
+  },
+  "macs.thisMac": {
+    "defaultMessage": "Mac này"
+  },
+  "macs.trackingFailed": {
+    "defaultMessage": "Không thể kết nối lại các lượt tải đang chạy."
+  },
+  "macs.tray.line": {
+    "defaultMessage": "{name} — {what}"
+  },
+  "macs.tray.open": {
+    "defaultMessage": "Mở Các Mac của tôi"
   },
   "markdownContent.cancel": {
     "defaultMessage": "Hủy"
@@ -2783,6 +2903,9 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "Hủy"
   },
+  "mlxDistributed.checksPassed": {
+    "defaultMessage": "{count,plural,one{# kiểm tra đạt} other{# kiểm tra đạt}}"
+  },
   "mlxDistributed.clusterChecks": {
     "defaultMessage": "Kiểm tra cụm"
   },
@@ -2969,15 +3092,6 @@
   "mlxDistributed.fits": {
     "defaultMessage": "vừa"
   },
-  "mlxDistributed.hosting.label": {
-    "defaultMessage": "Máy Mac này đang phục vụ một rank"
-  },
-  "mlxDistributed.hosting.loading": {
-    "defaultMessage": "Đang tải rank {rank} cho {requester}"
-  },
-  "mlxDistributed.hosting.text": {
-    "defaultMessage": "{line} — PID của rank {pid}. Engine đơn và engine phân tán riêng của máy Mac này bị từ chối cho đến khi {requester} dừng lượt chạy."
-  },
   "mlxDistributed.inflight": {
     "defaultMessage": "Đang xử lý"
   },
@@ -3104,12 +3218,6 @@
   "mlxDistributed.peakOf": {
     "defaultMessage": "GiB đỉnh trên ngân sách {budget} GiB"
   },
-  "mlxDistributed.peerBody": {
-    "defaultMessage": "Bạn đang quản lý {host}. Chuyển “Manage on” về “This device” để cấu hình, kiểm tra, khởi động hoặc dừng nó."
-  },
-  "mlxDistributed.peerTitle": {
-    "defaultMessage": "Engine phân tán được giám sát từ máy Mac này"
-  },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
   },
@@ -3226,15 +3334,6 @@
   },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {# chuỗi trong lô}}"
-  },
-  "mlxDistributed.serveNode": {
-    "defaultMessage": "Cho phép máy Mac này làm nút phân tán"
-  },
-  "mlxDistributed.serveNodeError": {
-    "defaultMessage": "Không thể thay đổi cài đặt"
-  },
-  "mlxDistributed.serveNodeHint": {
-    "defaultMessage": "Các máy Mac khác của bạn trên LeanZero Link khi đó có thể chạy một rank engine phân tán của chúng tại đây — chỉ chương trình rank và thăm dò riêng của goose, không bao giờ là lệnh tùy ý. Mặc định tắt."
   },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "Không đọc được trạng thái máy chủ: {error}"
@@ -3417,28 +3516,10 @@
     "defaultMessage": "Không giao diện (ssh)"
   },
   "mlxDistributedSetup.intro": {
-    "defaultMessage": "Chỉ cần nêu tên máy Mac kia một lần. goose thăm dò máy Mac này và máy kia qua ssh rồi điền liên kết, RDMA, backend, mô hình, cổng và Python."
+    "defaultMessage": "Chọn Mac còn lại của bạn. goose hỏi cả hai Mac qua LeanZero Link và điền kết nối, RDMA, backend, mô hình, cổng và Python."
   },
-  "mlxDistributedSetup.link.gid": {
-    "defaultMessage": "GID IPv4 {index}"
-  },
-  "mlxDistributedSetup.link.intro": {
-    "defaultMessage": "Đã đăng nhập cùng tài khoản. Mỗi máy tự mô tả qua mesh; chọn một máy và goose điều khiển nó qua goose của chính máy đó — không cần ssh."
-  },
-  "mlxDistributedSetup.link.memory": {
-    "defaultMessage": "Còn {available} / {total} GiB"
-  },
-  "mlxDistributedSetup.link.models": {
-    "defaultMessage": "{count, plural, other {# mô hình}}"
-  },
-  "mlxDistributedSetup.link.noGid": {
-    "defaultMessage": "không có GID IPv4"
-  },
-  "mlxDistributedSetup.link.noRdma": {
-    "defaultMessage": "Không có thiết bị RDMA"
-  },
-  "mlxDistributedSetup.link.noThunderbolt": {
-    "defaultMessage": "Không có địa chỉ Thunderbolt"
+  "mlxDistributedSetup.link.detectWith": {
+    "defaultMessage": "Phát hiện bằng Mac này"
   },
   "mlxDistributedSetup.link.none": {
     "defaultMessage": "Hiện không có máy Mac nào khác của tài khoản này trên LeanZero Link."
@@ -3446,14 +3527,11 @@
   "mlxDistributedSetup.link.notConnected": {
     "defaultMessage": "LeanZero Link chưa kết nối"
   },
-  "mlxDistributedSetup.link.rdmaActive": {
-    "defaultMessage": "hoạt động"
+  "mlxDistributedSetup.link.pick": {
+    "defaultMessage": "Mac còn lại"
   },
-  "mlxDistributedSetup.link.rdmaDownCount": {
-    "defaultMessage": "{count, plural, other {thêm # thiết bị, cổng tắt}}"
-  },
-  "mlxDistributedSetup.link.servingOff": {
-    "defaultMessage": "Bật “Cho phép máy Mac này làm nút phân tán” trên {name} (Nhà cung cấp › LeanZero MLX › Engine › Phân tán)."
+  "mlxDistributedSetup.link.servingOffMyMacs": {
+    "defaultMessage": "Bật “Cho các Mac khác của tôi dùng Mac này › Chạy một phần của mô hình được chia” trên {name} (Nhà cung cấp › Các Mac của tôi ở đó)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "goose ở đó không thể phục vụ"
@@ -3472,12 +3550,6 @@
   },
   "mlxDistributedSetup.link.state.unreadable": {
     "defaultMessage": "Đã trả lời, không đọc được"
-  },
-  "mlxDistributedSetup.link.title": {
-    "defaultMessage": "Các máy Mac của bạn trên LeanZero Link"
-  },
-  "mlxDistributedSetup.link.use": {
-    "defaultMessage": "Dùng máy Mac này"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS khớp"
@@ -3500,11 +3572,17 @@
   "mlxDistributedSetup.noneAnswering": {
     "defaultMessage": "Không bí danh nào trong ~/.ssh/config phản hồi ssh không tương tác."
   },
+  "mlxDistributedSetup.overSsh": {
+    "defaultMessage": "Nâng cao: một Mac qua ssh"
+  },
+  "mlxDistributedSetup.overSshMeta": {
+    "defaultMessage": "cho Mac không có trên LeanZero Link"
+  },
   "mlxDistributedSetup.peer": {
     "defaultMessage": "Máy Mac khác (bí danh ssh hoặc máy chủ)"
   },
   "mlxDistributedSetup.peerPlaceholder": {
-    "defaultMessage": "workhorse"
+    "defaultMessage": "bí danh ssh"
   },
   "mlxDistributedSetup.probed": {
     "defaultMessage": "{count, plural, other {Đã thăm dò # nút trong {ms} ms}}"
@@ -3539,20 +3617,17 @@
   "mlxEngineView.mountFailed": {
     "defaultMessage": "Nạp thất bại"
   },
-  "mlxEngineView.refusedUnnamed": {
-    "defaultMessage": "Bị từ chối, goose không nêu lý do"
+  "mlxEngineView.pickThenRun": {
+    "defaultMessage": "Chọn một mô hình, rồi khởi chạy nó ở mục “Chạy” bên dưới — trên Mac này, trên một Mac khác của bạn, hoặc chia giữa chúng."
+  },
+  "mlxEngineView.samplingOn": {
+    "defaultMessage": "Hồ sơ trên"
   },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Phục vụ trên nhiều máy Mac"
   },
-  "mlxEngineView.startFailed": {
-    "defaultMessage": "Khởi động thất bại"
-  },
-  "mlxEngineView.startRefused": {
-    "defaultMessage": "Khởi động bị từ chối"
-  },
-  "mlxEngineView.switchNeedsUnmount": {
-    "defaultMessage": "Mô hình này không chạy được trên riêng máy Mac này — hãy gỡ nạp, rồi khởi động từ ô."
+  "mlxEngineView.settingsFailed": {
+    "defaultMessage": "Không đọc được cài đặt động cơ."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB mỗi token thay vì {bf16} KiB — cùng bộ nhớ chứa được {ratio}× ngữ cảnh."
@@ -3650,6 +3725,39 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "Đang dừng"
   },
+  "mlxModels.cancelMessage": {
+    "defaultMessage": "Hủy tải {model} trên {name} và xóa các tệp dở dang ở đó?"
+  },
+  "mlxModels.cancelTitle": {
+    "defaultMessage": "Hủy tải xuống"
+  },
+  "mlxModels.downloadTo": {
+    "defaultMessage": "Tải xuống vào"
+  },
+  "mlxModels.edit": {
+    "defaultMessage": "Sửa"
+  },
+  "mlxModels.folderUnread": {
+    "defaultMessage": "Không đọc được: {reason}"
+  },
+  "mlxModels.folders": {
+    "defaultMessage": "Thư mục mô hình"
+  },
+  "mlxModels.foldersHint": {
+    "defaultMessage": "Mỗi Mac một thư mục, dùng chung cho tải xuống, sao chép và tải mô hình; thanh là dung lượng trống trên ổ của nó."
+  },
+  "mlxModels.huggingFace": {
+    "defaultMessage": "Hugging Face"
+  },
+  "mlxModels.keep": {
+    "defaultMessage": "Giữ"
+  },
+  "mlxModels.onYourMacs": {
+    "defaultMessage": "Trên các Mac của bạn"
+  },
+  "mlxModels.settingsFailed": {
+    "defaultMessage": "Không đọc được cài đặt động cơ."
+  },
   "mlxMount.foreignAnswering": {
     "defaultMessage": "Sẵn sàng · thuộc cửa sổ khác"
   },
@@ -3659,23 +3767,8 @@
   "mlxReplica.cancel": {
     "defaultMessage": "Hủy"
   },
-  "mlxReplica.cancelConfirmMessage": {
-    "defaultMessage": "Dừng sao chép {model} sang {host}? Bản sao dở dang trên {host} sẽ bị xóa."
-  },
-  "mlxReplica.cancelConfirmTitle": {
-    "defaultMessage": "Hủy sao chép"
-  },
-  "mlxReplica.cancelFailed": {
-    "defaultMessage": "Không thể hủy việc sao chép."
-  },
   "mlxReplica.cancelTitle": {
     "defaultMessage": "Dừng sao chép và xóa bản sao dở dang trên {host}"
-  },
-  "mlxReplica.checkLinks": {
-    "defaultMessage": "Kiểm tra kết nối"
-  },
-  "mlxReplica.checking": {
-    "defaultMessage": "Đang kiểm tra kết nối…"
   },
   "mlxReplica.copiedTo": {
     "defaultMessage": "Đã sao chép sang {host}"
@@ -3686,15 +3779,6 @@
   "mlxReplica.copyFailed": {
     "defaultMessage": "Sao chép sang {host} thất bại"
   },
-  "mlxReplica.copyTitleNetwork": {
-    "defaultMessage": "Không có kết nối Thunderbolt tới {host}, nên bản sao đi qua mạng cục bộ: {local} → {peer}"
-  },
-  "mlxReplica.copyTitleThunderbolt": {
-    "defaultMessage": "Sao chép qua cáp Thunderbolt: {local} → {peer}"
-  },
-  "mlxReplica.copyTo": {
-    "defaultMessage": "{kind,select,thunderbolt{Sao chép sang {host} · Thunderbolt} other{Sao chép sang {host} · mạng}}"
-  },
   "mlxReplica.copyingTo": {
     "defaultMessage": "{kind,select,thunderbolt{Đang sao chép sang {host} qua Thunderbolt} other{Đang sao chép sang {host} qua mạng}}"
   },
@@ -3703,39 +3787,6 @@
   },
   "mlxReplica.files": {
     "defaultMessage": "{done} trên {total} tệp"
-  },
-  "mlxReplica.keepCopying": {
-    "defaultMessage": "Tiếp tục sao chép"
-  },
-  "mlxReplica.linkNetwork": {
-    "defaultMessage": "mạng"
-  },
-  "mlxReplica.linkThunderbolt": {
-    "defaultMessage": "Thunderbolt"
-  },
-  "mlxReplica.linkThunderboltSpeed": {
-    "defaultMessage": "Thunderbolt · {speed}"
-  },
-  "mlxReplica.linksError": {
-    "defaultMessage": "Không thể kiểm tra kết nối tới các thiết bị khác của bạn: {reason}"
-  },
-  "mlxReplica.linksFailed": {
-    "defaultMessage": "Không thể đọc các kết nối."
-  },
-  "mlxReplica.linksNote": {
-    "defaultMessage": "Mô hình trên thiết bị này có thể được sao chép sang thiết bị đã liên kết thay vì tải lại. Mỗi tệp được đối chiếu với bản gốc trước khi dùng."
-  },
-  "mlxReplica.linksTitle": {
-    "defaultMessage": "Thiết bị đã liên kết"
-  },
-  "mlxReplica.networkNote": {
-    "defaultMessage": "Không có kết nối Thunderbolt, nên bản sao đi qua mạng cục bộ."
-  },
-  "mlxReplica.offerLabel": {
-    "defaultMessage": "Đã tải xuống"
-  },
-  "mlxReplica.offerText": {
-    "defaultMessage": "{model} đã có trên thiết bị này. {host} được liên kết bằng Thunderbolt: hãy sao chép sang đó thay vì tải lại."
   },
   "mlxReplica.progressLabel": {
     "defaultMessage": "Tiến độ sao chép {model} sang {host}"
@@ -3751,9 +3802,6 @@
   },
   "mlxReplica.resumed": {
     "defaultMessage": "{count,plural,one{tiếp tục từ bản sao dở dang: # tệp} other{tiếp tục từ bản sao dở dang: # tệp}}"
-  },
-  "mlxReplica.startFailed": {
-    "defaultMessage": "Việc sao chép chưa bắt đầu."
   },
   "mlxReplica.starting": {
     "defaultMessage": "Đang bắt đầu sao chép sang {host}…"
@@ -4112,6 +4160,123 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Tra cứu tên nhà cung cấp"
   },
+  "modelMatrix.cancel": {
+    "defaultMessage": "Hủy"
+  },
+  "modelMatrix.cancelCopyMessage": {
+    "defaultMessage": "Dừng sao chép {model} sang {name}? Bản sao dở dang trên {name} sẽ bị xóa."
+  },
+  "modelMatrix.cancelCopyTitle": {
+    "defaultMessage": "Hủy sao chép"
+  },
+  "modelMatrix.cancelDownloadMessage": {
+    "defaultMessage": "Hủy tải {model} trên {name} và xóa các tệp dở dang ở đó?"
+  },
+  "modelMatrix.cancelDownloadTitle": {
+    "defaultMessage": "Hủy tải xuống"
+  },
+  "modelMatrix.cantRead": {
+    "defaultMessage": "Không đọc được"
+  },
+  "modelMatrix.checking": {
+    "defaultMessage": "Đang kiểm tra…"
+  },
+  "modelMatrix.copyFailed": {
+    "defaultMessage": "Sao chép thất bại"
+  },
+  "modelMatrix.copyFrom": {
+    "defaultMessage": "{kind,select,thunderbolt{Sao chép từ {name} · Thunderbolt} other{Sao chép từ {name} · mạng}}"
+  },
+  "modelMatrix.copyFromTitle": {
+    "defaultMessage": "{kind,select,thunderbolt{Sao chép tệp của {name} trực tiếp qua cáp Thunderbolt; mỗi tệp được đối chiếu với bản gốc.} other{Sao chép tệp của {name} trực tiếp qua mạng cục bộ; mỗi tệp được đối chiếu với bản gốc.}}"
+  },
+  "modelMatrix.copyStarting": {
+    "defaultMessage": "Đang bắt đầu sao chép"
+  },
+  "modelMatrix.copying": {
+    "defaultMessage": "Đang sao chép {pct}%"
+  },
+  "modelMatrix.delete": {
+    "defaultMessage": "Xóa khỏi {name}"
+  },
+  "modelMatrix.deleteConfirm": {
+    "defaultMessage": "Xóa"
+  },
+  "modelMatrix.deleteFailed": {
+    "defaultMessage": "Không xóa được {model}."
+  },
+  "modelMatrix.deleteMessage": {
+    "defaultMessage": "Xóa {model} ({size}) khỏi {name}? Các tệp của nó bị gỡ khỏi ổ đĩa của Mac đó."
+  },
+  "modelMatrix.deleteTitle": {
+    "defaultMessage": "Xóa mô hình"
+  },
+  "modelMatrix.dismiss": {
+    "defaultMessage": "Đóng"
+  },
+  "modelMatrix.downloadFailed": {
+    "defaultMessage": "Tải xuống thất bại"
+  },
+  "modelMatrix.downloadHere": {
+    "defaultMessage": "Tải xuống tại đây"
+  },
+  "modelMatrix.downloadHereTitle": {
+    "defaultMessage": "Tải {model} từ Hugging Face xuống {name}"
+  },
+  "modelMatrix.downloading": {
+    "defaultMessage": "Đang tải xuống {pct}%"
+  },
+  "modelMatrix.empty": {
+    "defaultMessage": "Chưa có mô hình nào trên các Mac của bạn — hãy tải một mô hình từ thẻ Hugging Face."
+  },
+  "modelMatrix.free": {
+    "defaultMessage": "Trống {free}"
+  },
+  "modelMatrix.incomplete": {
+    "defaultMessage": "{count,plural,one{Chưa đầy đủ · thiếu # tệp} other{Chưa đầy đủ · thiếu # tệp}}"
+  },
+  "modelMatrix.keep": {
+    "defaultMessage": "Giữ"
+  },
+  "modelMatrix.keepCopying": {
+    "defaultMessage": "Tiếp tục sao chép"
+  },
+  "modelMatrix.loaded": {
+    "defaultMessage": "Đã tải"
+  },
+  "modelMatrix.loading": {
+    "defaultMessage": "Đang tải"
+  },
+  "modelMatrix.model": {
+    "defaultMessage": "Mô hình"
+  },
+  "modelMatrix.noCopyPath": {
+    "defaultMessage": "Không sao chép được từ {name}: {reason}"
+  },
+  "modelMatrix.notHere": {
+    "defaultMessage": "Không có ở đây"
+  },
+  "modelMatrix.offline": {
+    "defaultMessage": "Ngoại tuyến"
+  },
+  "modelMatrix.onDisk": {
+    "defaultMessage": "Trên ổ đĩa"
+  },
+  "modelMatrix.pause": {
+    "defaultMessage": "Tạm dừng"
+  },
+  "modelMatrix.paused": {
+    "defaultMessage": "Đã tạm dừng {pct}%"
+  },
+  "modelMatrix.queued": {
+    "defaultMessage": "Đang chờ"
+  },
+  "modelMatrix.resume": {
+    "defaultMessage": "Tiếp tục"
+  },
+  "modelMatrix.sampling": {
+    "defaultMessage": "Lấy mẫu trên {name}"
+  },
   "modelSettingsButtons.configureProviders": {
     "defaultMessage": "Cấu hình nhà cung cấp"
   },
@@ -4309,6 +4474,111 @@
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "Đặt lại nhà cung cấp và mô hình"
+  },
+  "myMacs.account": {
+    "defaultMessage": "Tài khoản"
+  },
+  "myMacs.applyOnReconnect": {
+    "defaultMessage": "“Tải lên và tải xuống mô hình” có hiệu lực khi Mac này kết nối lại với LeanZero Link."
+  },
+  "myMacs.cantRead": {
+    "defaultMessage": "Không đọc được: {reason}"
+  },
+  "myMacs.chatHint": {
+    "defaultMessage": "Mô hình được tải ở đây sẽ trả lời các cuộc trò chuyện bắt đầu trên các Mac khác của bạn."
+  },
+  "myMacs.chip": {
+    "defaultMessage": "Chip"
+  },
+  "myMacs.chipCores": {
+    "defaultMessage": "{brand} · GPU {cores} lõi"
+  },
+  "myMacs.details": {
+    "defaultMessage": "Chi tiết"
+  },
+  "myMacs.disconnect": {
+    "defaultMessage": "Ngắt kết nối"
+  },
+  "myMacs.disk": {
+    "defaultMessage": "Ổ đĩa"
+  },
+  "myMacs.diskFree": {
+    "defaultMessage": "Trống {free} / {total}"
+  },
+  "myMacs.hostname": {
+    "defaultMessage": "Tên máy chủ"
+  },
+  "myMacs.intro": {
+    "defaultMessage": "Mọi Mac đã đăng nhập tài khoản LeanZero Link của bạn. Tải mô hình lên bất kỳ Mac nào từ thẻ Mô hình, và chọn nơi mô hình chạy từ thẻ Động cơ."
+  },
+  "myMacs.lastPoll": {
+    "defaultMessage": "Lần đọc gần nhất thất bại"
+  },
+  "myMacs.lets": {
+    "defaultMessage": "Cho các Mac khác của bạn"
+  },
+  "myMacs.letsUnknown": {
+    "defaultMessage": "goose của nó không cho biết nó cho phép gì — hãy cập nhật goose ở đó."
+  },
+  "myMacs.logout": {
+    "defaultMessage": "Đăng xuất / Đổi tài khoản"
+  },
+  "myMacs.manageHint": {
+    "defaultMessage": "Các Mac khác của bạn xem, tải xuống, sao chép và xóa mô hình trên Mac này."
+  },
+  "myMacs.master": {
+    "defaultMessage": "Cho các Mac khác của tôi dùng Mac này"
+  },
+  "myMacs.masterHint": {
+    "defaultMessage": "Chỉ các Mac đã đăng nhập tài khoản LeanZero Link của bạn. Mỗi công tắc chỉ mở các thao tác riêng của goose — không bao giờ là lệnh tùy ý."
+  },
+  "myMacs.memory": {
+    "defaultMessage": "Bộ nhớ"
+  },
+  "myMacs.memoryFree": {
+    "defaultMessage": "Trống {free} GB / {total} GB"
+  },
+  "myMacs.mesh": {
+    "defaultMessage": "Mạng lưới"
+  },
+  "myMacs.meshIp": {
+    "defaultMessage": "IP mạng lưới"
+  },
+  "myMacs.meshLine": {
+    "defaultMessage": "{online,select,true{{count,plural,one{{state} · trực tuyến · # Mac} other{{state} · trực tuyến · # Mac}}} other{{count,plural,one{{state} · ngoại tuyến · # Mac} other{{state} · ngoại tuyến · # Mac}}}}"
+  },
+  "myMacs.models": {
+    "defaultMessage": "Mô hình"
+  },
+  "myMacs.none": {
+    "defaultMessage": "Chưa có Mac nào khác trong tài khoản LeanZero Link của bạn — hãy đăng nhập trên Mac đó để thấy nó ở đây."
+  },
+  "myMacs.off": {
+    "defaultMessage": "tắt"
+  },
+  "myMacs.on": {
+    "defaultMessage": "bật"
+  },
+  "myMacs.reconnect": {
+    "defaultMessage": "Kết nối lại ngay"
+  },
+  "myMacs.reconnecting": {
+    "defaultMessage": "Đang kết nối lại… (mất liên lạc với goose của Mac này)"
+  },
+  "myMacs.saveFailed": {
+    "defaultMessage": "Công tắc chưa được lưu"
+  },
+  "myMacs.sessions": {
+    "defaultMessage": "Phiên đang hoạt động"
+  },
+  "myMacs.splitHint": {
+    "defaultMessage": "Mac này giữ một phần của mô hình quá lớn cho một Mac, được chạy từ Mac khác."
+  },
+  "myMacs.thisMac": {
+    "defaultMessage": "Mac này"
+  },
+  "myMacs.title": {
+    "defaultMessage": "Các Mac của tôi"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -4625,6 +4895,30 @@
   "placementCard.context": {
     "defaultMessage": "ngữ cảnh {tokens}"
   },
+  "placementCard.copyFirst": {
+    "defaultMessage": "{kind,select,thunderbolt{Sao chép sang {name} trước · Thunderbolt} other{Sao chép sang {name} trước · mạng}}"
+  },
+  "placementCard.copyFirstMinutes": {
+    "defaultMessage": "{kind,select,thunderbolt{Sao chép sang {name} trước (~{minutes} phút qua Thunderbolt)} other{Sao chép sang {name} trước (~{minutes} phút qua mạng)}}"
+  },
+  "placementCard.copyFirstWhy": {
+    "defaultMessage": "{model} ({size}) chưa có trên {name}; việc khởi chạy tự tiếp tục khi bản sao tới nơi."
+  },
+  "placementCard.copyThenFailed": {
+    "defaultMessage": "Bản sao sang {name} chưa xong nên chưa có gì được khởi chạy: {reason}"
+  },
+  "placementCard.copyingThen": {
+    "defaultMessage": "Đang sao chép sang {name} — {pct}% · sẽ khởi chạy khi bản sao tới nơi"
+  },
+  "placementCard.details": {
+    "defaultMessage": "Chi tiết"
+  },
+  "placementCard.detailsMeta": {
+    "defaultMessage": "thiết lập, kiểm tra trước, kiểm tra, sự kiện"
+  },
+  "placementCard.distributedOwns": {
+    "defaultMessage": "Bản chia đang chiếm Mac này — hãy dừng nó để chạy riêng một mô hình ở đây."
+  },
   "placementCard.estimated": {
     "defaultMessage": "ước tính"
   },
@@ -4643,8 +4937,8 @@
   "placementCard.goalMany": {
     "defaultMessage": "Nhiều yêu cầu"
   },
-  "placementCard.gpuCores": {
-    "defaultMessage": "{brand} · GPU {cores} lõi"
+  "placementCard.keepRunning": {
+    "defaultMessage": "Tiếp tục chạy"
   },
   "placementCard.live.failed": {
     "defaultMessage": "Thất bại"
@@ -4661,9 +4955,6 @@
   "placementCard.measureFirst": {
     "defaultMessage": "Đang chạy và chưa được đo — Đo tốc độ sẽ thay ước tính bằng con số của chính máy Mac này."
   },
-  "placementCard.measureLater": {
-    "defaultMessage": "Có thể đo tốc độ khi nó đã chạy."
-  },
   "placementCard.measured": {
     "defaultMessage": "{runs, plural, other {đã đo · # lần}}"
   },
@@ -4673,26 +4964,17 @@
   "placementCard.measuring": {
     "defaultMessage": "Đang đo: một prompt ~2k token, rồi 256 token…"
   },
-  "placementCard.noFigure": {
-    "defaultMessage": "không có số liệu tốc độ"
-  },
   "placementCard.noFigureReason": {
     "defaultMessage": "Không có số liệu tốc độ"
   },
-  "placementCard.nodeGap": {
-    "defaultMessage": "{name}: {reason}"
-  },
-  "placementCard.nodeLine": {
-    "defaultMessage": "{name}: {chip} · {bandwidth} GB/s · trần GPU {ceiling}"
-  },
-  "placementCard.nothingFits": {
-    "defaultMessage": "Hiện không có gì vừa"
+  "placementCard.noPlanWays": {
+    "defaultMessage": "Không có kế hoạch thì không có con số tốc độ — nhưng vẫn có thể khởi chạy mọi cách."
   },
   "placementCard.others": {
-    "defaultMessage": "{count, plural, other {# cách khác}}"
+    "defaultMessage": "{count,plural,one{# cách chia khác} other{# cách chia khác}}"
   },
-  "placementCard.pipeline": {
-    "defaultMessage": "{count, plural, other {# máy Mac · chia theo pipeline · {link}}}"
+  "placementCard.pipelineKind": {
+    "defaultMessage": "chia theo pipeline · {link}"
   },
   "placementCard.planFailed": {
     "defaultMessage": "Không thể lập kế hoạch"
@@ -4712,17 +4994,32 @@
   "placementCard.refusedUnnamed": {
     "defaultMessage": "Bị từ chối, goose không nêu lý do"
   },
+  "placementCard.run": {
+    "defaultMessage": "Chạy"
+  },
+  "placementCard.runAcross": {
+    "defaultMessage": "{count,plural,=2{Chạy trên cả hai Mac} other{Chạy trên # Mac}}"
+  },
+  "placementCard.runAcrossAny": {
+    "defaultMessage": "Chạy trên các Mac của bạn"
+  },
+  "placementCard.runHere": {
+    "defaultMessage": "Chạy trên Mac này"
+  },
+  "placementCard.runIt": {
+    "defaultMessage": "Chạy"
+  },
+  "placementCard.runOn": {
+    "defaultMessage": "Chạy trên {name}"
+  },
   "placementCard.setupFirst": {
-    "defaultMessage": "Thiết lập phân tán đang chỉ định mô hình khác — hãy chọn mô hình này trong Phân tán › Thiết lập rồi khởi động."
+    "defaultMessage": "Bản chia được thiết lập với mô hình khác — mở Chi tiết › Thiết lập, chọn mô hình này rồi Chạy."
   },
   "placementCard.short": {
     "defaultMessage": "Không vừa: thiếu {gb} trên {node}"
   },
   "placementCard.shortSplit": {
     "defaultMessage": "Không vừa: thiếu {gb}"
-  },
-  "placementCard.single": {
-    "defaultMessage": "Chỉ {name}"
   },
   "placementCard.slower": {
     "defaultMessage": "Chậm hơn cho việc này: ~{mine} so với ~{best} tok/s"
@@ -4736,50 +5033,26 @@
   "placementCard.starting": {
     "defaultMessage": "Đang khởi động…"
   },
+  "placementCard.stop": {
+    "defaultMessage": "Dừng"
+  },
+  "placementCard.stopSplitMessage": {
+    "defaultMessage": "Mọi phần trên {nodes} sẽ bị dừng và được xác nhận đã tắt. Các yêu cầu đang xử lý bị cắt ngang."
+  },
+  "placementCard.stopSplitTitle": {
+    "defaultMessage": "Dừng bản chia?"
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Có dòng không đọc được trong kho đo đạc"
   },
-  "placementCard.tensor": {
-    "defaultMessage": "{count, plural, other {# máy Mac · chia tensor · {link}}}"
-  },
-  "placementCard.thisMac": {
-    "defaultMessage": "máy Mac này"
+  "placementCard.tensorKind": {
+    "defaultMessage": "chia tensor · {link}"
   },
   "placementCard.tied": {
     "defaultMessage": "Nhanh ngang nhau trong sai số (~{mine} so với ~{best} tok/s), nhưng cần nhiều máy Mac hơn"
   },
-  "placementCard.tile.mount": {
-    "defaultMessage": "Nạp"
-  },
-  "placementCard.tile.nothing": {
-    "defaultMessage": "Quá lớn cho máy Mac này, và không cấu hình nào goose khởi động được vừa: {reason}"
-  },
-  "placementCard.tile.peerWhy": {
-    "defaultMessage": "Quá lớn cho máy Mac này — vừa trên {name}, và trò chuyện đi đến đó qua Link."
-  },
-  "placementCard.tile.retry": {
-    "defaultMessage": "Thử lại"
-  },
-  "placementCard.tile.short": {
-    "defaultMessage": "Không vừa máy Mac nào của bạn: thiếu {gb} ngay cả khi chia cho tất cả."
-  },
-  "placementCard.tile.splitWhy": {
-    "defaultMessage": "Quá lớn cho riêng máy Mac này — chạy chia trên {names}."
-  },
-  "placementCard.tile.startAcross": {
-    "defaultMessage": "{count,plural,=2{Khởi động trên cả hai máy Mac} other{Khởi động trên # máy Mac}}"
-  },
-  "placementCard.tile.startOn": {
-    "defaultMessage": "Khởi động trên {name}"
-  },
-  "placementCard.title": {
-    "defaultMessage": "Chạy ở đâu"
-  },
   "placementCard.total": {
     "defaultMessage": "Tổng ~{value} tok/s với {concurrency} cùng lúc"
-  },
-  "placementCard.useThis": {
-    "defaultMessage": "Dùng cách này"
   },
   "placementCard.writes": {
     "defaultMessage": "ghi ~{value} tok/s"

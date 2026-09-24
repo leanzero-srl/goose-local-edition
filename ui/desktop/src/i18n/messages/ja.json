@@ -2231,8 +2231,8 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "クラウドプロバイダー"
   },
-  "leanzeroSwarm.tabLink": {
-    "defaultMessage": "LeanZero Link"
+  "leanzeroSwarm.tabMacs": {
+    "defaultMessage": "マイ Mac"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "スウォーム設定"
@@ -2494,6 +2494,126 @@
   },
   "loopView.stopCheck": {
     "defaultMessage": "Stop check: {command}"
+  },
+  "macs.cancelDownloadFailed": {
+    "defaultMessage": "キャンセルできませんでした。"
+  },
+  "macs.cancelFailed": {
+    "defaultMessage": "コピーをキャンセルできませんでした。"
+  },
+  "macs.copyFailed": {
+    "defaultMessage": "コピーを開始できませんでした。"
+  },
+  "macs.downloadFailed": {
+    "defaultMessage": "ダウンロードを開始できませんでした。"
+  },
+  "macs.line.checking": {
+    "defaultMessage": "エンジンを読み取り中…"
+  },
+  "macs.line.failed": {
+    "defaultMessage": "{model} が失敗しました: {reason}"
+  },
+  "macs.line.failedNoModel": {
+    "defaultMessage": "エンジンが失敗しました: {reason}"
+  },
+  "macs.line.hosting": {
+    "defaultMessage": "{model} · {requester} の分割の一部"
+  },
+  "macs.line.loading": {
+    "defaultMessage": "{model} を読み込み中"
+  },
+  "macs.line.notLoaded": {
+    "defaultMessage": "モデル未読み込み"
+  },
+  "macs.line.offline": {
+    "defaultMessage": "LeanZero Link 経由で到達できません"
+  },
+  "macs.line.running": {
+    "defaultMessage": "{model}"
+  },
+  "macs.line.split": {
+    "defaultMessage": "{count,plural,one{{model} · # 台の Mac に分割} other{{model} · # 台の Mac に分割}}"
+  },
+  "macs.line.writing": {
+    "defaultMessage": "{model} · {tps} tok/s"
+  },
+  "macs.linksFailed": {
+    "defaultMessage": "接続を読み取れませんでした。"
+  },
+  "macs.listFailed": {
+    "defaultMessage": "モデルフォルダを読み取れませんでした。"
+  },
+  "macs.offThere": {
+    "defaultMessage": "{name} では {what} がオフです — そちらで「他の Mac にこの Mac の使用を許可」をオンにしてください(プロバイダ › マイ Mac)"
+  },
+  "macs.pauseFailed": {
+    "defaultMessage": "一時停止できませんでした。"
+  },
+  "macs.permission.chat": {
+    "defaultMessage": "チャットに応答"
+  },
+  "macs.permission.manage": {
+    "defaultMessage": "モデルの読み込みとダウンロード"
+  },
+  "macs.permission.split": {
+    "defaultMessage": "分割モデルの一部を実行"
+  },
+  "macs.resumeFailed": {
+    "defaultMessage": "再開できませんでした。"
+  },
+  "macs.state.checking": {
+    "defaultMessage": "確認中"
+  },
+  "macs.state.failed": {
+    "defaultMessage": "失敗"
+  },
+  "macs.state.held": {
+    "defaultMessage": "保留中"
+  },
+  "macs.state.hosting": {
+    "defaultMessage": "分割の一部"
+  },
+  "macs.state.idle": {
+    "defaultMessage": "待機中"
+  },
+  "macs.state.loading": {
+    "defaultMessage": "読み込み中"
+  },
+  "macs.state.notLoaded": {
+    "defaultMessage": "未読み込み"
+  },
+  "macs.state.off": {
+    "defaultMessage": "オフ"
+  },
+  "macs.state.offline": {
+    "defaultMessage": "オフライン"
+  },
+  "macs.state.reading": {
+    "defaultMessage": "読み取り中"
+  },
+  "macs.state.split": {
+    "defaultMessage": "分割"
+  },
+  "macs.state.unreadable": {
+    "defaultMessage": "読み取れません"
+  },
+  "macs.state.writing": {
+    "defaultMessage": "書き出し中"
+  },
+  "macs.statusFailed": {
+    "defaultMessage": "エンジンを読み取れませんでした。"
+  },
+  "macs.thisMac": {
+    "defaultMessage": "この Mac"
+  },
+  "macs.trackingFailed": {
+    "defaultMessage": "進行中のダウンロードに再接続できませんでした。"
+  },
+  "macs.tray.line": {
+    "defaultMessage": "{name} — {what}"
+  },
+  "macs.tray.open": {
+    "defaultMessage": "マイ Mac を開く"
   },
   "markdownContent.cancel": {
     "defaultMessage": "キャンセル"
@@ -2783,6 +2903,9 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "キャンセル"
   },
+  "mlxDistributed.checksPassed": {
+    "defaultMessage": "{count,plural,one{# 件のチェックに合格} other{# 件のチェックに合格}}"
+  },
   "mlxDistributed.clusterChecks": {
     "defaultMessage": "クラスタのチェック"
   },
@@ -2969,15 +3092,6 @@
   "mlxDistributed.fits": {
     "defaultMessage": "収まる"
   },
-  "mlxDistributed.hosting.label": {
-    "defaultMessage": "この Mac はランクを担当中"
-  },
-  "mlxDistributed.hosting.loading": {
-    "defaultMessage": "{requester} のランク {rank} を読み込み中"
-  },
-  "mlxDistributed.hosting.text": {
-    "defaultMessage": "{line} — ランク PID {pid}。{requester} が実行を止めるまで、シングルエンジンとこの Mac 自身の分散エンジンは拒否されます。"
-  },
   "mlxDistributed.inflight": {
     "defaultMessage": "処理中"
   },
@@ -3104,12 +3218,6 @@
   "mlxDistributed.peakOf": {
     "defaultMessage": "GiB ピーク / 予算 {budget} GiB"
   },
-  "mlxDistributed.peerBody": {
-    "defaultMessage": "{host} を管理しています。構成・チェック・起動・停止を行うには、「Manage on」を「This device」に戻してください。"
-  },
-  "mlxDistributed.peerTitle": {
-    "defaultMessage": "分散エンジンはこの Mac から監視されます"
-  },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
   },
@@ -3226,15 +3334,6 @@
   },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {バッチ内 # シーケンス}}"
-  },
-  "mlxDistributed.serveNode": {
-    "defaultMessage": "この Mac を分散ノードとして使うことを許可"
-  },
-  "mlxDistributed.serveNodeError": {
-    "defaultMessage": "設定を変更できませんでした"
-  },
-  "mlxDistributed.serveNodeHint": {
-    "defaultMessage": "LeanZero Link 上のほかの Mac が、ここで分散エンジンのランクを実行できるようになります — goose 自身のランクプログラムとプローブのみで、任意のコマンドは決して実行しません。既定はオフ。"
   },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "サーバーステータスを読み取れません: {error}"
@@ -3417,28 +3516,10 @@
     "defaultMessage": "ヘッドレス (ssh)"
   },
   "mlxDistributedSetup.intro": {
-    "defaultMessage": "もう一台の Mac を一度だけ指定してください。goose がこの Mac と相手を ssh で調べ、リンク、RDMA、バックエンド、モデル、ポート、Python を入力します。"
+    "defaultMessage": "もう一台の Mac を選んでください。goose が LeanZero Link で両方の Mac に問い合わせ、接続、RDMA、バックエンド、モデル、ポート、Python を入力します。"
   },
-  "mlxDistributedSetup.link.gid": {
-    "defaultMessage": "IPv4 GID {index}"
-  },
-  "mlxDistributedSetup.link.intro": {
-    "defaultMessage": "同じアカウントでサインイン済み。各 Mac がメッシュ経由で自身を説明しました。1 台選ぶと、goose がその Mac 自身の goose を通じて操作します — ssh は不要です。"
-  },
-  "mlxDistributedSetup.link.memory": {
-    "defaultMessage": "{total} GiB 中 {available} GiB 利用可能"
-  },
-  "mlxDistributedSetup.link.models": {
-    "defaultMessage": "{count, plural, other {# 個のモデル}}"
-  },
-  "mlxDistributedSetup.link.noGid": {
-    "defaultMessage": "IPv4 GID なし"
-  },
-  "mlxDistributedSetup.link.noRdma": {
-    "defaultMessage": "RDMA デバイスなし"
-  },
-  "mlxDistributedSetup.link.noThunderbolt": {
-    "defaultMessage": "Thunderbolt アドレスなし"
+  "mlxDistributedSetup.link.detectWith": {
+    "defaultMessage": "この Mac で検出"
   },
   "mlxDistributedSetup.link.none": {
     "defaultMessage": "このアカウントのほかの Mac は現在 LeanZero Link 上にありません。"
@@ -3446,14 +3527,11 @@
   "mlxDistributedSetup.link.notConnected": {
     "defaultMessage": "LeanZero Link は接続されていません"
   },
-  "mlxDistributedSetup.link.rdmaActive": {
-    "defaultMessage": "アクティブ"
+  "mlxDistributedSetup.link.pick": {
+    "defaultMessage": "もう一台の Mac"
   },
-  "mlxDistributedSetup.link.rdmaDownCount": {
-    "defaultMessage": "{count, plural, other {ほか # 台のデバイスはポート停止}}"
-  },
-  "mlxDistributedSetup.link.servingOff": {
-    "defaultMessage": "{name} で「この Mac を分散ノードとして使うことを許可」をオンにしてください (プロバイダ › LeanZero MLX › エンジン › 分散)。"
+  "mlxDistributedSetup.link.servingOffMyMacs": {
+    "defaultMessage": "{name} で「他の Mac にこの Mac の使用を許可 › 分割モデルの一部を実行」をオンにしてください(そちらのプロバイダ › マイ Mac)。"
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "その goose は対応していません"
@@ -3472,12 +3550,6 @@
   },
   "mlxDistributedSetup.link.state.unreadable": {
     "defaultMessage": "応答あり、読み取り不可"
-  },
-  "mlxDistributedSetup.link.title": {
-    "defaultMessage": "LeanZero Link 上のあなたの Mac"
-  },
-  "mlxDistributedSetup.link.use": {
-    "defaultMessage": "この Mac を使う"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS 一致"
@@ -3500,11 +3572,17 @@
   "mlxDistributedSetup.noneAnswering": {
     "defaultMessage": "~/.ssh/config のどのエイリアスも非対話型 ssh に応答しませんでした。"
   },
+  "mlxDistributedSetup.overSsh": {
+    "defaultMessage": "詳細: ssh 経由の Mac"
+  },
+  "mlxDistributedSetup.overSshMeta": {
+    "defaultMessage": "LeanZero Link にない Mac 向け"
+  },
   "mlxDistributedSetup.peer": {
     "defaultMessage": "もう一台の Mac(ssh エイリアスまたはホスト)"
   },
   "mlxDistributedSetup.peerPlaceholder": {
-    "defaultMessage": "workhorse"
+    "defaultMessage": "ssh エイリアス"
   },
   "mlxDistributedSetup.probed": {
     "defaultMessage": "{count, plural, other {{ms} ms で # ノードを調査}}"
@@ -3539,20 +3617,17 @@
   "mlxEngineView.mountFailed": {
     "defaultMessage": "マウントに失敗しました"
   },
-  "mlxEngineView.refusedUnnamed": {
-    "defaultMessage": "拒否されました（goose は理由を示していません）"
+  "mlxEngineView.pickThenRun": {
+    "defaultMessage": "モデルを選び、下の「実行」で起動します — この Mac、他の Mac、または複数の Mac に分割して。"
+  },
+  "mlxEngineView.samplingOn": {
+    "defaultMessage": "プロファイルの対象"
   },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "複数の Mac で提供中"
   },
-  "mlxEngineView.startFailed": {
-    "defaultMessage": "起動に失敗しました"
-  },
-  "mlxEngineView.startRefused": {
-    "defaultMessage": "起動が拒否されました"
-  },
-  "mlxEngineView.switchNeedsUnmount": {
-    "defaultMessage": "このモデルはこの Mac だけでは動きません — アンマウントしてから、タイルで起動してください。"
+  "mlxEngineView.settingsFailed": {
+    "defaultMessage": "エンジン設定を読み取れませんでした。"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: 1 トークンあたり {bf16} KiB ではなく {bytes} KiB — 同じメモリに {ratio}× のコンテキストが入ります。"
@@ -3650,6 +3725,39 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "停止中"
   },
+  "mlxModels.cancelMessage": {
+    "defaultMessage": "{name} での {model} のダウンロードをキャンセルし、そこにある途中のファイルを削除しますか?"
+  },
+  "mlxModels.cancelTitle": {
+    "defaultMessage": "ダウンロードをキャンセル"
+  },
+  "mlxModels.downloadTo": {
+    "defaultMessage": "ダウンロード先"
+  },
+  "mlxModels.edit": {
+    "defaultMessage": "編集"
+  },
+  "mlxModels.folderUnread": {
+    "defaultMessage": "読み取れません: {reason}"
+  },
+  "mlxModels.folders": {
+    "defaultMessage": "モデルフォルダ"
+  },
+  "mlxModels.foldersHint": {
+    "defaultMessage": "Mac ごとに 1 つのフォルダを、ダウンロード・コピー・読み込みで共通に使います。バーはそのボリュームの空き容量です。"
+  },
+  "mlxModels.huggingFace": {
+    "defaultMessage": "Hugging Face"
+  },
+  "mlxModels.keep": {
+    "defaultMessage": "残す"
+  },
+  "mlxModels.onYourMacs": {
+    "defaultMessage": "あなたの Mac"
+  },
+  "mlxModels.settingsFailed": {
+    "defaultMessage": "エンジン設定を読み取れませんでした。"
+  },
   "mlxMount.foreignAnswering": {
     "defaultMessage": "準備完了 · 別のウィンドウが所有"
   },
@@ -3659,23 +3767,8 @@
   "mlxReplica.cancel": {
     "defaultMessage": "キャンセル"
   },
-  "mlxReplica.cancelConfirmMessage": {
-    "defaultMessage": "{model} の {host} へのコピーを停止しますか？ {host} 上の途中までのコピーは削除されます。"
-  },
-  "mlxReplica.cancelConfirmTitle": {
-    "defaultMessage": "コピーをキャンセル"
-  },
-  "mlxReplica.cancelFailed": {
-    "defaultMessage": "コピーをキャンセルできませんでした。"
-  },
   "mlxReplica.cancelTitle": {
     "defaultMessage": "コピーを停止し、{host} 上の途中までのコピーを削除します"
-  },
-  "mlxReplica.checkLinks": {
-    "defaultMessage": "接続を確認"
-  },
-  "mlxReplica.checking": {
-    "defaultMessage": "接続を確認中…"
   },
   "mlxReplica.copiedTo": {
     "defaultMessage": "{host} にコピーしました"
@@ -3686,15 +3779,6 @@
   "mlxReplica.copyFailed": {
     "defaultMessage": "{host} へのコピーに失敗しました"
   },
-  "mlxReplica.copyTitleNetwork": {
-    "defaultMessage": "{host} との Thunderbolt 接続がないため、ローカルネットワーク経由でコピーします: {local} → {peer}"
-  },
-  "mlxReplica.copyTitleThunderbolt": {
-    "defaultMessage": "Thunderbolt ケーブル経由でコピーします: {local} → {peer}"
-  },
-  "mlxReplica.copyTo": {
-    "defaultMessage": "{kind,select,thunderbolt{{host} にコピー · Thunderbolt} other{{host} にコピー · ネットワーク}}"
-  },
   "mlxReplica.copyingTo": {
     "defaultMessage": "{kind,select,thunderbolt{Thunderbolt 経由で {host} にコピー中} other{ネットワーク経由で {host} にコピー中}}"
   },
@@ -3703,39 +3787,6 @@
   },
   "mlxReplica.files": {
     "defaultMessage": "{total} 件中 {done} 件のファイル"
-  },
-  "mlxReplica.keepCopying": {
-    "defaultMessage": "コピーを続ける"
-  },
-  "mlxReplica.linkNetwork": {
-    "defaultMessage": "ネットワーク"
-  },
-  "mlxReplica.linkThunderbolt": {
-    "defaultMessage": "Thunderbolt"
-  },
-  "mlxReplica.linkThunderboltSpeed": {
-    "defaultMessage": "Thunderbolt · {speed}"
-  },
-  "mlxReplica.linksError": {
-    "defaultMessage": "他のデバイスとの接続を確認できませんでした: {reason}"
-  },
-  "mlxReplica.linksFailed": {
-    "defaultMessage": "接続を読み取れませんでした。"
-  },
-  "mlxReplica.linksNote": {
-    "defaultMessage": "このデバイスのモデルは、再ダウンロードする代わりにリンク済みのデバイスへコピーできます。各ファイルは使用前に元のファイルと照合されます。"
-  },
-  "mlxReplica.linksTitle": {
-    "defaultMessage": "リンク済みのデバイス"
-  },
-  "mlxReplica.networkNote": {
-    "defaultMessage": "Thunderbolt 接続がないため、コピーはローカルネットワーク経由になります。"
-  },
-  "mlxReplica.offerLabel": {
-    "defaultMessage": "ダウンロード済み"
-  },
-  "mlxReplica.offerText": {
-    "defaultMessage": "{model} がこのデバイスに入りました。{host} は Thunderbolt で接続されています。再ダウンロードせずにそちらへコピーしてください。"
   },
   "mlxReplica.progressLabel": {
     "defaultMessage": "{model} の {host} へのコピーの進行状況"
@@ -3751,9 +3802,6 @@
   },
   "mlxReplica.resumed": {
     "defaultMessage": "{count,plural,one{途中までのコピーから再開: # 件のファイル} other{途中までのコピーから再開: # 件のファイル}}"
-  },
-  "mlxReplica.startFailed": {
-    "defaultMessage": "コピーを開始できませんでした。"
   },
   "mlxReplica.starting": {
     "defaultMessage": "{host} へのコピーを開始しています…"
@@ -4112,6 +4160,123 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "プロバイダー名の確認"
   },
+  "modelMatrix.cancel": {
+    "defaultMessage": "キャンセル"
+  },
+  "modelMatrix.cancelCopyMessage": {
+    "defaultMessage": "{model} の {name} へのコピーを中止しますか? {name} 上の途中のコピーは削除されます。"
+  },
+  "modelMatrix.cancelCopyTitle": {
+    "defaultMessage": "コピーをキャンセル"
+  },
+  "modelMatrix.cancelDownloadMessage": {
+    "defaultMessage": "{name} での {model} のダウンロードをキャンセルし、そこにある途中のファイルを削除しますか?"
+  },
+  "modelMatrix.cancelDownloadTitle": {
+    "defaultMessage": "ダウンロードをキャンセル"
+  },
+  "modelMatrix.cantRead": {
+    "defaultMessage": "読み取れません"
+  },
+  "modelMatrix.checking": {
+    "defaultMessage": "確認中…"
+  },
+  "modelMatrix.copyFailed": {
+    "defaultMessage": "コピー失敗"
+  },
+  "modelMatrix.copyFrom": {
+    "defaultMessage": "{kind,select,thunderbolt{{name} からコピー · Thunderbolt} other{{name} からコピー · ネットワーク}}"
+  },
+  "modelMatrix.copyFromTitle": {
+    "defaultMessage": "{kind,select,thunderbolt{{name} のファイルを Thunderbolt ケーブルで直接コピーし、各ファイルを元と照合します。} other{{name} のファイルをローカルネットワークで直接コピーし、各ファイルを元と照合します。}}"
+  },
+  "modelMatrix.copyStarting": {
+    "defaultMessage": "コピーを開始中"
+  },
+  "modelMatrix.copying": {
+    "defaultMessage": "コピー中 {pct}%"
+  },
+  "modelMatrix.delete": {
+    "defaultMessage": "{name} から削除"
+  },
+  "modelMatrix.deleteConfirm": {
+    "defaultMessage": "削除"
+  },
+  "modelMatrix.deleteFailed": {
+    "defaultMessage": "{model} を削除できませんでした。"
+  },
+  "modelMatrix.deleteMessage": {
+    "defaultMessage": "{name} から {model} ({size}) を削除しますか? ファイルはその Mac のディスクから消去されます。"
+  },
+  "modelMatrix.deleteTitle": {
+    "defaultMessage": "モデルを削除"
+  },
+  "modelMatrix.dismiss": {
+    "defaultMessage": "閉じる"
+  },
+  "modelMatrix.downloadFailed": {
+    "defaultMessage": "ダウンロード失敗"
+  },
+  "modelMatrix.downloadHere": {
+    "defaultMessage": "ここにダウンロード"
+  },
+  "modelMatrix.downloadHereTitle": {
+    "defaultMessage": "{model} を Hugging Face から {name} にダウンロード"
+  },
+  "modelMatrix.downloading": {
+    "defaultMessage": "ダウンロード中 {pct}%"
+  },
+  "modelMatrix.empty": {
+    "defaultMessage": "あなたの Mac にはまだモデルがありません — Hugging Face タブからダウンロードしてください。"
+  },
+  "modelMatrix.free": {
+    "defaultMessage": "空き {free}"
+  },
+  "modelMatrix.incomplete": {
+    "defaultMessage": "{count,plural,one{不完全 · # 個のファイルが不足} other{不完全 · # 個のファイルが不足}}"
+  },
+  "modelMatrix.keep": {
+    "defaultMessage": "残す"
+  },
+  "modelMatrix.keepCopying": {
+    "defaultMessage": "コピーを続ける"
+  },
+  "modelMatrix.loaded": {
+    "defaultMessage": "読み込み済み"
+  },
+  "modelMatrix.loading": {
+    "defaultMessage": "読み込み中"
+  },
+  "modelMatrix.model": {
+    "defaultMessage": "モデル"
+  },
+  "modelMatrix.noCopyPath": {
+    "defaultMessage": "{name} からコピーできません: {reason}"
+  },
+  "modelMatrix.notHere": {
+    "defaultMessage": "ここにはありません"
+  },
+  "modelMatrix.offline": {
+    "defaultMessage": "オフライン"
+  },
+  "modelMatrix.onDisk": {
+    "defaultMessage": "ディスク上"
+  },
+  "modelMatrix.pause": {
+    "defaultMessage": "一時停止"
+  },
+  "modelMatrix.paused": {
+    "defaultMessage": "一時停止中 {pct}%"
+  },
+  "modelMatrix.queued": {
+    "defaultMessage": "待機中"
+  },
+  "modelMatrix.resume": {
+    "defaultMessage": "再開"
+  },
+  "modelMatrix.sampling": {
+    "defaultMessage": "{name} のサンプリング"
+  },
   "modelSettingsButtons.configureProviders": {
     "defaultMessage": "プロバイダーを設定"
   },
@@ -4309,6 +4474,111 @@
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "プロバイダーとモデルをリセット"
+  },
+  "myMacs.account": {
+    "defaultMessage": "アカウント"
+  },
+  "myMacs.applyOnReconnect": {
+    "defaultMessage": "「モデルの読み込みとダウンロード」は、この Mac が LeanZero Link に再接続したときに有効になります。"
+  },
+  "myMacs.cantRead": {
+    "defaultMessage": "読み取れません: {reason}"
+  },
+  "myMacs.chatHint": {
+    "defaultMessage": "ここで読み込んだモデルが、他の Mac で始めたチャットに応答します。"
+  },
+  "myMacs.chip": {
+    "defaultMessage": "チップ"
+  },
+  "myMacs.chipCores": {
+    "defaultMessage": "{brand} · {cores} コア GPU"
+  },
+  "myMacs.details": {
+    "defaultMessage": "詳細"
+  },
+  "myMacs.disconnect": {
+    "defaultMessage": "切断"
+  },
+  "myMacs.disk": {
+    "defaultMessage": "ディスク"
+  },
+  "myMacs.diskFree": {
+    "defaultMessage": "{total} 中 {free} 空き"
+  },
+  "myMacs.hostname": {
+    "defaultMessage": "ホスト名"
+  },
+  "myMacs.intro": {
+    "defaultMessage": "LeanZero Link アカウントにサインインしているすべての Mac です。モデルタブでどの Mac にもモデルを読み込み、エンジンタブでモデルを実行する場所を選べます。"
+  },
+  "myMacs.lastPoll": {
+    "defaultMessage": "最後の読み取りに失敗"
+  },
+  "myMacs.lets": {
+    "defaultMessage": "他の Mac に許可"
+  },
+  "myMacs.letsUnknown": {
+    "defaultMessage": "その goose は何を許可しているか報告しません — そちらの goose を更新してください。"
+  },
+  "myMacs.logout": {
+    "defaultMessage": "ログアウト / アカウント切り替え"
+  },
+  "myMacs.manageHint": {
+    "defaultMessage": "他の Mac がこの Mac のモデルを表示・ダウンロード・コピー・削除します。"
+  },
+  "myMacs.master": {
+    "defaultMessage": "他の Mac にこの Mac の使用を許可"
+  },
+  "myMacs.masterHint": {
+    "defaultMessage": "LeanZero Link アカウントにサインインしている Mac のみ。各スイッチは goose 自身の操作だけを許可し、任意のコマンドは実行しません。"
+  },
+  "myMacs.memory": {
+    "defaultMessage": "メモリ"
+  },
+  "myMacs.memoryFree": {
+    "defaultMessage": "{total} GB 中 {free} GB 空き"
+  },
+  "myMacs.mesh": {
+    "defaultMessage": "メッシュ"
+  },
+  "myMacs.meshIp": {
+    "defaultMessage": "メッシュ IP"
+  },
+  "myMacs.meshLine": {
+    "defaultMessage": "{online,select,true{{count,plural,one{{state} · オンライン · # 台の Mac} other{{state} · オンライン · # 台の Mac}}} other{{count,plural,one{{state} · オフライン · # 台の Mac} other{{state} · オフライン · # 台の Mac}}}}"
+  },
+  "myMacs.models": {
+    "defaultMessage": "モデル"
+  },
+  "myMacs.none": {
+    "defaultMessage": "LeanZero Link アカウントに他の Mac はまだありません — その Mac でサインインするとここに表示されます。"
+  },
+  "myMacs.off": {
+    "defaultMessage": "オフ"
+  },
+  "myMacs.on": {
+    "defaultMessage": "オン"
+  },
+  "myMacs.reconnect": {
+    "defaultMessage": "今すぐ再接続"
+  },
+  "myMacs.reconnecting": {
+    "defaultMessage": "再接続中…(この Mac の goose との接続が切れました)"
+  },
+  "myMacs.saveFailed": {
+    "defaultMessage": "スイッチを保存できませんでした"
+  },
+  "myMacs.sessions": {
+    "defaultMessage": "アクティブなセッション"
+  },
+  "myMacs.splitHint": {
+    "defaultMessage": "1 台では大きすぎるモデルの一部をこの Mac が保持し、別の Mac から実行します。"
+  },
+  "myMacs.thisMac": {
+    "defaultMessage": "この Mac"
+  },
+  "myMacs.title": {
+    "defaultMessage": "マイ Mac"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -4625,6 +4895,30 @@
   "placementCard.context": {
     "defaultMessage": "コンテキスト {tokens}"
   },
+  "placementCard.copyFirst": {
+    "defaultMessage": "{kind,select,thunderbolt{先に {name} へコピー · Thunderbolt} other{先に {name} へコピー · ネットワーク}}"
+  },
+  "placementCard.copyFirstMinutes": {
+    "defaultMessage": "{kind,select,thunderbolt{先に {name} へコピー(Thunderbolt で約 {minutes} 分)} other{先に {name} へコピー(ネットワークで約 {minutes} 分)}}"
+  },
+  "placementCard.copyFirstWhy": {
+    "defaultMessage": "{model} ({size}) はまだ {name} にありません。届いたら起動は自動で続きます。"
+  },
+  "placementCard.copyThenFailed": {
+    "defaultMessage": "{name} へのコピーが完了しなかったため、何も起動していません: {reason}"
+  },
+  "placementCard.copyingThen": {
+    "defaultMessage": "{name} へコピー中 — {pct}% · コピーが届くと起動します"
+  },
+  "placementCard.details": {
+    "defaultMessage": "詳細"
+  },
+  "placementCard.detailsMeta": {
+    "defaultMessage": "セットアップ、事前チェック、チェック、イベント"
+  },
+  "placementCard.distributedOwns": {
+    "defaultMessage": "分割がこの Mac を使用中です — ここでモデルを単独で実行するには停止してください。"
+  },
   "placementCard.estimated": {
     "defaultMessage": "推定"
   },
@@ -4643,8 +4937,8 @@
   "placementCard.goalMany": {
     "defaultMessage": "多数のリクエスト"
   },
-  "placementCard.gpuCores": {
-    "defaultMessage": "{brand} · {cores} コア GPU"
+  "placementCard.keepRunning": {
+    "defaultMessage": "実行を続ける"
   },
   "placementCard.live.failed": {
     "defaultMessage": "失敗"
@@ -4661,9 +4955,6 @@
   "placementCard.measureFirst": {
     "defaultMessage": "実行中でまだ測定されていません — 速度を測定すると、推定がこの Mac 自身の値に置き換わります。"
   },
-  "placementCard.measureLater": {
-    "defaultMessage": "実行が始まると速度を測定できます。"
-  },
   "placementCard.measured": {
     "defaultMessage": "{runs, plural, other {測定済み · # 回}}"
   },
@@ -4673,26 +4964,17 @@
   "placementCard.measuring": {
     "defaultMessage": "測定中：約 2k トークンのプロンプトの後に 256 トークン…"
   },
-  "placementCard.noFigure": {
-    "defaultMessage": "速度データなし"
-  },
   "placementCard.noFigureReason": {
     "defaultMessage": "速度データなし"
   },
-  "placementCard.nodeGap": {
-    "defaultMessage": "{name}：{reason}"
-  },
-  "placementCard.nodeLine": {
-    "defaultMessage": "{name}：{chip} · {bandwidth} GB/s · GPU 上限 {ceiling}"
-  },
-  "placementCard.nothingFits": {
-    "defaultMessage": "今は何も収まりません"
+  "placementCard.noPlanWays": {
+    "defaultMessage": "プランがないため速度の数値はありませんが、どの方法でも起動できます。"
   },
   "placementCard.others": {
-    "defaultMessage": "{count, plural, other {ほかに # 通り}}"
+    "defaultMessage": "{count,plural,one{他の分割 # 件} other{他の分割 # 件}}"
   },
-  "placementCard.pipeline": {
-    "defaultMessage": "{count, plural, other {# 台の Mac · パイプライン分割 · {link}}}"
+  "placementCard.pipelineKind": {
+    "defaultMessage": "パイプライン分割 · {link}"
   },
   "placementCard.planFailed": {
     "defaultMessage": "計画できませんでした"
@@ -4712,17 +4994,32 @@
   "placementCard.refusedUnnamed": {
     "defaultMessage": "拒否されました（goose は理由を示していません）"
   },
+  "placementCard.run": {
+    "defaultMessage": "実行"
+  },
+  "placementCard.runAcross": {
+    "defaultMessage": "{count,plural,=2{両方の Mac で実行} other{# 台の Mac で実行}}"
+  },
+  "placementCard.runAcrossAny": {
+    "defaultMessage": "あなたの Mac で実行"
+  },
+  "placementCard.runHere": {
+    "defaultMessage": "この Mac で実行"
+  },
+  "placementCard.runIt": {
+    "defaultMessage": "実行"
+  },
+  "placementCard.runOn": {
+    "defaultMessage": "{name} で実行"
+  },
   "placementCard.setupFirst": {
-    "defaultMessage": "分散設定では別のモデルが指定されています — 分散 › 設定でこのモデルを選んでから開始してください。"
+    "defaultMessage": "分割は別のモデルで設定されています — 詳細 › セットアップを開き、このモデルを選んでから実行してください。"
   },
   "placementCard.short": {
     "defaultMessage": "収まりません：{node} で {gb} 不足"
   },
   "placementCard.shortSplit": {
     "defaultMessage": "収まりません：{gb} 不足"
-  },
-  "placementCard.single": {
-    "defaultMessage": "{name} のみ"
   },
   "placementCard.slower": {
     "defaultMessage": "この用途では遅い：~{mine} 対 ~{best} tok/s"
@@ -4736,50 +5033,26 @@
   "placementCard.starting": {
     "defaultMessage": "開始中…"
   },
+  "placementCard.stop": {
+    "defaultMessage": "停止"
+  },
+  "placementCard.stopSplitMessage": {
+    "defaultMessage": "{nodes} 上のすべての部分を停止し、終了を確認します。処理中のリクエストは中断されます。"
+  },
+  "placementCard.stopSplitTitle": {
+    "defaultMessage": "分割を停止しますか?"
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "測定ストアに読み取れない行があります"
   },
-  "placementCard.tensor": {
-    "defaultMessage": "{count, plural, other {# 台の Mac · テンソル分割 · {link}}}"
-  },
-  "placementCard.thisMac": {
-    "defaultMessage": "この Mac"
+  "placementCard.tensorKind": {
+    "defaultMessage": "テンソル分割 · {link}"
   },
   "placementCard.tied": {
     "defaultMessage": "誤差の範囲で同じ速さ（~{mine} 対 ~{best} tok/s）ですが、より多くの Mac が必要"
   },
-  "placementCard.tile.mount": {
-    "defaultMessage": "マウント"
-  },
-  "placementCard.tile.nothing": {
-    "defaultMessage": "この Mac には大きすぎ、goose が起動できるどの構成にも収まりません: {reason}"
-  },
-  "placementCard.tile.peerWhy": {
-    "defaultMessage": "この Mac には大きすぎます — {name} には収まり、チャットは Link 経由でそちらに送られます。"
-  },
-  "placementCard.tile.retry": {
-    "defaultMessage": "再試行"
-  },
-  "placementCard.tile.short": {
-    "defaultMessage": "お持ちのどの Mac にも収まりません: すべてに分割しても {gb} 足りません。"
-  },
-  "placementCard.tile.splitWhy": {
-    "defaultMessage": "この Mac だけには大きすぎます — {names} に分割して動きます。"
-  },
-  "placementCard.tile.startAcross": {
-    "defaultMessage": "{count,plural,=2{両方の Mac で起動} other{# 台の Mac で起動}}"
-  },
-  "placementCard.tile.startOn": {
-    "defaultMessage": "{name} で起動"
-  },
-  "placementCard.title": {
-    "defaultMessage": "どこで実行するか"
-  },
   "placementCard.total": {
     "defaultMessage": "同時 {concurrency} 件で合計 ~{value} tok/s"
-  },
-  "placementCard.useThis": {
-    "defaultMessage": "これを使う"
   },
   "placementCard.writes": {
     "defaultMessage": "書き込み ~{value} tok/s"

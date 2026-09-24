@@ -23,7 +23,7 @@ export type MacState =
   | 'idle'
   | 'reading'
   | 'writing'
-  | 'queued'
+  | 'held'
   | 'failed'
   | 'split'
   | 'hosting';
@@ -59,7 +59,7 @@ function fromActivity(activity: MlxActivity | null): { phase: EnginePhase; state
     case 'prefill':
       return { phase, state: 'reading' };
     case 'queued':
-      return { phase, state: 'queued' };
+      return { phase, state: 'held' };
     case 'not_loaded':
       return { phase, state: 'notLoaded' };
     default:
@@ -135,7 +135,7 @@ const WORDS = defineMessages({
   idle: { id: 'macs.state.idle', defaultMessage: 'Idle' },
   reading: { id: 'macs.state.reading', defaultMessage: 'Reading' },
   writing: { id: 'macs.state.writing', defaultMessage: 'Writing' },
-  queued: { id: 'macs.state.queued', defaultMessage: 'Queued' },
+  held: { id: 'macs.state.held', defaultMessage: 'Held' },
   failed: { id: 'macs.state.failed', defaultMessage: 'Failed' },
   split: { id: 'macs.state.split', defaultMessage: 'Split' },
   hosting: { id: 'macs.state.hosting', defaultMessage: 'Part of a split' },
@@ -199,7 +199,7 @@ export function macLine(intl: IntlShape, summary: MacSummary): string | null {
         : intl.formatMessage(LINES.running, { model });
     case 'idle':
     case 'reading':
-    case 'queued':
+    case 'held':
       return intl.formatMessage(LINES.running, { model });
     case 'off':
     case 'unreadable':

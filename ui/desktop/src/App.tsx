@@ -311,7 +311,7 @@ const AgentWorkRoute = () => {
 };
 
 const LeanZeroSwarmRoute = () => {
-  // `?tab=link` — the tray's "Open LeanZero Link" lands on the tab that can act on it.
+  // `?tab=link` — the tray's "Open My Macs" lands on the tab that can act on it.
   const [searchParams] = useSearchParams();
   return <LeanZeroSwarmView requestedTab={searchParams.get('tab')} />;
 };

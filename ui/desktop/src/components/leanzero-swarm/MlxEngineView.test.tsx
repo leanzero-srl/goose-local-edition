@@ -2541,9 +2541,7 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
         'is already complete on this node'
       )
     );
-    expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent(
-      `Copy to ${STUDIO} failed`
-    );
+    expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent(`Copy to ${STUDIO} failed`);
     expect(mockReplicaProgress).not.toHaveBeenCalled();
     unmount();
   });
@@ -2633,7 +2631,9 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
     await waitFor(() => expect(cell).toHaveAttribute('data-cell', 'present'));
     await userEvent.click(within(cell).getByRole('button', { name: `Delete from ${STUDIO}` }));
     expect(
-      await screen.findByText(new RegExp(`Delete ${QWEN.replace('/', '\\/')} \\(.+\\) from ${STUDIO}\\?`))
+      await screen.findByText(
+        new RegExp(`Delete ${QWEN.replace('/', '\\/')} \\(.+\\) from ${STUDIO}\\?`)
+      )
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(mockModelDelete).toHaveBeenCalledWith(QWEN, PEER));
@@ -2649,9 +2649,7 @@ describe('MlxEngineView — Models: one row per model, one column per Mac', () =
     const { unmount } = render(<MlxEngineView />);
     await openModelsTab();
     const folder = await screen.findByTestId(`models-folder-${PEER}`);
-    await waitFor(() =>
-      expect(folder).toHaveTextContent('/Volumes/Studio/mlx-models')
-    );
+    await waitFor(() => expect(folder).toHaveTextContent('/Volumes/Studio/mlx-models'));
     expect(folder).toHaveTextContent(STUDIO);
     expect(screen.getByTestId('models-folder-self')).toHaveTextContent('/Users/x/mlx-models');
     unmount();

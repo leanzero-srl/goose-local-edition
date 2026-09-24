@@ -15,7 +15,6 @@ import {
   FLASH_PREFLIGHT_REFUSED,
   FLASH_READY,
   FLASH_SERVING,
-  HOSTING_RANK_1,
   STOPPED_WITH_CONFIG,
 } from './mlxDistributed.fixtures';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
@@ -263,7 +262,10 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     expect(within(events[1]).getByText('Restart')).toHaveAttribute('data-tone', 'warn');
     expect(within(events[5]).getByText('Link repaired')).toHaveAttribute('data-tone', 'warn');
     // The fold's header counts what its body shows.
-    expect(screen.getByTestId('mlx-dist-events-disclosure')).toHaveAttribute('data-state', 'closed');
+    expect(screen.getByTestId('mlx-dist-events-disclosure')).toHaveAttribute(
+      'data-state',
+      'closed'
+    );
     expect(
       screen.getByText('Supervisor events').closest('[data-testid="mlx-dist-events-disclosure"]')
     ).toHaveTextContent(`Supervisor events${FLASH_READY.events.length}`);
@@ -1188,7 +1190,6 @@ describe('DistributedEngineSection — LeanZero Link finds the other Mac and run
     expect(screen.queryByRole('switch', { name: /serve|split/i })).toBeNull();
     return expectDesigned(container);
   });
-
 });
 
 describe('DistributedEngineSection — the engine-phase palette on the run and every node', () => {
@@ -1248,5 +1249,4 @@ describe('DistributedEngineSection — the engine-phase palette on the run and e
       within(screen.getByTestId('mlx-dist-mode')).getByText('Failed').closest('[data-phase]')
     ).toHaveAttribute('data-phase', 'failed');
   });
-
 });

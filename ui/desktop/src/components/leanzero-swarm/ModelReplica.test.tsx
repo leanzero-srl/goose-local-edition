@@ -42,7 +42,12 @@ describe('a running copy', () => {
   it('says it is verifying, counts resumed files, the measured rate, and hands the cancel up', async () => {
     const onCancel = vi.fn();
     render(
-      <ReplicaJobRow job={running} receiverIsThisDevice={false} onCancel={onCancel} onDismiss={vi.fn()} />
+      <ReplicaJobRow
+        job={running}
+        receiverIsThisDevice={false}
+        onCancel={onCancel}
+        onDismiss={vi.fn()}
+      />
     );
     const row = screen.getByTestId(`mlx-replica-${MODEL}`);
     expect(row).toHaveTextContent('Copying to Work’s Mac Studio over Thunderbolt');
@@ -65,7 +70,12 @@ describe('a running copy', () => {
       },
     };
     render(
-      <ReplicaJobRow job={failed} receiverIsThisDevice={false} onCancel={vi.fn()} onDismiss={vi.fn()} />
+      <ReplicaJobRow
+        job={failed}
+        receiverIsThisDevice={false}
+        onCancel={vi.fn()}
+        onDismiss={vi.fn()}
+      />
     );
     const row = screen.getByTestId(`mlx-replica-${MODEL}`);
     expect(row).toHaveTextContent('Copy to Work’s Mac Studio failed');
@@ -88,7 +98,12 @@ describe('a running copy', () => {
       },
     };
     const { rerender } = render(
-      <ReplicaJobRow job={refused} receiverIsThisDevice={false} onCancel={vi.fn()} onDismiss={vi.fn()} />
+      <ReplicaJobRow
+        job={refused}
+        receiverIsThisDevice={false}
+        onCancel={vi.fn()}
+        onDismiss={vi.fn()}
+      />
     );
     // The receiver is workhorse: the fix is there, so nothing here opens THIS Mac's settings.
     expect(screen.getByTestId('local-network-blocked')).toHaveTextContent(

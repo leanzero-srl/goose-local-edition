@@ -18,6 +18,12 @@ import {
   summarizeMac,
 } from '../components/leanzero-swarm/macSummary';
 import { mlxErrorMessage } from '../components/leanzero-swarm/mlxErrorMessage';
+import {
+  liveDecodeTps,
+  mlxActivity,
+  readMlxLiveStatus,
+  type MlxActivity,
+} from '../components/leanzero-swarm/mlxLiveStats';
 import type { MacsTrayReport } from '../utils/macsTrayReport';
 
 /** The Link tab's own cadence, used while the state is still moving (a launch reconnect). */
@@ -61,6 +67,8 @@ export async function readMacsTrayReport(
     macs.map(async (mac) => {
       let status = null;
       let statusError: string | null = null;
+      let activity: MlxActivity | null = null;
+      let decodeTps: number | null = null;
       if (mac.online && !peerRefuses(mac, 'manage')) {
         try {
           status = await mlxEngineStatus(macTarget(mac));
@@ -68,7 +76,15 @@ export async function readMacsTrayReport(
           statusError = mlxErrorMessage(e, String(e));
         }
       }
-      const summary = summarizeMac(mac, { status, statusError, activity: null, decodeTps: null });
+      // This Mac's reading/writing comes from its engine's live read, exactly as My Macs reads it.
+      if (mac.isSelf && status?.state === 'running' && status.baseUrl) {
+        const live = await readMlxLiveStatus(status.baseUrl);
+        if (live.ok) {
+          activity = mlxActivity(live.stats);
+          decodeTps = liveDecodeTps(live.stats);
+        }
+      }
+      const summary = summarizeMac(mac, { status, statusError, activity, decodeTps });
       return { name: mac.name, phase: summary.phase, text: macTrayText(intl, mac, summary) };
     })
   );
