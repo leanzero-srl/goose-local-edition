@@ -15,7 +15,7 @@ use goose_sidecar::distributed::{
     NodeConfig, PreflightReport, RankPlan, StartOutcome, StopReport,
 };
 use goose_sidecar::distributed::{NodeExec, SystemExec};
-use goose_sidecar::engine::expand_tilde;
+use goose_sidecar::engine::{expand_tilde, served_model_id};
 use goose_sidecar::GIB;
 use std::collections::BTreeMap;
 use std::sync::Mutex as StdMutex;
@@ -181,6 +181,7 @@ fn status_to_dto(
         backend: status.backend.map(|b| b.as_str().to_string()),
         runner: status.runner.map(|r| r.as_str().to_string()),
         model_id: status.model_id,
+        served_model_id: status.served_model_id,
         base_url: status.base_url,
         context_limit: status.context_limit,
         admission_open: status.admission_open,
@@ -469,8 +470,14 @@ impl GooseAcpAgent {
         if given {
             persist_config(&config)?;
         }
+        // One naming rule for both engines: the swarm node that names this Mac's MLX engine
+        // (`mihai-mlx` → `mihai-qwen3.8-…`) must find the SAME id whichever engine owns the Mac.
+        let served = served_model_id(
+            &super::mlx_engine::load_engine_settings()?,
+            &config.model_id,
+        );
         let outcome = distributed::global_manager()
-            .start(config)
+            .start(config, served)
             .await
             .invalid_params_err()?;
         super::mlx_engine::align_omlx_host_env();

@@ -19,6 +19,15 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
 }
 
+/// These runs set no `served_model_name`, so the ranks serve the HF id — through the same rule the
+/// app applies (`engine::served_model_id`), never a copy of it.
+fn unaliased(config: &DistributedConfig) -> String {
+    goose_sidecar::engine::served_model_id(
+        &goose_sidecar::engine::EngineSettings::default(),
+        &config.model_id,
+    )
+}
+
 pub fn recorded_config() -> DistributedConfig {
     let home = dirs::home_dir().unwrap();
     DistributedConfig {
@@ -105,7 +114,11 @@ async fn live_start_complete_stop_the_27b_over_the_two_macs() {
     let config = recorded_config();
     let manager = DistributedManager::new(Arc::new(SystemExec));
     let t0 = Instant::now();
-    let preflight = match manager.start(config.clone()).await.unwrap() {
+    let preflight = match manager
+        .start(config.clone(), unaliased(&config))
+        .await
+        .unwrap()
+    {
         StartOutcome::Started { preflight } => preflight,
         StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
     };
@@ -285,7 +298,11 @@ async fn live_supervisor_detects_a_frozen_and_a_dead_peer_and_restarts() {
     let mut config = recorded_config();
     config.restart_on_failure = true;
     let manager = DistributedManager::new(Arc::new(SystemExec));
-    match manager.start(config).await.unwrap() {
+    match manager
+        .start(config.clone(), unaliased(&config))
+        .await
+        .unwrap()
+    {
         StartOutcome::Started { .. } => {}
         StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
     }
@@ -491,7 +508,11 @@ async fn live_hang_rule_and_stream_cut_mid_stream() {
     let base = config.base_url();
     let model = config.model_id.clone();
     let manager = DistributedManager::new(Arc::new(SystemExec));
-    match manager.start(config).await.unwrap() {
+    match manager
+        .start(config.clone(), unaliased(&config))
+        .await
+        .unwrap()
+    {
         StartOutcome::Started { .. } => {}
         StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
     }
@@ -758,7 +779,11 @@ async fn live_watchdog_warn_then_critical_on_real_workhorse_pressure() {
     let base = config.base_url();
     let model = config.model_id.clone();
     let manager = DistributedManager::new(Arc::new(SystemExec));
-    match manager.start(config).await.unwrap() {
+    match manager
+        .start(config.clone(), unaliased(&config))
+        .await
+        .unwrap()
+    {
         StartOutcome::Started { .. } => {}
         StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
     }

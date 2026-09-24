@@ -3114,6 +3114,12 @@ export type MlxDistributedStatusDto = {
     runner?: string | null;
     modelId?: string | null;
     /**
+     * The id the ranks serve on `/v1/models` — derived like the single engine's
+     * `--served-model-name` (`mlx_engine.served_model_name`, else `model_id`); the id a swarm
+     * node's `model_id` must equal. Absent while nothing was started in this goosed.
+     */
+    servedModelId?: string | null;
+    /**
      * The distributed engine's OpenAI base URL (goose's `omlx` provider targets it while
      * `mode` = "distributed").
      */

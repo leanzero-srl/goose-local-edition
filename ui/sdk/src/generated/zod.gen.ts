@@ -3609,6 +3609,10 @@ export const zMlxDistributedStatusDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    servedModelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     baseUrl: z.union([
         z.string(),
         z.null()
