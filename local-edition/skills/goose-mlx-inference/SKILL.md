@@ -59,8 +59,11 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
 - One engine owns a Mac: `distributedStart` → refusal code `singleEngineMounted` while the single engine is mounted (UI
   offers "unmount and continue"); `mount` → `distributedEngineActive` while distributed owns the Mac. Never a silent unmount.
 - Runner by `model_type`: qwen3_5 → `mlx_lm.server` tensor split via goose's own rank launcher + embedded `rank_wrapper.py`
-  (caps as RAM ratios, /v1/models = the goose id only, /goose/progress, /goose/admission); qwen4_exp → the fork's
-  `pipeline_qwen4 plan` for preflight, start REFUSED (fork has no `serve` entry yet).
+  (caps as RAM ratios, /v1/models = the goose id only, /goose/progress, /goose/admission); qwen4_exp → the fork pinned
+  BY COMMIT (provision.rs `PIPELINE_FORK_COMMIT`, env proof prints mlx, mlx_lm and the installed commit from
+  direct_url.json): preflight reads `pipeline_qwen4 plan --json` (bytes, budget, verdict verbatim, batch 2, a derived
+  context walks the planner's ceiling to its fixed point), launch runs `pipeline_rank.py` → the fork's
+  `pipeline_qwen4_serve.serve()` with the approved `--split` (2026-09-24).
 - Switch: `align_omlx_host_env` points OMLX_HOST at the distributed base URL while it owns the Mac (goosed-owned only), back
   to the single port after stop. The swarm router's `probe_mlx` targets it while THIS process runs it; goose-cli swarm
   lanes (swarm_engine.rs) do not.

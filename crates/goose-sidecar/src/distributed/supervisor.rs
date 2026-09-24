@@ -8,7 +8,8 @@
 //! 2. a stream without `[DONE]` is a failure (readiness), whatever the HTTP status said;
 //! 3. any rank dying stops the whole run and the restart policy decides what happens next;
 //! 4. STOP is SIGTERM to the local rank, then the peer rank's own pid verified gone over ssh
-//!    (SIGTERM, then SIGKILL, per pid — never a process group);
+//!    (SIGTERM, then SIGKILL, per pid — never a process group); a pipeline peer is first given
+//!    the grace window to leave on rank 0's shutdown broadcast;
 //! 5. the memory watchdog on the same poll: WARN stops admitting new requests, CRITICAL stops the
 //!    run with a loud event and never restarts it.
 
@@ -521,8 +522,11 @@ fn signal_local(pid: u32, signal: libc::c_int) {
 
 /// THE STOP SEQUENCE. Every signal targets one pid; no process group is ever signalled.
 /// 1. SIGTERM the local rank(s) and wait the crate's grace window for the exit.
-/// 2. For each peer rank: observe its own pid over ssh; alive → SIGTERM that pid; still alive
-///    after the grace → SIGKILL that pid; the final observation decides `verified`.
+/// 2. For each peer rank: observe its own pid over ssh — once (tensor: a peer does not follow
+///    rank 0), or through the grace window when `peers_follow_rank0` (pipeline: rank 0's SIGTERM
+///    broadcasts a shutdown every rank obeys, measured on the tiny model: both pids gone within
+///    1 s); alive → SIGTERM that pid; still alive after the grace → SIGKILL that pid; the final
+///    observation decides `verified`.
 /// 3. A local rank that outlived its grace → SIGKILL its pid.
 /// 4. Each peer's local ssh client: it ends with its session; if not, SIGTERM then SIGKILL its pid.
 /// 5. The API port is waited free.
@@ -530,6 +534,7 @@ pub(crate) async fn stop_ranks(
     ranks: &mut [RankProcess],
     exec: &dyn NodeExec,
     port: Option<u16>,
+    peers_follow_rank0: bool,
 ) -> StopReport {
     let mut report = StopReport {
         steps: Vec::new(),
@@ -573,14 +578,25 @@ pub(crate) async fn stop_ranks(
             report.steps.extend(swept.0);
             continue;
         };
-        // One observation, no wait: measured 2026-09-24, a peer rank does NOT exit when rank 0
-        // does (mlx.launch's cleanup script did that; goose's launcher signals it itself).
-        let mut gone = match pid_alive(exec, host, pid).await {
-            Ok(true) => Ok(None),
-            Ok(false) => Ok(Some(Duration::ZERO)),
-            Err(e) => Err(e),
+        // Tensor: one observation, no wait — measured 2026-09-24, a peer rank does NOT exit when
+        // rank 0 does (mlx.launch's cleanup script did that; goose's launcher signals it itself).
+        let mut gone = if peers_follow_rank0 {
+            wait_gone(exec, host, pid).await
+        } else {
+            match pid_alive(exec, host, pid).await {
+                Ok(true) => Ok(None),
+                Ok(false) => Ok(Some(Duration::ZERO)),
+                Err(e) => Err(e),
+            }
         };
         let mut line = match &gone {
+            Ok(Some(after)) if peers_follow_rank0 => format!(
+                "rank {} ({}) pid {pid}: left on rank 0's shutdown broadcast within {} ms \
+                 (verified over ssh)",
+                rank.rank,
+                rank.node,
+                after.as_millis()
+            ),
             Ok(Some(_)) => format!(
                 "rank {} ({}) pid {pid}: already gone after rank 0's exit (verified over ssh)",
                 rank.rank, rank.node
@@ -595,8 +611,14 @@ pub(crate) async fn stop_ranks(
             let sent = signal_pid(exec, host, pid, "TERM").await;
             gone = wait_gone(exec, host, pid).await;
             line = format!(
-                "rank {} ({}) pid {pid}: alive after rank 0's exit → SIGTERM ({sent})",
-                rank.rank, rank.node
+                "rank {} ({}) pid {pid}: alive after rank 0's exit{} → SIGTERM ({sent})",
+                rank.rank,
+                rank.node,
+                if peers_follow_rank0 {
+                    " and the grace window"
+                } else {
+                    ""
+                }
             );
             if matches!(gone, Ok(None)) {
                 let sent = signal_pid(exec, host, pid, "KILL").await;
@@ -704,6 +726,7 @@ struct RunContext {
     stream_http: reqwest::Client,
     config: DistributedConfig,
     served_id: String,
+    runner: Runner,
 }
 
 impl RunContext {
@@ -1162,6 +1185,43 @@ async fn monitor(
     }
 }
 
+/// The rank specs for the plan preflight approved: the tensor runner's per-rank bytes, or the
+/// pipeline runner's pinned split. A preflight that carries neither cannot be launched.
+fn launch_specs(
+    ctx: &RunContext,
+    preflight: &PreflightReport,
+    context: u64,
+) -> Result<Vec<launch::RankSpec>> {
+    let report_seconds = POLL_INTERVAL.as_secs_f64();
+    match ctx.runner {
+        Runner::MlxLmTensor => {
+            let bytes = preflight
+                .launch_bytes()
+                .ok_or_else(|| anyhow!("the preflight produced no per-rank plan"))?;
+            Ok(launch::rank_specs(
+                &ctx.config,
+                &ctx.served_id,
+                &bytes,
+                context,
+                report_seconds,
+            ))
+        }
+        Runner::PipelineQwen4 => {
+            let starts = preflight
+                .pipeline_starts
+                .as_deref()
+                .ok_or_else(|| anyhow!("the preflight approved no pipeline split"))?;
+            Ok(launch::pipeline_rank_specs(
+                &ctx.config,
+                &ctx.served_id,
+                context,
+                &super::plan::split_arg(starts),
+                report_seconds,
+            ))
+        }
+    }
+}
+
 async fn supervise(
     ctx: RunContext,
     mut preflight: PreflightReport,
@@ -1170,22 +1230,19 @@ async fn supervise(
     let parity = sidecar_parity();
     let mut restarts: VecDeque<Instant> = VecDeque::new();
     let mut backoff = parity.backoff_initial;
+    let peers_follow_rank0 = ctx.runner == Runner::PipelineQwen4;
     loop {
         let context = preflight.context_limit.unwrap_or_default();
-        let Some(bytes) = preflight.launch_bytes() else {
-            ctx.update(|s| {
-                s.status.state = RunState::Failed;
-                s.status.last_error = Some("the preflight produced no per-rank plan".to_string());
-            });
-            return StopReport::default();
+        let specs = match launch_specs(&ctx, &preflight, context) {
+            Ok(specs) => specs,
+            Err(e) => {
+                ctx.update(|s| {
+                    s.status.state = RunState::Failed;
+                    s.status.last_error = Some(format!("{e:#}"));
+                });
+                return StopReport::default();
+            }
         };
-        let specs = launch::rank_specs(
-            &ctx.config,
-            &ctx.served_id,
-            &bytes,
-            context,
-            POLL_INTERVAL.as_secs_f64(),
-        );
         ctx.update(|s| {
             s.status.state = RunState::Starting;
             s.status.admission_open = true;
@@ -1247,7 +1304,8 @@ async fn supervise(
         match outcome {
             Ok(Finish::Stop) => {
                 ctx.update(|s| s.status.state = RunState::Stopping);
-                let report = stop_ranks(&mut ranks, ctx.exec.as_ref(), port).await;
+                let report =
+                    stop_ranks(&mut ranks, ctx.exec.as_ref(), port, peers_follow_rank0).await;
                 ctx.update(|s| {
                     s.status.state = RunState::Stopped;
                     s.status.inflight = None;
@@ -1273,7 +1331,8 @@ async fn supervise(
             }
             Ok(Finish::Critical(reason)) => {
                 ctx.update(|s| s.status.state = RunState::Stopping);
-                let report = stop_ranks(&mut ranks, ctx.exec.as_ref(), port).await;
+                let report =
+                    stop_ranks(&mut ranks, ctx.exec.as_ref(), port, peers_follow_rank0).await;
                 ctx.update(|s| {
                     s.status.state = RunState::Stopped;
                     s.status.inflight = None;
@@ -1312,7 +1371,8 @@ async fn supervise(
                         };
                     }
                 });
-                let report = stop_ranks(&mut ranks, ctx.exec.as_ref(), port).await;
+                let report =
+                    stop_ranks(&mut ranks, ctx.exec.as_ref(), port, peers_follow_rank0).await;
                 ctx.event(
                     EventKind::Stopped,
                     None,
@@ -1550,6 +1610,15 @@ impl DistributedManager {
                 preflight: Some(report),
             });
         }
+        let Some(runner) = report.runner else {
+            shared.status.state = RunState::Stopped;
+            shared.status.last_error = Some("the preflight named no runner".to_string());
+            return Ok(StartOutcome::Refused {
+                code: RefusalCode::PreflightFailed,
+                message: "the preflight named no runner".to_string(),
+                preflight: Some(report),
+            });
+        };
         shared.status.base_url = Some(config.base_url());
         shared.status.context_limit = report.context_limit;
         shared.status.state = RunState::Starting;
@@ -1606,6 +1675,7 @@ impl DistributedManager {
                 .expect("reqwest client with static configuration"),
             config,
             served_id,
+            runner,
         };
         shared.stop_tx = Some(stop_tx);
         shared.task = Some(tokio::spawn(supervise(ctx, report.clone(), stop_rx)));
@@ -1862,7 +1932,7 @@ mod tests {
             rank(0, None, local, None),
             rank(1, Some("peer"), ssh_stand_in, Some(peer_pid)),
         ];
-        let report = stop_ranks(&mut ranks, &LocalAsPeer, None).await;
+        let report = stop_ranks(&mut ranks, &LocalAsPeer, None, false).await;
         assert!(report.verified, "{report:?}");
         assert!(
             report.steps[0]
@@ -1896,7 +1966,7 @@ mod tests {
             rank(0, None, local, None),
             rank(1, Some("peer"), ssh_stand_in, Some(stubborn_pid)),
         ];
-        let report = stop_ranks(&mut ranks, &LocalAsPeer, None).await;
+        let report = stop_ranks(&mut ranks, &LocalAsPeer, None, false).await;
         assert!(report.verified, "{report:?}");
         assert!(
             report.steps[1]
@@ -1912,6 +1982,52 @@ mod tests {
         drop(bystander);
     }
 
+    /// The pipeline shape: the peer leaves on its own shortly after rank 0 (the fork's shutdown
+    /// broadcast); the stop waits for that exit and verifies it without signalling the peer.
+    #[tokio::test]
+    async fn a_pipeline_peer_that_follows_rank_zero_is_verified_without_a_signal() {
+        let local = sleeper("exec sleep 60");
+        let ssh_stand_in = sleeper("exec sleep 60");
+        let follower = sleeper("sleep 1; exit 0");
+        let follower_pid = follower.id().unwrap();
+        let mut ranks = vec![
+            rank(0, None, local, None),
+            rank(1, Some("peer"), ssh_stand_in, Some(follower_pid)),
+        ];
+        let report = stop_ranks(&mut ranks, &LocalAsPeer, None, true).await;
+        assert!(report.verified, "{report:?}");
+        assert!(
+            report.steps[1].contains("left on rank 0's shutdown broadcast within")
+                && !report.steps[1].contains("SIGTERM"),
+            "{report:?}"
+        );
+        drop(follower);
+    }
+
+    /// The same pipeline stop when the peer does NOT follow: after the grace window, per-pid
+    /// SIGTERM, verified gone.
+    #[tokio::test]
+    async fn a_pipeline_peer_that_stays_is_termed_after_the_grace_window() {
+        let local = sleeper("exec sleep 60");
+        let ssh_stand_in = sleeper("exec sleep 60");
+        let stayer = sleeper("exec sleep 60");
+        let stayer_pid = stayer.id().unwrap();
+        let mut ranks = vec![
+            rank(0, None, local, None),
+            rank(1, Some("peer"), ssh_stand_in, Some(stayer_pid)),
+        ];
+        let report = stop_ranks(&mut ranks, &LocalAsPeer, None, true).await;
+        assert!(report.verified, "{report:?}");
+        assert!(
+            report.steps[1]
+                .contains("alive after rank 0's exit and the grace window → SIGTERM (sent)")
+                && report.steps[1].ends_with("→ gone (verified over ssh)"),
+            "{report:?}"
+        );
+        assert!(!alive(stayer_pid));
+        drop(stayer);
+    }
+
     #[tokio::test]
     async fn a_peer_already_gone_is_verified_without_a_signal() {
         let local = sleeper("exec sleep 60");
@@ -1923,7 +2039,7 @@ mod tests {
             rank(0, None, local, None),
             rank(1, Some("peer"), ssh_stand_in, Some(finished_pid)),
         ];
-        let report = stop_ranks(&mut ranks, &LocalAsPeer, None).await;
+        let report = stop_ranks(&mut ranks, &LocalAsPeer, None, false).await;
         assert!(report.verified, "{report:?}");
         assert!(
             report.steps[1].contains("gone") && report.steps[1].contains("verified over ssh"),

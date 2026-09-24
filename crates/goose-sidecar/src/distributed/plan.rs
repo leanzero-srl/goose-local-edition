@@ -1,11 +1,12 @@
 //! Per-rank memory arithmetic. The tensor split (qwen3_5 under `mlx_lm.server`) is computed here
-//! from the checkpoint's own config and safetensors headers — no tensor is read. The qwen4_exp
-//! pipeline split is the fork's planner's (`pipeline_qwen4 plan`), parsed, never re-derived: one
-//! planner decides the layer ranges.
+//! from the checkpoint's own config and safetensors headers — no tensor is read — and its verdict
+//! is `planned × RUNTIME_OVERHEAD_RATIO ≤ min(available × AVAILABLE_HEADROOM_RATIO, RAM ×
+//! MEMORY_LIMIT_RATIO)`.
 //!
-//! Every verdict is `planned × RUNTIME_OVERHEAD_RATIO ≤ budget`, with the budget
-//! `min(available × AVAILABLE_HEADROOM_RATIO, total × MEMORY_LIMIT_RATIO)` — the fork guard's
-//! formula, so a node the fork would stop mid-step is refused before it loads.
+//! The qwen4_exp pipeline split is the fork planner's (`pipeline_qwen4 plan --json`), read, never
+//! re-derived: one planner decides the layer ranges, the bytes, the budget
+//! (`min(available − RAM × pressure_floor, RAM × memory_limit)`, its ratios in the JSON) and the
+//! verdict — the same planner the fork's loader re-runs on every rank before it loads.
 
 use std::io::Read;
 use std::path::Path;
@@ -34,18 +35,20 @@ pub struct RankPlan {
     pub weights_bytes: u64,
     /// KV + recurrent state for the allowed context (pipeline: the fork's "state").
     pub state_bytes: u64,
-    /// The fork's modeled prefill workspace (pipeline only; 0 for tensor, where the measured
-    /// overhead ratio carries the transients).
+    /// The fork's prefill workspace (pipeline only: 49× the chunk's stream bytes per layer,
+    /// measured; 0 for tensor, where the measured overhead ratio carries the transients).
     pub workspace_bytes: u64,
     /// The prompt cache's byte bound on this rank (tensor: `--prompt-cache-bytes`).
     pub prompt_cache_bytes: u64,
     pub planned_bytes: u64,
-    /// `planned_bytes × RUNTIME_OVERHEAD_RATIO` — what is compared with the budget.
+    /// What is compared with the budget: tensor `planned × RUNTIME_OVERHEAD_RATIO`; pipeline the
+    /// fork's total as planned (no multiplier — see `RUNTIME_OVERHEAD_RATIO`).
     pub with_overhead_bytes: u64,
     pub budget_bytes: u64,
     pub fits: bool,
 }
 
+/// The tensor runner's per-rank budget (the pipeline runner reads the fork's from its plan).
 pub fn budget_bytes(available_bytes: u64, total_bytes: u64) -> u64 {
     ((available_bytes as f64 * AVAILABLE_HEADROOM_RATIO) as u64)
         .min((total_bytes as f64 * MEMORY_LIMIT_RATIO) as u64)
@@ -357,126 +360,147 @@ impl TensorModelFacts {
     }
 }
 
-/// One stage of the fork planner's answer (`format_plan`'s `rank N name: …` line).
-#[derive(Debug, Clone, PartialEq)]
+/// One stage of the fork planner's JSON (`pipeline_qwen4 plan --json`, `plan_json`'s `stages`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PipelineStage {
     pub rank: u32,
+    pub node: String,
     pub layer_start: u32,
     pub layer_end: u32,
-    pub weights_bytes: u64,
+    pub weight_bytes: u64,
     pub state_bytes: u64,
     pub workspace_bytes: u64,
     pub total_bytes: u64,
+    /// The fork's rule over the figures goose gave it: min(free − RAM × pressure_floor,
+    /// RAM × memory_limit).
+    pub budget_bytes: u64,
+    pub ram_bytes: u64,
+    pub budget_source: String,
+    pub fits: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct PipelinePlanText {
-    pub stages: Vec<PipelineStage>,
-    /// "largest context that fits this split: N"; `None` for "no context length fits".
+/// The ratios the fork's budget and caps are built from — its one home, read, never re-typed.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct PipelineRatios {
+    pub memory_limit: f64,
+    pub wired_limit: f64,
+    pub pressure_floor: f64,
+}
+
+/// The fork planner's whole answer. Exit 0 = fits, 2 = does not fit (the JSON is printed either
+/// way).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct PipelinePlan {
+    pub context: u64,
+    pub batch: u32,
+    pub prefill_step: u64,
+    /// The largest context every rank fits on THIS split; `None` when none does.
     pub max_context: Option<u64>,
+    pub starts: Vec<u32>,
+    pub fits: bool,
+    pub ratios: PipelineRatios,
+    pub stages: Vec<PipelineStage>,
 }
 
-fn gib_to_bytes(text: &str) -> Result<u64> {
-    let value: f64 = text
-        .trim()
-        .trim_end_matches("GiB")
-        .trim()
-        .replace(',', "")
-        .parse()
-        .with_context(|| format!("'{text}' is not a GiB figure"))?;
-    Ok((value * crate::GIB as f64).round() as u64)
-}
-
-/// Parse `python -m rapid_mlx.distributed.pipeline_qwen4 plan`'s text (fork branch
-/// lz/pipeline-qwen4 `format_plan`). A line that starts like a stage but does not parse is an
-/// error — a changed planner format must fail loudly, not drop a rank.
-pub fn parse_pipeline_plan(text: &str) -> Result<PipelinePlanText> {
-    let mut stages = Vec::new();
-    let mut max_context = None;
-    for line in text.lines().map(str::trim) {
-        if let Some(rest) = line.strip_prefix("largest context that fits this split: ") {
-            max_context = Some(
-                rest.replace(',', "")
-                    .trim()
-                    .parse::<u64>()
-                    .with_context(|| {
-                        format!("planner context ceiling is not an integer: {line}")
-                    })?,
-            );
-            continue;
-        }
-        let Some(rest) = line.strip_prefix("rank ") else {
-            continue;
-        };
-        if !rest.contains(": layers [") {
-            continue;
-        }
-        let parse = || -> Option<PipelineStage> {
-            let (rank, rest) = rest.split_once(' ')?;
-            let (_, rest) = rest.split_once(": layers [")?;
-            let (start, rest) = rest.split_once(", ")?;
-            let (end, rest) = rest.split_once(')')?;
-            let (_, rest) = rest.split_once("| weights ")?;
-            let (weights, rest) = rest.split_once(" + state ")?;
-            let (state, rest) = rest.split_once(" + workspace(modeled) ")?;
-            let (workspace, rest) = rest.split_once(" = ")?;
-            let (total, _) = rest.split_once(" of budget ")?;
-            Some(PipelineStage {
-                rank: rank.parse().ok()?,
-                layer_start: start.trim().parse().ok()?,
-                layer_end: end.trim().parse().ok()?,
-                weights_bytes: gib_to_bytes(weights).ok()?,
-                state_bytes: gib_to_bytes(state).ok()?,
-                workspace_bytes: gib_to_bytes(workspace).ok()?,
-                total_bytes: gib_to_bytes(total).ok()?,
-            })
-        };
-        stages.push(parse().with_context(|| format!("unparseable planner stage line: {line}"))?);
-    }
-    ensure!(
-        !stages.is_empty(),
-        "the planner printed no stage lines:\n{text}"
-    );
-    for (index, stage) in stages.iter().enumerate() {
+/// Parse the planner's stdout: one JSON line. A shape it cannot vouch for (stages out of order,
+/// ranges that do not tile, a `fits` that disagrees with its stages) is an error — a changed
+/// planner must fail loudly, never drop or reorder a rank.
+pub fn parse_pipeline_plan(stdout: &str) -> Result<PipelinePlan> {
+    let line = stdout
+        .lines()
+        .map(str::trim)
+        .rfind(|l| l.starts_with('{'))
+        .with_context(|| format!("the planner printed no JSON line:\n{stdout}"))?;
+    let plan: PipelinePlan =
+        serde_json::from_str(line).context("the planner's JSON does not match its contract")?;
+    ensure!(!plan.stages.is_empty(), "the planner returned no stages");
+    for (index, stage) in plan.stages.iter().enumerate() {
         ensure!(
             stage.rank as usize == index,
             "planner stages out of order at rank {}",
             stage.rank
         );
+        ensure!(
+            plan.starts.get(index) == Some(&stage.layer_start),
+            "starts {:?} disagree with rank {index}'s layer_start {}",
+            plan.starts,
+            stage.layer_start
+        );
+        ensure!(
+            stage.layer_start < stage.layer_end,
+            "rank {index} holds no layers ([{}, {}))",
+            stage.layer_start,
+            stage.layer_end
+        );
+        if let Some(next) = plan.stages.get(index + 1) {
+            ensure!(
+                stage.layer_end == next.layer_start,
+                "rank {index} ends at layer {} but rank {} starts at {}",
+                stage.layer_end,
+                index + 1,
+                next.layer_start
+            );
+        }
     }
-    Ok(PipelinePlanText {
-        stages,
-        max_context,
-    })
+    ensure!(
+        plan.starts.len() == plan.stages.len() && plan.starts.first() == Some(&0),
+        "starts {:?} do not describe {} stages from layer 0",
+        plan.starts,
+        plan.stages.len()
+    );
+    ensure!(
+        plan.fits == plan.stages.iter().all(|s| s.fits),
+        "the planner's fits ({}) disagrees with its stages",
+        plan.fits
+    );
+    Ok(plan)
+}
+
+/// The `--split` argument for approved starts: ranks 1..N-1's first layers, comma-joined.
+pub fn split_arg(starts: &[u32]) -> String {
+    starts
+        .iter()
+        .skip(1)
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+impl PipelinePlan {
+    pub fn split_arg(&self) -> String {
+        split_arg(&self.starts)
+    }
 }
 
 impl PipelineStage {
-    pub fn rank_plan(&self, budget: u64) -> RankPlan {
-        let with_overhead = with_overhead(self.total_bytes);
+    /// The rank's plan in goose's terms — the fork's bytes, budget and verdict, verbatim. No
+    /// overhead multiplier: the fork's workspace term (49× the chunk's stream bytes per layer)
+    /// already covers the measured peaks (see `RUNTIME_OVERHEAD_RATIO`'s receipt), so
+    /// `with_overhead_bytes` is the fork's total.
+    pub fn rank_plan(&self) -> RankPlan {
         RankPlan {
             layer_start: self.layer_start,
             layer_end: self.layer_end,
             shard_index: None,
             shard_count: None,
-            weights_bytes: self.weights_bytes,
+            weights_bytes: self.weight_bytes,
             state_bytes: self.state_bytes,
             workspace_bytes: self.workspace_bytes,
             prompt_cache_bytes: 0,
             planned_bytes: self.total_bytes,
-            with_overhead_bytes: with_overhead,
-            budget_bytes: budget,
-            fits: with_overhead <= budget,
+            with_overhead_bytes: self.total_bytes,
+            budget_bytes: self.budget_bytes,
+            fits: self.fits,
         }
     }
 }
 
-/// The `--node NAME:RAM_GIB:FREE_GIB` argument for the fork planner, with BOTH figures divided by
-/// the overhead ratio: the fork's budget is `min(free × 0.90, RAM × 0.75)`, so scaling both scales
-/// the budget by exactly 1/RUNTIME_OVERHEAD_RATIO — its split and its context ceiling are then the
-/// ones that hold after goose's measured overhead, and the ratio between nodes (which picks the
-/// split) is unchanged.
+/// The `--node NAME:RAM_GIB:FREE_GIB` argument for the fork planner: the node's RAM and goose's
+/// own measured available memory (host_statistics64 — the same measure the fork's loader takes on
+/// every rank at load time), unscaled. The name is reduced to `[A-Za-z0-9-]` (the fork splits the
+/// argument on `:`).
 pub fn planner_node_arg(name: &str, total_bytes: u64, available_bytes: u64) -> String {
-    let gib = |b: u64| b as f64 / crate::GIB as f64 / RUNTIME_OVERHEAD_RATIO;
+    let gib = |b: u64| b as f64 / crate::GIB as f64;
     let safe_name: String = name
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
@@ -489,7 +513,7 @@ pub fn planner_node_arg(name: &str, total_bytes: u64, available_bytes: u64) -> S
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::GIB;
 
@@ -555,8 +579,8 @@ mod tests {
     }
 
     #[test]
-    fn the_budget_is_the_fork_guards_formula_on_the_recorded_nodes() {
-        // Flash run 2026-09-24: MacBook 92.7 GiB available of 128, workhorse 61.6 of 96.
+    fn the_tensor_budget_on_the_recorded_nodes() {
+        // Node figures of 2026-09-24: MacBook 92.7 GiB available of 128, workhorse 61.6 of 96.
         let macbook = budget_bytes(gib(92.7), gib(128.0));
         let workhorse = budget_bytes(gib(61.6), gib(96.0));
         assert!((macbook as f64 / GIB as f64 - 83.43).abs() < 0.01);
@@ -594,48 +618,78 @@ mod tests {
         facts.check_divisible(4).unwrap();
     }
 
-    /// The fork planner's real answer for Flash at context 8,192 on the measured node figures
-    /// (`pipeline_qwen4 plan --node macbook:128:92.7 --node workhorse:96:61.6`, 2026-09-24).
-    const FLASH_PLAN: &str = "checkpoint text bytes 95.71 GiB (excluded: mtp 1.37 GiB, vision 0.42 GiB); embed 0.33 GiB, mixer+lm_head 0.34 GiB
-context 8,192 tokens, batch 1, prefill chunk 2048
-rank 0 macbook: layers [0, 20) = 20 layers | weights 57.33 GiB + state 0.13 GiB + workspace(modeled) 0.36 GiB = 57.81 GiB of budget 83.43 GiB (free given; RAM 128.00 GiB) -> 69% fits
-rank 1 workhorse: layers [20, 48) = 28 layers | weights 38.38 GiB + state 0.18 GiB + workspace(modeled) 0.36 GiB = 38.92 GiB of budget 55.44 GiB (free given; RAM 96.00 GiB) -> 70% fits
-largest context that fits this split: 262,144
-wire per token per sequence: 20,480 B stream x 1 hop(s) + 4 B token = 20,484 B (prefill: the same per prompt token; decode: per generated token)
-rank 0: 15 GDN + 5 QSA layers, PLE n-gram layer id(s) [2]
-rank 1: 21 GDN + 7 QSA layers
-";
+    /// The fork planner's real JSON for Flash (272cb0643, `plan --json --model <Flash> --node
+    /// m:128:90 --node w:96:67 --context 32768 --batch 2`, 2026-09-24): exit 0.
+    pub(crate) const FLASH_PLAN_32K: &str = r#"{"context": 32768, "batch": 2, "prefill_step": 2048, "max_context": 73216, "starts": [0, 19], "fits": true, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"memory_limit": 0.75, "wired_limit": 0.6, "pressure_floor": 0.21, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "m", "layer_start": 0, "layer_end": 19, "weight_bytes": 60098737464, "state_bytes": 650240032, "workspace_bytes": 4513071104, "total_bytes": 65262048600, "budget_bytes": 67774583931, "ram_bytes": 137438953472, "budget_source": "free given", "fits": true}, {"rank": 1, "node": "w", "layer_start": 19, "layer_end": 48, "weight_bytes": 42667415776, "state_bytes": 1242013696, "workspace_bytes": 4515057664, "total_bytes": 48424487136, "budget_bytes": 50294067037, "ram_bytes": 103079215104, "budget_source": "free given", "fits": true}]}"#;
+
+    /// The measured soak's shape re-planned by the same planner: split 20, context 8,192, batch 2,
+    /// the node figures recorded at that run (MacBook 92.7 of 128 GiB available, workhorse 61.6 of
+    /// 96): exit 2 — the workhorse's 42.66 GiB exceeds the fork's 41.44 GiB budget.
+    const FLASH_SOAK_SHAPE: &str = r#"{"context": 8192, "batch": 2, "prefill_step": 2048, "max_context": 1536, "starts": [0, 20], "fits": false, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"memory_limit": 0.75, "wired_limit": 0.6, "pressure_floor": 0.21, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "macbook", "layer_start": 0, "layer_end": 20, "weight_bytes": 61554874840, "state_bytes": 269608992, "workspace_bytes": 4211081216, "total_bytes": 66035565048, "budget_bytes": 70673686855, "ram_bytes": 137438953472, "budget_source": "free given", "fits": true}, {"rank": 1, "node": "workhorse", "layer_start": 20, "layer_end": 48, "weight_bytes": 41211278400, "state_bytes": 376936448, "workspace_bytes": 4213067776, "total_bytes": 45801282624, "budget_bytes": 44495861187, "ram_bytes": 103079215104, "budget_source": "free given", "fits": false}]}"#;
 
     #[test]
-    fn the_flash_plan_fits_and_the_overhead_ratio_covers_the_measured_peaks() {
-        let plan = parse_pipeline_plan(FLASH_PLAN).unwrap();
-        assert_eq!(plan.max_context, Some(262_144));
-        let (macbook, workhorse) = (&plan.stages[0], &plan.stages[1]);
-        assert_eq!((macbook.layer_start, macbook.layer_end), (0, 20));
-        assert_eq!((workhorse.layer_start, workhorse.layer_end), (20, 48));
-
-        let macbook = macbook.rank_plan(budget_bytes(gib(92.7), gib(128.0)));
-        let workhorse = workhorse.rank_plan(budget_bytes(gib(61.6), gib(96.0)));
-        assert!(macbook.fits && workhorse.fits);
-        // Measured peaks (Flash JACCL soak): MacBook 61.0 GiB vs budget 83.4, workhorse 42.5 vs
-        // 55.5. The planned × overhead figure must cover each measured peak and stay under budget.
-        assert!(macbook.with_overhead_bytes >= gib(61.0));
-        assert!(workhorse.with_overhead_bytes >= gib(42.5));
-        assert!(macbook.with_overhead_bytes <= macbook.budget_bytes);
-        assert!(workhorse.with_overhead_bytes <= workhorse.budget_bytes);
+    fn the_plan_json_is_read_verbatim() {
+        let plan = parse_pipeline_plan(FLASH_PLAN_32K).unwrap();
+        assert_eq!(
+            (plan.context, plan.batch, plan.prefill_step),
+            (32_768, 2, 2_048)
+        );
+        assert_eq!(plan.max_context, Some(73_216));
+        assert_eq!(plan.starts, vec![0, 19]);
+        assert_eq!(plan.split_arg(), "19");
+        assert!(plan.fits);
+        assert_eq!(plan.ratios.pressure_floor, 0.21);
+        let rank1 = plan.stages[1].rank_plan();
+        assert_eq!((rank1.layer_start, rank1.layer_end), (19, 48));
+        assert_eq!(rank1.weights_bytes, 42_667_415_776);
+        assert_eq!(rank1.workspace_bytes, 4_515_057_664);
+        assert_eq!(rank1.planned_bytes, 48_424_487_136);
+        assert_eq!(
+            rank1.with_overhead_bytes, rank1.planned_bytes,
+            "no multiplier on the fork's plan"
+        );
+        assert_eq!(
+            rank1.budget_bytes, 50_294_067_037,
+            "the fork's budget, not re-derived"
+        );
+        assert!(rank1.fits);
     }
 
     #[test]
-    fn a_changed_planner_format_fails_loudly() {
-        let broken = FLASH_PLAN.replace("| weights", "| w");
+    fn the_forks_plan_covers_the_measured_soak_peaks_and_its_verdict_stands() {
+        // Flash JACCL soak (131 single + 130 two-request batches, context 8,192, split 20):
+        // MLX peak MacBook 61.0 GiB, workhorse 42.5 GiB.
+        let plan = parse_pipeline_plan(FLASH_SOAK_SHAPE).unwrap();
+        let (macbook, workhorse) = (plan.stages[0].rank_plan(), plan.stages[1].rank_plan());
+        assert!(macbook.planned_bytes >= gib(61.0) && workhorse.planned_bytes >= gib(42.5));
+        // The fork keeps 21% of RAM available: 61.6 − 96 × 0.21 = 41.44 GiB < 42.66 planned.
+        assert!(macbook.fits && !workhorse.fits && !plan.fits);
+        assert!((workhorse.budget_bytes as f64 / GIB as f64 - 41.44).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_changed_planner_contract_fails_loudly() {
+        let broken = FLASH_PLAN_32K.replace("\"total_bytes\"", "\"total\"");
         assert!(parse_pipeline_plan(&broken).is_err());
-        assert!(parse_pipeline_plan("nothing here").is_err());
+        let gap = FLASH_PLAN_32K.replace("\"layer_start\": 19", "\"layer_start\": 20");
+        let err = parse_pipeline_plan(&gap).unwrap_err().to_string();
+        assert!(err.contains("starts"), "{err}");
+        let lying = FLASH_PLAN_32K.replacen(
+            "\"fits\": true, \"checkpoint\"",
+            "\"fits\": false, \"checkpoint\"",
+            1,
+        );
+        assert!(parse_pipeline_plan(&lying).is_err());
+        assert!(parse_pipeline_plan("Traceback (most recent call last):").is_err());
+        // Anything the planner printed before its JSON line is not the plan.
+        let noisy = format!("warning: something\n{FLASH_PLAN_32K}\n");
+        assert!(parse_pipeline_plan(&noisy).is_ok());
     }
 
     #[test]
-    fn planner_node_figures_carry_the_overhead_ratio() {
+    fn planner_node_figures_are_goose_measurements_unscaled() {
         let arg = planner_node_arg("MacBook Pro", gib(128.0), gib(92.7));
-        assert_eq!(arg, "MacBook-Pro:116.3636:84.2727");
+        assert_eq!(arg, "MacBook-Pro:128.0000:92.7000");
     }
 
     /// The real checkpoint, when present on this Mac: the facts read from its headers match the

@@ -14,13 +14,16 @@
 //! - [`exec`]: running a shell script on a node (`/bin/sh` here, `ssh <alias>` there).
 //! - [`probe`]: parsers for what the nodes answer (vm_stat, ps, ifconfig, ibv_devinfo, …).
 //! - [`plan`]: the per-rank memory arithmetic (tensor split computed here; the qwen4_exp
-//!   pipeline split read from the fork's own planner).
+//!   pipeline split, bytes, budget and verdict read from the fork's own planner, `plan --json`).
 //! - [`preflight`]: every check, per node, with its numbers; the documented TB link repair.
 //! - [`local_network`]: macOS local network privacy, named from the ping signature and the
 //!   peer's positive control.
-//! - [`provision`]: the ranks' Python, a goose-owned uv venv per node (pinned mlx + mlx_lm).
+//! - [`provision`]: the ranks' Python, a goose-owned uv venv per node (pinned mlx + mlx_lm; the
+//!   fork pinned by commit for the pipeline runner).
 //! - [`launch`]: the rank processes (goose's own launcher — see its doc for why not mlx.launch)
-//!   and the embedded rank wrapper (in-process memory caps, admission, progress counter).
+//!   and the embedded rank programs: `mlx_lm.server` under the tensor wrapper (in-process memory
+//!   caps, admission, progress counter), or the fork's `pipeline_qwen4_serve` (which carries the
+//!   same HTTP surface itself).
 //! - [`supervisor`]: readiness, liveness (the soak's hang rule), the memory watchdog, the
 //!   verified stop sequence and the restart policy.
 
@@ -44,19 +47,28 @@ pub use supervisor::{
 };
 
 // ratio: the MTPLX run measured a stable ceiling at 75% of RAM for MLX allocations on 96-128 GB
-// Apple silicon (mlx-jaccl-cluster skill, guardrail 3); the fork's pipeline guard uses the same.
+// Apple silicon (mlx-jaccl-cluster skill, guardrail 3). The tensor rank wrapper applies it; the
+// pipeline ranks apply the fork's own copy (its plan JSON's `ratios.memory_limit`, the same 0.75).
 pub const MEMORY_LIMIT_RATIO: f64 = 0.75;
 // ratio: the same MTPLX receipt measured 60% of RAM as the safe wired ceiling; exo's unbounded
-// wiring is what kernel-panicked the 96 GB M3 Ultra.
+// wiring is what kernel-panicked the 96 GB M3 Ultra. Tensor wrapper only, as above.
 pub const WIRED_LIMIT_RATIO: f64 = 0.60;
-// ratio: policy, not yet measured (parity with the fork's AVAILABLE_HEADROOM_RATIO) — 10% of the
-// memory the kernel reports available stays free for the OS and for transients.
+// ratio: policy, not measured — TENSOR RUNNER ONLY. It was parity with the fork's old headroom
+// rule (budget = min(free × 0.90, RAM × 0.75)), which the fork retired for a MEASURED pressure
+// floor (min(available − RAM × 0.21, RAM × 0.75)); the pipeline runner reads that budget from the
+// fork's plan and never applies this one on top.
 pub const AVAILABLE_HEADROOM_RATIO: f64 = 0.90;
-// measured: peak MLX memory over planned bytes on the three recorded splits — Flash pipeline
-// MacBook 61.0 / 57.81 GiB = 1.055, workhorse 42.5 / 38.92 GiB = 1.092 (2026-09-24), 27B tensor
-// bench peak 19.9 GB (18.53 GiB) / 17.07 GiB planned at 2,304 tokens = 1.086 (STEP1b). The planned slice is multiplied by
-// this before it is compared with a node's budget.
+// measured: TENSOR RUNNER ONLY — 27B tensor bench peak 19.9 GB (18.53 GiB) / 17.07 GiB planned at
+// 2,304 tokens = 1.086 (STEP1b); the planned slice is multiplied by this before it is compared
+// with a node's budget. The pipeline runner applies NO multiplier: the Flash soak's peaks were
+// 1.055 / 1.092 × the fork's OLD plan (0.36 GiB modeled workspace), but the fork's current plan
+// for the same shape (split 20, context 8,192, batch 2 — the soak ran 130 two-request batches;
+// `plan --json`, 272cb0643) carries MacBook 61.50 / workhorse 42.66 GiB against measured peaks of
+// 61.0 / 42.5 — 0.992 / 0.996 — so multiplying again would double count.
 pub const RUNTIME_OVERHEAD_RATIO: f64 = 1.10;
+// measured: the fork's `serve` proves 2 rows bit-exact against single-process batches
+// (pipeline_qwen4_serve.py); the plan is made for the batch the ranks are launched with.
+pub const PIPELINE_MAX_BATCH: u32 = 2;
 // ratio: the soak's hang rule (STEP1b REPORT: "no progress for 10x the running median of that
 // measure"); the worst healthy ratio observed across 326 requests was 2.73x.
 pub const HANG_MEDIAN_MULTIPLE: f64 = 10.0;
