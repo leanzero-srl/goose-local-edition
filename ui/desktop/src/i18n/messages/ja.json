@@ -3540,7 +3540,7 @@
     "defaultMessage": "一致率 {agreement}%"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "最長コンテキストでのデコード速度: bf16 の {ratio}%。"
+    "defaultMessage": "{context} トークンのコンテキストでのデコード速度: bf16 の {ratio}%。"
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "計測記録を読み込めません: {reason}"

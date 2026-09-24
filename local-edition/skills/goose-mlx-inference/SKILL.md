@@ -90,6 +90,61 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   unchanged). A mesh PEER's sidecar is not a node (loopback-bound; the Link mlx proxy is the only door) — LM Link fans LM Studio
   models across machines. Never add a clock to the queue (gate 5); never let a probe failure read as "idle".
 
+## KV-cache compression (2026-09-24 — per model, OFF by default = no flag)
+- Profile `kv_cache` (wire `kvCache: "int8"|"int4"`, absent = off) → `--kv-cache-dtype int8|int4`. goose_sidecar::kv_cache
+  prices a token from config.json: full-attention layers × 2 × kv_heads × head_dim × act bytes; quantized = bits/8 per element
+  + one scale + one bias per group (engine group 64, 32 for head_dim 96, none for 80 → goose refuses the mount). 27B:
+  16/64 layers carry KV, 65,536 / 34,816 / 18,432 B per token. modelsList `kvCache`/`kvCacheError`, `kvCacheMeasurement` from
+  the model folder's `goose-kv-cache.json` (written by `kv_quant_compare.py --record`). UI row: MlxKvCacheFields.tsx.
+- Engine: lz.2 REFUSED int8 on every qwen3_5 ("the loaded model is incompatible: ArraysCache" — the live-cache probe
+  rejected the GatedDeltaNet state caches). lz.3 (fork 999d43ea6, branch lz/kv-quant-hybrid) admits exact ArraysCache as
+  fixed state and prices the compressed cache in D-METAL-CAP. Log line that proves it engaged: `[kv-cache] hybrid partial
+  quantization: 16/64 full-attention layers use int8; 48 recurrent-state ... stay unquantized`; `/metrics`
+  `rapid_mlx_kv_cache_dtype{dtype="int8"} 1`. qwen4_exp (Flash) still refuses (Qwen4ExpStateCache subclass + CacheList/QSA).
+- Distributed: NEITHER runner can hold a quantized KV (mlx_lm.server BatchGenerator has no quantized batch cache; the pipeline
+  fork builds KVCache + QSAIndexCache) and neither reads model profiles → planner/preflight stay bf16; the UI row says so.
+- MEASURING (evals/mlx-engine-bench/kv_quant.py + kv_quant_compare.py): one FRESH engine per config on :8093 with
+  `RAPID_MLX_PREFIX_CACHE_AUTOLOAD=0` (never read/overwrite the owner's persisted cache); quality phase WITHOUT MTP, memory/decode
+  WITH MTP. Compare configs on the SAME nonce (`--nonce`) — a different first-line nonce alone moves greedy output (bf16 vs bf16
+  with another nonce: 45% agreement to first divergence, 5/13 identical), so cross-nonce numbers measure perturbation, not KV.
+- TRAPS (each cost time): (1) a `logprobs:true` request on an MTP-mounted engine ABORTS the whole process ("There is no
+  Stream(gpu, 1) in current thread", helpers.py `_extract_token_logprob` on a lazy array) — never send logprobs to the owner's
+  engine. (2) `uvx --from "…@ file:///worktree"` caches the built wheel by pyproject mtime: .py edits after the first build are
+  NOT picked up — grep the archive (`~/.cache/uv/archive-v0/*/…/rapid_mlx`) for your change before trusting a run. (3) a second
+  27B beside the owner's is a memory-gate BLOCK (43.4 GiB needed, ~31–42 available): unmount his via the tray menu, measure,
+  remount via the tray. (4) other agents share the Mac — node/cargo at 100% CPU during a speed phase contaminates tok/s; check
+  `ps -r` and say so.
+
+## Placement planner + "Measure speed" (2026-09-24 — design local-edition/mlx/DESIGN-PLACEMENT.md, phases 1–2)
+- Code: `goose_sidecar::placement` (chip, model, predict, planner, store, bench); ACP `mlxEngine/{placementPlan,measureSpeed,
+  speedHistory}` in `crates/goose/src/acp/server/mlx_placement.rs` (capability `mlxPlacement`); chat-turn recorder
+  `providers/mlx_speed.rs` (one wrap in swarm_router for MlxSidecar/MlxRemote); UI `PlacementCard.tsx` + picker badges.
+- FACTS: chip = `sysctl -n hw.model machdep.cpu.brand_string` + `ioreg -rc AGXAccelerator -d1 | grep gpu-core-count` (20 ms;
+  system_profiler 400 ms). Bandwidth ONLY from Apple's spec pages (table in chip.rs, URL per row; base M1 has none → gap).
+  This Mac's GPU ceiling = Metal `recommendedMaxWorkingSetSize` via the `metal` crate (== MLX's figure, measured). Peers
+  answer the discover script's `@@chip`/`@@gpu` (managed env's mlx) — a peer goose older than bf03d52c1 is a named gap
+  "update goose there", NEVER a guess; so the Link peer's chip needs the new goose installed THERE.
+- MODEL: active bytes/token = dense + routed×k/E from safetensors headers (lookups = embed/`embedding` tables; mtp + vision
+  excluded). 27B 26.47 GiB active; Flash 3.53 of 95.71 GiB, largest layer 31.18 GiB (the PLE layer).
+- FORMULA (predict.rs, every factor fitted to OUR runs at startup): t = c + bytes/BW_eff, c from llama.cpp #4167 (M3U 5.2,
+  M4M 4.3 ms), BW_eff least squares on the 27B+32B single runs → M3U 706, M4M 449 GB/s (worst residual 5.1%); all-sum
+  JACCL 0.28 / ring 0.55 ms (the naive 21 µs formula was 2× off); MoE class 0.17 of dense from the Flash pipeline run,
+  range up to 0.51 (published MoE share); rapid-mlx batch gain ×1.785 at 8 (experiments.jsonl). The SINGLE engine's
+  Rapid-MLX/MTP gain over the mlx_lm formula is recalibrated PER MODEL from goose's own measurements
+  (`single_engine_factor`). Estimates are labelled with a range; any measured (model, placement, backend, bucket) wins.
+- RULE: fit = `plan::budget_bytes` (min(avail − 7% RAM, ceiling)) + the single mount gate verbatim on this Mac; tensor via
+  plan.rs arithmetic (JACCL only, even divisor), pipeline via the fork's `plan --json` (`run_fork_planner`, fixed-point
+  walk) or a labelled aggregate estimate; goal pick with tie (overlapping ranges) → fewer Macs; `best` vs `bestAvailable`.
+- STORE: `<data dir>/mlx-speed-measurements.jsonl` (`Paths::in_data_dir`), one record per benchmark workload / chat turn;
+  bad lines are listed (`storeErrors`), never skipped. Chat turns record decode + TTFT; prefill only with cached-token usage.
+- BENCH: `bench::Workload::Chat` ≈1.9k prompt tokens (bench.py vocabulary, 1.118 tok/word measured) + 256 greedy tokens,
+  nonce at token 0; `LongDocument` ≈30k. Token-counted, no clock. Refused unless that placement is RUNNING.
+- LIVE recipe (backend): `GOOSE_PATH_ROOT=/tmp/gplace target/debug/goose serve --port 18790 --dangerously-unauthenticated`
+  with a seeded config (models_dir → ~/.goose/models, mlx_distributed peer `ssh: workhorse` so the NEW probe runs there),
+  then `node <scratchpad>/live/acp.mjs ws://127.0.0.1:18790/acp _goose/unstable/mlxEngine/placementPlan '{"goal":"chat"}'`
+  — 5.4 s with both Macs + the fork planner. TRAP: never benchmark while the KV agent's :8093 decode phase runs (GPU/CPU
+  contention poisons both numbers); cargo/vitest during it contaminates their tok/s too.
+
 ## Thinking controls (2026-09-23 — per model, OFF by default = send nothing)
 - WHY: Rapid-MLX turns thinking OFF on every tool-bearing request (`service/helpers.py`
   `maybe_auto_disable_thinking_for_tools`) unless the request pins `chat_template_kwargs.enable_thinking`,

@@ -201,6 +201,7 @@ fn kv_mode_measurement_to_dto(m: KvModeMeasurement) -> MlxKvModeMeasurementDto {
         identical_answers: m.identical_answers,
         retrieval_found: m.retrieval_found,
         decode_tps_ratio: m.decode_tps_ratio,
+        decode_context_tokens: m.decode_context_tokens,
     }
 }
 

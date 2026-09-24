@@ -3540,7 +3540,7 @@
     "defaultMessage": "{agreement}% मेल"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "सबसे लंबे संदर्भ पर डिकोड गति: bf16 का {ratio}%।"
+    "defaultMessage": "{context} टोकन संदर्भ पर डिकोड गति: bf16 का {ratio}%।"
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "माप रिकॉर्ड पढ़ा नहीं जा सकता: {reason}"

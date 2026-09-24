@@ -131,8 +131,9 @@ export interface MlxKvModeMeasurement {
   agreement: number;
   identicalAnswers: number;
   retrievalFound: boolean;
-  /** Decode tok/s at the longest measured context, over bf16's. */
+  /** Median decode tok/s with `decodeContextTokens` of context cached (MTP on), over bf16's. */
   decodeTpsRatio?: number | null;
+  decodeContextTokens?: number | null;
 }
 
 /** The model folder's goose-kv-cache.json (evals/mlx-engine-bench/kv_quant_compare.py). */

@@ -3540,7 +3540,7 @@
     "defaultMessage": "совпадение {agreement}%"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "Скорость декодирования на самом длинном контексте: {ratio}% от bf16."
+    "defaultMessage": "Скорость декодирования при контексте {context} токенов: {ratio}% от bf16."
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "Не удаётся прочитать запись измерения: {reason}"

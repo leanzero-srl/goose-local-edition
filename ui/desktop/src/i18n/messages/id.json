@@ -3540,7 +3540,7 @@
     "defaultMessage": "kecocokan {agreement}%"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "Kecepatan dekode pada konteks terpanjang: {ratio}% dari bf16."
+    "defaultMessage": "Kecepatan dekode dengan {context} token konteks: {ratio}% dari bf16."
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "Catatan pengukuran tidak dapat dibaca: {reason}"

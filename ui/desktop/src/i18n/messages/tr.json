@@ -3540,7 +3540,7 @@
     "defaultMessage": "%{agreement} uyum"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "En uzun bağlamda çözme hızı: bf16'nın %{ratio} kadarı."
+    "defaultMessage": "{context} token bağlamla çözme hızı: bf16'nın %{ratio} kadarı."
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "Ölçüm kaydı okunamıyor: {reason}"
