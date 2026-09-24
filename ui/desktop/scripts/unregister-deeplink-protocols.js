@@ -48,7 +48,6 @@ function unregisterAllProtocolHandlers() {
     // Also try to unregister by bundle identifier
     console.log('\nUnregistering by bundle identifier...');
     const bundleIds = [
-      'net.leanzero.goose-swarm',
       'com.electron.goose',
       'com.block.goose',
       'com.block.goose.dev'
