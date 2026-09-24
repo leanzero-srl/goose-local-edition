@@ -258,9 +258,6 @@ function NodeBlock({
           />
         ))}
       </div>
-      {node.env && node.env.state !== 'ready' && (
-        <span className={cx('break-words', TYPE.meta)}>{node.env.detail}</span>
-      )}
       {node.uv && <span className={cx('break-all', TYPE.meta)}>uv · {node.uv}</span>}
     </div>
   );
@@ -525,12 +522,16 @@ export function DistributedSetup({
                 onChange={(o) => o && void detect(o.value)}
                 placeholder={intl.formatMessage(i18n.modelPick)}
                 disabled={busy != null}
-                renderOption={(o) => (
-                  <span className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className="min-w-0 truncate font-mono text-lz-mono">{o.label}</span>
-                    {modelChips(intl, o.model, names)}
-                  </span>
-                )}
+                renderOption={(o, where) =>
+                  where === 'value' ? (
+                    <span className="font-mono text-lz-mono">{o.label}</span>
+                  ) : (
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 truncate font-mono text-lz-mono">{o.label}</span>
+                      {modelChips(intl, o.model, names)}
+                    </span>
+                  )
+                }
                 optionTestId={(o) => `mlx-dist-setup-model-${o.value}`}
               />
               {gapsFor(discovery, null, 'modelId').map((g) => (

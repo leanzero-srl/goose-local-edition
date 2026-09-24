@@ -536,9 +536,25 @@ impl GooseAcpAgent {
             futures::future::join_all(discover::ssh_config_hosts(&text).into_iter().map(|alias| {
                 let exec = &exec;
                 async move {
-                    let answer = exec.run(Some(&alias), "/bin/hostname -s").await;
+                    // A git host (bitbucket.org) accepts the key, ignores the command and exits 0
+                    // with a banner — measured 2026-09-24. Only a shell that RAN the command
+                    // prints the marker first.
+                    let answer = exec
+                        .run(Some(&alias), "echo GOOSE_PEER_SHELL; /bin/hostname -s")
+                        .await;
                     let (answered, detail) = match answer {
-                        Ok(out) if out.success() => (true, out.stdout.trim().to_string()),
+                        Ok(out) if out.success() => {
+                            match discover::peer_shell_answer(&out.stdout) {
+                                Some(host) => (true, host),
+                                None => (
+                                    false,
+                                    format!(
+                                        "answered without running a shell command: {}",
+                                        out.stdout.trim().chars().take(120).collect::<String>()
+                                    ),
+                                ),
+                            }
+                        }
                         Ok(out) => (false, out.stderr.trim().to_string()),
                         Err(e) => (false, format!("{e:#}")),
                     };

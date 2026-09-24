@@ -1098,6 +1098,14 @@ pub(super) async fn discover(
     result
 }
 
+/// The peer's `hostname -s` when the answer starts with the marker line a real shell printed.
+pub(super) fn peer_shell_answer(stdout: &str) -> Option<String> {
+    let mut lines = stdout.lines().map(str::trim);
+    (lines.next()? == "GOOSE_PEER_SHELL")
+        .then(|| lines.next().unwrap_or_default().to_string())
+        .filter(|h| !h.is_empty())
+}
+
 /// `Host` aliases in an ssh config (no wildcards, no negations), in file order.
 pub(super) fn ssh_config_hosts(text: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -1398,6 +1406,15 @@ x 3 me 1u IPv6 0x3 0t0 TCP [::1]:5000 (LISTEN)
         );
         let cfg = "Host workhorse\n  HostName 192.168.8.220\nHost *\n  IdentitiesOnly yes\nHost a b !c\nHost workhorse\n";
         assert_eq!(ssh_config_hosts(cfg), vec!["workhorse", "a", "b"]);
+        assert_eq!(
+            peer_shell_answer("GOOSE_PEER_SHELL\nWorksMacStudio\n").as_deref(),
+            Some("WorksMacStudio")
+        );
+        // bitbucket.org, verbatim: key accepted, command ignored, exit 0.
+        assert_eq!(
+            peer_shell_answer("authenticated via ssh key.\n\nYou can use git to connect to Bitbucket. Shell access is disabled\n"),
+            None
+        );
     }
 
     /// Re-captures the fixtures from the real pair: this Mac and the `workhorse` alias.
