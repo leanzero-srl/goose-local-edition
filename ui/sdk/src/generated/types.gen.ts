@@ -3539,7 +3539,11 @@ export type MlxDistributedStatusDto = {
     servedModelId?: string | null;
     /**
      * The distributed engine's OpenAI base URL (goose's `omlx` provider targets it while
-     * `mode` = "distributed").
+     * `mode` = "distributed"). Its `/v1/status` (rank 0, loopback) answers in the single
+     * engine's Rapid-MLX shape — `status`, `generation_tps`, `requests[]` with `phase` queued |
+     * prefill | generation, `tokens_per_second`, `ttft_s` … — plus `prefilled_tokens` and
+     * `prompt_tokens_per_second` per request, for BOTH runners: the tile reads it with the
+     * single engine's parser.
      */
     baseUrl?: string | null;
     contextLimit?: number | null;

@@ -9,7 +9,8 @@
 //!
 //! The program is embedded here and passed base64 on the command line, so a node needs nothing
 //! installed beyond its interpreter: `rank_env.py` (the backend env, `emit`, the memory reporter —
-//! every rank) followed by the runner's program — `rank_wrapper.py` (`mlx_lm.server`, tensor
+//! every rank), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
+//! then the runner's program — `rank_wrapper.py` (`mlx_lm.server`, tensor
 //! split, under `NodeConfig::python`) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
 //! layer split, under `NodeConfig::pipeline_python`).
 
@@ -30,9 +31,14 @@ use super::exec::{sh_quote, SSH_OPTIONS};
 /// goosed left behind (and `stop` can reclaim it per-pid).
 pub const RANK_MARKER: &str = "goose-distributed-rank";
 
-const TENSOR_PROGRAM: &str = concat!(include_str!("rank_env.py"), include_str!("rank_wrapper.py"));
+const TENSOR_PROGRAM: &str = concat!(
+    include_str!("rank_env.py"),
+    include_str!("rank_live.py"),
+    include_str!("rank_wrapper.py")
+);
 const PIPELINE_PROGRAM: &str = concat!(
     include_str!("rank_env.py"),
+    include_str!("rank_live.py"),
     include_str!("pipeline_rank.py")
 );
 const BOOT: &str = "import base64,sys;exec(base64.b64decode(sys.argv[1]))";
@@ -553,8 +559,14 @@ mod tests {
         let args = python_args(&specs[1]).unwrap();
         let b64 = base64::engine::general_purpose::STANDARD;
         let program = String::from_utf8(b64.decode(&args[2]).unwrap()).unwrap();
-        assert!(program.starts_with(include_str!("rank_env.py")));
-        assert!(program.ends_with(include_str!("pipeline_rank.py")));
+        assert_eq!(
+            program,
+            concat!(
+                include_str!("rank_env.py"),
+                include_str!("rank_live.py"),
+                include_str!("pipeline_rank.py")
+            )
+        );
         let script = remote_script(specs[1].interpreter(&config.nodes[1]).unwrap(), &args);
         assert!(script.starts_with(
             "echo GOOSE_RANK_PID=$$; exec '/Users/workhorse/.goose/distributed/fork/bin/python' '-c' "
@@ -612,6 +624,14 @@ mod tests {
         std::fs::write(
             site.join("rapid_mlx/distributed/pipeline_qwen4_serve.py"),
             "import os, time\n\
+             from dataclasses import dataclass\n\
+             @dataclass\n\
+             class _Job:\n\
+             \x20   row: object\n\
+             \x20   produced: int = 0\n\
+             def run_batch(stage, guard, rows, prefill_step, on_tokens=None, control_fn=None): pass\n\
+             def _step(stage, out, cache, rows, guard, control, *, sample): pass\n\
+             def _build_app(state, tokenizer, eos_ids, vision=None): pass\n\
              def add_arguments(parser):\n\
              \x20   parser.add_argument('--model', required=True)\n\
              \x20   parser.add_argument('--served-model-name', required=True)\n\
@@ -689,6 +709,47 @@ mod tests {
             "one backend's env only"
         );
         assert_eq!(ready["offline"], "1");
+    }
+
+    /// rank_live.py's two functions under a real interpreter, on the instants the 2-rank 27B
+    /// tensor split measured (2026-09-24: prefill from 0.52 s, 2,048 tokens reported at 13.53 s,
+    /// the first token at 21.069 s, the third at 21.354 s).
+    #[test]
+    fn the_live_request_table_reads_prefill_and_generation_apart() {
+        let checks = r#"
+queued = live_request("r", 0.0, 0.5, max_tokens=60)
+assert (queued["phase"], queued["status"]) == ("queued", "waiting"), queued
+assert queued["prompt_tokens_per_second"] is None and queued["tokens_per_second"] is None
+reading = live_request("r", 0.0, 13.53, prompt_tokens=3249, prefill_started=0.52, prefilled=2048)
+assert (reading["phase"], reading["status"]) == ("prefill", "running"), reading
+assert reading["prompt_tokens_per_second"] == round(2048 / 13.01, 2), reading
+assert reading["tokens_per_second"] is None
+writing = live_request("r", 0.0, 21.354, prompt_tokens=3249, prefill_started=0.52,
+                       prefilled=3249, first_token=21.069, last_token=21.354, completion=3)
+assert writing["phase"] == "generation", writing
+assert writing["prompt_tokens_per_second"] == round(3249 / (21.069 - 0.52), 2), writing
+assert writing["tokens_per_second"] == round(2 / (21.354 - 21.069), 2), writing
+assert writing["ttft_s"] == 21.069
+one = live_request("r", 0.0, 21.1, first_token=21.069, last_token=21.069, completion=1)
+assert one["tokens_per_second"] is None, "one token has no decode span"
+busy = live_status({"num_running": 1, "num_waiting": 0}, [writing, queued])
+assert busy["status"] == "generating" and busy["generation_tps"] == writing["tokens_per_second"]
+assert busy["num_running"] == 1 and len(busy["requests"]) == 2
+idle = live_status({"num_running": 0, "num_waiting": 0}, [])
+assert (idle["status"], idle["generation_tps"], idle["requests"]) == ("idle", None, [])
+print("ok")
+"#;
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_live.py")))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
     /// The phases a pipeline rank walks, from its own lines (the 27B's figures as a reporter thread

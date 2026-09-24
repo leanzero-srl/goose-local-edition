@@ -34,6 +34,7 @@ for owner, name in (
     (server.APIHandler, "validate_model_parameters"),
     (server.APIHandler, "_set_completion_headers"),
     (server.ModelProvider, "load"),
+    (server.ResponseGenerator, "generate"),
 ):
     if not hasattr(owner, name):
         raise SystemExit(
@@ -44,6 +45,11 @@ for owner, name in (
 served = spec["served_id"]
 state = {"steps": 0, "inflight": 0, "admission_open": True, "admission_reason": None}
 lock = threading.Lock()
+# Rank 0's live request table (rank_live.py): the instants each request was measured at, keyed by
+# a per-process counter. `generate` returns once the request is tokenized; mlx_lm then delivers
+# the prompt progress (processed, total) and the tokens through the iterator the handler drains.
+live = {}
+live_ids = iter(range(1, 1 << 62))
 
 
 def apply_caps():
@@ -92,6 +98,65 @@ def _next_request(self, timeout=None):
 
 server.ResponseGenerator._next_request = _next_request
 
+original_generate = server.ResponseGenerator.generate
+
+
+def generate(self, request, generation_args, progress_callback=None):
+    with lock:
+        request_id = f"req-{next(live_ids)}"
+        entry = {
+            "arrived": time.monotonic(),
+            "max_tokens": generation_args.max_tokens,
+            "prompt_tokens": None,
+            "cached_tokens": None,
+            "prefill_started": None,
+            "prefilled": 0,
+            "first_token": None,
+            "last_token": None,
+            "completion": 0,
+        }
+        live[request_id] = entry
+
+    def progress(processed, total):
+        entry["prefilled"] = processed
+        if progress_callback is not None:
+            progress_callback(processed, total)
+
+    def leave():
+        with lock:
+            live.pop(request_id, None)
+
+    try:
+        ctx, tokens = original_generate(self, request, generation_args, progress)
+    except BaseException:
+        leave()
+        raise
+    # The generation thread hands back the context as it takes the request into its batch: from
+    # here the engine is reading the prompt, though mlx_lm reports the first progress only after
+    # its first chunks (measured: 6,144 of 15,249 tokens, 30 s in, on a 2-rank 27B).
+    entry["prefill_started"] = time.monotonic()
+    entry["prompt_tokens"] = len(ctx.prompt)
+    if ctx.prompt_cache_count >= 0:
+        entry["cached_tokens"] = ctx.prompt_cache_count
+
+    def counted():
+        try:
+            for response in tokens:
+                now = time.monotonic()
+                if entry["first_token"] is None:
+                    entry["first_token"] = now
+                    entry["prefilled"] = entry["prompt_tokens"]
+                entry["last_token"] = now
+                entry["completion"] += 1
+                yield response
+        finally:
+            leave()
+
+    return ctx, counted()
+
+
+server.ResponseGenerator.generate = generate
+
 
 class Refused(Exception):
     def __init__(self, status, message):
@@ -127,9 +192,18 @@ def do_GET(self):
         )
     if self.path == "/v1/status":
         # Every accepted-and-unfinished request is counted in num_running; mlx_lm does not split
-        # queued from batched, so num_waiting carries none of them (the sum is the busy fact).
+        # queued from batched, so num_waiting carries none of them (the sum is the busy fact). The
+        # request table tells prefill from generation per request.
+        now = time.monotonic()
+        with lock:
+            rows = [
+                live_request(request_id, now=now, **entry)
+                for request_id, entry in live.items()
+            ]
         return send_json(
-            self, 200, {"num_running": state["inflight"], "num_waiting": 0, "status": "ok"}
+            self,
+            200,
+            live_status({"num_running": state["inflight"], "num_waiting": 0}, rows),
         )
     if self.path.startswith("/v1/models"):
         return send_json(

@@ -761,6 +761,14 @@ mod tests {
         std::fs::write(
             site.join("rapid_mlx/distributed/pipeline_qwen4_serve.py"),
             "import os, signal, threading\n\
+             from dataclasses import dataclass\n\
+             @dataclass\n\
+             class _Job:\n\
+             \x20   row: object\n\
+             \x20   produced: int = 0\n\
+             def run_batch(stage, guard, rows, prefill_step, on_tokens=None, control_fn=None): pass\n\
+             def _step(stage, out, cache, rows, guard, control, *, sample): pass\n\
+             def _build_app(state, tokenizer, eos_ids, vision=None): pass\n\
              def add_arguments(parser):\n\
              \x20   for flag in ('--model', '--served-model-name', '--host', '--split'):\n\
              \x20       parser.add_argument(flag)\n\

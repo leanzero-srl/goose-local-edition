@@ -2388,11 +2388,45 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             ..Default::default()
         });
 
+        let fit = manager.mount_fit(&model_id).await.unwrap();
+        eprintln!("live: fit {:?} — {}", fit.verdict, fit.message);
         let started = std::time::Instant::now();
         manager.mount(&model_id).await.unwrap();
-        let status = settle(&manager).await;
+        // The load as status reports it, every change of phase or resident bytes.
+        let mut loads: Vec<EngineLoad> = Vec::new();
+        let status = loop {
+            let status = manager.status().await;
+            if status.state != "mounting" {
+                break status;
+            }
+            if let Some(load) = status.load {
+                if loads.last() != Some(&load) {
+                    loads.push(load);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
         assert_eq!(status.state, "running", "{:?}", status.last_error);
         assert_eq!(status.served_model_id.as_deref(), Some("live-alias"));
+        assert!(status.load.is_none(), "a running engine reports no load");
+        let gib = |b: u64| format!("{:.2}", b as f64 / GIB as f64);
+        eprintln!(
+            "live: load samples [{}]",
+            loads
+                .iter()
+                .map(|l| format!("{} {}", l.phase, l.resident_bytes.map_or("-".into(), gib)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        assert!(loads.iter().any(|l| l.phase == "loading"), "{loads:?}");
+        let weights = loads.last().unwrap().weights_bytes;
+        let most = loads.iter().filter_map(|l| l.resident_bytes).max().unwrap();
+        assert!(
+            most as f64 / weights as f64 > 0.9,
+            "the engine's resident bytes reached {} of {} on disk",
+            gib(most),
+            gib(weights)
+        );
         let leader = status.pid.unwrap();
         assert!(crate::owns_process_group(leader));
         let members = std::process::Command::new("pgrep")

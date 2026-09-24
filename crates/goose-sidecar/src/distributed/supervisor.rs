@@ -2638,6 +2638,24 @@ mod tests {
         assert_eq!(load.slots_in_use, Some(0));
     }
 
+    /// Both runners' rank 0 now answer `/v1/status` with the live request table added
+    /// (rank_live.py) — measured bodies, 2026-09-24: a 2-rank local ring 27B tensor split and a
+    /// 2-rank local pipeline over a 4-layer Flash. The supervisor's own fields read as before.
+    #[test]
+    fn the_live_request_table_rides_the_runners_own_status() {
+        let tensor = r#"{"num_running": 1, "num_waiting": 0, "status": "generating", "generation_tps": 10.57, "requests": [{"request_id": "req-1", "status": "running", "phase": "generation", "elapsed_s": 21.354, "prompt_tokens": 3249, "prefilled_tokens": 3249, "prompt_tokens_per_second": 154.32, "completion_tokens": 3, "max_tokens": 60, "tokens_per_second": 10.57, "ttft_s": 21.069, "cached_tokens": 0}]}"#;
+        let load = server_load(tensor, Runner::MlxLmTensor, 2).unwrap();
+        assert_eq!((load.waiting, load.slots), (0, None));
+        let pipeline = r#"{"num_running": 1, "num_waiting": 2, "slots": 2, "slots_in_use": 1, "sequences_in_flight": 1, "kv_reserved_bytes": [2061807632, 2114216960], "kv_budget_bytes": [4123615264, 4254087168], "status": "generating", "generation_tps": 171.1, "requests": [{"request_id": "a52c969689464b6e88cbe1b5", "status": "running", "phase": "generation", "elapsed_s": 1.209, "prompt_tokens": 6546, "prefilled_tokens": 6546, "prompt_tokens_per_second": 5503.35, "completion_tokens": 4, "max_tokens": 80, "tokens_per_second": 171.1, "ttft_s": 1.19, "cached_tokens": null}, {"request_id": "58111b87b46a43b2982e9143", "status": "waiting", "phase": "queued", "elapsed_s": 1.186, "prompt_tokens": 6546, "prefilled_tokens": 0, "prompt_tokens_per_second": null, "completion_tokens": 0, "max_tokens": 80, "tokens_per_second": null, "ttft_s": null, "cached_tokens": null}]}"#;
+        let load = server_load(pipeline, Runner::PipelineQwen4, 2).unwrap();
+        assert_eq!(load.waiting, 2);
+        assert_eq!(load.sequences_in_flight, Some(1));
+        assert_eq!(
+            load.kv,
+            Some(vec![(2061807632, 4123615264), (2114216960, 4254087168)])
+        );
+    }
+
     #[test]
     fn a_tensor_status_has_no_slots_and_a_pipeline_one_without_them_is_an_error() {
         // The tensor wrapper's exact answer (rank_wrapper.py do_GET /v1/status).
