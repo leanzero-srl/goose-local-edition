@@ -231,6 +231,14 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   and the tray menu opening. The tray section is a pure model (`utils/mlxTray.ts`); Mount/Unmount run in a window's
   renderer (`hooks/useMlxTrayActions.ts`) because main has no ACP client.
 - Tile colours while RUNNING: slate idle / accent reading / ok writing / slate when activity is unknown.
+- TRAP (2026-09-24, 3.0.28 → fixed 6e287d4b9): main's `net.fetch` rides `session.defaultSession`, whose
+  `onBeforeSendHeaders` hook (upstream goose) stamped `Origin: http://localhost:5173` on EVERY request — main's too. The
+  Link relay refuses any Origin-bearing request (403), so a remote single's tile read "Rates unavailable over LeanZero
+  Link — engine returned 403" while chat worked (goosed's reqwest sends no Origin). Now the stamp applies only when
+  `details.webContentsId` is set (`utils/rendererOrigin.ts`). To see what main really sends: run a python echo server on
+  127.0.0.1:8777 and call `window.electron.mlxLiveStatus('http://127.0.0.1:8777/x')` over CDP 9333.
+- Restore on relaunch (3.0.28): the serving intent is saved only from 3.0.28 on — an app upgraded FROM an older build
+  comes back with nothing to restore. With the Studio engine still up, relaunch reattaches in <1 poll.
 
 ## Mount refusal, load progress, reading vs writing (2026-09-24 — 9c170176f, df7bdfff1, d8767618b)
 - A gate Block is `engine::MountRefused` (still Err for Rust callers); ACP `mlxEngine/mount` answers
