@@ -25,12 +25,19 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// {plan,serve,run}`, `plan --json` (with `slots`), the OpenAI server rank 0 serves (272cb0643),
 /// a node below its pressure floor refusing with the numbers instead of crashing (9f861d9e1), and
 /// `serve --slots` with KV admission by every rank's planned budget and the slot figures on
-/// `/v1/status` (ea6f8dee1), idle worker ranks parked in a blocking recv instead of spinning a core in the collective (286ed77f7, 2026-09-24).
+/// `/v1/status` (ea6f8dee1), idle worker ranks parked in a blocking recv instead of spinning a core in the collective (286ed77f7, 2026-09-24),
+/// the node budget = available − 7% of RAM capped at Metal's working set (2ce699589), and IMAGE
+/// INPUT — the vision tower on rank 0, (t, h, w) RoPE on every rank, OpenAI image content parts,
+/// `/v1/models` `capabilities: ["text", "vision", …]` (d40e9e363, dabcc67b2, 2f7cdf27c).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "286ed77f7554bb2a74c224695116c5557025bbb7";
+pub const PIPELINE_FORK_COMMIT: &str = "2f7cdf27ce987278bd150f44cbbafa96bd9ff05c";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@286ed77f7554bb2a74c224695116c5557025bbb7";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@2f7cdf27ce987278bd150f44cbbafa96bd9ff05c";
+/// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
+/// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
+/// which nothing here imports.
+pub const MLX_VLM_VERSION: &str = "0.7.1";
 
 /// Where every goose-managed env lives, relative to the node's `$HOME`.
 pub const ENVS_DIR: &str = ".goose/distributed";
@@ -74,8 +81,9 @@ impl EnvSpec {
                 PIPELINE_FORK.to_string(),
                 format!("mlx=={MLX_VERSION}"),
                 format!("mlx-lm=={MLX_LM_VERSION}"),
+                format!("mlx-vlm=={MLX_VLM_VERSION}"),
             ],
-            check: "import json, importlib.metadata as md, mlx.core as mx, mlx_lm, \
+            check: "import json, importlib.metadata as md, mlx.core as mx, mlx_lm, mlx_vlm, \
                     rapid_mlx.distributed.pipeline_qwen4, rapid_mlx.distributed.pipeline_qwen4_serve; \
                     print(mx.__version__, mlx_lm.__version__, json.loads(md.distribution(\"rapid-mlx\")\
                     .read_text(\"direct_url.json\") or \"{}\").get(\"vcs_info\", {}).get(\"commit_id\"))"
@@ -289,6 +297,12 @@ mod tests {
             .check
             .contains("rapid_mlx.distributed.pipeline_qwen4_serve"));
         assert!(
+            spec.packages
+                .contains(&format!("mlx-vlm=={MLX_VLM_VERSION}"))
+                && spec.check.contains("mlx_vlm"),
+            "rank 0 loads the vision tower through mlx-vlm; an env without it fails the proof"
+        );
+        assert!(
             !spec.check.contains('\''),
             "the check rides sh_quote unescaped"
         );
@@ -301,12 +315,19 @@ mod tests {
     async fn the_pipeline_proof_reads_the_installed_commit() {
         let root = tempfile::tempdir().unwrap();
         let site = root.path();
-        for module in ["mlx", "mlx_lm", "rapid_mlx", "rapid_mlx/distributed"] {
+        for module in [
+            "mlx",
+            "mlx_lm",
+            "mlx_vlm",
+            "rapid_mlx",
+            "rapid_mlx/distributed",
+        ] {
             std::fs::create_dir_all(site.join(module)).unwrap();
         }
         std::fs::write(site.join("mlx/__init__.py"), "").unwrap();
         std::fs::write(site.join("mlx/core.py"), "__version__ = '0.32.2'\n").unwrap();
         std::fs::write(site.join("mlx_lm/__init__.py"), "__version__ = '0.31.3'\n").unwrap();
+        std::fs::write(site.join("mlx_vlm/__init__.py"), "").unwrap();
         std::fs::write(site.join("rapid_mlx/__init__.py"), "").unwrap();
         std::fs::write(site.join("rapid_mlx/distributed/__init__.py"), "").unwrap();
         std::fs::write(site.join("rapid_mlx/distributed/pipeline_qwen4.py"), "").unwrap();
