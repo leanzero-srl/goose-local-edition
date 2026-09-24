@@ -37,7 +37,11 @@ const i18n = defineMessages({
     defaultMessage: 'No Thunderbolt address',
   },
   rdmaActive: { id: 'mlxDistributedSetup.link.rdmaActive', defaultMessage: 'active' },
-  rdmaDown: { id: 'mlxDistributedSetup.link.rdmaDown', defaultMessage: 'port down' },
+  rdmaDownCount: {
+    id: 'mlxDistributedSetup.link.rdmaDownCount',
+    defaultMessage:
+      '{count, plural, one {# more device, port down} other {# more devices, ports down}}',
+  },
   gid: { id: 'mlxDistributedSetup.link.gid', defaultMessage: 'IPv4 GID {index}' },
   noGid: { id: 'mlxDistributedSetup.link.noGid', defaultMessage: 'no IPv4 GID' },
   noRdma: { id: 'mlxDistributedSetup.link.noRdma', defaultMessage: 'No RDMA device' },
@@ -138,19 +142,26 @@ function PeerCard({
       )}
       {ready && (
         <span data-testid="mlx-dist-link-peer-rdma" className={cx('break-all', TYPE.mono)}>
-          {rdma.length > 0
-            ? rdma
-                .map((d) =>
-                  [
-                    d.device,
-                    intl.formatMessage(d.active ? i18n.rdmaActive : i18n.rdmaDown),
-                    d.ipv4GidIndex != null
-                      ? intl.formatMessage(i18n.gid, { index: d.ipv4GidIndex })
-                      : intl.formatMessage(i18n.noGid),
-                  ].join(' · ')
-                )
-                .join(', ')
-            : intl.formatMessage(i18n.noRdma)}
+          {[
+            ...rdma
+              .filter((d) => d.active)
+              .map((d) =>
+                [
+                  d.device,
+                  intl.formatMessage(i18n.rdmaActive),
+                  d.ipv4GidIndex != null
+                    ? intl.formatMessage(i18n.gid, { index: d.ipv4GidIndex })
+                    : intl.formatMessage(i18n.noGid),
+                ].join(' · ')
+              ),
+            ...(rdma.some((d) => !d.active)
+              ? [
+                  intl.formatMessage(i18n.rdmaDownCount, {
+                    count: rdma.filter((d) => !d.active).length,
+                  }),
+                ]
+              : []),
+          ].join(', ') || intl.formatMessage(i18n.noRdma)}
         </span>
       )}
       {ready && (

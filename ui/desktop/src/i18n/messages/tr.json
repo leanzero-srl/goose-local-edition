@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "etkin"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "bağlantı noktası kapalı"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, other {# aygıt daha, bağlantı noktası kapalı}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "{name} üzerinde “Bu Mac’in dağıtık düğüm olarak hizmet vermesine izin ver” seçeneğini açın (Sağlayıcılar › LeanZero MLX › Motor › Dağıtık)."

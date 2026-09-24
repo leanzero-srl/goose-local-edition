@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "aktiv"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "Port inaktiv"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, one {# weiteres Gerät, Port inaktiv} other {# weitere Geräte, Ports inaktiv}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "Schalte „Diesem Mac erlauben, als verteilter Knoten zu dienen“ auf {name} ein (Anbieter › LeanZero MLX › Engine › Verteilt)."

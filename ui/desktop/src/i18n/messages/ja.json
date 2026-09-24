@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "アクティブ"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "ポート停止"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, other {ほか # 台のデバイスはポート停止}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "{name} で「この Mac を分散ノードとして使うことを許可」をオンにしてください (プロバイダ › LeanZero MLX › エンジン › 分散)。"

@@ -333,11 +333,7 @@ impl std::fmt::Display for LinkCallError {
         match self {
             LinkCallError::NotConnected(m) => write!(f, "LeanZero Link is not connected: {m}"),
             LinkCallError::Unreachable(m) => write!(f, "unreachable over LeanZero Link: {m}"),
-            LinkCallError::Disabled(m) => write!(
-                f,
-                "servingDisabled: \"Allow this Mac to serve as a distributed node\" is off there \
-                 ({m})"
-            ),
+            LinkCallError::Disabled(m) => f.write_str(m),
             LinkCallError::NotServed(m) => write!(f, "not served there: {m}"),
             LinkCallError::Refused(r) => write!(f, "{}: {}", r.code, r.message),
             LinkCallError::BadRequest(m) => write!(f, "bad request: {m}"),
@@ -708,14 +704,17 @@ fn note(live: &StdMutex<RankLive>, line: String) {
 /// joined the group, then its poll interval), mirror what the rank said, and end the local session
 /// when the rank ends. A poll that fails is a CONTROL loss — recorded, never read as the rank's
 /// death; only past the peer's lease (when the peer has stopped the rank itself) does the session
-/// end here, with ssh's 255.
+/// end here, with ssh's 255. Every silence is measured from the last poll the peer ANSWERED — the
+/// same clock the peer's lease runs on — never from the first failure, which a transport's own
+/// connect timeout delays (measured 2026-09-24: a 7 s pause of the peer's daemon read as 2.0 s).
 async fn relay(
     state: Arc<LinkRankState>,
     live: Arc<StdMutex<RankLive>>,
     session_pid: Option<u32>,
     node: String,
 ) {
-    let mut lost_since: Option<(Instant, String)> = None;
+    let mut last_answer = Instant::now();
+    let mut lost: Option<String> = None;
     loop {
         let tick = if live.lock().unwrap().group_joined {
             POLL_INTERVAL
@@ -748,9 +747,10 @@ async fn relay(
         .await;
         match poll {
             Ok(snapshot) => {
-                if let Some((since, _)) = lost_since.take() {
-                    state.event(ControlEvent::Restored(since.elapsed()));
+                if lost.take().is_some() {
+                    state.event(ControlEvent::Restored(last_answer.elapsed()));
                 }
+                last_answer = Instant::now();
                 mirror(&live, &snapshot);
                 if let Some(exit) = snapshot.exit {
                     note(
@@ -767,19 +767,20 @@ async fn relay(
                 }
             }
             Err(error) => {
-                if lost_since.is_none() {
-                    state.event(ControlEvent::Lost(error.to_string()));
-                }
-                let (since, first) = lost_since
-                    .get_or_insert_with(|| (Instant::now(), error.to_string()))
+                let first = lost
+                    .get_or_insert_with(|| {
+                        state.event(ControlEvent::Lost(error.to_string()));
+                        error.to_string()
+                    })
                     .clone();
-                if since.elapsed() > LINK_LEASE + tick {
+                let silent = last_answer.elapsed();
+                if silent > LINK_LEASE + tick {
                     note(
                         &live,
                         format!(
                             "[LeanZero Link] no answer from {node} for {:.1} s (first error: \
                              {first}); its lease ({} s without a poll) has stopped the rank there",
-                            since.elapsed().as_secs_f64(),
+                            silent.as_secs_f64(),
                             LINK_LEASE.as_secs()
                         ),
                     );

@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "hoạt động"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "cổng tắt"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, other {thêm # thiết bị, cổng tắt}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "Bật “Cho phép máy Mac này làm nút phân tán” trên {name} (Nhà cung cấp › LeanZero MLX › Engine › Phân tán)."

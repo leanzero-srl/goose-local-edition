@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "aktif"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "port mati"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, other {# lagi peranti, port mati}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "Hidupkan “Benarkan Mac ini berkhidmat sebagai nod teragih” pada {name} (Pembekal › LeanZero MLX › Enjin › Teragih)."

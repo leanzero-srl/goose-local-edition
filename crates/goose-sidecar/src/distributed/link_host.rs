@@ -107,8 +107,19 @@ impl Hosted {
             return;
         }
         if let Ok(Some(status)) = self.process.child.try_wait() {
-            self.exit = Some(exit_of(status, "exited on its own".to_string()));
+            self.exit = Some(exit_of(status, unasked_end(status)));
         }
+    }
+}
+
+/// How a rank that nobody here stopped ended, in words: a code of its own, or a signal from
+/// outside goose (goose stops ranks only through `stop_hosted`, which records its own reason).
+fn unasked_end(status: std::process::ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    match (status.code(), status.signal()) {
+        (Some(code), _) => format!("exited on its own with code {code}"),
+        (None, Some(signal)) => format!("killed by signal {signal} from outside goose"),
+        (None, None) => "ended without a code or a signal".to_string(),
     }
 }
 
@@ -526,6 +537,13 @@ async fn stop_hosted(hosted: &mut Hosted, follow_rank0: bool, why: String) -> St
                 status,
                 "left on rank 0's shutdown broadcast".into(),
             ));
+        } else {
+            report.steps.push(format!(
+                "rank {} pid {}: still running after rank 0's shutdown broadcast and the grace \
+                 window",
+                hosted.status.rank,
+                pid.unwrap_or_default()
+            ));
         }
     }
     if hosted.exit.is_none() {
@@ -930,8 +948,10 @@ mod tests {
             matches!(events.first(), Some(ControlEvent::Lost(e)) if e.contains("SOCKS reply 1")),
             "{events:?}"
         );
+        // Silence is measured from the last answered poll (the peer's lease clock), so it spans
+        // the whole outage — not just the time since the first failed poll.
         assert!(
-            matches!(events.last(), Some(ControlEvent::Restored(_))),
+            matches!(events.last(), Some(ControlEvent::Restored(silent)) if *silent >= POLL_INTERVAL * 3 / 2),
             "{events:?}"
         );
         assert!(

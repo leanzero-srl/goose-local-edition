@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "活动"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "端口关闭"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, other {另有 # 个设备端口关闭}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "在 {name} 上打开“允许这台 Mac 作为分布式节点”（提供方 › LeanZero MLX › 引擎 › 分布式）。"
