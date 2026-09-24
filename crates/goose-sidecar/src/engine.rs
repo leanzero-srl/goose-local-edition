@@ -2042,12 +2042,17 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     /// alias, driven to Running by the progress terminator, the alias checked in the
     /// catalog, then unmounted — port free, the wrapper's whole group gone. Reads a model
     /// from `GOOSE_SIDECAR_LIVE_MODELS_DIR` / `GOOSE_SIDECAR_LIVE_MODEL_ID` (never deletes).
+    /// `GOOSE_SIDECAR_LIVE_KV_CACHE=int8|int4` mounts with that profile KV cache; the engine's own
+    /// `rapid_mlx_kv_cache_dtype` gauge must then name it (bf16 when unset).
     #[cfg(unix)]
     #[tokio::test]
     #[ignore = "spawns the real uvx/rapid-mlx engine; set GOOSE_SIDECAR_LIVE_MODELS_DIR and GOOSE_SIDECAR_LIVE_MODEL_ID"]
     async fn live_mount_of_the_real_engine_runs_and_unmounts_clean() {
         let models_dir = std::env::var("GOOSE_SIDECAR_LIVE_MODELS_DIR").unwrap();
         let model_id = std::env::var("GOOSE_SIDECAR_LIVE_MODEL_ID").unwrap();
+        let kv_cache: Option<KvCacheMode> = std::env::var("GOOSE_SIDECAR_LIVE_KV_CACHE")
+            .ok()
+            .map(|v| serde_json::from_value(serde_json::Value::String(v)).unwrap());
         let port = {
             let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             probe.local_addr().unwrap().port()
@@ -2057,6 +2062,13 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             models_dir,
             port,
             served_model_name: Some("live-alias".to_string()),
+            model_profiles: BTreeMap::from([(
+                model_id.clone(),
+                ModelProfile {
+                    kv_cache,
+                    ..Default::default()
+                },
+            )]),
             ..Default::default()
         });
 
@@ -2090,6 +2102,24 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert!(
             members.split_whitespace().count() >= 2,
             "uv and its engine must both sit in the leader's group: [{members}]"
+        );
+        let metrics = reqwest::get(format!("http://127.0.0.1:{port}/metrics"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        let active_dtype = metrics
+            .lines()
+            .find(|l| l.starts_with("rapid_mlx_kv_cache_dtype{") && l.ends_with(" 1"))
+            .map(str::to_string);
+        eprintln!("live: engine reports {active_dtype:?}");
+        let expected = kv_cache.map_or("bf16", KvCacheMode::engine_dtype);
+        assert_eq!(
+            active_dtype,
+            Some(format!(
+                "rapid_mlx_kv_cache_dtype{{dtype=\"{expected}\"}} 1"
+            ))
         );
 
         manager.unmount().await;
