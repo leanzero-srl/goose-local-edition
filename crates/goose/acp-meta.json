@@ -676,6 +676,11 @@
       "responseType": "MlxEngineRemoteSingleStatusResponse_unstable"
     },
     {
+      "method": "_goose/unstable/mlxEngine/servingIntent",
+      "requestType": "MlxEngineServingIntentRequest_unstable",
+      "responseType": "MlxEngineServingIntentResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/mlxEngine/distributedMakeRoom",
       "requestType": "MlxEngineDistributedMakeRoomRequest_unstable",
       "responseType": "MlxEngineDistributedMakeRoomResponse_unstable"

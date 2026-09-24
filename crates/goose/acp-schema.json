@@ -10365,7 +10365,21 @@
             "string",
             "null"
           ],
-          "description": "The peer's hostname as the mesh reports it — what \"Serving from <peer>\" shows."
+          "description": "The peer's hostname as the mesh reports it."
+        },
+        "peerComputerName": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The name the peer's owner gave it (macOS ComputerName) as the Link roster reported it when\nthe route started — what \"Serving from <peer>\" shows, the hostname when absent."
+        },
+        "baseUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "This Mac's loopback relay to the peer's engine: `GET <baseUrl>/v1/status` is the peer\nengine's own live status, read exactly like a local engine's. Carries the relay's\ncapability — never logged."
         },
         "modelId": {
           "type": [
@@ -10483,6 +10497,65 @@
       ],
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/remoteSingleStatus"
+    },
+    "MlxEngineServingIntentRequest_unstable": {
+      "type": "object",
+      "description": "Read the serving intent. Written by the owner's own starts (Mount, remote single start, split\nstart), removed by the matching explicit stop; an app quit or a goosed exit never touches it.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/servingIntent"
+    },
+    "MlxEngineServingIntentResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "intent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxServingIntentDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent = nothing to bring back (never started, or the owner stopped it)."
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The record exists and could not be read — named, never read as \"nothing to restore\"."
+        }
+      },
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/servingIntent"
+    },
+    "MlxServingIntentDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "peer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "peerName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "modelId"
+      ],
+      "description": "What the owner last started serving MLX chat from on this Mac and did not stop — the thing a\nrelaunch brings back. `kind`: `single` (this Mac's engine) · `remoteSingle` (the single engine\non Link peer `peer`, whom the owner calls `peerName`) · `split` (the saved distributed config)."
     },
     "MlxEngineDistributedMakeRoomRequest_unstable": {
       "type": "object",
@@ -14241,6 +14314,15 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEngineServingIntentRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/servingIntent",
+                  "title": "MlxEngineServingIntentRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/MlxEngineDistributedMakeRoomRequest_unstable"
                     }
                   ],
@@ -15237,6 +15319,14 @@
                         }
                       ],
                       "title": "MlxEngineRemoteSingleStatusResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineServingIntentResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineServingIntentResponse_unstable"
                     },
                     {
                       "allOf": [

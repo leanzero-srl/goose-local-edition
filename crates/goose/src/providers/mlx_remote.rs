@@ -38,6 +38,11 @@ pub struct PublishedRoute {
     /// The peer as the caller named it (a Link node id).
     pub peer: String,
     pub peer_hostname: String,
+    /// The name the peer's owner gave it (macOS ComputerName, "Work's Mac Studio") as the Link
+    /// roster reported it when the route started. `None` = its goose did not say, or an older
+    /// goosed published this record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_computer_name: Option<String>,
     pub model_id: String,
     /// `served_model_id` over the PEER's settings — the id every chat request carries.
     pub served_model_id: String,
@@ -54,6 +59,15 @@ impl PublishedRoute {
     /// desktop parses the router's "<id>: <reason>" rows on the first one.
     pub fn node_id(&self) -> String {
         format!("remote-{}", self.peer_hostname)
+    }
+
+    /// What every sentence about the route calls the peer: its owner's name for it, else its
+    /// hostname — the rule the desktop's `macName` applies to the same two facts.
+    pub fn peer_name(&self) -> &str {
+        match self.peer_computer_name.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => name,
+            _ => &self.peer_hostname,
+        }
     }
 }
 
@@ -172,6 +186,7 @@ mod tests {
             base_url: "http://127.0.0.1:61001/relay/ab".to_string(),
             peer: "worksmacstudio-lan-9c1e2a".to_string(),
             peer_hostname: "worksmacstudio-lan-9c1e2a".to_string(),
+            peer_computer_name: None,
             model_id: "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string(),
             served_model_id: "mihai-qwen3.8-27b".to_string(),
             capacity: 8,
@@ -197,6 +212,23 @@ mod tests {
         assert!(!withdraw_at(&path, 20).unwrap());
         assert!(withdraw_at(&path, 10).unwrap());
         assert_eq!(read_at(&path, 10, |_| true), RouteRecord::Absent);
+    }
+
+    #[test]
+    fn the_peer_is_named_by_its_owners_name_and_an_older_record_still_reads() {
+        let mut named = route(10);
+        assert_eq!(named.peer_name(), "worksmacstudio-lan-9c1e2a");
+        named.peer_computer_name = Some("Work's Mac Studio".to_string());
+        assert_eq!(named.peer_name(), "Work's Mac Studio");
+        named.peer_computer_name = Some("  ".to_string());
+        assert_eq!(named.peer_name(), "worksmacstudio-lan-9c1e2a");
+
+        // A record an older goosed published carries no computer name: it parses, unnamed.
+        let mut older = serde_json::to_value(route(10)).unwrap();
+        assert!(older.get("peer_computer_name").is_none());
+        older.as_object_mut().unwrap().remove("peer_computer_name");
+        let parsed: PublishedRoute = serde_json::from_value(older).unwrap();
+        assert_eq!(parsed, route(10));
     }
 
     #[cfg(unix)]

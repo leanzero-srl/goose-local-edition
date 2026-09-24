@@ -4365,6 +4365,14 @@ export const zMlxRemoteSingleStatusDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    peerComputerName: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    baseUrl: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     modelId: z.union([
         z.string(),
         z.null()
@@ -4433,6 +4441,41 @@ export const zMlxEngineRemoteSingleStatusRequest_unstable = z.record(z.unknown()
 
 export const zMlxEngineRemoteSingleStatusResponse_unstable = z.object({
     status: zMlxRemoteSingleStatusDto
+});
+
+/**
+ * Read the serving intent. Written by the owner's own starts (Mount, remote single start, split
+ * start), removed by the matching explicit stop; an app quit or a goosed exit never touches it.
+ */
+export const zMlxEngineServingIntentRequest_unstable = z.record(z.unknown());
+
+/**
+ * What the owner last started serving MLX chat from on this Mac and did not stop — the thing a
+ * relaunch brings back. `kind`: `single` (this Mac's engine) · `remoteSingle` (the single engine
+ * on Link peer `peer`, whom the owner calls `peerName`) · `split` (the saved distributed config).
+ */
+export const zMlxServingIntentDto = z.object({
+    kind: z.string(),
+    modelId: z.string(),
+    peer: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    peerName: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineServingIntentResponse_unstable = z.object({
+    intent: z.union([
+        zMlxServingIntentDto,
+        z.null()
+    ]).optional(),
+    error: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 /**
@@ -5656,6 +5699,7 @@ export const zExtRequest = z.object({
             zMlxEngineRemoteSingleStartRequest_unstable,
             zMlxEngineRemoteSingleStopRequest_unstable,
             zMlxEngineRemoteSingleStatusRequest_unstable,
+            zMlxEngineServingIntentRequest_unstable,
             zMlxEngineDistributedMakeRoomRequest_unstable,
             zMlxEngineDistributedPeerCandidatesRequest_unstable,
             zMlxEngineDistributedDiscoverRequest_unstable,
@@ -5787,6 +5831,7 @@ export const zExtResponse = z.union([
                 zMlxEngineRemoteSingleStartResponse_unstable,
                 zMlxEngineRemoteSingleStopResponse_unstable,
                 zMlxEngineRemoteSingleStatusResponse_unstable,
+                zMlxEngineServingIntentResponse_unstable,
                 zMlxEngineDistributedMakeRoomResponse_unstable,
                 zMlxEngineDistributedPeerCandidatesResponse_unstable,
                 zMlxEngineDistributedDiscoverResponse_unstable,

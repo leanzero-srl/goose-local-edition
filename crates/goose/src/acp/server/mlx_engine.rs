@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::config::ConfigError;
+use crate::providers::mlx_serving_intent::{self, IntentKind, IntentRecord, ServingIntent};
 use goose_sidecar::engine::{
     expand_tilde, global_manager, EngineLoad, EngineSettings, MlxEngineManager, ModelProfile,
     MountRefused, ThinkingMode,
@@ -71,6 +72,68 @@ pub(super) fn align_omlx_host_env() {
 }
 
 static LAST_ENGINE_STATE: StdMutex<String> = StdMutex::new(String::new());
+
+/// The owner's own start, recorded for the next launch. A record that cannot be written does not
+/// undo the start — the engine serves either way — but its return after a relaunch is lost, and
+/// the log says exactly that.
+pub(super) fn remember_serving(intent: ServingIntent) {
+    if let Err(e) = mlx_serving_intent::remember(&intent) {
+        warn!(
+            error = %format!("{e:#}"),
+            ?intent,
+            "the MLX serving intent was not recorded; a relaunch will not bring it back"
+        );
+    }
+}
+
+/// The owner's explicit stop: what served as `kind` does not come back at the next launch.
+pub(super) fn forget_serving(kind: IntentKind) {
+    if let Err(e) = mlx_serving_intent::forget(kind) {
+        warn!(
+            error = %format!("{e:#}"),
+            ?kind,
+            "the MLX serving intent was not removed; the next launch may restore what was stopped"
+        );
+    }
+}
+
+fn serving_intent_response(record: IntentRecord) -> MlxEngineServingIntentResponse {
+    match record {
+        IntentRecord::Absent => MlxEngineServingIntentResponse::default(),
+        IntentRecord::Present(intent) => MlxEngineServingIntentResponse {
+            intent: Some(match intent {
+                ServingIntent::Single { model_id } => MlxServingIntentDto {
+                    kind: "single".to_string(),
+                    model_id,
+                    ..Default::default()
+                },
+                ServingIntent::RemoteSingle {
+                    peer,
+                    peer_name,
+                    model_id,
+                } => MlxServingIntentDto {
+                    kind: "remoteSingle".to_string(),
+                    model_id,
+                    peer: Some(peer),
+                    peer_name: Some(peer_name),
+                },
+                ServingIntent::Split { model_id } => MlxServingIntentDto {
+                    kind: "split".to_string(),
+                    model_id,
+                    ..Default::default()
+                },
+            }),
+            error: None,
+        },
+        IntentRecord::Unreadable { path, error } => MlxEngineServingIntentResponse {
+            intent: None,
+            error: Some(format!(
+                "the record of what served before the relaunch ({}) is unreadable: {error}",
+                path.display()
+            )),
+        },
+    }
+}
 
 static DOWNLOAD_TRACKER: LazyLock<DownloadTracker> = LazyLock::new(DownloadTracker::new);
 
@@ -807,7 +870,12 @@ impl GooseAcpAgent {
         if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
             return self.mlx_engine_relay(&node, MlxOp::Mount, &req).await;
         }
-        core_mount(req).await
+        let model_id = req.model_id.clone();
+        let response = core_mount(req).await?;
+        if response.refusal.is_none() {
+            remember_serving(ServingIntent::Single { model_id });
+        }
+        Ok(response)
     }
 
     pub(super) async fn on_mlx_engine_unmount(
@@ -817,7 +885,16 @@ impl GooseAcpAgent {
         if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
             return self.mlx_engine_relay(&node, MlxOp::Unmount, &req).await;
         }
-        core_unmount(req).await
+        let response = core_unmount(req).await?;
+        forget_serving(IntentKind::Single);
+        Ok(response)
+    }
+
+    pub(super) async fn on_mlx_engine_serving_intent(
+        &self,
+        _req: MlxEngineServingIntentRequest,
+    ) -> Result<MlxEngineServingIntentResponse, agent_client_protocol::Error> {
+        Ok(serving_intent_response(mlx_serving_intent::read()))
     }
 
     pub(super) async fn on_mlx_engine_settings_read(
@@ -1114,6 +1191,42 @@ impl MlxControl for GoosedMlxControl {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn the_serving_intent_reads_as_its_kind_or_a_named_failure() {
+        assert!(serving_intent_response(IntentRecord::Absent)
+            .intent
+            .is_none());
+        let remote = serving_intent_response(IntentRecord::Present(ServingIntent::RemoteSingle {
+            peer: "worksmacstudio-lan-9c1e2a".to_string(),
+            peer_name: "Work's Mac Studio".to_string(),
+            model_id: "m".to_string(),
+        }));
+        assert_eq!(
+            serde_json::to_value(&remote).unwrap(),
+            serde_json::json!({"intent": {
+                "kind": "remoteSingle",
+                "modelId": "m",
+                "peer": "worksmacstudio-lan-9c1e2a",
+                "peerName": "Work's Mac Studio",
+            }})
+        );
+        let split = serving_intent_response(IntentRecord::Present(ServingIntent::Split {
+            model_id: "s".to_string(),
+        }))
+        .intent
+        .unwrap();
+        assert_eq!((split.kind.as_str(), split.peer), ("split", None));
+        let unreadable = serving_intent_response(IntentRecord::Unreadable {
+            path: "/state/mlx-serving-intent.json".into(),
+            error: "expected value".to_string(),
+        });
+        assert!(unreadable.intent.is_none());
+        assert!(unreadable
+            .error
+            .unwrap()
+            .ends_with("(/state/mlx-serving-intent.json) is unreadable: expected value"));
+    }
 
     const QWEN38: &str =
         include_str!("../../../../goose-sidecar/tests/fixtures/chat_templates/qwen3.8.jinja");

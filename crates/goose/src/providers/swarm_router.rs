@@ -2094,6 +2094,7 @@ devices:
             base_url: "http://127.0.0.1:61001/relay/cafe".to_string(),
             peer: "worksmacstudio-lan-9c1e2a".to_string(),
             peer_hostname: "WorksMacStudio.lan".to_string(),
+            peer_computer_name: None,
             model_id: HF_ID.to_string(),
             served_model_id: SERVED.to_string(),
             capacity,

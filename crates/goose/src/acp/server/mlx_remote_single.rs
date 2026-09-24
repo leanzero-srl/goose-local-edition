@@ -12,6 +12,7 @@
 use super::*;
 use crate::config::ConfigError;
 use crate::providers::mlx_remote::{self, PublishedRoute, RouteRecord};
+use crate::providers::mlx_serving_intent::{IntentKind, ServingIntent};
 use goose_sidecar::engine::{served_model_id, EngineSettings};
 use leanzero_link::inference::{InferenceRelay, PeerCallResolver, ENGINE_UNREACHABLE};
 use leanzero_link::manager::{AuthState, LinkError, LinkManager};
@@ -194,6 +195,8 @@ async fn route_status(
         state: "mounting".to_string(),
         peer: Some(route.peer.clone()),
         peer_hostname: Some(route.peer_hostname.clone()),
+        peer_computer_name: route.peer_computer_name.clone(),
+        base_url: Some(route.base_url.clone()),
         model_id: Some(route.model_id.clone()),
         served_model_id: Some(route.served_model_id.clone()),
         capacity: Some(route.capacity),
@@ -208,7 +211,9 @@ async fn route_status(
             }
             Ok((served, _, _)) => Some(format!(
                 "{} now serves {:?}, the route wants '{}'",
-                route.peer_hostname, served, route.served_model_id
+                route.peer_name(),
+                served,
+                route.served_model_id
             )),
             Err(e) => Some(format!("{e:#}")),
         },
@@ -257,7 +262,7 @@ async fn route_status(
         Ok(peer) => {
             status.state = "failed".to_string();
             status.last_error = Some(peer_engine_failure(
-                &route.peer_hostname,
+                route.peer_name(),
                 &peer.status,
                 &models_error,
             ));
@@ -344,7 +349,8 @@ impl GooseAcpAgent {
                     "remoteSingleActive",
                     format!(
                         "chat is already served from {} ({}); stop it first",
-                        route.peer_hostname, route.model_id
+                        route.peer_name(),
+                        route.model_id
                     ),
                 ))
             }
@@ -353,7 +359,9 @@ impl GooseAcpAgent {
                     "remoteSingleActive",
                     format!(
                         "another goose window on this Mac (goosed pid {}) routes chat to {} ({}); stop it from that window",
-                        route.pid, route.peer_hostname, route.model_id
+                        route.pid,
+                        route.peer_name(),
+                        route.model_id
                     ),
                 ))
             }
@@ -373,7 +381,11 @@ impl GooseAcpAgent {
         }
 
         let manager = self.connected_link_manager().await?;
-        let peer_hostname = peer_hostname(&manager, &req.peer).await?;
+        let (peer_hostname, peer_computer_name) = peer_names(&manager, &req.peer).await?;
+        let peer_name = match peer_computer_name.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => name.to_string(),
+            _ => peer_hostname.clone(),
+        };
 
         let relay = InferenceRelay::start(
             req.peer.clone(),
@@ -405,7 +417,7 @@ impl GooseAcpAgent {
         let capacity = peer_status.status.max_concurrent_requests.ok_or_else(|| {
             refusal(
                 "peerTooOld",
-                format!("{peer_hostname}'s goose does not report its admission cap (maxConcurrentRequests); update goose there"),
+                format!("{peer_name}'s goose does not report its admission cap (maxConcurrentRequests); update goose there"),
             )
         })?;
         let peer_settings: MlxEngineSettingsResponse = peer_op(
@@ -443,7 +455,7 @@ impl GooseAcpAgent {
                 return Err(refusal(
                     "peerMountFailed",
                     format!(
-                        "{peer_hostname}'s memory gate refused '{}': {}",
+                        "{peer_name}'s memory gate refused '{}': {}",
                         req.model_id, refused.fit.message
                     ),
                 ));
@@ -455,6 +467,7 @@ impl GooseAcpAgent {
             base_url: relay.base_url().to_string(),
             peer: req.peer.clone(),
             peer_hostname,
+            peer_computer_name,
             model_id: req.model_id.clone(),
             served_model_id: served,
             capacity,
@@ -468,7 +481,7 @@ impl GooseAcpAgent {
         })?;
         super::mlx_engine::align_omlx_host_env();
         tracing::info!(
-            peer = %route.peer_hostname,
+            peer = %route.peer_name(),
             model = %route.model_id,
             served = %route.served_model_id,
             capacity = route.capacity,
@@ -483,11 +496,23 @@ impl GooseAcpAgent {
         req: MlxEngineRemoteSingleStartRequest,
     ) -> Result<MlxEngineRemoteSingleStartResponse, agent_client_protocol::Error> {
         Ok(match self.remote_single_start(&req).await {
-            Ok(status) => MlxEngineRemoteSingleStartResponse {
-                started: true,
-                refusal: None,
-                status,
-            },
+            Ok(status) => {
+                super::mlx_engine::remember_serving(ServingIntent::RemoteSingle {
+                    peer: req.peer.clone(),
+                    peer_name: status
+                        .peer_computer_name
+                        .clone()
+                        .filter(|name| !name.trim().is_empty())
+                        .or_else(|| status.peer_hostname.clone())
+                        .unwrap_or_else(|| req.peer.clone()),
+                    model_id: req.model_id.clone(),
+                });
+                MlxEngineRemoteSingleStartResponse {
+                    started: true,
+                    refusal: None,
+                    status,
+                }
+            }
             Err(refused) => MlxEngineRemoteSingleStartResponse {
                 started: false,
                 refusal: Some(refused),
@@ -503,11 +528,13 @@ impl GooseAcpAgent {
         if let RouteRecord::Other(route) = mlx_remote::read() {
             return Err(agent_client_protocol::Error::invalid_params().data(format!(
                 "remoteSingleActive: another goose window on this Mac (goosed pid {}) owns the route to {}; stop it from that window",
-                route.pid, route.peer_hostname
+                route.pid,
+                route.peer_name()
             )));
         }
         let route = mlx_remote::uninstall()
             .internal_err_ctx("withdrawing the remote-single route record")?;
+        super::mlx_engine::forget_serving(IntentKind::RemoteSingle);
         super::mlx_engine::align_omlx_host_env();
         let (mut unmounted, mut unmount_error) = (false, None);
         if let (Some(route), false) = (&route, req.keep_mounted) {
@@ -528,7 +555,8 @@ impl GooseAcpAgent {
                 Err(refused) => {
                     unmount_error = Some(format!(
                         "{}'s engine was left mounted: {}",
-                        route.peer_hostname, refused.message
+                        route.peer_name(),
+                        refused.message
                     ))
                 }
             }
@@ -566,11 +594,12 @@ impl GooseAcpAgent {
     }
 }
 
-/// The mesh hostname of `peer` (a node id or a hostname), from the live peer view.
-async fn peer_hostname(
+/// The mesh hostname of `peer` (a node id or a hostname) and the name its owner gave it, from the
+/// live peer view.
+async fn peer_names(
     manager: &LinkManager,
     peer: &str,
-) -> Result<String, MlxRemoteSingleRefusalDto> {
+) -> Result<(String, Option<String>), MlxRemoteSingleRefusalDto> {
     let registry = manager
         .active_registry()
         .await
@@ -579,7 +608,7 @@ async fn peer_hostname(
         .peer_nodes()
         .into_iter()
         .find(|node| node.node_id == peer || node.hostname == peer)
-        .map(|node| node.hostname)
+        .map(|node| (node.hostname, node.computer_name))
         .ok_or_else(|| link_refusal(&LinkError::UnknownPeer(peer.to_string())))
 }
 

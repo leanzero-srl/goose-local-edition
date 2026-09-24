@@ -207,6 +207,8 @@ import type {
   MlxEngineReplicaTargetsResponse_unstable,
   MlxEngineReplicateRequest_unstable,
   MlxEngineReplicateResponse_unstable,
+  MlxEngineServingIntentRequest_unstable,
+  MlxEngineServingIntentResponse_unstable,
   MlxEngineSettingsReadRequest_unstable,
   MlxEngineSettingsResponse_unstable,
   MlxEngineSettingsUpdateRequest_unstable,
@@ -371,6 +373,7 @@ import {
   zMlxEngineReplicaProgressResponse_unstable,
   zMlxEngineReplicaTargetsResponse_unstable,
   zMlxEngineReplicateResponse_unstable,
+  zMlxEngineServingIntentResponse_unstable,
   zMlxEngineSettingsResponse_unstable,
   zMlxEngineSpeedHistoryResponse_unstable,
   zMlxEngineStatusResponse_unstable,
@@ -1825,6 +1828,18 @@ export class GooseExtClient {
     return zMlxEngineRemoteSingleStatusResponse_unstable.parse(
       raw,
     ) as MlxEngineRemoteSingleStatusResponse_unstable;
+  }
+
+  async mlxEngineServingIntent_unstable(
+    params: MlxEngineServingIntentRequest_unstable,
+  ): Promise<MlxEngineServingIntentResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/servingIntent",
+      params,
+    );
+    return zMlxEngineServingIntentResponse_unstable.parse(
+      raw,
+    ) as MlxEngineServingIntentResponse_unstable;
   }
 
   async mlxEngineDistributedMakeRoom_unstable(
