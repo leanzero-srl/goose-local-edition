@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "not measured"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "answering"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "Running in another window"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "not answering"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "Read-only here: Start and Stop belong to the window that started it (goosed pid {pid})."
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{model} on {nodes} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "Passed"
   },

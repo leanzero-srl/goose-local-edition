@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "मापा नहीं गया"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "जवाब दे रहा है"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "दूसरी विंडो में चल रहा है"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "जवाब नहीं दे रहा"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "यहाँ केवल पढ़ने के लिए: शुरू और बंद करना उस विंडो का काम है जिसने इसे शुरू किया (goosed pid {pid})।"
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{nodes} पर {model} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "पास"
   },

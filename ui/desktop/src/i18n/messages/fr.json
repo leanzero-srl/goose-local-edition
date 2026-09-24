@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "non mesuré"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "répond"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "En cours dans une autre fenêtre"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "ne répond pas"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "Lecture seule ici : Démarrer et Arrêter appartiennent à la fenêtre qui l’a lancé (PID goosed {pid})."
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{model} sur {nodes} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "Réussi"
   },

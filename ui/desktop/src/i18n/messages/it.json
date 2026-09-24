@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "non misurato"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "risponde"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "In esecuzione in un’altra finestra"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "non risponde"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "Sola lettura qui: Avvia e Arresta appartengono alla finestra che l’ha avviato (pid goosed {pid})."
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{model} su {nodes} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "Superato"
   },

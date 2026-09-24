@@ -84,7 +84,8 @@ vi.mock('../../contexts/FeaturesContext', () => ({
 }));
 
 const mockDistributedStatus = vi.fn();
-vi.mock('../../acp/mlx-distributed', () => ({
+vi.mock('../../acp/mlx-distributed', async (importOriginal) => ({
+  foreignOwner: (await importOriginal<typeof import('../../acp/mlx-distributed')>()).foreignOwner,
   mlxDistributedStatus: (...a: unknown[]) => mockDistributedStatus(...a),
   mlxDistributedPreflight: vi.fn(),
   mlxDistributedStart: vi.fn(),

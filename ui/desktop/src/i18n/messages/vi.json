@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "chưa đo"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "đang phản hồi"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "Đang chạy trong cửa sổ khác"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "không phản hồi"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "Chỉ đọc ở đây: Bắt đầu và Dừng thuộc về cửa sổ đã khởi chạy nó (pid goosed {pid})."
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{model} trên {nodes} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "Đạt"
   },

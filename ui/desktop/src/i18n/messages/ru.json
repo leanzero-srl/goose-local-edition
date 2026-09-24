@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "не измерено"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "отвечает"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "Запущено в другом окне"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "не отвечает"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "Здесь только просмотр: запуск и остановка — в окне, которое его запустило (PID goosed {pid})."
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{model} на {nodes} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "Пройдено"
   },

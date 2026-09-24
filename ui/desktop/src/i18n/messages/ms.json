@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "tidak diukur"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "menjawab"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "Berjalan dalam tetingkap lain"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "tidak menjawab"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "Baca sahaja di sini: Mula dan Henti milik tetingkap yang memulakannya (pid goosed {pid})."
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{model} pada {nodes} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "Lulus"
   },

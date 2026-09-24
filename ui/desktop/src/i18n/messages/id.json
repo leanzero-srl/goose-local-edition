@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "tidak terukur"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "menjawab"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "Berjalan di jendela lain"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "tidak menjawab"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "Hanya-baca di sini: Mulai dan Hentikan milik jendela yang memulainya (pid goosed {pid})."
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{model} di {nodes} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "Lolos"
   },

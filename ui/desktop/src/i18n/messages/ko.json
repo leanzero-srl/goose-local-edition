@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "측정 안 됨"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "응답 중"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "다른 창에서 실행 중"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "응답 없음"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "여기서는 읽기 전용: 시작과 중지는 이를 시작한 창에서 합니다(goosed pid {pid})."
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{nodes}의 {model} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "통과"
   },

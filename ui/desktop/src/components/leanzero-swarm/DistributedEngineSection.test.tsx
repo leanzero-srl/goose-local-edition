@@ -37,7 +37,9 @@ const mockConfigUpdate = vi.fn();
 const mockCandidates = vi.fn();
 const mockDiscover = vi.fn();
 const mockProvision = vi.fn();
-vi.mock('../../acp/mlx-distributed', () => ({
+vi.mock('../../acp/mlx-distributed', async (importOriginal) => ({
+  // The pure reading of `status.owner` is the real one; only the ACP calls are mocked.
+  foreignOwner: (await importOriginal<typeof import('../../acp/mlx-distributed')>()).foreignOwner,
   mlxDistributedPreflight: (...a: unknown[]) => mockPreflight(...a),
   mlxDistributedStart: (...a: unknown[]) => mockStart(...a),
   mlxDistributedStop: (...a: unknown[]) => mockStop(...a),
@@ -707,5 +709,77 @@ describe('DistributedEngineSection — macOS local network privacy', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Preflight (dry run)' }));
     expect(await screen.findByTestId('mlx-dist-preflight')).toHaveAttribute('data-ok', 'true');
     expect(screen.queryByTestId('local-network-blocked')).toBeNull();
+  });
+});
+
+describe('DistributedEngineSection — a run another window supervises', () => {
+  // 9d45fa088: this window's goosed supervises nothing; the record another window's goosed
+  // published is `status.owner`, and distributedStart refuses `ownedByAnotherWindow`.
+  const OTHER = {
+    ...STOPPED_WITH_CONFIG,
+    owner: {
+      state: 'answering',
+      pid: 51234,
+      baseUrl: 'http://127.0.0.1:8191',
+      servedModelId: 'mihai-qwen3.8-27b-atlassian-q8-mlx',
+      modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+      backend: 'jaccl',
+      nodeNames: ['Mihai Macbook', 'Work’s Mac Studio'],
+    },
+  };
+
+  it('is read-only here: what it serves, where, and Start/Stop disabled with the reason', async () => {
+    const { container } = section({ status: { ...OTHER, state: 'failed' } });
+    const run = screen.getByTestId('mlx-dist-other-window');
+    expect(run).toHaveAttribute('data-state', 'answering');
+    expect(run).toHaveTextContent('Running in another window');
+    expect(run).toHaveTextContent(
+      'mihai-qwen3.8-27b-atlassian-q8-mlx on Mihai Macbook · Work’s Mac Studio · JACCL · answering'
+    );
+    expect(run).toHaveTextContent(
+      'Read-only here: Start and Stop belong to the window that started it (goosed pid 51234).'
+    );
+    expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeDisabled();
+    await expectDesigned(container);
+  });
+
+  it('a record whose engine does not answer says so with the reason', () => {
+    section({
+      status: {
+        ...OTHER,
+        owner: {
+          ...OTHER.owner,
+          state: 'notAnswering',
+          detail: 'GET http://127.0.0.1:8191/v1/models failed',
+        },
+      },
+    });
+    expect(screen.getByTestId('mlx-dist-other-window')).toHaveTextContent(
+      'JACCL · not answering — GET http://127.0.0.1:8191/v1/models failed'
+    );
+  });
+
+  it('a stale record owns nothing: Start stays available', () => {
+    section({ status: { ...OTHER, owner: { ...OTHER.owner, state: 'stale' } } });
+    expect(screen.queryByTestId('mlx-dist-other-window')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Start' })).toBeEnabled();
+  });
+
+  it('a start that raced the other window is named as such, not as a generic refusal', async () => {
+    mockStart.mockResolvedValue({
+      started: false,
+      refusal: {
+        code: 'ownedByAnotherWindow',
+        message:
+          "the distributed MLX engine serving 'mihai-qwen3.8-27b-atlassian-q8-mlx' at http://127.0.0.1:8191 is owned by another window (goosed pid 51234); start and stop it from that window",
+      },
+    });
+    section({ status: STOPPED_WITH_CONFIG });
+    await userEvent.click(screen.getByRole('button', { name: 'Start' }));
+    const refusal = await screen.findByTestId('mlx-dist-refusal');
+    expect(refusal).toHaveTextContent('Running in another window');
+    expect(refusal).not.toHaveTextContent('Start refused');
+    expect(refusal).toHaveAttribute('data-tone', 'warn');
   });
 });

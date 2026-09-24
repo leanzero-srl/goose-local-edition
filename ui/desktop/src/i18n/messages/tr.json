@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "ölçülmedi"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "yanıt veriyor"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "Başka bir pencerede çalışıyor"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "yanıt vermiyor"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "Burada salt okunur: Başlat ve Durdur, onu başlatan pencereye aittir (goosed pid {pid})."
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{nodes} üzerinde {model} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "Geçti"
   },

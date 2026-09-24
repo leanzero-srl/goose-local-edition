@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "未測定"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "応答あり"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "別のウィンドウで実行中"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "応答なし"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "ここでは読み取り専用: 開始と停止は起動したウィンドウで行います（goosed pid {pid}）。"
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{nodes} 上の {model} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "合格"
   },

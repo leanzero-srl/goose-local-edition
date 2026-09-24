@@ -43,6 +43,7 @@ import {
   DialogTitle,
 } from '../ui/dialog';
 import {
+  foreignOwner,
   mlxDistributedConfigUpdate,
   mlxDistributedPreflight,
   mlxDistributedStart,
@@ -53,6 +54,7 @@ import {
   type MlxDistributedNodeConfig,
   type MlxDistributedNodePreflight,
   type MlxDistributedNodeStatus,
+  type MlxDistributedOwner,
   type MlxDistributedPreflight,
   type MlxDistributedProvision,
   type MlxDistributedStartResponse,
@@ -349,6 +351,24 @@ const i18n = defineMessages({
   },
   modelDir: { id: 'mlxDistributed.field.modelDir', defaultMessage: 'Model folder on this node' },
   startRefused: { id: 'mlxDistributed.startRefused', defaultMessage: 'Start refused' },
+  otherWindow: {
+    id: 'mlxDistributed.otherWindow.label',
+    defaultMessage: 'Running in another window',
+  },
+  otherWindowRun: {
+    id: 'mlxDistributed.otherWindow.run',
+    defaultMessage: '{model} on {nodes} · {backend} · {state}',
+  },
+  otherWindowAnswering: { id: 'mlxDistributed.otherWindow.answering', defaultMessage: 'answering' },
+  otherWindowNotAnswering: {
+    id: 'mlxDistributed.otherWindow.notAnswering',
+    defaultMessage: 'not answering',
+  },
+  otherWindowReadOnly: {
+    id: 'mlxDistributed.otherWindow.readOnly',
+    defaultMessage:
+      'Read-only here: Start and Stop belong to the window that started it (goosed pid {pid}).',
+  },
   preflightError: { id: 'mlxDistributed.error.preflight', defaultMessage: 'Preflight error' },
   startError: { id: 'mlxDistributed.error.start', defaultMessage: 'Start error' },
   stopError: { id: 'mlxDistributed.error.stop', defaultMessage: 'Stop error' },
@@ -460,6 +480,8 @@ const NODE_FIELDS: readonly NodeTextField[] = [
 ];
 
 const META = cx(TYPE.meta, TNUM);
+/** distributedStart's refusal code while another window's goosed supervises the run. */
+const OWNED_BY_ANOTHER_WINDOW = 'ownedByAnotherWindow';
 const BIG = cx('text-[28px] leading-none tracking-tight', WEIGHT.semibold, TNUM);
 
 function Absent() {
@@ -888,6 +910,37 @@ function RunFacts({ status }: { status: MlxDistributedStatus }) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A run another window supervises (each window runs its own goosed)
+// ---------------------------------------------------------------------------
+
+function OtherWindowRun({ owner }: { owner: MlxDistributedOwner }) {
+  const intl = useIntl();
+  const answering = owner.state === 'answering';
+  const run = intl.formatMessage(i18n.otherWindowRun, {
+    model: owner.servedModelId ?? owner.modelId ?? '—',
+    nodes: owner.nodeNames?.length ? owner.nodeNames.join(' · ') : '—',
+    backend: backendName(owner.backend) ?? '—',
+    state: intl.formatMessage(answering ? i18n.otherWindowAnswering : i18n.otherWindowNotAnswering),
+  });
+  return (
+    <div
+      data-testid="mlx-dist-other-window"
+      data-state={owner.state}
+      className="flex flex-col gap-1"
+    >
+      <ToneBanner
+        tone={answering ? 'accent' : 'warn'}
+        label={intl.formatMessage(i18n.otherWindow)}
+        text={owner.detail ? `${run} — ${owner.detail}` : run}
+      />
+      <p className={TYPE.meta}>
+        {intl.formatMessage(i18n.otherWindowReadOnly, { pid: owner.pid ?? '—' })}
+      </p>
     </div>
   );
 }
@@ -1378,6 +1431,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const [setupOpen, setSetupOpen] = useState(false);
 
   const owning = ownsTheMac(status);
+  const otherWindow = foreignOwner(status);
   // A refusal is the answer to ONE start; once the run owns the Mac it no longer describes it.
   useEffect(() => {
     if (owning) setRefusal(null);
@@ -1570,8 +1624,10 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
       )}
       {refusal && (
         <ToneBanner
-          tone="err"
-          label={intl.formatMessage(i18n.startRefused)}
+          tone={refusal.code === OWNED_BY_ANOTHER_WINDOW ? 'warn' : 'err'}
+          label={intl.formatMessage(
+            refusal.code === OWNED_BY_ANOTHER_WINDOW ? i18n.otherWindow : i18n.startRefused
+          )}
           text={refusal.message}
           testId="mlx-dist-refusal"
         />
@@ -1619,6 +1675,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
         <ToneBanner tone="err" label={intl.formatMessage(i18n.lastError)} text={status.lastError} />
       )}
       {lastAlarmKind === LOCAL_NETWORK_EVENT && <LocalNetworkNotice />}
+      {otherWindow && <OtherWindowRun owner={otherWindow} />}
 
       {status && (
         <div className="flex flex-col gap-2">
@@ -1636,7 +1693,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
                 variant="destructive"
                 icon={busy === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
                 onClick={() => setConfirmStop(true)}
-                disabled={busy != null}
+                disabled={busy != null || otherWindow != null}
               >
                 {intl.formatMessage(i18n.stop)}
               </Button>
@@ -1652,7 +1709,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
                   )
                 }
                 onClick={onStart}
-                disabled={!canAct}
+                disabled={!canAct || otherWindow != null}
               >
                 {intl.formatMessage(i18n.start)}
               </Button>

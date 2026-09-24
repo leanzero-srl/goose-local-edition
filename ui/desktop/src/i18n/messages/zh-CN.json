@@ -3038,6 +3038,21 @@
   "mlxDistributed.notMeasured": {
     "defaultMessage": "未测量"
   },
+  "mlxDistributed.otherWindow.answering": {
+    "defaultMessage": "有响应"
+  },
+  "mlxDistributed.otherWindow.label": {
+    "defaultMessage": "正在另一个窗口中运行"
+  },
+  "mlxDistributed.otherWindow.notAnswering": {
+    "defaultMessage": "无响应"
+  },
+  "mlxDistributed.otherWindow.readOnly": {
+    "defaultMessage": "此处只读：启动和停止由启动它的窗口负责（goosed pid {pid}）。"
+  },
+  "mlxDistributed.otherWindow.run": {
+    "defaultMessage": "{model}，位于 {nodes} · {backend} · {state}"
+  },
   "mlxDistributed.passed": {
     "defaultMessage": "通过"
   },
