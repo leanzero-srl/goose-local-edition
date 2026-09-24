@@ -4296,6 +4296,79 @@ pub struct LeanzeroLinkLogoutRequest {
     pub wipe: bool,
 }
 
+/// Take this node off the mesh and KEEP it off across launches; the account stays
+/// signed in (`loggedIn`). Records the intent `disconnected`, so no launch reconnects
+/// until the user connects again. `connect` is the way back.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/leanzeroLink/disconnect",
+    response = LeanzeroLinkStateResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkDisconnectRequest {}
+
+/// Whether the user wants this node on the mesh.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum LeanzeroLinkIntentValueDto {
+    /// Reconnect at every launch with no user action.
+    Connected,
+    /// Stay off until the user connects.
+    Disconnected,
+}
+
+/// Which action produced the intent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum LeanzeroLinkIntentCauseDto {
+    UserConnect,
+    UserDisconnect,
+    UserLogout,
+    /// No record existed; derived from a stored identity + the goose-owned mesh state a
+    /// previous connect left.
+    Migrated,
+    /// No record and nothing on disk shows a previous connect.
+    NoRecord,
+}
+
+/// The user's persisted mesh intent (`~/.leanzero/link-intent.json`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkIntentDto {
+    pub intent: LeanzeroLinkIntentValueDto,
+    pub cause: LeanzeroLinkIntentCauseDto,
+    /// RFC3339.
+    pub updated_at: String,
+}
+
+/// What goosed did about a `connected` intent without the user — the reconnect it runs
+/// once per launch. Internally tagged on `state`:
+/// `idle | skipped | reconnecting | reconnected | failed`. `failed` is the loud one: the
+/// mesh should be up and is not, `reason` says why, and Retry is `connect`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "camelCase")]
+pub enum LeanzeroLinkReconnectDto {
+    /// No launch reconnect ran, or the user connected/disconnected by hand since.
+    #[default]
+    Idle,
+    Skipped {
+        reason: String,
+    },
+    Reconnecting {
+        #[serde(rename = "startedAt")]
+        started_at: String,
+    },
+    Reconnected {
+        at: String,
+        #[serde(rename = "meshIp")]
+        mesh_ip: String,
+    },
+    Failed {
+        reason: String,
+        at: String,
+    },
+}
+
 /// The auth lifecycle state. Internally tagged on `state`:
 /// `loggedOut | codeSent | loggedIn | connecting | connected`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
@@ -4397,6 +4470,15 @@ pub struct LeanzeroLinkStateResponse {
     /// `/v1/swarm/mlx/*` op answers `501`.
     #[serde(default)]
     pub mlx_control_wired: bool,
+    /// The user's persisted mesh intent; absent only when the record is unreadable, and
+    /// then `intentError` says why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<LeanzeroLinkIntentDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent_error: Option<String>,
+    /// The launch reconnect's outcome.
+    #[serde(default)]
+    pub reconnect: LeanzeroLinkReconnectDto,
 }
 
 /// The swarm node view (`self` + peers). Proxies the local control service's

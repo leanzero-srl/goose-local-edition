@@ -487,7 +487,9 @@ pub fn wire_link_for_serve(config: ServeLinkConfig) {
     ))));
     super::set_executor(ServeRemoteExecutor::new(Config::global(), config.builtins));
     super::set_mlx_control(GoosedMlxControl::new());
-    info!("leanzeroLink: remote executor, delta source and mlx control wired for `goose serve`");
+    // The mesh the user left connected comes back with this goosed, no click needed.
+    super::link::arm_link_reconnect_at_boot();
+    info!("leanzeroLink: remote executor, delta source and mlx control wired for `goose serve`; launch reconnect armed");
 }
 
 // ---------------------------------------------------------------------------

@@ -1276,6 +1276,14 @@ impl GooseAcpAgent {
         self.on_leanzero_link_logout(req).await
     }
 
+    #[custom_method(LeanzeroLinkDisconnectRequest)]
+    async fn dispatch_leanzero_link_disconnect(
+        &self,
+        req: LeanzeroLinkDisconnectRequest,
+    ) -> Result<LeanzeroLinkStateResponse, agent_client_protocol::Error> {
+        self.on_leanzero_link_disconnect(req).await
+    }
+
     #[custom_method(LeanzeroLinkNodesRequest)]
     async fn dispatch_leanzero_link_nodes(
         &self,

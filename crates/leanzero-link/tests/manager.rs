@@ -2128,3 +2128,358 @@ async fn the_chat_relay_reaches_a_peer_through_the_connected_managers_registry()
         "{text}"
     );
 }
+
+// ── the persisted intent + the launch reconnect ─────────────────────────────
+//
+// A "relaunch" here is what it is in goosed: the manager is dropped and a NEW one is
+// built over the same identity/intent/state paths, then `auto_reconnect` runs once.
+
+use leanzero_link::intent::{IntentCause, IntentRecord, IntentStore, LinkIntent};
+use leanzero_link::manager::ReconnectState;
+
+async fn mount_join_key_ok(server: &MockServer) {
+    mount(
+        server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+}
+
+fn describe(err: &LinkError) -> String {
+    format!("described: {err}")
+}
+
+impl Harness {
+    fn intent_store(&self) -> IntentStore {
+        IntentStore::beside(&self.identity_path)
+    }
+
+    fn intent(&self) -> Option<IntentRecord> {
+        self.intent_store().load().expect("intent readable")
+    }
+
+    fn seed_intent(&self, intent: LinkIntent, cause: IntentCause) {
+        self.intent_store()
+            .save(&IntentRecord::new(intent, cause))
+            .expect("seed intent");
+    }
+}
+
+#[tokio::test]
+async fn a_user_connect_is_remembered_and_the_relaunch_reconnects_with_no_user_action() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+
+    let first = h.manager(&server, false);
+    assert_eq!(first.status().await.reconnect, ReconnectState::Idle);
+    first.connect().await.expect("the user's connect");
+    let record = h.intent().expect("Connect wrote the intent");
+    assert_eq!(
+        (record.intent, record.cause),
+        (LinkIntent::Connected, IntentCause::UserConnect)
+    );
+    drop(first); // goosed quits: the mesh is stopped, nothing is logged out
+
+    let relaunched = h.manager(&server, false);
+    let state = relaunched.status().await;
+    assert!(matches!(state.auth, AuthState::LoggedIn { .. }));
+    assert_eq!(
+        state.intent.map(|r| r.intent),
+        Some(LinkIntent::Connected)
+    );
+
+    let outcome = relaunched.auto_reconnect(Ok(()), describe).await;
+    match &outcome {
+        ReconnectState::Reconnected { mesh_ip, .. } => assert_eq!(mesh_ip, "100.64.0.7"),
+        other => panic!("expected Reconnected, got {other:?}"),
+    }
+    let state = relaunched.status().await;
+    assert!(matches!(state.auth, AuthState::Connected { .. }));
+    assert_eq!(state.reconnect, outcome, "the outcome rides the status");
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 2, "a fresh daemon");
+    assert_eq!(
+        h.intent().map(|r| r.cause),
+        Some(IntentCause::UserConnect),
+        "the reconnect acts on the intent and never rewrites it"
+    );
+    assert!(relaunched.node_token().await.is_some());
+}
+
+#[tokio::test]
+async fn an_explicit_disconnect_keeps_the_account_and_the_relaunch_stays_off() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+
+    let first = h.manager(&server, false);
+    first.connect().await.unwrap();
+    first.disconnect().await.expect("disconnect");
+    let state = first.status().await;
+    match &state.auth {
+        AuthState::LoggedIn { email } => assert_eq!(email, "a@example.com"),
+        other => panic!("expected LoggedIn after disconnect, got {other:?}"),
+    }
+    assert!(state.mesh.is_none());
+    assert!(first.node_token().await.is_none());
+    assert!(h.identity_present(), "disconnect never touches the credential");
+    {
+        let calls = h.calls.lock().unwrap();
+        assert_eq!(calls.shutdown_count, 1, "the daemon stopped per-pid");
+        assert_eq!(calls.logout_count, 0, "no `tailscale logout` on a disconnect");
+    }
+    let record = h.intent().unwrap();
+    assert_eq!(
+        (record.intent, record.cause),
+        (LinkIntent::Disconnected, IntentCause::UserDisconnect)
+    );
+    drop(first);
+
+    let relaunched = h.manager(&server, false);
+    match relaunched.auto_reconnect(Ok(()), describe).await {
+        ReconnectState::Skipped { reason } => {
+            assert!(reason.contains("you disconnected"), "{reason}")
+        }
+        other => panic!("a disconnected node must stay off, got {other:?}"),
+    }
+    assert!(matches!(
+        relaunched.status().await.auth,
+        AuthState::LoggedIn { .. }
+    ));
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 1, "no daemon started");
+
+    // Connect is the way back on — and it is remembered again.
+    relaunched.connect().await.unwrap();
+    assert_eq!(h.intent().map(|r| r.intent), Some(LinkIntent::Connected));
+}
+
+#[tokio::test]
+async fn a_logout_is_remembered_so_a_later_sign_in_does_not_reconnect_by_itself() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let first = h.manager(&server, false);
+    first.connect().await.unwrap();
+    first.logout(false).await.unwrap();
+    assert_eq!(
+        h.intent().map(|r| (r.intent, r.cause)),
+        Some((LinkIntent::Disconnected, IntentCause::UserLogout))
+    );
+    drop(first);
+
+    h.seed_identity("a@example.com", "fresh-token"); // signed in again, not connected
+    let relaunched = h.manager(&server, false);
+    assert!(matches!(
+        relaunched.auto_reconnect(Ok(()), describe).await,
+        ReconnectState::Skipped { .. }
+    ));
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_connected_intent_without_a_credential_is_a_named_failure() {
+    let server = MockServer::start().await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_intent(LinkIntent::Connected, IntentCause::UserConnect);
+    let manager = h.manager(&server, false);
+    match manager.auto_reconnect(Ok(()), describe).await {
+        ReconnectState::Failed { reason, .. } => {
+            assert!(reason.contains("not signed in"), "{reason}")
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    assert!(matches!(manager.status().await.auth, AuthState::LoggedOut));
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn the_embedders_preflight_refusal_is_the_failure_and_nothing_starts() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    h.seed_intent(LinkIntent::Connected, IntentCause::UserConnect);
+    let manager = h.manager(&server, false);
+    let outcome = manager
+        .auto_reconnect(Err("could not find 'tailscaled'".to_string()), describe)
+        .await;
+    match &outcome {
+        ReconnectState::Failed { reason, .. } => {
+            assert_eq!(reason, "could not find 'tailscaled'")
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    assert_eq!(manager.status().await.reconnect, outcome);
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 0);
+    assert!(matches!(
+        manager.status().await.auth,
+        AuthState::LoggedIn { .. }
+    ));
+}
+
+#[tokio::test]
+async fn a_failing_reconnect_is_named_and_the_users_retry_supersedes_it() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    h.seed_intent(LinkIntent::Connected, IntentCause::UserConnect);
+    let manager = h.manager(&server, true); // every join fails
+
+    match manager.auto_reconnect(Ok(()), describe).await {
+        ReconnectState::Failed { reason, .. } => {
+            assert!(
+                reason.starts_with("described: ") && reason.contains("fake join failure"),
+                "the describer's text, carrying the cause: {reason}"
+            )
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    let state = manager.status().await;
+    assert!(matches!(state.auth, AuthState::LoggedIn { .. }));
+    assert!(state.last_error.is_some());
+    assert_eq!(h.calls.lock().unwrap().shutdown_count, 1, "torn down per-pid");
+    assert!(h.identity_present(), "a mesh failure never clears the credential");
+
+    // Retry = the user's Connect: its own outcome now speaks (last_error), the launch
+    // report is cleared.
+    manager.connect().await.expect_err("join still fails");
+    assert_eq!(manager.status().await.reconnect, ReconnectState::Idle);
+}
+
+#[tokio::test]
+async fn a_dead_token_on_reconnect_signs_out_and_the_next_launch_says_so() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        401,
+        json!({"error": "invalid token", "reason": "expired"}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "dead-token");
+    h.seed_intent(LinkIntent::Connected, IntentCause::UserConnect);
+    let manager = h.manager(&server, false);
+    match manager.auto_reconnect(Ok(()), describe).await {
+        ReconnectState::Failed { reason, .. } => assert!(reason.contains("expired"), "{reason}"),
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    assert!(matches!(manager.status().await.auth, AuthState::LoggedOut));
+    assert!(!h.identity_present());
+    drop(manager);
+
+    let relaunched = h.manager(&server, false);
+    assert!(matches!(
+        relaunched.auto_reconnect(Ok(()), describe).await,
+        ReconnectState::Failed { reason, .. } if reason.contains("not signed in")
+    ));
+}
+
+#[tokio::test]
+async fn an_unreadable_intent_is_loud_and_connect_rewrites_it() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    std::fs::write(h.intent_store().path(), b"not json").unwrap();
+
+    let manager = h.manager(&server, false);
+    let state = manager.status().await;
+    assert!(state.intent.is_none());
+    assert!(
+        state.intent_error.as_deref().unwrap_or("").contains("malformed"),
+        "{:?}",
+        state.intent_error
+    );
+    match manager.auto_reconnect(Ok(()), describe).await {
+        ReconnectState::Failed { reason, .. } => {
+            assert!(reason.contains("could not be read"), "{reason}")
+        }
+        other => panic!("expected Failed, got {other:?}"),
+    }
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 0, "never a guess");
+
+    manager.connect().await.unwrap();
+    assert_eq!(h.intent().map(|r| r.intent), Some(LinkIntent::Connected));
+    assert!(manager.status().await.intent_error.is_none());
+}
+
+#[tokio::test]
+async fn an_install_that_predates_the_record_reconnects_when_it_was_connected_before() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    std::fs::create_dir_all(&h.state_dir).unwrap();
+    std::fs::write(h.state_dir.join("tailscaled.state"), b"{}").unwrap();
+
+    let manager = h.manager(&server, false);
+    assert_eq!(
+        h.intent().map(|r| (r.intent, r.cause)),
+        Some((LinkIntent::Connected, IntentCause::Migrated))
+    );
+    assert!(matches!(
+        manager.auto_reconnect(Ok(()), describe).await,
+        ReconnectState::Reconnected { .. }
+    ));
+}
+
+#[tokio::test]
+async fn a_signed_in_node_that_never_connected_is_not_connected_by_a_launch() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    match manager.auto_reconnect(Ok(()), describe).await {
+        ReconnectState::Skipped { reason } => assert!(reason.contains("never been connected")),
+        other => panic!("expected Skipped, got {other:?}"),
+    }
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 0);
+    assert_eq!(h.intent(), None, "NoRecord is never written");
+}
+
+#[tokio::test]
+async fn a_disconnect_during_the_reconnect_cancels_it_and_the_node_stays_off() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    h.seed_intent(LinkIntent::Connected, IntentCause::UserConnect);
+    let manager = h.manager(&server, false);
+    h.script.hold_join.store(true, Ordering::SeqCst);
+
+    let (outcome, ()) = tokio::join!(manager.auto_reconnect(Ok(()), describe), async {
+        wait_until("the reconnect to reach the mesh join", || async {
+            h.script.join_entered.load(Ordering::SeqCst)
+        })
+        .await;
+        assert!(matches!(
+            manager.status().await.reconnect,
+            ReconnectState::Reconnecting { .. }
+        ));
+        manager.disconnect().await.expect("disconnect mid-reconnect");
+        h.script.hold_join.store(false, Ordering::SeqCst);
+    });
+
+    assert_eq!(outcome, ReconnectState::Idle, "the user's disconnect stands");
+    let state = manager.status().await;
+    assert!(matches!(state.auth, AuthState::LoggedIn { .. }));
+    assert!(manager.active_registry().await.is_none(), "nothing installed");
+    assert!(h.identity_present());
+    let calls = h.calls.lock().unwrap();
+    assert_eq!(calls.shutdown_count, 1, "the fresh daemon stopped per-pid");
+    assert_eq!(calls.logout_count, 0, "a disconnect is not a tailnet logout");
+    assert_eq!(
+        h.intent().map(|r| r.intent),
+        Some(LinkIntent::Disconnected)
+    );
+}
