@@ -2960,6 +2960,12 @@
   "mlxDistributed.fits": {
     "defaultMessage": "들어감"
   },
+  "mlxDistributed.hosting.label": {
+    "defaultMessage": "이 Mac이 랭크를 담당 중"
+  },
+  "mlxDistributed.hosting.text": {
+    "defaultMessage": "{line} — 랭크 PID {pid}. {requester}가 실행을 멈출 때까지 단일 엔진과 이 Mac 자체의 분산 엔진은 거부됩니다."
+  },
   "mlxDistributed.inflight": {
     "defaultMessage": "처리 중"
   },
@@ -3164,6 +3170,15 @@
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {배치의 시퀀스 #개}}"
   },
+  "mlxDistributed.serveNode": {
+    "defaultMessage": "이 Mac을 분산 노드로 사용하도록 허용"
+  },
+  "mlxDistributed.serveNodeError": {
+    "defaultMessage": "설정을 변경할 수 없습니다"
+  },
+  "mlxDistributed.serveNodeHint": {
+    "defaultMessage": "LeanZero Link의 다른 Mac이 여기서 분산 엔진의 랭크를 실행할 수 있습니다 — goose 자체 랭크 프로그램과 점검만 실행하며 임의 명령은 절대 실행하지 않습니다. 기본값은 꺼짐."
+  },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "서버 상태를 읽을 수 없음: {error}"
   },
@@ -3284,6 +3299,9 @@
   "mlxDistributedSetup.detecting": {
     "defaultMessage": "이 Mac과 {peer}을(를) ssh로 조사하는 중…"
   },
+  "mlxDistributedSetup.detectingLink": {
+    "defaultMessage": "LeanZero Link로 이 Mac과 {peer}을(를) 확인하는 중…"
+  },
   "mlxDistributedSetup.differsOn": {
     "defaultMessage": "{nodes}에서 다름"
   },
@@ -3338,8 +3356,71 @@
   "mlxDistributedSetup.gapsTitle": {
     "defaultMessage": "{count, plural, other {값 #개를 찾지 못함}}"
   },
+  "mlxDistributedSetup.headless": {
+    "defaultMessage": "헤드리스 (ssh)"
+  },
   "mlxDistributedSetup.intro": {
     "defaultMessage": "다른 Mac을 한 번만 지정하세요. goose가 이 Mac과 상대를 ssh로 조사해 링크, RDMA, 백엔드, 모델, 포트, Python을 채웁니다."
+  },
+  "mlxDistributedSetup.link.gid": {
+    "defaultMessage": "IPv4 GID {index}"
+  },
+  "mlxDistributedSetup.link.intro": {
+    "defaultMessage": "같은 계정으로 로그인됨. 각 Mac이 메시를 통해 스스로를 설명했습니다. 하나를 고르면 goose가 그 Mac의 goose를 통해 제어합니다 — ssh 없이."
+  },
+  "mlxDistributedSetup.link.memory": {
+    "defaultMessage": "{total}GiB 중 {available}GiB 사용 가능"
+  },
+  "mlxDistributedSetup.link.models": {
+    "defaultMessage": "{count, plural, other {모델 #개}}"
+  },
+  "mlxDistributedSetup.link.noGid": {
+    "defaultMessage": "IPv4 GID 없음"
+  },
+  "mlxDistributedSetup.link.noRdma": {
+    "defaultMessage": "RDMA 장치 없음"
+  },
+  "mlxDistributedSetup.link.noThunderbolt": {
+    "defaultMessage": "Thunderbolt 주소 없음"
+  },
+  "mlxDistributedSetup.link.none": {
+    "defaultMessage": "현재 이 계정의 다른 Mac이 LeanZero Link에 없습니다."
+  },
+  "mlxDistributedSetup.link.notConnected": {
+    "defaultMessage": "LeanZero Link가 연결되지 않았습니다"
+  },
+  "mlxDistributedSetup.link.rdmaActive": {
+    "defaultMessage": "활성"
+  },
+  "mlxDistributedSetup.link.rdmaDown": {
+    "defaultMessage": "포트 꺼짐"
+  },
+  "mlxDistributedSetup.link.servingOff": {
+    "defaultMessage": "{name}에서 “이 Mac을 분산 노드로 사용하도록 허용”을 켜세요 (공급자 › LeanZero MLX › 엔진 › 분산)."
+  },
+  "mlxDistributedSetup.link.state.notServed": {
+    "defaultMessage": "그쪽 goose가 지원하지 않음"
+  },
+  "mlxDistributedSetup.link.state.offline": {
+    "defaultMessage": "오프라인"
+  },
+  "mlxDistributedSetup.link.state.ready": {
+    "defaultMessage": "준비됨"
+  },
+  "mlxDistributedSetup.link.state.servingDisabled": {
+    "defaultMessage": "그쪽에서 꺼짐"
+  },
+  "mlxDistributedSetup.link.state.unreachable": {
+    "defaultMessage": "연결할 수 없음"
+  },
+  "mlxDistributedSetup.link.state.unreadable": {
+    "defaultMessage": "응답했지만 읽을 수 없음"
+  },
+  "mlxDistributedSetup.link.title": {
+    "defaultMessage": "LeanZero Link의 내 Mac"
+  },
+  "mlxDistributedSetup.link.use": {
+    "defaultMessage": "이 Mac 사용"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS 일치"
@@ -3386,6 +3467,9 @@
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "연결할 수 없음"
   },
+  "mlxDistributedSetup.viaLink": {
+    "defaultMessage": "LeanZero Link · {node}"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "분산"
   },
@@ -3400,6 +3484,12 @@
   },
   "mlxMode.distributedNoBackend": {
     "defaultMessage": "{count, plural, other {분산 · 노드 #개}}"
+  },
+  "mlxMode.hosting": {
+    "defaultMessage": "{requester}의 분산 엔진 랭크 {rank} · {model} · {backend}"
+  },
+  "mlxMode.hostingNoBackend": {
+    "defaultMessage": "{requester}의 분산 엔진 랭크 {rank} · {model}"
   },
   "mlxMode.single": {
     "defaultMessage": "단일 · 이 Mac"
@@ -3643,6 +3733,18 @@
   },
   "mlxStateTile.groupLabel": {
     "defaultMessage": "엔진 {state}"
+  },
+  "mlxStateTile.hosting.for": {
+    "defaultMessage": "LeanZero Link를 통한 {requester}의 분산 엔진용"
+  },
+  "mlxStateTile.hosting.pid": {
+    "defaultMessage": "랭크 PID {pid}"
+  },
+  "mlxStateTile.hosting.rank": {
+    "defaultMessage": "랭크 {rank} / {size}"
+  },
+  "mlxStateTile.hosting.singleRefused": {
+    "defaultMessage": "이 Mac이 랭크를 담당하는 동안 여기서 단일 엔진은 거부됩니다."
   },
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "실시간 통계를 사용할 수 없음"

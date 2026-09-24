@@ -289,3 +289,28 @@ export const STOPPED_WITH_CONFIG: MlxDistributedStatus = {
   restarts: 0,
   config: FLASH_CONFIG,
 };
+
+/**
+ * The workhorse serving rank 1 of the MacBook's 27B tensor run over LeanZero Link: its own engine is
+ * stopped (the single engine is refused meanwhile) and `hosting` says whose run it serves.
+ */
+export const HOSTING_RANK_1: MlxDistributedStatus = {
+  ...STOPPED_WITH_CONFIG,
+  config: null,
+  allowDistributedNode: true,
+  hosting: {
+    rank: 1,
+    size: 2,
+    requesterName: 'MacBook Pro',
+    requesterNodeId: 'macbook-1a2b',
+    requesterHostname: 'macbook',
+    modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+    servedModelId: 'mihai-qwen3.8-27b-atlassian-q8-mlx',
+    backend: 'jaccl',
+    runner: 'mlxLmTensor',
+    pid: 4242,
+    state: 'serving',
+    startedMs: 1790200000000,
+    lastPollMs: 1790200002000,
+  },
+};

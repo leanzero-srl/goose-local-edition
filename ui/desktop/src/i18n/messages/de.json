@@ -2960,6 +2960,12 @@
   "mlxDistributed.fits": {
     "defaultMessage": "passt"
   },
+  "mlxDistributed.hosting.label": {
+    "defaultMessage": "Dieser Mac bedient einen Rang"
+  },
+  "mlxDistributed.hosting.text": {
+    "defaultMessage": "{line} — Rang-PID {pid}. Die Einzel-Engine und die eigene verteilte Engine dieses Macs sind gesperrt, bis {requester} den Lauf stoppt."
+  },
   "mlxDistributed.inflight": {
     "defaultMessage": "In Bearbeitung"
   },
@@ -3164,6 +3170,15 @@
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {# Sequenz im Batch} other {# Sequenzen im Batch}}"
   },
+  "mlxDistributed.serveNode": {
+    "defaultMessage": "Diesem Mac erlauben, als verteilter Knoten zu dienen"
+  },
+  "mlxDistributed.serveNodeError": {
+    "defaultMessage": "Die Einstellung konnte nicht geändert werden"
+  },
+  "mlxDistributed.serveNodeHint": {
+    "defaultMessage": "Deine anderen Macs in LeanZero Link können dann hier einen Rang ihrer verteilten Engine ausführen — nur gooses eigene Rang-Programme und Prüfungen, nie ein beliebiger Befehl. Standardmäßig aus."
+  },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "Serverstatus nicht lesbar: {error}"
   },
@@ -3284,6 +3299,9 @@
   "mlxDistributedSetup.detecting": {
     "defaultMessage": "Dieser Mac und {peer} werden per ssh geprüft…"
   },
+  "mlxDistributedSetup.detectingLink": {
+    "defaultMessage": "Prüfe diesen Mac und {peer} über LeanZero Link…"
+  },
   "mlxDistributedSetup.differsOn": {
     "defaultMessage": "abweichend auf {nodes}"
   },
@@ -3338,8 +3356,71 @@
   "mlxDistributedSetup.gapsTitle": {
     "defaultMessage": "{count, plural, one {# Wert nicht gefunden} other {# Werte nicht gefunden}}"
   },
+  "mlxDistributedSetup.headless": {
+    "defaultMessage": "Headless (ssh)"
+  },
   "mlxDistributedSetup.intro": {
     "defaultMessage": "Nenne den anderen Mac einmal. goose prüft diesen Mac und ihn per ssh und füllt Verbindung, RDMA, Backend, Modelle, Ports und Python aus."
+  },
+  "mlxDistributedSetup.link.gid": {
+    "defaultMessage": "IPv4-GID {index}"
+  },
+  "mlxDistributedSetup.link.intro": {
+    "defaultMessage": "Mit demselben Konto angemeldet. Jeder hat sich über das Mesh selbst beschrieben; wähle einen, und goose steuert ihn über sein eigenes goose — ohne ssh."
+  },
+  "mlxDistributedSetup.link.memory": {
+    "defaultMessage": "{available} von {total} GiB verfügbar"
+  },
+  "mlxDistributedSetup.link.models": {
+    "defaultMessage": "{count, plural, one {# Modell} other {# Modelle}}"
+  },
+  "mlxDistributedSetup.link.noGid": {
+    "defaultMessage": "keine IPv4-GID"
+  },
+  "mlxDistributedSetup.link.noRdma": {
+    "defaultMessage": "Kein RDMA-Gerät"
+  },
+  "mlxDistributedSetup.link.noThunderbolt": {
+    "defaultMessage": "Keine Thunderbolt-Adresse"
+  },
+  "mlxDistributedSetup.link.none": {
+    "defaultMessage": "Gerade ist kein anderer Mac dieses Kontos in LeanZero Link."
+  },
+  "mlxDistributedSetup.link.notConnected": {
+    "defaultMessage": "LeanZero Link ist nicht verbunden"
+  },
+  "mlxDistributedSetup.link.rdmaActive": {
+    "defaultMessage": "aktiv"
+  },
+  "mlxDistributedSetup.link.rdmaDown": {
+    "defaultMessage": "Port inaktiv"
+  },
+  "mlxDistributedSetup.link.servingOff": {
+    "defaultMessage": "Schalte „Diesem Mac erlauben, als verteilter Knoten zu dienen“ auf {name} ein (Anbieter › LeanZero MLX › Engine › Verteilt)."
+  },
+  "mlxDistributedSetup.link.state.notServed": {
+    "defaultMessage": "Sein goose kann nicht dienen"
+  },
+  "mlxDistributedSetup.link.state.offline": {
+    "defaultMessage": "Offline"
+  },
+  "mlxDistributedSetup.link.state.ready": {
+    "defaultMessage": "Bereit"
+  },
+  "mlxDistributedSetup.link.state.servingDisabled": {
+    "defaultMessage": "Dort ist das Dienen aus"
+  },
+  "mlxDistributedSetup.link.state.unreachable": {
+    "defaultMessage": "Nicht erreichbar"
+  },
+  "mlxDistributedSetup.link.state.unreadable": {
+    "defaultMessage": "Geantwortet, unlesbar"
+  },
+  "mlxDistributedSetup.link.title": {
+    "defaultMessage": "Deine Macs in LeanZero Link"
+  },
+  "mlxDistributedSetup.link.use": {
+    "defaultMessage": "Diesen Mac verwenden"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS stimmen überein"
@@ -3386,6 +3467,9 @@
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "nicht erreichbar"
   },
+  "mlxDistributedSetup.viaLink": {
+    "defaultMessage": "LeanZero Link · {node}"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Verteilt"
   },
@@ -3400,6 +3484,12 @@
   },
   "mlxMode.distributedNoBackend": {
     "defaultMessage": "{count, plural, one {Verteilt · # Node} other {Verteilt · # Nodes}}"
+  },
+  "mlxMode.hosting": {
+    "defaultMessage": "Rang {rank} der verteilten Engine von {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingNoBackend": {
+    "defaultMessage": "Rang {rank} der verteilten Engine von {requester} · {model}"
   },
   "mlxMode.single": {
     "defaultMessage": "Einzeln · dieser Mac"
@@ -3643,6 +3733,18 @@
   },
   "mlxStateTile.groupLabel": {
     "defaultMessage": "Engine {state}"
+  },
+  "mlxStateTile.hosting.for": {
+    "defaultMessage": "für die verteilte Engine von {requester} über LeanZero Link"
+  },
+  "mlxStateTile.hosting.pid": {
+    "defaultMessage": "Rang-PID {pid}"
+  },
+  "mlxStateTile.hosting.rank": {
+    "defaultMessage": "Rang {rank} von {size}"
+  },
+  "mlxStateTile.hosting.singleRefused": {
+    "defaultMessage": "Die Einzel-Engine ist hier gesperrt, solange dieser Mac den Rang bedient."
   },
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Live-Werte nicht verfügbar"

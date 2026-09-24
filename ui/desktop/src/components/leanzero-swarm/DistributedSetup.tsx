@@ -8,6 +8,7 @@ import {
   mlxDistributedPeerCandidates,
   mlxDistributedProvision,
   type MlxDistributedConfig,
+  type MlxDistributedLinkDiscovery,
   type MlxDistributedDiscoveredModel,
   type MlxDistributedDiscoveredNode,
   type MlxDistributedDiscovery,
@@ -18,6 +19,12 @@ import { backendName, cleanConfig, gb1, gib, missingFields } from './mlxDistribu
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { INPUT, StudioSelect, ToneBanner, type StudioSelectOption } from './studio';
 import { touchLocalNetwork } from './LocalNetworkNotice';
+import { DistributedLinkPeers } from './DistributedLinkPeers';
+
+/** A LeanZero Link Mac is named `link:<node>` wherever an ssh alias would be. */
+export function linkNode(host: string | null | undefined): string | null {
+  return host?.startsWith('link:') ? host.slice('link:'.length) || null : null;
+}
 
 /**
  * "Set up" for the distributed engine: the person names the other Mac ONCE and goose probes both
@@ -42,6 +49,12 @@ const i18n = defineMessages({
     id: 'mlxDistributedSetup.detecting',
     defaultMessage: 'Probing this Mac and {peer} over ssh…',
   },
+  detectingLink: {
+    id: 'mlxDistributedSetup.detectingLink',
+    defaultMessage: 'Probing this Mac and {peer} over LeanZero Link…',
+  },
+  headless: { id: 'mlxDistributedSetup.headless', defaultMessage: 'Headless (ssh)' },
+  viaLink: { id: 'mlxDistributedSetup.viaLink', defaultMessage: 'LeanZero Link · {node}' },
   answering: {
     id: 'mlxDistributedSetup.answering',
     defaultMessage: 'Answering from ~/.ssh/config',
@@ -227,7 +240,9 @@ function NodeBlock({
       <div className="flex flex-wrap items-center gap-2">
         <span className={TYPE.h2}>{node.name}</span>
         <Chip tone={node.reachable ? 'accent' : 'err'}>
-          {node.host ?? intl.formatMessage(i18n.thisMac)}
+          {linkNode(node.host)
+            ? intl.formatMessage(i18n.viaLink, { node: linkNode(node.host) })
+            : (node.host ?? intl.formatMessage(i18n.thisMac))}
         </Chip>
         {!node.reachable && <Chip tone="err">{intl.formatMessage(i18n.unreachable)}</Chip>}
         {node.linkSpeed && <Chip tone="ok">{node.linkSpeed}</Chip>}
@@ -318,6 +333,7 @@ export function DistributedSetup({
   const intl = useIntl();
   const [peer, setPeer] = useState(initialPeer);
   const [candidates, setCandidates] = useState<MlxDistributedPeerCandidate[] | null>(null);
+  const [link, setLink] = useState<MlxDistributedLinkDiscovery | null>(null);
   const [candidatesError, setCandidatesError] = useState<string | null>(null);
   const [discovery, setDiscovery] = useState<MlxDistributedDiscovery | null>(null);
   const [draft, setDraft] = useState<MlxDistributedConfig | null>(null);
@@ -327,15 +343,19 @@ export function DistributedSetup({
   useEffect(() => {
     let live = true;
     mlxDistributedPeerCandidates()
-      .then((c) => live && setCandidates(c))
+      .then((c) => {
+        if (!live) return;
+        setCandidates(c.candidates);
+        setLink(c.link);
+      })
       .catch((e) => live && setCandidatesError(mlxErrorMessage(e, String(e))));
     return () => {
       live = false;
     };
   }, []);
 
-  const detect = async (modelId: string | null) => {
-    const peers = [peer.trim()].filter(Boolean);
+  const detect = async (modelId: string | null, pick?: string) => {
+    const peers = [(pick ?? peer).trim()].filter(Boolean);
     if (peers.length === 0) return;
     setBusy('detect');
     setError(null);
@@ -384,6 +404,17 @@ export function DistributedSetup({
         <span className={TYPE.h2}>{intl.formatMessage(i18n.title)}</span>
         <span className={TYPE.bodyMuted}>{intl.formatMessage(i18n.intro)}</span>
       </div>
+      {link != null && (
+        <DistributedLinkPeers
+          link={link}
+          selectedHost={peer.trim()}
+          disabled={busy != null}
+          onPick={(host) => {
+            setPeer(host);
+            void detect(preferredModel, host);
+          }}
+        />
+      )}
       <form
         className="flex flex-wrap items-end gap-2"
         onSubmit={(e) => {
@@ -419,6 +450,9 @@ export function DistributedSetup({
       </form>
       {candidates != null && (
         <div data-testid="mlx-dist-setup-candidates" className="flex flex-wrap items-center gap-2">
+          <span className={cx(TYPE.meta, WEIGHT.semibold)}>
+            {intl.formatMessage(i18n.headless)}
+          </span>
           <span className={TYPE.meta}>
             {intl.formatMessage(answering.length ? i18n.answering : i18n.noneAnswering)}
           </span>
@@ -456,7 +490,13 @@ export function DistributedSetup({
           tone="accent"
           live
           label={intl.formatMessage(i18n.detect)}
-          text={intl.formatMessage(i18n.detecting, { peer: peer.trim() })}
+          text={
+            linkNode(peer.trim())
+              ? intl.formatMessage(i18n.detectingLink, {
+                  peer: link?.peers?.find((p) => p.host === peer.trim())?.name ?? peer.trim(),
+                })
+              : intl.formatMessage(i18n.detecting, { peer: peer.trim() })
+          }
         />
       )}
       {error && (

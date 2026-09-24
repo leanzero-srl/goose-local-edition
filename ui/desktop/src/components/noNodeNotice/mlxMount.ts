@@ -83,7 +83,9 @@ export function distributedFact(
       ? 'up'
       : 'down';
   }
-  if (!ownsTheMac(distributed)) return null;
+  // Serving a rank of ANOTHER Mac's engine: nothing here answers requests, and the single engine
+  // is refused (the backend's `hostingRank`) — so Mount is never offered.
+  if (!ownsTheMac(distributed)) return distributed.hosting ? 'down' : null;
   const { state } = distributed;
   if (state === 'preflight' || state === 'starting') return 'mounting';
   if (
@@ -128,6 +130,9 @@ export function distributedStateLabel(intl: IntlShape, distributed: MlxDistribut
     return intl.formatMessage(
       foreign.state === 'answering' ? i18n.foreignAnswering : i18n.foreignNotAnswering
     );
+  }
+  if (!ownsTheMac(distributed) && distributed.hosting) {
+    return distributedStateWord(intl, distributed.hosting.state);
   }
   return distributedStateWord(intl, distributed.state);
 }

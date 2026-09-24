@@ -9,6 +9,7 @@ import { toMlxDistributedReport } from './mlxDistributedReport';
 import {
   FLASH_READY,
   FLASH_SERVING,
+  HOSTING_RANK_1,
   STOPPED_WITH_CONFIG,
 } from '../components/leanzero-swarm/mlxDistributed.fixtures';
 import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
@@ -299,5 +300,35 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
     expect(off.title).toBe('Dist failed');
     expect(labels(off.items)).toContain('Distributed engine failed: rank 1 died: exit status 137');
     expect(actions(off.items).map(([a]) => a)).toEqual(['open-providers', 'mount']);
+  });
+});
+
+describe('the tray while this Mac SERVES a rank of another Mac over LeanZero Link', () => {
+  const hosting = toMlxDistributedReport(HOSTING_RANK_1);
+
+  it('says whose engine, which model and backend; offers no Mount (the single engine is refused)', () => {
+    const model = buildMlxTrayModel(
+      { ...INITIAL_SNAPSHOT, mode: 'off' },
+      { ...OPTS, distributed: { report: hosting, ageMs: 0 } }
+    );
+    expect(model.title).toBe('Rank 1 · serving');
+    expect(labels(model.items)).toEqual([
+      'LeanZero MLX: serving a rank, serving',
+      "Rank 1 of MacBook Pro's distributed engine · JACCL",
+      'Model: Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+      'Single engine: refused while this Mac serves MacBook Pro',
+      '---',
+      'Open Providers',
+    ]);
+    expect(actions(model.items).map(([action]) => action)).toEqual(['open-providers']);
+  });
+
+  it('an old read is said to be old here too', () => {
+    const model = buildMlxTrayModel(INITIAL_SNAPSHOT, {
+      ...OPTS,
+      distributed: { report: hosting, ageMs: MLX_DISTRIBUTED_STALE_MS + 1 },
+    });
+    expect(model.title).toBe('Rank · stale');
+    expect(labels(model.items)).toContain('Not refreshed for 6s — open goose to read it again');
   });
 });

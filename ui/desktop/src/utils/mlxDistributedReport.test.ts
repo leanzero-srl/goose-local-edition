@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { isMlxDistributedReport, toMlxDistributedReport } from './mlxDistributedReport';
 import {
   FLASH_READY,
+  HOSTING_RANK_1,
   STOPPED_WITH_CONFIG,
 } from '../components/leanzero-swarm/mlxDistributed.fixtures';
 
@@ -48,5 +49,21 @@ describe('toMlxDistributedReport — what main is told after every status read',
       isMlxDistributedReport({ ...good, nodes: [{ ...good.nodes[0], layers: { kind: 'x' } }] })
     ).toBe(false);
     expect(isMlxDistributedReport({ ...good, lastAlarm: { kind: 'hang' } })).toBe(false);
+    expect(isMlxDistributedReport({ ...good, hosting: { rank: '1' } })).toBe(false);
+    expect(isMlxDistributedReport({ ...good, hosting: undefined })).toBe(false);
+  });
+
+  it('a rank served for another Mac rides along, and validates', () => {
+    const report = toMlxDistributedReport(HOSTING_RANK_1);
+    expect(report.mode).toBe('single');
+    expect(report.hosting).toEqual({
+      rank: 1,
+      requester: 'MacBook Pro',
+      modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+      backend: 'jaccl',
+      state: 'serving',
+    });
+    expect(isMlxDistributedReport(report)).toBe(true);
+    expect(toMlxDistributedReport(FLASH_READY).hosting).toBeNull();
   });
 });

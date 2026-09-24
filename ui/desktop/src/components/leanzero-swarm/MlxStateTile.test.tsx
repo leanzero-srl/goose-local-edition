@@ -17,7 +17,12 @@ import {
   type TpsSample,
 } from './mlxLiveStats';
 import { GENERATING_STATUS, IDLE_STATUS, PREFILL_STATUS } from './mlxLiveStatus.fixtures';
-import { FLASH_READY, FLASH_SERVING, STOPPED_WITH_CONFIG } from './mlxDistributed.fixtures';
+import {
+  FLASH_READY,
+  FLASH_SERVING,
+  HOSTING_RANK_1,
+  STOPPED_WITH_CONFIG,
+} from './mlxDistributed.fixtures';
 
 const GIB = 1024 * 1024 * 1024;
 
@@ -388,5 +393,28 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
       },
     });
     expect(screen.queryByTestId('mlx-dist-tile-load')).toBeNull();
+  });
+});
+
+describe('MlxStateTile — this Mac serving a rank of another Mac over LeanZero Link', () => {
+  it('the tile names the rank, whose run and the model; Mount is not offered', async () => {
+    const { container } = tile({
+      state: 'stopped',
+      modeLabel:
+        "Rank 1 of MacBook Pro's distributed engine · Qwen3.8-27B-Atlassian-Q8-mlx · JACCL",
+      distributed: HOSTING_RANK_1,
+      action: <button type="button">Mount</button>,
+    });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(t).toHaveAttribute('data-mode', 'hosting');
+    expect(t).toHaveAttribute('data-state', 'stopped');
+    const hosting = screen.getByTestId('mlx-hosting-tile');
+    expect(hosting).toHaveTextContent('Rank 1 of 2');
+    expect(hosting).toHaveTextContent("for MacBook Pro's distributed engine over LeanZero Link");
+    expect(hosting).toHaveTextContent('Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx');
+    expect(hosting).toHaveTextContent('rank pid 4242');
+    expect(within(t).getByRole('status')).toHaveTextContent('Serving');
+    expect(screen.queryByRole('button', { name: 'Mount' })).toBeNull();
+    await expectDesigned(container);
   });
 });

@@ -28,6 +28,16 @@ export interface MlxDistributedReportNode {
   memoryError: string | null;
 }
 
+/** The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link. */
+export interface MlxDistributedReportHosting {
+  rank: number;
+  requester: string;
+  modelId: string;
+  backend: string | null;
+  /** "loading" | "serving". */
+  state: string;
+}
+
 export interface MlxDistributedReport {
   mode: 'single' | 'distributed';
   state: string;
@@ -42,6 +52,8 @@ export interface MlxDistributedReport {
   lastError: string | null;
   /** The newest event that needed the supervisor (a restart, a hang, a repair, a hold). */
   lastAlarm: { kind: string; node: string | null; message: string } | null;
+  /** Set while this Mac serves a rank of another Mac's engine (then `mode` is 'single'). */
+  hosting: MlxDistributedReportHosting | null;
 }
 
 export function toMlxDistributedReport(status: MlxDistributedStatusDto): MlxDistributedReport {
@@ -78,6 +90,15 @@ export function toMlxDistributedReport(status: MlxDistributedStatusDto): MlxDist
     lastAlarm: alarm
       ? { kind: alarm.kind, node: alarm.node ?? null, message: alarm.message }
       : null,
+    hosting: status.hosting
+      ? {
+          rank: status.hosting.rank,
+          requester: status.hosting.requesterName,
+          modelId: status.hosting.modelId,
+          backend: status.hosting.backend ?? null,
+          state: status.hosting.state,
+        }
+      : null,
   };
 }
 
@@ -112,12 +133,26 @@ function isReportNode(v: unknown): boolean {
   );
 }
 
+function isHosting(v: unknown): boolean {
+  if (v === null) return true;
+  if (v == null || typeof v !== 'object') return false;
+  const h = v as Record<string, unknown>;
+  return (
+    isNum(h.rank) &&
+    isStr(h.requester) &&
+    isStr(h.modelId) &&
+    strOrNull(h.backend) &&
+    isStr(h.state)
+  );
+}
+
 /** An IPC payload is a report only if every field is what `toMlxDistributedReport` builds. */
 export function isMlxDistributedReport(value: unknown): value is MlxDistributedReport {
   if (value == null || typeof value !== 'object') return false;
   const r = value as Record<string, unknown>;
   const alarm = r.lastAlarm as Record<string, unknown> | null | undefined;
   return (
+    isHosting(r.hosting) &&
     (r.mode === 'single' || r.mode === 'distributed') &&
     isStr(r.state) &&
     strOrNull(r.backend) &&

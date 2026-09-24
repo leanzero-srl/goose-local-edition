@@ -2960,6 +2960,12 @@
   "mlxDistributed.fits": {
     "defaultMessage": "समाता है"
   },
+  "mlxDistributed.hosting.label": {
+    "defaultMessage": "यह Mac एक रैंक चला रहा है"
+  },
+  "mlxDistributed.hosting.text": {
+    "defaultMessage": "{line} — रैंक PID {pid}। जब तक {requester} रन नहीं रोकता, सिंगल इंजन और इस Mac का अपना वितरित इंजन अस्वीकार हैं।"
+  },
   "mlxDistributed.inflight": {
     "defaultMessage": "प्रगति में"
   },
@@ -3164,6 +3170,15 @@
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {बैच में # अनुक्रम} other {बैच में # अनुक्रम}}"
   },
+  "mlxDistributed.serveNode": {
+    "defaultMessage": "इस Mac को वितरित नोड के रूप में सेवा देने दें"
+  },
+  "mlxDistributed.serveNodeError": {
+    "defaultMessage": "सेटिंग बदली नहीं जा सकी"
+  },
+  "mlxDistributed.serveNodeHint": {
+    "defaultMessage": "आपके LeanZero Link पर मौजूद दूसरे Mac तब यहाँ अपने वितरित इंजन का एक रैंक चला सकते हैं — केवल goose के अपने रैंक प्रोग्राम और जाँचें, कोई मनमाना कमांड कभी नहीं। डिफ़ॉल्ट रूप से बंद।"
+  },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "सर्वर स्थिति पढ़ी नहीं जा सकी: {error}"
   },
@@ -3284,6 +3299,9 @@
   "mlxDistributedSetup.detecting": {
     "defaultMessage": "इस Mac और {peer} को ssh से जाँचा जा रहा है…"
   },
+  "mlxDistributedSetup.detectingLink": {
+    "defaultMessage": "इस Mac और {peer} की LeanZero Link से जाँच हो रही है…"
+  },
   "mlxDistributedSetup.differsOn": {
     "defaultMessage": "{nodes} पर अलग"
   },
@@ -3338,8 +3356,71 @@
   "mlxDistributedSetup.gapsTitle": {
     "defaultMessage": "{count, plural, one {# मान नहीं मिला} other {# मान नहीं मिले}}"
   },
+  "mlxDistributedSetup.headless": {
+    "defaultMessage": "हेडलेस (ssh)"
+  },
   "mlxDistributedSetup.intro": {
     "defaultMessage": "दूसरे Mac का नाम एक बार दें। goose इस Mac और उसे ssh से जाँचता है और लिंक, RDMA, बैकएंड, मॉडल, पोर्ट और Python भर देता है।"
+  },
+  "mlxDistributedSetup.link.gid": {
+    "defaultMessage": "IPv4 GID {index}"
+  },
+  "mlxDistributedSetup.link.intro": {
+    "defaultMessage": "एक ही खाते से साइन इन। हर एक ने मेश पर खुद का वर्णन किया; एक चुनें और goose उसे उसके अपने goose के ज़रिए चलाएगा — बिना ssh।"
+  },
+  "mlxDistributedSetup.link.memory": {
+    "defaultMessage": "{total} में से {available} GiB उपलब्ध"
+  },
+  "mlxDistributedSetup.link.models": {
+    "defaultMessage": "{count, plural, one {# मॉडल} other {# मॉडल}}"
+  },
+  "mlxDistributedSetup.link.noGid": {
+    "defaultMessage": "कोई IPv4 GID नहीं"
+  },
+  "mlxDistributedSetup.link.noRdma": {
+    "defaultMessage": "कोई RDMA डिवाइस नहीं"
+  },
+  "mlxDistributedSetup.link.noThunderbolt": {
+    "defaultMessage": "कोई Thunderbolt पता नहीं"
+  },
+  "mlxDistributedSetup.link.none": {
+    "defaultMessage": "इस खाते का कोई दूसरा Mac अभी LeanZero Link पर नहीं है।"
+  },
+  "mlxDistributedSetup.link.notConnected": {
+    "defaultMessage": "LeanZero Link कनेक्ट नहीं है"
+  },
+  "mlxDistributedSetup.link.rdmaActive": {
+    "defaultMessage": "सक्रिय"
+  },
+  "mlxDistributedSetup.link.rdmaDown": {
+    "defaultMessage": "पोर्ट बंद"
+  },
+  "mlxDistributedSetup.link.servingOff": {
+    "defaultMessage": "{name} पर “इस Mac को वितरित नोड के रूप में सेवा देने दें” चालू करें (Providers › LeanZero MLX › Engine › Distributed)।"
+  },
+  "mlxDistributedSetup.link.state.notServed": {
+    "defaultMessage": "इसका goose सेवा नहीं दे सकता"
+  },
+  "mlxDistributedSetup.link.state.offline": {
+    "defaultMessage": "ऑफ़लाइन"
+  },
+  "mlxDistributedSetup.link.state.ready": {
+    "defaultMessage": "तैयार"
+  },
+  "mlxDistributedSetup.link.state.servingDisabled": {
+    "defaultMessage": "वहाँ सेवा बंद है"
+  },
+  "mlxDistributedSetup.link.state.unreachable": {
+    "defaultMessage": "पहुँच से बाहर"
+  },
+  "mlxDistributedSetup.link.state.unreadable": {
+    "defaultMessage": "उत्तर दिया, पढ़ा नहीं जा सका"
+  },
+  "mlxDistributedSetup.link.title": {
+    "defaultMessage": "LeanZero Link पर आपके Mac"
+  },
+  "mlxDistributedSetup.link.use": {
+    "defaultMessage": "यह Mac इस्तेमाल करें"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS मेल खाते हैं"
@@ -3386,6 +3467,9 @@
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "पहुँच योग्य नहीं"
   },
+  "mlxDistributedSetup.viaLink": {
+    "defaultMessage": "LeanZero Link · {node}"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "वितरित"
   },
@@ -3400,6 +3484,12 @@
   },
   "mlxMode.distributedNoBackend": {
     "defaultMessage": "{count, plural, one {वितरित · # नोड} other {वितरित · # नोड}}"
+  },
+  "mlxMode.hosting": {
+    "defaultMessage": "{requester} के वितरित इंजन का रैंक {rank} · {model} · {backend}"
+  },
+  "mlxMode.hostingNoBackend": {
+    "defaultMessage": "{requester} के वितरित इंजन का रैंक {rank} · {model}"
   },
   "mlxMode.single": {
     "defaultMessage": "एकल · यह Mac"
@@ -3643,6 +3733,18 @@
   },
   "mlxStateTile.groupLabel": {
     "defaultMessage": "इंजन {state}"
+  },
+  "mlxStateTile.hosting.for": {
+    "defaultMessage": "LeanZero Link पर {requester} के वितरित इंजन के लिए"
+  },
+  "mlxStateTile.hosting.pid": {
+    "defaultMessage": "रैंक PID {pid}"
+  },
+  "mlxStateTile.hosting.rank": {
+    "defaultMessage": "{size} में से रैंक {rank}"
+  },
+  "mlxStateTile.hosting.singleRefused": {
+    "defaultMessage": "जब तक यह Mac रैंक चला रहा है, यहाँ सिंगल इंजन अस्वीकार है।"
   },
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "लाइव आँकड़े उपलब्ध नहीं"

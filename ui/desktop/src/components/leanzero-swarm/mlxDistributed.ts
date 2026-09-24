@@ -28,13 +28,41 @@ export function backendName(backend: string | null | undefined): string | null {
 
 export type MlxModeSummary =
   | { mode: 'single' }
-  | { mode: 'distributed'; nodeNames: string[]; backend: string | null };
+  | { mode: 'distributed'; nodeNames: string[]; backend: string | null }
+  | {
+      mode: 'hosting';
+      rank: number;
+      requester: string;
+      modelId: string;
+      backend: string | null;
+    };
 
-/** What the mode line says: the running nodes while distributed, else the single engine. */
+/**
+ * The rank this Mac serves for ANOTHER Mac's distributed engine over LeanZero Link, as the mode
+ * line says it — `null` when it serves none.
+ */
+export function hostingSummary(
+  status: Pick<MlxDistributedStatusDto, 'hosting'> | null
+): Extract<MlxModeSummary, { mode: 'hosting' }> | null {
+  const hosting = status?.hosting;
+  if (!hosting) return null;
+  return {
+    mode: 'hosting',
+    rank: hosting.rank,
+    requester: hosting.requesterName,
+    modelId: hosting.modelId,
+    backend: backendName(hosting.backend),
+  };
+}
+
+/**
+ * What the mode line says: the running nodes while distributed, the rank this Mac serves for
+ * another Mac, else the single engine.
+ */
 export function modeSummary(
-  status: Pick<MlxDistributedStatusDto, 'mode' | 'nodes' | 'backend' | 'config'> | null
+  status: Pick<MlxDistributedStatusDto, 'mode' | 'nodes' | 'backend' | 'config' | 'hosting'> | null
 ): MlxModeSummary {
-  if (!status || !ownsTheMac(status)) return { mode: 'single' };
+  if (!status || !ownsTheMac(status)) return hostingSummary(status) ?? { mode: 'single' };
   const running = status.nodes.map((n) => n.name);
   const nodeNames = running.length > 0 ? running : (status.config?.nodes ?? []).map((n) => n.name);
   return {
@@ -50,7 +78,7 @@ export function modeSummary(
  * engine's words.
  */
 export function configuredModeSummary(
-  status: Pick<MlxDistributedStatusDto, 'mode' | 'nodes' | 'backend' | 'config'> | null
+  status: Pick<MlxDistributedStatusDto, 'mode' | 'nodes' | 'backend' | 'config' | 'hosting'> | null
 ): MlxModeSummary | null {
   if (!status) return null;
   if (ownsTheMac(status)) return modeSummary(status);

@@ -17,6 +17,14 @@ const i18n = defineMessages({
     id: 'mlxMode.distributedNoBackend',
     defaultMessage: 'Distributed · {count, plural, one {# node} other {# nodes}}',
   },
+  hosting: {
+    id: 'mlxMode.hosting',
+    defaultMessage: "Rank {rank} of {requester}'s distributed engine · {model} · {backend}",
+  },
+  hostingNoBackend: {
+    id: 'mlxMode.hostingNoBackend',
+    defaultMessage: "Rank {rank} of {requester}'s distributed engine · {model}",
+  },
 });
 
 /** The distributed run's and each rank's state words (the backend's own vocabulary). */
@@ -50,6 +58,16 @@ export function formatMlxMode(
 ): string {
   if (peerHost != null) return intl.formatMessage(i18n.singlePeer, { host: peerHost });
   if (summary.mode === 'single') return intl.formatMessage(i18n.single);
+  if (summary.mode === 'hosting') {
+    const values = {
+      rank: summary.rank,
+      requester: summary.requester,
+      model: summary.modelId.split('/').pop() || summary.modelId,
+    };
+    return summary.backend
+      ? intl.formatMessage(i18n.hosting, { ...values, backend: summary.backend })
+      : intl.formatMessage(i18n.hostingNoBackend, values);
+  }
   const count = summary.nodeNames.length;
   return summary.backend
     ? intl.formatMessage(i18n.distributed, { count, backend: summary.backend })

@@ -18,7 +18,11 @@ import {
   STOPPED_WITH_CONFIG,
 } from './mlxDistributed.fixtures';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
-import type { MlxDistributedDiscovery, MlxDistributedStatus } from '../../acp/mlx-distributed';
+import type {
+  MlxDistributedDiscovery,
+  MlxDistributedLinkPeer,
+  MlxDistributedStatus,
+} from '../../acp/mlx-distributed';
 // What the backend's Detect returned for the real pair (exported by the goose crate's
 // `export_discovery_ui_fixture` from the captured probe answers of both Macs).
 import DISCOVERY from './mlxDistributedDiscovery.fixture.json';
@@ -53,6 +57,57 @@ const mockUnmount = vi.fn();
 vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineUnmount: (...a: unknown[]) => mockUnmount(...a),
 }));
+const mockUpsertConfig = vi.fn();
+vi.mock('../../acp/config', () => ({
+  acpUpsertConfig: (...a: unknown[]) => mockUpsertConfig(...a),
+}));
+
+/** The workhorse as its own goosed describes itself over LeanZero Link (its recorded probe). */
+const WORKHORSE_ON_LINK: MlxDistributedLinkPeer = {
+  nodeId: 'workhorse-7f3a',
+  hostname: 'workhorse',
+  host: 'link:workhorse-7f3a',
+  state: 'ready',
+  name: 'Work’s Mac Studio',
+  totalBytes: 103079215104,
+  availableBytes: 71080000000,
+  pressure: 'normal',
+  thunderbolt: [
+    {
+      device: 'en3',
+      hardwarePort: 'Thunderbolt 2',
+      ipv4: '192.168.0.2',
+      prefixLen: 30,
+      speed: '80 Gb/s',
+    },
+  ],
+  rdma: [{ device: 'rdma_en3', active: true, ipv4GidIndex: 1 }],
+  models: [
+    {
+      dir: '/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx',
+      modelType: 'qwen3_5',
+      weightsBytes: 32800000000,
+    },
+  ],
+};
+
+const LINK_CONNECTED = {
+  state: 'connected',
+  peers: [
+    WORKHORSE_ON_LINK,
+    {
+      nodeId: 'mini-01c2',
+      hostname: 'mini',
+      host: 'link:mini-01c2',
+      state: 'servingDisabled',
+      detail:
+        'servingDisabled: "Allow this Mac to serve as a distributed node" is off there (servingDisabled: "Allow this Mac to serve as a distributed node" is off on this node)',
+      thunderbolt: [],
+      rdma: [],
+      models: [],
+    },
+  ],
+};
 
 const SINGLE_RUNNING: MlxEngineStatus = {
   state: 'running',
@@ -95,14 +150,18 @@ beforeEach(() => {
   mockStart.mockReset();
   mockStop.mockReset();
   mockConfigUpdate.mockReset();
-  mockCandidates.mockReset().mockResolvedValue([
-    { alias: 'workhorse', answered: true, detail: 'WorksMacStudio' },
-    {
-      alias: 'old-box',
-      answered: false,
-      detail: 'ssh: connect to host old-box: Operation timed out',
-    },
-  ]);
+  mockCandidates.mockReset().mockResolvedValue({
+    candidates: [
+      { alias: 'workhorse', answered: true, detail: 'WorksMacStudio' },
+      {
+        alias: 'old-box',
+        answered: false,
+        detail: 'ssh: connect to host old-box: Operation timed out',
+      },
+    ],
+    link: LINK_CONNECTED,
+  });
+  mockUpsertConfig.mockReset().mockResolvedValue(undefined);
   mockDiscover.mockReset();
   mockProvision.mockReset();
   mockUnmount.mockReset().mockResolvedValue(undefined);
@@ -884,5 +943,116 @@ describe('DistributedEngineSection — a run another window supervises', () => {
     expect(refusal).toHaveTextContent('Running in another window');
     expect(refusal).not.toHaveTextContent('Start refused');
     expect(refusal).toHaveAttribute('data-tone', 'warn');
+  });
+});
+
+describe('DistributedEngineSection — LeanZero Link finds the other Mac and runs it as a node', () => {
+  const NONE: MlxDistributedStatus = { ...STOPPED_WITH_CONFIG, config: null };
+
+  it('offers the Link Macs FIRST, each as it described itself, then the headless ssh aliases', async () => {
+    const { container } = section({ status: NONE });
+    await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    const setup = screen.getByTestId('mlx-dist-setup');
+    const link = await within(setup).findByTestId('mlx-dist-link-peers');
+    const headless = within(setup).getByTestId('mlx-dist-setup-candidates');
+    expect(
+      link.compareDocumentPosition(headless) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the Link Macs come before the ssh aliases'
+    ).toBeTruthy();
+    expect(within(setup).getByRole('textbox').compareDocumentPosition(link)).toBe(
+      Node.DOCUMENT_POSITION_PRECEDING
+    );
+    expect(headless).toHaveTextContent('Headless (ssh)');
+
+    const [ready, off] = within(link).getAllByTestId('mlx-dist-link-peer');
+    expect(ready).toHaveAttribute('data-host', 'link:workhorse-7f3a');
+    expect(ready).toHaveTextContent('Work’s Mac Studio');
+    expect(ready).toHaveTextContent('66.2 of 96.0 GiB available');
+    expect(within(ready).getByTestId('mlx-dist-link-peer-tb')).toHaveTextContent(
+      'en3 192.168.0.2/30 · Thunderbolt 2 · 80 Gb/s'
+    );
+    expect(within(ready).getByTestId('mlx-dist-link-peer-rdma')).toHaveTextContent(
+      'rdma_en3 · active · IPv4 GID 1'
+    );
+    expect(ready).toHaveTextContent('Qwen3.8-27B-Atlassian-Q8-mlx · qwen3_5 · 30.5 GiB');
+
+    expect(off).toHaveAttribute('data-state', 'servingDisabled');
+    expect(off).toHaveTextContent(
+      'Turn on “Allow this Mac to serve as a distributed node” on mini'
+    );
+    expect(within(off).queryByRole('button', { name: 'Use this Mac' })).toBeNull();
+    await expectDesigned(container);
+  });
+
+  it('one click on a Link Mac runs Detect over LeanZero Link — nothing typed', async () => {
+    mockDiscover.mockResolvedValue(UNCHOSEN);
+    section({ status: NONE });
+    await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    const link = await screen.findByTestId('mlx-dist-link-peers');
+    await userEvent.click(within(link).getByRole('button', { name: 'Use this Mac' }));
+    expect(mockDiscover).toHaveBeenCalledWith(['link:workhorse-7f3a'], null);
+    expect(screen.getByTestId('mlx-dist-setup-peer')).toHaveValue('link:workhorse-7f3a');
+    await screen.findByTestId('mlx-dist-setup-result');
+  });
+
+  it('without a connected Link it says why, and the ssh aliases still work', async () => {
+    mockCandidates.mockResolvedValue({
+      candidates: [{ alias: 'workhorse', answered: true, detail: 'WorksMacStudio' }],
+      link: {
+        state: 'notConnected',
+        detail: 'this Mac is not signed in to LeanZero Link',
+        peers: [],
+      },
+    });
+    section({ status: NONE });
+    await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    const link = await screen.findByTestId('mlx-dist-link-peers');
+    expect(link).toHaveAttribute('data-state', 'notConnected');
+    expect(link).toHaveTextContent('LeanZero Link is not connected');
+    expect(link).toHaveTextContent('this Mac is not signed in to LeanZero Link');
+    expect(await screen.findAllByTestId('mlx-dist-setup-candidate')).toHaveLength(1);
+  });
+
+  it('this Mac serving a rank says whose, which model and backend, and refuses its own Start', () => {
+    const { container } = section({
+      status: {
+        ...STOPPED_WITH_CONFIG,
+        allowDistributedNode: true,
+        hosting: {
+          rank: 1,
+          size: 2,
+          requesterName: 'MacBook Pro',
+          requesterNodeId: 'macbook-1a2b',
+          requesterHostname: 'macbook',
+          modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+          servedModelId: 'mihai-qwen3.8-27b-atlassian-q8-mlx',
+          backend: 'jaccl',
+          runner: 'mlxLmTensor',
+          pid: 4242,
+          state: 'serving',
+          startedMs: 1,
+          lastPollMs: 2,
+        },
+      },
+    });
+    expect(screen.getByTestId('mlx-dist-hosting')).toHaveTextContent(
+      "Rank 1 of MacBook Pro's distributed engine · Qwen3.8-27B-Atlassian-Q8-mlx · JACCL — rank pid 4242"
+    );
+    expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
+    expect(
+      screen.getByRole('switch', { name: 'Allow this Mac to serve as a distributed node' })
+    ).toHaveAttribute('aria-checked', 'true');
+    return expectDesigned(container);
+  });
+
+  it('the switch writes the one config key the backend reads on every request', async () => {
+    section({ status: STOPPED_WITH_CONFIG });
+    const toggle = screen.getByRole('switch', {
+      name: 'Allow this Mac to serve as a distributed node',
+    });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await userEvent.click(toggle);
+    expect(mockUpsertConfig).toHaveBeenCalledWith('LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE', true);
+    await waitFor(() => expect(onRefresh).toHaveBeenCalled());
   });
 });

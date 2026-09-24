@@ -2960,6 +2960,12 @@
   "mlxDistributed.fits": {
     "defaultMessage": "収まる"
   },
+  "mlxDistributed.hosting.label": {
+    "defaultMessage": "この Mac はランクを担当中"
+  },
+  "mlxDistributed.hosting.text": {
+    "defaultMessage": "{line} — ランク PID {pid}。{requester} が実行を止めるまで、シングルエンジンとこの Mac 自身の分散エンジンは拒否されます。"
+  },
   "mlxDistributed.inflight": {
     "defaultMessage": "処理中"
   },
@@ -3164,6 +3170,15 @@
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {バッチ内 # シーケンス}}"
   },
+  "mlxDistributed.serveNode": {
+    "defaultMessage": "この Mac を分散ノードとして使うことを許可"
+  },
+  "mlxDistributed.serveNodeError": {
+    "defaultMessage": "設定を変更できませんでした"
+  },
+  "mlxDistributed.serveNodeHint": {
+    "defaultMessage": "LeanZero Link 上のほかの Mac が、ここで分散エンジンのランクを実行できるようになります — goose 自身のランクプログラムとプローブのみで、任意のコマンドは決して実行しません。既定はオフ。"
+  },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "サーバーステータスを読み取れません: {error}"
   },
@@ -3284,6 +3299,9 @@
   "mlxDistributedSetup.detecting": {
     "defaultMessage": "この Mac と {peer} を ssh で調査中…"
   },
+  "mlxDistributedSetup.detectingLink": {
+    "defaultMessage": "LeanZero Link 経由でこの Mac と {peer} を調べています…"
+  },
   "mlxDistributedSetup.differsOn": {
     "defaultMessage": "{nodes} で不一致"
   },
@@ -3338,8 +3356,71 @@
   "mlxDistributedSetup.gapsTitle": {
     "defaultMessage": "{count, plural, other {# 件の値が見つかりません}}"
   },
+  "mlxDistributedSetup.headless": {
+    "defaultMessage": "ヘッドレス (ssh)"
+  },
   "mlxDistributedSetup.intro": {
     "defaultMessage": "もう一台の Mac を一度だけ指定してください。goose がこの Mac と相手を ssh で調べ、リンク、RDMA、バックエンド、モデル、ポート、Python を入力します。"
+  },
+  "mlxDistributedSetup.link.gid": {
+    "defaultMessage": "IPv4 GID {index}"
+  },
+  "mlxDistributedSetup.link.intro": {
+    "defaultMessage": "同じアカウントでサインイン済み。各 Mac がメッシュ経由で自身を説明しました。1 台選ぶと、goose がその Mac 自身の goose を通じて操作します — ssh は不要です。"
+  },
+  "mlxDistributedSetup.link.memory": {
+    "defaultMessage": "{total} GiB 中 {available} GiB 利用可能"
+  },
+  "mlxDistributedSetup.link.models": {
+    "defaultMessage": "{count, plural, other {# 個のモデル}}"
+  },
+  "mlxDistributedSetup.link.noGid": {
+    "defaultMessage": "IPv4 GID なし"
+  },
+  "mlxDistributedSetup.link.noRdma": {
+    "defaultMessage": "RDMA デバイスなし"
+  },
+  "mlxDistributedSetup.link.noThunderbolt": {
+    "defaultMessage": "Thunderbolt アドレスなし"
+  },
+  "mlxDistributedSetup.link.none": {
+    "defaultMessage": "このアカウントのほかの Mac は現在 LeanZero Link 上にありません。"
+  },
+  "mlxDistributedSetup.link.notConnected": {
+    "defaultMessage": "LeanZero Link は接続されていません"
+  },
+  "mlxDistributedSetup.link.rdmaActive": {
+    "defaultMessage": "アクティブ"
+  },
+  "mlxDistributedSetup.link.rdmaDown": {
+    "defaultMessage": "ポート停止"
+  },
+  "mlxDistributedSetup.link.servingOff": {
+    "defaultMessage": "{name} で「この Mac を分散ノードとして使うことを許可」をオンにしてください (プロバイダ › LeanZero MLX › エンジン › 分散)。"
+  },
+  "mlxDistributedSetup.link.state.notServed": {
+    "defaultMessage": "その goose は対応していません"
+  },
+  "mlxDistributedSetup.link.state.offline": {
+    "defaultMessage": "オフライン"
+  },
+  "mlxDistributedSetup.link.state.ready": {
+    "defaultMessage": "準備完了"
+  },
+  "mlxDistributedSetup.link.state.servingDisabled": {
+    "defaultMessage": "向こうで無効"
+  },
+  "mlxDistributedSetup.link.state.unreachable": {
+    "defaultMessage": "到達不能"
+  },
+  "mlxDistributedSetup.link.state.unreadable": {
+    "defaultMessage": "応答あり、読み取り不可"
+  },
+  "mlxDistributedSetup.link.title": {
+    "defaultMessage": "LeanZero Link 上のあなたの Mac"
+  },
+  "mlxDistributedSetup.link.use": {
+    "defaultMessage": "この Mac を使う"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS 一致"
@@ -3386,6 +3467,9 @@
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "到達不能"
   },
+  "mlxDistributedSetup.viaLink": {
+    "defaultMessage": "LeanZero Link · {node}"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "分散"
   },
@@ -3400,6 +3484,12 @@
   },
   "mlxMode.distributedNoBackend": {
     "defaultMessage": "{count, plural, other {分散 · # ノード}}"
+  },
+  "mlxMode.hosting": {
+    "defaultMessage": "{requester} の分散エンジンのランク {rank} · {model} · {backend}"
+  },
+  "mlxMode.hostingNoBackend": {
+    "defaultMessage": "{requester} の分散エンジンのランク {rank} · {model}"
   },
   "mlxMode.single": {
     "defaultMessage": "単一 · この Mac"
@@ -3643,6 +3733,18 @@
   },
   "mlxStateTile.groupLabel": {
     "defaultMessage": "エンジン {state}"
+  },
+  "mlxStateTile.hosting.for": {
+    "defaultMessage": "LeanZero Link 経由の {requester} の分散エンジン用"
+  },
+  "mlxStateTile.hosting.pid": {
+    "defaultMessage": "ランク PID {pid}"
+  },
+  "mlxStateTile.hosting.rank": {
+    "defaultMessage": "ランク {rank} / {size}"
+  },
+  "mlxStateTile.hosting.singleRefused": {
+    "defaultMessage": "この Mac がランクを担当している間、ここではシングルエンジンは拒否されます。"
   },
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "ライブ統計を取得できません"

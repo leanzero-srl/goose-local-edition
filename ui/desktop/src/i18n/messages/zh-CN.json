@@ -2960,6 +2960,12 @@
   "mlxDistributed.fits": {
     "defaultMessage": "可容纳"
   },
+  "mlxDistributed.hosting.label": {
+    "defaultMessage": "这台 Mac 正在承担一个 rank"
+  },
+  "mlxDistributed.hosting.text": {
+    "defaultMessage": "{line} — rank PID {pid}。在 {requester} 停止运行之前，单机引擎和这台 Mac 自己的分布式引擎都会被拒绝。"
+  },
   "mlxDistributed.inflight": {
     "defaultMessage": "处理中"
   },
@@ -3164,6 +3170,15 @@
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {批次中 # 个序列}}"
   },
+  "mlxDistributed.serveNode": {
+    "defaultMessage": "允许这台 Mac 作为分布式节点"
+  },
+  "mlxDistributed.serveNodeError": {
+    "defaultMessage": "无法更改该设置"
+  },
+  "mlxDistributed.serveNodeHint": {
+    "defaultMessage": "LeanZero Link 上你的其他 Mac 随后可以在这里运行其分布式引擎的一个 rank——只运行 goose 自己的 rank 程序和探测，绝不运行任意命令。默认关闭。"
+  },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "服务器状态无法读取：{error}"
   },
@@ -3284,6 +3299,9 @@
   "mlxDistributedSetup.detecting": {
     "defaultMessage": "正在通过 ssh 探测本机和 {peer}…"
   },
+  "mlxDistributedSetup.detectingLink": {
+    "defaultMessage": "正在通过 LeanZero Link 探测这台 Mac 和 {peer}…"
+  },
   "mlxDistributedSetup.differsOn": {
     "defaultMessage": "在 {nodes} 上不同"
   },
@@ -3338,8 +3356,71 @@
   "mlxDistributedSetup.gapsTitle": {
     "defaultMessage": "{count, plural, other {有 # 个值未找到}}"
   },
+  "mlxDistributedSetup.headless": {
+    "defaultMessage": "无界面（ssh）"
+  },
   "mlxDistributedSetup.intro": {
     "defaultMessage": "只需填写另一台 Mac 一次。goose 会通过 ssh 探测本机和对方,并填写链路、RDMA、后端、模型、端口和 Python。"
+  },
+  "mlxDistributedSetup.link.gid": {
+    "defaultMessage": "IPv4 GID {index}"
+  },
+  "mlxDistributedSetup.link.intro": {
+    "defaultMessage": "已登录同一账号。每台都通过网格描述了自己；选择一台，goose 会通过它自己的 goose 来控制——无需 ssh。"
+  },
+  "mlxDistributedSetup.link.memory": {
+    "defaultMessage": "{total} GiB 中可用 {available} GiB"
+  },
+  "mlxDistributedSetup.link.models": {
+    "defaultMessage": "{count, plural, other {# 个模型}}"
+  },
+  "mlxDistributedSetup.link.noGid": {
+    "defaultMessage": "无 IPv4 GID"
+  },
+  "mlxDistributedSetup.link.noRdma": {
+    "defaultMessage": "无 RDMA 设备"
+  },
+  "mlxDistributedSetup.link.noThunderbolt": {
+    "defaultMessage": "无 Thunderbolt 地址"
+  },
+  "mlxDistributedSetup.link.none": {
+    "defaultMessage": "当前 LeanZero Link 上没有此账号的其他 Mac。"
+  },
+  "mlxDistributedSetup.link.notConnected": {
+    "defaultMessage": "LeanZero Link 未连接"
+  },
+  "mlxDistributedSetup.link.rdmaActive": {
+    "defaultMessage": "活动"
+  },
+  "mlxDistributedSetup.link.rdmaDown": {
+    "defaultMessage": "端口关闭"
+  },
+  "mlxDistributedSetup.link.servingOff": {
+    "defaultMessage": "在 {name} 上打开“允许这台 Mac 作为分布式节点”（提供方 › LeanZero MLX › 引擎 › 分布式）。"
+  },
+  "mlxDistributedSetup.link.state.notServed": {
+    "defaultMessage": "它的 goose 无法提供服务"
+  },
+  "mlxDistributedSetup.link.state.offline": {
+    "defaultMessage": "离线"
+  },
+  "mlxDistributedSetup.link.state.ready": {
+    "defaultMessage": "就绪"
+  },
+  "mlxDistributedSetup.link.state.servingDisabled": {
+    "defaultMessage": "那边已关闭服务"
+  },
+  "mlxDistributedSetup.link.state.unreachable": {
+    "defaultMessage": "无法访问"
+  },
+  "mlxDistributedSetup.link.state.unreadable": {
+    "defaultMessage": "已应答，无法读取"
+  },
+  "mlxDistributedSetup.link.title": {
+    "defaultMessage": "你在 LeanZero Link 上的 Mac"
+  },
+  "mlxDistributedSetup.link.use": {
+    "defaultMessage": "使用这台 Mac"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS 一致"
@@ -3386,6 +3467,9 @@
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "无法连接"
   },
+  "mlxDistributedSetup.viaLink": {
+    "defaultMessage": "LeanZero Link · {node}"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "分布式"
   },
@@ -3400,6 +3484,12 @@
   },
   "mlxMode.distributedNoBackend": {
     "defaultMessage": "{count, plural, other {分布式 · # 个节点}}"
+  },
+  "mlxMode.hosting": {
+    "defaultMessage": "{requester} 分布式引擎的 rank {rank} · {model} · {backend}"
+  },
+  "mlxMode.hostingNoBackend": {
+    "defaultMessage": "{requester} 分布式引擎的 rank {rank} · {model}"
   },
   "mlxMode.single": {
     "defaultMessage": "单机 · 这台 Mac"
@@ -3643,6 +3733,18 @@
   },
   "mlxStateTile.groupLabel": {
     "defaultMessage": "引擎 {state}"
+  },
+  "mlxStateTile.hosting.for": {
+    "defaultMessage": "通过 LeanZero Link 服务 {requester} 的分布式引擎"
+  },
+  "mlxStateTile.hosting.pid": {
+    "defaultMessage": "rank PID {pid}"
+  },
+  "mlxStateTile.hosting.rank": {
+    "defaultMessage": "rank {rank} / {size}"
+  },
+  "mlxStateTile.hosting.singleRefused": {
+    "defaultMessage": "这台 Mac 承担该 rank 期间，这里的单机引擎会被拒绝。"
   },
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "实时统计不可用"

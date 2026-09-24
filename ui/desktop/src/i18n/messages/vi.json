@@ -2960,6 +2960,12 @@
   "mlxDistributed.fits": {
     "defaultMessage": "vừa"
   },
+  "mlxDistributed.hosting.label": {
+    "defaultMessage": "Máy Mac này đang phục vụ một rank"
+  },
+  "mlxDistributed.hosting.text": {
+    "defaultMessage": "{line} — PID của rank {pid}. Engine đơn và engine phân tán riêng của máy Mac này bị từ chối cho đến khi {requester} dừng lượt chạy."
+  },
   "mlxDistributed.inflight": {
     "defaultMessage": "Đang xử lý"
   },
@@ -3164,6 +3170,15 @@
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {# chuỗi trong lô}}"
   },
+  "mlxDistributed.serveNode": {
+    "defaultMessage": "Cho phép máy Mac này làm nút phân tán"
+  },
+  "mlxDistributed.serveNodeError": {
+    "defaultMessage": "Không thể thay đổi cài đặt"
+  },
+  "mlxDistributed.serveNodeHint": {
+    "defaultMessage": "Các máy Mac khác của bạn trên LeanZero Link khi đó có thể chạy một rank engine phân tán của chúng tại đây — chỉ chương trình rank và thăm dò riêng của goose, không bao giờ là lệnh tùy ý. Mặc định tắt."
+  },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "Không đọc được trạng thái máy chủ: {error}"
   },
@@ -3284,6 +3299,9 @@
   "mlxDistributedSetup.detecting": {
     "defaultMessage": "Đang thăm dò máy Mac này và {peer} qua ssh…"
   },
+  "mlxDistributedSetup.detectingLink": {
+    "defaultMessage": "Đang thăm dò máy Mac này và {peer} qua LeanZero Link…"
+  },
   "mlxDistributedSetup.differsOn": {
     "defaultMessage": "khác trên {nodes}"
   },
@@ -3338,8 +3356,71 @@
   "mlxDistributedSetup.gapsTitle": {
     "defaultMessage": "{count, plural, other {# giá trị không tìm thấy}}"
   },
+  "mlxDistributedSetup.headless": {
+    "defaultMessage": "Không giao diện (ssh)"
+  },
   "mlxDistributedSetup.intro": {
     "defaultMessage": "Chỉ cần nêu tên máy Mac kia một lần. goose thăm dò máy Mac này và máy kia qua ssh rồi điền liên kết, RDMA, backend, mô hình, cổng và Python."
+  },
+  "mlxDistributedSetup.link.gid": {
+    "defaultMessage": "GID IPv4 {index}"
+  },
+  "mlxDistributedSetup.link.intro": {
+    "defaultMessage": "Đã đăng nhập cùng tài khoản. Mỗi máy tự mô tả qua mesh; chọn một máy và goose điều khiển nó qua goose của chính máy đó — không cần ssh."
+  },
+  "mlxDistributedSetup.link.memory": {
+    "defaultMessage": "Còn {available} / {total} GiB"
+  },
+  "mlxDistributedSetup.link.models": {
+    "defaultMessage": "{count, plural, other {# mô hình}}"
+  },
+  "mlxDistributedSetup.link.noGid": {
+    "defaultMessage": "không có GID IPv4"
+  },
+  "mlxDistributedSetup.link.noRdma": {
+    "defaultMessage": "Không có thiết bị RDMA"
+  },
+  "mlxDistributedSetup.link.noThunderbolt": {
+    "defaultMessage": "Không có địa chỉ Thunderbolt"
+  },
+  "mlxDistributedSetup.link.none": {
+    "defaultMessage": "Hiện không có máy Mac nào khác của tài khoản này trên LeanZero Link."
+  },
+  "mlxDistributedSetup.link.notConnected": {
+    "defaultMessage": "LeanZero Link chưa kết nối"
+  },
+  "mlxDistributedSetup.link.rdmaActive": {
+    "defaultMessage": "hoạt động"
+  },
+  "mlxDistributedSetup.link.rdmaDown": {
+    "defaultMessage": "cổng tắt"
+  },
+  "mlxDistributedSetup.link.servingOff": {
+    "defaultMessage": "Bật “Cho phép máy Mac này làm nút phân tán” trên {name} (Nhà cung cấp › LeanZero MLX › Engine › Phân tán)."
+  },
+  "mlxDistributedSetup.link.state.notServed": {
+    "defaultMessage": "goose ở đó không thể phục vụ"
+  },
+  "mlxDistributedSetup.link.state.offline": {
+    "defaultMessage": "Ngoại tuyến"
+  },
+  "mlxDistributedSetup.link.state.ready": {
+    "defaultMessage": "Sẵn sàng"
+  },
+  "mlxDistributedSetup.link.state.servingDisabled": {
+    "defaultMessage": "Ở đó đang tắt phục vụ"
+  },
+  "mlxDistributedSetup.link.state.unreachable": {
+    "defaultMessage": "Không truy cập được"
+  },
+  "mlxDistributedSetup.link.state.unreadable": {
+    "defaultMessage": "Đã trả lời, không đọc được"
+  },
+  "mlxDistributedSetup.link.title": {
+    "defaultMessage": "Các máy Mac của bạn trên LeanZero Link"
+  },
+  "mlxDistributedSetup.link.use": {
+    "defaultMessage": "Dùng máy Mac này"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS khớp"
@@ -3386,6 +3467,9 @@
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "không truy cập được"
   },
+  "mlxDistributedSetup.viaLink": {
+    "defaultMessage": "LeanZero Link · {node}"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Phân tán"
   },
@@ -3400,6 +3484,12 @@
   },
   "mlxMode.distributedNoBackend": {
     "defaultMessage": "{count, plural, other {Phân tán · # node}}"
+  },
+  "mlxMode.hosting": {
+    "defaultMessage": "Rank {rank} của engine phân tán của {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingNoBackend": {
+    "defaultMessage": "Rank {rank} của engine phân tán của {requester} · {model}"
   },
   "mlxMode.single": {
     "defaultMessage": "Đơn · máy Mac này"
@@ -3643,6 +3733,18 @@
   },
   "mlxStateTile.groupLabel": {
     "defaultMessage": "Engine {state}"
+  },
+  "mlxStateTile.hosting.for": {
+    "defaultMessage": "cho engine phân tán của {requester} qua LeanZero Link"
+  },
+  "mlxStateTile.hosting.pid": {
+    "defaultMessage": "PID của rank {pid}"
+  },
+  "mlxStateTile.hosting.rank": {
+    "defaultMessage": "Rank {rank} / {size}"
+  },
+  "mlxStateTile.hosting.singleRefused": {
+    "defaultMessage": "Engine đơn ở đây bị từ chối khi máy Mac này đang phục vụ rank."
   },
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Không có số liệu trực tiếp"

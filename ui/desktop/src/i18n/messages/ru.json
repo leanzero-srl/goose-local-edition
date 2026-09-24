@@ -2960,6 +2960,12 @@
   "mlxDistributed.fits": {
     "defaultMessage": "помещается"
   },
+  "mlxDistributed.hosting.label": {
+    "defaultMessage": "Этот Mac обслуживает ранг"
+  },
+  "mlxDistributed.hosting.text": {
+    "defaultMessage": "{line} — PID ранга {pid}. Одиночный движок и собственный распределённый движок этого Mac отклоняются, пока {requester} не остановит запуск."
+  },
   "mlxDistributed.inflight": {
     "defaultMessage": "В работе"
   },
@@ -3164,6 +3170,15 @@
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {# последовательность в пакете} few {# последовательности в пакете} many {# последовательностей в пакете} other {# последовательности в пакете}}"
   },
+  "mlxDistributed.serveNode": {
+    "defaultMessage": "Разрешить этому Mac работать распределённым узлом"
+  },
+  "mlxDistributed.serveNodeError": {
+    "defaultMessage": "Не удалось изменить настройку"
+  },
+  "mlxDistributed.serveNodeHint": {
+    "defaultMessage": "Ваши другие Mac в LeanZero Link смогут запускать здесь ранг своего распределённого движка — только собственные программы рангов и проверки goose, никогда произвольную команду. По умолчанию выключено."
+  },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "Статус сервера не читается: {error}"
   },
@@ -3284,6 +3299,9 @@
   "mlxDistributedSetup.detecting": {
     "defaultMessage": "Опрос этого Mac и {peer} по ssh…"
   },
+  "mlxDistributedSetup.detectingLink": {
+    "defaultMessage": "Проверка этого Mac и {peer} через LeanZero Link…"
+  },
   "mlxDistributedSetup.differsOn": {
     "defaultMessage": "отличается на {nodes}"
   },
@@ -3338,8 +3356,71 @@
   "mlxDistributedSetup.gapsTitle": {
     "defaultMessage": "{count, plural, one {# значение не найдено} few {# значения не найдены} many {# значений не найдено} other {# значения не найдено}}"
   },
+  "mlxDistributedSetup.headless": {
+    "defaultMessage": "Без интерфейса (ssh)"
+  },
   "mlxDistributedSetup.intro": {
     "defaultMessage": "Укажите другой Mac один раз. goose опрашивает этот Mac и его по ssh и заполняет канал, RDMA, бэкенд, модели, порты и Python."
+  },
+  "mlxDistributedSetup.link.gid": {
+    "defaultMessage": "IPv4 GID {index}"
+  },
+  "mlxDistributedSetup.link.intro": {
+    "defaultMessage": "Вход в одну учётную запись. Каждый описал себя сам через сеть; выберите один — goose управляет им через его собственный goose, без ssh."
+  },
+  "mlxDistributedSetup.link.memory": {
+    "defaultMessage": "Доступно {available} из {total} ГиБ"
+  },
+  "mlxDistributedSetup.link.models": {
+    "defaultMessage": "{count, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}"
+  },
+  "mlxDistributedSetup.link.noGid": {
+    "defaultMessage": "нет IPv4 GID"
+  },
+  "mlxDistributedSetup.link.noRdma": {
+    "defaultMessage": "Нет устройства RDMA"
+  },
+  "mlxDistributedSetup.link.noThunderbolt": {
+    "defaultMessage": "Нет адреса Thunderbolt"
+  },
+  "mlxDistributedSetup.link.none": {
+    "defaultMessage": "Сейчас в LeanZero Link нет других Mac этой учётной записи."
+  },
+  "mlxDistributedSetup.link.notConnected": {
+    "defaultMessage": "LeanZero Link не подключён"
+  },
+  "mlxDistributedSetup.link.rdmaActive": {
+    "defaultMessage": "активно"
+  },
+  "mlxDistributedSetup.link.rdmaDown": {
+    "defaultMessage": "порт не активен"
+  },
+  "mlxDistributedSetup.link.servingOff": {
+    "defaultMessage": "Включите «Разрешить этому Mac работать распределённым узлом» на {name} (Провайдеры › LeanZero MLX › Движок › Распределённый)."
+  },
+  "mlxDistributedSetup.link.state.notServed": {
+    "defaultMessage": "Его goose не умеет обслуживать"
+  },
+  "mlxDistributedSetup.link.state.offline": {
+    "defaultMessage": "Не в сети"
+  },
+  "mlxDistributedSetup.link.state.ready": {
+    "defaultMessage": "Готов"
+  },
+  "mlxDistributedSetup.link.state.servingDisabled": {
+    "defaultMessage": "Там обслуживание выключено"
+  },
+  "mlxDistributedSetup.link.state.unreachable": {
+    "defaultMessage": "Недоступен"
+  },
+  "mlxDistributedSetup.link.state.unreadable": {
+    "defaultMessage": "Ответил, не читается"
+  },
+  "mlxDistributedSetup.link.title": {
+    "defaultMessage": "Ваши Mac в LeanZero Link"
+  },
+  "mlxDistributedSetup.link.use": {
+    "defaultMessage": "Использовать этот Mac"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS совпадают"
@@ -3386,6 +3467,9 @@
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "недоступен"
   },
+  "mlxDistributedSetup.viaLink": {
+    "defaultMessage": "LeanZero Link · {node}"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Распределённо"
   },
@@ -3400,6 +3484,12 @@
   },
   "mlxMode.distributedNoBackend": {
     "defaultMessage": "{count, plural, one {Распределённо · # узел} few {Распределённо · # узла} many {Распределённо · # узлов} other {Распределённо · # узла}}"
+  },
+  "mlxMode.hosting": {
+    "defaultMessage": "Ранг {rank} распределённого движка {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingNoBackend": {
+    "defaultMessage": "Ранг {rank} распределённого движка {requester} · {model}"
   },
   "mlxMode.single": {
     "defaultMessage": "Одиночный · этот Mac"
@@ -3643,6 +3733,18 @@
   },
   "mlxStateTile.groupLabel": {
     "defaultMessage": "Движок: {state}"
+  },
+  "mlxStateTile.hosting.for": {
+    "defaultMessage": "для распределённого движка {requester} через LeanZero Link"
+  },
+  "mlxStateTile.hosting.pid": {
+    "defaultMessage": "PID ранга {pid}"
+  },
+  "mlxStateTile.hosting.rank": {
+    "defaultMessage": "Ранг {rank} из {size}"
+  },
+  "mlxStateTile.hosting.singleRefused": {
+    "defaultMessage": "Одиночный движок здесь отклоняется, пока этот Mac обслуживает ранг."
   },
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Живая статистика недоступна"

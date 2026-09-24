@@ -2960,6 +2960,12 @@
   "mlxDistributed.fits": {
     "defaultMessage": "sığar"
   },
+  "mlxDistributed.hosting.label": {
+    "defaultMessage": "Bu Mac bir rank hizmeti veriyor"
+  },
+  "mlxDistributed.hosting.text": {
+    "defaultMessage": "{line} — rank PID {pid}. {requester} çalıştırmayı durdurana kadar tekli motor ve bu Mac’in kendi dağıtık motoru reddedilir."
+  },
   "mlxDistributed.inflight": {
     "defaultMessage": "İşlenen"
   },
@@ -3164,6 +3170,15 @@
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {Toplu işte # dizi} other {Toplu işte # dizi}}"
   },
+  "mlxDistributed.serveNode": {
+    "defaultMessage": "Bu Mac’in dağıtık düğüm olarak hizmet vermesine izin ver"
+  },
+  "mlxDistributed.serveNodeError": {
+    "defaultMessage": "Ayar değiştirilemedi"
+  },
+  "mlxDistributed.serveNodeHint": {
+    "defaultMessage": "LeanZero Link’teki diğer Mac’leriniz burada dağıtık motorlarının bir rankını çalıştırabilir — yalnızca goose’un kendi rank programları ve yoklamaları, asla rastgele bir komut değil. Varsayılan olarak kapalı."
+  },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "Sunucu durumu okunamıyor: {error}"
   },
@@ -3284,6 +3299,9 @@
   "mlxDistributedSetup.detecting": {
     "defaultMessage": "Bu Mac ve {peer} ssh ile yoklanıyor…"
   },
+  "mlxDistributedSetup.detectingLink": {
+    "defaultMessage": "Bu Mac ve {peer} LeanZero Link üzerinden yoklanıyor…"
+  },
   "mlxDistributedSetup.differsOn": {
     "defaultMessage": "{nodes} üzerinde farklı"
   },
@@ -3338,8 +3356,71 @@
   "mlxDistributedSetup.gapsTitle": {
     "defaultMessage": "{count, plural, one {# değer bulunamadı} other {# değer bulunamadı}}"
   },
+  "mlxDistributedSetup.headless": {
+    "defaultMessage": "Arayüzsüz (ssh)"
+  },
   "mlxDistributedSetup.intro": {
     "defaultMessage": "Diğer Mac'i bir kez adlandırın. goose bu Mac'i ve onu ssh ile yoklar; bağlantıyı, RDMA'yı, arka ucu, modelleri, portları ve Python'u doldurur."
+  },
+  "mlxDistributedSetup.link.gid": {
+    "defaultMessage": "IPv4 GID {index}"
+  },
+  "mlxDistributedSetup.link.intro": {
+    "defaultMessage": "Aynı hesapla oturum açılmış. Her biri kendini mesh üzerinden tanımladı; birini seçin, goose onu kendi goose’u üzerinden yönetsin — ssh olmadan."
+  },
+  "mlxDistributedSetup.link.memory": {
+    "defaultMessage": "{total} GiB içinden {available} GiB kullanılabilir"
+  },
+  "mlxDistributedSetup.link.models": {
+    "defaultMessage": "{count, plural, other {# model}}"
+  },
+  "mlxDistributedSetup.link.noGid": {
+    "defaultMessage": "IPv4 GID yok"
+  },
+  "mlxDistributedSetup.link.noRdma": {
+    "defaultMessage": "RDMA aygıtı yok"
+  },
+  "mlxDistributedSetup.link.noThunderbolt": {
+    "defaultMessage": "Thunderbolt adresi yok"
+  },
+  "mlxDistributedSetup.link.none": {
+    "defaultMessage": "Şu anda bu hesabın başka bir Mac’i LeanZero Link’te değil."
+  },
+  "mlxDistributedSetup.link.notConnected": {
+    "defaultMessage": "LeanZero Link bağlı değil"
+  },
+  "mlxDistributedSetup.link.rdmaActive": {
+    "defaultMessage": "etkin"
+  },
+  "mlxDistributedSetup.link.rdmaDown": {
+    "defaultMessage": "bağlantı noktası kapalı"
+  },
+  "mlxDistributedSetup.link.servingOff": {
+    "defaultMessage": "{name} üzerinde “Bu Mac’in dağıtık düğüm olarak hizmet vermesine izin ver” seçeneğini açın (Sağlayıcılar › LeanZero MLX › Motor › Dağıtık)."
+  },
+  "mlxDistributedSetup.link.state.notServed": {
+    "defaultMessage": "Oradaki goose hizmet veremiyor"
+  },
+  "mlxDistributedSetup.link.state.offline": {
+    "defaultMessage": "Çevrimdışı"
+  },
+  "mlxDistributedSetup.link.state.ready": {
+    "defaultMessage": "Hazır"
+  },
+  "mlxDistributedSetup.link.state.servingDisabled": {
+    "defaultMessage": "Orada hizmet kapalı"
+  },
+  "mlxDistributedSetup.link.state.unreachable": {
+    "defaultMessage": "Ulaşılamıyor"
+  },
+  "mlxDistributedSetup.link.state.unreadable": {
+    "defaultMessage": "Yanıt verdi, okunamıyor"
+  },
+  "mlxDistributedSetup.link.title": {
+    "defaultMessage": "LeanZero Link’teki Mac’leriniz"
+  },
+  "mlxDistributedSetup.link.use": {
+    "defaultMessage": "Bu Mac’i kullan"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS eşleşiyor"
@@ -3386,6 +3467,9 @@
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "erişilemiyor"
   },
+  "mlxDistributedSetup.viaLink": {
+    "defaultMessage": "LeanZero Link · {node}"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Dağıtık"
   },
@@ -3400,6 +3484,12 @@
   },
   "mlxMode.distributedNoBackend": {
     "defaultMessage": "{count, plural, one {Dağıtık · # düğüm} other {Dağıtık · # düğüm}}"
+  },
+  "mlxMode.hosting": {
+    "defaultMessage": "{requester} dağıtık motorunun rank {rank} · {model} · {backend}"
+  },
+  "mlxMode.hostingNoBackend": {
+    "defaultMessage": "{requester} dağıtık motorunun rank {rank} · {model}"
   },
   "mlxMode.single": {
     "defaultMessage": "Tekli · bu Mac"
@@ -3643,6 +3733,18 @@
   },
   "mlxStateTile.groupLabel": {
     "defaultMessage": "Motor {state}"
+  },
+  "mlxStateTile.hosting.for": {
+    "defaultMessage": "LeanZero Link üzerinden {requester} dağıtık motoru için"
+  },
+  "mlxStateTile.hosting.pid": {
+    "defaultMessage": "rank PID {pid}"
+  },
+  "mlxStateTile.hosting.rank": {
+    "defaultMessage": "Rank {rank} / {size}"
+  },
+  "mlxStateTile.hosting.singleRefused": {
+    "defaultMessage": "Bu Mac rankı hizmet ederken buradaki tekli motor reddedilir."
   },
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Canlı istatistikler kullanılamıyor"

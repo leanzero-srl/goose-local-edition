@@ -2960,6 +2960,12 @@
   "mlxDistributed.fits": {
     "defaultMessage": "muat"
   },
+  "mlxDistributed.hosting.label": {
+    "defaultMessage": "Mac ini melayan satu rank"
+  },
+  "mlxDistributed.hosting.text": {
+    "defaultMessage": "{line} — PID rank {pid}. Enjin tunggal dan enjin teragih Mac ini sendiri ditolak sehingga {requester} menghentikan larian."
+  },
   "mlxDistributed.inflight": {
     "defaultMessage": "Sedang diproses"
   },
@@ -3164,6 +3170,15 @@
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {# jujukan dalam kelompok}}"
   },
+  "mlxDistributed.serveNode": {
+    "defaultMessage": "Benarkan Mac ini berkhidmat sebagai nod teragih"
+  },
+  "mlxDistributed.serveNodeError": {
+    "defaultMessage": "Tetapan tidak dapat ditukar"
+  },
+  "mlxDistributed.serveNodeHint": {
+    "defaultMessage": "Mac anda yang lain di LeanZero Link kemudian boleh menjalankan satu rank enjin teragih mereka di sini — hanya program rank dan probe goose sendiri, tidak sekali-kali arahan sewenang-wenang. Mati secara lalai."
+  },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "Status pelayan tidak boleh dibaca: {error}"
   },
@@ -3284,6 +3299,9 @@
   "mlxDistributedSetup.detecting": {
     "defaultMessage": "Memeriksa Mac ini dan {peer} melalui ssh…"
   },
+  "mlxDistributedSetup.detectingLink": {
+    "defaultMessage": "Memeriksa Mac ini dan {peer} melalui LeanZero Link…"
+  },
   "mlxDistributedSetup.differsOn": {
     "defaultMessage": "berbeza pada {nodes}"
   },
@@ -3338,8 +3356,71 @@
   "mlxDistributedSetup.gapsTitle": {
     "defaultMessage": "{count, plural, other {# nilai tidak ditemui}}"
   },
+  "mlxDistributedSetup.headless": {
+    "defaultMessage": "Tanpa antara muka (ssh)"
+  },
   "mlxDistributedSetup.intro": {
     "defaultMessage": "Namakan Mac yang satu lagi sekali sahaja. goose memeriksa Mac ini dan Mac itu melalui ssh dan mengisi pautan, RDMA, backend, model, port dan Python."
+  },
+  "mlxDistributedSetup.link.gid": {
+    "defaultMessage": "GID IPv4 {index}"
+  },
+  "mlxDistributedSetup.link.intro": {
+    "defaultMessage": "Log masuk dengan akaun yang sama. Setiap satu menerangkan dirinya melalui mesh; pilih satu dan goose memandunya melalui goose miliknya sendiri — tanpa ssh."
+  },
+  "mlxDistributedSetup.link.memory": {
+    "defaultMessage": "{available} daripada {total} GiB tersedia"
+  },
+  "mlxDistributedSetup.link.models": {
+    "defaultMessage": "{count, plural, other {# model}}"
+  },
+  "mlxDistributedSetup.link.noGid": {
+    "defaultMessage": "tiada GID IPv4"
+  },
+  "mlxDistributedSetup.link.noRdma": {
+    "defaultMessage": "Tiada peranti RDMA"
+  },
+  "mlxDistributedSetup.link.noThunderbolt": {
+    "defaultMessage": "Tiada alamat Thunderbolt"
+  },
+  "mlxDistributedSetup.link.none": {
+    "defaultMessage": "Tiada Mac lain daripada akaun ini di LeanZero Link sekarang."
+  },
+  "mlxDistributedSetup.link.notConnected": {
+    "defaultMessage": "LeanZero Link tidak bersambung"
+  },
+  "mlxDistributedSetup.link.rdmaActive": {
+    "defaultMessage": "aktif"
+  },
+  "mlxDistributedSetup.link.rdmaDown": {
+    "defaultMessage": "port mati"
+  },
+  "mlxDistributedSetup.link.servingOff": {
+    "defaultMessage": "Hidupkan “Benarkan Mac ini berkhidmat sebagai nod teragih” pada {name} (Pembekal › LeanZero MLX › Enjin › Teragih)."
+  },
+  "mlxDistributedSetup.link.state.notServed": {
+    "defaultMessage": "goose-nya tidak boleh berkhidmat"
+  },
+  "mlxDistributedSetup.link.state.offline": {
+    "defaultMessage": "Luar talian"
+  },
+  "mlxDistributedSetup.link.state.ready": {
+    "defaultMessage": "Sedia"
+  },
+  "mlxDistributedSetup.link.state.servingDisabled": {
+    "defaultMessage": "Perkhidmatan dimatikan di sana"
+  },
+  "mlxDistributedSetup.link.state.unreachable": {
+    "defaultMessage": "Tidak dapat dicapai"
+  },
+  "mlxDistributedSetup.link.state.unreadable": {
+    "defaultMessage": "Menjawab, tidak boleh dibaca"
+  },
+  "mlxDistributedSetup.link.title": {
+    "defaultMessage": "Mac anda di LeanZero Link"
+  },
+  "mlxDistributedSetup.link.use": {
+    "defaultMessage": "Guna Mac ini"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS sepadan"
@@ -3386,6 +3467,9 @@
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "tidak dapat dicapai"
   },
+  "mlxDistributedSetup.viaLink": {
+    "defaultMessage": "LeanZero Link · {node}"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Teragih"
   },
@@ -3400,6 +3484,12 @@
   },
   "mlxMode.distributedNoBackend": {
     "defaultMessage": "{count, plural, other {Teragih · # nod}}"
+  },
+  "mlxMode.hosting": {
+    "defaultMessage": "Rank {rank} enjin teragih {requester} · {model} · {backend}"
+  },
+  "mlxMode.hostingNoBackend": {
+    "defaultMessage": "Rank {rank} enjin teragih {requester} · {model}"
   },
   "mlxMode.single": {
     "defaultMessage": "Tunggal · Mac ini"
@@ -3643,6 +3733,18 @@
   },
   "mlxStateTile.groupLabel": {
     "defaultMessage": "Enjin {state}"
+  },
+  "mlxStateTile.hosting.for": {
+    "defaultMessage": "untuk enjin teragih {requester} melalui LeanZero Link"
+  },
+  "mlxStateTile.hosting.pid": {
+    "defaultMessage": "PID rank {pid}"
+  },
+  "mlxStateTile.hosting.rank": {
+    "defaultMessage": "Rank {rank} daripada {size}"
+  },
+  "mlxStateTile.hosting.singleRefused": {
+    "defaultMessage": "Enjin tunggal di sini ditolak selagi Mac ini melayan rank tersebut."
   },
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Statistik langsung tidak tersedia"
