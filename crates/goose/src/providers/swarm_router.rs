@@ -1085,7 +1085,17 @@ pub(crate) async fn route_stream(
             add_template_kwargs(&mut node_cfg, kwargs)?;
         }
         match provider.stream(&node_cfg, system, messages, tools).await {
-            Ok(inner) => return Ok(leased_stream(inner, lease)),
+            Ok(inner) => {
+                let inner = if matches!(
+                    lease.node.kind,
+                    NodeKind::MlxSidecar | NodeKind::MlxRemote(_)
+                ) {
+                    super::mlx_speed::observe(inner)
+                } else {
+                    inner
+                };
+                return Ok(leased_stream(inner, lease));
+            }
             Err(e) if is_admission_refusal(&e) => {
                 tracing::warn!(
                     target: "swarm_router",

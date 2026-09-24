@@ -10512,6 +10512,985 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/replicaPull"
     },
+    "MlxEnginePlacementPlanRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "goal": {
+          "$ref": "#/$defs/MlxPlacementGoalDto",
+          "default": "chat"
+        },
+        "context": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Context wanted (tokens); absent = the largest that fits, capped at the model's maximum.",
+          "minimum": 0
+        }
+      },
+      "description": "Plan one model (`modelId`) or every model in the models folder (absent — the picker's badges).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/placementPlan"
+    },
+    "MlxPlacementGoalDto": {
+      "type": "string",
+      "enum": [
+        "chat",
+        "longDocuments",
+        "manyRequests"
+      ],
+      "description": "What the recommendation optimises: one conversation's writing speed (decode), reading long\nprompts (prefill), or total speed across many requests."
+    },
+    "MlxEnginePlacementPlanResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "plans": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxPlacementPlanDto"
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxPlacementNodeDto"
+          }
+        },
+        "storeErrors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Lines of the measurement store that did not parse, by number.",
+          "default": []
+        },
+        "probeMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "plans",
+        "nodes",
+        "probeMs"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/placementPlan"
+    },
+    "MlxPlacementPlanDto": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "goal": {
+          "$ref": "#/$defs/MlxPlacementGoalDto"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxPlacementCandidateDto"
+          },
+          "description": "Best first, then the rest in the order they lost.",
+          "default": []
+        },
+        "best": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The fastest candidate's id, whether or not it can be started today."
+        },
+        "bestAvailable": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The fastest candidate goose can start today."
+        },
+        "badge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxPlacementBadgeDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "modelId",
+        "goal"
+      ],
+      "description": "One model's plan, or why it could not be planned (`error`)."
+    },
+    "MlxPlacementCandidateDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "`single:local`, `tensor:jaccl:local+link:<id>` — what `measureSpeed` takes."
+        },
+        "key": {
+          "$ref": "#/$defs/MlxPlacementKeyDto"
+        },
+        "nodeNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "chips": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MlxChipDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "Per node; `null` = the node did not report its chip."
+        },
+        "backend": {
+          "type": "string",
+          "description": "\"rapid-mlx\" | \"mlx_lm\" | \"pipeline_qwen4\"."
+        },
+        "supported": {
+          "type": "boolean",
+          "description": "`false` = goose cannot run this placement for this architecture yet (listed, never offered)."
+        },
+        "fit": {
+          "$ref": "#/$defs/MlxPlacementFitDto"
+        },
+        "speed": {
+          "$ref": "#/$defs/MlxPlacementSpeedDto"
+        },
+        "action": {
+          "$ref": "#/$defs/MlxPlacementActionDto"
+        },
+        "outcome": {
+          "$ref": "#/$defs/MlxPlacementOutcomeDto"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "nodeNames",
+        "chips",
+        "backend",
+        "supported",
+        "fit",
+        "speed",
+        "action",
+        "outcome"
+      ]
+    },
+    "MlxPlacementKeyDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/MlxPlacementKindDto"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "link": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "nodes"
+      ],
+      "description": "A placement's identity: kind, node ids in rank order (`local` = this Mac, a peer by its\nconfigured host), the link of a split."
+    },
+    "MlxPlacementKindDto": {
+      "type": "string",
+      "enum": [
+        "single",
+        "tensor",
+        "pipeline"
+      ]
+    },
+    "MlxChipDto": {
+      "type": "object",
+      "properties": {
+        "hwModel": {
+          "type": "string"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "gpuCores": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "hwModel",
+        "brand"
+      ],
+      "description": "A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count."
+    },
+    "MlxPlacementFitDto": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/MlxFitStatusDto"
+        },
+        "context": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "shortBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "shortNode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxNodeFitDto"
+          },
+          "default": []
+        },
+        "detail": {
+          "type": "string",
+          "description": "The arithmetic in words (English), a refusal's message verbatim."
+        }
+      },
+      "required": [
+        "status",
+        "detail"
+      ]
+    },
+    "MlxFitStatusDto": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "fits",
+            "short",
+            "unknown"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "smallerContext",
+          "description": "Fits only at a smaller context than wanted (`context` says which)."
+        }
+      ]
+    },
+    "MlxNodeFitDto": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "needBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budgetBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "needBytes",
+        "budgetBytes"
+      ]
+    },
+    "MlxPlacementSpeedDto": {
+      "type": "object",
+      "properties": {
+        "decode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxSpeedFigureDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Writing speed of one conversation (tok/s) at a ~2k-token prompt."
+        },
+        "prefill": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxSpeedFigureDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Prompt reading speed (tok/s) at the goal's prompt size."
+        },
+        "throughput": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxSpeedFigureDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Total tok/s across `concurrency` requests (derived from decode × a measured gain)."
+        },
+        "concurrency": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "basis": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What the figures rest on, one line each (English diagnostics).",
+          "default": []
+        }
+      }
+    },
+    "MlxSpeedFigureDto": {
+      "type": "object",
+      "properties": {
+        "estimate": {
+          "$ref": "#/$defs/MlxEstimateDto"
+        },
+        "measured": {
+          "type": "boolean"
+        },
+        "runs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastMeasuredMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "estimate",
+        "measured",
+        "runs"
+      ],
+      "description": "`measured` = goose timed this placement (median of `runs`, range = their extremes); else the\ncalibrated formula's estimate."
+    },
+    "MlxEstimateDto": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number",
+          "format": "double"
+        },
+        "low": {
+          "type": "number",
+          "format": "double"
+        },
+        "high": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "value",
+        "low",
+        "high"
+      ],
+      "description": "A figure and its range (tok/s)."
+    },
+    "MlxPlacementActionDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "mountHere"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Mount on this Mac's single engine (`mlxEngine/mount`)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "setupMatches": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "startSplit"
+            }
+          },
+          "required": [
+            "kind",
+            "setupMatches"
+          ],
+          "description": "Start the distributed engine (`mlxEngine/distributedStart`); `setupMatches` = the saved\nsetup already names this model (else Set up must pick it first)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "remoteSingle"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Start the single engine on the peer and chat through Link."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "description": "Nothing goose can start for it today — why (English)."
+        }
+      ],
+      "description": "What [Use this] does. Internally tagged on `kind`."
+    },
+    "MlxPlacementOutcomeDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "best"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "bestAvailableNow"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "notSupported"
+            }
+          },
+          "required": [
+            "code",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "doesNotFit"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "fitUnknown"
+            }
+          },
+          "required": [
+            "code",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "noFigure"
+            }
+          },
+          "required": [
+            "code",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mine": {
+              "type": "number",
+              "format": "double"
+            },
+            "best": {
+              "type": "number",
+              "format": "double"
+            },
+            "code": {
+              "type": "string",
+              "const": "slower"
+            }
+          },
+          "required": [
+            "code",
+            "mine",
+            "best"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mine": {
+              "type": "number",
+              "format": "double"
+            },
+            "best": {
+              "type": "number",
+              "format": "double"
+            },
+            "code": {
+              "type": "string",
+              "const": "tiedNeedsMoreMacs"
+            }
+          },
+          "required": [
+            "code",
+            "mine",
+            "best"
+          ]
+        }
+      ],
+      "description": "Why a candidate won or lost. Internally tagged on `code`; `mine`/`best` are the goal's tok/s."
+    },
+    "MlxPlacementBadgeDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fitsThisMac"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "fitsPeer"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "needsBothMacs"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "shortBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "tooBig"
+            }
+          },
+          "required": [
+            "kind",
+            "shortBytes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ],
+      "description": "The model-picker badge. Internally tagged on `kind`."
+    },
+    "MlxPlacementNodeDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "`local`, or the configured host (ssh alias / `link:<id>`)."
+        },
+        "name": {
+          "type": "string"
+        },
+        "chip": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxChipDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "chipError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bandwidthGbs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "Apple's published memory bandwidth for the chip."
+        },
+        "bandwidthSource": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bandwidthError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "totalBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "availableBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "memoryError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ceilingBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Metal's working-set ceiling.",
+          "minimum": 0
+        },
+        "ceilingError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "description": "One Mac as the planner measured it. Every figure it could not read is absent with its `*Error`."
+    },
+    "MlxEngineMeasureSpeedRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "placementId": {
+          "type": "string"
+        },
+        "longDocument": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "modelId",
+        "placementId"
+      ],
+      "description": "\"Measure speed\": the fixed workload on the RUNNING engine of `placementId` (the single engine\non this Mac, or the distributed engine) — ~1.9k prompt tokens + 256 greedy tokens, and with\n`longDocument` a ~30k-token document too. Recorded into the store.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/measureSpeed"
+    },
+    "MlxEngineMeasureSpeedResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxSpeedRecordDto"
+          }
+        }
+      },
+      "required": [
+        "records"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/measureSpeed"
+    },
+    "MlxSpeedRecordDto": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "placement": {
+          "$ref": "#/$defs/MlxPlacementKeyDto"
+        },
+        "nodeNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "chips": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MlxChipDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "backend": {
+          "type": "string"
+        },
+        "contextBucket": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "promptTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "completionTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prefillTps": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "decodeTps": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "ttftMs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "recordedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "source": {
+          "type": "string",
+          "description": "\"benchmark\" | \"chat\"."
+        },
+        "workload": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kvCache": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "modelId",
+        "placement",
+        "nodeNames",
+        "chips",
+        "backend",
+        "contextBucket",
+        "promptTokens",
+        "completionTokens",
+        "recordedAtMs",
+        "source"
+      ],
+      "description": "One measured run, as stored."
+    },
+    "MlxEngineSpeedHistoryRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "description": "Every stored measurement (optionally one model's), newest last.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/speedHistory"
+    },
+    "MlxEngineSpeedHistoryResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxSpeedRecordDto"
+          }
+        },
+        "storeErrors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "path": {
+          "type": "string",
+          "description": "The store file."
+        }
+      },
+      "required": [
+        "records",
+        "path"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/speedHistory"
+    },
     "MlxEngineReplicaProgressRequest_unstable": {
       "type": "object",
       "properties": {
@@ -12846,6 +13825,33 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEnginePlacementPlanRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/placementPlan",
+                  "title": "MlxEnginePlacementPlanRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineMeasureSpeedRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/measureSpeed",
+                  "title": "MlxEngineMeasureSpeedRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineSpeedHistoryRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/speedHistory",
+                  "title": "MlxEngineSpeedHistoryRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/MlxEngineReplicaProgressRequest_unstable"
                     }
                   ],
@@ -13772,6 +14778,30 @@
                         }
                       ],
                       "title": "MlxEngineReplicateResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEnginePlacementPlanResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEnginePlacementPlanResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineMeasureSpeedResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineMeasureSpeedResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineSpeedHistoryResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineSpeedHistoryResponse_unstable"
                     },
                     {
                       "allOf": [

@@ -726,6 +726,21 @@
       "responseType": "EmptyResponse"
     },
     {
+      "method": "_goose/unstable/mlxEngine/placementPlan",
+      "requestType": "MlxEnginePlacementPlanRequest_unstable",
+      "responseType": "MlxEnginePlacementPlanResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/measureSpeed",
+      "requestType": "MlxEngineMeasureSpeedRequest_unstable",
+      "responseType": "MlxEngineMeasureSpeedResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/speedHistory",
+      "requestType": "MlxEngineSpeedHistoryRequest_unstable",
+      "responseType": "MlxEngineSpeedHistoryResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/mlxEngine/replicaProgress",
       "requestType": "MlxEngineReplicaProgressRequest_unstable",
       "responseType": "MlxEngineReplicaProgressResponse_unstable"

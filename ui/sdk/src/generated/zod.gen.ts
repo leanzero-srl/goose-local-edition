@@ -4505,6 +4505,378 @@ export const zMlxEngineReplicaPullRequest_unstable = z.object({
 });
 
 /**
+ * What the recommendation optimises: one conversation's writing speed (decode), reading long
+ * prompts (prefill), or total speed across many requests.
+ */
+export const zMlxPlacementGoalDto = z.enum([
+    'chat',
+    'longDocuments',
+    'manyRequests'
+]);
+
+/**
+ * Plan one model (`modelId`) or every model in the models folder (absent — the picker's badges).
+ */
+export const zMlxEnginePlacementPlanRequest_unstable = z.object({
+    modelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    goal: zMlxPlacementGoalDto.optional().default('chat'),
+    context: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxPlacementKindDto = z.enum([
+    'single',
+    'tensor',
+    'pipeline'
+]);
+
+/**
+ * A placement's identity: kind, node ids in rank order (`local` = this Mac, a peer by its
+ * configured host), the link of a split.
+ */
+export const zMlxPlacementKeyDto = z.object({
+    kind: zMlxPlacementKindDto,
+    nodes: z.array(z.string()),
+    link: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
+ */
+export const zMlxChipDto = z.object({
+    hwModel: z.string(),
+    brand: z.string(),
+    gpuCores: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxFitStatusDto = z.union([
+    z.literal('fits'),
+    z.literal('short'),
+    z.literal('unknown'),
+    z.literal('smallerContext')
+]);
+
+export const zMlxNodeFitDto = z.object({
+    name: z.string(),
+    needBytes: z.number().int().gte(0),
+    budgetBytes: z.number().int().gte(0)
+});
+
+export const zMlxPlacementFitDto = z.object({
+    status: zMlxFitStatusDto,
+    context: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    shortBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    shortNode: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    nodes: z.array(zMlxNodeFitDto).optional().default([]),
+    detail: z.string()
+});
+
+/**
+ * A figure and its range (tok/s).
+ */
+export const zMlxEstimateDto = z.object({
+    value: z.number(),
+    low: z.number(),
+    high: z.number()
+});
+
+/**
+ * `measured` = goose timed this placement (median of `runs`, range = their extremes); else the
+ * calibrated formula's estimate.
+ */
+export const zMlxSpeedFigureDto = z.object({
+    estimate: zMlxEstimateDto,
+    measured: z.boolean(),
+    runs: z.number().int().gte(0),
+    lastMeasuredMs: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxPlacementSpeedDto = z.object({
+    decode: z.union([
+        zMlxSpeedFigureDto,
+        z.null()
+    ]).optional(),
+    prefill: z.union([
+        zMlxSpeedFigureDto,
+        z.null()
+    ]).optional(),
+    throughput: z.union([
+        zMlxSpeedFigureDto,
+        z.null()
+    ]).optional(),
+    concurrency: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    basis: z.array(z.string()).optional().default([])
+});
+
+/**
+ * What [Use this] does. Internally tagged on `kind`.
+ */
+export const zMlxPlacementActionDto = z.union([
+    z.object({
+        kind: z.literal('mountHere')
+    }),
+    z.object({
+        setupMatches: z.boolean(),
+        kind: z.literal('startSplit')
+    }),
+    z.object({
+        kind: z.literal('remoteSingle')
+    }),
+    z.object({
+        reason: z.string(),
+        kind: z.literal('unavailable')
+    })
+]);
+
+/**
+ * Why a candidate won or lost. Internally tagged on `code`; `mine`/`best` are the goal's tok/s.
+ */
+export const zMlxPlacementOutcomeDto = z.union([
+    z.object({
+        code: z.literal('best')
+    }),
+    z.object({
+        code: z.literal('bestAvailableNow')
+    }),
+    z.object({
+        reason: z.string(),
+        code: z.literal('notSupported')
+    }),
+    z.object({
+        code: z.literal('doesNotFit')
+    }),
+    z.object({
+        reason: z.string(),
+        code: z.literal('fitUnknown')
+    }),
+    z.object({
+        reason: z.string(),
+        code: z.literal('noFigure')
+    }),
+    z.object({
+        mine: z.number(),
+        best: z.number(),
+        code: z.literal('slower')
+    }),
+    z.object({
+        mine: z.number(),
+        best: z.number(),
+        code: z.literal('tiedNeedsMoreMacs')
+    })
+]);
+
+export const zMlxPlacementCandidateDto = z.object({
+    id: z.string(),
+    key: zMlxPlacementKeyDto,
+    nodeNames: z.array(z.string()),
+    chips: z.array(z.union([zMlxChipDto, z.null()])),
+    backend: z.string(),
+    supported: z.boolean(),
+    fit: zMlxPlacementFitDto,
+    speed: zMlxPlacementSpeedDto,
+    action: zMlxPlacementActionDto,
+    outcome: zMlxPlacementOutcomeDto
+});
+
+/**
+ * The model-picker badge. Internally tagged on `kind`.
+ */
+export const zMlxPlacementBadgeDto = z.union([
+    z.object({
+        kind: z.literal('fitsThisMac')
+    }),
+    z.object({
+        name: z.string(),
+        kind: z.literal('fitsPeer')
+    }),
+    z.object({
+        kind: z.literal('needsBothMacs')
+    }),
+    z.object({
+        shortBytes: z.number().int().gte(0),
+        kind: z.literal('tooBig')
+    }),
+    z.object({
+        reason: z.string(),
+        kind: z.literal('unknown')
+    })
+]);
+
+/**
+ * One model's plan, or why it could not be planned (`error`).
+ */
+export const zMlxPlacementPlanDto = z.object({
+    modelId: z.string(),
+    goal: zMlxPlacementGoalDto,
+    candidates: z.array(zMlxPlacementCandidateDto).optional().default([]),
+    best: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    bestAvailable: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    badge: z.union([
+        zMlxPlacementBadgeDto,
+        z.null()
+    ]).optional(),
+    notes: z.array(z.string()).optional().default([]),
+    error: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * One Mac as the planner measured it. Every figure it could not read is absent with its `*Error`.
+ */
+export const zMlxPlacementNodeDto = z.object({
+    id: z.string(),
+    name: z.string(),
+    chip: z.union([
+        zMlxChipDto,
+        z.null()
+    ]).optional(),
+    chipError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    bandwidthGbs: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    bandwidthSource: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    bandwidthError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    totalBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    availableBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    memoryError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    ceilingBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    ceilingError: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEnginePlacementPlanResponse_unstable = z.object({
+    plans: z.array(zMlxPlacementPlanDto),
+    nodes: z.array(zMlxPlacementNodeDto),
+    storeErrors: z.array(z.string()).optional().default([]),
+    probeMs: z.number().int().gte(0)
+});
+
+/**
+ * "Measure speed": the fixed workload on the RUNNING engine of `placementId` (the single engine
+ * on this Mac, or the distributed engine) — ~1.9k prompt tokens + 256 greedy tokens, and with
+ * `longDocument` a ~30k-token document too. Recorded into the store.
+ */
+export const zMlxEngineMeasureSpeedRequest_unstable = z.object({
+    modelId: z.string(),
+    placementId: z.string(),
+    longDocument: z.boolean().optional().default(false)
+});
+
+/**
+ * One measured run, as stored.
+ */
+export const zMlxSpeedRecordDto = z.object({
+    modelId: z.string(),
+    placement: zMlxPlacementKeyDto,
+    nodeNames: z.array(z.string()),
+    chips: z.array(z.union([zMlxChipDto, z.null()])),
+    backend: z.string(),
+    contextBucket: z.number().int().gte(0),
+    promptTokens: z.number().int().gte(0),
+    completionTokens: z.number().int().gte(0),
+    prefillTps: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    decodeTps: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    ttftMs: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    recordedAtMs: z.number().int().gte(0),
+    source: z.string(),
+    workload: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    kvCache: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineMeasureSpeedResponse_unstable = z.object({
+    records: z.array(zMlxSpeedRecordDto)
+});
+
+/**
+ * Every stored measurement (optionally one model's), newest last.
+ */
+export const zMlxEngineSpeedHistoryRequest_unstable = z.object({
+    modelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineSpeedHistoryResponse_unstable = z.object({
+    records: z.array(zMlxSpeedRecordDto),
+    storeErrors: z.array(z.string()).optional().default([]),
+    path: z.string()
+});
+
+/**
  * Poll a copy on the receiving node (`nodeId` = that node). `progress` is unset when no
  * copy of the model was tracked there.
  */
@@ -5074,6 +5446,9 @@ export const zExtRequest = z.object({
             zMlxEngineReplicaTargetsRequest_unstable,
             zMlxEngineReplicateRequest_unstable,
             zMlxEngineReplicaPullRequest_unstable,
+            zMlxEnginePlacementPlanRequest_unstable,
+            zMlxEngineMeasureSpeedRequest_unstable,
+            zMlxEngineSpeedHistoryRequest_unstable,
             zMlxEngineReplicaProgressRequest_unstable,
             zMlxEngineReplicaCancelRequest_unstable,
             zLeanzeroLinkHealthRequest_unstable,
@@ -5198,6 +5573,9 @@ export const zExtResponse = z.union([
                 zMlxEngineLinkFactsResponse_unstable,
                 zMlxEngineReplicaTargetsResponse_unstable,
                 zMlxEngineReplicateResponse_unstable,
+                zMlxEnginePlacementPlanResponse_unstable,
+                zMlxEngineMeasureSpeedResponse_unstable,
+                zMlxEngineSpeedHistoryResponse_unstable,
                 zMlxEngineReplicaProgressResponse_unstable,
                 zLeanzeroLinkHealthResponse_unstable,
                 zLeanzeroLinkRequestCodeResponse_unstable,

@@ -70,6 +70,9 @@ pub struct NodeInput {
     pub memory: Result<NodeMemory, String>,
     /// Whether this node holds the model (same directory name, same loaded files and sizes).
     pub has_model: Result<bool, String>,
+    /// A peer: whether goose can start its single engine and chat with it (remote single over
+    /// LeanZero Link), or why not. Unused for this Mac.
+    pub remote_single: Result<(), String>,
 }
 
 impl NodeInput {
@@ -119,8 +122,6 @@ pub struct PlanInput<'a> {
     pub records: &'a [SpeedRecord],
     pub calibration: &'a Calibration,
     pub gate: &'a MemoryGate,
-    /// A single engine on a PEER can be started and chatted with (design phase 3).
-    pub remote_single_available: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,7 +184,11 @@ pub struct Speed {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum Action {
     /// Mount it on this Mac's single engine.
     MountHere,
@@ -196,7 +201,11 @@ pub enum Action {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "code")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "code"
+)]
 pub enum Outcome {
     Best,
     /// The fastest placement cannot be started yet; this one is the best that can.
@@ -252,7 +261,11 @@ impl Candidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "kind"
+)]
 pub enum Badge {
     FitsThisMac,
     FitsPeer { name: String },
@@ -807,9 +820,9 @@ pub fn plan(input: &PlanInput) -> Plan {
                 Some(reason) => Action::Unavailable { reason },
                 None => Action::MountHere,
             }
-        } else if !input.remote_single_available {
+        } else if let Err(reason) = &node.remote_single {
             Action::Unavailable {
-                reason: format!("coming: needs the remote engine on {} (a single engine there, chat through LeanZero Link)", node.name),
+                reason: reason.clone(),
             }
         } else {
             match missing_model(&[node]) {
@@ -1171,6 +1184,7 @@ mod tests {
                     ceiling_bytes: Ok(M4_CEILING),
                 }),
                 has_model: Ok(true),
+                remote_single: Ok(()),
             },
             NodeInput {
                 id: "link:worksmacstudio".into(),
@@ -1182,6 +1196,7 @@ mod tests {
                     ceiling_bytes: Ok(M3_CEILING),
                 }),
                 has_model: Ok(true),
+                remote_single: Ok(()),
             },
         ]
     }
@@ -1297,7 +1312,6 @@ mod tests {
                 records: &self.records,
                 calibration: &self.cal,
                 gate: &self.gate,
-                remote_single_available: false,
             })
         }
     }
@@ -1331,12 +1345,9 @@ mod tests {
             Some("single:link:worksmacstudio"),
             "{plan:#?}"
         );
-        // Its engine on the peer has not landed: the best a person can start now is this Mac.
-        assert_eq!(plan.best_available.as_deref(), Some("single:local"));
+        assert_eq!(plan.best_available, plan.best);
         let studio = by_id(&plan, "single:link:worksmacstudio");
-        assert!(
-            matches!(&studio.action, Action::Unavailable { reason } if reason.starts_with("coming"))
-        );
+        assert_eq!(studio.action, Action::RemoteSingle);
         assert_eq!(studio.fit.status, FitStatus::Fits);
         assert_eq!(studio.fit.context, Some(262_144));
         let decode = studio.speed.decode.as_ref().unwrap();
@@ -1361,6 +1372,19 @@ mod tests {
             matches!(&pipeline.outcome, Outcome::NotSupported { reason } if reason.contains("tensor-parallel"))
         );
         assert_eq!(plan.badge, Badge::FitsThisMac);
+
+        // A peer goose cannot start a single engine on stays the fastest, and is named as such,
+        // while the best a person can start now is this Mac.
+        let mut ssh_peer = the_27b();
+        ssh_peer.nodes[1].remote_single =
+            Err("remote single runs over LeanZero Link; this Mac is set up over ssh".into());
+        let plan = ssh_peer.plan(Goal::Chat);
+        assert_eq!(plan.best.as_deref(), Some("single:link:worksmacstudio"));
+        assert_eq!(plan.best_available.as_deref(), Some("single:local"));
+        let studio = by_id(&plan, "single:link:worksmacstudio");
+        assert!(
+            matches!(&studio.action, Action::Unavailable { reason } if reason.contains("over ssh"))
+        );
     }
 
     #[test]

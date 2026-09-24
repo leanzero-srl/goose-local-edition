@@ -4612,3 +4612,348 @@ pub struct InspectConfigExtensionResponse {
     pub tools: Vec<serde_json::Value>,
     pub saved_file: Option<String>,
 }
+
+// ---------------------------------------------------------------------------------------------
+// MLX placement planner (local-edition/mlx/DESIGN-PLACEMENT.md): which way of running a model is
+// best on the Macs goose can reach, and "Measure speed". Shapes mirror goose_sidecar::placement.
+// ---------------------------------------------------------------------------------------------
+
+/// What the recommendation optimises: one conversation's writing speed (decode), reading long
+/// prompts (prefill), or total speed across many requests.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum MlxPlacementGoalDto {
+    #[default]
+    Chat,
+    LongDocuments,
+    ManyRequests,
+}
+
+/// A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxChipDto {
+    pub hw_model: String,
+    pub brand: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_cores: Option<u32>,
+}
+
+/// A figure and its range (tok/s).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEstimateDto {
+    pub value: f64,
+    pub low: f64,
+    pub high: f64,
+}
+
+/// `measured` = goose timed this placement (median of `runs`, range = their extremes); else the
+/// calibrated formula's estimate.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxSpeedFigureDto {
+    pub estimate: MlxEstimateDto,
+    pub measured: bool,
+    pub runs: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_measured_ms: Option<u64>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxPlacementSpeedDto {
+    /// Writing speed of one conversation (tok/s) at a ~2k-token prompt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode: Option<MlxSpeedFigureDto>,
+    /// Prompt reading speed (tok/s) at the goal's prompt size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill: Option<MlxSpeedFigureDto>,
+    /// Total tok/s across `concurrency` requests (derived from decode × a measured gain).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub throughput: Option<MlxSpeedFigureDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<u32>,
+    /// What the figures rest on, one line each (English diagnostics).
+    #[serde(default)]
+    pub basis: Vec<String>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum MlxPlacementKindDto {
+    #[default]
+    Single,
+    Tensor,
+    Pipeline,
+}
+
+/// A placement's identity: kind, node ids in rank order (`local` = this Mac, a peer by its
+/// configured host), the link of a split.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxPlacementKeyDto {
+    pub kind: MlxPlacementKindDto,
+    pub nodes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum MlxFitStatusDto {
+    Fits,
+    /// Fits only at a smaller context than wanted (`context` says which).
+    SmallerContext,
+    Short,
+    #[default]
+    Unknown,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxNodeFitDto {
+    pub name: String,
+    pub need_bytes: u64,
+    pub budget_bytes: u64,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxPlacementFitDto {
+    pub status: MlxFitStatusDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_node: Option<String>,
+    #[serde(default)]
+    pub nodes: Vec<MlxNodeFitDto>,
+    /// The arithmetic in words (English), a refusal's message verbatim.
+    pub detail: String,
+}
+
+/// What [Use this] does. Internally tagged on `kind`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum MlxPlacementActionDto {
+    /// Mount on this Mac's single engine (`mlxEngine/mount`).
+    MountHere,
+    /// Start the distributed engine (`mlxEngine/distributedStart`); `setupMatches` = the saved
+    /// setup already names this model (else Set up must pick it first).
+    StartSplit { setup_matches: bool },
+    /// Start the single engine on the peer and chat through Link.
+    RemoteSingle,
+    /// Nothing goose can start for it today — why (English).
+    Unavailable { reason: String },
+}
+
+/// Why a candidate won or lost. Internally tagged on `code`; `mine`/`best` are the goal's tok/s.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "code",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum MlxPlacementOutcomeDto {
+    Best,
+    BestAvailableNow,
+    NotSupported { reason: String },
+    DoesNotFit,
+    FitUnknown { reason: String },
+    NoFigure { reason: String },
+    Slower { mine: f64, best: f64 },
+    TiedNeedsMoreMacs { mine: f64, best: f64 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxPlacementCandidateDto {
+    /// `single:local`, `tensor:jaccl:local+link:<id>` — what `measureSpeed` takes.
+    pub id: String,
+    pub key: MlxPlacementKeyDto,
+    pub node_names: Vec<String>,
+    /// Per node; `null` = the node did not report its chip.
+    pub chips: Vec<Option<MlxChipDto>>,
+    /// "rapid-mlx" | "mlx_lm" | "pipeline_qwen4".
+    pub backend: String,
+    /// `false` = goose cannot run this placement for this architecture yet (listed, never offered).
+    pub supported: bool,
+    pub fit: MlxPlacementFitDto,
+    pub speed: MlxPlacementSpeedDto,
+    pub action: MlxPlacementActionDto,
+    pub outcome: MlxPlacementOutcomeDto,
+}
+
+/// The model-picker badge. Internally tagged on `kind`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum MlxPlacementBadgeDto {
+    FitsThisMac,
+    FitsPeer { name: String },
+    NeedsBothMacs,
+    TooBig { short_bytes: u64 },
+    Unknown { reason: String },
+}
+
+/// One model's plan, or why it could not be planned (`error`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxPlacementPlanDto {
+    pub model_id: String,
+    pub goal: MlxPlacementGoalDto,
+    /// Best first, then the rest in the order they lost.
+    #[serde(default)]
+    pub candidates: Vec<MlxPlacementCandidateDto>,
+    /// The fastest candidate's id, whether or not it can be started today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best: Option<String>,
+    /// The fastest candidate goose can start today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_available: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge: Option<MlxPlacementBadgeDto>,
+    #[serde(default)]
+    pub notes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// One Mac as the planner measured it. Every figure it could not read is absent with its `*Error`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxPlacementNodeDto {
+    /// `local`, or the configured host (ssh alias / `link:<id>`).
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chip: Option<MlxChipDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chip_error: Option<String>,
+    /// Apple's published memory bandwidth for the chip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bandwidth_gbs: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bandwidth_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bandwidth_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_error: Option<String>,
+    /// Metal's working-set ceiling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceiling_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceiling_error: Option<String>,
+}
+
+/// Plan one model (`modelId`) or every model in the models folder (absent — the picker's badges).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/placementPlan",
+    response = MlxEnginePlacementPlanResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEnginePlacementPlanRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default)]
+    pub goal: MlxPlacementGoalDto,
+    /// Context wanted (tokens); absent = the largest that fits, capped at the model's maximum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEnginePlacementPlanResponse {
+    pub plans: Vec<MlxPlacementPlanDto>,
+    pub nodes: Vec<MlxPlacementNodeDto>,
+    /// Lines of the measurement store that did not parse, by number.
+    #[serde(default)]
+    pub store_errors: Vec<String>,
+    pub probe_ms: u64,
+}
+
+/// One measured run, as stored.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxSpeedRecordDto {
+    pub model_id: String,
+    pub placement: MlxPlacementKeyDto,
+    pub node_names: Vec<String>,
+    pub chips: Vec<Option<MlxChipDto>>,
+    pub backend: String,
+    pub context_bucket: u64,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_tps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_tps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<f64>,
+    pub recorded_at_ms: u64,
+    /// "benchmark" | "chat".
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workload: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_cache: Option<String>,
+}
+
+/// "Measure speed": the fixed workload on the RUNNING engine of `placementId` (the single engine
+/// on this Mac, or the distributed engine) — ~1.9k prompt tokens + 256 greedy tokens, and with
+/// `longDocument` a ~30k-token document too. Recorded into the store.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/measureSpeed",
+    response = MlxEngineMeasureSpeedResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMeasureSpeedRequest {
+    pub model_id: String,
+    pub placement_id: String,
+    #[serde(default)]
+    pub long_document: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMeasureSpeedResponse {
+    pub records: Vec<MlxSpeedRecordDto>,
+}
+
+/// Every stored measurement (optionally one model's), newest last.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/speedHistory",
+    response = MlxEngineSpeedHistoryResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineSpeedHistoryRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineSpeedHistoryResponse {
+    pub records: Vec<MlxSpeedRecordDto>,
+    #[serde(default)]
+    pub store_errors: Vec<String>,
+    /// The store file.
+    pub path: String,
+}

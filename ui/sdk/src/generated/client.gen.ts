@@ -181,12 +181,16 @@ import type {
   MlxEngineHfSearchResponse_unstable,
   MlxEngineLinkFactsRequest_unstable,
   MlxEngineLinkFactsResponse_unstable,
+  MlxEngineMeasureSpeedRequest_unstable,
+  MlxEngineMeasureSpeedResponse_unstable,
   MlxEngineModelCardRequest_unstable,
   MlxEngineModelCardResponse_unstable,
   MlxEngineModelDeleteRequest_unstable,
   MlxEngineModelsListRequest_unstable,
   MlxEngineModelsListResponse_unstable,
   MlxEngineMountRequest_unstable,
+  MlxEnginePlacementPlanRequest_unstable,
+  MlxEnginePlacementPlanResponse_unstable,
   MlxEngineRemoteSingleStartRequest_unstable,
   MlxEngineRemoteSingleStartResponse_unstable,
   MlxEngineRemoteSingleStatusRequest_unstable,
@@ -204,6 +208,8 @@ import type {
   MlxEngineSettingsReadRequest_unstable,
   MlxEngineSettingsResponse_unstable,
   MlxEngineSettingsUpdateRequest_unstable,
+  MlxEngineSpeedHistoryRequest_unstable,
+  MlxEngineSpeedHistoryResponse_unstable,
   MlxEngineStatusRequest_unstable,
   MlxEngineStatusResponse_unstable,
   MlxEngineUnmountRequest_unstable,
@@ -352,8 +358,10 @@ import {
   zMlxEngineDownloadProgressResponse_unstable,
   zMlxEngineHfSearchResponse_unstable,
   zMlxEngineLinkFactsResponse_unstable,
+  zMlxEngineMeasureSpeedResponse_unstable,
   zMlxEngineModelCardResponse_unstable,
   zMlxEngineModelsListResponse_unstable,
+  zMlxEnginePlacementPlanResponse_unstable,
   zMlxEngineRemoteSingleStartResponse_unstable,
   zMlxEngineRemoteSingleStatusResponse_unstable,
   zMlxEngineRemoteSingleStopResponse_unstable,
@@ -361,6 +369,7 @@ import {
   zMlxEngineReplicaTargetsResponse_unstable,
   zMlxEngineReplicateResponse_unstable,
   zMlxEngineSettingsResponse_unstable,
+  zMlxEngineSpeedHistoryResponse_unstable,
   zMlxEngineStatusResponse_unstable,
   zOnboardingImportApplyResponse_unstable,
   zOnboardingImportScanResponse_unstable,
@@ -1918,6 +1927,42 @@ export class GooseExtClient {
     params: MlxEngineReplicaPullRequest_unstable,
   ): Promise<void> {
     await this.conn.extMethod("_goose/unstable/mlxEngine/replicaPull", params);
+  }
+
+  async mlxEnginePlacementPlan_unstable(
+    params: MlxEnginePlacementPlanRequest_unstable,
+  ): Promise<MlxEnginePlacementPlanResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/placementPlan",
+      params,
+    );
+    return zMlxEnginePlacementPlanResponse_unstable.parse(
+      raw,
+    ) as MlxEnginePlacementPlanResponse_unstable;
+  }
+
+  async mlxEngineMeasureSpeed_unstable(
+    params: MlxEngineMeasureSpeedRequest_unstable,
+  ): Promise<MlxEngineMeasureSpeedResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/measureSpeed",
+      params,
+    );
+    return zMlxEngineMeasureSpeedResponse_unstable.parse(
+      raw,
+    ) as MlxEngineMeasureSpeedResponse_unstable;
+  }
+
+  async mlxEngineSpeedHistory_unstable(
+    params: MlxEngineSpeedHistoryRequest_unstable,
+  ): Promise<MlxEngineSpeedHistoryResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/speedHistory",
+      params,
+    );
+    return zMlxEngineSpeedHistoryResponse_unstable.parse(
+      raw,
+    ) as MlxEngineSpeedHistoryResponse_unstable;
   }
 
   async mlxEngineReplicaProgress_unstable(

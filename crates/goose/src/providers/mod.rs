@@ -55,6 +55,7 @@ pub mod local_inference;
 pub mod mlx_distributed_owner;
 pub mod mlx_remote;
 pub mod mlx_serving;
+pub mod mlx_speed;
 pub mod nanogpt;
 pub mod oauth;
 pub mod oauth_device_flow;
