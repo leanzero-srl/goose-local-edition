@@ -124,7 +124,9 @@ pub(crate) enum NodeKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RemoteTarget {
-    pub peer_hostname: String,
+    /// The peer by its one name (its owner's name for it, else its hostname) — what every reason
+    /// says. The node id keeps the hostname.
+    pub peer_name: String,
     /// The relay's base URL — it carries the relay's capability, so it never enters a reason.
     pub base_url: String,
     /// The peer profile's thinking choices for the served model.
@@ -214,7 +216,7 @@ pub(crate) fn with_remote_route(mut nodes: Vec<Node>, route: Option<&PublishedRo
             weight,
             capacity: route.capacity,
             kind: NodeKind::MlxRemote(RemoteTarget {
-                peer_hostname: route.peer_hostname.clone(),
+                peer_name: route.peer_name().to_string(),
                 base_url: route.base_url.clone(),
                 template_kwargs: route.template_kwargs.clone(),
             }),
@@ -229,7 +231,7 @@ fn sidecar_routed_away(record: &RouteRecord) -> Option<String> {
     match record {
         RouteRecord::Mine(route) | RouteRecord::Other(route) => Some(format!(
             "this Mac's MLX chat is served from {} (remote single, node {}) — stop it to use this Mac's own engine",
-            route.peer_hostname,
+            route.peer_name(),
             route.node_id()
         )),
         RouteRecord::Unreadable { path, error } => Some(format!(
@@ -351,7 +353,7 @@ fn remote_provider(target: &RemoteTarget) -> Result<Arc<dyn Provider>, String> {
     let provider = super::openai_def::from_custom_config(config, None).map_err(|e| {
         format!(
             "creating the provider for {}'s engine: {e}",
-            target.peer_hostname
+            target.peer_name
         )
     })?;
     Ok(Arc::new(provider))
@@ -556,7 +558,7 @@ impl LiveProbe {
         target: &RemoteTarget,
         model_id: &str,
     ) -> Result<Servable, String> {
-        let peer = &target.peer_hostname;
+        let peer = &target.peer_name;
         let get = |path: &'static str| {
             let url = format!("{}/{path}", target.base_url);
             let http = self.http.clone();
@@ -2143,6 +2145,21 @@ devices:
             "the capability never enters a reason: {mine}"
         );
         assert!(sidecar_routed_away(&RouteRecord::Other(remote_route(8))).is_some());
+        // The reason names the Mac by its owner's name; the node id keeps the hostname.
+        let named = PublishedRoute {
+            peer_computer_name: Some("Work's Mac Studio".to_string()),
+            ..remote_route(8)
+        };
+        let said = sidecar_routed_away(&RouteRecord::Mine(named.clone())).unwrap();
+        assert!(
+            said.starts_with("this Mac's MLX chat is served from Work's Mac Studio (remote single, node remote-WorksMacStudio.lan)"),
+            "{said}"
+        );
+        let nodes = with_remote_route(vec![], Some(&named));
+        match &nodes[0].kind {
+            NodeKind::MlxRemote(target) => assert_eq!(target.peer_name, "Work's Mac Studio"),
+            other => panic!("not the remote node: {other:?}"),
+        }
         let torn = sidecar_routed_away(&RouteRecord::Unreadable {
             path: "/state/mlx-remote-route.json".into(),
             error: "EOF".into(),
@@ -2180,7 +2197,7 @@ devices:
             providers: Arc::new(LiveProviders::new()),
         };
         let target = RemoteTarget {
-            peer_hostname: "WorksMacStudio.lan".to_string(),
+            peer_name: "WorksMacStudio.lan".to_string(),
             base_url: format!("{}/relay/cafe", relay.uri()),
             template_kwargs: None,
         };
@@ -2237,7 +2254,7 @@ devices:
             .mount(&relay)
             .await;
         let target = RemoteTarget {
-            peer_hostname: "WorksMacStudio.lan".to_string(),
+            peer_name: "WorksMacStudio.lan".to_string(),
             base_url: format!("{}/relay/cafe", relay.uri()),
             template_kwargs: None,
         };

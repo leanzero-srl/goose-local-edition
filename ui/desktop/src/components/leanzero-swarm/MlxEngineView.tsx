@@ -89,7 +89,7 @@ import { ModelCardModal } from './ModelCardModal';
 import { ModelMatrix, matrixRowCount } from './ModelMatrix';
 import { SELF_KEY, macTarget, peerRefuses, routePeerName, type Mac } from './macs';
 import { WithMacs, useMacs } from './useMacs';
-import { MlxStateTile } from './MlxStateTile';
+import { MlxStateTile, servingEngine } from './MlxStateTile';
 import { MlxRestoreBanner } from './MlxRestoreLine';
 import type { MlxServing } from '../../utils/mlxServing';
 import {
@@ -97,7 +97,6 @@ import {
   advanceLastRates,
   advanceMountWatch,
   liveDecodeTps,
-  mlxActivity,
   mountCostOf,
   mountFill,
   MLX_STATUS_POLL_MS,
@@ -108,9 +107,9 @@ import {
   type LastRates,
   type MlxLiveRead,
   type MountWatch,
+  type SingleLoad,
   type TpsSample,
 } from './mlxLiveStats';
-import { singlePhase } from './mlxPhase';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import { defineMessages, useIntl } from '../../i18n';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
@@ -340,24 +339,31 @@ export function draftsEqual(a: NumericDrafts, b: NumericDrafts): boolean {
  * The engine's state on the tabs without the tile: a solid dot (pulsing while a mount is in
  * flight) beside a chip, both in the engine-phase palette the tile uses (mlxPhase.ts).
  */
-function StateBadge({ state, live }: { state: MlxEngineState; live: MlxLiveRead | null }) {
-  const phase = singlePhase(
-    state,
-    false,
-    state === 'running' && live?.ok ? mlxActivity(live.stats) : null
-  );
+/**
+ * The Models and Sampling tabs' badge: what serves this Mac's chat — the route to a linked Mac, the
+ * split, or this Mac's engine — in the tile's own words and colour (`servingEngine`, one source).
+ */
+function StateBadge(props: {
+  state: MlxEngineState;
+  live: MlxLiveRead | null;
+  distributed: MlxDistributedStatus | null;
+  remote: MlxRemoteSingleStatus | null;
+  load: SingleLoad | null;
+}) {
+  const intl = useIntl();
+  const engine = servingEngine(intl, { ...props, unreachable: false });
+  const moving = engine.phase === 'loading';
   return (
     <span
       className="inline-flex items-center gap-2"
       data-testid="mlx-state-badge"
-      data-phase={phase}
+      data-mode={engine.mode}
+      data-state={engine.stateKey}
+      data-phase={engine.phase}
     >
-      <StatusDot phase={phase} live={state === 'mounting'} label={`Engine ${state}`} />
-      <Chip
-        phase={phase}
-        icon={state === 'mounting' ? <Loader2 className="animate-spin" /> : undefined}
-      >
-        {state}
+      <StatusDot phase={engine.phase} live={moving} label={engine.wordText} />
+      <Chip phase={engine.phase} icon={moving ? <Loader2 className="animate-spin" /> : undefined}>
+        {engine.wordText}
       </Chip>
     </span>
   );
@@ -2735,7 +2741,13 @@ function MlxEngineViewBody() {
         {/* The Engine tab's hero owns the state; the other tabs keep the badge in view. */}
         {status && tab !== 'engine' && (
           <span className="pb-2">
-            <StateBadge state={status.state} live={live} />
+            <StateBadge
+              state={status.state}
+              live={live}
+              distributed={distributed.status}
+              remote={remote}
+              load={singleLoad(status)}
+            />
           </span>
         )}
         {/* Which engine owns this Mac, on every tab. */}

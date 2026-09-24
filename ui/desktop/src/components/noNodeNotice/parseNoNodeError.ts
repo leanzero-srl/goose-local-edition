@@ -56,9 +56,10 @@ export function classifyReason(raw: string): NodeReason {
   if (m) return { kind: 'mlx-down', base: m[1] };
   m = /^MLX engine serves '([^']*)', the device wants '([^']*)'/.exec(raw);
   if (m) return { kind: 'mlx-wrong-model', served: m[1], wanted: m[2] };
-  m = /^this Mac's MLX chat is served from (\S+) \(remote single/.exec(raw);
+  // The router names the peer by its one name, which may carry spaces and apostrophes.
+  m = /^this Mac's MLX chat is served from (.+?) \(remote single/.exec(raw);
   if (m) return { kind: 'mlx-routed-remote', peer: m[1] };
-  m = /^(\S+)'s MLX engine is not serving through Link/.exec(raw);
+  m = /^(.+?)'s MLX engine is not serving through Link/.exec(raw);
   if (m) return { kind: 'mlx-remote-down', peer: m[1] };
   m = /^model '([^']*)' is not listed by \S+/.exec(raw);
   if (m) return { kind: 'lm-not-listed', model: m[1] };
