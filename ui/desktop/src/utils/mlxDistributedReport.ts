@@ -51,6 +51,8 @@ export interface MlxDistributedReport {
   state: string;
   backend: string | null;
   modelId: string | null;
+  /** Rank 0's loopback OpenAI base — main reads its `/v1/status` for the tray's live line. */
+  baseUrl: string | null;
   /** The running nodes while distributed, else the configured ones. */
   nodeNames: string[];
   nodes: MlxDistributedReportNode[];
@@ -72,6 +74,7 @@ export function toMlxDistributedReport(status: MlxDistributedStatusDto): MlxDist
     state: status.state,
     backend: status.backend ?? status.config?.backend ?? null,
     modelId: status.modelId ?? null,
+    baseUrl: status.baseUrl ?? null,
     nodeNames:
       summary.mode === 'distributed'
         ? summary.nodeNames
@@ -168,6 +171,16 @@ function isHosting(v: unknown): boolean {
 }
 
 /** An IPC payload is a report only if every field is what `toMlxDistributedReport` builds. */
+/**
+ * The base URL whose `/v1/status` is the distributed run's live read — only while the run owns this
+ * Mac and is up (ready / serving); null otherwise, and main then reads the single engine.
+ */
+export function distributedLiveBase(report: MlxDistributedReport | null): string | null {
+  if (!report || report.mode !== 'distributed') return null;
+  if (report.state !== 'ready' && report.state !== 'serving') return null;
+  return report.baseUrl;
+}
+
 export function isMlxDistributedReport(value: unknown): value is MlxDistributedReport {
   if (value == null || typeof value !== 'object') return false;
   const r = value as Record<string, unknown>;
@@ -178,6 +191,7 @@ export function isMlxDistributedReport(value: unknown): value is MlxDistributedR
     isStr(r.state) &&
     strOrNull(r.backend) &&
     strOrNull(r.modelId) &&
+    strOrNull(r.baseUrl) &&
     Array.isArray(r.nodeNames) &&
     r.nodeNames.every(isStr) &&
     Array.isArray(r.nodes) &&

@@ -284,7 +284,10 @@ const LINE = cx('text-lz-body', TNUM);
 export interface MlxStateTileProps {
   state: MlxEngineState | null;
   unreachable: boolean;
-  /** RUNNING: the last /v1/status read (null before the first one lands). */
+  /**
+   * RUNNING: the last /v1/status read (null before the first one lands) — of the single engine, or
+   * of the distributed engine's rank 0 while that run owns this Mac and is up.
+   */
   live: MlxLiveRead | null;
   /** RUNNING: the writing rate per read, oldest first. */
   history: readonly TpsSample[];
@@ -309,7 +312,7 @@ export interface MlxStateTileProps {
   modeLabel: string;
   /**
    * The distributed engine's status. While it owns this Mac the tile IS that engine: its state,
-   * requests in flight and each rank's peak memory against its budget.
+   * rank 0's live read (`live`), and each rank's peak memory against its budget.
    */
   distributed: MlxDistributedStatus | null;
 }
@@ -415,8 +418,8 @@ function RequestRow({ request }: { request: MlxLiveRequest }) {
   const intl = useIntl();
   const waiting = request.status === 'waiting' || request.phase === 'queued';
   if (waiting || request.phase === 'prefill') {
-    // The long silent pre-fill: no token is out yet and the engine reports no per-request progress,
-    // so there is no fraction to draw — the prompt size, what the cache supplied and the engine's
+    // The long pre-fill: no token is out yet. The single engine reports no per-request progress,
+    // so there it draws no fraction — the prompt size, what the cache supplied and the engine's
     // own elapsed seconds are the honest measure of it.
     const parts = [
       intl.formatMessage(waiting ? i18n.rowQueued : i18n.rowReading),
@@ -427,14 +430,25 @@ function RequestRow({ request }: { request: MlxLiveRequest }) {
         ? intl.formatMessage(i18n.rowCached, { count: compact(intl, request.cachedTokens) })
         : null,
     ].filter(Boolean);
+    // The distributed engine reports how far into the prompt it is; the single engine does not.
+    const read =
+      !waiting && request.prefilledTokens != null && request.promptTokens
+        ? request.prefilledTokens / request.promptTokens
+        : null;
     return (
       <li data-testid="mlx-live-request" data-phase={request.phase} className="flex flex-col gap-1">
         <div className={cx('flex items-baseline justify-between gap-3', LINE)}>
           <span className={cx('min-w-0 truncate', WEIGHT.semibold)}>{parts.join(' · ')}</span>
-          {request.elapsedS != null && (
-            <span className="shrink-0">{formatElapsed(request.elapsedS)}</span>
-          )}
+          <span className="shrink-0">
+            {[
+              read != null ? `${Math.round(Math.min(1, read) * 100)}%` : null,
+              request.elapsedS != null ? formatElapsed(request.elapsedS) : null,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
         </div>
+        {read != null && <TileBar fraction={read} label={intl.formatMessage(i18n.rowReading)} />}
       </li>
     );
   }
@@ -944,8 +958,29 @@ function NodeStrip({ status }: { status: MlxDistributedStatus }) {
   );
 }
 
-/** The distributed run on the tile: requests in flight, then every rank's peak against its budget. */
-function DistributedInstrument({ status }: { status: MlxDistributedStatus }) {
+/** A run that is up answers requests on its base URL; only then is rank 0's live read taken. */
+function runIsUp(status: MlxDistributedStatus): boolean {
+  return status.state === 'ready' || status.state === 'serving';
+}
+
+/**
+ * The distributed run on the tile: rank 0's live read through the single engine's instrument
+ * (reading / writing / queued, the rates, the request rows), the pipeline's slots and queue, then
+ * every rank's peak against its budget. Before the first live read, the supervisor's in-flight count.
+ */
+function DistributedInstrument({
+  status,
+  live,
+  history,
+  last,
+  serving,
+}: {
+  status: MlxDistributedStatus;
+  live: MlxLiveRead | null;
+  history: readonly TpsSample[];
+  last: LastRates;
+  serving: MlxServing | null;
+}) {
   const intl = useIntl();
   if (status.state === 'preflight' || status.state === 'starting') {
     return (
@@ -973,7 +1008,9 @@ function DistributedInstrument({ status }: { status: MlxDistributedStatus }) {
           {status.modelId}
         </span>
       )}
-      {status.inflight != null ? (
+      {live != null && runIsUp(status) ? (
+        <RunningInstrument live={live} history={history} last={last} serving={serving} />
+      ) : status.inflight != null ? (
         <div className="flex items-baseline gap-2">
           <span data-testid="mlx-dist-tile-inflight" className={HERO}>
             {intl.formatNumber(status.inflight)}
@@ -1057,9 +1094,10 @@ export function MlxStateTile(props: MlxStateTileProps) {
     latestMlxRemoteSingleStatus
   );
   const remote = remoteRouteUp(remoteStatus) ? remoteStatus : null;
-  const activity = !dist && state === 'running' && live?.ok ? mlxActivity(live.stats) : null;
+  const engineUp = dist ? runIsUp(dist) : !hosting && state === 'running';
+  const activity = engineUp && live?.ok ? mlxActivity(live.stats) : null;
   const phase: EnginePhase = dist
-    ? runPhase(dist.state, dist.admissionOpen)
+    ? runPhase(dist.state, dist.admissionOpen, activity)
     : hosting
       ? hostingPhase(hosting.state)
       : starting
@@ -1144,7 +1182,15 @@ export function MlxStateTile(props: MlxStateTileProps) {
           </span>
         )}
       </div>
-      {dist && <DistributedInstrument status={dist} />}
+      {dist && (
+        <DistributedInstrument
+          status={dist}
+          live={live}
+          history={history}
+          last={last}
+          serving={serving}
+        />
+      )}
       {hosting && <HostingInstrument hosting={hosting} />}
       {!dist && !hosting && state === 'running' && (
         <RunningInstrument live={live} history={history} last={last} serving={serving} />

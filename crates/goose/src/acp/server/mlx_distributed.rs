@@ -685,7 +685,9 @@ impl GooseAcpAgent {
         }
 
         // One naming rule for both engines: the swarm node that names this Mac's MLX engine
-        // (`mihai-mlx` → `mihai-qwen3.8-…`) must find the SAME id whichever engine owns the Mac.
+        // (`mihai-mlx` → `mihai-qwen3.8-…`) must find the SAME id whichever engine owns the Mac —
+        // and only when that engine serves the model the alias names; a split of another model
+        // serves its own HF id.
         let served = served_model_id(
             &super::mlx_engine::load_engine_settings()?,
             &config.model_id,

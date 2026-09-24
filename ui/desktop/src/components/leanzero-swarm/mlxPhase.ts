@@ -49,13 +49,21 @@ export function singlePhase(
 }
 
 /**
- * The distributed run. `serving` is the supervisor's "a request is in flight" (rank 0's progress
- * reports inflight > 0) — the run reports no read/write split, so in-flight work is the working
- * green. Admission held by the memory watchdog is orange whatever the run state says.
+ * The distributed run. Admission held by the memory watchdog is orange whatever the run state says.
+ * While it is up, `activity` — rank 0's own `/v1/status` read through the single engine's
+ * `mlxActivity` — decides exactly as it does for the single engine (reading blue, writing green,
+ * queued orange). Without a live read, `serving` (the supervisor's "a request is in flight") is the
+ * working green: the supervisor's counters cannot tell reading from writing.
  */
-export function runPhase(state: string, admissionOpen: boolean): EnginePhase {
+export function runPhase(
+  state: string,
+  admissionOpen: boolean,
+  activity: MlxActivity | null = null
+): EnginePhase {
   if (state === 'failed') return 'failed';
-  if (!admissionOpen && (state === 'ready' || state === 'serving')) return 'held';
+  const up = state === 'ready' || state === 'serving';
+  if (!admissionOpen && up) return 'held';
+  if (up && activity) return activityPhase(activity);
   switch (state) {
     case 'preflight':
     case 'starting':

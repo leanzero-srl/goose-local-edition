@@ -1921,7 +1921,7 @@ impl DistributedManager {
     /// Preflight (repairing the TB link when needed), then launch under supervision. Refused —
     /// with a code the UI acts on — while the single engine is mounted, while a run is live, or
     /// when a preflight check fails. `served_id` is `engine::served_model_id(settings,
-    /// config.model_id)` over the single engine's saved settings — the caller reads them.
+    /// config.model_id)` — the SPLIT's model, never the single engine's — the caller reads them.
     pub async fn start(
         &self,
         config: DistributedConfig,

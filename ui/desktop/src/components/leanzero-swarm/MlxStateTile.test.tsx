@@ -17,7 +17,13 @@ import {
   type MlxLiveStats,
   type TpsSample,
 } from './mlxLiveStats';
-import { GENERATING_STATUS, IDLE_STATUS, PREFILL_STATUS } from './mlxLiveStatus.fixtures';
+import {
+  DIST_READING_STATUS,
+  DIST_WRITING_STATUS,
+  GENERATING_STATUS,
+  IDLE_STATUS,
+  PREFILL_STATUS,
+} from './mlxLiveStatus.fixtures';
 import {
   FLASH_READY,
   FLASH_SERVING,
@@ -368,6 +374,87 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
     t = screen.getByTestId('mlx-state-badge');
     expect(t.className).toContain('bg-lz-phase-held');
     expect(t).toHaveTextContent('Admission closed: a node is low on memory');
+  });
+
+  it('distributed READING a long prompt: BLUE, the prompt size, the live read rate and how far in', async () => {
+    const { container } = tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: { ...FLASH_SERVING, inflight: 1, slotsInUse: 1 },
+      live: parseMlxLiveStatus(DIST_READING_STATUS),
+    });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(t).toHaveAttribute('data-mode', 'distributed');
+    expect(t).toHaveAttribute('data-activity', 'prefill');
+    expect(t.className).toContain('bg-lz-phase-reading');
+    expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Reading prompt');
+    expect(screen.getByTestId('mlx-live-prompt')).toHaveTextContent('7K');
+    // The split reports its prefill rate while it reads — the live figure, not the last prompt's.
+    expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('152');
+    expect(within(t).getByText('tok/s reading this prompt')).toBeInTheDocument();
+    const [row] = screen.getAllByTestId('mlx-live-request');
+    expect(row).toHaveTextContent('Reading prompt · 7K tokens');
+    expect(row).toHaveTextContent('29% · 14s');
+    expect(within(row).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '29');
+    // The supervisor's bare count gives way to the live read; the ranks stay.
+    expect(screen.queryByTestId('mlx-dist-tile-inflight')).toBeNull();
+    expect(screen.getAllByTestId('mlx-dist-tile-node')).toHaveLength(2);
+    await expectDesigned(container);
+  });
+
+  it('distributed WRITING: GREEN with the writing rate; the queue behind it rides the rows', () => {
+    tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: FLASH_SERVING,
+      live: parseMlxLiveStatus(DIST_WRITING_STATUS),
+    });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(t).toHaveAttribute('data-activity', 'generating');
+    expect(t.className).toContain('bg-lz-phase-writing');
+    expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Writing');
+    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('171');
+    // The engine's own prefill rate for the prompt it just read.
+    expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('5,503');
+    const rows = screen.getAllByTestId('mlx-live-request');
+    expect(rows.map((r) => r.dataset.phase)).toEqual(['generation', 'queued']);
+  });
+
+  it('distributed with only QUEUED requests is ORANGE; a closed admission stays orange over any activity', () => {
+    const queued = {
+      ...DIST_WRITING_STATUS,
+      requests: [DIST_WRITING_STATUS.requests[1]],
+    };
+    const { unmount } = tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: FLASH_SERVING,
+      live: parseMlxLiveStatus(queued),
+    });
+    expect(screen.getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-held');
+    unmount();
+    tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: { ...FLASH_SERVING, admissionOpen: false },
+      live: parseMlxLiveStatus(DIST_WRITING_STATUS),
+    });
+    expect(screen.getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-held');
+  });
+
+  it('a failed rank 0 read on an up run says why, and the tile keeps the run colour', () => {
+    tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: FLASH_SERVING,
+      live: { ok: false, detail: 'unreachable: connect ECONNREFUSED 127.0.0.1:8091' },
+    });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(t).not.toHaveAttribute('data-activity');
+    expect(t.className).toContain('bg-lz-phase-writing');
+    expect(screen.getByTestId('mlx-live-unavailable')).toHaveTextContent(
+      'unreachable: connect ECONNREFUSED 127.0.0.1:8091'
+    );
   });
 
   it('distributed slots: the pipeline says slots and the queue, tensor the queue only, a failed poll nothing', () => {

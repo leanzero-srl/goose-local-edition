@@ -2660,13 +2660,30 @@ const MlxEngineView: React.FC = () => {
   const settledFreeGb = useRef<number | null>(null);
   // One live read at a time, so a slow read never lands after a newer one and reorders the samples.
   const liveInFlight = useRef(false);
+  // While the distributed engine owns this Mac and is up, the live read is ITS rank 0's /v1/status
+  // (the single engine's shape, rank_live.py) through the same parser — the tile's one activity code.
+  const distributedNow = useRef(distributed.status);
+  useEffect(() => {
+    distributedNow.current = distributed.status;
+  }, [distributed.status]);
+  // The engine the live figures came from: a switch between engines starts the history afresh.
+  const liveSource = useRef<string | null>(null);
 
   const refreshLive = useCallback(
     async (next: MlxEngineStatus) => {
-      if (next.state !== 'running') {
-        setLive(null);
+      const dist = activeNodeId === undefined ? distributedNow.current : null;
+      const distUp =
+        dist && ownsTheMac(dist) && (dist.state === 'ready' || dist.state === 'serving')
+          ? dist
+          : null;
+      const source = distUp ? 'distributed' : next.state === 'running' ? 'single' : null;
+      if (source !== liveSource.current) {
+        liveSource.current = source;
         setTpsHistory([]);
         setLastRates(NO_RATES);
+      }
+      if (source === null) {
+        setLive(null);
         setServing(null);
         return;
       }
@@ -2678,14 +2695,20 @@ const MlxEngineView: React.FC = () => {
         });
         return;
       }
-      if (!next.baseUrl) {
-        setLive({ ok: false, detail: 'the running engine reported no base URL' });
+      const baseUrl = distUp ? distUp.baseUrl : next.baseUrl;
+      if (!baseUrl) {
+        setLive({
+          ok: false,
+          detail: distUp
+            ? 'the distributed engine reported no base URL'
+            : 'the running engine reported no base URL',
+        });
         return;
       }
       if (liveInFlight.current) return;
       liveInFlight.current = true;
       try {
-        const [read, who] = await Promise.all([readMlxLiveStatus(next.baseUrl), readMlxServing()]);
+        const [read, who] = await Promise.all([readMlxLiveStatus(baseUrl), readMlxServing()]);
         if (activeNodeRef.current !== activeNodeId) return;
         setLive(read);
         setServing(who);

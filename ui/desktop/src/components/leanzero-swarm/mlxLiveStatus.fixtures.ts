@@ -182,3 +182,79 @@ export const CACHED_GENERATING_STATUS = {
     },
   ],
 };
+
+/**
+ * The DISTRIBUTED engine's rank 0 `/v1/status` (rank_live.py over the pipeline fork): the runner's
+ * own counters, slots and KV, plus the single engine's request table and the two fields Rapid-MLX
+ * lacks — `prefilled_tokens` and `prompt_tokens_per_second`. No `uptime_s`, `metal` or `cache`: the
+ * split reports none. READING is a 7,012-token prompt 2,048 tokens in; WRITING is the pipeline body
+ * measured on 2026-09-24 (df7bdfff1): one request generating at 171.1 tok/s after a 5,503 tok/s
+ * prefill, a second queued behind the KV admission.
+ */
+export const DIST_READING_STATUS = {
+  num_running: 1,
+  num_waiting: 0,
+  slots: 2,
+  slots_in_use: 1,
+  sequences_in_flight: 1,
+  status: 'generating',
+  generation_tps: null,
+  requests: [
+    {
+      request_id: 'dist-read-1',
+      status: 'running',
+      phase: 'prefill',
+      elapsed_s: 14.2,
+      prompt_tokens: 7012,
+      prefilled_tokens: 2048,
+      prompt_tokens_per_second: 152.4,
+      completion_tokens: 0,
+      max_tokens: 400,
+      tokens_per_second: null,
+      ttft_s: null,
+      cached_tokens: null,
+    },
+  ],
+};
+
+export const DIST_WRITING_STATUS = {
+  num_running: 1,
+  num_waiting: 2,
+  slots: 2,
+  slots_in_use: 1,
+  sequences_in_flight: 1,
+  kv_reserved_bytes: [2061807632, 2114216960],
+  kv_budget_bytes: [4123615264, 4254087168],
+  status: 'generating',
+  generation_tps: 171.1,
+  requests: [
+    {
+      request_id: 'a52c969689464b6e88cbe1b5',
+      status: 'running',
+      phase: 'generation',
+      elapsed_s: 1.209,
+      prompt_tokens: 6546,
+      prefilled_tokens: 6546,
+      prompt_tokens_per_second: 5503.35,
+      completion_tokens: 4,
+      max_tokens: 80,
+      tokens_per_second: 171.1,
+      ttft_s: 1.19,
+      cached_tokens: null,
+    },
+    {
+      request_id: '58111b87b46a43b2982e9143',
+      status: 'waiting',
+      phase: 'queued',
+      elapsed_s: 1.186,
+      prompt_tokens: 6546,
+      prefilled_tokens: 0,
+      prompt_tokens_per_second: null,
+      completion_tokens: 0,
+      max_tokens: 80,
+      tokens_per_second: null,
+      ttft_s: null,
+      cached_tokens: null,
+    },
+  ],
+};

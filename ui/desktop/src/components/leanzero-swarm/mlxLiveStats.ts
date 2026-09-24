@@ -36,6 +36,13 @@ export interface MlxLiveRequest {
   ttftS: number | null;
   /** Prompt tokens the prefix cache supplied, so the engine never computed them. */
   cachedTokens: number | null;
+  /**
+   * How far into the prompt the prefill is, and the prefill's own rate — reported by the
+   * distributed engine's rank 0 (rank_live.py `prefilled_tokens`, `prompt_tokens_per_second`);
+   * Rapid-MLX's single engine reports neither, so both stay null there.
+   */
+  prefilledTokens: number | null;
+  promptTps: number | null;
 }
 
 export interface MlxLiveStats {
@@ -98,6 +105,8 @@ export function parseMlxLiveStatus(body: unknown): MlxLiveRead {
       tokensPerSecond: num(r.tokens_per_second),
       ttftS: num(r.ttft_s),
       cachedTokens: num(r.cached_tokens),
+      prefilledTokens: num(r.prefilled_tokens),
+      promptTps: num(r.prompt_tokens_per_second),
     });
   });
   return {
@@ -146,16 +155,30 @@ export function liveDecodeTps(stats: MlxLiveStats): number {
 }
 
 /**
- * The prompt-reading (prefill) rate the engine achieved on the request whose first token landed
- * most recently: (prompt − cached) / ttft_s — the tokens it actually COMPUTED over the time it took
- * to compute them, the same accounting oMLX's usage history calls "prefill speed". Cached tokens are
- * excluded because a prefix-cache hit reads as thousands of tok/s it never did (the engine's own
- * aggregate `prompt_tps` counts them, and is sticky like `generation_tps`, so it is never shown).
- * ttft_s runs from ARRIVAL, so time queued behind another request is inside it: the figure is
- * conservative, never flattering. A request still in prefill has no rate yet — the engine reports
- * no per-request progress — so this is 0 until some request has written its first token.
+ * The prompt-reading rate NOW: the sum of the engine-reported prefill rates of the requests still
+ * reading (`promptTps`). Only the distributed engine reports one; on the single engine this is 0.
+ */
+export function readingNowTps(stats: MlxLiveStats): number {
+  return stats.requests
+    .filter((r) => r.status !== 'waiting' && r.phase === 'prefill')
+    .reduce((sum, r) => sum + (r.promptTps ?? 0), 0);
+}
+
+/**
+ * The prompt-reading (prefill) rate. While a request is still reading and the engine reports its
+ * prefill rate (the distributed engine does), that live rate. Otherwise the rate achieved on the
+ * request whose first token landed most recently: the engine's own prefill rate when it reports one,
+ * else (prompt − cached) / ttft_s — the tokens it actually COMPUTED over the time it took to compute
+ * them, the same accounting oMLX's usage history calls "prefill speed". Cached tokens are excluded
+ * because a prefix-cache hit reads as thousands of tok/s it never did (the engine's own aggregate
+ * `prompt_tps` counts them, and is sticky like `generation_tps`, so it is never shown). ttft_s runs
+ * from ARRIVAL, so time queued behind another request is inside it: the figure is conservative,
+ * never flattering. The single engine reports no per-request progress, so there this is 0 until
+ * some request has written its first token.
  */
 export function measuredPrefillTps(stats: MlxLiveStats): number {
+  const now = readingNowTps(stats);
+  if (now > 0) return now;
   let best: { firstTokenAge: number; tps: number } | null = null;
   for (const r of stats.requests) {
     if (r.phase !== 'generation' || r.ttftS == null || r.ttftS <= 0 || r.promptTokens == null) {
@@ -166,7 +189,7 @@ export function measuredPrefillTps(stats: MlxLiveStats): number {
     // Seconds since the first token: the smallest is the prefill that finished last.
     const firstTokenAge = (r.elapsedS ?? r.ttftS) - r.ttftS;
     if (best == null || firstTokenAge < best.firstTokenAge) {
-      best = { firstTokenAge, tps: computed / r.ttftS };
+      best = { firstTokenAge, tps: r.promptTps ?? computed / r.ttftS };
     }
   }
   return best?.tps ?? 0;

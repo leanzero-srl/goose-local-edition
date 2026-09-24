@@ -3626,7 +3626,8 @@ pub struct MlxDistributedStatusDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     /// The id the ranks serve on `/v1/models` — derived like the single engine's
-    /// `--served-model-name` (`mlx_engine.served_model_name`, else `model_id`); the id a swarm
+    /// `--served-model-name`: `mlx_engine.served_model_name` when this run's `model_id` is
+    /// `mlx_engine.model_id` (the model that alias names), else `model_id` itself; the id a swarm
     /// node's `model_id` must equal. Absent while nothing was started in this goosed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub served_model_id: Option<String>,
