@@ -104,7 +104,9 @@ pub fn read_model_type(model_dir: &Path) -> Result<String> {
         .context("config.json has no `model_type`")
 }
 
-fn read_safetensors_header(path: &Path) -> Result<serde_json::Map<String, serde_json::Value>> {
+pub(crate) fn read_safetensors_header(
+    path: &Path,
+) -> Result<serde_json::Map<String, serde_json::Value>> {
     let mut file =
         std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut len = [0u8; 8];
@@ -121,7 +123,7 @@ fn read_safetensors_header(path: &Path) -> Result<serde_json::Map<String, serde_
     serde_json::from_slice(&header).with_context(|| format!("parsing {}'s header", path.display()))
 }
 
-fn dtype_bytes(dtype: &str) -> Result<u64> {
+pub(crate) fn dtype_bytes(dtype: &str) -> Result<u64> {
     Ok(match dtype {
         "BF16" | "F16" => 2,
         "F32" | "U32" | "I32" => 4,

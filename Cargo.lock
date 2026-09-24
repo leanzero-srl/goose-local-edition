@@ -5299,6 +5299,7 @@ dependencies = [
  "dirs",
  "futures",
  "libc",
+ "metal",
  "minijinja",
  "reqwest 0.13.4",
  "serde",

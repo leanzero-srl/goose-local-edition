@@ -35,6 +35,8 @@ pub mod hf;
 pub mod kv_cache;
 mod memory;
 mod model_parsers;
+#[cfg(unix)]
+pub mod placement;
 mod subprocess;
 pub mod thinking;
 
