@@ -182,7 +182,48 @@ const i18n = defineMessages({
     id: 'mlxStateTile.dist.held',
     defaultMessage: 'Admission closed: a node is low on memory',
   },
+  hostingRank: {
+    id: 'mlxStateTile.hosting.rank',
+    defaultMessage: 'Rank {rank} of {size}',
+  },
+  hostingFor: {
+    id: 'mlxStateTile.hosting.for',
+    defaultMessage: "for {requester}'s distributed engine over LeanZero Link",
+  },
+  hostingPid: { id: 'mlxStateTile.hosting.pid', defaultMessage: 'rank pid {pid}' },
+  hostingSingleRefused: {
+    id: 'mlxStateTile.hosting.singleRefused',
+    defaultMessage: 'The single engine here is refused while this Mac serves the rank.',
+  },
 });
+
+/** A rank this Mac serves for ANOTHER Mac's distributed engine: which one, for whom, its pid. */
+function HostingInstrument({
+  hosting,
+}: {
+  hosting: NonNullable<MlxDistributedStatus['hosting']>;
+}) {
+  const intl = useIntl();
+  return (
+    <div data-testid="mlx-hosting-tile" className="flex flex-col gap-3">
+      <div className="flex items-baseline gap-2">
+        <span className={HERO}>
+          {intl.formatMessage(i18n.hostingRank, { rank: hosting.rank, size: hosting.size })}
+        </span>
+      </div>
+      <span className={cx(LINE, WEIGHT.semibold)}>
+        {intl.formatMessage(i18n.hostingFor, { requester: hosting.requesterName })}
+      </span>
+      <span className={cx('break-all font-mono text-lz-mono', WEIGHT.semibold)}>
+        {hosting.modelId}
+      </span>
+      {hosting.pid != null && (
+        <span className={LINE}>{intl.formatMessage(i18n.hostingPid, { pid: hosting.pid })}</span>
+      )}
+      <span className={LINE}>{intl.formatMessage(i18n.hostingSingleRefused)}</span>
+    </div>
+  );
+}
 
 const STATE_TONE: Record<MlxEngineState, Tone> = {
   running: 'ok',
@@ -806,12 +847,17 @@ export function MlxStateTile(props: MlxStateTileProps) {
     distributed,
   } = props;
   const dist = ownsTheMac(distributed) ? distributed : null;
+  const hosting = !dist ? (distributed?.hosting ?? null) : null;
   const activity = !dist && state === 'running' && live?.ok ? mlxActivity(live.stats) : null;
   const tone: Tone = dist
     ? dist.admissionOpen
       ? runStateTone(dist.state)
       : 'warn'
-    : state === null
+    : hosting
+      ? hosting.state === 'serving'
+        ? 'ok'
+        : 'accent'
+      : state === null
       ? unreachable
         ? 'err'
         : 'stopped'
@@ -823,8 +869,12 @@ export function MlxStateTile(props: MlxStateTileProps) {
   const word = state ?? (unreachable ? 'unreachable' : 'checking');
   const wordText = dist
     ? distributedStateWord(intl, dist.state)
-    : intl.formatMessage(STATE_WORD[word]);
-  const icon = dist ? (
+    : hosting
+      ? distributedStateWord(intl, hosting.state)
+      : intl.formatMessage(STATE_WORD[word]);
+  const icon = hosting ? (
+    <Network />
+  ) : dist ? (
     runStateInFlight(dist.state) ? (
       <Loader2 className="animate-spin" />
     ) : (
@@ -843,7 +893,7 @@ export function MlxStateTile(props: MlxStateTileProps) {
     <div
       data-testid="mlx-state-badge"
       data-state={dist ? dist.state : word}
-      data-mode={dist ? 'distributed' : 'single'}
+      data-mode={dist ? 'distributed' : hosting ? 'hosting' : 'single'}
       data-activity={activity ?? undefined}
       role="group"
       aria-label={intl.formatMessage(i18n.groupLabel, { state: wordText })}
@@ -873,11 +923,12 @@ export function MlxStateTile(props: MlxStateTileProps) {
         </span>
       </div>
       {dist && <DistributedInstrument status={dist} />}
-      {!dist && state === 'running' && (
+      {hosting && <HostingInstrument hosting={hosting} />}
+      {!dist && !hosting && state === 'running' && (
         <RunningInstrument live={live} history={history} last={last} serving={serving} />
       )}
-      {!dist && state === 'mounting' && <MountingInstrument mount={mount} />}
-      {!dist && state === 'stopped' && <StoppedInstrument cost={cost} />}
+      {!dist && !hosting && state === 'mounting' && <MountingInstrument mount={mount} />}
+      {!dist && !hosting && state === 'stopped' && <StoppedInstrument cost={cost} />}
       {!dist && state === 'failed' && (
         <p
           data-testid="mlx-failed-excerpt"
@@ -890,7 +941,7 @@ export function MlxStateTile(props: MlxStateTileProps) {
       {!dist && state === null && unreachable && (
         <p className={LINE}>{intl.formatMessage(i18n.statusUnread)}</p>
       )}
-      {action && <div className="mt-auto flex flex-wrap gap-2">{action}</div>}
+      {action && !hosting && <div className="mt-auto flex flex-wrap gap-2">{action}</div>}
     </div>
   );
 }

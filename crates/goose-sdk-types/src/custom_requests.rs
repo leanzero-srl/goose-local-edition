@@ -3417,6 +3417,15 @@ pub struct MlxDistributedStatusDto {
     /// `ownedByAnotherWindow`, and `mode`/`state` above stay this goosed's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<MlxDistributedOwnerDto>,
+    /// Set while THIS Mac serves a rank of another Mac's distributed engine over LeanZero Link
+    /// ("Rank 1 of <requester>'s distributed engine · <model> · JACCL"); its single engine and its
+    /// own distributed engine are refused meanwhile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosting: Option<MlxDistributedHostedRankDto>,
+    /// This Mac's switch "Allow this Mac to serve as a distributed node" (config key
+    /// `LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`, off by default), as the control route reads it.
+    #[serde(default)]
+    pub allow_distributed_node: bool,
 }
 
 /// Another goosed's distributed run, from the record it published under the goose state dir.
@@ -3585,6 +3594,118 @@ pub struct MlxEngineDistributedPeerCandidatesResponse {
     pub candidates: Vec<MlxDistributedPeerCandidateDto>,
     /// The file read (absent `~/.ssh/config` = no candidates, and this says so).
     pub source: String,
+    /// The same-account Macs on LeanZero Link, offered FIRST: each answered goose's discovery
+    /// probe over the mesh (its own goosed ran it), or says why not.
+    #[serde(default)]
+    pub link: MlxDistributedLinkDiscoveryDto,
+}
+
+/// LeanZero Link's side of the peer candidates.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedLinkDiscoveryDto {
+    /// "connected" (the peers below are the mesh's) | "notConnected" (this Mac is not signed in
+    /// / not connected — `detail` says which; no Link peer can be offered) | "unavailable" (this
+    /// goosed runs no Link).
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub peers: Vec<MlxDistributedLinkPeerDto>,
+}
+
+/// One Thunderbolt port a Link peer reported (LeanZero Link's path detector over its own
+/// `ifconfig` / hardware ports / `system_profiler`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedLinkPortDto {
+    pub device: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hardware_port: Option<String>,
+    pub ipv4: String,
+    pub prefix_len: u8,
+    /// The negotiated speed ("80 Gb/s") when the OS attributes one to this port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<String>,
+}
+
+/// One RDMA device a Link peer reported (`ibv_devinfo -v`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedLinkRdmaDto {
+    pub device: String,
+    /// Its first port is `PORT_ACTIVE`.
+    pub active: bool,
+    /// The GID index holding an IPv4-mapped address (JACCL needs one; the soak's rule is 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ipv4_gid_index: Option<u32>,
+}
+
+/// One model directory on a Link peer (a `config.json` with a `model_type`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedLinkPeerModelDto {
+    pub dir: String,
+    pub model_type: String,
+    /// The loaded files' bytes (safetensors).
+    pub weights_bytes: u64,
+}
+
+/// A same-account Mac on LeanZero Link, as its own goosed described itself.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedLinkPeerDto {
+    pub node_id: String,
+    pub hostname: String,
+    /// The host `distributedDiscover` takes for this Mac (`link:<nodeId>`).
+    pub host: String,
+    /// "ready" (it answered the probe) | "servingDisabled" (its owner's switch "Allow this Mac
+    /// to serve as a distributed node" is off) | "notServed" (its goose predates or lacks the
+    /// node side) | "offline" (the mesh reports it offline) | "unreachable" | "unreadable" (it
+    /// answered, the probe did not parse). `detail` carries the words.
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// Its ComputerName.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_bytes: Option<u64>,
+    /// "normal" | "warn" | "critical".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure: Option<String>,
+    #[serde(default)]
+    pub thunderbolt: Vec<MlxDistributedLinkPortDto>,
+    #[serde(default)]
+    pub rdma: Vec<MlxDistributedLinkRdmaDto>,
+    #[serde(default)]
+    pub models: Vec<MlxDistributedLinkPeerModelDto>,
+}
+
+/// The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedHostedRankDto {
+    pub rank: u32,
+    pub size: u32,
+    /// The requesting Mac's ComputerName, node id and hostname.
+    pub requester_name: String,
+    pub requester_node_id: String,
+    pub requester_hostname: String,
+    pub model_id: String,
+    pub served_model_id: String,
+    /// "jaccl" | "ring".
+    pub backend: String,
+    /// "mlxLmTensor" | "pipelineQwen4".
+    pub runner: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    /// "loading" | "serving".
+    pub state: String,
+    pub started_ms: u64,
+    pub last_poll_ms: u64,
 }
 
 /// Where one discovered value came from. `node` absent = a config-level field (`modelId`,

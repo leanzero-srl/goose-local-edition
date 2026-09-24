@@ -155,7 +155,7 @@ async fn spawn_node_full(
     config.reconnect_backoff = Duration::from_millis(100);
     config.allow_remote_execution = allow_remote_execution;
     config.peer_proxy = Some(support::fake_tailnet().proxy());
-    ControlService::start(config, source, executor, None)
+    ControlService::start(config, source, executor, None, None)
         .await
         .expect("control service starts")
 }
@@ -951,7 +951,7 @@ async fn without_a_mesh_proxy_a_reachable_peer_is_offline_never_dialed_directly(
     config.poll_interval = Duration::from_millis(100);
     config.reconnect_backoff = Duration::from_millis(100);
     assert!(config.peer_proxy.is_none(), "the template carries no proxy");
-    let a = ControlService::start(config, FakeStateSource::new("node-a"), None, None)
+    let a = ControlService::start(config, FakeStateSource::new("node-a"), None, None, None)
         .await
         .expect("A starts");
     a.set_peers(vec![PeerTarget {
@@ -1298,7 +1298,7 @@ async fn spawn_node_mlx_allowing(
     config.heartbeat_interval = Duration::from_secs(5);
     config.reconnect_backoff = Duration::from_millis(100);
     config.allow_remote_execution = allow_remote_execution;
-    ControlService::start(config, source, None, mlx_control)
+    ControlService::start(config, source, None, mlx_control, None)
         .await
         .expect("control service starts")
 }

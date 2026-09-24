@@ -2151,7 +2151,8 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
   const silent =
     snapshot.mode === 'unknown' &&
     snapshot.baseUrl == null &&
-    distributed?.report.mode !== 'distributed';
+    distributed?.report.mode !== 'distributed' &&
+    distributed?.report.hosting == null;
   const model = buildMlxTrayModel(snapshot, {
     canAct: mlxActionWindow() != null,
     mountModelId:
@@ -2184,7 +2185,7 @@ ipcMain.on('mlx-distributed-report', (_event, report: unknown) => {
   // held read turns stale so the tray stops presenting it as live.
   if (mlxDistributedStaleTimer) clearTimeout(mlxDistributedStaleTimer);
   mlxDistributedStaleTimer =
-    report.mode === 'distributed'
+    report.mode === 'distributed' || report.hosting != null
       ? setTimeout(() => renderMlxTray(mlxMonitor.current()), MLX_DISTRIBUTED_STALE_MS + 1)
       : null;
 });

@@ -7998,6 +7998,22 @@
             }
           ],
           "description": "Set when ANOTHER goosed on this Mac (another desktop window) published a distributed run\nand this one supervises none: that run is read-only here — start and stop are refused with\n`ownedByAnotherWindow`, and `mode`/`state` above stay this goosed's own."
+        },
+        "hosting": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedHostedRankDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set while THIS Mac serves a rank of another Mac's distributed engine over LeanZero Link\n(\"Rank 1 of <requester>'s distributed engine · <model> · JACCL\"); its single engine and its\nown distributed engine are refused meanwhile."
+        },
+        "allowDistributedNode": {
+          "type": "boolean",
+          "description": "This Mac's switch \"Allow this Mac to serve as a distributed node\" (config key\n`LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`, off by default), as the control route reads it.",
+          "default": false
         }
       },
       "required": [
@@ -8803,6 +8819,77 @@
       ],
       "description": "Another goosed's distributed run, from the record it published under the goose state dir."
     },
+    "MlxDistributedHostedRankDto": {
+      "type": "object",
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requesterName": {
+          "type": "string",
+          "description": "The requesting Mac's ComputerName, node id and hostname."
+        },
+        "requesterNodeId": {
+          "type": "string"
+        },
+        "requesterHostname": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "servedModelId": {
+          "type": "string"
+        },
+        "backend": {
+          "type": "string",
+          "description": "\"jaccl\" | \"ring\"."
+        },
+        "runner": {
+          "type": "string",
+          "description": "\"mlxLmTensor\" | \"pipelineQwen4\"."
+        },
+        "pid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "state": {
+          "type": "string",
+          "description": "\"loading\" | \"serving\"."
+        },
+        "startedMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastPollMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "rank",
+        "size",
+        "requesterName",
+        "requesterNodeId",
+        "requesterHostname",
+        "modelId",
+        "servedModelId",
+        "backend",
+        "runner",
+        "state",
+        "startedMs",
+        "lastPollMs"
+      ],
+      "description": "The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link."
+    },
     "MlxEngineDistributedPreflightRequest_unstable": {
       "type": "object",
       "properties": {
@@ -8966,6 +9053,14 @@
         "source": {
           "type": "string",
           "description": "The file read (absent `~/.ssh/config` = no candidates, and this says so)."
+        },
+        "link": {
+          "$ref": "#/$defs/MlxDistributedLinkDiscoveryDto",
+          "description": "The same-account Macs on LeanZero Link, offered FIRST: each answered goose's discovery\nprobe over the mesh (its own goosed ran it), or says why not.",
+          "default": {
+            "state": "",
+            "peers": []
+          }
         }
       },
       "required": [
@@ -8995,6 +9090,195 @@
         "detail"
       ],
       "description": "One ssh alias from `~/.ssh/config` (a `Host` line without wildcards) and whether it answered a\nnon-interactive ssh (`BatchMode=yes`) just now."
+    },
+    "MlxDistributedLinkDiscoveryDto": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "description": "\"connected\" (the peers below are the mesh's) | \"notConnected\" (this Mac is not signed in\n/ not connected — `detail` says which; no Link peer can be offered) | \"unavailable\" (this\ngoosed runs no Link)."
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "peers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedLinkPeerDto"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "description": "LeanZero Link's side of the peer candidates."
+    },
+    "MlxDistributedLinkPeerDto": {
+      "type": "object",
+      "properties": {
+        "nodeId": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string",
+          "description": "The host `distributedDiscover` takes for this Mac (`link:<nodeId>`)."
+        },
+        "state": {
+          "type": "string",
+          "description": "\"ready\" (it answered the probe) | \"servingDisabled\" (its owner's switch \"Allow this Mac\nto serve as a distributed node\" is off) | \"notServed\" (its goose predates or lacks the\nnode side) | \"offline\" (the mesh reports it offline) | \"unreachable\" | \"unreadable\" (it\nanswered, the probe did not parse). `detail` carries the words."
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Its ComputerName."
+        },
+        "totalBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "availableBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "pressure": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"normal\" | \"warn\" | \"critical\"."
+        },
+        "thunderbolt": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedLinkPortDto"
+          },
+          "default": []
+        },
+        "rdma": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedLinkRdmaDto"
+          },
+          "default": []
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedLinkPeerModelDto"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "nodeId",
+        "hostname",
+        "host",
+        "state"
+      ],
+      "description": "A same-account Mac on LeanZero Link, as its own goosed described itself."
+    },
+    "MlxDistributedLinkPortDto": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "hardwarePort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ipv4": {
+          "type": "string"
+        },
+        "prefixLen": {
+          "type": "integer",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "speed": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The negotiated speed (\"80 Gb/s\") when the OS attributes one to this port."
+        }
+      },
+      "required": [
+        "device",
+        "ipv4",
+        "prefixLen"
+      ],
+      "description": "One Thunderbolt port a Link peer reported (LeanZero Link's path detector over its own\n`ifconfig` / hardware ports / `system_profiler`)."
+    },
+    "MlxDistributedLinkRdmaDto": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "type": "string"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Its first port is `PORT_ACTIVE`."
+        },
+        "ipv4GidIndex": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The GID index holding an IPv4-mapped address (JACCL needs one; the soak's rule is 1).",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "device",
+        "active"
+      ],
+      "description": "One RDMA device a Link peer reported (`ibv_devinfo -v`)."
+    },
+    "MlxDistributedLinkPeerModelDto": {
+      "type": "object",
+      "properties": {
+        "dir": {
+          "type": "string"
+        },
+        "modelType": {
+          "type": "string"
+        },
+        "weightsBytes": {
+          "type": "integer",
+          "description": "The loaded files' bytes (safetensors).",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "dir",
+        "modelType",
+        "weightsBytes"
+      ],
+      "description": "One model directory on a Link peer (a `config.json` with a `model_type`)."
     },
     "MlxEngineDistributedDiscoverRequest_unstable": {
       "type": "object",

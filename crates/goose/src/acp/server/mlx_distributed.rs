@@ -21,6 +21,8 @@ use std::collections::BTreeMap;
 use std::sync::Mutex as StdMutex;
 
 use super::mlx_distributed_discover as discover;
+use super::mlx_distributed_link as link;
+use goose_sidecar::distributed::link_control;
 use crate::providers::mlx_distributed_owner::{self as owner_record, OwnerRecord, PublishedEngine};
 
 const MLX_DISTRIBUTED_CONFIG_KEY: &str = "mlx_distributed";
@@ -246,6 +248,8 @@ fn status_to_dto(
         config: status.config.or(persisted).map(config_to_dto),
         provision: None,
         owner: None,
+        hosting: None,
+        allow_distributed_node: false,
     }
 }
 
@@ -295,6 +299,9 @@ fn resolve_config(
 /// The single engine's mount path calls this: while the distributed engine owns the Mac, a mount
 /// is refused with a named reason (never a silent stop of either engine).
 pub(super) fn refuse_single_mount_while_distributed() -> Result<(), agent_client_protocol::Error> {
+    if let Some(refusal) = link::hosting_refusal() {
+        return Err(agent_client_protocol::Error::invalid_params().data(refusal));
+    }
     let status = distributed::global_manager().status();
     if status.state.owns_the_mac() {
         return Err(agent_client_protocol::Error::invalid_params().data(format!(
@@ -376,6 +383,11 @@ async fn owner_dto(record: OwnerRecord) -> Option<MlxDistributedOwnerDto> {
 /// `goose serve`'s exit path: stop a supervised distributed run (verified, per pid) so no 20 GB
 /// rank outlives goosed on either Mac.
 pub(super) async fn shutdown_distributed_engine() -> String {
+    let hosted = goose_sidecar::distributed::link_host::shutdown().await;
+    format!("{}; {hosted}", shutdown_supervised_engine().await)
+}
+
+async fn shutdown_supervised_engine() -> String {
     let manager = distributed::global_manager();
     let state = manager.status().state;
     if !state.owns_the_mac() {
@@ -424,6 +436,8 @@ async fn status_response(
     let mut status = status_to_dto(status, persisted);
     status.provision = PROVISION.lock().unwrap().clone();
     status.owner = owner;
+    status.hosting = link::hosting_dto();
+    status.allow_distributed_node = link::distributed_node_allowed();
     Ok(MlxEngineDistributedStatusResponse { status })
 }
 
@@ -481,8 +495,7 @@ fn update_provision(index: usize, f: impl FnOnce(&mut MlxDistributedProvisionNod
 }
 
 async fn run_provision_job(index: usize, host: Option<String>, spec: EnvSpec) {
-    let script = provision::provision_script(&spec);
-    let result = provision::run_streaming(host.as_deref(), &script, |line| {
+    let on_line = |line: &str| {
         let progress = provision::parse_progress(line);
         update_provision(index, |row| {
             row.lines.push(line.to_string());
@@ -491,8 +504,15 @@ async fn run_provision_job(index: usize, host: Option<String>, spec: EnvSpec) {
                 row.detail = p.detail;
             }
         });
-    })
-    .await;
+    };
+    // A LeanZero Link node builds the env itself from its own pins; ssh and this Mac run the script.
+    let result = match link_control::link_peer(host.as_deref()) {
+        Some(peer) => link_control::provision(peer, &spec, on_line).await,
+        None => {
+            let script = provision::provision_script(&spec);
+            provision::run_streaming(host.as_deref(), &script, on_line).await
+        }
+    };
     update_provision(index, |row| {
         let finished = goose_sidecar::distributed::preflight::now_ms();
         row.finished_ms = Some(finished);
@@ -524,6 +544,7 @@ impl GooseAcpAgent {
         &self,
         _req: MlxEngineDistributedStatusRequest,
     ) -> Result<MlxEngineDistributedStatusResponse, agent_client_protocol::Error> {
+        link::ensure_link_transport();
         super::mlx_engine::align_omlx_host_env();
         let response = status_response().await?;
         let entered_serving = {
@@ -550,6 +571,7 @@ impl GooseAcpAgent {
         &self,
         req: MlxEngineDistributedPreflightRequest,
     ) -> Result<MlxEngineDistributedPreflightResponse, agent_client_protocol::Error> {
+        link::ensure_link_transport();
         let config = resolve_config(req.config)?;
         let report = distributed::global_manager()
             .preflight(&config, req.repair_link)
@@ -564,6 +586,17 @@ impl GooseAcpAgent {
         &self,
         req: MlxEngineDistributedStartRequest,
     ) -> Result<MlxEngineDistributedStartResponse, agent_client_protocol::Error> {
+        link::ensure_link_transport();
+        if let Some(refusal) = link::hosting_refusal() {
+            return Ok(MlxEngineDistributedStartResponse {
+                started: false,
+                refusal: Some(MlxDistributedRefusalDto {
+                    code: "hostingRank".to_string(),
+                    message: refusal,
+                }),
+                preflight: None,
+            });
+        }
         if let OwnerRecord::Other(engine) = owner_record::read() {
             return Ok(MlxEngineDistributedStartResponse {
                 started: false,
@@ -633,6 +666,7 @@ impl GooseAcpAgent {
         &self,
         _req: MlxEngineDistributedStopRequest,
     ) -> Result<MlxEngineDistributedStopResponse, agent_client_protocol::Error> {
+        link::ensure_link_transport();
         let manager = distributed::global_manager();
         if !manager.owns_the_mac() {
             // Without a run of its own, stop sweeps the configured nodes for goose ranks by marker
@@ -660,6 +694,7 @@ impl GooseAcpAgent {
         &self,
         _req: MlxEngineDistributedPeerCandidatesRequest,
     ) -> Result<MlxEngineDistributedPeerCandidatesResponse, agent_client_protocol::Error> {
+        link::ensure_link_transport();
         let path = dirs::home_dir()
             .ok_or_else(|| {
                 agent_client_protocol::Error::internal_error().data("no home directory")
@@ -672,6 +707,7 @@ impl GooseAcpAgent {
                 return Ok(MlxEngineDistributedPeerCandidatesResponse {
                     candidates: Vec::new(),
                     source: format!("{source} (absent)"),
+                    link: link::link_discovery().await,
                 })
             }
             Err(e) => return Err(e).internal_err_ctx("reading ~/.ssh/config"),
@@ -711,13 +747,18 @@ impl GooseAcpAgent {
                 }
             }))
             .await;
-        Ok(MlxEngineDistributedPeerCandidatesResponse { candidates, source })
+        Ok(MlxEngineDistributedPeerCandidatesResponse {
+            candidates,
+            source,
+            link: link::link_discovery().await,
+        })
     }
 
     pub(super) async fn on_mlx_engine_distributed_discover(
         &self,
         req: MlxEngineDistributedDiscoverRequest,
     ) -> Result<MlxEngineDistributedDiscoverResponse, agent_client_protocol::Error> {
+        link::ensure_link_transport();
         let mut peers: Vec<String> = Vec::new();
         for peer in req.peers.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
             if !peers.iter().any(|p| p == peer) {
@@ -725,8 +766,10 @@ impl GooseAcpAgent {
             }
         }
         if peers.is_empty() {
-            return Err(agent_client_protocol::Error::invalid_params()
-                .data("name at least one peer (an ssh alias such as `workhorse`)"));
+            return Err(agent_client_protocol::Error::invalid_params().data(
+                "name at least one peer (a LeanZero Link Mac `link:<node>` or an ssh alias such \
+                 as `workhorse`)",
+            ));
         }
         let settings = super::mlx_engine::load_engine_settings()?;
         let goose_models_dir = expand_tilde(&settings.models_dir).display().to_string();
@@ -759,6 +802,7 @@ impl GooseAcpAgent {
         &self,
         req: MlxEngineDistributedProvisionRequest,
     ) -> Result<MlxEngineDistributedProvisionResponse, agent_client_protocol::Error> {
+        link::ensure_link_transport();
         let config = resolve_config(req.config)?;
         let jobs = provision_jobs(&config);
         let snapshot = {

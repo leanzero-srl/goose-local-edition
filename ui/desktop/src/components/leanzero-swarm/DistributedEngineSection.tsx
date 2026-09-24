@@ -89,6 +89,7 @@ import {
 } from './mlxDistributed';
 import { distributedStateWord, formatMlxMode } from './mlxModeLabel';
 import { DistributedSetup } from './DistributedSetup';
+import { DistributedNodeServing } from './DistributedNodeServing';
 import { formatElapsed } from './mlxLiveStats';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
@@ -1676,6 +1677,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
       )}
       {lastAlarmKind === LOCAL_NETWORK_EVENT && <LocalNetworkNotice />}
       {otherWindow && <OtherWindowRun owner={otherWindow} />}
+      {status && !owning && <DistributedNodeServing status={status} onChanged={onRefresh} />}
 
       {status && (
         <div className="flex flex-col gap-2">
@@ -1709,7 +1711,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
                   )
                 }
                 onClick={onStart}
-                disabled={!canAct || otherWindow != null}
+                disabled={!canAct || otherWindow != null || status.hosting != null}
               >
                 {intl.formatMessage(i18n.start)}
               </Button>

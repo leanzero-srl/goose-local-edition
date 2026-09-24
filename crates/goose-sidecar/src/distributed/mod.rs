@@ -12,6 +12,9 @@
 //! Shape:
 //! - [`config`]: what the operator configures (nodes, backend, per-node model dir + python).
 //! - [`exec`]: running a shell script on a node (`/bin/sh` here, `ssh <alias>` there).
+//! - [`node_op`], [`link_control`], [`link_host`]: LeanZero Link as the control plane — a node
+//!   named `link:<node id>` is driven through its OWN goosed over the mesh (typed ops only, its
+//!   rank spawned and stopped there, under a lease); the data plane stays JACCL/ring over TB.
 //! - [`probe`]: parsers for what the nodes answer (vm_stat, ps, ifconfig, ibv_devinfo, …).
 //! - [`plan`]: the per-rank memory arithmetic (tensor split computed here; the qwen4_exp
 //!   pipeline split, bytes, budget and verdict read from the fork's own planner, `plan --json`).
@@ -30,7 +33,10 @@
 pub mod config;
 pub mod exec;
 pub mod launch;
+pub mod link_control;
+pub mod link_host;
 pub mod local_network;
+pub mod node_op;
 pub mod plan;
 pub mod preflight;
 pub mod probe;

@@ -408,14 +408,14 @@ fn busy_status(busy: &HashSet<String>) -> NodeStatus {
 // Node identity helpers.
 // ---------------------------------------------------------------------------
 
-fn hostname_string() -> String {
+pub(super) fn hostname_string() -> String {
     gethostname::gethostname().to_string_lossy().into_owned()
 }
 
 /// The node id: the sanitized hostname, plus the mesh's persisted 6-hex per-machine
 /// suffix once it exists (so this matches the tailnet hostname the manager mints). Two
 /// machines that share a hostname stay distinct once each has connected at least once.
-fn stable_node_id() -> String {
+pub(super) fn stable_node_id() -> String {
     let raw = hostname_string();
     let base: String = sanitize_hostname(&raw).chars().take(56).collect();
     let base = base.trim_end_matches('-').to_string();
@@ -1056,6 +1056,13 @@ impl GooseAcpAgent {
         // without it serves `/v1/swarm/mlx/*` as `501` (mlx control not wired).
         if let Some(mlx_control) = current_mlx_control() {
             manager = manager.with_mlx_control(mlx_control);
+        }
+        // This Mac as a node of another Mac's distributed MLX engine; its owner's switch
+        // (`LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`, off by default) gates every call.
+        #[cfg(unix)]
+        {
+            manager = manager
+                .with_distributed_node(Arc::new(super::mlx_distributed_link::GoosedDistributedNode));
         }
         Ok(Arc::new(manager))
     }

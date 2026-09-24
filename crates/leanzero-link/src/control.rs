@@ -76,8 +76,9 @@ use tokio::task::JoinHandle;
 use crate::peer_dial::{MeshProxy, PeerDialError};
 use crate::pubsub::{EventOrigin, PubSub, StampedEvent, SubscribeError};
 use crate::state::{
-    ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerRegistry,
-    PeerRegistryConfig, PeerTarget, RemoteExecutor, SwarmStateSource,
+    DistributedNode, DistributedNodeError, ExecuteError, ExecuteRequest, MlxControl,
+    MlxControlError, MlxOp, PeerRegistry, PeerRegistryConfig, PeerTarget, RemoteExecutor,
+    SwarmStateSource,
 };
 use crate::wire::{NodeStatus, StreamFrame, SwarmNodesResponse};
 
@@ -193,6 +194,9 @@ struct Ctx {
     /// Injected beside `executor`; the seam goose implements over its local mlxEngine
     /// code path. This crate never touches `goose_sidecar`.
     mlx_control: Option<Arc<dyn MlxControl>>,
+    /// `None` → the `/v1/swarm/distributed/*` routes answer `501`. The seam goose implements
+    /// over its distributed engine's node side; its own switch gates every call (`403`).
+    distributed_node: Option<Arc<dyn DistributedNode>>,
     allow_remote_execution: bool,
 }
 
@@ -209,6 +213,7 @@ impl ControlService {
         source: Arc<dyn SwarmStateSource>,
         executor: Option<Arc<dyn RemoteExecutor>>,
         mlx_control: Option<Arc<dyn MlxControl>>,
+        distributed_node: Option<Arc<dyn DistributedNode>>,
     ) -> Result<ControlHandle, ControlError> {
         if config.node_token.trim().is_empty() {
             return Err(ControlError::EmptyToken);
@@ -234,6 +239,7 @@ impl ControlService {
             heartbeat_interval: config.heartbeat_interval,
             executor,
             mlx_control,
+            distributed_node,
             allow_remote_execution: config.allow_remote_execution,
         };
         let router = swarm_router(ctx, Arc::new(config.node_token));
@@ -368,6 +374,9 @@ fn swarm_router(ctx: Ctx, token: Arc<String>) -> Router {
         // One authenticated proxy route per mlxEngine op. `{op}` is validated against
         // `MlxOp` in the handler — an unknown op is a loud `404`, never a silent no-op.
         .route("/v1/swarm/mlx/{op}", post(mlx_proxy))
+        // The distributed MLX engine's node side; `{op}` is interpreted by the injected
+        // `DistributedNode` (an unknown op is its loud `404`).
+        .route("/v1/swarm/distributed/{op}", post(distributed_proxy))
         .layer(axum::middleware::from_fn_with_state(token, require_token))
         .with_state(ctx)
 }
@@ -625,6 +634,76 @@ async fn mlx_proxy(
     match control.dispatch(op, request).await {
         Ok(value) => (StatusCode::OK, Json(value)).into_response(),
         Err(error) => (mlx_control_error_status(&error), error.to_string()).into_response(),
+    }
+}
+
+/// The HTTP status each [`DistributedNodeError`] maps to on `/v1/swarm/distributed/*`; the
+/// forwarding side ([`crate::manager::LinkManager::distributed_proxy`]) maps it back.
+pub fn distributed_node_error_status(error: &DistributedNodeError) -> StatusCode {
+    match error {
+        DistributedNodeError::Disabled(_) => StatusCode::FORBIDDEN,
+        DistributedNodeError::UnknownOp(_) => StatusCode::NOT_FOUND,
+        DistributedNodeError::BadRequest(_) => StatusCode::BAD_REQUEST,
+        DistributedNodeError::Refused { .. } => StatusCode::CONFLICT,
+        DistributedNodeError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn distributed_node_error_response(error: DistributedNodeError) -> Response {
+    let status = distributed_node_error_status(&error);
+    match error {
+        DistributedNodeError::Refused { code, message } => (
+            status,
+            Json(serde_json::json!({"code": code, "message": message})),
+        )
+            .into_response(),
+        other => (status, other.to_string()).into_response(),
+    }
+}
+
+/// The text of the `403` a node answers while its owner's switch is off.
+pub const DISTRIBUTED_NODE_DISABLED: &str =
+    "servingDisabled: \"Allow this Mac to serve as a distributed node\" is off on this node";
+
+/// `POST /v1/swarm/distributed/<op>`: this node as a node of a same-account peer's distributed
+/// MLX engine — goose's typed node operations, its managed envs, and ONE rank this node spawns,
+/// polls under a lease and stops per pid.
+///
+/// Gate order (each loud, none a fallback): no [`DistributedNode`] injected → `501`; the node
+/// owner's switch off (read per request) → `403` [`DISTRIBUTED_NODE_DISABLED`]; an unparseable
+/// body → `400`; otherwise the op runs and answers `200` with its JSON, or its
+/// [`DistributedNodeError`] class (`404` unknown op, `409 {code, message}` a named refusal,
+/// `500`). Auth (bearer / `?token=`, constant time, `Origin` refused) is the router
+/// middleware's. This switch is separate from `allow_remote_execution`: serving a rank does not
+/// let a peer run prompts, and running prompts does not let it take this node's memory.
+async fn distributed_proxy(
+    Path(op): Path<String>,
+    State(ctx): State<Ctx>,
+    body: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Response {
+    let Some(node) = ctx.distributed_node.as_ref() else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "distributed node serving is not wired on this node".to_string(),
+        )
+            .into_response();
+    };
+    if !node.serving_allowed() {
+        return distributed_node_error_response(DistributedNodeError::Disabled(
+            DISTRIBUTED_NODE_DISABLED.to_string(),
+        ));
+    }
+    let Json(request) = match body {
+        Ok(json) => json,
+        Err(rejection) => {
+            return distributed_node_error_response(DistributedNodeError::BadRequest(format!(
+                "invalid distributed request body: {rejection}"
+            )));
+        }
+    };
+    match node.dispatch(&op, request).await {
+        Ok(value) => (StatusCode::OK, Json(value)).into_response(),
+        Err(error) => distributed_node_error_response(error),
     }
 }
 

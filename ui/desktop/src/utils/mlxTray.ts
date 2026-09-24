@@ -10,7 +10,11 @@ import {
 } from '../components/leanzero-swarm/mlxLiveStats';
 import { backendName, gb1, layerSpanShort } from '../components/leanzero-swarm/mlxDistributed';
 import type { MlxEngineSnapshot } from './mlxEngineMonitor';
-import type { MlxDistributedReport, MlxDistributedReportNode } from './mlxDistributedReport';
+import type {
+  MlxDistributedReport,
+  MlxDistributedReportHosting,
+  MlxDistributedReportNode,
+} from './mlxDistributedReport';
 import type { MlxClient, MlxServing } from './mlxServing';
 
 /**
@@ -320,11 +324,58 @@ function distributedItems(d: NonNullable<MlxTrayOptions['distributed']>): MlxTra
   return items;
 }
 
+/** "Rank 1 of MacBook Pro's distributed engine · Qwen3.8-27B · JACCL" — the tile's mode line. */
+export function hostingLine(hosting: MlxDistributedReportHosting): string {
+  const backend = backendName(hosting.backend);
+  return clip(
+    [
+      `Rank ${hosting.rank} of ${hosting.requester}'s distributed engine`,
+      shortModel(hosting.modelId),
+      backend,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  );
+}
+
 export function buildMlxTrayModel(
   snapshot: MlxEngineSnapshot,
   options: MlxTrayOptions
 ): MlxTrayModel {
   const distributed = options.distributed;
+  const hosting = distributed?.report.mode === 'single' ? distributed.report.hosting : null;
+  if (hosting && distributed) {
+    // This Mac serves a rank of ANOTHER Mac's engine over LeanZero Link: the single engine is
+    // refused meanwhile (goose's `hostingRank`), so no Mount is offered; the run is stopped from
+    // the Mac that started it.
+    return {
+      title: distributedStale(distributed) ? 'Rank · stale' : `Rank ${hosting.rank} · ${hosting.state}`,
+      items: [
+        { type: 'info', label: `LeanZero MLX: serving a rank, ${hosting.state}` },
+        { type: 'info', label: hostingLine(hosting) },
+        { type: 'info', label: clip(`Model: ${hosting.modelId}`) },
+        {
+          type: 'info',
+          label: clip(`Single engine: refused while this Mac serves ${hosting.requester}`),
+        },
+        ...(distributedStale(distributed)
+          ? [
+              {
+                type: 'info' as const,
+                label: `Not refreshed for ${ageText(distributed.ageMs)} — open goose to read it again`,
+              },
+            ]
+          : []),
+        { type: 'separator' },
+        {
+          type: 'action',
+          label: 'Open Providers',
+          action: 'open-providers',
+          enabled: options.canAct,
+        },
+      ],
+    };
+  }
   if (distributed?.report.mode === 'distributed') {
     // The distributed engine owns this Mac: the single engine cannot mount (goose refuses it), so
     // the menu speaks for the distributed run and offers its Stop instead of Mount.

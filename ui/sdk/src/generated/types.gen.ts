@@ -3179,6 +3179,17 @@ export type MlxDistributedStatusDto = {
      * `ownedByAnotherWindow`, and `mode`/`state` above stay this goosed's own.
      */
     owner?: MlxDistributedOwnerDto | null;
+    /**
+     * Set while THIS Mac serves a rank of another Mac's distributed engine over LeanZero Link
+     * ("Rank 1 of <requester>'s distributed engine · <model> · JACCL"); its single engine and its
+     * own distributed engine are refused meanwhile.
+     */
+    hosting?: MlxDistributedHostedRankDto | null;
+    /**
+     * This Mac's switch "Allow this Mac to serve as a distributed node" (config key
+     * `LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`, off by default), as the control route reads it.
+     */
+    allowDistributedNode?: boolean;
 };
 
 /**
@@ -3533,6 +3544,37 @@ export type MlxDistributedOwnerDto = {
 };
 
 /**
+ * The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link.
+ */
+export type MlxDistributedHostedRankDto = {
+    rank: number;
+    size: number;
+    /**
+     * The requesting Mac's ComputerName, node id and hostname.
+     */
+    requesterName: string;
+    requesterNodeId: string;
+    requesterHostname: string;
+    modelId: string;
+    servedModelId: string;
+    /**
+     * "jaccl" | "ring".
+     */
+    backend: string;
+    /**
+     * "mlxLmTensor" | "pipelineQwen4".
+     */
+    runner: string;
+    pid?: number | null;
+    /**
+     * "loading" | "serving".
+     */
+    state: string;
+    startedMs: number;
+    lastPollMs: number;
+};
+
+/**
  * Dry run: every preflight check on every node, no launch. `config` absent = the persisted one.
  * `repairLink` = perform the documented TB repair (toggle the configured TB service + re-apply
  * its manual IP) when a JACCL GID/IPv4 check fails; default false (a dry run changes nothing).
@@ -3609,6 +3651,11 @@ export type MlxEngineDistributedPeerCandidatesResponse_unstable = {
      * The file read (absent `~/.ssh/config` = no candidates, and this says so).
      */
     source: string;
+    /**
+     * The same-account Macs on LeanZero Link, offered FIRST: each answered goose's discovery
+     * probe over the mesh (its own goosed ran it), or says why not.
+     */
+    link?: MlxDistributedLinkDiscoveryDto;
 };
 
 /**
@@ -3622,6 +3669,95 @@ export type MlxDistributedPeerCandidateDto = {
      * The peer's `hostname -s` when it answered, else ssh's own error.
      */
     detail: string;
+};
+
+/**
+ * LeanZero Link's side of the peer candidates.
+ */
+export type MlxDistributedLinkDiscoveryDto = {
+    /**
+     * "connected" (the peers below are the mesh's) | "notConnected" (this Mac is not signed in
+     * / not connected — `detail` says which; no Link peer can be offered) | "unavailable" (this
+     * goosed runs no Link).
+     */
+    state: string;
+    detail?: string | null;
+    peers?: Array<MlxDistributedLinkPeerDto>;
+};
+
+/**
+ * A same-account Mac on LeanZero Link, as its own goosed described itself.
+ */
+export type MlxDistributedLinkPeerDto = {
+    nodeId: string;
+    hostname: string;
+    /**
+     * The host `distributedDiscover` takes for this Mac (`link:<nodeId>`).
+     */
+    host: string;
+    /**
+     * "ready" (it answered the probe) | "servingDisabled" (its owner's switch "Allow this Mac
+     * to serve as a distributed node" is off) | "notServed" (its goose predates or lacks the
+     * node side) | "offline" (the mesh reports it offline) | "unreachable" | "unreadable" (it
+     * answered, the probe did not parse). `detail` carries the words.
+     */
+    state: string;
+    detail?: string | null;
+    /**
+     * Its ComputerName.
+     */
+    name?: string | null;
+    totalBytes?: number | null;
+    availableBytes?: number | null;
+    /**
+     * "normal" | "warn" | "critical".
+     */
+    pressure?: string | null;
+    thunderbolt?: Array<MlxDistributedLinkPortDto>;
+    rdma?: Array<MlxDistributedLinkRdmaDto>;
+    models?: Array<MlxDistributedLinkPeerModelDto>;
+};
+
+/**
+ * One Thunderbolt port a Link peer reported (LeanZero Link's path detector over its own
+ * `ifconfig` / hardware ports / `system_profiler`).
+ */
+export type MlxDistributedLinkPortDto = {
+    device: string;
+    hardwarePort?: string | null;
+    ipv4: string;
+    prefixLen: number;
+    /**
+     * The negotiated speed ("80 Gb/s") when the OS attributes one to this port.
+     */
+    speed?: string | null;
+};
+
+/**
+ * One RDMA device a Link peer reported (`ibv_devinfo -v`).
+ */
+export type MlxDistributedLinkRdmaDto = {
+    device: string;
+    /**
+     * Its first port is `PORT_ACTIVE`.
+     */
+    active: boolean;
+    /**
+     * The GID index holding an IPv4-mapped address (JACCL needs one; the soak's rule is 1).
+     */
+    ipv4GidIndex?: number | null;
+};
+
+/**
+ * One model directory on a Link peer (a `config.json` with a `model_type`).
+ */
+export type MlxDistributedLinkPeerModelDto = {
+    dir: string;
+    modelType: string;
+    /**
+     * The loaded files' bytes (safetensors).
+     */
+    weightsBytes: number;
 };
 
 /**

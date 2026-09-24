@@ -103,8 +103,10 @@ export function useMlxDistributedReporter(enabled: boolean): void {
       }
       try {
         const status = await mlxDistributedStatus();
-        // Another window's run is followed too, so its stop reaches this window's readiness.
-        owned = status.mode === 'distributed' || foreignOwner(status) != null;
+        // Another window's run is followed too, so its stop reaches this window's readiness; so is a
+        // rank this Mac serves for another Mac, so the tray follows it until it ends.
+        owned =
+          status.mode === 'distributed' || foreignOwner(status) != null || status.hosting != null;
       } catch {
         // Nothing to report; `owned` keeps the last good read's word.
       } finally {
@@ -125,7 +127,7 @@ export function useMlxDistributedReporter(enabled: boolean): void {
         disposed ||
         reading ||
         timer ||
-        (latest?.mode !== 'distributed' && foreignOwner(latest) == null)
+        (latest?.mode !== 'distributed' && foreignOwner(latest) == null && latest?.hosting == null)
       ) {
         return;
       }

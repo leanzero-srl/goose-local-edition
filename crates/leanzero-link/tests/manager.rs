@@ -37,8 +37,8 @@ use leanzero_link::mesh::{
 };
 use leanzero_link::peer_dial::MeshProxy;
 use leanzero_link::state::{
-    ExecuteAccepted, ExecuteError, ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerTarget,
-    RemoteExecutor, SwarmStateSource,
+    DistributedNode, DistributedNodeError, ExecuteAccepted, ExecuteError, ExecuteRequest,
+    MlxControl, MlxControlError, MlxOp, PeerTarget, RemoteExecutor, SwarmStateSource,
 };
 use leanzero_link::token::node_token_from_secret;
 use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus, SessionSummary};
@@ -1423,6 +1423,7 @@ async fn remote_execute_posts_to_a_peer_execute_route() {
         }),
         Some(b_executor.clone()),
         None,
+        None,
     )
     .await
     .expect("node B starts");
@@ -1567,6 +1568,7 @@ async fn mlx_proxy_posts_to_a_peer_mlx_route_and_surfaces_its_payload_and_errors
         }),
         None,
         Some(b_control.clone()),
+        None,
     )
     .await
     .expect("node B starts");
@@ -1649,6 +1651,7 @@ async fn mlx_proxy_surfaces_a_peer_failure_verbatim() {
         }),
         None,
         Some(b_control.clone()),
+        None,
     )
     .await
     .expect("node B starts");
@@ -1720,6 +1723,7 @@ async fn mlx_proxy_waits_past_the_fabric_request_timeout_for_a_slow_peer() {
         }),
         None,
         Some(b_control.clone()),
+        None,
     )
     .await
     .expect("node B starts");
@@ -1822,5 +1826,182 @@ async fn mlx_proxy_unreachable_peer_is_a_typed_error() {
         "an unreachable peer is a loud typed error, got {err:?}"
     );
 
+    manager.logout(false).await.unwrap();
+}
+
+// ── the distributed engine's node route ──────────────────────────────────
+
+/// A peer's distributed-node side, scripted: its owner's switch, and one answer per op.
+struct ScriptedDistributedNode {
+    allowed: AtomicBool,
+    recorded: StdMutex<Vec<(String, serde_json::Value)>>,
+}
+
+#[async_trait]
+impl DistributedNode for ScriptedDistributedNode {
+    fn serving_allowed(&self) -> bool {
+        self.allowed.load(Ordering::SeqCst)
+    }
+
+    async fn dispatch(
+        &self,
+        op: &str,
+        request: serde_json::Value,
+    ) -> Result<serde_json::Value, DistributedNodeError> {
+        self.recorded
+            .lock()
+            .unwrap()
+            .push((op.to_string(), request.clone()));
+        match op {
+            "rankPoll" => Ok(json!({"rankId": request["rankId"], "lines": 3})),
+            "rankStart" => Err(DistributedNodeError::Refused {
+                code: "singleEngineMounted".to_string(),
+                message: "this Mac's single MLX engine is running with 'm'".to_string(),
+            }),
+            "exec" => Err(DistributedNodeError::Failed("ps exploded".to_string())),
+            other => Err(DistributedNodeError::UnknownOp(format!("unknown op '{other}'"))),
+        }
+    }
+}
+
+async fn connected_requester(server: &MockServer) -> (LinkManager, tempfile::TempDir) {
+    mount(
+        server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(server, false);
+    manager.connect().await.expect("A connects");
+    (manager, dir)
+}
+
+async fn proxy_until_known(
+    manager: &LinkManager,
+    target: &PeerTarget,
+    op: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, LinkError> {
+    let registry = manager.active_registry().await.expect("connected");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        registry.set_peers(vec![target.clone()]);
+        match manager.distributed_proxy(&target.hostname, op, &body).await {
+            Err(LinkError::UnknownPeer(_)) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            other => return other,
+        }
+    }
+}
+
+/// Every class of a peer's `/v1/swarm/distributed/<op>` answer crosses the mesh hop intact:
+/// its owner's switch off → `Disabled` (403, and nothing dispatched); a named refusal →
+/// `Refused {code, message}` (409); an unknown op → `UnknownOp` (404); its own failure →
+/// `Failed` (500); an answer → the JSON verbatim. The switch is read per request: flipping it
+/// on applies to the next call without a reconnect. A peer with no node side → `501`, a
+/// `DistributedProxy`, never a success.
+#[tokio::test]
+async fn distributed_proxy_carries_every_class_of_a_peers_answer() {
+    let node = Arc::new(ScriptedDistributedNode {
+        allowed: AtomicBool::new(false),
+        recorded: StdMutex::new(Vec::new()),
+    });
+    let mut b_config = ControlConfig::new(node_token_from_secret(SECRET), None);
+    b_config.port = 0;
+    let b = ControlService::start(
+        b_config,
+        Arc::new(NamedIdleSource {
+            node_id: "node-b".to_string(),
+        }),
+        None,
+        None,
+        Some(node.clone()),
+    )
+    .await
+    .expect("node B starts");
+    let b_port = b.local_addr().port();
+    let server = MockServer::start().await;
+    let (manager, _dir) = connected_requester(&server).await;
+    let target = PeerTarget {
+        hostname: "node-b".to_string(),
+        mesh_ip: Some(support::fake_tailnet().expose(b_port)),
+        port: b_port,
+    };
+
+    let off = proxy_until_known(&manager, &target, "rankPoll", json!({"rankId": "r1"})).await;
+    match off {
+        Err(LinkError::DistributedNode(DistributedNodeError::Disabled(text))) => {
+            assert!(text.starts_with("servingDisabled"), "{text}")
+        }
+        other => panic!("expected the switch's 403, got {other:?}"),
+    }
+    assert!(
+        node.recorded.lock().unwrap().is_empty(),
+        "a node whose switch is off dispatches nothing"
+    );
+
+    node.allowed.store(true, Ordering::SeqCst);
+    let polled = proxy_until_known(&manager, &target, "rankPoll", json!({"rankId": "r1"}))
+        .await
+        .expect("the switch applies at once");
+    assert_eq!(polled, json!({"rankId": "r1", "lines": 3}));
+
+    match proxy_until_known(&manager, &target, "rankStart", json!({})).await {
+        Err(LinkError::DistributedNode(DistributedNodeError::Refused { code, message })) => {
+            assert_eq!(code, "singleEngineMounted");
+            assert!(message.contains("single MLX engine"), "{message}");
+        }
+        other => panic!("expected a named 409, got {other:?}"),
+    }
+    assert!(matches!(
+        proxy_until_known(&manager, &target, "shell", json!({})).await,
+        Err(LinkError::DistributedNode(DistributedNodeError::UnknownOp(_)))
+    ));
+    assert!(matches!(
+        proxy_until_known(&manager, &target, "exec", json!({})).await,
+        Err(LinkError::DistributedNode(DistributedNodeError::Failed(t))) if t == "ps exploded"
+    ));
+    assert_eq!(
+        node.recorded
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(op, _)| op.as_str())
+            .collect::<Vec<_>>(),
+        ["rankPoll", "rankStart", "shell", "exec"]
+    );
+
+    let mut c_config = ControlConfig::new(node_token_from_secret(SECRET), None);
+    c_config.port = 0;
+    let c = ControlService::start(
+        c_config,
+        Arc::new(NamedIdleSource {
+            node_id: "node-c".to_string(),
+        }),
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("node C starts");
+    let c_port = c.local_addr().port();
+    let unwired = PeerTarget {
+        hostname: "node-c".to_string(),
+        mesh_ip: Some(support::fake_tailnet().expose(c_port)),
+        port: c_port,
+    };
+    match proxy_until_known(&manager, &unwired, "rankPoll", json!({})).await {
+        Err(LinkError::DistributedProxy(text)) => assert!(text.contains("501"), "{text}"),
+        other => panic!("expected the 501 as a proxy failure, got {other:?}"),
+    }
+
+    b.shutdown();
+    c.shutdown();
     manager.logout(false).await.unwrap();
 }

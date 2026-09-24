@@ -6,6 +6,9 @@ import type {
   MlxDistributedDiscoveryDto,
   MlxDistributedEventDto,
   MlxDistributedGapDto,
+  MlxDistributedHostedRankDto,
+  MlxDistributedLinkDiscoveryDto,
+  MlxDistributedLinkPeerDto,
   MlxDistributedPeerCandidateDto,
   MlxDistributedProvisionDto,
   MlxDistributedProvisionNodeDto,
@@ -50,6 +53,19 @@ export type MlxDistributedDiscoveredNode = MlxDistributedDiscoveredNodeDto;
 export type MlxDistributedDiscoveredModel = MlxDistributedDiscoveredModelDto;
 export type MlxDistributedGap = MlxDistributedGapDto;
 export type MlxDistributedPeerCandidate = MlxDistributedPeerCandidateDto;
+export type MlxDistributedLinkDiscovery = MlxDistributedLinkDiscoveryDto;
+export type MlxDistributedLinkPeer = MlxDistributedLinkPeerDto;
+export type MlxDistributedHostedRank = MlxDistributedHostedRankDto;
+
+/** The config key behind "Allow this Mac to serve as a distributed node" (off by default). */
+export const ALLOW_DISTRIBUTED_NODE_KEY = 'LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE';
+
+export interface MlxDistributedPeerCandidates {
+  /** ssh aliases from ~/.ssh/config, each probed — the headless path. */
+  candidates: MlxDistributedPeerCandidate[];
+  /** The same-account Macs on LeanZero Link, offered first. */
+  link: MlxDistributedLinkDiscovery;
+}
 export type MlxDistributedProvision = MlxDistributedProvisionDto;
 export type MlxDistributedProvisionNode = MlxDistributedProvisionNodeDto;
 
@@ -173,12 +189,20 @@ export async function mlxDistributedConfigUpdate(
 }
 
 /** Every non-wildcard `Host` alias in ~/.ssh/config, each probed with a non-interactive ssh. */
-export async function mlxDistributedPeerCandidates(): Promise<MlxDistributedPeerCandidate[]> {
-  const response = await call<{ candidates: MlxDistributedPeerCandidate[] }>(
-    '_goose/unstable/mlxEngine/distributedPeerCandidates',
-    {}
-  );
-  return response.candidates;
+export async function mlxDistributedPeerCandidates(): Promise<MlxDistributedPeerCandidates> {
+  const response = await call<{
+    candidates: MlxDistributedPeerCandidate[];
+    link?: MlxDistributedLinkDiscovery;
+  }>('_goose/unstable/mlxEngine/distributedPeerCandidates', {});
+  return {
+    candidates: response.candidates,
+    // A backend without the Link side answers no `link`: said as such, never as "no peers".
+    link: response.link ?? {
+      state: 'unavailable',
+      detail: 'this goose backend does not report LeanZero Link peers',
+      peers: [],
+    },
+  };
 }
 
 /**

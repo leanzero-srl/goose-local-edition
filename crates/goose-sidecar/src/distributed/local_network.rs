@@ -78,10 +78,40 @@ pub struct PeerAnswer<'a> {
     pub pings: &'a [PingLine],
 }
 
+/// A LeanZero Link node's goosed runs its probe and its rank as an APP (not under ssh), so its own
+/// Local Network privilege applies there — named on that Mac.
+pub fn blocked_on(node: &str) -> String {
+    format!(
+        "macOS is blocking Goose Swarm on {node} from the local network — allow it there in System \
+         Settings › Privacy & Security › Local Network"
+    )
+}
+
+/// [`diagnose`] for a Link node: its app is refused the local network, while another node reached
+/// it over the same link from its side.
+pub fn diagnose_on(
+    node: &str,
+    node_tb_ip: &str,
+    pings: &[PingLine],
+    peers: &[PeerAnswer],
+) -> Option<String> {
+    diagnose_as(node, "answered its probe", node_tb_ip, pings, peers)
+}
+
 /// The evidence that THIS Mac's app is refused the local network, or `None` when the facts do
 /// not show it: every failed ping from here names EHOSTUNREACH, and at least one of those peers
 /// answered over ssh AND reached this node's address over the same link from its side.
 pub fn diagnose(local_tb_ip: &str, local: &[PingLine], peers: &[PeerAnswer]) -> Option<String> {
+    diagnose_as("this Mac", "answered over ssh", local_tb_ip, local, peers)
+}
+
+fn diagnose_as(
+    who: &str,
+    answered: &str,
+    local_tb_ip: &str,
+    local: &[PingLine],
+    peers: &[PeerAnswer],
+) -> Option<String> {
     let failed: Vec<&PingLine> = local.iter().filter(|p| !p.ok).collect();
     let unreachable: Vec<(&str, &str)> = failed
         .iter()
@@ -107,8 +137,8 @@ pub fn diagnose(local_tb_ip: &str, local: &[PingLine], peers: &[PeerAnswer]) -> 
             }
             let _ = write!(
                 evidence,
-                "this Mac → {ip}: {reason}, while {} answered over ssh and reached {local_tb_ip} \
-                 from its side",
+                "{who} → {ip}: {reason}, while {} {answered} and reached {local_tb_ip} from its \
+                 side",
                 peer.name
             );
         }
@@ -189,6 +219,29 @@ mod tests {
             evidence.contains("Work’s Mac Studio answered over ssh"),
             "{evidence}"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_link_node_refused_while_rank_zero_reaches_it_is_named_on_that_node() {
+        let studio = parse_ping_lines("192.168.0.1 fail ping: sendto: No route to host\n");
+        let here = parse_ping_lines("192.168.0.2 ok\n");
+        let rank0 = [PeerAnswer {
+            name: "MacBook Pro",
+            tb_ip: "192.168.0.1",
+            answered: true,
+            pings: &here,
+        }];
+        let evidence = diagnose_on("workhorse", "192.168.0.2", &studio, &rank0).expect("named");
+        assert!(
+            evidence.starts_with("workhorse → 192.168.0.1: ping: sendto: No route to host"),
+            "{evidence}"
+        );
+        assert!(
+            evidence.contains("MacBook Pro answered its probe"),
+            "{evidence}"
+        );
+        assert!(blocked_on("workhorse").contains("on workhorse"));
     }
 
     #[cfg(target_os = "macos")]
