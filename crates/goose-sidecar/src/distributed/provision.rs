@@ -22,12 +22,12 @@ pub const MLX_LM_VERSION: &str = "0.31.3";
 /// measured: the interpreter both jaccl-smoke venvs were built with (`uv venv --python 3.12`).
 pub const PYTHON_VERSION: &str = "3.12";
 /// The fork commit the qwen4_exp split runs (branch lz/pipeline-qwen4): `pipeline_qwen4
-/// {plan,serve,run}`, `plan --json`, and the OpenAI server rank-0 serves (272cb0643, 2026-09-24).
+/// {plan,serve,run}`, `plan --json`, and the OpenAI server rank-0 serves (272cb0643), a node below its pressure floor refusing with the numbers instead of crashing (9f861d9e1, 2026-09-24).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "272cb06433abe80c9b01c5709ce550cc86671862";
+pub const PIPELINE_FORK_COMMIT: &str = "9f861d9e104521ff311b173b3afe04bbee187045";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@272cb06433abe80c9b01c5709ce550cc86671862";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@9f861d9e104521ff311b173b3afe04bbee187045";
 
 /// Where every goose-managed env lives, relative to the node's `$HOME`.
 pub const ENVS_DIR: &str = ".goose/distributed";
