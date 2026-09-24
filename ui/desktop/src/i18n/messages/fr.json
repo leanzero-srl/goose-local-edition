@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Sert sur plusieurs Mac"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode} : {bytes} Kio par jeton au lieu de {bf16} Kio — la même mémoire contient {ratio}× plus de contexte."
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4 bits"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8 bits"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "Cache KV"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "Mesuré sur ce modèle ({date}) : {agreement} % de jetons identiques à bf16, {identical} réponses identiques sur {prompts}, fait enfoui : {retrieval} ; bf16 contre lui-même : {floor} %."
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "{agreement} % d’accord"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "Vitesse de décodage au contexte le plus long : {ratio} % de bf16."
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "Impossible de lire le relevé de mesure : {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "Ce modèle n’a aucune couche à attention complète : il n’y a pas de KV croissant à compresser."
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "La taille de tête de ce modèle ({headDim}) n’entre dans aucun groupe de quantification du moteur : son KV ne peut pas être compressé."
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "La compression du cache KV a besoin du config.json du modèle, et ce modèle n’est pas dans le dossier des modèles."
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "Qualité non mesurée sur ce modèle — comparez ses réponses avant de vous y fier."
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "Désactivé (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "Désactivé : le cache bf16 du moteur, {bytes} Kio par jeton de contexte."
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "trouvé"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "MANQUÉ"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "Seules les {attention} couches à attention complète grandissent avec le contexte et sont compressées ; {state} couches à attention linéaire gardent un état de taille fixe. S’applique au prochain montage. Les exécutions distribuées gardent un cache bf16."
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "Compression du cache KV indisponible : {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Distribué · # nœud · {backend}} other {Distribué · # nœuds · {backend}}}"
   },

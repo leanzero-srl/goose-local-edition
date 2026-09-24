@@ -32,6 +32,7 @@
 pub mod distributed;
 pub mod engine;
 pub mod hf;
+pub mod kv_cache;
 mod memory;
 mod model_parsers;
 mod subprocess;

@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Bedient über mehrere Macs"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}: {bytes} KiB pro Token statt {bf16} KiB — derselbe Speicher fasst {ratio}× so viel Kontext."
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4-Bit"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8-Bit"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "KV-Cache"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "Gemessen an diesem Modell ({date}): {agreement}% Token-Übereinstimmung mit bf16, {identical} von {prompts} Antworten identisch, versteckter Fakt: {retrieval}; bf16 gegen sich selbst: {floor}%."
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "{agreement}% Übereinstimmung"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "Dekodiergeschwindigkeit beim längsten Kontext: {ratio}% von bf16."
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "Der Messdatensatz kann nicht gelesen werden: {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "Dieses Modell hat keine Full-Attention-Schichten, daher gibt es keinen wachsenden KV zum Komprimieren."
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "Die Kopfgröße dieses Modells ({headDim}) passt in keine Quantisierungsgruppe der Engine, daher kann sein KV nicht komprimiert werden."
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "KV-Cache-Komprimierung braucht die config.json des Modells, und dieses Modell liegt nicht im Modellordner."
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "Qualität für dieses Modell nicht gemessen — vergleiche seine Antworten, bevor du dich darauf verlässt."
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "Aus (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "Aus: der bf16-Cache der Engine, {bytes} KiB pro Kontext-Token."
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "gefunden"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "VERFEHLT"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "Nur die {attention} Full-Attention-Schichten wachsen mit dem Kontext und werden komprimiert; {state} Linear-Attention-Schichten behalten einen Zustand fester Größe. Gilt ab dem nächsten Mount. Verteilte Läufe behalten einen bf16-Cache."
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "KV-Cache-Komprimierung nicht verfügbar: {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Verteilt · # Node · {backend}} other {Verteilt · # Nodes · {backend}}}"
   },

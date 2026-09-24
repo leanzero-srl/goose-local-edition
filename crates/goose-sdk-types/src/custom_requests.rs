@@ -2290,6 +2290,12 @@ pub struct MlxModelProfileDto {
     /// per session (it rewrites the system prompt, so a mid-session change would void the cache).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    /// Compressed live KV cache, passed as `--kv-cache-dtype`: `"int8"` | `"int4"`. Absent = off
+    /// (the engine's bf16 cache, no flag). A change restarts the engine. The mount is refused when
+    /// the model's KV cannot take it (goose: no attention layers / no quantization group for its
+    /// head_dim; the engine: a cache layout it cannot quantize — both name the reason).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_cache: Option<MlxKvCacheModeDto>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2297,6 +2303,65 @@ pub struct MlxModelProfileDto {
 pub enum MlxThinkingModeDto {
     On,
     Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum MlxKvCacheModeDto {
+    Int8,
+    Int4,
+}
+
+/// What one token of context costs in KV for this model at each cache setting, from its
+/// config.json and the engine's packed layout (bits/8 bytes per element + one scale and one bias
+/// per group). Only full-attention layers grow with context; linear-attention state is fixed-size.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxKvCacheFactsDto {
+    pub attention_layers: u64,
+    pub state_layers: u64,
+    pub sliding_layers: u64,
+    pub kv_heads: u64,
+    pub head_dim: u64,
+    /// The engine's quantization group for this head_dim; absent = none fits, so the model's KV
+    /// cannot be compressed (both byte figures below are absent too).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_size: Option<u64>,
+    pub bf16_bytes_per_token: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub int8_bytes_per_token: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub int4_bytes_per_token: Option<u64>,
+}
+
+/// One setting's measured quality against the bf16 cache on the same prompts, greedy.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxKvModeMeasurementDto {
+    /// Tokens emitted before the first divergence from bf16, over bf16's tokens (0..1).
+    pub agreement: f64,
+    pub identical_answers: u32,
+    /// The fact buried ~31k tokens deep was answered correctly.
+    pub retrieval_found: bool,
+    /// Decode tok/s at the longest measured context, over bf16's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_tps_ratio: Option<f64>,
+}
+
+/// The model directory's `goose-kv-cache.json`, written by evals/mlx-engine-bench/kv_quant_compare.py.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxKvCacheMeasurementDto {
+    pub measured_at: String,
+    pub engine: String,
+    pub prompts: u32,
+    /// bf16 measured against itself — the floor every setting is read against.
+    pub noise_floor: MlxKvModeMeasurementDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub int8: Option<MlxKvModeMeasurementDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub int4: Option<MlxKvModeMeasurementDto>,
+    pub source: String,
 }
 
 /// What the model's own chat template lets a request steer about reasoning, proven on the
@@ -2431,6 +2496,16 @@ pub struct MlxLocalModelDto {
     pub thinking: Option<MlxThinkingCapabilitiesDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_error: Option<String>,
+    /// KV bytes per token at each cache setting; absent exactly when `kv_cache_error` says why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_cache: Option<MlxKvCacheFactsDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_cache_error: Option<String>,
+    /// The measured quality of each setting on THIS model; absent with no error = never measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_cache_measurement: Option<MlxKvCacheMeasurementDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_cache_measurement_error: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]

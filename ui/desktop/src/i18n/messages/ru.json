@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Обслуживает на нескольких Mac"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}: {bytes} КиБ на токен вместо {bf16} КиБ — в той же памяти помещается в {ratio}× больше контекста."
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4 бит"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8 бит"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "KV-кэш"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "Измерено на этой модели ({date}): совпадение токенов с bf16 {agreement}%, идентичных ответов {identical} из {prompts}, спрятанный факт: {retrieval}; bf16 против самого себя: {floor}%."
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "совпадение {agreement}%"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "Скорость декодирования на самом длинном контексте: {ratio}% от bf16."
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "Не удаётся прочитать запись измерения: {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "У этой модели нет слоёв полного внимания, поэтому растущего KV для сжатия нет."
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "Размер головы этой модели ({headDim}) не подходит ни под одну группу квантования движка, поэтому её KV нельзя сжать."
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "Для сжатия KV-кэша нужен config.json модели, а этой модели нет в папке моделей."
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "Качество на этой модели не измерено — сравните её ответы, прежде чем полагаться на неё."
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "Выкл. (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "Выкл.: bf16-кэш движка, {bytes} КиБ на токен контекста."
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "найден"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "ПРОПУЩЕН"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "С контекстом растут и сжимаются только {attention} слоёв полного внимания; {state} слоёв линейного внимания хранят состояние фиксированного размера. Применяется при следующем монтировании. Распределённые запуски сохраняют bf16-кэш."
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "Сжатие KV-кэша недоступно: {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Распределённо · # узел · {backend}} few {Распределённо · # узла · {backend}} many {Распределённо · # узлов · {backend}} other {Распределённо · # узла · {backend}}}"
   },

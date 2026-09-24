@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Serving across Macs"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}: {bytes} KiB per token instead of {bf16} KiB — the same memory holds {ratio}× the context."
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4-bit"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8-bit"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "KV cache"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "Measured on this model ({date}): {agreement}% token agreement with bf16, {identical} of {prompts} answers identical, the buried fact {retrieval}; bf16 against itself agreed {floor}%."
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "{agreement}% agreement"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "Decode speed at the longest context: {ratio}% of bf16."
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "The measurement record cannot be read: {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "This model has no full-attention layers, so there is no growing KV to compress."
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "This model's head size ({headDim}) fits none of the engine's quantization groups, so its KV cannot be compressed."
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "KV cache compression needs the model's config.json, and this model is not in the models folder."
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "Quality not measured on this model — compare its answers before relying on it."
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "Off (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "Off: the engine's bf16 cache, {bytes} KiB per token of context."
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "found"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "MISSED"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "Only the {attention} full-attention layers grow with the context and are compressed; {state} linear-attention layers keep fixed-size state. Applies at the next mount. Distributed runs keep a bf16 cache."
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "KV cache compression unavailable: {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count,plural,one{Distributed · # node · {backend}} other{Distributed · # nodes · {backend}}}"
   },
