@@ -71,6 +71,8 @@ export interface ReplicaProgress {
   wireMillis: number;
   elapsedMillis: number;
   error?: string;
+  /** macOS refused the RECEIVING device's app the local network (the engine's named verdict). */
+  localNetworkBlocked?: boolean;
   releaseError?: string;
 }
 

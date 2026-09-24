@@ -2336,6 +2336,18 @@
   "localModelPicker.useModel": {
     "defaultMessage": "{modelId}'yi kullanın"
   },
+  "localNetwork.blocked": {
+    "defaultMessage": "macOS, Goose Swarm’ın yerel ağa erişimini engelliyor — Sistem Ayarları › Gizlilik ve Güvenlik › Yerel Ağ bölümünden izin verin"
+  },
+  "localNetwork.blockedOn": {
+    "defaultMessage": "{host} üzerindeki macOS, Goose Swarm’ın yerel ağa erişimini engelliyor — {host} üzerinde Sistem Ayarları › Gizlilik ve Güvenlik › Yerel Ağ bölümünden izin verin"
+  },
+  "localNetwork.label": {
+    "defaultMessage": "Yerel Ağ"
+  },
+  "localNetwork.open": {
+    "defaultMessage": "Gizlilik ve Güvenlik ayarlarını aç"
+  },
   "loopModal.browseYaml": {
     "defaultMessage": "Browse for YAML file..."
   },
@@ -2822,6 +2834,9 @@
   "mlxDistributed.event.linkRepaired": {
     "defaultMessage": "Bağlantı onarıldı"
   },
+  "mlxDistributed.event.localNetworkBlocked": {
+    "defaultMessage": "Yerel ağ engellendi"
+  },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Sahipsiz süreç geri alındı"
   },
@@ -3054,7 +3069,7 @@
     "defaultMessage": "GiB ek yükle planlandı, {budget} GiB bütçeden"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "planlanan {gb} GiB"
+    "defaultMessage": "planlanan {gb} GiB (ek yük dahil)"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Henüz preflight çalıştırılmadı. Deneme çalıştırması her düğümü (erişilebilirlik, bellek, model, Python, Thunderbolt bağlantısı, bağlantı noktaları) denetler ve hiçbir şey başlatmadan katmanları düğümlere göre planlar."

@@ -2336,6 +2336,18 @@
   "localModelPicker.useModel": {
     "defaultMessage": "Gunakan {modelId}"
   },
+  "localNetwork.blocked": {
+    "defaultMessage": "macOS memblokir Goose Swarm dari jaringan lokal — izinkan di Pengaturan Sistem › Privasi & Keamanan › Jaringan Lokal"
+  },
+  "localNetwork.blockedOn": {
+    "defaultMessage": "macOS di {host} memblokir Goose Swarm dari jaringan lokal — izinkan di {host} pada Pengaturan Sistem › Privasi & Keamanan › Jaringan Lokal"
+  },
+  "localNetwork.label": {
+    "defaultMessage": "Jaringan Lokal"
+  },
+  "localNetwork.open": {
+    "defaultMessage": "Buka Privasi & Keamanan"
+  },
   "loopModal.browseYaml": {
     "defaultMessage": "Browse for YAML file..."
   },
@@ -2822,6 +2834,9 @@
   "mlxDistributed.event.linkRepaired": {
     "defaultMessage": "Tautan diperbaiki"
   },
+  "mlxDistributed.event.localNetworkBlocked": {
+    "defaultMessage": "Jaringan lokal diblokir"
+  },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Proses yatim diambil alih"
   },
@@ -3054,7 +3069,7 @@
     "defaultMessage": "GiB direncanakan dengan overhead, dari anggaran {budget} GiB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "direncanakan {gb} GiB"
+    "defaultMessage": "direncanakan {gb} GiB dengan overhead"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Belum ada preflight yang dijalankan. Uji coba memeriksa setiap node (keterjangkauan, memori, model, Python, tautan Thunderbolt, port) dan merencanakan lapisan per node tanpa meluncurkan apa pun."

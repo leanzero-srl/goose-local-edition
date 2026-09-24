@@ -17,6 +17,7 @@ import {
 import { backendName, cleanConfig, gb1, gib, missingFields } from './mlxDistributed';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { INPUT, StudioSelect, ToneBanner, type StudioSelectOption } from './studio';
+import { touchLocalNetwork } from './LocalNetworkNotice';
 
 /**
  * "Set up" for the distributed engine: the person names the other Mac ONCE and goose probes both
@@ -339,6 +340,7 @@ export function DistributedSetup({
     setBusy('detect');
     setError(null);
     try {
+      await touchLocalNetwork();
       const found = await mlxDistributedDiscover(peers, modelId);
       setDiscovery(found);
       setDraft(found.config);

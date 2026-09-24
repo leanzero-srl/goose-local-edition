@@ -2402,6 +2402,7 @@ const MlxEngineView: React.FC = () => {
   );
   const replicas = useModelReplicas({
     enabled: leanzeroLink && peers.length > 0 && tab === 'models',
+    selfNodeId: linkNodes?.self.node_id ?? null,
     senderNodeId: activeNodeId,
     peerKey,
   });

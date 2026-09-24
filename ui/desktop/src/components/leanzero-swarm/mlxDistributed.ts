@@ -166,6 +166,7 @@ export function pressureTone(pressure: string | null | undefined): Tone | null {
 /** Events that mean something went wrong (a death, a hang, a memory stop) — red. */
 const ALARM_EVENTS = new Set([
   'startFailed',
+  'localNetworkBlocked',
   'rankDied',
   'rankFrozen',
   'hang',

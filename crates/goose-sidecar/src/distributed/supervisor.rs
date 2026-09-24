@@ -25,6 +25,7 @@ use tokio::task::JoinHandle;
 use super::config::{Backend, DistributedConfig, Runner};
 use super::exec::{NodeExec, SystemExec};
 use super::launch::{self, RankProcess, RANK_MARKER};
+use super::local_network;
 use super::preflight::{self, now_ms, PreflightReport};
 use super::probe::{self, Pressure, SseVerdict};
 use super::{HANG_MEDIAN_MULTIPLE, HANG_MIN_SAMPLES};
@@ -129,6 +130,9 @@ pub enum EventKind {
     StopRequested,
     Stopped,
     OrphanReclaimed,
+    /// A rank on THIS Mac died naming EHOSTUNREACH: macOS local network privacy (see
+    /// `local_network`), not the cable.
+    LocalNetworkBlocked,
 }
 
 impl EventKind {
@@ -153,6 +157,7 @@ impl EventKind {
             EventKind::StopRequested => "stopRequested",
             EventKind::Stopped => "stopped",
             EventKind::OrphanReclaimed => "orphanReclaimed",
+            EventKind::LocalNetworkBlocked => "localNetworkBlocked",
         }
     }
 }
@@ -185,6 +190,9 @@ pub struct NodeStatus {
     /// MLX's own counters on the rank (`mx.get_active_memory` / `get_peak_memory`).
     pub active_bytes: Option<u64>,
     pub peak_bytes: Option<u64>,
+    /// The launch plan's WITH-OVERHEAD figure (`RankPlan::with_overhead_bytes`) — the one the
+    /// preflight compares with the budget and prints as "planned with overhead", so the node
+    /// card and the preflight never show two different "planned" numbers.
     pub planned_bytes: Option<u64>,
     /// The caps the rank applied in-process (its own `GOOSE_RANK_CAPS` report): absent until the
     /// rank reported them.
@@ -314,7 +322,8 @@ impl Shared {
             | EventKind::StreamWithoutDone
             | EventKind::WatchdogCritical
             | EventKind::BreakerOpen
-            | EventKind::StartFailed => {
+            | EventKind::StartFailed
+            | EventKind::LocalNetworkBlocked => {
                 tracing::warn!(kind = kind.as_str(), node, "distributed engine: {message}")
             }
             _ => tracing::info!(kind = kind.as_str(), node, "distributed engine: {message}"),
@@ -780,6 +789,34 @@ fn local_progress_mark(sys: &mut System, ranks: &[RankProcess]) -> Vec<u64> {
         .collect()
 }
 
+/// A dead rank, named. A rank on THIS Mac whose last output names EHOSTUNREACH is the app's
+/// Local Network privilege (the peers run under ssh, which macOS exempts), not a dead link.
+fn rank_exit(
+    rank: &RankProcess,
+    status: std::process::ExitStatus,
+    when: &str,
+    after: &str,
+) -> (EventKind, String) {
+    let tail = rank.tail();
+    let what = if rank.host.is_some() {
+        "its ssh session ended"
+    } else {
+        "exited"
+    };
+    let message = format!(
+        "rank {} {what}{when} ({status}){after} Last output:\n{tail}",
+        rank.rank
+    );
+    if rank.host.is_none() && local_network::names_host_unreachable(&tail) {
+        (
+            EventKind::LocalNetworkBlocked,
+            format!("{}: {message}", local_network::BLOCKED),
+        )
+    } else {
+        (EventKind::RankDied, message)
+    }
+}
+
 async fn wait_ready(
     ctx: &RunContext,
     ranks: &mut [RankProcess],
@@ -798,20 +835,8 @@ async fn wait_ready(
         }
         for rank in ranks.iter_mut() {
             if let Ok(Some(status)) = rank.child.try_wait() {
-                let what = if rank.host.is_some() {
-                    "its ssh session ended"
-                } else {
-                    "exited"
-                };
-                return ReadyOutcome::Failed(
-                    EventKind::RankDied,
-                    Some(rank.node.clone()),
-                    format!(
-                        "rank {} {what} during startup ({status}). Last output:\n{}",
-                        rank.rank,
-                        rank.tail()
-                    ),
-                );
+                let (kind, message) = rank_exit(rank, status, " during startup", ".");
+                return ReadyOutcome::Failed(kind, Some(rank.node.clone()), message);
             }
         }
         let pids: Vec<Option<u32>> = ranks.iter().map(RankProcess::pid).collect();
@@ -917,20 +942,8 @@ async fn monitor(
         }
         for rank in ranks.iter_mut() {
             if let Ok(Some(status)) = rank.child.try_wait() {
-                let what = if rank.host.is_some() {
-                    "its ssh session ended"
-                } else {
-                    "exited"
-                };
-                return RunOutcome::Failed(
-                    EventKind::RankDied,
-                    Some(rank.node.clone()),
-                    format!(
-                        "rank {} {what} ({status}); the pair cannot serve. Last output:\n{}",
-                        rank.rank,
-                        rank.tail()
-                    ),
-                );
+                let (kind, message) = rank_exit(rank, status, "", "; the pair cannot serve.");
+                return RunOutcome::Failed(kind, Some(rank.node.clone()), message);
             }
         }
         let pids: Vec<Option<u32>> = ranks.iter().map(RankProcess::pid).collect();
@@ -1182,7 +1195,7 @@ async fn supervise(
             for (node, plan) in s.status.nodes.iter_mut().zip(&preflight.nodes) {
                 node.state = NodeState::Loading;
                 node.pid = None;
-                node.planned_bytes = plan.plan.as_ref().map(|p| p.planned_bytes);
+                node.planned_bytes = plan.plan.as_ref().map(|p| p.with_overhead_bytes);
             }
         });
         let mut ranks = Vec::new();
@@ -1314,7 +1327,9 @@ async fn supervise(
                         report.steps.join("; ")
                     ),
                 );
-                if !ctx.config.restart_on_failure {
+                // A refused Local Network privilege is the owner's click, not a transient: a
+                // restart would only fail the same way.
+                if !ctx.config.restart_on_failure || kind == EventKind::LocalNetworkBlocked {
                     ctx.update(|s| s.status.state = RunState::Failed);
                     return report;
                 }
@@ -1566,7 +1581,7 @@ impl DistributedManager {
                     memory_error: None,
                     active_bytes: None,
                     peak_bytes: None,
-                    planned_bytes: plan.map(|p| p.planned_bytes),
+                    planned_bytes: plan.map(|p| p.with_overhead_bytes),
                     memory_limit_bytes: None,
                     wired_limit_bytes: None,
                     cache_limit_bytes: None,

@@ -2336,6 +2336,18 @@
   "localModelPicker.useModel": {
     "defaultMessage": "Sử dụng {modelId}"
   },
+  "localNetwork.blocked": {
+    "defaultMessage": "macOS đang chặn Goose Swarm truy cập mạng cục bộ — hãy cho phép trong Cài đặt hệ thống › Quyền riêng tư & Bảo mật › Mạng cục bộ"
+  },
+  "localNetwork.blockedOn": {
+    "defaultMessage": "macOS trên {host} đang chặn Goose Swarm truy cập mạng cục bộ — hãy cho phép trên {host} trong Cài đặt hệ thống › Quyền riêng tư & Bảo mật › Mạng cục bộ"
+  },
+  "localNetwork.label": {
+    "defaultMessage": "Mạng cục bộ"
+  },
+  "localNetwork.open": {
+    "defaultMessage": "Mở Quyền riêng tư & Bảo mật"
+  },
   "loopModal.browseYaml": {
     "defaultMessage": "Browse for YAML file..."
   },
@@ -2822,6 +2834,9 @@
   "mlxDistributed.event.linkRepaired": {
     "defaultMessage": "Đã sửa liên kết"
   },
+  "mlxDistributed.event.localNetworkBlocked": {
+    "defaultMessage": "Mạng cục bộ bị chặn"
+  },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Đã thu hồi tiến trình mồ côi"
   },
@@ -3054,7 +3069,7 @@
     "defaultMessage": "GiB dự kiến kèm chi phí phụ, trên ngân sách {budget} GiB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "dự kiến {gb} GiB"
+    "defaultMessage": "dự kiến {gb} GiB kèm chi phí phụ"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Chưa chạy preflight nào. Một lần chạy thử kiểm tra từng node (khả năng kết nối, bộ nhớ, mô hình, Python, liên kết Thunderbolt, cổng) và lập kế hoạch lớp cho từng node mà không khởi chạy gì cả."

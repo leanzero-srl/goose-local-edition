@@ -606,3 +606,106 @@ describe('DistributedEngineSection — loud absence', () => {
     expect(screen.getByRole('button', { name: 'Start' })).toBeEnabled();
   });
 });
+
+// The real messages of the 2026-09-24 measurement: the app opened from Finder was refused
+// 192.168.0.2 while the Studio (probed over ssh) reached 192.168.0.1.
+const REFUSED_PING =
+  'no ping answer over the TB link from 192.168.0.2 (ping: sendto: No route to host)';
+const REFUSED_EVIDENCE =
+  'macOS is blocking Goose Swarm from the local network — allow it in System Settings › Privacy & Security › Local Network (this Mac → 192.168.0.2: ping: sendto: No route to host, while workhorse answered over ssh and reached 192.168.0.1 from its side)';
+const LOCAL_NETWORK_REFUSED = {
+  ...FLASH_PREFLIGHT_OK,
+  ok: false,
+  nodes: [
+    {
+      ...FLASH_PREFLIGHT_OK.nodes[0],
+      checks: [
+        { id: 'reachable', verdict: 'pass' as const, message: 'this Mac' },
+        { id: 'ping', verdict: 'fail' as const, message: REFUSED_PING },
+        { id: 'localNetworkPermission', verdict: 'fail' as const, message: REFUSED_EVIDENCE },
+      ],
+    },
+    FLASH_PREFLIGHT_OK.nodes[1],
+  ],
+};
+
+describe('DistributedEngineSection — macOS local network privacy', () => {
+  it('Preflight first brings up the system alert from main, then names the refusal with the one click that fixes it', async () => {
+    const calls: string[] = [];
+    vi.mocked(window.electron.touchLocalNetwork).mockImplementation(async () => {
+      calls.push('touch');
+      return [];
+    });
+    mockPreflight.mockImplementation(async () => {
+      calls.push('preflight');
+      return LOCAL_NETWORK_REFUSED;
+    });
+    const { container } = section({ status: STOPPED_WITH_CONFIG });
+    await userEvent.click(screen.getByRole('button', { name: 'Preflight (dry run)' }));
+    const notice = await screen.findByTestId('local-network-blocked');
+    expect(calls).toEqual(['touch', 'preflight']);
+    expect(notice).toHaveTextContent(
+      'macOS is blocking Goose Swarm from the local network — allow it in System Settings › Privacy & Security › Local Network'
+    );
+    const rows = within(screen.getByTestId('mlx-dist-failing')).getAllByTestId('mlx-dist-check');
+    expect(rows.map((r) => r.getAttribute('data-check'))).toEqual([
+      'ping',
+      'localNetworkPermission',
+    ]);
+    expect(rows[1]).toHaveTextContent('workhorse answered over ssh and reached 192.168.0.1');
+    await userEvent.click(within(notice).getByRole('button', { name: 'Open Privacy & Security' }));
+    expect(window.electron.openLocalNetworkSettings).toHaveBeenCalledTimes(1);
+    await expectDesigned(container);
+  });
+
+  it('Start brings up the alert before it asks the backend', async () => {
+    const calls: string[] = [];
+    vi.mocked(window.electron.touchLocalNetwork).mockImplementation(async () => {
+      calls.push('touch');
+      return [];
+    });
+    mockStart.mockImplementation(async () => {
+      calls.push('start');
+      return {
+        started: false,
+        refusal: { code: 'preflightFailed', message: 'preflight refused the start' },
+        preflight: LOCAL_NETWORK_REFUSED,
+      };
+    });
+    section({ status: STOPPED_WITH_CONFIG });
+    await userEvent.click(screen.getByRole('button', { name: 'Start' }));
+    expect(await screen.findByTestId('local-network-blocked')).toBeInTheDocument();
+    expect(calls).toEqual(['touch', 'start']);
+  });
+
+  it('a rank on this Mac that died of it is named in the events and offers the same click', () => {
+    section({
+      status: {
+        ...STOPPED_WITH_CONFIG,
+        state: 'failed',
+        lastError: 'rank 0 exited during startup (exit status: 1).',
+        events: [
+          {
+            atMs: 1_000,
+            kind: 'localNetworkBlocked',
+            node: 'macbook',
+            message:
+              'macOS is blocking Goose Swarm from the local network — allow it in System Settings › Privacy & Security › Local Network: rank 0 exited during startup (exit status: 1). Last output:\n[ring] Couldn’t connect (error: 65)',
+          },
+        ],
+      },
+    });
+    expect(screen.getByTestId('local-network-blocked')).toBeInTheDocument();
+    const event = screen.getByTestId('mlx-dist-event');
+    expect(event).toHaveAttribute('data-kind', 'localNetworkBlocked');
+    expect(within(event).getByText('Local network blocked')).toHaveAttribute('data-tone', 'err');
+  });
+
+  it('nothing is claimed when the preflight passes', async () => {
+    mockPreflight.mockResolvedValue(FLASH_PREFLIGHT_OK);
+    section({ status: STOPPED_WITH_CONFIG });
+    await userEvent.click(screen.getByRole('button', { name: 'Preflight (dry run)' }));
+    expect(await screen.findByTestId('mlx-dist-preflight')).toHaveAttribute('data-ok', 'true');
+    expect(screen.queryByTestId('local-network-blocked')).toBeNull();
+  });
+});

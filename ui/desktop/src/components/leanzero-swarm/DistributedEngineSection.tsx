@@ -68,6 +68,7 @@ import {
   eventTone,
   gb1,
   gib,
+  isAlarmOrNotice,
   layerSpan,
   configuredModeSummary,
   missingFields,
@@ -89,6 +90,12 @@ import { DistributedSetup } from './DistributedSetup';
 import { formatElapsed } from './mlxLiveStats';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
+import {
+  LOCAL_NETWORK_CHECK,
+  LOCAL_NETWORK_EVENT,
+  LocalNetworkNotice,
+  touchLocalNetwork,
+} from './LocalNetworkNotice';
 
 /**
  * Providers › LeanZero MLX › Engine: the DISTRIBUTED engine — one model split across several Macs,
@@ -195,7 +202,7 @@ const i18n = defineMessages({
   noPeak: { id: 'mlxDistributed.noPeak', defaultMessage: 'No peak reported yet' },
   peakBar: { id: 'mlxDistributed.peakBar', defaultMessage: 'Peak memory against the budget' },
   active: { id: 'mlxDistributed.active', defaultMessage: 'active {gb} GiB' },
-  planned: { id: 'mlxDistributed.planned', defaultMessage: 'planned {gb} GiB' },
+  planned: { id: 'mlxDistributed.planned', defaultMessage: 'planned {gb} GiB with overhead' },
   available: {
     id: 'mlxDistributed.available',
     defaultMessage: '{available} of {total} GiB available',
@@ -415,6 +422,10 @@ const EVENT_WORDS = defineMessages({
     id: 'mlxDistributed.event.orphanReclaimed',
     defaultMessage: 'Orphan reclaimed',
   },
+  localNetworkBlocked: {
+    id: 'mlxDistributed.event.localNetworkBlocked',
+    defaultMessage: 'Local network blocked',
+  },
 });
 
 const FIELD_LABEL: Record<MissingField['field'], MessageDescriptor> = {
@@ -628,6 +639,7 @@ function PreflightReportView({ report }: { report: MlxDistributedPreflight }) {
         : (report.contextSource ?? '—');
   return (
     <div data-testid="mlx-dist-preflight" data-ok={report.ok} className="flex flex-col gap-4">
+      {failing.some(({ c }) => c.id === LOCAL_NETWORK_CHECK) && <LocalNetworkNotice />}
       <div className="flex flex-wrap items-center gap-2">
         <Chip tone={report.ok ? 'ok' : 'err'}>
           {intl.formatMessage(report.ok ? i18n.passed : i18n.failed)}
@@ -1403,6 +1415,9 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const payload = dirty && config ? cleanConfig(config) : null;
   const canAct = busy == null && status != null && config != null && missing.length === 0;
 
+  const lastAlarmKind =
+    [...(status?.events ?? [])].reverse().find((e) => isAlarmOrNotice(e.kind))?.kind ?? null;
+
   // The newest preflight wins: this view's own dry run, or the one the supervisor ran at start.
   const lastPreflight = status?.lastPreflight ?? null;
   const preflight =
@@ -1427,6 +1442,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const onPreflight = () =>
     void run('preflight', i18n.preflightError, async () => {
       setRefusal(null);
+      await touchLocalNetwork();
       setFreshPreflight(await mlxDistributedPreflight(payload, repairLink));
     });
 
@@ -1434,6 +1450,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const startOnce = async (offerUnmount: boolean) => {
     setRefusal(null);
     setStopReport(null);
+    await touchLocalNetwork();
     const response = await mlxDistributedStart(payload);
     if (response.preflight) setFreshPreflight(response.preflight);
     if (response.started) {
@@ -1601,6 +1618,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
       {status?.lastError && (
         <ToneBanner tone="err" label={intl.formatMessage(i18n.lastError)} text={status.lastError} />
       )}
+      {lastAlarmKind === LOCAL_NETWORK_EVENT && <LocalNetworkNotice />}
 
       {status && (
         <div className="flex flex-col gap-2">

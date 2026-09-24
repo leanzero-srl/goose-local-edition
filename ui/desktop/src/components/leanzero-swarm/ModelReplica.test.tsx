@@ -48,6 +48,7 @@ function replicasWith(
   jobs: Record<string, ReplicaJob> = {}
 ): ModelReplicas {
   return {
+    selfNodeId: null,
     targets: { meshConnected: true, targets },
     targetsError: null,
     checking: false,
@@ -178,5 +179,37 @@ describe('a running copy', () => {
     expect(row).toHaveTextContent('Copy to workhorse failed');
     expect(row).toHaveTextContent('failed verification');
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+  });
+
+  it('a pull macOS refused the local network is named on the Mac that must allow it', async () => {
+    const refused: ReplicaJob = {
+      ...running,
+      progress: {
+        ...running.progress!,
+        state: 'failed',
+        phase: undefined,
+        localNetworkBlocked: true,
+        error:
+          'fetching the manifest of …: error sending request: No route to host (os error 65) — macOS is blocking Goose Swarm from the local network on this node',
+      },
+    };
+    const { rerender } = render(
+      <ReplicaModelControls modelId={MODEL} replicas={replicasWith([TB], { [MODEL]: refused })} />
+    );
+    // The receiver is workhorse: the fix is there, so nothing here opens THIS Mac's settings.
+    expect(screen.getByTestId('local-network-blocked')).toHaveTextContent(
+      'macOS on workhorse is blocking Goose Swarm from the local network — allow it on workhorse in System Settings › Privacy & Security › Local Network'
+    );
+    expect(screen.queryByRole('button', { name: 'Open Privacy & Security' })).toBeNull();
+    expect(screen.getByTestId(`mlx-replica-${MODEL}`)).toHaveTextContent('No route to host');
+
+    rerender(
+      <ReplicaModelControls
+        modelId={MODEL}
+        replicas={{ ...replicasWith([TB], { [MODEL]: refused }), selfNodeId: 'peer-workhorse' }}
+      />
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Open Privacy & Security' }));
+    expect(window.electron.openLocalNetworkSettings).toHaveBeenCalled();
   });
 });

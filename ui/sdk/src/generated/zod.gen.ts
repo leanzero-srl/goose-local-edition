@@ -4079,6 +4079,7 @@ export const zMlxReplicaProgressDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    localNetworkBlocked: z.boolean().optional().default(false),
     releaseError: z.union([
         z.string(),
         z.null()

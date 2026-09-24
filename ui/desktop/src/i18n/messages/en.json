@@ -2336,6 +2336,18 @@
   "localModelPicker.useModel": {
     "defaultMessage": "Use {modelId}"
   },
+  "localNetwork.blocked": {
+    "defaultMessage": "macOS is blocking Goose Swarm from the local network — allow it in System Settings › Privacy & Security › Local Network"
+  },
+  "localNetwork.blockedOn": {
+    "defaultMessage": "macOS on {host} is blocking Goose Swarm from the local network — allow it on {host} in System Settings › Privacy & Security › Local Network"
+  },
+  "localNetwork.label": {
+    "defaultMessage": "Local Network"
+  },
+  "localNetwork.open": {
+    "defaultMessage": "Open Privacy & Security"
+  },
   "loopModal.browseYaml": {
     "defaultMessage": "Browse for YAML file..."
   },
@@ -2822,6 +2834,9 @@
   "mlxDistributed.event.linkRepaired": {
     "defaultMessage": "Link repaired"
   },
+  "mlxDistributed.event.localNetworkBlocked": {
+    "defaultMessage": "Local network blocked"
+  },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Orphan reclaimed"
   },
@@ -3054,7 +3069,7 @@
     "defaultMessage": "GiB planned with overhead, of {budget} GiB budget"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "planned {gb} GiB"
+    "defaultMessage": "planned {gb} GiB with overhead"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "No preflight has run yet. A dry run checks every node (reachability, memory, the model, Python, the Thunderbolt link, ports) and plans the layers per node without launching anything."

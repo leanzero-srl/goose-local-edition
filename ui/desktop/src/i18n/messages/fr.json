@@ -2336,6 +2336,18 @@
   "localModelPicker.useModel": {
     "defaultMessage": "Utiliser {modelId}"
   },
+  "localNetwork.blocked": {
+    "defaultMessage": "macOS bloque l’accès de Goose Swarm au réseau local — autorisez-le dans Réglages Système › Confidentialité et sécurité › Réseau local"
+  },
+  "localNetwork.blockedOn": {
+    "defaultMessage": "macOS sur {host} bloque l’accès de Goose Swarm au réseau local — autorisez-le sur {host} dans Réglages Système › Confidentialité et sécurité › Réseau local"
+  },
+  "localNetwork.label": {
+    "defaultMessage": "Réseau local"
+  },
+  "localNetwork.open": {
+    "defaultMessage": "Ouvrir Confidentialité et sécurité"
+  },
   "loopModal.browseYaml": {
     "defaultMessage": "Browse for YAML file..."
   },
@@ -2822,6 +2834,9 @@
   "mlxDistributed.event.linkRepaired": {
     "defaultMessage": "Liaison réparée"
   },
+  "mlxDistributed.event.localNetworkBlocked": {
+    "defaultMessage": "Réseau local bloqué"
+  },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Orphelin récupéré"
   },
@@ -3054,7 +3069,7 @@
     "defaultMessage": "Gio planifiés avec surcoût, sur un budget de {budget} Gio"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "planifié {gb} Gio"
+    "defaultMessage": "planifié {gb} Gio avec surcoût"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Aucun preflight n’a encore été lancé. Un essai à blanc vérifie chaque nœud (joignabilité, mémoire, modèle, Python, liaison Thunderbolt, ports) et planifie les couches par nœud sans rien lancer."

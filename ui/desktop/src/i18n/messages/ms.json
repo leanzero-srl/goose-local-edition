@@ -2336,6 +2336,18 @@
   "localModelPicker.useModel": {
     "defaultMessage": "Guna {modelId}"
   },
+  "localNetwork.blocked": {
+    "defaultMessage": "macOS menyekat Goose Swarm daripada rangkaian setempat — benarkannya dalam Seting Sistem › Privasi & Keselamatan › Rangkaian Setempat"
+  },
+  "localNetwork.blockedOn": {
+    "defaultMessage": "macOS pada {host} menyekat Goose Swarm daripada rangkaian setempat — benarkannya pada {host} dalam Seting Sistem › Privasi & Keselamatan › Rangkaian Setempat"
+  },
+  "localNetwork.label": {
+    "defaultMessage": "Rangkaian Setempat"
+  },
+  "localNetwork.open": {
+    "defaultMessage": "Buka Privasi & Keselamatan"
+  },
   "loopModal.browseYaml": {
     "defaultMessage": "Browse for YAML file..."
   },
@@ -2822,6 +2834,9 @@
   "mlxDistributed.event.linkRepaired": {
     "defaultMessage": "Pautan dibaiki"
   },
+  "mlxDistributed.event.localNetworkBlocked": {
+    "defaultMessage": "Rangkaian setempat disekat"
+  },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Proses yatim dituntut semula"
   },
@@ -3054,7 +3069,7 @@
     "defaultMessage": "GiB dirancang dengan overhed, daripada bajet {budget} GiB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "dirancang {gb} GiB"
+    "defaultMessage": "dirancang {gb} GiB dengan overhed"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Belum ada preflight dijalankan. Larian kering menyemak setiap nod (kebolehcapaian, memori, model, Python, pautan Thunderbolt, port) dan merancang lapisan bagi setiap nod tanpa melancarkan apa-apa."

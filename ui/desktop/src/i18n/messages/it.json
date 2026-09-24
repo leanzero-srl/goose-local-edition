@@ -2336,6 +2336,18 @@
   "localModelPicker.useModel": {
     "defaultMessage": "Usa {modelId}"
   },
+  "localNetwork.blocked": {
+    "defaultMessage": "macOS sta bloccando Goose Swarm sulla rete locale — consentilo in Impostazioni di Sistema › Privacy e sicurezza › Rete locale"
+  },
+  "localNetwork.blockedOn": {
+    "defaultMessage": "macOS su {host} sta bloccando Goose Swarm sulla rete locale — consentilo su {host} in Impostazioni di Sistema › Privacy e sicurezza › Rete locale"
+  },
+  "localNetwork.label": {
+    "defaultMessage": "Rete locale"
+  },
+  "localNetwork.open": {
+    "defaultMessage": "Apri Privacy e sicurezza"
+  },
   "loopModal.browseYaml": {
     "defaultMessage": "Browse for YAML file..."
   },
@@ -2822,6 +2834,9 @@
   "mlxDistributed.event.linkRepaired": {
     "defaultMessage": "Collegamento riparato"
   },
+  "mlxDistributed.event.localNetworkBlocked": {
+    "defaultMessage": "Rete locale bloccata"
+  },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Orfano recuperato"
   },
@@ -3054,7 +3069,7 @@
     "defaultMessage": "GiB pianificati con overhead, su un budget di {budget} GiB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "pianificati {gb} GiB"
+    "defaultMessage": "pianificati {gb} GiB con overhead"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Nessun preflight è stato ancora eseguito. Una prova a secco controlla ogni nodo (raggiungibilità, memoria, il modello, Python, il collegamento Thunderbolt, le porte) e pianifica gli strati per nodo senza avviare nulla."

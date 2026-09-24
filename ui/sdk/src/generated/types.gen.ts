@@ -3915,6 +3915,12 @@ export type MlxReplicaProgressDto = {
     elapsedMillis: number;
     error?: string | null;
     /**
+     * The copy failed because macOS refused the RECEIVING node's app the local network
+     * (EHOSTUNREACH on the direct path): allowed in System Settings › Privacy & Security ›
+     * Local Network on that Mac.
+     */
+    localNetworkBlocked?: boolean;
+    /**
      * The sender's offer could not be released (it lapses when the sender exits).
      */
     releaseError?: string | null;

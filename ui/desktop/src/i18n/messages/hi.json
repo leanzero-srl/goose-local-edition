@@ -2336,6 +2336,18 @@
   "localModelPicker.useModel": {
     "defaultMessage": "{modelId} का प्रयोग करें"
   },
+  "localNetwork.blocked": {
+    "defaultMessage": "macOS, Goose Swarm को स्थानीय नेटवर्क से रोक रहा है — सिस्टम सेटिंग › गोपनीयता और सुरक्षा › स्थानीय नेटवर्क में इसकी अनुमति दें"
+  },
+  "localNetwork.blockedOn": {
+    "defaultMessage": "{host} पर macOS, Goose Swarm को स्थानीय नेटवर्क से रोक रहा है — {host} पर सिस्टम सेटिंग › गोपनीयता और सुरक्षा › स्थानीय नेटवर्क में इसकी अनुमति दें"
+  },
+  "localNetwork.label": {
+    "defaultMessage": "स्थानीय नेटवर्क"
+  },
+  "localNetwork.open": {
+    "defaultMessage": "गोपनीयता और सुरक्षा खोलें"
+  },
   "loopModal.browseYaml": {
     "defaultMessage": "Browse for YAML file..."
   },
@@ -2822,6 +2834,9 @@
   "mlxDistributed.event.linkRepaired": {
     "defaultMessage": "लिंक ठीक किया गया"
   },
+  "mlxDistributed.event.localNetworkBlocked": {
+    "defaultMessage": "स्थानीय नेटवर्क अवरुद्ध"
+  },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "अनाथ प्रक्रिया वापस ली गई"
   },
@@ -3054,7 +3069,7 @@
     "defaultMessage": "GiB ओवरहेड सहित नियोजित, {budget} GiB बजट में से"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "नियोजित {gb} GiB"
+    "defaultMessage": "नियोजित {gb} GiB ओवरहेड सहित"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "अभी कोई प्रीफ़्लाइट नहीं चला। ड्राई रन हर नोड (पहुँच, मेमोरी, मॉडल, Python, Thunderbolt लिंक, पोर्ट) जाँचता है और कुछ भी लॉन्च किए बिना प्रति नोड परतों की योजना बनाता है।"

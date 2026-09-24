@@ -9618,6 +9618,11 @@
             "null"
           ]
         },
+        "localNetworkBlocked": {
+          "type": "boolean",
+          "description": "The copy failed because macOS refused the RECEIVING node's app the local network\n(EHOSTUNREACH on the direct path): allowed in System Settings › Privacy & Security ›\nLocal Network on that Mac.",
+          "default": false
+        },
         "releaseError": {
           "type": [
             "string",

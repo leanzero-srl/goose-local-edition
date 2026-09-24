@@ -31,6 +31,7 @@ import type { MlxDownloadProgress, MlxLocalModel } from '../../acp/mlx-engine';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { formatBytesShort } from './primitives';
 import { ToneBanner } from './studio';
+import { LocalNetworkNotice, touchLocalNetwork } from './LocalNetworkNotice';
 
 const i18n = defineMessages({
   copyTo: {
@@ -135,6 +136,8 @@ export interface ReplicaJob {
 }
 
 export interface ModelReplicas {
+  /** This device's Link node id: a copy whose receiver is this id is fixed on THIS Mac. */
+  selfNodeId: string | null;
   targets: ReplicaTargets | null;
   targetsError: string | null;
   checking: boolean;
@@ -164,10 +167,12 @@ function isRunning(job: ReplicaJob): boolean {
  */
 export function useModelReplicas({
   enabled,
+  selfNodeId = null,
   senderNodeId,
   peerKey,
 }: {
   enabled: boolean;
+  selfNodeId?: string | null;
   senderNodeId?: string;
   /** Changes whenever the linked peer set changes, so the targets are re-read. */
   peerKey: string;
@@ -239,6 +244,7 @@ export function useModelReplicas({
       }));
       void (async () => {
         try {
+          await touchLocalNetwork();
           await mlxEngineReplicate(modelId, target.nodeId, senderNodeId);
         } catch (error) {
           setJob(modelId, (job) => ({
@@ -304,7 +310,17 @@ export function useModelReplicas({
     return () => clearInterval(timer);
   }, [runningKey, setJob]);
 
-  return { targets, targetsError, checking, refreshTargets, jobs, start, cancel, dismiss };
+  return {
+    selfNodeId,
+    targets,
+    targetsError,
+    checking,
+    refreshTargets,
+    jobs,
+    start,
+    cancel,
+    dismiss,
+  };
 }
 
 function availableTargets(replicas: ModelReplicas): ReplicaTarget[] {
@@ -462,10 +478,12 @@ const STATE_TONE: Record<ReplicaProgress['state'], Tone> = {
 /** A copy's live row under its model: real bytes from the receiver, the rate, the files. */
 export function ReplicaJobRow({
   job,
+  receiverIsThisDevice,
   onCancel,
   onDismiss,
 }: {
   job: ReplicaJob;
+  receiverIsThisDevice: boolean;
   onCancel: () => void;
   onDismiss: () => void;
 }) {
@@ -588,6 +606,9 @@ export function ReplicaJobRow({
           {intl.formatMessage(i18n.restarted, { count: progress.restartedFiles.length })}
         </div>
       )}
+      {progress?.localNetworkBlocked && (
+        <LocalNetworkNotice host={receiverIsThisDevice ? undefined : job.targetHostname} />
+      )}
       {error && (
         <div className={cx('break-words text-lz-body', WEIGHT.semibold, TONE_TEXT.err)}>
           {error}
@@ -621,6 +642,7 @@ export function ReplicaModelControls({
     <>
       <ReplicaJobRow
         job={job}
+        receiverIsThisDevice={job.targetNodeId === replicas.selfNodeId}
         onCancel={() => setConfirming(true)}
         onDismiss={() => replicas.dismiss(modelId)}
       />

@@ -2336,6 +2336,18 @@
   "localModelPicker.useModel": {
     "defaultMessage": "{modelId}を使用"
   },
+  "localNetwork.blocked": {
+    "defaultMessage": "macOS が Goose Swarm のローカルネットワークへのアクセスをブロックしています — システム設定 › プライバシーとセキュリティ › ローカルネットワーク で許可してください"
+  },
+  "localNetwork.blockedOn": {
+    "defaultMessage": "{host} の macOS が Goose Swarm のローカルネットワークへのアクセスをブロックしています — {host} の システム設定 › プライバシーとセキュリティ › ローカルネットワーク で許可してください"
+  },
+  "localNetwork.label": {
+    "defaultMessage": "ローカルネットワーク"
+  },
+  "localNetwork.open": {
+    "defaultMessage": "プライバシーとセキュリティを開く"
+  },
   "loopModal.browseYaml": {
     "defaultMessage": "Browse for YAML file..."
   },
@@ -2822,6 +2834,9 @@
   "mlxDistributed.event.linkRepaired": {
     "defaultMessage": "リンクを修復"
   },
+  "mlxDistributed.event.localNetworkBlocked": {
+    "defaultMessage": "ローカルネットワークがブロックされています"
+  },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "孤立プロセスを回収"
   },
@@ -3054,7 +3069,7 @@
     "defaultMessage": "GiB（オーバーヘッド込みの計画）/ 予算 {budget} GiB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "計画 {gb} GiB"
+    "defaultMessage": "計画 {gb} GiB（オーバーヘッド込み）"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "プリフライトはまだ実行されていません。ドライランは各ノード（到達性、メモリ、モデル、Python、Thunderbolt リンク、ポート）をチェックし、何も起動せずにノードごとのレイヤーを計画します。"

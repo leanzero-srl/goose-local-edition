@@ -2336,6 +2336,18 @@
   "localModelPicker.useModel": {
     "defaultMessage": "使用 {modelId}"
   },
+  "localNetwork.blocked": {
+    "defaultMessage": "macOS 正在阻擋 Goose Swarm 存取區域網路——請在「系統設定 › 隱私權與安全性 › 區域網路」中允許"
+  },
+  "localNetwork.blockedOn": {
+    "defaultMessage": "{host} 上的 macOS 正在阻擋 Goose Swarm 存取區域網路——請在 {host} 的「系統設定 › 隱私權與安全性 › 區域網路」中允許"
+  },
+  "localNetwork.label": {
+    "defaultMessage": "區域網路"
+  },
+  "localNetwork.open": {
+    "defaultMessage": "打開「隱私權與安全性」"
+  },
   "loopModal.browseYaml": {
     "defaultMessage": "Browse for YAML file..."
   },
@@ -2822,6 +2834,9 @@
   "mlxDistributed.event.linkRepaired": {
     "defaultMessage": "連結已修復"
   },
+  "mlxDistributed.event.localNetworkBlocked": {
+    "defaultMessage": "區域網路遭阻擋"
+  },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "已回收孤兒程序"
   },
@@ -3054,7 +3069,7 @@
     "defaultMessage": "GiB 含開銷的計畫用量，預算 {budget} GiB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "計畫 {gb} GiB"
+    "defaultMessage": "計畫 {gb} GiB（含開銷）"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "尚未執行預檢。試執行會檢查每個節點（可達性、記憶體、模型、Python、Thunderbolt 連結、連接埠），並在不啟動任何東西的情況下規劃各節點的層。"
