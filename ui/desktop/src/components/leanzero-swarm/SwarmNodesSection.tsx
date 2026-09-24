@@ -34,7 +34,8 @@ const i18nMsg = defineMessages({
   nodesTitle: { id: 'swarmSettings.nodesTitle', defaultMessage: 'Nodes' },
   nodesDesc: {
     id: 'swarmSettings.nodesDesc',
-    defaultMessage: 'Share: relative share of work across nodes — higher gets more tasks.',
+    defaultMessage:
+      'Share: relative share of work across nodes — higher gets more tasks.',
   },
   shareLabel: { id: 'swarmSettings.shareLabel', defaultMessage: 'Share' },
   addNode: { id: 'swarmSettings.addNode', defaultMessage: 'Add node' },
@@ -235,7 +236,8 @@ export default function SwarmNodesSection({
           // The engine substring-matches these keys (id.contains(key)); a full device id contains
           // itself, so a newly written full-id key always matches its node. Update an existing
           // matching key in place so the map never carries two values for one node.
-          const existing = row.id in sw ? row.id : Object.keys(sw).find((k) => row.id.includes(k));
+          const existing =
+            row.id in sw ? row.id : Object.keys(sw).find((k) => row.id.includes(k));
           sw[existing ?? row.id] = share;
           return { ...base, speed_weights: sw };
         }).catch(fail);
@@ -341,10 +343,7 @@ export default function SwarmNodesSection({
         row.provider != null ? (
           <span className="text-lz-ink-4">—</span>
         ) : (
-          <span
-            className="block max-w-[28ch] truncate font-mono text-lz-mono text-lz-ink-3"
-            title={row.modelId}
-          >
+          <span className="block max-w-[28ch] truncate font-mono text-lz-mono text-lz-ink-3" title={row.modelId}>
             {row.modelId}
           </span>
         ),

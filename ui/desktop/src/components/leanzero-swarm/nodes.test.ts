@@ -88,22 +88,9 @@ describe('addableMlxMachines — the machine cap', () => {
   it('an already-added machine leaves the list — by id convention OR by host', () => {
     const devices = [
       // the local convention: id '<machine>-mlx'
-      {
-        id: 'workhorse-mlx',
-        model_id: 'workhorse-x-mlx',
-        weight: 2,
-        enabled: true,
-        engine: 'mlx-sidecar',
-      },
+      { id: 'workhorse-mlx', model_id: 'workhorse-x-mlx', weight: 2, enabled: true, engine: 'mlx-sidecar' },
       // the remote shape: host names the machine
-      {
-        id: 'weird-id',
-        model_id: 'mihai-x-mlx',
-        weight: 2,
-        enabled: true,
-        engine: 'mlx-sidecar',
-        host: 'mihai',
-      },
+      { id: 'weird-id', model_id: 'mihai-x-mlx', weight: 2, enabled: true, engine: 'mlx-sidecar', host: 'mihai' },
     ];
     const out = addableMlxMachines(ipc, fleetModels, devices);
     expect(out.map((m) => m.machine)).toEqual(['gabee']);
@@ -120,14 +107,7 @@ describe('addableMlxMachines — the machine cap', () => {
 
   it('an LM Studio node with an mlx-sidecar row does not block CLOUD nodes (only MLX is capped)', () => {
     const devices = [
-      {
-        id: 'zai-glm',
-        model_id: 'glm-5.3-flash',
-        weight: 2,
-        enabled: true,
-        provider: 'zai',
-        host: 'zai',
-      },
+      { id: 'zai-glm', model_id: 'glm-5.3-flash', weight: 2, enabled: true, provider: 'zai', host: 'zai' },
     ];
     // a cloud row's host names the PROVIDER, never a machine — it must not consume a machine slot
     const out = addableMlxMachines(ipc, fleetModels, devices);

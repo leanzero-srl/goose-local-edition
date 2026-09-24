@@ -2691,7 +2691,8 @@ describe('Engine tab — which engine owns this Mac is always said', () => {
     expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Distributed · 2 nodes · JACCL');
     expect(within(tile).queryByRole('button', { name: 'Mount' })).toBeNull();
     expect(screen.getByTestId('mlx-distributed-owns')).toBeInTheDocument();
-    expect(screen.getAllByTestId('mlx-dist-node')).toHaveLength(2);
+    // The nodes live in the split's Details under Run it, which renders once its own reads land.
+    expect(await screen.findAllByTestId('mlx-dist-node')).toHaveLength(2);
     expect(screen.getByTestId('mlx-dist-slots')).toHaveTextContent('Slots 0 / 2');
     expect(screen.getByTestId('mlx-dist-tile-load')).toHaveTextContent('slots 0 of 2 · 0 waiting');
     // This Mac's own start waits for the split to stop.

@@ -11,7 +11,10 @@ function isSlashCommandItemType(value: unknown): value is SlashCommandItemType {
   return typeof value === 'string' && SLASH_COMMAND_ITEM_TYPES.has(value);
 }
 
-function stringMetaValue(meta: AvailableCommand['_meta'], key: string): string | undefined {
+function stringMetaValue(
+  meta: AvailableCommand['_meta'],
+  key: string
+): string | undefined {
   const value = meta?.[key];
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
@@ -30,8 +33,7 @@ export function availableCommandToDisplayItem(
   }
 
   const sourcePath = stringMetaValue(command._meta, 'sourcePath');
-  const extra =
-    commandType === 'Recipe' ? (sourcePath ?? command.description) : command.description;
+  const extra = commandType === 'Recipe' ? sourcePath ?? command.description : command.description;
 
   return {
     name: command.name,

@@ -67,15 +67,7 @@ export interface ToneBannerProps {
 }
 
 /** A surface card carrying one solid status dot, a toned label and the message in body ink. */
-export function ToneBanner({
-  tone,
-  label,
-  text,
-  action,
-  live,
-  testId,
-  className,
-}: ToneBannerProps) {
+export function ToneBanner({ tone, label, text, action, live, testId, className }: ToneBannerProps) {
   return (
     <div
       role={tone === 'err' ? 'alert' : 'status'}
@@ -123,7 +115,9 @@ export function WeightStepper({
       >
         <Minus />
       </button>
-      <span className={cx('w-6 text-center text-lz-body text-lz-accent', WEIGHT.semibold, TNUM)}>
+      <span
+        className={cx('w-6 text-center text-lz-body text-lz-accent', WEIGHT.semibold, TNUM)}
+      >
         {value}
       </span>
       <button
@@ -233,13 +227,7 @@ export function StudioSelect<T extends StudioSelectOption>({
   }, [open]);
 
   useEffect(() => {
-    if (open)
-      setHighlight(
-        Math.max(
-          0,
-          options.findIndex((o) => o.value === value?.value)
-        )
-      );
+    if (open) setHighlight(Math.max(0, options.findIndex((o) => o.value === value?.value)));
   }, [open, options, value]);
 
   const pick = (o: T) => {

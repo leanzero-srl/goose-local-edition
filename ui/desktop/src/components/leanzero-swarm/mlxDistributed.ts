@@ -149,7 +149,8 @@ export function nodeLoadProgress(fields: object): LoadProgress | null {
       ? { unit: 'bytes', done: Math.min(done, total) * scale, total: total * scale }
       : null;
   return (
-    pair(f.loadedBytes, f.plannedWeightBytes, 1) ?? pair(f.activeMemoryGb, f.plannedWeightsGb, GIB)
+    pair(f.loadedBytes, f.plannedWeightBytes, 1) ??
+    pair(f.activeMemoryGb, f.plannedWeightsGb, GIB)
   );
 }
 
