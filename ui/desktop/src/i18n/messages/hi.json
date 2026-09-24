@@ -4538,6 +4538,159 @@
   "permissionSetting.permissionRulesDescription": {
     "defaultMessage": "छिपे हुए निर्देश जो आपकी प्रतिक्रियाओं को निर्देशित करने और संदर्भ जोड़ने में सहायता के लिए प्रदाता को भेजे जाएंगे।"
   },
+  "placementCard.actionFailed": {
+    "defaultMessage": "कार्रवाई विफल रही"
+  },
+  "placementCard.badgeBoth": {
+    "defaultMessage": "दोनों Mac चाहिए"
+  },
+  "placementCard.badgePeer": {
+    "defaultMessage": "{name} में समाता है"
+  },
+  "placementCard.badgeThisMac": {
+    "defaultMessage": "इस Mac में समाता है"
+  },
+  "placementCard.badgeTooBig": {
+    "defaultMessage": "बहुत बड़ा, {gb} कम"
+  },
+  "placementCard.badgeUnknown": {
+    "defaultMessage": "समाएगा या नहीं, अज्ञात"
+  },
+  "placementCard.best": {
+    "defaultMessage": "सबसे अच्छा"
+  },
+  "placementCard.bestNow": {
+    "defaultMessage": "अभी शुरू किया जा सकने वाला सबसे अच्छा"
+  },
+  "placementCard.context": {
+    "defaultMessage": "{tokens} संदर्भ"
+  },
+  "placementCard.estimated": {
+    "defaultMessage": "अनुमानित"
+  },
+  "placementCard.fitUnknown": {
+    "defaultMessage": "समाएगा या नहीं, अज्ञात"
+  },
+  "placementCard.goalChat": {
+    "defaultMessage": "चैट"
+  },
+  "placementCard.goalLabel": {
+    "defaultMessage": "सबसे ज़्यादा क्या मायने रखता है"
+  },
+  "placementCard.goalLong": {
+    "defaultMessage": "लंबे दस्तावेज़"
+  },
+  "placementCard.goalMany": {
+    "defaultMessage": "बहुत सारे अनुरोध"
+  },
+  "placementCard.gpuCores": {
+    "defaultMessage": "{brand} · {cores}-कोर GPU"
+  },
+  "placementCard.measure": {
+    "defaultMessage": "गति मापें"
+  },
+  "placementCard.measureFirst": {
+    "defaultMessage": "चल रहा है और अभी मापा नहीं गया — गति मापें अनुमान को इस Mac की अपनी संख्या से बदल देता है।"
+  },
+  "placementCard.measureLater": {
+    "defaultMessage": "चलने के बाद गति मापें उपलब्ध होगा।"
+  },
+  "placementCard.measured": {
+    "defaultMessage": "{runs, plural, one {मापा गया} other {मापा गया · # बार}}"
+  },
+  "placementCard.measuredResult": {
+    "defaultMessage": "मापा गया: लिखना {decode} tok/s, पढ़ना {prefill} tok/s"
+  },
+  "placementCard.measuring": {
+    "defaultMessage": "माप रहे हैं: ~2k टोकन का प्रॉम्प्ट, फिर 256 टोकन…"
+  },
+  "placementCard.noFigure": {
+    "defaultMessage": "गति का आँकड़ा नहीं"
+  },
+  "placementCard.noFigureReason": {
+    "defaultMessage": "गति का आँकड़ा नहीं"
+  },
+  "placementCard.nodeGap": {
+    "defaultMessage": "{name}: {reason}"
+  },
+  "placementCard.nodeLine": {
+    "defaultMessage": "{name}: {chip} · {bandwidth} GB/s · GPU सीमा {ceiling}"
+  },
+  "placementCard.nothingFits": {
+    "defaultMessage": "अभी कुछ भी नहीं समाता"
+  },
+  "placementCard.others": {
+    "defaultMessage": "{count, plural, one {# और तरीका} other {# और तरीके}}"
+  },
+  "placementCard.pipeline": {
+    "defaultMessage": "{count, plural, one {# Mac · पाइपलाइन विभाजन · {link}} other {# Mac · पाइपलाइन विभाजन · {link}}}"
+  },
+  "placementCard.planFailed": {
+    "defaultMessage": "योजना नहीं बन सकी"
+  },
+  "placementCard.planning": {
+    "defaultMessage": "आपके Mac और मॉडल को माप रहे हैं…"
+  },
+  "placementCard.range": {
+    "defaultMessage": "{low}–{high}"
+  },
+  "placementCard.reads": {
+    "defaultMessage": "पढ़ना ~{value} tok/s"
+  },
+  "placementCard.refresh": {
+    "defaultMessage": "फिर से योजना बनाएँ"
+  },
+  "placementCard.refusedUnnamed": {
+    "defaultMessage": "अस्वीकृत, और goose ने कोई कारण नहीं बताया"
+  },
+  "placementCard.setupFirst": {
+    "defaultMessage": "वितरित सेटअप में दूसरा मॉडल है — वितरित › सेट अप में यह मॉडल चुनें, फिर शुरू करें।"
+  },
+  "placementCard.short": {
+    "defaultMessage": "नहीं समाता: {node} पर {gb} कम"
+  },
+  "placementCard.shortSplit": {
+    "defaultMessage": "नहीं समाता: {gb} कम"
+  },
+  "placementCard.single": {
+    "defaultMessage": "केवल {name}"
+  },
+  "placementCard.slower": {
+    "defaultMessage": "इसके लिए धीमा: ~{mine} बनाम ~{best} tok/s"
+  },
+  "placementCard.smallerContext": {
+    "defaultMessage": "केवल {tokens} संदर्भ पर समाता है"
+  },
+  "placementCard.started": {
+    "defaultMessage": "शुरू हो रहा है — यह कार्ड इसे फ़ॉलो करता है।"
+  },
+  "placementCard.starting": {
+    "defaultMessage": "शुरू हो रहा है…"
+  },
+  "placementCard.storeErrors": {
+    "defaultMessage": "माप भंडार में न पढ़ी जा सकने वाली पंक्तियाँ"
+  },
+  "placementCard.tensor": {
+    "defaultMessage": "{count, plural, one {# Mac · टेंसर विभाजन · {link}} other {# Mac · टेंसर विभाजन · {link}}}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "यह Mac"
+  },
+  "placementCard.tied": {
+    "defaultMessage": "त्रुटि की सीमा में उतना ही तेज़ (~{mine} बनाम ~{best} tok/s), पर ज़्यादा Mac चाहिए"
+  },
+  "placementCard.title": {
+    "defaultMessage": "इसे कहाँ चलाएँ"
+  },
+  "placementCard.total": {
+    "defaultMessage": "एक साथ {concurrency} पर कुल ~{value} tok/s"
+  },
+  "placementCard.useThis": {
+    "defaultMessage": "इसे उपयोग करें"
+  },
+  "placementCard.writes": {
+    "defaultMessage": "लिखना ~{value} tok/s"
+  },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "त्रुटि प्रकार (उदाहरण के लिए, \"रेट_लिमिट\", \"ऑथ\" - कोई विवरण नहीं)"
   },

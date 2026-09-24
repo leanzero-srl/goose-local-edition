@@ -4538,6 +4538,159 @@
   "permissionSetting.permissionRulesDescription": {
     "defaultMessage": "Instructions masquées qui seront transmises au fournisseur pour aider à orienter et à contextualiser vos réponses."
   },
+  "placementCard.actionFailed": {
+    "defaultMessage": "L’action a échoué"
+  },
+  "placementCard.badgeBoth": {
+    "defaultMessage": "Nécessite les deux Mac"
+  },
+  "placementCard.badgePeer": {
+    "defaultMessage": "Tient sur {name}"
+  },
+  "placementCard.badgeThisMac": {
+    "defaultMessage": "Tient sur ce Mac"
+  },
+  "placementCard.badgeTooBig": {
+    "defaultMessage": "Trop gros, il manque {gb}"
+  },
+  "placementCard.badgeUnknown": {
+    "defaultMessage": "Encombrement inconnu"
+  },
+  "placementCard.best": {
+    "defaultMessage": "Le meilleur"
+  },
+  "placementCard.bestNow": {
+    "defaultMessage": "Le meilleur que vous pouvez lancer maintenant"
+  },
+  "placementCard.context": {
+    "defaultMessage": "contexte de {tokens}"
+  },
+  "placementCard.estimated": {
+    "defaultMessage": "estimé"
+  },
+  "placementCard.fitUnknown": {
+    "defaultMessage": "Encombrement inconnu"
+  },
+  "placementCard.goalChat": {
+    "defaultMessage": "Chat"
+  },
+  "placementCard.goalLabel": {
+    "defaultMessage": "Ce qui compte le plus"
+  },
+  "placementCard.goalLong": {
+    "defaultMessage": "Documents longs"
+  },
+  "placementCard.goalMany": {
+    "defaultMessage": "Nombreuses requêtes"
+  },
+  "placementCard.gpuCores": {
+    "defaultMessage": "{brand} · GPU {cores} cœurs"
+  },
+  "placementCard.measure": {
+    "defaultMessage": "Mesurer la vitesse"
+  },
+  "placementCard.measureFirst": {
+    "defaultMessage": "En marche et pas encore mesuré — Mesurer la vitesse remplace l’estimation par le chiffre propre à ce Mac."
+  },
+  "placementCard.measureLater": {
+    "defaultMessage": "Mesurer la vitesse devient disponible une fois lancé."
+  },
+  "placementCard.measured": {
+    "defaultMessage": "{runs, plural, one {mesuré} other {mesuré · # passes}}"
+  },
+  "placementCard.measuredResult": {
+    "defaultMessage": "Mesuré : {decode} tok/s en écriture, {prefill} tok/s en lecture"
+  },
+  "placementCard.measuring": {
+    "defaultMessage": "Mesure : un prompt d’environ 2k jetons, puis 256 jetons…"
+  },
+  "placementCard.noFigure": {
+    "defaultMessage": "aucun chiffre de vitesse"
+  },
+  "placementCard.noFigureReason": {
+    "defaultMessage": "Aucun chiffre de vitesse"
+  },
+  "placementCard.nodeGap": {
+    "defaultMessage": "{name} : {reason}"
+  },
+  "placementCard.nodeLine": {
+    "defaultMessage": "{name} : {chip} · {bandwidth} Go/s · plafond GPU {ceiling}"
+  },
+  "placementCard.nothingFits": {
+    "defaultMessage": "Rien ne tient pour l’instant"
+  },
+  "placementCard.others": {
+    "defaultMessage": "{count, plural, one {# autre façon} other {# autres façons}}"
+  },
+  "placementCard.pipeline": {
+    "defaultMessage": "{count, plural, one {# Mac · découpage en pipeline · {link}} other {# Mac · découpage en pipeline · {link}}}"
+  },
+  "placementCard.planFailed": {
+    "defaultMessage": "Planification impossible"
+  },
+  "placementCard.planning": {
+    "defaultMessage": "Mesure de vos Mac et du modèle…"
+  },
+  "placementCard.range": {
+    "defaultMessage": "{low}–{high}"
+  },
+  "placementCard.reads": {
+    "defaultMessage": "~{value} tok/s en lecture"
+  },
+  "placementCard.refresh": {
+    "defaultMessage": "Replanifier"
+  },
+  "placementCard.refusedUnnamed": {
+    "defaultMessage": "Refusé, et goose n’a donné aucune raison"
+  },
+  "placementCard.setupFirst": {
+    "defaultMessage": "La configuration distribuée nomme un autre modèle — choisissez celui-ci dans Distribué › Configurer, puis lancez-le."
+  },
+  "placementCard.short": {
+    "defaultMessage": "Ne tient pas : il manque {gb} sur {node}"
+  },
+  "placementCard.shortSplit": {
+    "defaultMessage": "Ne tient pas : il manque {gb}"
+  },
+  "placementCard.single": {
+    "defaultMessage": "{name} seul"
+  },
+  "placementCard.slower": {
+    "defaultMessage": "Plus lent pour cela : ~{mine} contre ~{best} tok/s"
+  },
+  "placementCard.smallerContext": {
+    "defaultMessage": "ne tient qu’avec un contexte de {tokens}"
+  },
+  "placementCard.started": {
+    "defaultMessage": "Démarrage — cette carte le suit."
+  },
+  "placementCard.starting": {
+    "defaultMessage": "Démarrage…"
+  },
+  "placementCard.storeErrors": {
+    "defaultMessage": "Lignes illisibles dans le stockage des mesures"
+  },
+  "placementCard.tensor": {
+    "defaultMessage": "{count, plural, one {# Mac · découpage tensoriel · {link}} other {# Mac · découpage tensoriel · {link}}}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "ce Mac"
+  },
+  "placementCard.tied": {
+    "defaultMessage": "Aussi rapide à l’erreur près (~{mine} contre ~{best} tok/s), mais demande plus de Mac"
+  },
+  "placementCard.title": {
+    "defaultMessage": "Où le faire tourner"
+  },
+  "placementCard.total": {
+    "defaultMessage": "~{value} tok/s au total à {concurrency} en même temps"
+  },
+  "placementCard.useThis": {
+    "defaultMessage": "Utiliser ceci"
+  },
+  "placementCard.writes": {
+    "defaultMessage": "~{value} tok/s en écriture"
+  },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Types d'erreurs (par ex. « rate_limit », « auth » - sans détails)"
   },

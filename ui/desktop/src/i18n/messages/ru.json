@@ -4538,6 +4538,159 @@
   "permissionSetting.permissionRulesDescription": {
     "defaultMessage": "Скрытые инструкции, которые будут переданы провайдеру, чтобы направлять ответы и добавлять к ним контекст."
   },
+  "placementCard.actionFailed": {
+    "defaultMessage": "Действие не удалось"
+  },
+  "placementCard.badgeBoth": {
+    "defaultMessage": "Нужны оба Mac"
+  },
+  "placementCard.badgePeer": {
+    "defaultMessage": "Помещается на {name}"
+  },
+  "placementCard.badgeThisMac": {
+    "defaultMessage": "Помещается на этом Mac"
+  },
+  "placementCard.badgeTooBig": {
+    "defaultMessage": "Слишком большая, не хватает {gb}"
+  },
+  "placementCard.badgeUnknown": {
+    "defaultMessage": "Помещается ли — неизвестно"
+  },
+  "placementCard.best": {
+    "defaultMessage": "Лучший"
+  },
+  "placementCard.bestNow": {
+    "defaultMessage": "Лучший из доступных сейчас"
+  },
+  "placementCard.context": {
+    "defaultMessage": "контекст {tokens}"
+  },
+  "placementCard.estimated": {
+    "defaultMessage": "оценка"
+  },
+  "placementCard.fitUnknown": {
+    "defaultMessage": "Помещается ли — неизвестно"
+  },
+  "placementCard.goalChat": {
+    "defaultMessage": "Чат"
+  },
+  "placementCard.goalLabel": {
+    "defaultMessage": "Что важнее всего"
+  },
+  "placementCard.goalLong": {
+    "defaultMessage": "Длинные документы"
+  },
+  "placementCard.goalMany": {
+    "defaultMessage": "Много запросов"
+  },
+  "placementCard.gpuCores": {
+    "defaultMessage": "{brand} · GPU на {cores} ядер"
+  },
+  "placementCard.measure": {
+    "defaultMessage": "Измерить скорость"
+  },
+  "placementCard.measureFirst": {
+    "defaultMessage": "Работает и ещё не измерено — «Измерить скорость» заменит оценку собственным числом этого Mac."
+  },
+  "placementCard.measureLater": {
+    "defaultMessage": "«Измерить скорость» станет доступно после запуска."
+  },
+  "placementCard.measured": {
+    "defaultMessage": "{runs, plural, one {измерено · # запуск} few {измерено · # запуска} many {измерено · # запусков} other {измерено · # запуска}}"
+  },
+  "placementCard.measuredResult": {
+    "defaultMessage": "Измерено: запись {decode} ток/с, чтение {prefill} ток/с"
+  },
+  "placementCard.measuring": {
+    "defaultMessage": "Измерение: запрос на ~2k токенов, затем 256 токенов…"
+  },
+  "placementCard.noFigure": {
+    "defaultMessage": "нет данных о скорости"
+  },
+  "placementCard.noFigureReason": {
+    "defaultMessage": "Нет данных о скорости"
+  },
+  "placementCard.nodeGap": {
+    "defaultMessage": "{name}: {reason}"
+  },
+  "placementCard.nodeLine": {
+    "defaultMessage": "{name}: {chip} · {bandwidth} ГБ/с · потолок GPU {ceiling}"
+  },
+  "placementCard.nothingFits": {
+    "defaultMessage": "Сейчас ничего не помещается"
+  },
+  "placementCard.others": {
+    "defaultMessage": "{count, plural, one {ещё # способ} few {ещё # способа} many {ещё # способов} other {ещё # способа}}"
+  },
+  "placementCard.pipeline": {
+    "defaultMessage": "{count, plural, one {# Mac · конвейерное разделение · {link}} few {# Mac · конвейерное разделение · {link}} many {# Mac · конвейерное разделение · {link}} other {# Mac · конвейерное разделение · {link}}}"
+  },
+  "placementCard.planFailed": {
+    "defaultMessage": "Не удалось спланировать"
+  },
+  "placementCard.planning": {
+    "defaultMessage": "Измеряем ваши Mac и модель…"
+  },
+  "placementCard.range": {
+    "defaultMessage": "{low}–{high}"
+  },
+  "placementCard.reads": {
+    "defaultMessage": "~{value} ток/с на чтение"
+  },
+  "placementCard.refresh": {
+    "defaultMessage": "Спланировать снова"
+  },
+  "placementCard.refusedUnnamed": {
+    "defaultMessage": "Отказано, причина не названа"
+  },
+  "placementCard.setupFirst": {
+    "defaultMessage": "Распределённая настройка указывает другую модель — выберите эту в «Распределённый › Настроить», затем запустите."
+  },
+  "placementCard.short": {
+    "defaultMessage": "Не помещается: не хватает {gb} на {node}"
+  },
+  "placementCard.shortSplit": {
+    "defaultMessage": "Не помещается: не хватает {gb}"
+  },
+  "placementCard.single": {
+    "defaultMessage": "{name} отдельно"
+  },
+  "placementCard.slower": {
+    "defaultMessage": "Медленнее для этого: ~{mine} против ~{best} ток/с"
+  },
+  "placementCard.smallerContext": {
+    "defaultMessage": "помещается только с контекстом {tokens}"
+  },
+  "placementCard.started": {
+    "defaultMessage": "Запуск — карточка следит за ним."
+  },
+  "placementCard.starting": {
+    "defaultMessage": "Запуск…"
+  },
+  "placementCard.storeErrors": {
+    "defaultMessage": "Нечитаемые строки в хранилище измерений"
+  },
+  "placementCard.tensor": {
+    "defaultMessage": "{count, plural, one {# Mac · тензорное разделение · {link}} few {# Mac · тензорное разделение · {link}} many {# Mac · тензорное разделение · {link}} other {# Mac · тензорное разделение · {link}}}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "этот Mac"
+  },
+  "placementCard.tied": {
+    "defaultMessage": "Так же быстро в пределах погрешности (~{mine} против ~{best} ток/с), но нужно больше Mac"
+  },
+  "placementCard.title": {
+    "defaultMessage": "Где запускать"
+  },
+  "placementCard.total": {
+    "defaultMessage": "~{value} ток/с всего при {concurrency} одновременно"
+  },
+  "placementCard.useThis": {
+    "defaultMessage": "Использовать"
+  },
+  "placementCard.writes": {
+    "defaultMessage": "~{value} ток/с на запись"
+  },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Типы ошибок (например, «rate_limit», «auth» - без подробностей)"
   },

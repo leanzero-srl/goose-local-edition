@@ -4538,6 +4538,159 @@
   "permissionSetting.permissionRulesDescription": {
     "defaultMessage": "Instruksi tersembunyi yang akan diteruskan ke penyedia untuk membantu mengarahkan dan menambahkan konteks ke respons Anda."
   },
+  "placementCard.actionFailed": {
+    "defaultMessage": "Tindakan gagal"
+  },
+  "placementCard.badgeBoth": {
+    "defaultMessage": "Perlu kedua Mac"
+  },
+  "placementCard.badgePeer": {
+    "defaultMessage": "Muat di {name}"
+  },
+  "placementCard.badgeThisMac": {
+    "defaultMessage": "Muat di Mac ini"
+  },
+  "placementCard.badgeTooBig": {
+    "defaultMessage": "Terlalu besar, kurang {gb}"
+  },
+  "placementCard.badgeUnknown": {
+    "defaultMessage": "Muat atau tidak belum diketahui"
+  },
+  "placementCard.best": {
+    "defaultMessage": "Terbaik"
+  },
+  "placementCard.bestNow": {
+    "defaultMessage": "Terbaik yang bisa dimulai sekarang"
+  },
+  "placementCard.context": {
+    "defaultMessage": "konteks {tokens}"
+  },
+  "placementCard.estimated": {
+    "defaultMessage": "perkiraan"
+  },
+  "placementCard.fitUnknown": {
+    "defaultMessage": "Muat atau tidak belum diketahui"
+  },
+  "placementCard.goalChat": {
+    "defaultMessage": "Obrolan"
+  },
+  "placementCard.goalLabel": {
+    "defaultMessage": "Yang paling penting"
+  },
+  "placementCard.goalLong": {
+    "defaultMessage": "Dokumen panjang"
+  },
+  "placementCard.goalMany": {
+    "defaultMessage": "Banyak permintaan"
+  },
+  "placementCard.gpuCores": {
+    "defaultMessage": "{brand} · GPU {cores} inti"
+  },
+  "placementCard.measure": {
+    "defaultMessage": "Ukur kecepatan"
+  },
+  "placementCard.measureFirst": {
+    "defaultMessage": "Berjalan dan belum diukur — Ukur kecepatan mengganti perkiraan dengan angka Mac ini sendiri."
+  },
+  "placementCard.measureLater": {
+    "defaultMessage": "Ukur kecepatan tersedia setelah berjalan."
+  },
+  "placementCard.measured": {
+    "defaultMessage": "{runs, plural, other {terukur · # kali}}"
+  },
+  "placementCard.measuredResult": {
+    "defaultMessage": "Terukur: menulis {decode} tok/dtk, membaca {prefill} tok/dtk"
+  },
+  "placementCard.measuring": {
+    "defaultMessage": "Mengukur: prompt ~2k token, lalu 256 token…"
+  },
+  "placementCard.noFigure": {
+    "defaultMessage": "tidak ada angka kecepatan"
+  },
+  "placementCard.noFigureReason": {
+    "defaultMessage": "Tidak ada angka kecepatan"
+  },
+  "placementCard.nodeGap": {
+    "defaultMessage": "{name}: {reason}"
+  },
+  "placementCard.nodeLine": {
+    "defaultMessage": "{name}: {chip} · {bandwidth} GB/dtk · batas GPU {ceiling}"
+  },
+  "placementCard.nothingFits": {
+    "defaultMessage": "Saat ini tidak ada yang muat"
+  },
+  "placementCard.others": {
+    "defaultMessage": "{count, plural, other {# cara lain}}"
+  },
+  "placementCard.pipeline": {
+    "defaultMessage": "{count, plural, other {# Mac · pembagian pipeline · {link}}}"
+  },
+  "placementCard.planFailed": {
+    "defaultMessage": "Tidak bisa merencanakan"
+  },
+  "placementCard.planning": {
+    "defaultMessage": "Mengukur Mac Anda dan modelnya…"
+  },
+  "placementCard.range": {
+    "defaultMessage": "{low}–{high}"
+  },
+  "placementCard.reads": {
+    "defaultMessage": "membaca ~{value} tok/dtk"
+  },
+  "placementCard.refresh": {
+    "defaultMessage": "Rencanakan lagi"
+  },
+  "placementCard.refusedUnnamed": {
+    "defaultMessage": "Ditolak, dan goose tidak menyebut alasan"
+  },
+  "placementCard.setupFirst": {
+    "defaultMessage": "Pengaturan terdistribusi menyebut model lain — pilih yang ini di Terdistribusi › Atur, lalu mulai."
+  },
+  "placementCard.short": {
+    "defaultMessage": "Tidak muat: kurang {gb} di {node}"
+  },
+  "placementCard.shortSplit": {
+    "defaultMessage": "Tidak muat: kurang {gb}"
+  },
+  "placementCard.single": {
+    "defaultMessage": "{name} saja"
+  },
+  "placementCard.slower": {
+    "defaultMessage": "Lebih lambat untuk ini: ~{mine} vs ~{best} tok/dtk"
+  },
+  "placementCard.smallerContext": {
+    "defaultMessage": "hanya muat pada konteks {tokens}"
+  },
+  "placementCard.started": {
+    "defaultMessage": "Memulai — kartu ini mengikutinya."
+  },
+  "placementCard.starting": {
+    "defaultMessage": "Memulai…"
+  },
+  "placementCard.storeErrors": {
+    "defaultMessage": "Baris yang tidak terbaca di penyimpanan pengukuran"
+  },
+  "placementCard.tensor": {
+    "defaultMessage": "{count, plural, other {# Mac · pembagian tensor · {link}}}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "Mac ini"
+  },
+  "placementCard.tied": {
+    "defaultMessage": "Sama cepat dalam batas galat (~{mine} vs ~{best} tok/dtk), tetapi perlu lebih banyak Mac"
+  },
+  "placementCard.title": {
+    "defaultMessage": "Di mana menjalankannya"
+  },
+  "placementCard.total": {
+    "defaultMessage": "Total ~{value} tok/dtk dengan {concurrency} sekaligus"
+  },
+  "placementCard.useThis": {
+    "defaultMessage": "Gunakan ini"
+  },
+  "placementCard.writes": {
+    "defaultMessage": "menulis ~{value} tok/dtk"
+  },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Jenis kesalahan (mis., \"rate_limit\", \"auth\" - tanpa detail)"
   },

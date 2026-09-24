@@ -4538,6 +4538,159 @@
   "permissionSetting.permissionRulesDescription": {
     "defaultMessage": "レスポンスの方向づけやコンテキスト追加のためにプロバイダーへ渡される非表示の指示です。"
   },
+  "placementCard.actionFailed": {
+    "defaultMessage": "操作に失敗しました"
+  },
+  "placementCard.badgeBoth": {
+    "defaultMessage": "両方の Mac が必要"
+  },
+  "placementCard.badgePeer": {
+    "defaultMessage": "{name} に収まる"
+  },
+  "placementCard.badgeThisMac": {
+    "defaultMessage": "この Mac に収まる"
+  },
+  "placementCard.badgeTooBig": {
+    "defaultMessage": "大きすぎます（{gb} 不足）"
+  },
+  "placementCard.badgeUnknown": {
+    "defaultMessage": "収まるか不明"
+  },
+  "placementCard.best": {
+    "defaultMessage": "最適"
+  },
+  "placementCard.bestNow": {
+    "defaultMessage": "今すぐ開始できる最適な選択"
+  },
+  "placementCard.context": {
+    "defaultMessage": "コンテキスト {tokens}"
+  },
+  "placementCard.estimated": {
+    "defaultMessage": "推定"
+  },
+  "placementCard.fitUnknown": {
+    "defaultMessage": "収まるか不明"
+  },
+  "placementCard.goalChat": {
+    "defaultMessage": "チャット"
+  },
+  "placementCard.goalLabel": {
+    "defaultMessage": "重視すること"
+  },
+  "placementCard.goalLong": {
+    "defaultMessage": "長い文書"
+  },
+  "placementCard.goalMany": {
+    "defaultMessage": "多数のリクエスト"
+  },
+  "placementCard.gpuCores": {
+    "defaultMessage": "{brand} · {cores} コア GPU"
+  },
+  "placementCard.measure": {
+    "defaultMessage": "速度を測定"
+  },
+  "placementCard.measureFirst": {
+    "defaultMessage": "実行中でまだ測定されていません — 速度を測定すると、推定がこの Mac 自身の値に置き換わります。"
+  },
+  "placementCard.measureLater": {
+    "defaultMessage": "実行が始まると速度を測定できます。"
+  },
+  "placementCard.measured": {
+    "defaultMessage": "{runs, plural, other {測定済み · # 回}}"
+  },
+  "placementCard.measuredResult": {
+    "defaultMessage": "測定結果：書き込み {decode} tok/s、読み込み {prefill} tok/s"
+  },
+  "placementCard.measuring": {
+    "defaultMessage": "測定中：約 2k トークンのプロンプトの後に 256 トークン…"
+  },
+  "placementCard.noFigure": {
+    "defaultMessage": "速度データなし"
+  },
+  "placementCard.noFigureReason": {
+    "defaultMessage": "速度データなし"
+  },
+  "placementCard.nodeGap": {
+    "defaultMessage": "{name}：{reason}"
+  },
+  "placementCard.nodeLine": {
+    "defaultMessage": "{name}：{chip} · {bandwidth} GB/s · GPU 上限 {ceiling}"
+  },
+  "placementCard.nothingFits": {
+    "defaultMessage": "今は何も収まりません"
+  },
+  "placementCard.others": {
+    "defaultMessage": "{count, plural, other {ほかに # 通り}}"
+  },
+  "placementCard.pipeline": {
+    "defaultMessage": "{count, plural, other {# 台の Mac · パイプライン分割 · {link}}}"
+  },
+  "placementCard.planFailed": {
+    "defaultMessage": "計画できませんでした"
+  },
+  "placementCard.planning": {
+    "defaultMessage": "Mac とモデルを測定しています…"
+  },
+  "placementCard.range": {
+    "defaultMessage": "{low}–{high}"
+  },
+  "placementCard.reads": {
+    "defaultMessage": "読み込み ~{value} tok/s"
+  },
+  "placementCard.refresh": {
+    "defaultMessage": "再計画"
+  },
+  "placementCard.refusedUnnamed": {
+    "defaultMessage": "拒否されました（goose は理由を示していません）"
+  },
+  "placementCard.setupFirst": {
+    "defaultMessage": "分散設定では別のモデルが指定されています — 分散 › 設定でこのモデルを選んでから開始してください。"
+  },
+  "placementCard.short": {
+    "defaultMessage": "収まりません：{node} で {gb} 不足"
+  },
+  "placementCard.shortSplit": {
+    "defaultMessage": "収まりません：{gb} 不足"
+  },
+  "placementCard.single": {
+    "defaultMessage": "{name} のみ"
+  },
+  "placementCard.slower": {
+    "defaultMessage": "この用途では遅い：~{mine} 対 ~{best} tok/s"
+  },
+  "placementCard.smallerContext": {
+    "defaultMessage": "コンテキスト {tokens} でのみ収まる"
+  },
+  "placementCard.started": {
+    "defaultMessage": "開始しています — このカードで追跡します。"
+  },
+  "placementCard.starting": {
+    "defaultMessage": "開始中…"
+  },
+  "placementCard.storeErrors": {
+    "defaultMessage": "測定ストアに読み取れない行があります"
+  },
+  "placementCard.tensor": {
+    "defaultMessage": "{count, plural, other {# 台の Mac · テンソル分割 · {link}}}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "この Mac"
+  },
+  "placementCard.tied": {
+    "defaultMessage": "誤差の範囲で同じ速さ（~{mine} 対 ~{best} tok/s）ですが、より多くの Mac が必要"
+  },
+  "placementCard.title": {
+    "defaultMessage": "どこで実行するか"
+  },
+  "placementCard.total": {
+    "defaultMessage": "同時 {concurrency} 件で合計 ~{value} tok/s"
+  },
+  "placementCard.useThis": {
+    "defaultMessage": "これを使う"
+  },
+  "placementCard.writes": {
+    "defaultMessage": "書き込み ~{value} tok/s"
+  },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "エラーの種類（例: 「rate_limit」「auth」— 詳細なし）"
   },

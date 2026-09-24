@@ -4538,6 +4538,159 @@
   "permissionSetting.permissionRulesDescription": {
     "defaultMessage": "Các hướng dẫn ẩn sẽ được chuyển đến nhà cung cấp để giúp định hướng và bổ sung ngữ cảnh cho các phản hồi của bạn."
   },
+  "placementCard.actionFailed": {
+    "defaultMessage": "Thao tác thất bại"
+  },
+  "placementCard.badgeBoth": {
+    "defaultMessage": "Cần cả hai máy Mac"
+  },
+  "placementCard.badgePeer": {
+    "defaultMessage": "Vừa với {name}"
+  },
+  "placementCard.badgeThisMac": {
+    "defaultMessage": "Vừa với máy Mac này"
+  },
+  "placementCard.badgeTooBig": {
+    "defaultMessage": "Quá lớn, thiếu {gb}"
+  },
+  "placementCard.badgeUnknown": {
+    "defaultMessage": "Chưa rõ có vừa không"
+  },
+  "placementCard.best": {
+    "defaultMessage": "Tốt nhất"
+  },
+  "placementCard.bestNow": {
+    "defaultMessage": "Tốt nhất có thể khởi động ngay"
+  },
+  "placementCard.context": {
+    "defaultMessage": "ngữ cảnh {tokens}"
+  },
+  "placementCard.estimated": {
+    "defaultMessage": "ước tính"
+  },
+  "placementCard.fitUnknown": {
+    "defaultMessage": "Chưa rõ có vừa không"
+  },
+  "placementCard.goalChat": {
+    "defaultMessage": "Trò chuyện"
+  },
+  "placementCard.goalLabel": {
+    "defaultMessage": "Điều quan trọng nhất"
+  },
+  "placementCard.goalLong": {
+    "defaultMessage": "Tài liệu dài"
+  },
+  "placementCard.goalMany": {
+    "defaultMessage": "Nhiều yêu cầu"
+  },
+  "placementCard.gpuCores": {
+    "defaultMessage": "{brand} · GPU {cores} lõi"
+  },
+  "placementCard.measure": {
+    "defaultMessage": "Đo tốc độ"
+  },
+  "placementCard.measureFirst": {
+    "defaultMessage": "Đang chạy và chưa được đo — Đo tốc độ sẽ thay ước tính bằng con số của chính máy Mac này."
+  },
+  "placementCard.measureLater": {
+    "defaultMessage": "Có thể đo tốc độ khi nó đã chạy."
+  },
+  "placementCard.measured": {
+    "defaultMessage": "{runs, plural, other {đã đo · # lần}}"
+  },
+  "placementCard.measuredResult": {
+    "defaultMessage": "Đã đo: ghi {decode} tok/s, đọc {prefill} tok/s"
+  },
+  "placementCard.measuring": {
+    "defaultMessage": "Đang đo: một prompt ~2k token, rồi 256 token…"
+  },
+  "placementCard.noFigure": {
+    "defaultMessage": "không có số liệu tốc độ"
+  },
+  "placementCard.noFigureReason": {
+    "defaultMessage": "Không có số liệu tốc độ"
+  },
+  "placementCard.nodeGap": {
+    "defaultMessage": "{name}: {reason}"
+  },
+  "placementCard.nodeLine": {
+    "defaultMessage": "{name}: {chip} · {bandwidth} GB/s · trần GPU {ceiling}"
+  },
+  "placementCard.nothingFits": {
+    "defaultMessage": "Hiện không có gì vừa"
+  },
+  "placementCard.others": {
+    "defaultMessage": "{count, plural, other {# cách khác}}"
+  },
+  "placementCard.pipeline": {
+    "defaultMessage": "{count, plural, other {# máy Mac · chia theo pipeline · {link}}}"
+  },
+  "placementCard.planFailed": {
+    "defaultMessage": "Không thể lập kế hoạch"
+  },
+  "placementCard.planning": {
+    "defaultMessage": "Đang đo các máy Mac và mô hình…"
+  },
+  "placementCard.range": {
+    "defaultMessage": "{low}–{high}"
+  },
+  "placementCard.reads": {
+    "defaultMessage": "đọc ~{value} tok/s"
+  },
+  "placementCard.refresh": {
+    "defaultMessage": "Lập kế hoạch lại"
+  },
+  "placementCard.refusedUnnamed": {
+    "defaultMessage": "Bị từ chối, goose không nêu lý do"
+  },
+  "placementCard.setupFirst": {
+    "defaultMessage": "Thiết lập phân tán đang chỉ định mô hình khác — hãy chọn mô hình này trong Phân tán › Thiết lập rồi khởi động."
+  },
+  "placementCard.short": {
+    "defaultMessage": "Không vừa: thiếu {gb} trên {node}"
+  },
+  "placementCard.shortSplit": {
+    "defaultMessage": "Không vừa: thiếu {gb}"
+  },
+  "placementCard.single": {
+    "defaultMessage": "Chỉ {name}"
+  },
+  "placementCard.slower": {
+    "defaultMessage": "Chậm hơn cho việc này: ~{mine} so với ~{best} tok/s"
+  },
+  "placementCard.smallerContext": {
+    "defaultMessage": "chỉ vừa với ngữ cảnh {tokens}"
+  },
+  "placementCard.started": {
+    "defaultMessage": "Đang khởi động — thẻ này theo dõi nó."
+  },
+  "placementCard.starting": {
+    "defaultMessage": "Đang khởi động…"
+  },
+  "placementCard.storeErrors": {
+    "defaultMessage": "Có dòng không đọc được trong kho đo đạc"
+  },
+  "placementCard.tensor": {
+    "defaultMessage": "{count, plural, other {# máy Mac · chia tensor · {link}}}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "máy Mac này"
+  },
+  "placementCard.tied": {
+    "defaultMessage": "Nhanh ngang nhau trong sai số (~{mine} so với ~{best} tok/s), nhưng cần nhiều máy Mac hơn"
+  },
+  "placementCard.title": {
+    "defaultMessage": "Chạy ở đâu"
+  },
+  "placementCard.total": {
+    "defaultMessage": "Tổng ~{value} tok/s với {concurrency} cùng lúc"
+  },
+  "placementCard.useThis": {
+    "defaultMessage": "Dùng cách này"
+  },
+  "placementCard.writes": {
+    "defaultMessage": "ghi ~{value} tok/s"
+  },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Loại lỗi (ví dụ: \"rate_limit\", \"auth\" - không có chi tiết)"
   },

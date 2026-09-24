@@ -4538,6 +4538,159 @@
   "permissionSetting.permissionRulesDescription": {
     "defaultMessage": "Yanıtlarınızı yönlendirmeye ve bağlam eklemeye yardımcı olmak için sağlayıcıya iletilecek gizli talimatlar."
   },
+  "placementCard.actionFailed": {
+    "defaultMessage": "İşlem başarısız oldu"
+  },
+  "placementCard.badgeBoth": {
+    "defaultMessage": "İki Mac de gerekli"
+  },
+  "placementCard.badgePeer": {
+    "defaultMessage": "{name} üzerine sığar"
+  },
+  "placementCard.badgeThisMac": {
+    "defaultMessage": "Bu Mac’e sığar"
+  },
+  "placementCard.badgeTooBig": {
+    "defaultMessage": "Çok büyük, {gb} eksik"
+  },
+  "placementCard.badgeUnknown": {
+    "defaultMessage": "Sığıp sığmadığı bilinmiyor"
+  },
+  "placementCard.best": {
+    "defaultMessage": "En iyisi"
+  },
+  "placementCard.bestNow": {
+    "defaultMessage": "Şimdi başlatabileceğin en iyisi"
+  },
+  "placementCard.context": {
+    "defaultMessage": "{tokens} bağlam"
+  },
+  "placementCard.estimated": {
+    "defaultMessage": "tahmini"
+  },
+  "placementCard.fitUnknown": {
+    "defaultMessage": "Sığıp sığmadığı bilinmiyor"
+  },
+  "placementCard.goalChat": {
+    "defaultMessage": "Sohbet"
+  },
+  "placementCard.goalLabel": {
+    "defaultMessage": "En önemli olan"
+  },
+  "placementCard.goalLong": {
+    "defaultMessage": "Uzun belgeler"
+  },
+  "placementCard.goalMany": {
+    "defaultMessage": "Çok sayıda istek"
+  },
+  "placementCard.gpuCores": {
+    "defaultMessage": "{brand} · {cores} çekirdekli GPU"
+  },
+  "placementCard.measure": {
+    "defaultMessage": "Hızı ölç"
+  },
+  "placementCard.measureFirst": {
+    "defaultMessage": "Çalışıyor ve henüz ölçülmedi — Hızı ölç, tahmini bu Mac’in kendi sayısıyla değiştirir."
+  },
+  "placementCard.measureLater": {
+    "defaultMessage": "Hızı ölç, çalışmaya başlayınca kullanılabilir."
+  },
+  "placementCard.measured": {
+    "defaultMessage": "{runs, plural, one {ölçüldü} other {ölçüldü · # çalıştırma}}"
+  },
+  "placementCard.measuredResult": {
+    "defaultMessage": "Ölçüldü: yazma {decode} tok/sn, okuma {prefill} tok/sn"
+  },
+  "placementCard.measuring": {
+    "defaultMessage": "Ölçülüyor: ~2k token’lık bir istem, ardından 256 token…"
+  },
+  "placementCard.noFigure": {
+    "defaultMessage": "hız verisi yok"
+  },
+  "placementCard.noFigureReason": {
+    "defaultMessage": "Hız verisi yok"
+  },
+  "placementCard.nodeGap": {
+    "defaultMessage": "{name}: {reason}"
+  },
+  "placementCard.nodeLine": {
+    "defaultMessage": "{name}: {chip} · {bandwidth} GB/sn · GPU tavanı {ceiling}"
+  },
+  "placementCard.nothingFits": {
+    "defaultMessage": "Şu anda hiçbir şey sığmıyor"
+  },
+  "placementCard.others": {
+    "defaultMessage": "{count, plural, one {# başka yol} other {# başka yol}}"
+  },
+  "placementCard.pipeline": {
+    "defaultMessage": "{count, plural, one {# Mac · boru hattı bölme · {link}} other {# Mac · boru hattı bölme · {link}}}"
+  },
+  "placementCard.planFailed": {
+    "defaultMessage": "Planlanamadı"
+  },
+  "placementCard.planning": {
+    "defaultMessage": "Mac’lerin ve model ölçülüyor…"
+  },
+  "placementCard.range": {
+    "defaultMessage": "{low}–{high}"
+  },
+  "placementCard.reads": {
+    "defaultMessage": "~{value} tok/sn okuma"
+  },
+  "placementCard.refresh": {
+    "defaultMessage": "Yeniden planla"
+  },
+  "placementCard.refusedUnnamed": {
+    "defaultMessage": "Reddedildi ve goose bir neden belirtmedi"
+  },
+  "placementCard.setupFirst": {
+    "defaultMessage": "Dağıtık kurulum başka bir modeli adlandırıyor — bunu Dağıtık › Kur bölümünde seç, sonra başlat."
+  },
+  "placementCard.short": {
+    "defaultMessage": "Sığmıyor: {node} üzerinde {gb} eksik"
+  },
+  "placementCard.shortSplit": {
+    "defaultMessage": "Sığmıyor: {gb} eksik"
+  },
+  "placementCard.single": {
+    "defaultMessage": "Yalnızca {name}"
+  },
+  "placementCard.slower": {
+    "defaultMessage": "Bunun için daha yavaş: ~{mine} ile ~{best} tok/sn"
+  },
+  "placementCard.smallerContext": {
+    "defaultMessage": "yalnızca {tokens} bağlamla sığar"
+  },
+  "placementCard.started": {
+    "defaultMessage": "Başlatılıyor — bu kart onu izliyor."
+  },
+  "placementCard.starting": {
+    "defaultMessage": "Başlatılıyor…"
+  },
+  "placementCard.storeErrors": {
+    "defaultMessage": "Ölçüm deposunda okunamayan satırlar"
+  },
+  "placementCard.tensor": {
+    "defaultMessage": "{count, plural, one {# Mac · tensör bölme · {link}} other {# Mac · tensör bölme · {link}}}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "bu Mac"
+  },
+  "placementCard.tied": {
+    "defaultMessage": "Hata payı içinde aynı hızda (~{mine} ile ~{best} tok/sn), ama daha fazla Mac gerekiyor"
+  },
+  "placementCard.title": {
+    "defaultMessage": "Nerede çalıştırılsın"
+  },
+  "placementCard.total": {
+    "defaultMessage": "Aynı anda {concurrency} ile toplam ~{value} tok/sn"
+  },
+  "placementCard.useThis": {
+    "defaultMessage": "Bunu kullan"
+  },
+  "placementCard.writes": {
+    "defaultMessage": "~{value} tok/sn yazma"
+  },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Hata türleri (ör. \"rate_limit\", \"auth\" - ayrıntı yok)"
   },

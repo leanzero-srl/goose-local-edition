@@ -4538,6 +4538,159 @@
   "permissionSetting.permissionRulesDescription": {
     "defaultMessage": "传给提供商的隐藏指令，用于引导并为回复补充上下文。"
   },
+  "placementCard.actionFailed": {
+    "defaultMessage": "操作失败"
+  },
+  "placementCard.badgeBoth": {
+    "defaultMessage": "需要两台 Mac"
+  },
+  "placementCard.badgePeer": {
+    "defaultMessage": "可放入 {name}"
+  },
+  "placementCard.badgeThisMac": {
+    "defaultMessage": "可放入这台 Mac"
+  },
+  "placementCard.badgeTooBig": {
+    "defaultMessage": "太大，还差 {gb}"
+  },
+  "placementCard.badgeUnknown": {
+    "defaultMessage": "能否放入未知"
+  },
+  "placementCard.best": {
+    "defaultMessage": "最佳"
+  },
+  "placementCard.bestNow": {
+    "defaultMessage": "现在可启动的最佳方案"
+  },
+  "placementCard.context": {
+    "defaultMessage": "{tokens} 上下文"
+  },
+  "placementCard.estimated": {
+    "defaultMessage": "估算"
+  },
+  "placementCard.fitUnknown": {
+    "defaultMessage": "能否放入未知"
+  },
+  "placementCard.goalChat": {
+    "defaultMessage": "聊天"
+  },
+  "placementCard.goalLabel": {
+    "defaultMessage": "最看重什么"
+  },
+  "placementCard.goalLong": {
+    "defaultMessage": "长文档"
+  },
+  "placementCard.goalMany": {
+    "defaultMessage": "大量请求"
+  },
+  "placementCard.gpuCores": {
+    "defaultMessage": "{brand} · {cores} 核 GPU"
+  },
+  "placementCard.measure": {
+    "defaultMessage": "测量速度"
+  },
+  "placementCard.measureFirst": {
+    "defaultMessage": "正在运行且尚未测量 — 测量速度会用这台 Mac 自己的数值替换估算。"
+  },
+  "placementCard.measureLater": {
+    "defaultMessage": "运行后即可测量速度。"
+  },
+  "placementCard.measured": {
+    "defaultMessage": "{runs, plural, other {已测量 · # 次}}"
+  },
+  "placementCard.measuredResult": {
+    "defaultMessage": "已测量：写入 {decode} tok/s，读取 {prefill} tok/s"
+  },
+  "placementCard.measuring": {
+    "defaultMessage": "测量中：约 2k token 的提示，然后 256 个 token…"
+  },
+  "placementCard.noFigure": {
+    "defaultMessage": "无速度数据"
+  },
+  "placementCard.noFigureReason": {
+    "defaultMessage": "无速度数据"
+  },
+  "placementCard.nodeGap": {
+    "defaultMessage": "{name}：{reason}"
+  },
+  "placementCard.nodeLine": {
+    "defaultMessage": "{name}：{chip} · {bandwidth} GB/s · GPU 上限 {ceiling}"
+  },
+  "placementCard.nothingFits": {
+    "defaultMessage": "目前放不下任何方案"
+  },
+  "placementCard.others": {
+    "defaultMessage": "{count, plural, other {另外 # 种方式}}"
+  },
+  "placementCard.pipeline": {
+    "defaultMessage": "{count, plural, other {# 台 Mac · 流水线拆分 · {link}}}"
+  },
+  "placementCard.planFailed": {
+    "defaultMessage": "无法规划"
+  },
+  "placementCard.planning": {
+    "defaultMessage": "正在测量你的 Mac 和模型…"
+  },
+  "placementCard.range": {
+    "defaultMessage": "{low}–{high}"
+  },
+  "placementCard.reads": {
+    "defaultMessage": "读取 ~{value} tok/s"
+  },
+  "placementCard.refresh": {
+    "defaultMessage": "重新规划"
+  },
+  "placementCard.refusedUnnamed": {
+    "defaultMessage": "已拒绝，goose 未给出原因"
+  },
+  "placementCard.setupFirst": {
+    "defaultMessage": "分布式设置指定的是另一个模型 — 请在 分布式 › 设置 中选择此模型，然后启动。"
+  },
+  "placementCard.short": {
+    "defaultMessage": "放不下：{node} 上还差 {gb}"
+  },
+  "placementCard.shortSplit": {
+    "defaultMessage": "放不下：还差 {gb}"
+  },
+  "placementCard.single": {
+    "defaultMessage": "仅 {name}"
+  },
+  "placementCard.slower": {
+    "defaultMessage": "对此更慢：~{mine} 对 ~{best} tok/s"
+  },
+  "placementCard.smallerContext": {
+    "defaultMessage": "仅在 {tokens} 上下文时可放入"
+  },
+  "placementCard.started": {
+    "defaultMessage": "正在启动 — 此卡片会跟踪它。"
+  },
+  "placementCard.starting": {
+    "defaultMessage": "正在启动…"
+  },
+  "placementCard.storeErrors": {
+    "defaultMessage": "测量存储中有无法读取的行"
+  },
+  "placementCard.tensor": {
+    "defaultMessage": "{count, plural, other {# 台 Mac · 张量拆分 · {link}}}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "这台 Mac"
+  },
+  "placementCard.tied": {
+    "defaultMessage": "在误差范围内同样快（~{mine} 对 ~{best} tok/s），但需要更多 Mac"
+  },
+  "placementCard.title": {
+    "defaultMessage": "在哪里运行"
+  },
+  "placementCard.total": {
+    "defaultMessage": "同时 {concurrency} 个时总计 ~{value} tok/s"
+  },
+  "placementCard.useThis": {
+    "defaultMessage": "使用此方案"
+  },
+  "placementCard.writes": {
+    "defaultMessage": "写入 ~{value} tok/s"
+  },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "错误类型（例如“rate_limit”“auth”——不含详情）"
   },

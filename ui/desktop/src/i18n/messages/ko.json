@@ -4538,6 +4538,159 @@
   "permissionSetting.permissionRulesDescription": {
     "defaultMessage": "응답에 컨텍스트를 추가하고 지시하는 데 도움이 되도록 제공업체에게 전달되는 숨겨진 지침입니다."
   },
+  "placementCard.actionFailed": {
+    "defaultMessage": "작업에 실패했습니다"
+  },
+  "placementCard.badgeBoth": {
+    "defaultMessage": "두 Mac 모두 필요"
+  },
+  "placementCard.badgePeer": {
+    "defaultMessage": "{name}에 들어감"
+  },
+  "placementCard.badgeThisMac": {
+    "defaultMessage": "이 Mac에 들어감"
+  },
+  "placementCard.badgeTooBig": {
+    "defaultMessage": "너무 큼, {gb} 부족"
+  },
+  "placementCard.badgeUnknown": {
+    "defaultMessage": "들어갈지 알 수 없음"
+  },
+  "placementCard.best": {
+    "defaultMessage": "최적"
+  },
+  "placementCard.bestNow": {
+    "defaultMessage": "지금 시작할 수 있는 최적"
+  },
+  "placementCard.context": {
+    "defaultMessage": "컨텍스트 {tokens}"
+  },
+  "placementCard.estimated": {
+    "defaultMessage": "추정"
+  },
+  "placementCard.fitUnknown": {
+    "defaultMessage": "들어갈지 알 수 없음"
+  },
+  "placementCard.goalChat": {
+    "defaultMessage": "채팅"
+  },
+  "placementCard.goalLabel": {
+    "defaultMessage": "가장 중요한 것"
+  },
+  "placementCard.goalLong": {
+    "defaultMessage": "긴 문서"
+  },
+  "placementCard.goalMany": {
+    "defaultMessage": "많은 요청"
+  },
+  "placementCard.gpuCores": {
+    "defaultMessage": "{brand} · {cores}코어 GPU"
+  },
+  "placementCard.measure": {
+    "defaultMessage": "속도 측정"
+  },
+  "placementCard.measureFirst": {
+    "defaultMessage": "실행 중이며 아직 측정되지 않음 — 속도 측정을 하면 추정치가 이 Mac의 실제 수치로 바뀝니다."
+  },
+  "placementCard.measureLater": {
+    "defaultMessage": "실행되면 속도 측정을 사용할 수 있습니다."
+  },
+  "placementCard.measured": {
+    "defaultMessage": "{runs, plural, other {측정됨 · #회}}"
+  },
+  "placementCard.measuredResult": {
+    "defaultMessage": "측정됨: 쓰기 {decode} tok/s, 읽기 {prefill} tok/s"
+  },
+  "placementCard.measuring": {
+    "defaultMessage": "측정 중: 약 2k 토큰 프롬프트 후 256 토큰…"
+  },
+  "placementCard.noFigure": {
+    "defaultMessage": "속도 수치 없음"
+  },
+  "placementCard.noFigureReason": {
+    "defaultMessage": "속도 수치 없음"
+  },
+  "placementCard.nodeGap": {
+    "defaultMessage": "{name}: {reason}"
+  },
+  "placementCard.nodeLine": {
+    "defaultMessage": "{name}: {chip} · {bandwidth} GB/s · GPU 상한 {ceiling}"
+  },
+  "placementCard.nothingFits": {
+    "defaultMessage": "지금은 들어가는 것이 없음"
+  },
+  "placementCard.others": {
+    "defaultMessage": "{count, plural, other {다른 방법 #개}}"
+  },
+  "placementCard.pipeline": {
+    "defaultMessage": "{count, plural, other {Mac #대 · 파이프라인 분할 · {link}}}"
+  },
+  "placementCard.planFailed": {
+    "defaultMessage": "계획할 수 없음"
+  },
+  "placementCard.planning": {
+    "defaultMessage": "Mac과 모델을 측정하는 중…"
+  },
+  "placementCard.range": {
+    "defaultMessage": "{low}–{high}"
+  },
+  "placementCard.reads": {
+    "defaultMessage": "읽기 ~{value} tok/s"
+  },
+  "placementCard.refresh": {
+    "defaultMessage": "다시 계획"
+  },
+  "placementCard.refusedUnnamed": {
+    "defaultMessage": "거부되었으며 goose가 이유를 밝히지 않음"
+  },
+  "placementCard.setupFirst": {
+    "defaultMessage": "분산 설정에 다른 모델이 지정되어 있습니다 — 분산 › 설정에서 이 모델을 고른 뒤 시작하세요."
+  },
+  "placementCard.short": {
+    "defaultMessage": "들어가지 않음: {node}에서 {gb} 부족"
+  },
+  "placementCard.shortSplit": {
+    "defaultMessage": "들어가지 않음: {gb} 부족"
+  },
+  "placementCard.single": {
+    "defaultMessage": "{name} 단독"
+  },
+  "placementCard.slower": {
+    "defaultMessage": "이 용도에는 더 느림: ~{mine} 대 ~{best} tok/s"
+  },
+  "placementCard.smallerContext": {
+    "defaultMessage": "컨텍스트 {tokens}에서만 들어감"
+  },
+  "placementCard.started": {
+    "defaultMessage": "시작 중 — 이 카드가 따라갑니다."
+  },
+  "placementCard.starting": {
+    "defaultMessage": "시작 중…"
+  },
+  "placementCard.storeErrors": {
+    "defaultMessage": "측정 저장소에 읽을 수 없는 줄이 있음"
+  },
+  "placementCard.tensor": {
+    "defaultMessage": "{count, plural, other {Mac #대 · 텐서 분할 · {link}}}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "이 Mac"
+  },
+  "placementCard.tied": {
+    "defaultMessage": "오차 범위 안에서 같은 속도(~{mine} 대 ~{best} tok/s)지만 Mac이 더 필요함"
+  },
+  "placementCard.title": {
+    "defaultMessage": "어디서 실행할지"
+  },
+  "placementCard.total": {
+    "defaultMessage": "동시 {concurrency}개일 때 총 ~{value} tok/s"
+  },
+  "placementCard.useThis": {
+    "defaultMessage": "이것 사용"
+  },
+  "placementCard.writes": {
+    "defaultMessage": "쓰기 ~{value} tok/s"
+  },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "오류 유형(예: 'rate_limit', 'auth' - 세부정보 없음)"
   },
