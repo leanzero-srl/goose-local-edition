@@ -3540,7 +3540,7 @@
     "defaultMessage": "一致率 {agreement}%"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "最长上下文下的解码速度：bf16 的 {ratio}%。"
+    "defaultMessage": "上下文为 {context} 个 token 时的解码速度：bf16 的 {ratio}%。"
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "无法读取测量记录：{reason}"

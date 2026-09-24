@@ -3540,7 +3540,7 @@
     "defaultMessage": "khớp {agreement}%"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "Tốc độ giải mã ở ngữ cảnh dài nhất: {ratio}% so với bf16."
+    "defaultMessage": "Tốc độ giải mã với {context} token ngữ cảnh: {ratio}% so với bf16."
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "Không đọc được bản ghi đo: {reason}"

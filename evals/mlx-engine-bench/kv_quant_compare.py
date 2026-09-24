@@ -131,32 +131,43 @@ def retrieval_found(run: dict) -> bool:
     return "KESTREL-4471" in (r.get("content") or "")
 
 
-def longest_decode(run: dict) -> float | None:
-    rows = memory_rows(run)
-    return rows[-1]["decode"] if rows else None
+def warm_decode(run: dict) -> tuple[float, int] | None:
+    """Median decode tok/s of the `decode` phase's warm requests, and their prompt size."""
+    warm = [x for x in (run.get("decode") or {}).get("runs", []) if not x["cold"] and x["decode_tps"]]
+    if not warm:
+        return None
+    return statistics.median(x["decode_tps"] for x in warm), warm[0]["prompt_tokens"]
 
 
-def mode_record(ref: dict, cand: dict, summary: dict) -> dict:
+def mode_record(ref: dict, cand: dict, summary: dict, speed_ref: dict | None, speed_cand: dict | None) -> dict:
     out = {
         "agreement": round(summary["agreement"], 4),
         "identicalAnswers": summary["identical"],
         "retrievalFound": retrieval_found(cand),
     }
-    ref_tps, cand_tps = longest_decode(ref), longest_decode(cand)
-    if ref_tps and cand_tps:
-        out["decodeTpsRatio"] = round(cand_tps / ref_tps, 3)
+    ref_speed = warm_decode(speed_ref) if speed_ref else None
+    cand_speed = warm_decode(speed_cand) if speed_cand else None
+    if ref_speed and cand_speed:
+        out["decodeTpsRatio"] = round(cand_speed[0] / ref_speed[0], 3)
+        out["decodeContextTokens"] = cand_speed[1]
     return out
 
 
-def write_record(model_dir: str, results_dir: str, engine: str, ref: dict, noise: str, summaries: dict, runs: dict):
-    """goose's per-model measurement record (goose_sidecar::kv_cache::MEASUREMENT_FILE)."""
+def write_record(model_dir: str, results_dir: str, engine: str, ref: dict, noise: str, summaries: dict, runs: dict,
+                 modes: dict, speed: dict):
+    """goose's per-model measurement record (goose_sidecar::kv_cache::MEASUREMENT_FILE).
+
+    `modes` maps a cache mode to the label measured for it; `speed` maps "bf16"/a mode to the label
+    whose `decode` phase carries its tok/s (speed runs keep MTP on, quality runs cannot)."""
+    speed_runs = {k: load(results_dir, v) for k, v in speed.items()}
     record = {
         "measuredAt": os.path.basename(os.path.normpath(results_dir))[:10],
         "engine": engine,
         "prompts": summaries[noise]["prompts"],
-        "noiseFloor": mode_record(ref, runs[noise], summaries[noise]),
+        "noiseFloor": mode_record(ref, runs[noise], summaries[noise], None, None),
         "modes": {
-            mode: mode_record(ref, runs[mode], summaries[mode]) for mode in ("int8", "int4") if mode in summaries
+            mode: mode_record(ref, runs[label], summaries[label], speed_runs.get("bf16"), speed_runs.get(mode))
+            for mode, label in modes.items()
         },
         "source": os.path.relpath(results_dir, os.path.join(HERE, "..", "..")),
     }
@@ -177,6 +188,9 @@ def main():
     ap.add_argument("--noise", default=None)
     ap.add_argument("--record", default=None, help="model directory to write goose-kv-cache.json into")
     ap.add_argument("--engine", default=None, help="engine version named in the record")
+    ap.add_argument("--record-modes", default="int8=int8,int4=int4", help="mode=label pairs whose quality goes in the record")
+    ap.add_argument("--record-speed", default="bf16=bf16,int8=int8,int4=int4", help="mode=label pairs carrying the decode phase")
+    ap.add_argument("--summary", default="summary.md", help="file name for the markdown table in results_dir")
     ap.add_argument("candidates", nargs="+")
     args = ap.parse_args()
     if args.record and not (args.noise and args.engine):
@@ -258,8 +272,10 @@ def main():
         ]
     if args.record:
         runs = {label: load(args.results_dir, label) for label in labels}
-        write_record(args.record, args.results_dir, args.engine, ref, args.noise, summaries, runs)
-    out = os.path.join(args.results_dir, "summary.md")
+        pairs = lambda text: dict(kv.split("=", 1) for kv in text.split(","))  # noqa: E731
+        write_record(args.record, args.results_dir, args.engine, ref, args.noise, summaries, runs,
+                     pairs(args.record_modes), pairs(args.record_speed))
+    out = os.path.join(args.results_dir, args.summary)
     with open(out, "w") as f:
         f.write("\n".join(md) + "\n")
     print("\n".join(md))

@@ -3540,7 +3540,7 @@
     "defaultMessage": "padanan {agreement}%"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "Kelajuan nyahkod pada konteks terpanjang: {ratio}% daripada bf16."
+    "defaultMessage": "Kelajuan nyahkod dengan {context} token konteks: {ratio}% daripada bf16."
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "Rekod pengukuran tidak dapat dibaca: {reason}"

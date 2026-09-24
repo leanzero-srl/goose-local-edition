@@ -7440,7 +7440,14 @@
             "null"
           ],
           "format": "double",
-          "description": "Decode tok/s at the longest measured context, over bf16's."
+          "description": "Median decode tok/s with `decode_context_tokens` of context in the prefix cache (MTP on),\nover bf16's on the same prompt."
+        },
+        "decodeContextTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
         }
       },
       "required": [

@@ -2343,9 +2343,12 @@ pub struct MlxKvModeMeasurementDto {
     pub identical_answers: u32,
     /// The fact buried ~31k tokens deep was answered correctly.
     pub retrieval_found: bool,
-    /// Decode tok/s at the longest measured context, over bf16's.
+    /// Median decode tok/s with `decode_context_tokens` of context in the prefix cache (MTP on),
+    /// over bf16's on the same prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode_tps_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_context_tokens: Option<u32>,
 }
 
 /// The model directory's `goose-kv-cache.json`, written by evals/mlx-engine-bench/kv_quant_compare.py.

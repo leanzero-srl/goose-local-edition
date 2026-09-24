@@ -30,7 +30,7 @@ const i18n = defineMessages({
   },
   measuredDecode: {
     id: 'mlxKvCache.measuredDecode',
-    defaultMessage: 'Decode speed at the longest context: {ratio}% of bf16.',
+    defaultMessage: 'Decode speed with {context} tokens of context: {ratio}% of bf16.',
   },
   retrievalFound: { id: 'mlxKvCache.retrievalFound', defaultMessage: 'found' },
   retrievalMissed: { id: 'mlxKvCache.retrievalMissed', defaultMessage: 'MISSED' },
@@ -195,10 +195,11 @@ export function MlxKvCacheFields({
             floor: pct(record.noiseFloor.agreement),
           })
         );
-        if (measured.decodeTpsRatio != null) {
+        if (measured.decodeTpsRatio != null && measured.decodeContextTokens != null) {
           lines.push(
             intl.formatMessage(i18n.measuredDecode, {
               ratio: (measured.decodeTpsRatio * 100).toFixed(0),
+              context: intl.formatNumber(measured.decodeContextTokens),
             })
           );
         }

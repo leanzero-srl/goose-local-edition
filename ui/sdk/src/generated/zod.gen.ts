@@ -3049,6 +3049,10 @@ export const zMlxKvModeMeasurementDto = z.object({
     decodeTpsRatio: z.union([
         z.number(),
         z.null()
+    ]).optional(),
+    decodeContextTokens: z.union([
+        z.number().int().gte(0),
+        z.null()
     ]).optional()
 });
 

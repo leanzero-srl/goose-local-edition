@@ -3540,7 +3540,7 @@
     "defaultMessage": "일치율 {agreement}%"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "가장 긴 컨텍스트에서의 디코딩 속도: bf16의 {ratio}%."
+    "defaultMessage": "{context} 토큰 컨텍스트에서의 디코딩 속도: bf16의 {ratio}%."
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "측정 기록을 읽을 수 없습니다: {reason}"

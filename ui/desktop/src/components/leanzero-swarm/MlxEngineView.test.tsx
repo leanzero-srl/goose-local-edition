@@ -1373,6 +1373,7 @@ describe('MlxEngineView sampling tab', () => {
               identicalAnswers: 9,
               retrievalFound: true,
               decodeTpsRatio: 0.94,
+              decodeContextTokens: 32722,
             },
             source: 'evals/mlx-engine-bench/results/2026-09-24-kv-quant',
           },
@@ -1401,7 +1402,7 @@ describe('MlxEngineView sampling tab', () => {
       screen.getByText(/91\.2% token agreement with bf16, 9 of 15 answers/)
     ).toBeInTheDocument();
     expect(
-      screen.getByText('Decode speed at the longest context: 94% of bf16.')
+      screen.getByText('Decode speed with 32,722 tokens of context: 94% of bf16.')
     ).toBeInTheDocument();
     expect(screen.getByText('91.2% agreement')).toBeInTheDocument();
 

@@ -2902,9 +2902,11 @@ export type MlxKvModeMeasurementDto = {
      */
     retrievalFound: boolean;
     /**
-     * Decode tok/s at the longest measured context, over bf16's.
+     * Median decode tok/s with `decode_context_tokens` of context in the prefix cache (MTP on),
+     * over bf16's on the same prompt.
      */
     decodeTpsRatio?: number | null;
+    decodeContextTokens?: number | null;
 };
 
 /**

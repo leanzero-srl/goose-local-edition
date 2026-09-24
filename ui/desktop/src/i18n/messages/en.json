@@ -3540,7 +3540,7 @@
     "defaultMessage": "{agreement}% agreement"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "Decode speed at the longest context: {ratio}% of bf16."
+    "defaultMessage": "Decode speed with {context} tokens of context: {ratio}% of bf16."
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "The measurement record cannot be read: {reason}"

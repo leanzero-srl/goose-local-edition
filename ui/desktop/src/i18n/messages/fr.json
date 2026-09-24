@@ -3540,7 +3540,7 @@
     "defaultMessage": "{agreement} % d’accord"
   },
   "mlxKvCache.measuredDecode": {
-    "defaultMessage": "Vitesse de décodage au contexte le plus long : {ratio} % de bf16."
+    "defaultMessage": "Vitesse de décodage avec {context} jetons de contexte : {ratio} % de bf16."
   },
   "mlxKvCache.measurementUnreadable": {
     "defaultMessage": "Impossible de lire le relevé de mesure : {reason}"
