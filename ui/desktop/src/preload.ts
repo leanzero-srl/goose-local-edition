@@ -13,6 +13,7 @@ import type { FleetChatResult, FleetProbeResult } from './utils/fleetProbe';
 import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
 import type { MlxEngineReport, MlxEngineSnapshot } from './utils/mlxEngineMonitor';
 import type { MlxDistributedReport } from './utils/mlxDistributedReport';
+import type { LocalNetworkTouch } from './localNetwork';
 
 // Mapping from settings keys to their old localStorage keys for lazy migration
 const localStorageKeyMap: Partial<Record<SettingKey, string>> = {
@@ -387,6 +388,10 @@ type ElectronAPI = {
   setSpellcheck: (enable: boolean) => Promise<boolean>;
   getSpellcheckState: () => Promise<boolean>;
   openNotificationsSettings: () => Promise<boolean>;
+  /** macOS: performs the operation that brings up the Local Network alert (see localNetwork.ts). */
+  touchLocalNetwork: () => Promise<LocalNetworkTouch[]>;
+  /** macOS: opens System Settings › Privacy & Security, where Local Network lives. */
+  openLocalNetworkSettings: () => Promise<boolean>;
   isAnyWindowFocused: () => Promise<boolean>;
   getIsFullScreen: () => Promise<boolean>;
   /** Toggles the focused window's full screen state; resolves to the state it moved to. */
@@ -637,6 +642,8 @@ const electronAPI: ElectronAPI = {
   setSpellcheck: (enable: boolean) => ipcRenderer.invoke('set-spellcheck', enable),
   getSpellcheckState: () => ipcRenderer.invoke('get-spellcheck-state'),
   openNotificationsSettings: () => ipcRenderer.invoke('open-notifications-settings'),
+  touchLocalNetwork: () => ipcRenderer.invoke('local-network-touch'),
+  openLocalNetworkSettings: () => ipcRenderer.invoke('open-local-network-settings'),
   isAnyWindowFocused: () => ipcRenderer.invoke('is-any-window-focused'),
   getIsFullScreen: () => ipcRenderer.invoke('get-is-fullscreen'),
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),

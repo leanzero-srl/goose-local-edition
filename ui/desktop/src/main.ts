@@ -66,6 +66,7 @@ import { execFileSync, spawn, execFile, type ChildProcess } from 'child_process'
 import 'dotenv/config';
 import { checkBackendStatus } from './backendStatus';
 import { startGooseServe, findGooseBinaryPath } from './gooseServe';
+import { LOCAL_NETWORK_SETTINGS_URL, touchLocalNetwork } from './localNetwork';
 import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLeaseRegistry';
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
@@ -2383,6 +2384,16 @@ ipcMain.handle('get-dock-icon-state', () => {
     console.error('Error getting dock icon state:', error);
     return true;
   }
+});
+
+// macOS local network privacy: MAIN (the responsible process) performs the alert-triggering
+// operation when a feature is about to reach another Mac; the named failures live in the engine.
+ipcMain.handle('local-network-touch', () => touchLocalNetwork());
+
+ipcMain.handle('open-local-network-settings', async () => {
+  if (process.platform !== 'darwin') return false;
+  await shell.openExternal(LOCAL_NETWORK_SETTINGS_URL);
+  return true;
 });
 
 // Handle opening system notifications preferences

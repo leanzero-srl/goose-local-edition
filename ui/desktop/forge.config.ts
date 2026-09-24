@@ -109,6 +109,11 @@ let cfg = {
       'Goose Swarm needs access to your calendars to help manage and query calendar events.',
     NSRemindersUsageDescription:
       'Goose Swarm needs access to your reminders to help manage and query reminders.',
+    // macOS local network privacy (Apple TN3179): the text of the system's Local Network alert.
+    // Without the Local Network privilege every process the app starts — goosed, the distributed
+    // preflight's ping, the ranks, a model copy's pull — is refused 192.168.x / 169.254.x peers.
+    NSLocalNetworkUsageDescription:
+      'Goose Swarm reaches your other Macs over Thunderbolt and your local network to run distributed inference and to copy models between them.',
   },
 };
 
@@ -147,6 +152,35 @@ if (process.env.APPLE_TEAM_ID) {
 module.exports = {
   packagerConfig: cfg,
   hooks: {
+    // Every executable in the bundle gets a Mach-O UUID of its own before any signing: stock
+    // Electron's UUID is shared with every other app on the same Electron (TN3179 — local network
+    // privacy "may behave weirdly"). Measured 2026-09-24: the 3.0.19 bundle opened from Finder was
+    // refused 192.168.0.2 by the preflight's ping; the SAME bundle with only its UUIDs rewritten
+    // (and re-signed) reached it.
+    packageAfterCopy: async (_forgeConfig, resourcesPath, _electronVersion, platform, arch) => {
+      if (platform !== 'darwin' && platform !== 'mas') return;
+      const { uniquifyBundle } = require('./scripts/unique-macho-uuid.cjs');
+      const rewritten = uniquifyBundle(resourcesPath, cfg.appBundleId);
+      for (const { file, changes } of rewritten) {
+        for (const { arch: sliceArch, before, after } of changes) {
+          console.log(`[macho-uuid] ${file} (${sliceArch}): ${before} -> ${after}`);
+        }
+      }
+      // An unsigned arm64 package must stay launchable: re-sign what was rewritten ad hoc, the way
+      // the fuses plugin does. A signing build re-signs everything afterwards.
+      if (!cfg.osxSign && arch === 'arm64') {
+        const contents = resolve(resourcesPath, '..', '..');
+        for (const { file } of rewritten) {
+          require('child_process').execFileSync('codesign', [
+            '--sign',
+            '-',
+            '--force',
+            '--preserve-metadata=entitlements,requirements,flags,runtime',
+            join(contents, file),
+          ]);
+        }
+      }
+    },
     prePackage: async () => {
       require('child_process').execFileSync(
         process.execPath,

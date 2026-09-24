@@ -101,6 +101,9 @@ Object.defineProperty(window, 'electron', {
       error: 'unreachable',
       detail: 'no fleet in tests',
     })),
+    // macOS local network privacy (localNetwork.ts): the alert trigger and the Settings door.
+    touchLocalNetwork: vi.fn(async () => []),
+    openLocalNetworkSettings: vi.fn(async () => true),
     fleetChat: vi.fn(async (endpoint: string) => ({
       ok: false,
       url: endpoint,
