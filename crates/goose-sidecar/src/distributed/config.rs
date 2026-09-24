@@ -111,6 +111,11 @@ pub struct DistributedConfig {
     /// `max_position_embeddings`), reported as derived.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<u64>,
+    /// Pipeline runner only: the full-context sequences the split is planned and KV-budgeted for
+    /// (the fork planner's `--batch`, the server's `--slots` and `--max-batch`). `None` =
+    /// `PIPELINE_DEFAULT_SLOTS`. The tensor runner (`mlx_lm.server`) has no slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots: Option<u32>,
     /// Restart after a rank death or a hang (the breaker still applies). A watchdog CRITICAL
     /// stop never restarts.
     #[serde(default)]
@@ -192,6 +197,7 @@ impl DistributedConfig {
                 node.name
             );
         }
+        ensure!(self.slots() >= 1, "slots must be at least 1");
         let (warn, critical) = self.watchdog_ratios();
         ensure!(
             0.0 < critical && critical < warn && warn < 1.0,
@@ -214,6 +220,11 @@ impl DistributedConfig {
         )
     }
 
+    /// The slot count in force for a pipeline run.
+    pub fn slots(&self) -> u32 {
+        self.slots.unwrap_or(super::PIPELINE_DEFAULT_SLOTS)
+    }
+
     pub fn size(&self) -> usize {
         self.nodes.len()
     }
@@ -234,6 +245,7 @@ pub(crate) mod tests {
             port: 8190,
             coordinator_port: 32323,
             context: None,
+            slots: None,
             restart_on_failure: true,
             hang_ratio_only: false,
             watchdog_warn_ratio: None,

@@ -397,6 +397,9 @@ pub struct PipelinePlan {
     /// The largest context every rank fits on THIS split; `None` when none does.
     pub max_context: Option<u64>,
     pub starts: Vec<u32>,
+    /// The full-context sequences every stage's state and workspace were planned for (the
+    /// planner's `--batch`).
+    pub slots: u32,
     pub fits: bool,
     pub ratios: PipelineRatios,
     pub stages: Vec<PipelineStage>,
@@ -447,6 +450,12 @@ pub fn parse_pipeline_plan(stdout: &str) -> Result<PipelinePlan> {
         "starts {:?} do not describe {} stages from layer 0",
         plan.starts,
         plan.stages.len()
+    );
+    ensure!(
+        plan.slots == plan.batch,
+        "the planner planned batch {} but reports {} slots",
+        plan.batch,
+        plan.slots
     );
     ensure!(
         plan.fits == plan.stages.iter().all(|s| s.fits),
