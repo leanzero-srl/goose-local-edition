@@ -1,4 +1,5 @@
 import type { FetchLike } from './fleetProbe';
+import { MLX_STATUS_POLL_MS } from '../components/leanzero-swarm/mlxLiveStats';
 
 /**
  * The LeanZero MLX engine's live instrument read, done by MAIN (IPC `mlx-live-status`): a GET of
@@ -26,8 +27,14 @@ export type MlxLiveStatusResult =
   | { ok: true; url: string; body: unknown }
   | { ok: false; url: string; error: MlxLiveStatusError; detail: string; status?: number };
 
-/** Under the view's 2-second status cadence, so a slow read never stacks behind the next poll. */
-export const MLX_LIVE_STATUS_TIMEOUT_MS = 1500;
+/**
+ * A transport bound on ONE status GET (it decides no model work): three quarters of the status
+ * poll, so a slow read never stacks behind the next one. Over LeanZero Link the read crosses the
+ * relay and the peer's control service; the mesh round trip to the Studio measured 1 ms, so a read
+ * that runs out this bound is a stalled path or engine — the tile says so, it never shows an old
+ * number.
+ */
+export const MLX_LIVE_STATUS_TIMEOUT_MS = Math.round((MLX_STATUS_POLL_MS * 3) / 4); // ratio: ¾ of the status poll; measured: `tailscale ping` Mac→Work's Mac Studio over Link 2026-09-24, direct 192.168.0.2, 10/10 at 1 ms
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 

@@ -158,6 +158,9 @@ describe('the tray while chat is served from a linked Mac', () => {
     );
     expect(model.title).toBe('Remote');
     expect(model.phase).toBe('idle');
-    expect(labels(model)).toContain('Live stats unavailable: timeout: no answer within 1500 ms');
+    expect(labels(model)).toContain(
+      'Rates unavailable over LeanZero Link: timeout: no answer within 1500 ms'
+    );
+    expect(labels(model).some((l) => /tok\/s/.test(l))).toBe(false);
   });
 });

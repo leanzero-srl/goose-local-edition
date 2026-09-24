@@ -156,7 +156,10 @@ function remoteModel(
   if (live) {
     items.push(...runningItems(live));
   } else if (remote.state === 'ready' && snapshot.engine === 'remote' && snapshot.statusDetail) {
-    items.push({ type: 'info', label: clip(`Live stats unavailable: ${snapshot.statusDetail}`) });
+    items.push({
+      type: 'info',
+      label: clip(`Rates unavailable over LeanZero Link: ${snapshot.statusDetail}`),
+    });
   }
   if (remote.lastError) items.push({ type: 'info', label: clip(`Error: ${remote.lastError}`) });
   items.push(

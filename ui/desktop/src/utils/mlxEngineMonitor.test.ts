@@ -295,6 +295,27 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
     expect(h.monitor.current().engine).toBe('distributed');
   });
 
+  it('a relay read that times out drops the last figures — never an old number over Link', async () => {
+    const timeout: MlxLiveStatusResult = {
+      ok: false,
+      url: RELAY,
+      error: 'timeout',
+      detail: 'no answer within 1500 ms',
+    };
+    let answer: MlxLiveStatusResult = answered(GENERATING_STATUS);
+    const h = harness({ status: () => answer, remoteBaseUrl: () => RELAY });
+    await h.monitor.tick();
+    expect(h.monitor.current().stats).not.toBeNull();
+    answer = timeout;
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({
+      engine: 'remote',
+      mode: 'running',
+      stats: null,
+      statusDetail: 'timeout: no answer within 1500 ms',
+    });
+  });
+
   it('a relay that stops answering is UNKNOWN with the reason, never the local engine', async () => {
     const h = harness({ status: () => refused, remoteBaseUrl: () => RELAY });
     await h.monitor.tick();

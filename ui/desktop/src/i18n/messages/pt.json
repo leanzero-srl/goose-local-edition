@@ -3971,6 +3971,9 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Estatísticas ao vivo indisponíveis"
   },
+  "mlxStateTile.liveUnavailableOverLink": {
+    "defaultMessage": "Taxas indisponíveis pelo LeanZero Link"
+  },
   "mlxStateTile.load.bar": {
     "defaultMessage": "Pesos carregados em {node}"
   },

@@ -592,6 +592,22 @@ describe('MlxStateTile — a remote single IS the tile while it serves this Mac�
     );
   });
 
+  it('a read over Link that timed out is a NAMED state — "Rates unavailable over LeanZero Link", no old number', () => {
+    tile({
+      state: 'stopped',
+      remote: ROUTE,
+      live: { ok: false, detail: 'timeout: no answer within 1500 ms' },
+      last: LAST_AFTER_GENERATING,
+    });
+    const gone = screen.getByTestId('mlx-live-unavailable');
+    expect(gone).toHaveAttribute('data-over-link', 'true');
+    expect(gone).toHaveAttribute('data-reason', 'timeout');
+    expect(gone).toHaveTextContent('Rates unavailable over LeanZero Link');
+    expect(gone).toHaveTextContent('timeout: no answer within 1500 ms');
+    expect(screen.queryByTestId('mlx-live-tps')).toBeNull();
+    expect(screen.queryByTestId('mlx-live-pps')).toBeNull();
+  });
+
   it('a route that is off claims nothing: this Mac’s own engine is the tile', () => {
     tile({ state: 'stopped', remote: { state: 'off' }, cost: cost(17, 96.6, 'allow') });
     const t = screen.getByTestId('mlx-state-badge');

@@ -3971,6 +3971,9 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "实时统计不可用"
   },
+  "mlxStateTile.liveUnavailableOverLink": {
+    "defaultMessage": "无法通过 LeanZero Link 读取速率"
+  },
   "mlxStateTile.load.bar": {
     "defaultMessage": "{node} 上已加载的权重"
   },

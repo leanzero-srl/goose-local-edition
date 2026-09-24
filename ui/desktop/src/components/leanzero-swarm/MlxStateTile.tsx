@@ -86,6 +86,10 @@ const i18n = defineMessages({
   notLoaded: { id: 'mlxStateTile.activity.notLoaded', defaultMessage: 'Model not loaded' },
   readingLive: { id: 'mlxStateTile.readingLive', defaultMessage: 'Reading live stats…' },
   liveUnavailable: { id: 'mlxStateTile.liveUnavailable', defaultMessage: 'Live stats unavailable' },
+  liveUnavailableOverLink: {
+    id: 'mlxStateTile.liveUnavailableOverLink',
+    defaultMessage: 'Rates unavailable over LeanZero Link',
+  },
   writeRate: { id: 'mlxStateTile.writeRate', defaultMessage: 'tok/s writing' },
   writeRateLast: { id: 'mlxStateTile.writeRateLast', defaultMessage: 'tok/s writing, last run' },
   writeRateNone: { id: 'mlxStateTile.writeRateNone', defaultMessage: 'nothing written yet' },
@@ -572,6 +576,8 @@ function RunningInstrument(props: {
   history: readonly TpsSample[];
   last: LastRates;
   serving: MlxServing | null;
+  /** The engine is a linked Mac's, read through the relay: a failed read names Link. */
+  overLink?: boolean;
 }) {
   const intl = useIntl();
   const { live } = props;
@@ -579,9 +585,17 @@ function RunningInstrument(props: {
     return <p className={LINE}>{intl.formatMessage(i18n.readingLive)}</p>;
   }
   if (!live.ok) {
+    // No figure survives a failed read — an old rate beside "unavailable" would be a stale claim.
     return (
-      <div data-testid="mlx-live-unavailable" className="flex flex-col gap-1">
-        <span className="text-lz-h2">{intl.formatMessage(i18n.liveUnavailable)}</span>
+      <div
+        data-testid="mlx-live-unavailable"
+        data-over-link={props.overLink ? 'true' : undefined}
+        data-reason={live.detail.split(':')[0]}
+        className="flex flex-col gap-1"
+      >
+        <span className="text-lz-h2">
+          {intl.formatMessage(props.overLink ? i18n.liveUnavailableOverLink : i18n.liveUnavailable)}
+        </span>
         <span className={cx('break-words', LINE)}>{live.detail}</span>
       </div>
     );
@@ -1098,7 +1112,7 @@ function RemoteInstrument({
         </span>
       )}
       {remote.state === 'ready' && (
-        <RunningInstrument live={live} history={history} last={last} serving={serving} />
+        <RunningInstrument live={live} history={history} last={last} serving={serving} overLink />
       )}
       {remote.state === 'mounting' && (
         <div className="flex flex-col gap-2">
@@ -1121,30 +1135,38 @@ function RemoteInstrument({
   );
 }
 
-export function MlxStateTile(props: MlxStateTileProps) {
-  const intl = useIntl();
-  const {
-    state,
-    unreachable,
-    live,
-    history,
-    last,
-    serving,
-    mount,
-    cost,
-    failedError,
-    action,
-    modeLabel,
-    distributed,
-  } = props;
-  const load = props.load ?? null;
+/** What serves this Mac's chat, as the Engine tile shows it — the ONE derivation the tile and the
+ * other tabs' badge share: which engine (the split that owns the Mac, a rank hosted for another Mac,
+ * a route to a linked Mac, or this Mac's own), its state word and its engine-phase colour. */
+export interface ServingEngine {
+  mode: 'distributed' | 'hosting' | 'remote' | 'single';
+  phase: EnginePhase;
+  /** The `data-state` value: the split's own state, else the single-engine vocabulary. */
+  stateKey: string;
+  wordText: string;
+  activity: ReturnType<typeof mlxActivity> | null;
+  starting: boolean;
+  dist: MlxDistributedStatus | null;
+  hosting: MlxDistributedStatus['hosting'] | null;
+  remote: MlxRemoteSingleStatus | null;
+}
+
+export function servingEngine(
+  intl: IntlShape,
+  input: Pick<
+    MlxStateTileProps,
+    'state' | 'unreachable' | 'live' | 'distributed' | 'remote' | 'load'
+  >
+): ServingEngine {
+  const { state, unreachable, live, distributed } = input;
+  const load = input.load ?? null;
   // A start the sidecar is measuring IS the mount, whatever word the state carries (making room
   // runs before the engine flips to mounting).
   const starting = state === 'mounting' || (load != null && state !== 'running');
   const dist = ownsTheMac(distributed) ? distributed : null;
   const hosting = !dist ? (distributed?.hosting ?? null) : null;
   const remote =
-    !dist && !hosting && props.remote && remoteRouteUp(props.remote) ? props.remote : null;
+    !dist && !hosting && input.remote && remoteRouteUp(input.remote) ? input.remote : null;
   const engineUp = dist
     ? runIsUp(dist)
     : remote
@@ -1179,6 +1201,37 @@ export function MlxStateTile(props: MlxStateTileProps) {
           })
         : distributedStateWord(intl, hosting.state)
       : intl.formatMessage(STATE_WORD[word]);
+  return {
+    mode: dist ? 'distributed' : hosting ? 'hosting' : remote ? 'remote' : 'single',
+    phase,
+    stateKey: dist ? dist.state : word,
+    wordText,
+    activity,
+    starting,
+    dist,
+    hosting,
+    remote,
+  };
+}
+
+export function MlxStateTile(props: MlxStateTileProps) {
+  const intl = useIntl();
+  const {
+    state,
+    unreachable,
+    live,
+    history,
+    last,
+    serving,
+    mount,
+    cost,
+    failedError,
+    action,
+    modeLabel,
+  } = props;
+  const load = props.load ?? null;
+  const engine = servingEngine(intl, props);
+  const { starting, dist, hosting, remote, activity, phase, wordText } = engine;
   const icon = remote ? (
     remote.state === 'mounting' ? (
       <Loader2 className="animate-spin" />
@@ -1211,8 +1264,8 @@ export function MlxStateTile(props: MlxStateTileProps) {
   return (
     <div
       data-testid="mlx-state-badge"
-      data-state={dist ? dist.state : word}
-      data-mode={dist ? 'distributed' : hosting ? 'hosting' : remote ? 'remote' : 'single'}
+      data-state={engine.stateKey}
+      data-mode={engine.mode}
       data-activity={activity ?? undefined}
       data-phase={phase}
       role="group"

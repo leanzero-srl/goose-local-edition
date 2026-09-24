@@ -3971,6 +3971,9 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Statistik langsung tidak tersedia"
   },
+  "mlxStateTile.liveUnavailableOverLink": {
+    "defaultMessage": "Kadar tidak tersedia melalui LeanZero Link"
+  },
   "mlxStateTile.load.bar": {
     "defaultMessage": "Pemberat dimuatkan pada {node}"
   },

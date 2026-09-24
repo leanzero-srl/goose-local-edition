@@ -3971,6 +3971,9 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Canlı istatistikler kullanılamıyor"
   },
+  "mlxStateTile.liveUnavailableOverLink": {
+    "defaultMessage": "LeanZero Link üzerinden hızlar alınamıyor"
+  },
   "mlxStateTile.load.bar": {
     "defaultMessage": "{node} üzerinde yüklenen ağırlıklar"
   },

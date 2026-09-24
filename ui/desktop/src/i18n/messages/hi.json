@@ -3971,6 +3971,9 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "लाइव आँकड़े उपलब्ध नहीं"
   },
+  "mlxStateTile.liveUnavailableOverLink": {
+    "defaultMessage": "LeanZero Link पर दरें उपलब्ध नहीं"
+  },
   "mlxStateTile.load.bar": {
     "defaultMessage": "{node} पर वेट्स लोड हुए"
   },

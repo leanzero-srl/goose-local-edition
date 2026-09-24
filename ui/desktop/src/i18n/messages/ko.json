@@ -3971,6 +3971,9 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "실시간 통계를 사용할 수 없음"
   },
+  "mlxStateTile.liveUnavailableOverLink": {
+    "defaultMessage": "LeanZero Link를 통해 속도를 읽을 수 없음"
+  },
   "mlxStateTile.load.bar": {
     "defaultMessage": "{node}의 가중치 로드"
   },

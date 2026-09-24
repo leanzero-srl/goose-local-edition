@@ -3971,6 +3971,9 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "ライブ統計を取得できません"
   },
+  "mlxStateTile.liveUnavailableOverLink": {
+    "defaultMessage": "LeanZero Link 経由では速度を取得できません"
+  },
   "mlxStateTile.load.bar": {
     "defaultMessage": "{node} での重みの読み込み"
   },

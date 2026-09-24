@@ -137,6 +137,16 @@ describe('parseNoNodeError', () => {
       ],
     ]);
   });
+
+  it('the router says the Mac’s one name — spaces and apostrophes included — and the row keeps it', () => {
+    const rows = parseNoNodeError(
+      "swarm chat: no node can serve this turn — mihai-mlx: this Mac's MLX chat is served from Work's Mac Studio (remote single, node remote-WorksMacStudio.lan) — stop it to use this Mac's own engine; remote-WorksMacStudio.lan: Work's Mac Studio's MLX engine is not serving through Link — v1/models answered 502 Bad Gateway: engineUnreachable"
+    );
+    expect(rows?.map((r) => [r.nodeId, r.reason])).toEqual([
+      ['mihai-mlx', { kind: 'mlx-routed-remote', peer: "Work's Mac Studio" }],
+      ['remote-WorksMacStudio.lan', { kind: 'mlx-remote-down', peer: "Work's Mac Studio" }],
+    ]);
+  });
 });
 
 describe('resolveMountTarget', () => {

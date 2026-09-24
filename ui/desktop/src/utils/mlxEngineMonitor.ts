@@ -192,12 +192,15 @@ export class MlxEngineMonitor {
     const last = held?.last ?? NO_RATES;
     const result = await this.deps.readStatus(baseUrl);
     if (!result.ok) {
+      // A split's rank 0 on this Mac that is slow keeps its last read; a linked Mac's engine read
+      // over Link never does — a timeout there is a named "rates unavailable", not an old number.
+      const hold = result.error === 'timeout' && engine === 'distributed';
       return {
         ...INITIAL_SNAPSHOT,
         engine,
         mode: result.error === 'timeout' && held ? held.mode : 'unknown',
         baseUrl,
-        stats: result.error === 'timeout' ? (held?.stats ?? null) : null,
+        stats: hold ? (held?.stats ?? null) : null,
         statusDetail: `${result.error}: ${result.detail}`,
         last,
       };

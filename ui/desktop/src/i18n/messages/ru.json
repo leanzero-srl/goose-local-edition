@@ -3971,6 +3971,9 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Живая статистика недоступна"
   },
+  "mlxStateTile.liveUnavailableOverLink": {
+    "defaultMessage": "Скорости недоступны через LeanZero Link"
+  },
   "mlxStateTile.load.bar": {
     "defaultMessage": "Веса загружены на {node}"
   },

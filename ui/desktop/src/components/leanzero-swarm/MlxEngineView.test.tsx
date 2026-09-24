@@ -896,6 +896,26 @@ describe('MlxEngineView state tile instrument', () => {
     unmount();
   });
 
+  it('the Models and Sampling tabs’ badge says what serves chat — the route, from the tile’s own source', async () => {
+    bridge.mlxLiveStatus = vi.fn(async (baseUrl: string) => ({
+      ok: true,
+      url: `${baseUrl}/v1/status`,
+      body: GENERATING_STATUS,
+    }));
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    remoteStore.publish(ROUTE);
+    const user = userEvent.setup();
+    const { unmount } = render(<MlxEngineView />);
+    await screen.findByTestId('mlx-live-tps');
+    await user.click(screen.getByRole('radio', { name: /^Sampling$/ }));
+    const badge = await screen.findByTestId('mlx-state-badge');
+    expect(badge).toHaveAttribute('data-mode', 'remote');
+    expect(badge).toHaveAttribute('data-phase', 'writing');
+    expect(badge).toHaveTextContent('Running');
+    expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent("Serving from Work's Mac Studio");
+    unmount();
+  });
+
   it('a REMOTE single still mounting there is amber and says where; failed is red in its words', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
     remoteStore.publish({ ...ROUTE, state: 'mounting' });

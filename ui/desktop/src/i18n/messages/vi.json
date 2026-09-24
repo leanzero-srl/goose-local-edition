@@ -3971,6 +3971,9 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Không có số liệu trực tiếp"
   },
+  "mlxStateTile.liveUnavailableOverLink": {
+    "defaultMessage": "Không có tốc độ qua LeanZero Link"
+  },
   "mlxStateTile.load.bar": {
     "defaultMessage": "Trọng số đã tải trên {node}"
   },
