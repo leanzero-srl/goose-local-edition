@@ -359,6 +359,12 @@ def main():
     ap.add_argument("--contexts", default="8192,32768,131072")
     ap.add_argument("--poll-seconds", type=float, default=0.5)
     ap.add_argument("--out-dir", default=None)
+    ap.add_argument(
+        "--nonce",
+        default=None,
+        help="reuse another run's nonce so the prompts are byte-identical to it (each configuration "
+        "runs on its own fresh engine with RAPID_MLX_PREFIX_CACHE_AUTOLOAD=0, so no cache is shared)",
+    )
     args = ap.parse_args()
     base = args.base_url.rstrip("/")
     if base.endswith(":8090"):
@@ -368,7 +374,7 @@ def main():
     st = status(base)
     if st.get("num_running") or st.get("num_waiting"):
         sys.exit(f"refusing: engine is busy ({st.get('num_running')} running, {st.get('num_waiting')} waiting)")
-    nonce = f"kvq-{args.label}-{datetime.now().strftime('%Y%m%dT%H%M%S')}"
+    nonce = args.nonce or f"kvq-{args.label}-{datetime.now().strftime('%Y%m%dT%H%M%S')}"
     fixture = json.load(open(os.path.join(HERE, "fixtures", "goose-agent-request.json")))
     out_dir = args.out_dir or os.path.join(HERE, "results", f"{datetime.now().strftime('%Y-%m-%d')}-kv-quant")
     path = os.path.join(out_dir, f"{args.label}.json")
@@ -386,9 +392,11 @@ def main():
     phases = args.phases.split(",")
     if "quality" in phases:
         record["quality_engine"] = engine
+        record["quality_nonce"] = nonce
         record["quality"] = quality(base, model, nonce, fixture)
     if "memory" in phases:
         record["memory_engine"] = engine
+        record["memory_nonce"] = nonce
         record["memory"] = memory(base, model, nonce, [int(c) for c in args.contexts.split(",")], args.poll_seconds)
     record["finished"] = datetime.now().isoformat()
     record["status_end"] = status(base)
