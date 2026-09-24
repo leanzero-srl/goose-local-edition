@@ -482,6 +482,26 @@ impl ProgressMeter {
     }
 }
 
+impl ProgressMeter {
+    /// Nothing is in flight: silence is the idle engine, not a stall. The silence clock restarts
+    /// here, so it measures only time spent WITH work (since fork 286ed77f7 an idle pipeline burns
+    /// no CPU on any rank — the spinning worker used to keep this rule quiet by accident).
+    pub fn rest(&mut self, now: Instant) {
+        self.last_progress = now;
+    }
+}
+
+/// The hang rule's verdict for one poll: silence counts only while rank 0 reports work in flight.
+/// An unreadable progress counter counts as work — a rank-0 server that stopped answering must
+/// still be caught.
+fn judge_silence(meter: &mut ProgressMeter, now: Instant, busy: bool, reading: &mut MeterReading) {
+    if !busy {
+        meter.rest(now);
+        reading.hang = false;
+        reading.silent_for = Duration::ZERO;
+    }
+}
+
 /// The restart breaker, parity with `Sidecar::ensure_running`: the count is checked BEFORE the
 /// push, so `max` restarts inside `window` are allowed and the next failure opens it.
 fn breaker_allows(
@@ -1367,7 +1387,10 @@ async fn monitor(
             });
         }
 
-        let reading = meter.observe(Instant::now(), progress.as_ref().map(|p| p.steps), &cpu);
+        let now = Instant::now();
+        let mut reading = meter.observe(now, progress.as_ref().map(|p| p.steps), &cpu);
+        let busy = progress.as_ref().is_none_or(|p| p.inflight > 0);
+        judge_silence(&mut meter, now, busy, &mut reading);
         for rank in ranks.iter() {
             for event in link_control::drain_events(rank) {
                 let (kind, message) = link_control_event(ctx, rank, event, &reading, &progress);
@@ -2152,6 +2175,42 @@ mod tests {
 
     fn at(start: Instant, ms: u64) -> Instant {
         start + Duration::from_millis(ms)
+    }
+
+    /// Measured 2026-09-24 on Flash (installed 3.0.24): the last request ended at 17:17:50 and at
+    /// 17:18:12 the rule stopped an IDLE engine — "silent 20298 ms … rank ps stats [S, S]",
+    /// bound 20,160 ms (10 × the 2,016 ms median). Idle silence is not a hang; work silence is.
+    #[test]
+    fn an_idle_engine_is_never_a_hang_and_work_after_idle_is_timed_from_its_start() {
+        let start = Instant::now();
+        let mut meter = ProgressMeter::new(start, 2);
+        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)]);
+        for i in 1..=39u64 {
+            let r = meter.observe(at(start, i * 2_016), Some(i), &[Some(i), Some(i)]);
+            assert!(r.progressed);
+        }
+        let last = 39 * 2_016;
+        // Idle for 5 minutes: counter and CPU frozen, nothing in flight.
+        for poll in 1..=150u64 {
+            let now = at(start, last + poll * 2_016);
+            let mut r = meter.observe(now, Some(39), &[Some(39), Some(39)]);
+            judge_silence(&mut meter, now, false, &mut r);
+            assert!(!r.hang, "idle poll {poll} read as a hang");
+        }
+        // A request arrives and the pipeline freezes on it: caught one bound after it started.
+        let resumed = last + 150 * 2_016;
+        let mut caught = None;
+        for poll in 1..=20u64 {
+            let now = at(start, resumed + poll * 2_016);
+            let mut r = meter.observe(now, Some(39), &[Some(39), Some(39)]);
+            judge_silence(&mut meter, now, true, &mut r);
+            if r.hang {
+                caught = Some(poll);
+                break;
+            }
+        }
+        // 20,160 ms bound at a 2,016 ms poll: the 11th busy poll (22,176 ms silent).
+        assert_eq!(caught, Some(11));
     }
 
     fn node_preflight(rank: usize, short_bytes: Option<u64>) -> preflight::NodePreflight {
