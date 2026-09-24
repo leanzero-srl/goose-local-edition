@@ -157,6 +157,8 @@ import type {
   MlxEngineDistributedConfigUpdateRequest_unstable,
   MlxEngineDistributedDiscoverRequest_unstable,
   MlxEngineDistributedDiscoverResponse_unstable,
+  MlxEngineDistributedMakeRoomRequest_unstable,
+  MlxEngineDistributedMakeRoomResponse_unstable,
   MlxEngineDistributedPeerCandidatesRequest_unstable,
   MlxEngineDistributedPeerCandidatesResponse_unstable,
   MlxEngineDistributedPreflightRequest_unstable,
@@ -334,6 +336,7 @@ import {
   zMlxEngineBrowseResponse_unstable,
   zMlxEngineDistributedConfigResponse_unstable,
   zMlxEngineDistributedDiscoverResponse_unstable,
+  zMlxEngineDistributedMakeRoomResponse_unstable,
   zMlxEngineDistributedPeerCandidatesResponse_unstable,
   zMlxEngineDistributedPreflightResponse_unstable,
   zMlxEngineDistributedProvisionResponse_unstable,
@@ -1759,6 +1762,18 @@ export class GooseExtClient {
     return zMlxEngineDistributedStopResponse_unstable.parse(
       raw,
     ) as MlxEngineDistributedStopResponse_unstable;
+  }
+
+  async mlxEngineDistributedMakeRoom_unstable(
+    params: MlxEngineDistributedMakeRoomRequest_unstable,
+  ): Promise<MlxEngineDistributedMakeRoomResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/distributedMakeRoom",
+      params,
+    );
+    return zMlxEngineDistributedMakeRoomResponse_unstable.parse(
+      raw,
+    ) as MlxEngineDistributedMakeRoomResponse_unstable;
   }
 
   async mlxEngineDistributedPeerCandidates_unstable(

@@ -36,10 +36,19 @@ impl Default for MemoryGate {
 }
 
 impl MemoryGate {
+    pub fn floor_bytes(&self, total_bytes: u64) -> u64 {
+        self.floor_min_bytes
+            .max((total_bytes as f64 * self.floor_fraction) as u64)
+    }
+
+    /// Could ANY amount of reclaimed memory let the model through? Not when the model plus the
+    /// floor exceeds the Mac's whole RAM.
+    pub fn could_ever_fit(&self, model_bytes: u64, total_bytes: u64) -> bool {
+        model_bytes.saturating_add(self.floor_bytes(total_bytes)) <= total_bytes
+    }
+
     pub fn evaluate(&self, model_bytes: u64, available_bytes: u64, total_bytes: u64) -> GateResult {
-        let floor = self
-            .floor_min_bytes
-            .max((total_bytes as f64 * self.floor_fraction) as u64);
+        let floor = self.floor_bytes(total_bytes);
         let needed = model_bytes.saturating_add(floor);
         if needed > available_bytes {
             let short = needed - available_bytes;
@@ -310,6 +319,15 @@ mod tests {
     fn allows_with_headroom() {
         let g = MemoryGate::default();
         assert_eq!(g.evaluate(6 * GIB, 40 * GIB, TOTAL).verdict, Verdict::Allow);
+    }
+
+    #[test]
+    fn no_reclaim_fits_a_model_bigger_than_the_ram_less_the_floor() {
+        let g = MemoryGate::default();
+        // 96 GiB: floor max(8, 9.6) = 9.6 GiB → at most 86.4 GiB can ever pass.
+        assert!(g.could_ever_fit(86 * GIB, TOTAL));
+        assert!(!g.could_ever_fit(87 * GIB, TOTAL));
+        assert!(!g.could_ever_fit(4096 * GIB, TOTAL));
     }
 
     #[test]

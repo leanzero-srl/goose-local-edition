@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "Сработал предохранитель перезапусков"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "Освобождение места пропущено"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "Обнаружено зависание"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "Локальная сеть заблокирована"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "Память освобождена"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Осиротевший процесс возвращён"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "исполнитель"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "Бюджет {budget} ГиБ (лимит GPU {ceiling} · доступно {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "Бюджет {budget} ГиБ (лимит GPU {ceiling} · доступно после сжатия {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "Не удалось освободить место"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "Освобождать память автоматически"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "Освобождено {gib} ГиБ"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "Ничего не освобождено (на {gib} ГиБ меньше)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "Просит macOS вернуть память: простаивающие приложения сжимаются, кэши сбрасываются. Ничего не закрывается."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "Освободить место"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "Освобождение места не запускалось"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "Не хватает {gib} ГиБ — освободите место или закройте приложения: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "Не хватает {gib} ГиБ — освободите место или закройте приложения"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Сохранить конфигурацию"

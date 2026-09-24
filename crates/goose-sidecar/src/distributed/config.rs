@@ -83,6 +83,15 @@ pub struct NodeConfig {
     pub pipeline_python: Option<String>,
     /// The model directory ON THIS NODE (paths differ per node; each rank loads its own).
     pub model_dir: String,
+    /// "Free memory automatically": when a preflight finds this node short, compact it (ask macOS
+    /// to reclaim — `compaction`) and preflight again. ON unless the owner turned it off, so a
+    /// config saved before the switch existed reads as ON.
+    #[serde(default = "free_memory_default")]
+    pub free_memory_automatically: bool,
+}
+
+fn free_memory_default() -> bool {
+    true
 }
 
 impl NodeConfig {
@@ -264,6 +273,7 @@ pub(crate) mod tests {
                     model_dir:
                         "/Users/me/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx"
                             .to_string(),
+                    free_memory_automatically: true,
                 },
                 NodeConfig {
                     name: "workhorse".to_string(),
@@ -277,6 +287,7 @@ pub(crate) mod tests {
                     pipeline_python: None,
                     model_dir: "/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx"
                         .to_string(),
+                    free_memory_automatically: true,
                 },
             ],
         }

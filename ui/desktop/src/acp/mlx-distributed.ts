@@ -1,5 +1,7 @@
 import type {
+  MlxDistributedAppMemoryDto,
   MlxDistributedCheckDto,
+  MlxDistributedCompactionDto,
   MlxDistributedConfigDto,
   MlxDistributedDiscoveredModelDto,
   MlxDistributedDiscoveredNodeDto,
@@ -19,6 +21,7 @@ import type {
   MlxDistributedPreflightDto,
   MlxDistributedRankPlanDto,
   MlxDistributedStatusDto,
+  MlxEngineDistributedMakeRoomResponse_unstable,
   MlxEngineDistributedStartResponse_unstable,
   MlxEngineDistributedStopResponse_unstable,
 } from '@aaif/goose-sdk';
@@ -56,6 +59,9 @@ export type MlxDistributedPeerCandidate = MlxDistributedPeerCandidateDto;
 export type MlxDistributedLinkDiscovery = MlxDistributedLinkDiscoveryDto;
 export type MlxDistributedLinkPeer = MlxDistributedLinkPeerDto;
 export type MlxDistributedHostedRank = MlxDistributedHostedRankDto;
+export type MlxDistributedCompaction = MlxDistributedCompactionDto;
+export type MlxDistributedAppMemory = MlxDistributedAppMemoryDto;
+export type MlxDistributedMakeRoomResponse = MlxEngineDistributedMakeRoomResponse_unstable;
 
 export interface MlxDistributedPeerCandidates {
   /** ssh aliases from ~/.ssh/config, each probed — the headless path. */
@@ -169,6 +175,26 @@ export async function mlxDistributedStop(): Promise<MlxDistributedStopResponse> 
   const response = await call<MlxDistributedStopResponse>(
     '_goose/unstable/mlxEngine/distributedStop',
     {}
+  );
+  reportToMain(response.status);
+  publishLatest(response.status);
+  return response;
+}
+
+/**
+ * "Make room" on one configured node: goose raises memory pressure to the kernel's WARN with
+ * Apple's `memory_pressure`, releases it at once and samples until available memory stopped
+ * rising (tens of seconds). Nothing is quit. Refused beside any loaded MLX engine.
+ */
+export async function mlxDistributedMakeRoom(
+  node: string,
+  config: MlxDistributedConfig | null
+): Promise<MlxDistributedMakeRoomResponse> {
+  const params: Record<string, unknown> = { node };
+  if (config) params.config = config;
+  const response = await call<MlxDistributedMakeRoomResponse>(
+    '_goose/unstable/mlxEngine/distributedMakeRoom',
+    params
   );
   reportToMain(response.status);
   publishLatest(response.status);

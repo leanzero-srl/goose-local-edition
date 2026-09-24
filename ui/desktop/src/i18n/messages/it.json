@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "Interruttore dei riavvii aperto"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "Fai spazio saltato"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "Blocco rilevato"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "Rete locale bloccata"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "Memoria liberata"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Orfano recuperato"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "esecutore"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "Budget {budget} GiB (limite GPU {ceiling} · disponibile {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "Budget {budget} GiB (limite GPU {ceiling} · disponibile dopo la compattazione {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "Fai spazio non è riuscito"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "Libera memoria automaticamente"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "Liberati {gib} GiB"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "Nulla liberato ({gib} GiB in meno)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "Chiede a macOS di recuperare memoria: le app inattive vengono compresse e le cache svuotate. Non si chiude nulla."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "Fai spazio"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "Fai spazio non è stato eseguito"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "Mancano {gib} GiB — fai spazio o chiudi app: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "Mancano {gib} GiB — fai spazio o chiudi app"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Salva configurazione"

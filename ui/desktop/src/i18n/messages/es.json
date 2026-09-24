@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "Disyuntor de reinicios abierto"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "Liberar espacio omitido"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "Bloqueo detectado"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "Red local bloqueada"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "Memoria liberada"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Huérfano recuperado"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "trabajador"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "Presupuesto {budget} GiB (límite de GPU {ceiling} · disponible {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "Presupuesto {budget} GiB (límite de GPU {ceiling} · disponible tras compactar {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "Liberar espacio falló"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "Liberar memoria automáticamente"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "{gib} GiB liberados"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "No se liberó nada ({gib} GiB menos)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "Pide a macOS que recupere memoria: las apps inactivas se comprimen y se descartan cachés. No se cierra nada."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "Liberar espacio"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "Liberar espacio no se ejecutó"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "Faltan {gib} GiB — libera espacio o cierra apps: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "Faltan {gib} GiB — libera espacio o cierra apps"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Guardar configuración"

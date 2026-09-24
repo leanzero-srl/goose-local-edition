@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "Pemutus restart terbuka"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "Kosongkan ruang dilewati"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "Macet terdeteksi"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "Jaringan lokal diblokir"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "Memori dikosongkan"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Proses yatim diambil alih"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "pekerja"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "Anggaran {budget} GiB (batas GPU {ceiling} · tersedia {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "Anggaran {budget} GiB (batas GPU {ceiling} · tersedia setelah pemadatan {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "Kosongkan ruang gagal"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "Kosongkan memori otomatis"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "{gib} GiB dikosongkan"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "Tidak ada yang dikosongkan ({gib} GiB lebih sedikit)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "Meminta macOS mengambil kembali memori: aplikasi yang diam dikompresi dan cache dibuang. Tidak ada yang ditutup."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "Kosongkan ruang"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "Kosongkan ruang tidak dijalankan"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "Kurang {gib} GiB — kosongkan ruang, atau tutup aplikasi: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "Kurang {gib} GiB — kosongkan ruang, atau tutup aplikasi"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Simpan konfigurasi"

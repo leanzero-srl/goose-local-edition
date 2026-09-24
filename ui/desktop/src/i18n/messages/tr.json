@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "Yeniden başlatma sigortası attı"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "Yer açma atlandı"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "Takılma algılandı"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "Yerel ağ engellendi"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "Bellek boşaltıldı"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Sahipsiz süreç geri alındı"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "işçi"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "Bütçe {budget} GiB (GPU sınırı {ceiling} · kullanılabilir {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "Bütçe {budget} GiB (GPU sınırı {ceiling} · sıkıştırma sonrası kullanılabilir {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "Yer açma başarısız oldu"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "Belleği otomatik boşalt"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "{gib} GiB boşaltıldı"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "Hiçbir şey boşaltılmadı ({gib} GiB daha az)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "macOS’tan belleği geri almasını ister: boştaki uygulamalar sıkıştırılır, önbellekler bırakılır. Hiçbir şey kapatılmaz."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "Yer aç"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "Yer açma çalışmadı"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "{gib} GiB eksik — yer açın veya uygulamaları kapatın: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "{gib} GiB eksik — yer açın veya uygulamaları kapatın"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Yapılandırmayı kaydet"

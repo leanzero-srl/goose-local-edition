@@ -675,11 +675,16 @@ impl MlxEngineManager {
         );
 
         let reading = measure()?;
-        let gate = self.gate.evaluate(
+        #[allow(unused_mut)]
+        let mut gate = self.gate.evaluate(
             model.size_bytes,
             reading.available_bytes,
             reading.total_bytes,
         );
+        #[cfg(unix)]
+        if gate.verdict == Verdict::Block {
+            gate = self.make_room_then_gate(model.size_bytes, gate).await?;
+        }
         let blocked = gate.verdict == Verdict::Block;
         let block_message = gate.message.clone();
         *self.last_gate.lock().unwrap() = Some(gate);
@@ -775,6 +780,54 @@ impl MlxEngineManager {
             }
         });
         Ok(())
+    }
+
+    /// The gate said the model does not fit: when nothing of ours is loaded on this Mac, ask macOS
+    /// to reclaim memory (`distributed::compaction`: pressure to the kernel's WARN, released at
+    /// once, settled on progress) and gate again on the new reading. The outcome — freed, refused
+    /// beside a loaded engine, or failed — is appended to the gate's message either way, so the
+    /// refusal the owner reads says what was tried.
+    #[cfg(unix)]
+    async fn make_room_then_gate(
+        &self,
+        model_bytes: u64,
+        blocked: crate::GateResult,
+    ) -> Result<crate::GateResult> {
+        use crate::distributed::compaction::{compact_node, CompactionOutcome};
+        let loaded = matches!(
+            &*self.state.lock().await,
+            ManagerState::Running { .. } | ManagerState::Mounting { .. }
+        );
+        let total = measure()?.total_bytes;
+        if loaded || !self.gate.could_ever_fit(model_bytes, total) {
+            return Ok(blocked);
+        }
+        let outcome = compact_node(&crate::distributed::SystemExec, None, "this Mac").await;
+        Ok(match outcome {
+            Ok(CompactionOutcome::Compacted(report)) => {
+                let reading = measure()?;
+                let mut gate =
+                    self.gate
+                        .evaluate(model_bytes, reading.available_bytes, reading.total_bytes);
+                gate.message = format!(
+                    "{} — Make room ran first: {}",
+                    gate.message,
+                    report.summary()
+                );
+                gate
+            }
+            Ok(CompactionOutcome::Refused(refusal)) => crate::GateResult {
+                message: format!(
+                    "{} — Make room did not run ({}): {}",
+                    blocked.message, refusal.code, refusal.message
+                ),
+                ..blocked
+            },
+            Err(e) => crate::GateResult {
+                message: format!("{} — Make room failed: {e:#}", blocked.message),
+                ..blocked
+            },
+        })
     }
 
     /// Stop the engine if one is running; a mount still in flight sees the state change
@@ -2101,8 +2154,13 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             ..Default::default()
         });
 
+        // 4 TiB exceeds any Mac's RAM, so the gate refuses without asking macOS to make room.
         let err = manager.mount("pub/huge").await.unwrap_err().to_string();
         assert!(err.contains("memory gate BLOCK"), "unexpected error: {err}");
+        assert!(
+            !err.contains("Make room"),
+            "no compaction for a model no RAM holds: {err}"
+        );
 
         let status = manager.status().await;
         assert_eq!(status.state, "stopped");

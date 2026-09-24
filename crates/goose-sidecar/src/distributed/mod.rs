@@ -30,6 +30,7 @@
 //! - [`supervisor`]: readiness, liveness (the soak's hang rule), the memory watchdog, the
 //!   verified stop sequence and the restart policy.
 
+pub mod compaction;
 pub mod config;
 pub mod exec;
 pub mod launch;
@@ -43,6 +44,7 @@ pub mod probe;
 pub mod provision;
 pub mod supervisor;
 
+pub use compaction::{CompactionOutcome, CompactionRefusal, CompactionReport};
 pub use config::{Backend, DistributedConfig, NodeConfig, Runner};
 pub use exec::{ExecOutput, NodeExec, SystemExec};
 pub use plan::RankPlan;
@@ -52,18 +54,17 @@ pub use supervisor::{
     NodeStatus, RefusalCode, RunState, StartOutcome, StopReport,
 };
 
-// ratio: the MTPLX run measured a stable ceiling at 75% of RAM for MLX allocations on 96-128 GB
-// Apple silicon (mlx-jaccl-cluster skill, guardrail 3). The tensor rank wrapper applies it; the
-// pipeline ranks apply the fork's own copy (its plan JSON's `ratios.memory_limit`, the same 0.75).
-pub const MEMORY_LIMIT_RATIO: f64 = 0.75;
-// ratio: the same MTPLX receipt measured 60% of RAM as the safe wired ceiling; exo's unbounded
-// wiring is what kernel-panicked the 96 GB M3 Ultra. Tensor wrapper only, as above.
-pub const WIRED_LIMIT_RATIO: f64 = 0.60;
-// ratio: policy, not measured — TENSOR RUNNER ONLY. It was parity with the fork's old headroom
-// rule (budget = min(free × 0.90, RAM × 0.75)), which the fork retired for a MEASURED pressure
-// floor (min(available − RAM × 0.21, RAM × 0.75)); the pipeline runner reads that budget from the
-// fork's plan and never applies this one on top.
-pub const AVAILABLE_HEADROOM_RATIO: f64 = 0.90;
+// derived: the share of each node's RAM that stays available under a rank's full budget —
+// budget = min(available − RAM × this, the node's GPU ceiling (Metal's
+// max_recommended_working_set_size)). The watchdog's WARN reserve plus the load-time drift margin:
+// a rank planned at 100% of its budget leaves the node above the level where the watchdog closes
+// admission, after the drift the ranks' own re-measure showed. MEASURED 2026-09-24 beside it: the
+// M3 Ultra (96 GB), under Apple's memory_pressure ballast, reached kernel WARN at 3.73 GiB
+// available = 3.9% of RAM — below this margin. It replaced the fork's 21% floor and the tensor
+// runner's min(available × 0.90, RAM × 0.75), which left 44.9 / 52.6 GiB budgets on 128 / 96 GB
+// Macs ("way too conservative"). The fork carries the same 0.07 (`AVAILABLE_MARGIN_RATIO` in
+// pipeline_qwen4.py, echoed in its plan JSON); both runners share this one rule.
+pub const AVAILABLE_MARGIN_RATIO: f64 = WATCHDOG_WARN_RESERVE_RATIO + DERIVED_CONTEXT_MARGIN_RATIO;
 // measured: TENSOR RUNNER ONLY — 27B tensor bench peak 19.9 GB (18.53 GiB) / 17.07 GiB planned at
 // 2,304 tokens = 1.086 (STEP1b); the planned slice is multiplied by this before it is compared
 // with a node's budget. The pipeline runner applies NO multiplier: the Flash soak's peaks were

@@ -50,6 +50,13 @@ impl GooseAcpAgent {
         unsupported()
     }
 
+    pub(super) async fn on_mlx_engine_distributed_make_room(
+        &self,
+        _req: MlxEngineDistributedMakeRoomRequest,
+    ) -> Result<MlxEngineDistributedMakeRoomResponse, agent_client_protocol::Error> {
+        unsupported()
+    }
+
     pub(super) async fn on_mlx_engine_distributed_peer_candidates(
         &self,
         _req: MlxEngineDistributedPeerCandidatesRequest,

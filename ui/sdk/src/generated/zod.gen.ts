@@ -3522,6 +3522,11 @@ export const zMlxDistributedRankPlanDto = z.object({
     fits: z.boolean()
 });
 
+export const zMlxDistributedAppMemoryDto = z.object({
+    name: z.string(),
+    rssBytes: z.number().int().gte(0)
+});
+
 export const zMlxDistributedNodePreflightDto = z.object({
     name: z.string(),
     rank: z.number().int().gte(0),
@@ -3553,7 +3558,20 @@ export const zMlxDistributedNodePreflightDto = z.object({
     mlxVersion: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    ceilingBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    wiredLimitMb: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    shortBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    topApps: z.array(zMlxDistributedAppMemoryDto).optional()
 });
 
 export const zMlxDistributedPreflightDto = z.object({
@@ -3624,7 +3642,11 @@ export const zMlxDistributedNodeConfigDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
-    modelDir: z.string()
+    modelDir: z.string(),
+    freeMemoryAutomatically: z.union([
+        z.boolean(),
+        z.null()
+    ]).optional()
 });
 
 export const zMlxDistributedConfigDto = z.object({
@@ -3747,6 +3769,51 @@ export const zMlxDistributedHostedRankDto = z.object({
     lastPollMs: z.number().int().gte(0)
 });
 
+/**
+ * One node's latest memory compaction ("Make room"): goose raised memory pressure to the
+ * kernel's WARN with Apple's `memory_pressure`, released it at once, and sampled until available
+ * memory stopped rising. Nothing is quit; macOS compresses idle apps and apps drop caches.
+ */
+export const zMlxDistributedCompactionDto = z.object({
+    node: z.string(),
+    atMs: z.number().int().gte(0),
+    trigger: z.string(),
+    outcome: z.string(),
+    code: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    message: z.string(),
+    totalBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    beforeAvailableBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    peakAvailableBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    settledAvailableBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    gainedBytes: z.union([
+        z.number().int(),
+        z.null()
+    ]).optional(),
+    end: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    settleSamples: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
 export const zMlxDistributedStatusDto = z.object({
     mode: z.string(),
     state: z.string(),
@@ -3830,7 +3897,8 @@ export const zMlxDistributedStatusDto = z.object({
         zMlxDistributedHostedRankDto,
         z.null()
     ]).optional(),
-    allowDistributedNode: z.boolean().optional().default(false)
+    allowDistributedNode: z.boolean().optional().default(false),
+    compactions: z.array(zMlxDistributedCompactionDto).optional()
 });
 
 export const zMlxEngineDistributedStatusResponse_unstable = z.object({
@@ -3905,6 +3973,23 @@ export const zMlxDistributedStopReportDto = z.object({
 
 export const zMlxEngineDistributedStopResponse_unstable = z.object({
     stop: zMlxDistributedStopReportDto,
+    status: zMlxDistributedStatusDto
+});
+
+/**
+ * "Make room" on one configured node: compact its memory now (refused while the distributed
+ * engine runs, or beside any MLX engine on that node). Returns after the settle.
+ */
+export const zMlxEngineDistributedMakeRoomRequest_unstable = z.object({
+    node: z.string(),
+    config: z.union([
+        zMlxDistributedConfigDto,
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineDistributedMakeRoomResponse_unstable = z.object({
+    compaction: zMlxDistributedCompactionDto,
     status: zMlxDistributedStatusDto
 });
 
@@ -4860,6 +4945,7 @@ export const zExtRequest = z.object({
             zMlxEngineDistributedPreflightRequest_unstable,
             zMlxEngineDistributedStartRequest_unstable,
             zMlxEngineDistributedStopRequest_unstable,
+            zMlxEngineDistributedMakeRoomRequest_unstable,
             zMlxEngineDistributedPeerCandidatesRequest_unstable,
             zMlxEngineDistributedDiscoverRequest_unstable,
             zMlxEngineDistributedProvisionRequest_unstable,
@@ -4982,6 +5068,7 @@ export const zExtResponse = z.union([
                 zMlxEngineDistributedPreflightResponse_unstable,
                 zMlxEngineDistributedStartResponse_unstable,
                 zMlxEngineDistributedStopResponse_unstable,
+                zMlxEngineDistributedMakeRoomResponse_unstable,
                 zMlxEngineDistributedPeerCandidatesResponse_unstable,
                 zMlxEngineDistributedDiscoverResponse_unstable,
                 zMlxEngineDistributedProvisionResponse_unstable,

@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "重新啟動斷路器已開啟"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "已略過騰出空間"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "偵測到卡住"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "區域網路遭阻擋"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "記憶體已釋放"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "已回收孤兒程序"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "工作節點"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "預算 {budget} GiB（GPU 上限 {ceiling} · 可用 {available}）"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "預算 {budget} GiB（GPU 上限 {ceiling} · 壓縮後可用 {available}）"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "騰出空間失敗"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "自動釋放記憶體"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "已釋放 {gib} GiB"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "未釋放記憶體（減少 {gib} GiB）"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "請 macOS 回收記憶體：閒置的 App 會被壓縮，快取會被捨棄。不會結束任何 App。"
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "騰出空間"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "騰出空間未執行"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "還差 {gib} GiB — 騰出空間，或關閉 App：{apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "還差 {gib} GiB — 騰出空間，或關閉 App"
   },
   "mlxDistributed.save": {
     "defaultMessage": "儲存設定"

@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{bail, ensure, Context, Result};
+use serde::{Deserialize, Serialize};
 
 use crate::memory::{darwin_reading, VmPageCounts};
 use crate::MemoryReading;
@@ -117,6 +118,63 @@ pub fn parse_sysctl_values(text: &str, expected: usize) -> Result<Vec<u64>> {
         values.len()
     );
     Ok(values)
+}
+
+/// The `@@gpu` answer: Metal's `max_recommended_working_set_size` in bytes (its last line).
+pub fn parse_gpu_ceiling(text: &str) -> Result<u64> {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .context("the GPU probe printed nothing")?;
+    let bytes: u64 = line
+        .parse()
+        .with_context(|| format!("the GPU probe did not print a byte count: {line}"))?;
+    ensure!(bytes > 0, "the GPU probe reported a ceiling of 0 bytes");
+    Ok(bytes)
+}
+
+/// One app's resident memory: every process inside the same outermost `.app` bundle, summed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppMemory {
+    pub name: String,
+    pub rss_bytes: u64,
+}
+
+/// `ps -axo rss=,comm=` (RSS in KiB, then the executable path) → the `limit` biggest APPS the
+/// owner could close, largest first. Only processes inside an `.app` bundle count (a daemon or a
+/// CLI is not something to close); helpers are folded into their outermost app ("Google
+/// Chrome.app/…/Google Chrome Helper (Renderer).app" is Google Chrome). goose's own app is left
+/// out — it is the one doing this work.
+pub fn top_apps_by_rss(text: &str, limit: usize) -> Vec<AppMemory> {
+    let mut apps: BTreeMap<String, u64> = BTreeMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        let Some((rss, path)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let Ok(kib) = rss.parse::<u64>() else {
+            continue;
+        };
+        let Some(app) = path
+            .split('/')
+            .find_map(|component| component.strip_suffix(".app"))
+        else {
+            continue;
+        };
+        if app.starts_with("Goose") {
+            continue;
+        }
+        *apps.entry(app.to_string()).or_default() += kib * 1024;
+    }
+    let mut ranked: Vec<AppMemory> = apps
+        .into_iter()
+        .map(|(name, rss_bytes)| AppMemory { name, rss_bytes })
+        .collect();
+    ranked.sort_by(|a, b| b.rss_bytes.cmp(&a.rss_bytes).then(a.name.cmp(&b.name)));
+    ranked.truncate(limit);
+    ranked
 }
 
 /// `ps -o time=` (macOS: `M:SS.cc`, minutes growing past 60; also accepts `[D-]H:MM:SS.cc`) as
@@ -599,5 +657,43 @@ Pages occupied by compressor:                 649325.
         assert_eq!(s["a"], "one\n");
         assert_eq!(s["b"], "two\nthree\n");
         assert!(section(&s, "c").is_err());
+    }
+
+    #[test]
+    fn the_biggest_apps_fold_helpers_and_skip_daemons_and_goose() {
+        let ps = "  900000 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  600000 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)
+ 1200000 /Applications/Slack.app/Contents/MacOS/Slack
+ 5000000 /usr/libexec/some-daemon
+ 4000000 /Applications/Goose Swarm.app/Contents/MacOS/Goose Swarm
+  100000 /System/Applications/Mail.app/Contents/MacOS/Mail
+   50000 /Applications/Notes.app/Contents/MacOS/Notes
+";
+        let top = top_apps_by_rss(ps, 3);
+        assert_eq!(
+            top,
+            vec![
+                AppMemory {
+                    name: "Google Chrome".into(),
+                    rss_bytes: 1_500_000 * 1024
+                },
+                AppMemory {
+                    name: "Slack".into(),
+                    rss_bytes: 1_200_000 * 1024
+                },
+                AppMemory {
+                    name: "Mail".into(),
+                    rss_bytes: 100_000 * 1024
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn the_gpu_ceiling_is_a_positive_byte_count_or_a_named_error() {
+        assert_eq!(parse_gpu_ceiling("83494174720\n").unwrap(), 83_494_174_720);
+        assert!(parse_gpu_ceiling("ModuleNotFoundError: No module named 'mlx'\n").is_err());
+        assert!(parse_gpu_ceiling("").is_err());
+        assert!(parse_gpu_ceiling("0").is_err());
     }
 }

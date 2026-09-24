@@ -1,4 +1,5 @@
 import type {
+  MlxDistributedCompactionDto,
   MlxDistributedConfigDto,
   MlxDistributedNodeConfigDto,
   MlxDistributedRankPlanDto,
@@ -210,8 +211,9 @@ const NOTICE_EVENTS = new Set([
   'watchdogBlind',
   'admissionClosed',
   'orphanReclaimed',
+  'compactionSkipped',
 ]);
-const GOOD_EVENTS = new Set(['ready', 'admissionOpened', 'launched']);
+const GOOD_EVENTS = new Set(['ready', 'admissionOpened', 'launched', 'memoryCompacted']);
 
 export function eventTone(kind: string): Tone {
   if (ALARM_EVENTS.has(kind)) return 'err';
@@ -380,4 +382,35 @@ export function cleanConfig(config: MlxDistributedConfigDto): MlxDistributedConf
   if (next.context == null) delete next.context;
   if (next.slots == null) delete next.slots;
   return next;
+}
+
+// ---------------------------------------------------------------------------
+// Memory compaction ("Make room")
+// ---------------------------------------------------------------------------
+
+/** The latest compaction the backend holds for `node` (it keeps one per node). */
+export function compactionFor(
+  status: Pick<MlxDistributedStatusDto, 'compactions'> | null,
+  node: string
+): MlxDistributedCompactionDto | null {
+  return status?.compactions?.find((c) => c.node === node) ?? null;
+}
+
+/** "Free memory automatically": absent on the wire reads as ON (the backend's documented default). */
+export function freeMemoryOn(
+  node: Pick<MlxDistributedNodeConfigDto, 'freeMemoryAutomatically'>
+): boolean {
+  return node.freeMemoryAutomatically !== false;
+}
+
+/** `config` with `node`'s "Free memory automatically" switched; every other field untouched. */
+export function withFreeMemory(
+  config: MlxDistributedConfigDto,
+  node: string,
+  on: boolean
+): MlxDistributedConfigDto {
+  return {
+    ...config,
+    nodes: config.nodes.map((n) => (n.name === node ? { ...n, freeMemoryAutomatically: on } : n)),
+  };
 }

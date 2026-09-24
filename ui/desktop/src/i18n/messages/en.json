@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "Restart breaker open"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "Make room skipped"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "Hang detected"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "Local network blocked"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "Memory freed"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Orphan reclaimed"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "worker"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "Budget {budget} GiB (GPU limit {ceiling} · available {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "Budget {budget} GiB (GPU limit {ceiling} · available after compaction {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "Make room failed"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "Free memory automatically"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "Freed {gib} GiB"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "Nothing freed ({gib} GiB less)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "Asks macOS to reclaim memory: idle apps are compressed and caches dropped. Nothing is quit."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "Make room"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "Make room did not run"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "Short by {gib} GiB — Make room, or close apps: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "Short by {gib} GiB — Make room, or close apps"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Save configuration"

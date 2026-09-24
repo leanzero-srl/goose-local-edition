@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "重启断路器已打开"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "已跳过腾出空间"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "检测到卡死"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "本地网络被阻止"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "内存已释放"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "已回收孤儿进程"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "工作节点"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "预算 {budget} GiB（GPU 上限 {ceiling} · 可用 {available}）"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "预算 {budget} GiB（GPU 上限 {ceiling} · 压缩后可用 {available}）"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "腾出空间失败"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "自动释放内存"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "已释放 {gib} GiB"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "未释放内存（减少 {gib} GiB）"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "请求 macOS 回收内存：闲置应用会被压缩，缓存会被丢弃。不会退出任何应用。"
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "腾出空间"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "腾出空间未运行"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "还差 {gib} GiB — 腾出空间，或关闭应用：{apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "还差 {gib} GiB — 腾出空间，或关闭应用"
   },
   "mlxDistributed.save": {
     "defaultMessage": "保存配置"

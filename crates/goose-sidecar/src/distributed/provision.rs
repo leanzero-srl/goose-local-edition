@@ -465,9 +465,16 @@ mod tests {
     #[ignore = "installs mlx + mlx_lm into ~/.goose/distributed on a real node over ssh"]
     async fn live_provision() {
         let host = std::env::var("GOOSE_PROV_HOST").unwrap_or_else(|_| "workhorse".to_string());
+        // GOOSE_PROV_ENV=pipeline builds the fork env instead of the tensor one; GOOSE_PROV_HOST=local
+        // provisions this Mac.
+        let spec = match std::env::var("GOOSE_PROV_ENV").as_deref() {
+            Ok("pipeline") => EnvSpec::pipeline(),
+            _ => EnvSpec::tensor(),
+        };
+        let host = (host != "local").then_some(host);
         let started = std::time::Instant::now();
         let mut last = None;
-        let code = run_streaming(Some(&host), &provision_script(&EnvSpec::tensor()), |line| {
+        let code = run_streaming(host.as_deref(), &provision_script(&spec), |line| {
             println!("{:>7.1}s {line}", started.elapsed().as_secs_f64());
             if let Some(p) = parse_progress(line) {
                 last = Some(p);
