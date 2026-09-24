@@ -253,16 +253,11 @@ async fn route_status(
         Ok(peer) if peer.status.state == "mounting" => {}
         Ok(peer) => {
             status.state = "failed".to_string();
-            status.last_error = Some(match peer.status.last_error {
-                Some(err) => format!(
-                    "{}'s engine is {}: {err}",
-                    route.peer_hostname, peer.status.state
-                ),
-                None => format!(
-                    "{}'s engine is {} ({models_error})",
-                    route.peer_hostname, peer.status.state
-                ),
-            });
+            status.last_error = Some(peer_engine_failure(
+                &route.peer_hostname,
+                &peer.status,
+                &models_error,
+            ));
         }
         Err(refused) => {
             status.state = "failed".to_string();
@@ -270,6 +265,23 @@ async fn route_status(
         }
     }
     status
+}
+
+/// Why the peer's engine does not serve through the proxy, in the peer's own words first. Its
+/// goose can report `running` for an engine that no longer answers (measured live 2026-09-24: the
+/// engine process SIGKILLed, its launcher a zombie, the peer's manager still `running` with a
+/// connection-refused probe) — so the proxy's answer is always part of the reason.
+fn peer_engine_failure(peer: &str, engine: &MlxEngineStatusDto, proxy_answer: &str) -> String {
+    let own_words = engine
+        .last_error
+        .as_deref()
+        .or(engine.probe_error.as_deref())
+        .map(|err| format!(" ({err})"))
+        .unwrap_or_default();
+    format!(
+        "{peer}'s goose reports its engine {}{own_words}, and it does not serve through LeanZero Link: {proxy_answer}",
+        engine.state
+    )
 }
 
 async fn current_status(manager: Option<&LinkManager>) -> MlxRemoteSingleStatusDto {
@@ -306,9 +318,22 @@ impl GooseAcpAgent {
         req: &MlxEngineRemoteSingleStartRequest,
     ) -> Result<MlxRemoteSingleStatusDto, MlxRemoteSingleRefusalDto> {
         match mlx_remote::read() {
-            RouteRecord::Mine(route) | RouteRecord::Other(route)
-                if route.peer == req.peer && route.model_id == req.model_id =>
-            {
+            RouteRecord::Mine(route) if route.peer == req.peer && route.model_id == req.model_id => {
+                let manager = super::link::existing_link_manager();
+                let status = route_status(manager.as_deref(), &route).await;
+                if status.state != "failed" {
+                    return Ok(status);
+                }
+                // The same placement asked again after the peer's engine failed: start it over
+                // (a fresh relay, a fresh mount) instead of answering "failed" forever.
+                mlx_remote::uninstall().map_err(|e| {
+                    refusal(
+                        "remoteSingleActive",
+                        format!("withdrawing the failed route before restarting it: {e:#}"),
+                    )
+                })?;
+            }
+            RouteRecord::Other(route) if route.peer == req.peer && route.model_id == req.model_id => {
                 let manager = super::link::existing_link_manager();
                 return Ok(route_status(manager.as_deref(), &route).await);
             }
@@ -359,9 +384,11 @@ impl GooseAcpAgent {
                 format!("starting this Mac's Link relay: {e}"),
             )
         })?;
-        if let Some(refused) = serving_refusal(&relay_get(relay.base_url(), "v1/status").await) {
+        let precheck = relay_get(relay.base_url(), "v1/status").await;
+        if let Some(refused) = serving_refusal(&precheck) {
             return Err(refused);
         }
+        let engine_answers = matches!(precheck, RelayAnswer::Ok(_));
 
         let peer_status: MlxEngineStatusResponse = peer_op(
             &manager,
@@ -390,9 +417,22 @@ impl GooseAcpAgent {
             .get(&req.model_id)
             .and_then(goose_sidecar::thinking::chat_template_kwargs);
 
-        let already_serving = peer_status.status.state == "running"
+        let claims_running = peer_status.status.state == "running";
+        let already_serving = engine_answers
+            && claims_running
             && peer_status.status.served_model_id.as_deref() == Some(served.as_str());
         if !already_serving {
+            if claims_running && !engine_answers {
+                // Its goose says running while nothing answers (a dead engine it has not noticed):
+                // a mount of the same model would be a no-op there, so its engine is reset first.
+                let _: EmptyResponse = peer_op(
+                    &manager,
+                    &req.peer,
+                    MlxOp::Unmount,
+                    &MlxEngineUnmountRequest { node_id: None },
+                )
+                .await?;
+            }
             let _: EmptyResponse = peer_op(
                 &manager,
                 &req.peer,
@@ -428,6 +468,7 @@ impl GooseAcpAgent {
             served = %route.served_model_id,
             capacity = route.capacity,
             mounted = !already_serving,
+            reset_dead_engine = claims_running && !engine_answers,
             "mlx remote single: chat routed to the peer's engine through LeanZero Link"
         );
         Ok(route_status(Some(&manager), &route).await)
@@ -610,6 +651,21 @@ mod tests {
         })
         .unwrap();
         assert_eq!(gone.code, "peerUnreachable");
+    }
+
+    #[test]
+    fn a_peer_that_says_running_while_nothing_answers_is_named_with_both_facts() {
+        let engine = MlxEngineStatusDto {
+            state: "running".to_string(),
+            probe_error: Some("GET http://127.0.0.1:8095/v1/models: Connection refused".into()),
+            ..Default::default()
+        };
+        let text = peer_engine_failure("WorksMacStudio.lan", &engine, "502: engineUnreachable: …");
+        assert!(
+            text.starts_with("WorksMacStudio.lan's goose reports its engine running (GET "),
+            "{text}"
+        );
+        assert!(text.ends_with("does not serve through LeanZero Link: 502: engineUnreachable: …"));
     }
 
     #[test]
