@@ -15,7 +15,7 @@ use super::exec::{sh_quote, ExecOutput, NodeExec};
 use super::link_control::link_peer;
 use super::local_network::{self, PeerAnswer, PingLine};
 use super::node_op::NodeOp;
-use super::plan::{self, PipelinePlan, PipelineRatios, RankPlan};
+use super::plan::{self, PipelinePlan, PipelineRatios, PipelineStage, RankPlan};
 use super::probe::{self, Pressure};
 use super::provision::{EnvSpec, PIPELINE_FORK_COMMIT};
 use super::DERIVED_CONTEXT_MARGIN_RATIO;
@@ -79,6 +79,39 @@ pub struct NodePreflight {
     pub plan: Option<RankPlan>,
     pub link_speed: Option<String>,
     pub mlx_version: Option<String>,
+    /// The node's GPU ceiling: Metal's `max_recommended_working_set_size`, read on the node with
+    /// its own mlx. `None` = it could not be read (a `gpuCeiling` FAIL says why).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceiling_bytes: Option<u64>,
+    /// `sysctl iogpu.wired_limit_mb` (0 = macOS's default wired ceiling), reported beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wired_limit_mb: Option<u64>,
+    /// By how much this rank's plan exceeds its budget; `None` when it fits or has no plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_bytes: Option<u64>,
+    /// The node's biggest apps by resident memory (what the owner could close), largest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_apps: Vec<probe::AppMemory>,
+}
+
+/// One node's measured memory figures and the budget the rule builds from them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeFigures {
+    pub available: u64,
+    pub total: u64,
+    pub ceiling: u64,
+    pub budget: u64,
+}
+
+impl NodeFigures {
+    pub fn new(available: u64, total: u64, ceiling: u64) -> Self {
+        Self {
+            available,
+            total,
+            ceiling,
+            budget: plan::budget_bytes(available, total, ceiling),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -152,6 +185,13 @@ fn gib(bytes: u64) -> String {
 
 const PIPELINE_MODULE: &str = "rapid_mlx.distributed.pipeline_qwen4";
 
+/// Prints the node's Metal working-set ceiling in bytes (mlx 0.32's `mx.device_info()`).
+const GPU_CEILING_PROBE: &str =
+    "import mlx.core as mx; print(mx.device_info()['max_recommended_working_set_size'])";
+
+/// How many of a node's biggest apps a short node names.
+const TOP_APPS: usize = 3;
+
 /// The ports a node's launch binds: rank 0 the API port (and JACCL's coordinator); under ring every
 /// rank its `coordinator_port + rank`.
 fn ports_for(config: &DistributedConfig, rank: usize) -> Vec<u16> {
@@ -208,6 +248,13 @@ pub(crate) fn node_probe_script(
         "echo; echo @@python; {} -c 'import mlx.core as mx, mlx_lm; print(mx.__version__, mlx_lm.__version__)' 2>&1",
         sh_quote(&node.python)
     ));
+    add(format!(
+        "echo; echo @@gpu; {} -c {} 2>&1",
+        sh_quote(&node.python),
+        sh_quote(GPU_CEILING_PROBE)
+    ));
+    add("echo; echo @@wiredlimit; /usr/sbin/sysctl -n iogpu.wired_limit_mb 2>&1".into());
+    add("echo; echo @@rss; /bin/ps -axo rss=,comm=".into());
     if runner == Some(Runner::PipelineQwen4) {
         if let Some(python) = &node.pipeline_python {
             add(format!(
@@ -374,6 +421,9 @@ fn link_checks(
 struct NodeAnswer {
     checks: Vec<Check>,
     memory: Option<(crate::MemoryReading, Pressure)>,
+    ceiling: Option<u64>,
+    wired_limit_mb: Option<u64>,
+    top_apps: Vec<probe::AppMemory>,
     model_files: Option<BTreeMap<String, u64>>,
     sums: BTreeMap<String, String>,
     mlx_version: Option<String>,
@@ -393,6 +443,9 @@ fn read_answer(
     let mut answer = NodeAnswer {
         checks: Vec::new(),
         memory: None,
+        ceiling: None,
+        wired_limit_mb: None,
+        top_apps: Vec::new(),
         model_files: None,
         sums: BTreeMap::new(),
         mlx_version: None,
@@ -457,6 +510,25 @@ fn read_answer(
             .checks
             .push(Check::fail("memory", format!("memory probe failed: {e}"))),
     }
+
+    match probe::section(&sections, "gpu").and_then(probe::parse_gpu_ceiling) {
+        Ok(ceiling) => answer.ceiling = Some(ceiling),
+        Err(e) => answer.checks.push(Check::fail(
+            "gpuCeiling",
+            format!(
+                "the GPU ceiling (Metal max_recommended_working_set_size) could not be read with \
+                 {}: {e:#} — the budget is built from it, so there is no plan without it",
+                node.python
+            ),
+        )),
+    }
+    answer.wired_limit_mb = sections
+        .get("wiredlimit")
+        .and_then(|t| t.trim().parse().ok());
+    answer.top_apps = sections
+        .get("rss")
+        .map(|t| probe::top_apps_by_rss(t, TOP_APPS))
+        .unwrap_or_default();
 
     let own_pid: Vec<u32> = probe::section(&sections, "self")
         .ok()
@@ -941,22 +1013,21 @@ pub async fn run_preflight(
     }
 
     // The plan, per rank, against each node's measured budget.
-    let budgets: Vec<Option<(u64, u64, u64)>> = answers
+    let budgets: Vec<Option<NodeFigures>> = answers
         .iter()
         .map(|a| {
-            a.memory.map(|(m, _)| {
-                (
-                    m.available_bytes,
-                    m.total_bytes,
-                    plan::budget_bytes(m.available_bytes, m.total_bytes),
-                )
-            })
+            let (memory, _) = a.memory?;
+            Some(NodeFigures::new(
+                memory.available_bytes,
+                memory.total_bytes,
+                a.ceiling?,
+            ))
         })
         .collect();
     let mut plans: Vec<Option<RankPlan>> = vec![None; config.size()];
     let mut pipeline_ratios = None;
     if let (Some(runner), true) = (runner, budgets.iter().all(Option::is_some)) {
-        let budgets: Vec<(u64, u64, u64)> = budgets.iter().map(|b| b.unwrap()).collect();
+        let budgets: Vec<NodeFigures> = budgets.iter().map(|b| b.unwrap()).collect();
         match runner {
             Runner::MlxLmTensor => {
                 plan_tensor(config, &budgets, &mut report, &mut plans);
@@ -969,7 +1040,8 @@ pub async fn run_preflight(
     } else if runner.is_some() {
         report.checks.push(Check::fail(
             "plan",
-            "no plan: a node's memory could not be measured",
+            "no plan: a node's memory or GPU ceiling could not be measured (its memory / \
+             gpuCeiling check says why)",
         ));
     }
 
@@ -984,13 +1056,16 @@ pub async fn run_preflight(
                 pressure.as_str(),
             );
             let head = match &pipeline_ratios {
-                Some(ratios) => format!("{measured}; {}", pipeline_stage_line(plan, ratios)),
+                Some(ratios) => format!(
+                    "{measured}; {}",
+                    stage_line(plan, ratios, reading.available_bytes, answer.ceiling)
+                ),
                 None => format!(
-                    "{measured}; budget {} = min(available × {:.2}, RAM × {:.2}); \
+                    "{measured}; budget {} = min(available − RAM × {:.2}, GPU ceiling {}); \
                      planned {} (weights {} + state {} + workspace {} + prompt cache {}) × {:.2} = {}",
                     gib(plan.budget_bytes),
-                    super::AVAILABLE_HEADROOM_RATIO,
-                    super::MEMORY_LIMIT_RATIO,
+                    super::AVAILABLE_MARGIN_RATIO,
+                    answer.ceiling.map(gib).unwrap_or_else(|| "unread".to_string()),
                     gib(plan.planned_bytes),
                     gib(plan.weights_bytes),
                     gib(plan.state_bytes),
@@ -1037,9 +1112,16 @@ pub async fn run_preflight(
             available_bytes: answer.memory.map(|(m, _)| m.available_bytes),
             total_bytes: answer.memory.map(|(m, _)| m.total_bytes),
             pressure: answer.memory.map(|(_, p)| p.as_str().to_string()),
+            short_bytes: plan
+                .as_ref()
+                .filter(|p| !p.fits)
+                .map(|p| p.with_overhead_bytes.saturating_sub(p.budget_bytes)),
             plan,
             link_speed: answer.link_speed,
             mlx_version: answer.mlx_version,
+            ceiling_bytes: answer.ceiling,
+            wired_limit_mb: answer.wired_limit_mb,
+            top_apps: answer.top_apps,
         });
     }
     report.ok = report.failures().is_empty() && report.nodes.iter().all(|n| n.plan.is_some());
@@ -1103,7 +1185,7 @@ fn local_network_checks(config: &DistributedConfig, answers: &mut [NodeAnswer]) 
 
 fn plan_tensor(
     config: &DistributedConfig,
-    budgets: &[(u64, u64, u64)],
+    budgets: &[NodeFigures],
     report: &mut PreflightReport,
     plans: &mut [Option<RankPlan>],
 ) {
@@ -1121,7 +1203,7 @@ fn plan_tensor(
     }
     let ceiling = budgets
         .iter()
-        .map(|(_, _, budget)| facts.max_context(ranks, *budget))
+        .map(|figures| facts.max_context(ranks, figures.budget))
         .min()
         .unwrap_or(0);
     report.max_context_fits = Some(ceiling);
@@ -1151,8 +1233,8 @@ fn plan_tensor(
         }
     };
     report.context_limit = Some(context);
-    for (rank, (_, _, budget)) in budgets.iter().enumerate() {
-        plans[rank] = Some(facts.rank_plan(ranks, rank as u64, context.max(1), *budget));
+    for (rank, figures) in budgets.iter().enumerate() {
+        plans[rank] = Some(facts.rank_plan(ranks, rank as u64, context.max(1), figures.budget));
     }
     report.checks.push(Check::pass(
         "plan",
@@ -1168,11 +1250,26 @@ fn plan_tensor(
     ));
 }
 
-/// One pipeline rank's plan line: its layers and the fork's bytes against the fork's budget.
-fn pipeline_stage_line(plan: &RankPlan, ratios: &PipelineRatios) -> String {
+/// One pipeline rank's plan line: its layers and the fork's bytes against the fork's budget, with
+/// the available figure and GPU ceiling the fork built that budget from.
+fn pipeline_stage_line(stage: &PipelineStage, ratios: &PipelineRatios) -> String {
+    stage_line(
+        &stage.rank_plan(),
+        ratios,
+        stage.available_bytes,
+        Some(stage.ceiling_bytes),
+    )
+}
+
+fn stage_line(
+    plan: &RankPlan,
+    ratios: &PipelineRatios,
+    available: u64,
+    ceiling: Option<u64>,
+) -> String {
     format!(
         "layers [{}, {}): weights {} + state {} + workspace {} = {} of budget {} = \
-         min(available − RAM × {:.2}, RAM × {:.2}) (the fork's plan, {:.0}%) → {}",
+         min(available {} − RAM × {:.2}, GPU ceiling {}) (the fork's plan, {:.0}%) → {}",
         plan.layer_start,
         plan.layer_end,
         gib(plan.weights_bytes),
@@ -1180,8 +1277,9 @@ fn pipeline_stage_line(plan: &RankPlan, ratios: &PipelineRatios) -> String {
         gib(plan.workspace_bytes),
         gib(plan.with_overhead_bytes),
         gib(plan.budget_bytes),
-        ratios.pressure_floor,
-        ratios.memory_limit,
+        gib(available),
+        ratios.available_margin,
+        ceiling.map(gib).unwrap_or_else(|| "unread".to_string()),
         100.0 * plan.with_overhead_bytes as f64 / plan.budget_bytes.max(1) as f64,
         if plan.fits { "fits" } else { "DOES NOT FIT" },
     )
@@ -1194,7 +1292,7 @@ async fn run_fork_planner(
     config: &DistributedConfig,
     exec: &Arc<dyn NodeExec>,
     python: &str,
-    budgets: &[(u64, u64, u64)],
+    budgets: &[NodeFigures],
     context: Option<u64>,
 ) -> Result<PipelinePlan> {
     let rank0 = &config.nodes[0];
@@ -1202,7 +1300,14 @@ async fn run_fork_planner(
         .nodes
         .iter()
         .zip(budgets)
-        .map(|(node, (available, total, _))| plan::planner_node_arg(&node.name, *total, *available))
+        .map(|(node, figures)| {
+            plan::planner_node_arg(
+                &node.name,
+                figures.total,
+                figures.available,
+                figures.ceiling,
+            )
+        })
         .collect();
     let mut script = format!(
         "{} -m {PIPELINE_MODULE} plan --json --model {}",
@@ -1226,7 +1331,7 @@ async fn run_fork_planner(
             .filter(|l| !l.is_empty())
             .collect();
         format!(
-            "the fork planner exited {:?} for nodes {nodes:?} (RAM GiB : available GiB): {}",
+            "the fork planner exited {:?} for nodes {nodes:?} (RAM GiB : available GiB : GPU ceiling GiB): {}",
             out.status,
             words[words.len().saturating_sub(3)..].join(" | ")
         )
@@ -1255,7 +1360,7 @@ async fn run_fork_planner(
 async fn plan_pipeline(
     config: &DistributedConfig,
     exec: &Arc<dyn NodeExec>,
-    budgets: &[(u64, u64, u64)],
+    budgets: &[NodeFigures],
     report: &mut PreflightReport,
     plans: &mut [Option<RankPlan>],
 ) -> Option<PipelineRatios> {
@@ -1280,11 +1385,15 @@ async fn plan_pipeline(
         // The walk runs on margin budgets (DERIVED_CONTEXT_MARGIN_RATIO); the chosen context is
         // then planned once more on the real ones, so the report and the pinned split carry the
         // measured budgets while the ranks keep room for what memory does between now and load.
-        let margin: Vec<(u64, u64, u64)> = budgets
+        let margin: Vec<NodeFigures> = budgets
             .iter()
-            .map(|(available, total, budget)| {
-                let reserve = (*total as f64 * DERIVED_CONTEXT_MARGIN_RATIO) as u64;
-                (available.saturating_sub(reserve), *total, *budget)
+            .map(|figures| {
+                let reserve = (figures.total as f64 * DERIVED_CONTEXT_MARGIN_RATIO) as u64;
+                NodeFigures::new(
+                    figures.available.saturating_sub(reserve),
+                    figures.total,
+                    figures.ceiling,
+                )
             })
             .collect();
         let mut derived = match run_fork_planner(config, exec, python, &margin, None).await {
@@ -1353,7 +1462,7 @@ async fn plan_pipeline(
                 "rank {} ({}) {}",
                 stage.rank,
                 config.nodes[stage.rank as usize].name,
-                pipeline_stage_line(&rank_plan, &planned.ratios)
+                pipeline_stage_line(stage, &planned.ratios)
             );
             plans[stage.rank as usize] = Some(rank_plan);
             line
@@ -1569,7 +1678,7 @@ mod tests {
         let json = plan::tests::FLASH_PLAN_32K
             .replacen("\"context\": 32768", &format!("\"context\": {context}"), 1)
             .replace(
-                "\"max_context\": 73216",
+                "\"max_context\": 262144",
                 &format!("\"max_context\": {max_context}"),
             )
             .replace("\"fits\": true", &format!("\"fits\": {fits}"));
@@ -1588,8 +1697,11 @@ mod tests {
         config
     }
 
-    fn budgets() -> Vec<(u64, u64, u64)> {
-        vec![(90 * GIB, 128 * GIB, 0), (67 * GIB, 96 * GIB, 0)]
+    fn budgets() -> Vec<NodeFigures> {
+        vec![
+            NodeFigures::new(90 * GIB, 128 * GIB, plan::tests::M4_MAX_CEILING),
+            NodeFigures::new(67 * GIB, 96 * GIB, plan::tests::M3_ULTRA_CEILING),
+        ]
     }
 
     #[tokio::test]
@@ -1623,7 +1735,12 @@ mod tests {
             "{}",
             check.message
         );
-        assert_eq!(plans[1].as_ref().unwrap().budget_bytes, 50_294_067_037);
+        assert_eq!(plans[1].as_ref().unwrap().budget_bytes, 64_725_157_151);
+        assert!(
+            check.message.contains("GPU ceiling 77.76 GiB"),
+            "{}",
+            check.message
+        );
     }
 
     #[tokio::test]
@@ -1643,9 +1760,10 @@ mod tests {
         let mut plans = vec![None; 2];
         plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
         let seen = planner.seen.lock().unwrap();
-        // 2% of 128 GiB = 2.56 GiB and of 96 GiB = 1.92 GiB off each node's available figure.
-        let margin = "--node 'MacBook-Pro:128.0000:87.4400' --node 'workhorse:96.0000:65.0800'";
-        let real = "--node 'MacBook-Pro:128.0000:90.0000' --node 'workhorse:96.0000:67.0000'";
+        // 2% of 128 GiB = 2.56 GiB and of 96 GiB = 1.92 GiB off each node's available figure;
+        // the GPU ceilings go through unchanged.
+        let margin = "--node 'MacBook-Pro:128.0000:87.4400:107.5200' --node 'workhorse:96.0000:65.0800:77.7600'";
+        let real = "--node 'MacBook-Pro:128.0000:90.0000:107.5200' --node 'workhorse:96.0000:67.0000:77.7600'";
         let (last, walk) = seen.split_last().unwrap();
         assert_eq!(walk.len(), 3, "{seen:?}");
         assert!(
@@ -1677,8 +1795,8 @@ mod tests {
             seen[0],
             "'/fork/bin/python' -m rapid_mlx.distributed.pipeline_qwen4 plan --json --model \
              '/Users/me/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx' \
-             --node 'MacBook-Pro:128.0000:90.0000' --node 'workhorse:96.0000:67.0000' \
-             --batch 2 --context 32768"
+             --node 'MacBook-Pro:128.0000:90.0000:107.5200' --node \
+             'workhorse:96.0000:67.0000:77.7600' --batch 2 --context 32768"
         );
         assert_eq!(report.context_source.as_deref(), Some("requested"));
         assert_eq!(report.pipeline_starts, Some(vec![0, 19]));
@@ -1734,8 +1852,8 @@ mod tests {
             answer: |_| {
                 let mut out = flash_answer(32_768, 8_192, true);
                 out.stdout = out.stdout.replacen(
-                    "\"budget_bytes\": 50294067037, \"ram_bytes\": 103079215104, \"budget_source\": \"free given\", \"fits\": true",
-                    "\"budget_bytes\": 40000000000, \"ram_bytes\": 103079215104, \"budget_source\": \"free given\", \"fits\": false",
+                    "\"budget_bytes\": 64725157151, \"available_bytes\": 71940702208, \"ceiling_bytes\": 83494164234, \"ram_bytes\": 103079215104, \"budget_source\": \"free + GPU ceiling given\", \"fits\": true",
+                    "\"budget_bytes\": 40000000000, \"available_bytes\": 71940702208, \"ceiling_bytes\": 83494164234, \"ram_bytes\": 103079215104, \"budget_source\": \"free + GPU ceiling given\", \"fits\": false",
                     1,
                 ).replacen("\"fits\": true, \"checkpoint\"", "\"fits\": false, \"checkpoint\"", 1);
                 out.status = Some(2);
@@ -1762,8 +1880,8 @@ mod tests {
             "a split that does not fit is never approved"
         );
 
-        // Measured 2026-09-24: a node whose available memory is below the fork's pressure floor
-        // crashes the planner (budget 0 → ZeroDivisionError, exit 1, no JSON).
+        // Measured 2026-09-24 (before 9f861d9e1): a node below the fork's budget floor crashed the
+        // planner (budget 0 → ZeroDivisionError, exit 1, no JSON); any crash stays a named FAIL.
         let exec: Arc<dyn NodeExec> = Arc::new(ScriptedPlanner {
             seen: Default::default(),
             answer: |_| {
@@ -1781,7 +1899,7 @@ mod tests {
         assert!(
             message.contains("exited Some(1)")
                 && message.contains("ZeroDivisionError")
-                && message.contains("workhorse:96.0000:67.0000"),
+                && message.contains("workhorse:96.0000:67.0000:77.7600"),
             "{message}"
         );
     }

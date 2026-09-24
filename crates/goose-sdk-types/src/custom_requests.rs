@@ -3110,6 +3110,11 @@ pub struct MlxDistributedNodeConfigDto {
     pub pipeline_python: Option<String>,
     /// Absolute path of the model directory ON THIS NODE (paths may differ per node).
     pub model_dir: String,
+    /// "Free memory automatically": when a preflight finds this node short, goose compacts it
+    /// (asks macOS to reclaim memory) and preflights again. Absent reads as ON — the default, so a
+    /// config saved before the switch existed keeps it on; goose always sends it explicitly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub free_memory_automatically: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -3212,6 +3217,67 @@ pub struct MlxDistributedNodePreflightDto {
     /// e.g. "mlx 0.32.2 · mlx_lm 0.31.3".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mlx_version: Option<String>,
+    /// The node's GPU ceiling: Metal's `max_recommended_working_set_size`, read on the node. The
+    /// budget is min(available − RAM × availableMargin, this). Absent exactly when a `gpuCeiling`
+    /// FAIL says why it could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceiling_bytes: Option<u64>,
+    /// `sysctl iogpu.wired_limit_mb` on the node (0 = macOS's default wired ceiling).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wired_limit_mb: Option<u64>,
+    /// How far this rank's plan exceeds its budget; absent when it fits or has no plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_bytes: Option<u64>,
+    /// The node's biggest apps by resident memory (helpers folded into their app; goose left out),
+    /// largest first — what the owner could close when compaction is off or not enough.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_apps: Vec<MlxDistributedAppMemoryDto>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedAppMemoryDto {
+    pub name: String,
+    pub rss_bytes: u64,
+}
+
+/// One node's latest memory compaction ("Make room"): goose raised memory pressure to the
+/// kernel's WARN with Apple's `memory_pressure`, released it at once, and sampled until available
+/// memory stopped rising. Nothing is quit; macOS compresses idle apps and apps drop caches.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedCompactionDto {
+    pub node: String,
+    pub at_ms: u64,
+    /// "automatic" (a preflight found the node short) | "manual" (Make room).
+    pub trigger: String,
+    /// "compacted" | "refused" | "failed".
+    pub outcome: String,
+    /// Refusals only: "engineLoaded" (an MLX engine runs on the node — never pressured) |
+    /// "notNormal" (kernel pressure already WARN/CRITICAL).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// The one-line account: freed/lost GiB, before → settled, the kernel's WARN point; or the
+    /// refusal / failure reason.
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_available_bytes: Option<u64>,
+    /// Available memory when the kernel raised WARN (the ballast was released right then).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_available_bytes: Option<u64>,
+    /// Available memory once it stopped rising after the release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled_available_bytes: Option<u64>,
+    /// settled − before; negative when the node ended with less.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gained_bytes: Option<i64>,
+    /// How the pressure phase ended: "warn" | "critical" (released at once) | "toolExited".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settle_samples: Option<u32>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
@@ -3426,6 +3492,9 @@ pub struct MlxDistributedStatusDto {
     /// `LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`, off by default), as the control route reads it.
     #[serde(default)]
     pub allow_distributed_node: bool,
+    /// The latest memory compaction per node (automatic or Make room), newest last.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compactions: Vec<MlxDistributedCompactionDto>,
 }
 
 /// Another goosed's distributed run, from the record it published under the goose state dir.
@@ -3548,6 +3617,29 @@ pub struct MlxEngineDistributedStopRequest {}
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineDistributedStopResponse {
     pub stop: MlxDistributedStopReportDto,
+    pub status: MlxDistributedStatusDto,
+}
+
+/// "Make room" on one configured node: compact its memory now (refused while the distributed
+/// engine runs, or beside any MLX engine on that node). Returns after the settle.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/distributedMakeRoom",
+    response = MlxEngineDistributedMakeRoomResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedMakeRoomRequest {
+    /// The node's configured `name`.
+    pub node: String,
+    /// Absent = the saved config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<MlxDistributedConfigDto>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineDistributedMakeRoomResponse {
+    pub compaction: MlxDistributedCompactionDto,
     pub status: MlxDistributedStatusDto,
 }
 

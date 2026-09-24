@@ -661,6 +661,11 @@
       "responseType": "MlxEngineDistributedStopResponse_unstable"
     },
     {
+      "method": "_goose/unstable/mlxEngine/distributedMakeRoom",
+      "requestType": "MlxEngineDistributedMakeRoomRequest_unstable",
+      "responseType": "MlxEngineDistributedMakeRoomResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/mlxEngine/distributedPeerCandidates",
       "requestType": "MlxEngineDistributedPeerCandidatesRequest_unstable",
       "responseType": "MlxEngineDistributedPeerCandidatesResponse_unstable"

@@ -42,6 +42,7 @@ const mockConfigUpdate = vi.fn();
 const mockCandidates = vi.fn();
 const mockDiscover = vi.fn();
 const mockProvision = vi.fn();
+const mockMakeRoom = vi.fn();
 vi.mock('../../acp/mlx-distributed', async (importOriginal) => ({
   // The pure reading of `status.owner` is the real one; only the ACP calls are mocked.
   foreignOwner: (await importOriginal<typeof import('../../acp/mlx-distributed')>()).foreignOwner,
@@ -52,6 +53,7 @@ vi.mock('../../acp/mlx-distributed', async (importOriginal) => ({
   mlxDistributedPeerCandidates: (...a: unknown[]) => mockCandidates(...a),
   mlxDistributedDiscover: (...a: unknown[]) => mockDiscover(...a),
   mlxDistributedProvision: (...a: unknown[]) => mockProvision(...a),
+  mlxDistributedMakeRoom: (...a: unknown[]) => mockMakeRoom(...a),
 }));
 const mockUnmount = vi.fn();
 vi.mock('../../acp/mlx-engine', () => ({
@@ -149,6 +151,7 @@ async function expectDesigned(container: HTMLElement) {
 }
 
 beforeEach(() => {
+  mockMakeRoom.mockReset();
   mockPreflight.mockReset();
   mockStart.mockReset();
   mockStop.mockReset();
@@ -312,6 +315,111 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }));
     expect(await screen.findByText('Stop not verified')).toBeInTheDocument();
     expect(screen.getByText('SIGTERM rank 1 pid 5521 → STILL ALIVE')).toBeInTheDocument();
+  });
+});
+
+describe('DistributedEngineSection — Make room', () => {
+  const GIB = 1024 ** 3;
+  /** The workhorse after an automatic compaction: still short, its biggest apps named. */
+  const SHORT: MlxDistributedStatus = {
+    ...STOPPED_WITH_CONFIG,
+    lastPreflight: {
+      ...FLASH_PREFLIGHT_REFUSED,
+      nodes: [
+        FLASH_PREFLIGHT_REFUSED.nodes[0],
+        {
+          ...FLASH_PREFLIGHT_REFUSED.nodes[1],
+          ceilingBytes: 83_494_174_720,
+          wiredLimitMb: 0,
+          shortBytes: 3.8 * GIB,
+          topApps: [
+            { name: 'Google Chrome', rssBytes: 6.1 * GIB },
+            { name: 'Slack', rssBytes: 1.2 * GIB },
+          ],
+        },
+      ],
+    },
+    compactions: [
+      {
+        node: 'workhorse',
+        atMs: FLASH_PREFLIGHT_REFUSED.ranAtMs - 5_000,
+        trigger: 'automatic',
+        outcome: 'compacted',
+        message:
+          'workhorse: freed 5.6 GiB — available 72.4 → 78.0 GiB (kernel reached WARN at 3.7 GiB available; settled after 6 samples)',
+        gainedBytes: 5.6 * GIB,
+        beforeAvailableBytes: 72.4 * GIB,
+        settledAvailableBytes: 78 * GIB,
+        peakAvailableBytes: 3.7 * GIB,
+        totalBytes: 96 * GIB,
+        end: 'warn',
+        settleSamples: 6,
+      },
+    ],
+  };
+
+  it('a short node says by how much, names its biggest apps, and shows what compaction freed', async () => {
+    const { container } = section({ status: SHORT });
+    const card = screen
+      .getAllByTestId('mlx-dist-preflight-node')
+      .find((c) => c.getAttribute('data-node') === 'workhorse')!;
+    expect(within(card).getByTestId('mlx-dist-short')).toHaveTextContent(
+      'Short by 3.8 GiB — Make room, or close apps: Google Chrome (6.1 GiB), Slack (1.2 GiB)'
+    );
+    expect(within(card).getByText('Freed 5.6 GiB')).toHaveAttribute('data-tone', 'ok');
+    expect(within(card).getByTestId('mlx-dist-budget-line')).toHaveTextContent(
+      'Budget 35.1 GiB (GPU limit 77.8 · available after compaction 39.0)'
+    );
+    // The MacBook has no compaction and no short line.
+    const macbook = screen
+      .getAllByTestId('mlx-dist-preflight-node')
+      .find((c) => c.getAttribute('data-node') !== 'workhorse')!;
+    expect(within(macbook).queryByTestId('mlx-dist-short')).toBeNull();
+    expect(within(macbook).queryByTestId('mlx-dist-compaction')).toBeNull();
+    await expectDesigned(container);
+  });
+
+  it('Make room asks for that node; the switch saves the node with free memory off', async () => {
+    mockMakeRoom.mockResolvedValue({ compaction: SHORT.compactions![0], status: SHORT });
+    mockConfigUpdate.mockResolvedValue(FLASH_CONFIG);
+    section({ status: SHORT });
+    const card = screen
+      .getAllByTestId('mlx-dist-preflight-node')
+      .find((c) => c.getAttribute('data-node') === 'workhorse')!;
+    await userEvent.click(within(card).getByRole('button', { name: 'Make room' }));
+    await waitFor(() => expect(mockMakeRoom).toHaveBeenCalledWith('workhorse', null));
+    await userEvent.click(
+      within(card).getByRole('switch', { name: 'Free memory automatically · workhorse' })
+    );
+    await waitFor(() => expect(mockConfigUpdate).toHaveBeenCalledTimes(1));
+    const saved = mockConfigUpdate.mock.calls[0][0];
+    const workhorse = saved.nodes.find((n: { name: string }) => n.name === 'workhorse');
+    const macbook = saved.nodes.find((n: { name: string }) => n.name !== 'workhorse');
+    expect(workhorse.freeMemoryAutomatically).toBe(false);
+    expect(macbook.freeMemoryAutomatically).not.toBe(false);
+  });
+
+  it('a refused compaction says why, never a freed figure', () => {
+    section({
+      status: {
+        ...SHORT,
+        compactions: [
+          {
+            node: 'workhorse',
+            atMs: 1,
+            trigger: 'manual',
+            outcome: 'refused',
+            code: 'engineLoaded',
+            message: 'workhorse runs an MLX engine (pid 7: mlx_lm.server)',
+          },
+        ],
+      },
+    });
+    const line = screen.getByTestId('mlx-dist-compaction');
+    expect(line).toHaveAttribute('data-outcome', 'refused');
+    expect(line).toHaveTextContent('Make room did not run');
+    expect(line).toHaveTextContent('workhorse runs an MLX engine (pid 7: mlx_lm.server)');
+    expect(screen.queryByText(/^Freed/)).toBeNull();
   });
 });
 

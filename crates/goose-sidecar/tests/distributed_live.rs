@@ -70,6 +70,8 @@ pub fn recorded_config() -> DistributedConfig {
                         .display()
                         .to_string(),
                 ),
+                // These tests measure the engine, not compaction: nothing pressures the Macs.
+                free_memory_automatically: false,
             },
             NodeConfig {
                 name: "workhorse".to_string(),
@@ -88,6 +90,7 @@ pub fn recorded_config() -> DistributedConfig {
                     "GOOSE_DIST_REMOTE_MODEL",
                     "/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx",
                 ),
+                free_memory_automatically: false,
             },
         ],
     }
@@ -941,4 +944,221 @@ async fn live_watchdog_warn_then_critical_on_real_workhorse_pressure() {
         .output()
         .unwrap();
     assert!(String::from_utf8_lossy(&leftover.stdout).trim().is_empty());
+}
+
+/// Make room over ssh on a peer that holds NO model (`GOOSE_COMPACT_HOST`, default `workhorse`):
+/// Apple's memory_pressure to the kernel's WARN, released at once, sampled until available stopped
+/// rising. Nothing is quit. Afterwards no `memory_pressure` may remain on the peer.
+#[tokio::test]
+#[ignore = "pressures a real Mac to WARN: run only on a peer with no model loaded"]
+async fn live_compaction_over_ssh() {
+    use goose_sidecar::distributed::compaction::{compact_node, CompactionOutcome};
+    let host = env_or("GOOSE_COMPACT_HOST", "workhorse");
+    let started = Instant::now();
+    let outcome = compact_node(&SystemExec, Some(&host), &host).await.unwrap();
+    let CompactionOutcome::Compacted(report) = outcome else {
+        panic!("{host} refused: {outcome:?}");
+    };
+    println!(
+        "{} ({:.1} s)",
+        report.summary(),
+        started.elapsed().as_secs_f64()
+    );
+    println!("{report:#?}");
+    let leftover = std::process::Command::new("/usr/bin/ssh")
+        .args([host.as_str(), "/usr/bin/pgrep -fl /usr/bin/memory_pressure"])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&leftover.stdout).trim().is_empty(),
+        "ballast left behind: {}",
+        String::from_utf8_lossy(&leftover.stdout)
+    );
+}
+
+/// The negative control: a Mac with an MLX engine loaded is refused by name, and nothing is
+/// pressured (`GOOSE_COMPACT_BUSY_HOST` unset = this Mac).
+#[tokio::test]
+#[ignore = "needs an MLX engine running on the target Mac"]
+async fn live_compaction_refuses_beside_a_loaded_engine() {
+    use goose_sidecar::distributed::compaction::{compact_node, CompactionOutcome};
+    let host = std::env::var("GOOSE_COMPACT_BUSY_HOST").ok();
+    let outcome = compact_node(&SystemExec, host.as_deref(), "target")
+        .await
+        .unwrap();
+    let CompactionOutcome::Refused(refusal) = outcome else {
+        panic!("expected a refusal beside a loaded engine: {outcome:?}");
+    };
+    println!("{}: {}", refusal.code, refusal.message);
+    assert_eq!(refusal.code, "engineLoaded");
+}
+
+/// Flash split over both Macs at the GPU-ceiling budget rule, with "Free memory automatically" ON:
+/// the start's preflight compacts a short node and plans again; then a 2k prompt, a long prompt
+/// and two concurrent requests. Sample `kern.memorystatus_vm_pressure_level` on both Macs from
+/// outside (the report reads the supervisor's own watchdog events). Stops verified at the end.
+/// GOOSE_FLASH_LONG_TOKENS (default 24,000) sizes the long prompt.
+#[tokio::test]
+#[ignore = "loads Flash on both Macs: nothing else may run an MLX engine on either"]
+async fn live_flash_at_the_ceiling_rule_after_compaction() {
+    use goose_sidecar::distributed::provision::EnvSpec;
+    let home = dirs::home_dir().unwrap();
+    let mut config = recorded_config();
+    config.model_id = "rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string();
+    config.context = None;
+    for node in &mut config.nodes {
+        node.free_memory_automatically = true;
+    }
+    config.nodes[0].pipeline_python = Some(EnvSpec::pipeline().python(&home.display().to_string()));
+    config.nodes[0].model_dir = home
+        .join(".goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit")
+        .display()
+        .to_string();
+    config.nodes[1].pipeline_python = Some(EnvSpec::pipeline().python("/Users/workhorse"));
+    config.nodes[1].model_dir =
+        "/Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string();
+    let served = unaliased(&config);
+    let manager = DistributedManager::new(Arc::new(SystemExec));
+    let t0 = Instant::now();
+    let stamp = |what: &str| println!("[{:>7.1}s] {what}", t0.elapsed().as_secs_f64());
+    stamp("start (preflight, compaction when short)");
+    let preflight = match manager.start(config.clone(), served.clone()).await.unwrap() {
+        StartOutcome::Started { preflight } => preflight,
+        StartOutcome::Refused {
+            code,
+            message,
+            preflight,
+        } => {
+            for e in &manager.status().events {
+                println!("event {:?} {:?}: {}", e.kind, e.node, e.message);
+            }
+            if let Some(p) = preflight {
+                for n in &p.nodes {
+                    println!(
+                        "{} short {:?} checks {:#?}",
+                        n.name, n.short_bytes, n.checks
+                    );
+                }
+            }
+            panic!("refused {code:?}: {message}");
+        }
+    };
+    let gib = |b: u64| b as f64 / GIB_F;
+    for n in &preflight.nodes {
+        let plan = n.plan.as_ref().unwrap();
+        println!(
+            "{}: layers [{}, {}) planned {:.2} GiB of budget {:.2} (available {:.2}, GPU ceiling {:.2}, iogpu.wired_limit_mb {:?})",
+            n.name,
+            plan.layer_start,
+            plan.layer_end,
+            gib(plan.with_overhead_bytes),
+            gib(plan.budget_bytes),
+            gib(n.available_bytes.unwrap()),
+            gib(n.ceiling_bytes.unwrap()),
+            n.wired_limit_mb
+        );
+    }
+    println!(
+        "context {:?} ({:?})",
+        preflight.context_limit, preflight.context_source
+    );
+    for c in &manager.status().compactions {
+        println!("compaction {c:?}");
+    }
+    loop {
+        let status = manager.status();
+        match status.state {
+            RunState::Ready | RunState::Serving => break,
+            RunState::Failed | RunState::Stopped => {
+                for e in &status.events {
+                    println!("event {:?} {:?}: {}", e.kind, e.node, e.message);
+                }
+                panic!("start failed: {:?}", status.last_error);
+            }
+            _ => tokio::time::sleep(Duration::from_millis(500)).await,
+        }
+    }
+    stamp("ready");
+
+    let http = reqwest::Client::new();
+    let base = config.base_url();
+    let paragraph = "The workhorse is a Mac Studio with an M3 Ultra and 96 GB of unified memory; \
+                     the MacBook is an M4 Max with 128 GB. They are joined by one Thunderbolt 5 \
+                     cable that carries RDMA traffic for the pipeline split. ";
+    let prompt_of = |tokens: usize| paragraph.repeat(tokens * 4 / paragraph.len() + 1);
+    let ask = |prompt: String, max_tokens: u32| {
+        let http = http.clone();
+        let base = base.clone();
+        let served = served.clone();
+        async move {
+            let started = Instant::now();
+            let resp = http
+                .post(format!("{base}/v1/chat/completions"))
+                .header("content-type", "application/json")
+                .body(
+                    serde_json::json!({
+                        "model": served,
+                        "messages": [{"role": "user", "content": format!("{prompt}\n\nSummarize the text above in one sentence.")}],
+                        "max_tokens": max_tokens,
+                        "temperature": 0,
+                        "stream": false,
+                        "chat_template_kwargs": {"enable_thinking": false},
+                    })
+                    .to_string(),
+                )
+                .send()
+                .await
+                .unwrap();
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap();
+            let body: serde_json::Value =
+                serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({ "raw": text }));
+            (status, started.elapsed(), body)
+        }
+    };
+    let report = |label: &str, (status, took, body): (u16, Duration, serde_json::Value)| {
+        println!(
+            "{label}: HTTP {status} in {:.1} s — usage {} — {}",
+            took.as_secs_f64(),
+            body["usage"],
+            body["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or("<no content>")
+                .chars()
+                .take(160)
+                .collect::<String>()
+        );
+        assert_eq!(status, 200, "{body}");
+    };
+    stamp("2k prompt");
+    report("2k", ask(prompt_of(2_000), 128).await);
+    let long: usize = env_or("GOOSE_FLASH_LONG_TOKENS", "24000").parse().unwrap();
+    stamp(&format!("long prompt ({long} tokens)"));
+    report("long", ask(prompt_of(long), 128).await);
+    stamp("2 concurrent 2k prompts");
+    let (a, b) = tokio::join!(ask(prompt_of(2_000), 128), ask(prompt_of(2_100), 128));
+    report("concurrent A", a);
+    report("concurrent B", b);
+    stamp("done serving");
+
+    let status = manager.status();
+    for n in &status.nodes {
+        println!(
+            "{}: peak {:?} GiB, active {:?}, memory_limit {:?}, wired_limit {:?}, available {:?}, pressure {:?}",
+            n.name,
+            n.peak_bytes.map(gib),
+            n.active_bytes.map(gib),
+            n.memory_limit_bytes.map(gib),
+            n.wired_limit_bytes.map(gib),
+            n.available_bytes.map(gib),
+            n.pressure
+        );
+    }
+    for e in &status.events {
+        println!("event {:?} {:?}: {}", e.kind, e.node, e.message);
+    }
+    let stop = manager.stop().await;
+    println!("stop verified {}: {:?}", stop.verified, stop.steps);
+    assert!(stop.verified);
+    stamp("stopped");
 }

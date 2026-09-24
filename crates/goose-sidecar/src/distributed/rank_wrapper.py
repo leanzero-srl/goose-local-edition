@@ -2,9 +2,10 @@
 # rank_env.py (the shared prelude: `spec`, `emit`, the backend env, `mx`, `report_memory`).
 #
 # What it adds around mlx_lm.server, and why:
-# - in-process memory caps as ratios of THIS node's RAM, applied after mlx_lm.server's own
-#   set_wired_limit(max_recommended_working_set_size), so an over-allocation raises in MLX
-#   instead of the kernel wiring past the ceiling (exo panicked a 96 GB M3 Ultra that way);
+# - in-process memory caps at THIS node's GPU ceiling (max_recommended_working_set_size — the
+#   budget preflight planned against is at most that), applied after mlx_lm.server's own
+#   set_wired_limit, so an over-allocation raises in MLX instead of the kernel wiring past the
+#   ceiling (exo panicked a 96 GB M3 Ultra that way);
 # - rank 0's HTTP surface: /v1/models serves ONLY the goose model id (mlx_lm lists the HF cache,
 #   and a request naming any of those would make every rank try to load it), the goose id maps to
 #   each rank's OWN --model path (paths differ per node), /goose/progress exposes the
@@ -44,10 +45,9 @@ lock = threading.Lock()
 def apply_caps():
     info = mx.device_info()
     ram = int(info["memory_size"])
-    memory_limit = int(ram * spec["memory_limit_ratio"])
-    wired_limit = min(
-        int(ram * spec["wired_limit_ratio"]), int(info["max_recommended_working_set_size"])
-    )
+    ceiling = int(info["max_recommended_working_set_size"])
+    memory_limit = ceiling
+    wired_limit = ceiling
     cache_limit = max(0, memory_limit - int(spec["planned_bytes"]))
     mx.set_memory_limit(memory_limit)
     mx.set_wired_limit(wired_limit)

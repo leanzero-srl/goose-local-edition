@@ -25,12 +25,16 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// {plan,serve,run}`, `plan --json` (with `slots`), the OpenAI server rank 0 serves (272cb0643),
 /// a node below its pressure floor refusing with the numbers instead of crashing (9f861d9e1), and
 /// `serve --slots` with KV admission by every rank's planned budget and the slot figures on
-/// `/v1/status` (ea6f8dee1), idle worker ranks parked in a blocking recv instead of spinning a core in the collective (286ed77f7, 2026-09-24).
+/// `/v1/status` (ea6f8dee1), idle worker ranks parked in a blocking recv instead of spinning a core in the collective (286ed77f7, 2026-09-24),
+/// and each node's budget = min(available − RAM × 0.07, its GPU ceiling) with the in-process limits
+/// at that ceiling, `--node NAME:RAM:FREE:CEILING` (11d5a5ac2 on lz/pipeline-memory-ceiling-286 —
+/// 286ed77f7 plus that one commit; the same change is 2ce699589 on lz/pipeline-qwen4, after the
+/// vision work, whose `plan` needs mlx-vlm the managed env does not carry yet).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "286ed77f7554bb2a74c224695116c5557025bbb7";
+pub const PIPELINE_FORK_COMMIT: &str = "11d5a5ac278841aabb75cef21d724038221c5a07";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@286ed77f7554bb2a74c224695116c5557025bbb7";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@11d5a5ac278841aabb75cef21d724038221c5a07";
 
 /// Where every goose-managed env lives, relative to the node's `$HOME`.
 pub const ENVS_DIR: &str = ".goose/distributed";

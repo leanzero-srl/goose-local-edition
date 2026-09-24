@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "Pemutus mula semula terbuka"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "Kosongkan ruang dilangkau"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "Tergantung dikesan"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "Rangkaian setempat disekat"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "Memori dikosongkan"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Proses yatim dituntut semula"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "pekerja"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "Bajet {budget} GiB (had GPU {ceiling} · tersedia {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "Bajet {budget} GiB (had GPU {ceiling} · tersedia selepas pemadatan {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "Kosongkan ruang gagal"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "Kosongkan memori secara automatik"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "{gib} GiB dikosongkan"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "Tiada yang dikosongkan ({gib} GiB kurang)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "Meminta macOS menuntut semula memori: apl terbiar dimampatkan dan cache dibuang. Tiada apa yang ditutup."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "Kosongkan ruang"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "Kosongkan ruang tidak dijalankan"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "Kurang {gib} GiB — kosongkan ruang, atau tutup apl: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "Kurang {gib} GiB — kosongkan ruang, atau tutup apl"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Simpan konfigurasi"

@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "Cầu dao khởi động lại đã ngắt"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "Đã bỏ qua giải phóng bộ nhớ"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "Phát hiện treo"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "Mạng cục bộ bị chặn"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "Đã giải phóng bộ nhớ"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Đã thu hồi tiến trình mồ côi"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "xử lý"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "Ngân sách {budget} GiB (giới hạn GPU {ceiling} · khả dụng {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "Ngân sách {budget} GiB (giới hạn GPU {ceiling} · khả dụng sau khi nén {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "Giải phóng bộ nhớ thất bại"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "Tự động giải phóng bộ nhớ"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "Đã giải phóng {gib} GiB"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "Không giải phóng được gì (ít hơn {gib} GiB)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "Yêu cầu macOS thu hồi bộ nhớ: ứng dụng nhàn rỗi được nén và bộ nhớ đệm bị bỏ. Không có gì bị đóng."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "Giải phóng bộ nhớ"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "Giải phóng bộ nhớ không chạy"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "Thiếu {gib} GiB — giải phóng bộ nhớ, hoặc đóng ứng dụng: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "Thiếu {gib} GiB — giải phóng bộ nhớ, hoặc đóng ứng dụng"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Lưu cấu hình"

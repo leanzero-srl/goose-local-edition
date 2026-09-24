@@ -265,6 +265,25 @@ async fn exec(request: ExecRequest) -> Result<ExecAnswer, HostError> {
         ),
         _ => None,
     };
+    if matches!(op, NodeOp::Compact) {
+        // This Mac's own guard: never pressure a model loaded here — a rank this goosed hosts, or
+        // any MLX engine process (another window's single engine included).
+        if let Some(hosted) = hosting() {
+            return Err(refused(
+                "engineLoaded",
+                format!(
+                    "this Mac serves rank {} of {}'s distributed engine; compaction never runs \
+                     beside a loaded model",
+                    hosted.rank, hosted.requester.name
+                ),
+            ));
+        }
+        let listing = run_here(super::node_op::PROCESS_LIST_SCRIPT).await?;
+        let engines = super::compaction::engines_in(&listing.stdout);
+        if let Some(refusal) = super::compaction::engine_refusal("this Mac", &engines) {
+            return Err(refused(&refusal.code, refusal.message));
+        }
+    }
     let code = match &op {
         NodeOp::Probe { .. } => "interpreterNotManaged",
         NodeOp::Signal { .. } => "notAGooseRank",

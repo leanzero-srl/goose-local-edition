@@ -8014,6 +8014,13 @@
           "type": "boolean",
           "description": "This Mac's switch \"Allow this Mac to serve as a distributed node\" (config key\n`LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`, off by default), as the control route reads it.",
           "default": false
+        },
+        "compactions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedCompactionDto"
+          },
+          "description": "The latest memory compaction per node (automatic or Make room), newest last."
         }
       },
       "required": [
@@ -8422,6 +8429,37 @@
             "null"
           ],
           "description": "e.g. \"mlx 0.32.2 · mlx_lm 0.31.3\"."
+        },
+        "ceilingBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The node's GPU ceiling: Metal's `max_recommended_working_set_size`, read on the node. The\nbudget is min(available − RAM × availableMargin, this). Absent exactly when a `gpuCeiling`\nFAIL says why it could not be read.",
+          "minimum": 0
+        },
+        "wiredLimitMb": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "`sysctl iogpu.wired_limit_mb` on the node (0 = macOS's default wired ceiling).",
+          "minimum": 0
+        },
+        "shortBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "How far this rank's plan exceeds its budget; absent when it fits or has no plan.",
+          "minimum": 0
+        },
+        "topApps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxDistributedAppMemoryDto"
+          },
+          "description": "The node's biggest apps by resident memory (helpers folded into their app; goose left out),\nlargest first — what the owner could close when compaction is off or not enough."
         }
       },
       "required": [
@@ -8500,6 +8538,22 @@
         "fits"
       ],
       "description": "What one rank will hold, in bytes. Tensor split: every layer's shard (`shardIndex` of\n`shardCount`, layers [layerStart, layerEnd) = all). Pipeline split: layers [layerStart, layerEnd).\nTensor split: `withOverheadBytes` = `plannedBytes` × the measured runtime-overhead ratio (1.10),\n`fits` = `withOverheadBytes` ≤ `budgetBytes` = min(available × 0.90, RAM × 0.75). Pipeline split:\nthe fork planner's figures verbatim — `withOverheadBytes` = `plannedBytes` (no multiplier),\n`budgetBytes` = min(available − RAM × 0.21, RAM × 0.75), `fits` is the planner's verdict; the\nstate and workspace bytes are for the preflight's `slots` full-context sequences."
+    },
+    "MlxDistributedAppMemoryDto": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "rssBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "rssBytes"
+      ]
     },
     "MlxDistributedEventDto": {
       "type": "object",
@@ -8656,6 +8710,13 @@
         "modelDir": {
           "type": "string",
           "description": "Absolute path of the model directory ON THIS NODE (paths may differ per node)."
+        },
+        "freeMemoryAutomatically": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "\"Free memory automatically\": when a preflight finds this node short, goose compacts it\n(asks macOS to reclaim memory) and preflights again. Absent reads as ON — the default, so a\nconfig saved before the switch existed keeps it on; goose always sends it explicitly."
         }
       },
       "required": [
@@ -8890,6 +8951,96 @@
       ],
       "description": "The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link."
     },
+    "MlxDistributedCompactionDto": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "atMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "trigger": {
+          "type": "string",
+          "description": "\"automatic\" (a preflight found the node short) | \"manual\" (Make room)."
+        },
+        "outcome": {
+          "type": "string",
+          "description": "\"compacted\" | \"refused\" | \"failed\"."
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Refusals only: \"engineLoaded\" (an MLX engine runs on the node — never pressured) |\n\"notNormal\" (kernel pressure already WARN/CRITICAL)."
+        },
+        "message": {
+          "type": "string",
+          "description": "The one-line account: freed/lost GiB, before → settled, the kernel's WARN point; or the\nrefusal / failure reason."
+        },
+        "totalBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "beforeAvailableBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "peakAvailableBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Available memory when the kernel raised WARN (the ballast was released right then).",
+          "minimum": 0
+        },
+        "settledAvailableBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Available memory once it stopped rising after the release.",
+          "minimum": 0
+        },
+        "gainedBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "settled − before; negative when the node ended with less."
+        },
+        "end": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "How the pressure phase ended: \"warn\" | \"critical\" (released at once) | \"toolExited\"."
+        },
+        "settleSamples": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "node",
+        "atMs",
+        "trigger",
+        "outcome",
+        "message"
+      ],
+      "description": "One node's latest memory compaction (\"Make room\"): goose raised memory pressure to the\nkernel's WARN with Apple's `memory_pressure`, released it at once, and sampled until available\nmemory stopped rising. Nothing is quit; macOS compresses idle apps and apps drop caches."
+    },
     "MlxEngineDistributedPreflightRequest_unstable": {
       "type": "object",
       "properties": {
@@ -9034,6 +9185,49 @@
         "verified"
       ],
       "description": "The verified stop: each step (what was signalled, per pid, and what was observed)."
+    },
+    "MlxEngineDistributedMakeRoomRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string",
+          "description": "The node's configured `name`."
+        },
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedConfigDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent = the saved config."
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "description": "\"Make room\" on one configured node: compact its memory now (refused while the distributed\nengine runs, or beside any MLX engine on that node). Returns after the settle.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedMakeRoom"
+    },
+    "MlxEngineDistributedMakeRoomResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "compaction": {
+          "$ref": "#/$defs/MlxDistributedCompactionDto"
+        },
+        "status": {
+          "$ref": "#/$defs/MlxDistributedStatusDto"
+        }
+      },
+      "required": [
+        "compaction",
+        "status"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/distributedMakeRoom"
     },
     "MlxEngineDistributedPeerCandidatesRequest_unstable": {
       "type": "object",
@@ -12135,6 +12329,15 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEngineDistributedMakeRoomRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/distributedMakeRoom",
+                  "title": "MlxEngineDistributedMakeRoomRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/MlxEngineDistributedPeerCandidatesRequest_unstable"
                     }
                   ],
@@ -13054,6 +13257,14 @@
                         }
                       ],
                       "title": "MlxEngineDistributedStopResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineDistributedMakeRoomResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineDistributedMakeRoomResponse_unstable"
                     },
                     {
                       "allOf": [

@@ -1084,6 +1084,14 @@ impl GooseAcpAgent {
         self.on_mlx_engine_distributed_stop(req).await
     }
 
+    #[custom_method(MlxEngineDistributedMakeRoomRequest)]
+    async fn dispatch_mlx_engine_distributed_make_room(
+        &self,
+        req: MlxEngineDistributedMakeRoomRequest,
+    ) -> Result<MlxEngineDistributedMakeRoomResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_distributed_make_room(req).await
+    }
+
     #[custom_method(MlxEngineDistributedPeerCandidatesRequest)]
     async fn dispatch_mlx_engine_distributed_peer_candidates(
         &self,

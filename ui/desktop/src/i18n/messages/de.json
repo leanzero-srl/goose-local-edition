@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "Neustart-Sicherung ausgelöst"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "Platz schaffen übersprungen"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "Hänger erkannt"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "Lokales Netzwerk blockiert"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "Speicher freigegeben"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Verwaisten Prozess übernommen"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "Worker"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "Budget {budget} GiB (GPU-Grenze {ceiling} · verfügbar {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "Budget {budget} GiB (GPU-Grenze {ceiling} · verfügbar nach Verdichtung {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "Platz schaffen fehlgeschlagen"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "Speicher automatisch freigeben"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "{gib} GiB freigegeben"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "Nichts freigegeben ({gib} GiB weniger)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "Bittet macOS, Speicher zurückzuholen: ruhende Apps werden komprimiert und Caches verworfen. Nichts wird beendet."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "Platz schaffen"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "Platz schaffen lief nicht"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "Es fehlen {gib} GiB — Platz schaffen oder Apps schließen: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "Es fehlen {gib} GiB — Platz schaffen oder Apps schließen"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Konfiguration speichern"

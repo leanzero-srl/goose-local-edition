@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "Disjoncteur de redémarrage ouvert"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "Faire de la place ignoré"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "Blocage détecté"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "Réseau local bloqué"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "Mémoire libérée"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "Orphelin récupéré"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "travailleur"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "Budget {budget} Gio (limite GPU {ceiling} · disponible {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "Budget {budget} Gio (limite GPU {ceiling} · disponible après compaction {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "Faire de la place a échoué"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "Libérer la mémoire automatiquement"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "{gib} Gio libérés"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "Rien de libéré ({gib} Gio de moins)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "Demande à macOS de récupérer de la mémoire : les apps inactives sont compressées et les caches vidés. Rien n’est quitté."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "Faire de la place"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "Faire de la place n’a pas été lancé"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "Il manque {gib} Gio — faites de la place ou fermez des apps : {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "Il manque {gib} Gio — faites de la place ou fermez des apps"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Enregistrer la configuration"

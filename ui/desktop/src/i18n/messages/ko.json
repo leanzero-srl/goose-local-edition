@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "재시작 차단기 작동"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "공간 확보 건너뜀"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "멈춤 감지"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "로컬 네트워크 차단됨"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "메모리 확보됨"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "고아 프로세스 회수"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "워커"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "예산 {budget} GiB (GPU 한도 {ceiling} · 사용 가능 {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "예산 {budget} GiB (GPU 한도 {ceiling} · 압축 후 사용 가능 {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "공간 확보 실패"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "메모리 자동 확보"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "{gib} GiB 확보됨"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "확보된 메모리 없음 ({gib} GiB 감소)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "macOS에 메모리 회수를 요청합니다. 유휴 앱은 압축되고 캐시는 비워집니다. 아무것도 종료되지 않습니다."
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "공간 확보"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "공간 확보가 실행되지 않음"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "{gib} GiB 부족 — 공간을 확보하거나 앱을 닫으세요: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "{gib} GiB 부족 — 공간을 확보하거나 앱을 닫으세요"
   },
   "mlxDistributed.save": {
     "defaultMessage": "구성 저장"

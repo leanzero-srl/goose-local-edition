@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "再起動ブレーカー作動"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "空きを作る処理をスキップ"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "ハングを検出"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "ローカルネットワークがブロックされています"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "メモリを空けました"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "孤立プロセスを回収"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "ワーカー"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "予算 {budget} GiB（GPU 上限 {ceiling}・空き {available}）"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "予算 {budget} GiB（GPU 上限 {ceiling}・圧縮後の空き {available}）"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "空きを作る処理に失敗しました"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "メモリを自動で空ける"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "{gib} GiB 空きました"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "空きは増えませんでした（{gib} GiB 減少）"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "macOS にメモリの回収を依頼します。アイドル中のアプリは圧縮され、キャッシュは破棄されます。終了されるものはありません。"
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "空きを作る"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "空きを作る処理は実行されませんでした"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "{gib} GiB 不足 — 空きを作るか、アプリを閉じてください: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "{gib} GiB 不足 — 空きを作るか、アプリを閉じてください"
   },
   "mlxDistributed.save": {
     "defaultMessage": "構成を保存"

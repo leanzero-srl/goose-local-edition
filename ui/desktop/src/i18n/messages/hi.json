@@ -2825,6 +2825,9 @@
   "mlxDistributed.event.breakerOpen": {
     "defaultMessage": "रीस्टार्ट ब्रेकर खुला"
   },
+  "mlxDistributed.event.compactionSkipped": {
+    "defaultMessage": "जगह बनाना छोड़ा गया"
+  },
   "mlxDistributed.event.hang": {
     "defaultMessage": "अटकना पकड़ा गया"
   },
@@ -2836,6 +2839,9 @@
   },
   "mlxDistributed.event.localNetworkBlocked": {
     "defaultMessage": "स्थानीय नेटवर्क अवरुद्ध"
+  },
+  "mlxDistributed.event.memoryCompacted": {
+    "defaultMessage": "मेमोरी खाली हुई"
   },
   "mlxDistributed.event.orphanReclaimed": {
     "defaultMessage": "अनाथ प्रक्रिया वापस ली गई"
@@ -3163,6 +3169,39 @@
   },
   "mlxDistributed.role.worker": {
     "defaultMessage": "वर्कर"
+  },
+  "mlxDistributed.room.budgetLine": {
+    "defaultMessage": "बजट {budget} GiB (GPU सीमा {ceiling} · उपलब्ध {available})"
+  },
+  "mlxDistributed.room.budgetLineCompacted": {
+    "defaultMessage": "बजट {budget} GiB (GPU सीमा {ceiling} · संघनन के बाद उपलब्ध {available})"
+  },
+  "mlxDistributed.room.failed": {
+    "defaultMessage": "जगह बनाना विफल रहा"
+  },
+  "mlxDistributed.room.freeMemory": {
+    "defaultMessage": "मेमोरी अपने-आप खाली करें"
+  },
+  "mlxDistributed.room.freed": {
+    "defaultMessage": "{gib} GiB खाली हुई"
+  },
+  "mlxDistributed.room.freedNothing": {
+    "defaultMessage": "कुछ खाली नहीं हुआ ({gib} GiB कम)"
+  },
+  "mlxDistributed.room.hint": {
+    "defaultMessage": "macOS से मेमोरी वापस लेने को कहता है: निष्क्रिय ऐप्स संपीड़ित होते हैं और कैश हटाए जाते हैं। कुछ भी बंद नहीं होता।"
+  },
+  "mlxDistributed.room.makeRoom": {
+    "defaultMessage": "जगह बनाएं"
+  },
+  "mlxDistributed.room.refused": {
+    "defaultMessage": "जगह बनाना नहीं चला"
+  },
+  "mlxDistributed.room.shortBy": {
+    "defaultMessage": "{gib} GiB कम — जगह बनाएं, या ऐप्स बंद करें: {apps}"
+  },
+  "mlxDistributed.room.shortByNoApps": {
+    "defaultMessage": "{gib} GiB कम — जगह बनाएं, या ऐप्स बंद करें"
   },
   "mlxDistributed.save": {
     "defaultMessage": "कॉन्फ़िगरेशन सहेजें"

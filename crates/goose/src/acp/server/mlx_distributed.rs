@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::config::ConfigError;
+use goose_sidecar::distributed::compaction::NodeCompaction;
 use goose_sidecar::distributed::provision::{self, EnvSpec};
 use goose_sidecar::distributed::{
     self, supervisor::Liveness, Backend, CheckVerdict, DistributedConfig, DistributedStatus,
@@ -67,6 +68,8 @@ fn config_from_dto(dto: MlxDistributedConfigDto) -> anyhow::Result<DistributedCo
                 python: n.python,
                 pipeline_python: n.pipeline_python,
                 model_dir: n.model_dir,
+                // Absent is the documented default: ON (the DTO's own doc).
+                free_memory_automatically: n.free_memory_automatically.unwrap_or(true),
             })
             .collect(),
     })
@@ -98,6 +101,7 @@ fn config_to_dto(config: DistributedConfig) -> MlxDistributedConfigDto {
                 python: n.python,
                 pipeline_python: n.pipeline_python,
                 model_dir: n.model_dir,
+                free_memory_automatically: Some(n.free_memory_automatically),
             })
             .collect(),
     }
@@ -162,10 +166,57 @@ fn preflight_to_dto(report: PreflightReport) -> MlxDistributedPreflightDto {
                 plan: n.plan.map(plan_to_dto),
                 link_speed: n.link_speed,
                 mlx_version: n.mlx_version,
+                ceiling_bytes: n.ceiling_bytes,
+                wired_limit_mb: n.wired_limit_mb,
+                short_bytes: n.short_bytes,
+                top_apps: n
+                    .top_apps
+                    .into_iter()
+                    .map(|a| MlxDistributedAppMemoryDto {
+                        name: a.name,
+                        rss_bytes: a.rss_bytes,
+                    })
+                    .collect(),
             })
             .collect(),
         repairs: report.repairs,
     }
+}
+
+fn compaction_to_dto(record: NodeCompaction) -> MlxDistributedCompactionDto {
+    let mut dto = MlxDistributedCompactionDto {
+        node: record.node,
+        at_ms: record.at_ms,
+        trigger: record.trigger,
+        ..Default::default()
+    };
+    match (record.report, record.refusal, record.error) {
+        (Some(report), _, _) => {
+            dto.outcome = "compacted".to_string();
+            dto.message = report.summary();
+            dto.total_bytes = Some(report.total_bytes);
+            dto.before_available_bytes = Some(report.before_available_bytes);
+            dto.peak_available_bytes = Some(report.peak_available_bytes);
+            dto.settled_available_bytes = Some(report.settled_available_bytes);
+            dto.gained_bytes = Some(report.gained_bytes);
+            dto.end = Some(report.end.as_str().to_string());
+            dto.settle_samples = Some(report.settle_samples as u32);
+        }
+        (None, Some(refusal), _) => {
+            dto.outcome = "refused".to_string();
+            dto.code = Some(refusal.code);
+            dto.message = refusal.message;
+        }
+        (None, None, Some(error)) => {
+            dto.outcome = "failed".to_string();
+            dto.message = error;
+        }
+        (None, None, None) => {
+            dto.outcome = "failed".to_string();
+            dto.message = "the compaction recorded no outcome".to_string();
+        }
+    }
+    dto
 }
 
 fn liveness_to_dto(liveness: Liveness) -> MlxDistributedLivenessDto {
@@ -250,6 +301,11 @@ fn status_to_dto(
         owner: None,
         hosting: None,
         allow_distributed_node: false,
+        compactions: status
+            .compactions
+            .into_iter()
+            .map(compaction_to_dto)
+            .collect(),
     }
 }
 
@@ -693,6 +749,29 @@ impl GooseAcpAgent {
         })
     }
 
+    pub(super) async fn on_mlx_engine_distributed_make_room(
+        &self,
+        req: MlxEngineDistributedMakeRoomRequest,
+    ) -> Result<MlxEngineDistributedMakeRoomResponse, agent_client_protocol::Error> {
+        link::ensure_link_transport();
+        // Another window's run owns this Mac's ranks: its loaded models are never pressured.
+        if let OwnerRecord::Other(engine) = owner_record::read() {
+            return Err(agent_client_protocol::Error::invalid_params().data(format!(
+                "{OWNED_BY_ANOTHER_WINDOW}: {}; a node holding a loaded model is never compacted",
+                owned_elsewhere(&engine)
+            )));
+        }
+        let config = resolve_config(req.config)?;
+        let record = distributed::global_manager()
+            .make_room(&config, &req.node)
+            .await
+            .invalid_params_err()?;
+        Ok(MlxEngineDistributedMakeRoomResponse {
+            compaction: compaction_to_dto(record),
+            status: status_response().await?.status,
+        })
+    }
+
     pub(super) async fn on_mlx_engine_distributed_peer_candidates(
         &self,
         _req: MlxEngineDistributedPeerCandidatesRequest,
@@ -877,6 +956,7 @@ mod tests {
                     python: "/v/bin/python".to_string(),
                     pipeline_python: None,
                     model_dir: "/m/a".to_string(),
+                    free_memory_automatically: Some(true),
                 },
                 MlxDistributedNodeConfigDto {
                     name: "workhorse".to_string(),
@@ -889,6 +969,7 @@ mod tests {
                     python: "/v/bin/python".to_string(),
                     pipeline_python: Some("/f/bin/python".to_string()),
                     model_dir: "/m/b".to_string(),
+                    free_memory_automatically: Some(false),
                 },
             ],
         }
@@ -903,6 +984,11 @@ mod tests {
         assert_eq!(wire["coordinatorPort"], 32323);
         assert_eq!(wire["nodes"][1]["tbService"], "EXO Thunderbolt 2");
         assert_eq!(wire["nodes"][1]["pipelinePython"], "/f/bin/python");
+        assert_eq!(wire["nodes"][1]["freeMemoryAutomatically"], false);
+        // A node saved before the switch existed reads as ON.
+        let mut legacy = dto();
+        legacy.nodes[0].free_memory_automatically = None;
+        assert!(config_from_dto(legacy).unwrap().nodes[0].free_memory_automatically);
         assert!(
             wire["nodes"][0].get("ssh").is_none(),
             "absent ssh = this Mac"

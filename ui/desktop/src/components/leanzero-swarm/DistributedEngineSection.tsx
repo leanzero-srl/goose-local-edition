@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Loader2,
+  MemoryStick,
   Network,
   Pencil,
   Play,
@@ -45,10 +46,12 @@ import {
 import {
   foreignOwner,
   mlxDistributedConfigUpdate,
+  mlxDistributedMakeRoom,
   mlxDistributedPreflight,
   mlxDistributedStart,
   mlxDistributedStop,
   type MlxDistributedCheck,
+  type MlxDistributedCompaction,
   type MlxDistributedConfig,
   type MlxDistributedEvent,
   type MlxDistributedNodeConfig,
@@ -65,9 +68,11 @@ import { mlxEngineUnmount, type MlxEngineStatus, type MlxLocalModel } from '../.
 import {
   backendName,
   cleanConfig,
+  compactionFor,
   emptyNode,
   eventKeys,
   eventTone,
+  freeMemoryOn,
   gb1,
   gib,
   isAlarmOrNotice,
@@ -82,6 +87,7 @@ import {
   runStateTone,
   sameConfig,
   verdictTone,
+  withFreeMemory,
   withModel,
   type LayerSpan,
   type MissingField,
@@ -424,6 +430,45 @@ const i18n = defineMessages({
   eventsNone: { id: 'mlxDistributed.eventsNone', defaultMessage: 'No events yet.' },
 });
 
+const ROOM = defineMessages({
+  budgetLine: {
+    id: 'mlxDistributed.room.budgetLine',
+    defaultMessage: 'Budget {budget} GiB (GPU limit {ceiling} · available {available})',
+  },
+  budgetLineCompacted: {
+    id: 'mlxDistributed.room.budgetLineCompacted',
+    defaultMessage:
+      'Budget {budget} GiB (GPU limit {ceiling} · available after compaction {available})',
+  },
+  freeMemory: { id: 'mlxDistributed.room.freeMemory', defaultMessage: 'Free memory automatically' },
+  makeRoom: { id: 'mlxDistributed.room.makeRoom', defaultMessage: 'Make room' },
+  hint: {
+    id: 'mlxDistributed.room.hint',
+    defaultMessage:
+      'Asks macOS to reclaim memory: idle apps are compressed and caches dropped. Nothing is quit.',
+  },
+  freed: { id: 'mlxDistributed.room.freed', defaultMessage: 'Freed {gib} GiB' },
+  freedNothing: {
+    id: 'mlxDistributed.room.freedNothing',
+    defaultMessage: 'Nothing freed ({gib} GiB less)',
+  },
+  refused: { id: 'mlxDistributed.room.refused', defaultMessage: 'Make room did not run' },
+  failed: { id: 'mlxDistributed.room.failed', defaultMessage: 'Make room failed' },
+  shortBy: {
+    id: 'mlxDistributed.room.shortBy',
+    defaultMessage: 'Short by {gib} GiB — Make room, or close apps: {apps}',
+  },
+  shortByNoApps: {
+    id: 'mlxDistributed.room.shortByNoApps',
+    defaultMessage: 'Short by {gib} GiB — Make room, or close apps',
+  },
+  memoryCompacted: { id: 'mlxDistributed.event.memoryCompacted', defaultMessage: 'Memory freed' },
+  compactionSkipped: {
+    id: 'mlxDistributed.event.compactionSkipped',
+    defaultMessage: 'Make room skipped',
+  },
+});
+
 const EVENT_WORDS = defineMessages({
   preflight: { id: 'mlxDistributed.event.preflight', defaultMessage: 'Preflight' },
   linkRepaired: { id: 'mlxDistributed.event.linkRepaired', defaultMessage: 'Link repaired' },
@@ -466,6 +511,8 @@ const EVENT_WORDS = defineMessages({
     id: 'mlxDistributed.event.localNetworkBlocked',
     defaultMessage: 'Local network blocked',
   },
+  memoryCompacted: ROOM.memoryCompacted,
+  compactionSkipped: ROOM.compactionSkipped,
 });
 
 const FIELD_LABEL: Record<MissingField['field'], MessageDescriptor> = {
@@ -626,7 +673,132 @@ function PlanBlock({ node }: { node: MlxDistributedNodePreflight }) {
   );
 }
 
-function PreflightNodeCard({ node }: { node: MlxDistributedNodePreflight }) {
+/** What a node card needs to show and drive "Make room" (absent in read-only renders). */
+interface RoomControls {
+  freeMemory: (node: string) => boolean | null;
+  compaction: (node: string) => MlxDistributedCompaction | null;
+  onToggleFree: (node: string, on: boolean) => void;
+  onMakeRoom: (node: string) => void;
+  making: string | null;
+  locked: boolean;
+}
+
+function CompactionLine({ compaction }: { compaction: MlxDistributedCompaction }) {
+  const intl = useIntl();
+  if (compaction.outcome === 'compacted' && compaction.gainedBytes != null) {
+    const gained = compaction.gainedBytes;
+    return (
+      <div
+        data-testid="mlx-dist-compaction"
+        data-outcome="compacted"
+        className="flex flex-col gap-1"
+      >
+        <Chip tone={gained > 0 ? 'ok' : 'warn'}>
+          {gained >= 0
+            ? intl.formatMessage(ROOM.freed, { gib: gb1(gib(gained)) })
+            : intl.formatMessage(ROOM.freedNothing, { gib: gb1(gib(-gained)) })}
+        </Chip>
+        <span className={cx('break-words', META)}>{compaction.message}</span>
+      </div>
+    );
+  }
+  return (
+    <div
+      data-testid="mlx-dist-compaction"
+      data-outcome={compaction.outcome}
+      className="flex flex-col gap-1"
+    >
+      <Chip tone={compaction.outcome === 'refused' ? 'warn' : 'err'}>
+        {intl.formatMessage(compaction.outcome === 'refused' ? ROOM.refused : ROOM.failed)}
+      </Chip>
+      <span className={cx('break-words', TYPE.body)}>{compaction.message}</span>
+    </div>
+  );
+}
+
+function RoomBlock({ node, room }: { node: MlxDistributedNodePreflight; room: RoomControls }) {
+  const intl = useIntl();
+  const free = room.freeMemory(node.name);
+  const compaction = room.compaction(node.name);
+  const making = room.making === node.name;
+  const apps = (node.topApps ?? []).map((a) => `${a.name} (${gb1(gib(a.rssBytes))} GiB)`);
+  return (
+    <div data-testid="mlx-dist-room" className="flex flex-col gap-2">
+      {node.shortBytes != null && (
+        <p
+          data-testid="mlx-dist-short"
+          className={cx('break-words', TYPE.body, WEIGHT.semibold, TONE_TEXT.err)}
+        >
+          {apps.length > 0
+            ? intl.formatMessage(ROOM.shortBy, {
+                gib: gb1(gib(node.shortBytes)),
+                apps: apps.join(', '),
+              })
+            : intl.formatMessage(ROOM.shortByNoApps, { gib: gb1(gib(node.shortBytes)) })}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-3">
+        {free != null && (
+          <span className="flex items-center gap-2">
+            <StudioSwitch
+              checked={free}
+              onChange={(on) => room.onToggleFree(node.name, on)}
+              aria-label={`${intl.formatMessage(ROOM.freeMemory)} · ${node.name}`}
+              disabled={room.locked}
+            />
+            <span className={TYPE.meta}>{intl.formatMessage(ROOM.freeMemory)}</span>
+          </span>
+        )}
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={making ? <Loader2 className="animate-spin" /> : <MemoryStick />}
+          onClick={() => room.onMakeRoom(node.name)}
+          disabled={room.locked || room.making != null}
+        >
+          {intl.formatMessage(ROOM.makeRoom)}
+        </Button>
+      </div>
+      <span className={META}>{intl.formatMessage(ROOM.hint)}</span>
+      {compaction && <CompactionLine compaction={compaction} />}
+    </div>
+  );
+}
+
+/** "Budget X GiB (GPU limit Y · available Z)" — the figures the node's budget was built from. */
+function BudgetLine({
+  node,
+  compaction,
+  ranAtMs,
+}: {
+  node: MlxDistributedNodePreflight;
+  compaction: MlxDistributedCompaction | null;
+  ranAtMs: number;
+}) {
+  const intl = useIntl();
+  if (!node.plan || node.availableBytes == null) return null;
+  const compacted =
+    compaction?.outcome === 'compacted' && compaction.atMs <= ranAtMs ? compaction : null;
+  return (
+    <span data-testid="mlx-dist-budget-line" className={cx(TYPE.body, TNUM)}>
+      {intl.formatMessage(compacted ? ROOM.budgetLineCompacted : ROOM.budgetLine, {
+        budget: gb1(gib(node.plan.budgetBytes)),
+        ceiling: node.ceilingBytes != null ? gb1(gib(node.ceilingBytes)) : '—',
+        available: gb1(gib(node.availableBytes)),
+      })}
+    </span>
+  );
+}
+
+function PreflightNodeCard({
+  node,
+  ranAtMs,
+  room,
+}: {
+  node: MlxDistributedNodePreflight;
+  ranAtMs: number;
+  room?: RoomControls;
+}) {
   const intl = useIntl();
   const tone = pressureTone(node.pressure);
   return (
@@ -654,6 +826,8 @@ function PreflightNodeCard({ node }: { node: MlxDistributedNodePreflight }) {
         {node.mlxVersion && <span>{node.mlxVersion}</span>}
       </div>
       <PlanBlock node={node} />
+      <BudgetLine node={node} compaction={room?.compaction(node.name) ?? null} ranAtMs={ranAtMs} />
+      {room && <RoomBlock node={node} room={room} />}
       {node.checks.length > 0 && (
         <ul className="flex flex-col gap-1.5">
           {node.checks.map((c) => (
@@ -665,7 +839,13 @@ function PreflightNodeCard({ node }: { node: MlxDistributedNodePreflight }) {
   );
 }
 
-function PreflightReportView({ report }: { report: MlxDistributedPreflight }) {
+function PreflightReportView({
+  report,
+  room,
+}: {
+  report: MlxDistributedPreflight;
+  room?: RoomControls;
+}) {
   const intl = useIntl();
   const failing = [
     ...report.checks.filter((c) => c.verdict === 'fail').map((c) => ({ c, node: undefined })),
@@ -722,7 +902,12 @@ function PreflightReportView({ report }: { report: MlxDistributedPreflight }) {
       )}
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
         {report.nodes.map((n) => (
-          <PreflightNodeCard key={`${n.rank}|${n.name}`} node={n} />
+          <PreflightNodeCard
+            key={`${n.rank}|${n.name}`}
+            node={n}
+            ranAtMs={report.ranAtMs}
+            room={room}
+          />
         ))}
       </div>
       {report.checks.length > 0 && (
@@ -1496,7 +1681,7 @@ export interface DistributedEngineSectionProps {
   onSingleChanged: () => void;
 }
 
-type Busy = 'preflight' | 'start' | 'stop' | 'save' | 'unmount' | null;
+type Busy = 'preflight' | 'start' | 'stop' | 'save' | 'unmount' | 'room' | null;
 
 interface ActionError {
   label: MessageDescriptor;
@@ -1528,6 +1713,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const [confirmStop, setConfirmStop] = useState(false);
   const [stopReport, setStopReport] = useState<MlxDistributedStopResponse['stop'] | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [makingRoom, setMakingRoom] = useState<string | null>(null);
 
   const owning = ownsTheMac(status);
   const otherWindow = foreignOwner(status);
@@ -1635,6 +1821,42 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
       const response = await mlxDistributedStop();
       setStopReport(response.stop);
     });
+  };
+
+  const onMakeRoom = (node: string) => {
+    setMakingRoom(node);
+    void run('room', ROOM.failed, async () => {
+      try {
+        await mlxDistributedMakeRoom(node, payload);
+      } finally {
+        setMakingRoom(null);
+      }
+    });
+  };
+
+  /** The switch edits the draft when one is open; otherwise it is saved at once. */
+  const onToggleFree = (node: string, on: boolean) => {
+    if (!config) return;
+    const next = withFreeMemory(config, node, on);
+    if (dirty) {
+      setDraft(next);
+      return;
+    }
+    void run('save', i18n.saveError, async () => {
+      await mlxDistributedConfigUpdate(cleanConfig(next));
+    });
+  };
+
+  const room: RoomControls = {
+    freeMemory: (node) => {
+      const configured = config?.nodes.find((n) => n.name === node);
+      return configured ? freeMemoryOn(configured) : null;
+    },
+    compaction: (node) => compactionFor(status, node),
+    onToggleFree,
+    onMakeRoom,
+    making: makingRoom,
+    locked: busy != null || owning || otherWindow != null || config == null,
   };
 
   const onSave = () =>
@@ -1857,7 +2079,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
         <div className="flex flex-col gap-2">
           <span className={TYPE.zone}>{intl.formatMessage(i18n.preflightTitle)}</span>
           {preflight ? (
-            <PreflightReportView report={preflight} />
+            <PreflightReportView report={preflight} room={room} />
           ) : (
             <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.preflightNone)}</p>
           )}
