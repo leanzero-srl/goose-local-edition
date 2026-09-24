@@ -38,8 +38,8 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
 - oMLX default is thinking ON — if it is ever re-benched, disable via `chat_template_kwargs {enable_thinking:false}` first or the numbers are 2x-wall unfair.
 
 ## Where everything lives (built 2026-08-31)
-- `crates/goose-sidecar` — supervisor (spawn/health/restart+breaker/per-pid kill), Rust MemoryGate
-  (parity with gates.py G1), `hf.rs` (MLX HF search `filter=mlx`, snapshot downloads with
+- `crates/goose-sidecar` — supervisor (spawn/health/restart+breaker/per-pid kill), `fit.rs` (THE fit rule —
+  MemoryGate is deleted; gates.py G1 still carries the retired 8 GiB/10% floor), `hf.rs` (MLX HF search `filter=mlx`, snapshot downloads with
   .part/resume/cancel), `engine.rs` (MlxEngineManager: stopped/mounting/running/failed,
   restart_required = argv diff). Global manager consumed by the ACP layer.
 - ACP: 11 methods `_goose/unstable/mlxEngine/*` (crates/goose/src/acp/server/mlx_engine.rs,
@@ -154,7 +154,11 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   range up to 0.51 (published MoE share); rapid-mlx batch gain ×1.785 at 8 (experiments.jsonl). The SINGLE engine's
   Rapid-MLX/MTP gain over the mlx_lm formula is recalibrated PER MODEL from goose's own measurements
   (`single_engine_factor`). Estimates are labelled with a range; any measured (model, placement, backend, bucket) wins.
-- RULE: fit = `plan::budget_bytes` (min(avail − RAM × distributed::AVAILABLE_MARGIN_RATIO, ceiling) — 9.3% since 20ef879e6) + the single mount gate verbatim on this Mac; tensor via
+- RULE: fit = `fit::judge(need, NodeMemoryFacts)` — budget min(avail − RAM × AVAILABLE_MARGIN_RATIO 9.3%, Metal ceiling),
+  warn inside DERIVED_CONTEXT_MARGIN_RATIO 2% of RAM. ONE function for the mount gate, the planner's single fit
+  (`planner::single_engine_need`: weights + KV at the chat benchmark's 2,304 tokens), plan::budget_bytes (tensor), the
+  preflight and the desktop (`mlxEngine/status {fitModelId}` → `mountFit`; mountCost's TS copy is deleted). A mounted model's
+  footprint counts as available to the gate, as the planner counts it (9c170176f). Tensor via
   plan.rs arithmetic (JACCL only, even divisor), pipeline via the fork's `plan --json` (`run_fork_planner`, fixed-point
   walk) or a labelled aggregate estimate; goal pick with tie (overlapping ranges) → fewer Macs; `best` vs `bestAvailable`.
 - STORE: `<data dir>/mlx-speed-measurements.jsonl` (`Paths::in_data_dir`), one record per benchmark workload / chat turn;
@@ -207,6 +211,30 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   and the tray menu opening. The tray section is a pure model (`utils/mlxTray.ts`); Mount/Unmount run in a window's
   renderer (`hooks/useMlxTrayActions.ts`) because main has no ACP client.
 - Tile colours while RUNNING: slate idle / accent reading / ok writing / slate when activity is unknown.
+
+## Mount refusal, load progress, reading vs writing (2026-09-24 — 9c170176f, df7bdfff1, d8767618b)
+- A gate Block is `engine::MountRefused` (still Err for Rust callers); ACP `mlxEngine/mount` answers
+  `{refusal: {fit, alternative, badge, alternativeError}}` — NOT an RPC error (the old error + status.gateMessage
+  was the owner's two banners). alternative = `planner::alternative_to_this_mac` (Flash on the M4 Max → the pipeline).
+  Remote single reads a peer's refusal as `peerMountFailed`.
+- Badge `needsBothMacs{needs}`: with NO distributed setup on this Mac, placementPlan measures the Link peers; a peer
+  whose distributed-node switch is off answers no Discover → its memory + `gpuCeilingBytes` come from its
+  mlxEngine/status over the mesh and the split carries `split_refusal` ("allow this Mac to serve …"). The workhorse's
+  3.0.25 "Too big" was the planner seeing no peer at all (peers came only from the saved setup).
+- Single load: `status.load {phase makingRoom|starting|loading|warming, residentBytes, weightsBytes}` — RSS of the
+  largest process in the engine tree (StartupWatch); MEASURED warm 27B: loading 0.30 → 30.05 GiB of 30.5, 13.8 s to
+  running. Phase words are Rapid-MLX's stderr ("Loading model/MLLM", "Warming up") — stdout is discarded by the sidecar.
+- Rank load: node `loadPhase` (loading until RANK_CAPS, warming until READY) + `plannedWeightsGb`; activeMemoryGb is
+  the numerator (MLX active; mx.eval releases the GIL — measured 21.9 of 31.0 GB mid-eval). The tensor wrapper's
+  RANK_MEM reporter now starts before the load. Peer: `hosting.{phase, loadedBytes, plannedWeightBytes}` on BOTH
+  distributedStatus and mlxEngine/status; its `state` said "serving" at group join (before any weight) — fixed.
+  Layers-loaded is NOT measurable (the fork evals a stage in one mx.eval).
+- Rank 0 `/v1/status` = Rapid-MLX shape + `prefilled_tokens`, `prompt_tokens_per_second` (rank_live.py builds it;
+  rank_wrapper.py wraps ResponseGenerator.generate; pipeline_rank.py extends the fork's _Job/run_batch/_step/_build_app —
+  no fork change). TRAP: mlx_lm's first prompt-progress report comes after its first chunks (30 s on a 15k prompt) —
+  prefill is stamped when the context comes back. TRAP: the fork's _Job dataclass has no __post_init__, so a subclass's
+  __post_init__ never runs (500 on /v1/status) — extend __init__. HARNESS: 2 local ring ranks (ring_hosts 127.0.0.1:55xx,
+  distinct ports) for the 27B tensor; the Flash pipeline via a test-only `load_stage(layer_limit=4)` shim.
 
 ## Available memory on macOS (2026-09-23 — the measure under the mount gate and the page)
 - `memory::measure()` on macOS = `host_statistics64(HOST_VM_INFO64)`: (free_count − speculative_count) +
