@@ -24,6 +24,7 @@ use std::sync::Mutex as StdMutex;
 use super::mlx_distributed_discover as discover;
 use super::mlx_distributed_link as link;
 use crate::providers::mlx_distributed_owner::{self as owner_record, OwnerRecord, PublishedEngine};
+use crate::providers::mlx_serving_intent::{IntentKind, ServingIntent};
 use goose_sidecar::distributed::link_control;
 
 const MLX_DISTRIBUTED_CONFIG_KEY: &str = "mlx_distributed";
@@ -709,6 +710,9 @@ impl GooseAcpAgent {
             if let Err(e) = owner_record::publish(&published) {
                 warn!(error = %e, "publishing the distributed engine's owner record failed; other windows will not find it");
             }
+            super::mlx_engine::remember_serving(ServingIntent::Split {
+                model_id: published.model_id.clone(),
+            });
         }
         super::mlx_engine::align_omlx_host_env();
         Ok(match outcome {
@@ -753,6 +757,7 @@ impl GooseAcpAgent {
         }
         let report = manager.stop().await;
         withdraw_owner_record();
+        super::mlx_engine::forget_serving(IntentKind::Split);
         super::mlx_engine::align_omlx_host_env();
         Ok(MlxEngineDistributedStopResponse {
             stop: stop_to_dto(report),

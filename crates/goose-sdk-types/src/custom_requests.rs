@@ -4238,9 +4238,18 @@ pub struct MlxRemoteSingleStatusDto {
     /// The peer as the caller named it (a Link `nodeId`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer: Option<String>,
-    /// The peer's hostname as the mesh reports it — what "Serving from <peer>" shows.
+    /// The peer's hostname as the mesh reports it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_hostname: Option<String>,
+    /// The name the peer's owner gave it (macOS ComputerName) as the Link roster reported it when
+    /// the route started — what "Serving from <peer>" shows, the hostname when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_computer_name: Option<String>,
+    /// This Mac's loopback relay to the peer's engine: `GET <baseUrl>/v1/status` is the peer
+    /// engine's own live status, read exactly like a local engine's. Carries the relay's
+    /// capability — never logged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
     /// The HF directory id mounted on the peer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
@@ -4327,6 +4336,41 @@ pub struct MlxEngineRemoteSingleStatusRequest {}
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineRemoteSingleStatusResponse {
     pub status: MlxRemoteSingleStatusDto,
+}
+
+/// What the owner last started serving MLX chat from on this Mac and did not stop — the thing a
+/// relaunch brings back. `kind`: `single` (this Mac's engine) · `remoteSingle` (the single engine
+/// on Link peer `peer`, whom the owner calls `peerName`) · `split` (the saved distributed config).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxServingIntentDto {
+    pub kind: String,
+    pub model_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_name: Option<String>,
+}
+
+/// Read the serving intent. Written by the owner's own starts (Mount, remote single start, split
+/// start), removed by the matching explicit stop; an app quit or a goosed exit never touches it.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/servingIntent",
+    response = MlxEngineServingIntentResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineServingIntentRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineServingIntentResponse {
+    /// Absent = nothing to bring back (never started, or the owner stopped it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<MlxServingIntentDto>,
+    /// The record exists and could not be read — named, never read as "nothing to restore".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 // ============================================================================

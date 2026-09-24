@@ -1108,6 +1108,14 @@ impl GooseAcpAgent {
         self.on_mlx_engine_remote_single_status(req).await
     }
 
+    #[custom_method(MlxEngineServingIntentRequest)]
+    async fn dispatch_mlx_engine_serving_intent(
+        &self,
+        req: MlxEngineServingIntentRequest,
+    ) -> Result<MlxEngineServingIntentResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_serving_intent(req).await
+    }
+
     #[custom_method(MlxEngineDistributedMakeRoomRequest)]
     async fn dispatch_mlx_engine_distributed_make_room(
         &self,
