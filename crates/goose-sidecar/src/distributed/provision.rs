@@ -21,9 +21,13 @@ pub const MLX_VERSION: &str = "0.32.2";
 pub const MLX_LM_VERSION: &str = "0.31.3";
 /// measured: the interpreter both jaccl-smoke venvs were built with (`uv venv --python 3.12`).
 pub const PYTHON_VERSION: &str = "3.12";
-/// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` (the qwen4_exp split).
+/// The fork commit the qwen4_exp split runs (branch lz/pipeline-qwen4): `pipeline_qwen4
+/// {plan,serve,run}`, `plan --json`, and the OpenAI server rank-0 serves (272cb0643, 2026-09-24).
+/// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
+pub const PIPELINE_FORK_COMMIT: &str = "272cb06433abe80c9b01c5709ce550cc86671862";
+/// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@lz/pipeline-qwen4";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@272cb06433abe80c9b01c5709ce550cc86671862";
 
 /// Where every goose-managed env lives, relative to the node's `$HOME`.
 pub const ENVS_DIR: &str = ".goose/distributed";
@@ -56,7 +60,10 @@ impl EnvSpec {
         }
     }
 
-    /// The fork for the qwen4_exp pipeline runner, on the same mlx pair.
+    /// The fork for the qwen4_exp pipeline runner, on the same mlx pair. The proof prints the
+    /// installed fork commit (PEP 610 `direct_url.json`, which uv writes for a git install —
+    /// measured 2026-09-24), so an env built from an earlier pin fails the proof and the next
+    /// provisioning reinstalls it in place instead of leaving a stale server behind.
     pub fn pipeline() -> Self {
         Self {
             name: format!("rapid-mlx-pipeline-qwen4-py{PYTHON_VERSION}"),
@@ -65,10 +72,12 @@ impl EnvSpec {
                 format!("mlx=={MLX_VERSION}"),
                 format!("mlx-lm=={MLX_LM_VERSION}"),
             ],
-            check: "import mlx.core as mx, mlx_lm, rapid_mlx.distributed.pipeline_qwen4; \
-                    print(mx.__version__, mlx_lm.__version__)"
+            check: "import json, importlib.metadata as md, mlx.core as mx, mlx_lm, \
+                    rapid_mlx.distributed.pipeline_qwen4, rapid_mlx.distributed.pipeline_qwen4_serve; \
+                    print(mx.__version__, mlx_lm.__version__, json.loads(md.distribution(\"rapid-mlx\")\
+                    .read_text(\"direct_url.json\") or \"{}\").get(\"vcs_info\", {}).get(\"commit_id\"))"
                 .to_string(),
-            expect: format!("{MLX_VERSION} {MLX_LM_VERSION}"),
+            expect: format!("{MLX_VERSION} {MLX_LM_VERSION} {PIPELINE_FORK_COMMIT}"),
         }
     }
 
@@ -261,7 +270,80 @@ mod tests {
             EnvSpec::managed_by("/tmp/jaccl-smoke/.venv/bin/python"),
             None
         );
-        assert!(EnvSpec::pipeline().packages[0].ends_with("@lz/pipeline-qwen4"));
+    }
+
+    #[test]
+    fn the_pipeline_env_pins_the_fork_by_commit_and_proves_it() {
+        let spec = EnvSpec::pipeline();
+        assert!(PIPELINE_FORK.ends_with(&format!("@{PIPELINE_FORK_COMMIT}")));
+        assert_eq!(spec.packages[0], PIPELINE_FORK);
+        assert_eq!(
+            spec.expect,
+            format!("0.32.2 0.31.3 {PIPELINE_FORK_COMMIT}"),
+            "an env on another fork commit fails the proof and is reinstalled"
+        );
+        assert!(spec
+            .check
+            .contains("rapid_mlx.distributed.pipeline_qwen4_serve"));
+        assert!(
+            !spec.check.contains('\''),
+            "the check rides sh_quote unescaped"
+        );
+    }
+
+    /// The proof's Python, run for real against a stand-in `rapid-mlx` dist whose
+    /// `direct_url.json` names a commit: it prints exactly the pinned expectation, and an env
+    /// installed from another commit prints something else.
+    #[tokio::test]
+    async fn the_pipeline_proof_reads_the_installed_commit() {
+        let root = tempfile::tempdir().unwrap();
+        let site = root.path();
+        for module in ["mlx", "mlx_lm", "rapid_mlx", "rapid_mlx/distributed"] {
+            std::fs::create_dir_all(site.join(module)).unwrap();
+        }
+        std::fs::write(site.join("mlx/__init__.py"), "").unwrap();
+        std::fs::write(site.join("mlx/core.py"), "__version__ = '0.32.2'\n").unwrap();
+        std::fs::write(site.join("mlx_lm/__init__.py"), "__version__ = '0.31.3'\n").unwrap();
+        std::fs::write(site.join("rapid_mlx/__init__.py"), "").unwrap();
+        std::fs::write(site.join("rapid_mlx/distributed/__init__.py"), "").unwrap();
+        std::fs::write(site.join("rapid_mlx/distributed/pipeline_qwen4.py"), "").unwrap();
+        std::fs::write(
+            site.join("rapid_mlx/distributed/pipeline_qwen4_serve.py"),
+            "",
+        )
+        .unwrap();
+        let dist = site.join("rapid_mlx-0.14.3.dist-info");
+        std::fs::create_dir_all(&dist).unwrap();
+        std::fs::write(
+            dist.join("METADATA"),
+            "Metadata-Version: 2.1\nName: rapid-mlx\nVersion: 0.14.3\n",
+        )
+        .unwrap();
+        let run = |commit: &str| {
+            std::fs::write(
+                dist.join("direct_url.json"),
+                format!(
+                    r#"{{"url":"https://github.com/leanzero-srl/Rapid-MLX","vcs_info":{{"vcs":"git","commit_id":"{commit}"}}}}"#
+                ),
+            )
+            .unwrap();
+            let out = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!(
+                    "/usr/bin/python3 -c {}",
+                    sh_quote(&EnvSpec::pipeline().check)
+                ))
+                .env("PYTHONPATH", site)
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+                + &String::from_utf8_lossy(&out.stderr)
+        };
+        assert_eq!(run(PIPELINE_FORK_COMMIT), EnvSpec::pipeline().expect);
+        assert_ne!(
+            run("e7d49b355fe2692d54b04332c19fc541e5e120fd"),
+            EnvSpec::pipeline().expect
+        );
     }
 
     #[test]

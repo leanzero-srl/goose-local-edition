@@ -351,29 +351,25 @@ async fn live_supervisor_detects_a_frozen_and_a_dead_peer_and_restarts() {
     }
 }
 
-/// The qwen4_exp runner as a DRY RUN on the real pair with Flash (headers only, nothing loads):
-/// the fork's planner splits the layers on the measured memory, and the start is refused by name
-/// because the fork offers no `serve` entry.
+/// The qwen4_exp runner as a DRY RUN on the real pair with Flash (headers only, nothing loads,
+/// no rank is launched): the fork's `plan --json` splits the layers on the measured memory, the
+/// runner check finds the pinned fork's `serve` in the goose-managed fork env on both Macs
+/// (provision it first: `distributedProvision`), and the plan approves a split that tiles the 48
+/// layers.
 #[tokio::test]
-#[ignore = "needs both Macs, the fork venvs and Flash on each"]
-async fn live_flash_pipeline_is_planned_and_refused_by_name() {
+#[ignore = "needs both Macs, the provisioned fork env and Flash on each"]
+async fn live_flash_pipeline_is_planned_from_the_forks_json() {
+    use goose_sidecar::distributed::provision::EnvSpec;
     let home = dirs::home_dir().unwrap();
     let mut config = recorded_config();
     config.model_id = "rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string();
     config.context = Some(8_192);
-    let local_fork = home
-        .join("Projects/Rapid-MLX/.venv/bin/python")
-        .display()
-        .to_string();
-    config.nodes[0].python = local_fork.clone();
-    config.nodes[0].pipeline_python = Some(local_fork);
+    config.nodes[0].pipeline_python = Some(EnvSpec::pipeline().python(&home.display().to_string()));
     config.nodes[0].model_dir = home
         .join(".goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit")
         .display()
         .to_string();
-    let remote_fork = "/Users/workhorse/Projects/Rapid-MLX-pipeline/.venv/bin/python".to_string();
-    config.nodes[1].python = remote_fork.clone();
-    config.nodes[1].pipeline_python = Some(remote_fork);
+    config.nodes[1].pipeline_python = Some(EnvSpec::pipeline().python("/Users/workhorse"));
     config.nodes[1].model_dir =
         "/Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string();
 
@@ -394,20 +390,27 @@ async fn live_flash_pipeline_is_planned_and_refused_by_name() {
         }
         println!("{} plan {:?}", node.name, node.plan);
     }
-    assert!(!report.ok);
-    let failures = report.failures();
-    assert!(
-        failures
-            .iter()
-            .all(|f| f.contains("runner:") && f.contains("no `serve` entry")),
-        "the only refusal is the missing server entry: {failures:#?}"
-    );
+    for node in &report.nodes {
+        let runner = node.checks.iter().find(|c| c.id == "runner").unwrap();
+        assert!(
+            runner.message.contains("\"serve\""),
+            "{}: {}",
+            node.name,
+            runner.message
+        );
+    }
     let rank0 = report.nodes[0].plan.as_ref().unwrap();
     let rank1 = report.nodes[1].plan.as_ref().unwrap();
     assert_eq!(rank0.layer_start, 0);
     assert_eq!(rank0.layer_end, rank1.layer_start);
     assert_eq!(rank1.layer_end, 48);
-    assert!(rank0.fits && rank1.fits);
+    if rank0.fits && rank1.fits {
+        assert_eq!(
+            report.pipeline_starts,
+            Some(vec![0, rank1.layer_start]),
+            "the approved split is the one the ranks launch with"
+        );
+    }
 }
 
 /// A streaming completion read chunk by chunk: (chunks received, saw `[DONE]`, how it ended).

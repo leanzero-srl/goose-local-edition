@@ -1,52 +1,15 @@
-# goose distributed rank wrapper: one tensor-parallel rank of mlx_lm.server.
+# goose distributed tensor rank: one tensor-parallel rank of mlx_lm.server. Runs after
+# rank_env.py (the shared prelude: `spec`, `emit`, the backend env, `mx`, `report_memory`).
 #
-# Embedded in goose-sidecar (distributed/launch.rs) and run as
-#   python -c 'import base64,sys;exec(base64.b64decode(sys.argv[1]))' <this file b64> <spec b64> goose-distributed-rank
-# so nothing is installed on a node. What it adds around mlx_lm.server, and why:
-# - the distributed env mlx.launch would have written (MLX_RANK, MLX_IBV_DEVICES /
-#   MLX_JACCL_COORDINATOR or MLX_HOSTFILE), so goose launches the ranks itself and reads each
-#   rank's own exit (mlx.launch exits 0 on a rank death and spins >1 core for its life, STEP1b);
+# What it adds around mlx_lm.server, and why:
 # - in-process memory caps as ratios of THIS node's RAM, applied after mlx_lm.server's own
 #   set_wired_limit(max_recommended_working_set_size), so an over-allocation raises in MLX
 #   instead of the kernel wiring past the ceiling (exo panicked a 96 GB M3 Ultra that way);
-# - HF_HUB_OFFLINE=1: a rank never downloads;
 # - rank 0's HTTP surface: /v1/models serves ONLY the goose model id (mlx_lm lists the HF cache,
 #   and a request naming any of those would make every rank try to load it), the goose id maps to
 #   each rank's OWN --model path (paths differ per node), /goose/progress exposes the
 #   generation loop's step counter (the supervisor's liveness measure), /goose/admission lets the
 #   memory watchdog stop admitting new requests.
-import base64
-import json
-import os
-import sys
-import tempfile
-import threading
-import time
-
-spec = json.loads(base64.b64decode(sys.argv[2]))
-
-
-def emit(tag, payload):
-    print(f"GOOSE_{tag} {json.dumps(payload)}", flush=True)
-
-
-def spec_file(content):
-    fd, path = tempfile.mkstemp(prefix="goose-dist-")
-    with os.fdopen(fd, "w") as handle:
-        handle.write(content)
-    return path
-
-
-os.environ["MLX_RANK"] = str(spec["rank"])
-os.environ["HF_HUB_OFFLINE"] = "1"
-if spec["backend"] == "jaccl":
-    os.environ["MLX_IBV_DEVICES"] = spec_file(json.dumps(spec["ibv_devices"]))
-    os.environ["MLX_JACCL_COORDINATOR"] = spec["coordinator"]
-else:
-    os.environ["MLX_HOSTFILE"] = spec_file(json.dumps(spec["ring_hosts"]))
-
-import mlx.core as mx  # noqa: E402
-
 group = mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 if group.rank() != spec["rank"] or group.size() != spec["size"]:
@@ -99,19 +62,6 @@ def apply_caps():
             "planned": int(spec["planned_bytes"]),
         },
     )
-
-
-def report_memory():
-    while True:
-        emit(
-            "RANK_MEM",
-            {
-                "active": mx.get_active_memory(),
-                "peak": mx.get_peak_memory(),
-                "cache": mx.get_cache_memory(),
-            },
-        )
-        time.sleep(spec["memory_report_seconds"])
 
 
 original_run = server.run

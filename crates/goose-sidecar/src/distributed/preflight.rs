@@ -13,8 +13,10 @@ use serde::{Deserialize, Serialize};
 use super::config::{Backend, DistributedConfig, NodeConfig, Runner};
 use super::exec::{sh_quote, ExecOutput, NodeExec};
 use super::local_network::{self, PeerAnswer, PingLine};
-use super::plan::{self, RankPlan};
+use super::plan::{self, PipelinePlan, PipelineRatios, RankPlan};
 use super::probe::{self, Pressure};
+use super::provision::{EnvSpec, PIPELINE_FORK_COMMIT};
+use super::PIPELINE_MAX_BATCH;
 use crate::GIB;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +92,10 @@ pub struct PreflightReport {
     pub context_source: Option<String>,
     /// The largest context every rank fits on the measured memory.
     pub max_context_fits: Option<u64>,
+    /// The pipeline split the fork's planner approved (each rank's first layer); the launch pins
+    /// it with `--split`. `None` for the tensor runner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_starts: Option<Vec<u32>>,
     /// Cluster-wide checks (runner, cross-node model/version agreement, the plan).
     pub checks: Vec<Check>,
     pub nodes: Vec<NodePreflight>,
@@ -200,6 +206,11 @@ pub(crate) fn node_probe_script(
             add(format!(
                 "echo; echo @@pipeline; {} -m {PIPELINE_MODULE} --help 2>&1 | /usr/bin/head -3",
                 sh_quote(python)
+            ));
+            add(format!(
+                "echo; echo @@pipelineenv; {} -c {} 2>&1 | /usr/bin/tail -1",
+                sh_quote(python),
+                sh_quote(&EnvSpec::pipeline().check)
             ));
         }
     }
@@ -589,9 +600,11 @@ fn read_answer(
     }
 
     if runner == Some(Runner::PipelineQwen4) {
-        answer
-            .checks
-            .push(pipeline_runner_check(node, sections.get("pipeline")));
+        answer.checks.push(pipeline_runner_check(
+            node,
+            sections.get("pipeline"),
+            sections.get("pipelineenv"),
+        ));
     }
     answer
 }
@@ -635,10 +648,15 @@ fn foreign_engines_check(foreign: &[(u32, String, probe::ForeignKind)]) -> Check
     Check::pass("foreignEngines", "no other MLX engine runs here")
 }
 
-/// The qwen4_exp split serves only if the fork's module offers a `serve` subcommand. Branch
-/// lz/pipeline-qwen4 (7a9b622a5, 2026-09-24) offers `{plan,run}` — a planner and a one-shot
-/// generator, no OpenAI server — so this check fails loudly with what the module does offer.
-fn pipeline_runner_check(node: &NodeConfig, help: Option<&String>) -> Check {
+/// The qwen4_exp split serves through the fork's `pipeline_qwen4 serve` (the rank program calls
+/// its `serve()`): the module must offer that subcommand, and a goose-managed fork env must be
+/// the pinned commit — an env built from an earlier pin could offer `serve` with another
+/// contract. An operator's own interpreter on another commit is a WARN naming both.
+fn pipeline_runner_check(
+    node: &NodeConfig,
+    help: Option<&String>,
+    env_answer: Option<&String>,
+) -> Check {
     let Some(python) = &node.pipeline_python else {
         return Check::fail(
             "runner",
@@ -661,21 +679,45 @@ fn pipeline_runner_check(node: &NodeConfig, help: Option<&String>) -> Check {
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         });
-    match offered {
-        Some(commands) if commands.iter().any(|c| c == "serve") => {
-            Check::pass("runner", format!("{PIPELINE_MODULE} offers {commands:?}"))
+    let commands = match offered {
+        Some(commands) if commands.iter().any(|c| c == "serve") => commands,
+        Some(commands) => {
+            return Check::fail(
+                "runner",
+                format!(
+                    "{PIPELINE_MODULE} on {python} offers {commands:?}, not `serve` — this env \
+                     predates the pinned fork ({PIPELINE_FORK_COMMIT}); provision it again"
+                ),
+            )
         }
-        Some(commands) => Check::fail(
+        None => {
+            return Check::fail(
+                "runner",
+                format!("{python} -m {PIPELINE_MODULE} --help: {}", help.trim()),
+            )
+        }
+    };
+    let pinned = EnvSpec::pipeline().expect;
+    let answer = env_answer.map(|a| a.trim()).unwrap_or_default();
+    if answer == pinned {
+        return Check::pass(
             "runner",
-            format!(
-                "{PIPELINE_MODULE} on {python} offers {commands:?} — no `serve` entry, so the \
-                 qwen4_exp split cannot serve an OpenAI API (the plan below is a dry run only)"
-            ),
-        ),
-        None => Check::fail(
+            format!("{PIPELINE_MODULE} offers {commands:?}; {python} imports {answer}"),
+        );
+    }
+    let what = format!(
+        "{python} imports '{answer}', the pinned fork is '{pinned}' (mlx, mlx_lm, fork commit)"
+    );
+    if EnvSpec::managed_by(python).is_some() {
+        Check::fail(
             "runner",
-            format!("{python} -m {PIPELINE_MODULE} --help: {}", help.trim()),
-        ),
+            format!("{what} — the goose-managed env is stale; provision it again"),
+        )
+    } else {
+        Check::warn(
+            "runner",
+            format!("{what} — an operator's own interpreter, used as configured"),
+        )
     }
 }
 
@@ -725,6 +767,7 @@ pub async fn run_preflight(
         context_limit: None,
         context_source: None,
         max_context_fits: None,
+        pipeline_starts: None,
         checks: Vec::new(),
         nodes: Vec::new(),
         repairs: Vec::new(),
@@ -896,6 +939,7 @@ pub async fn run_preflight(
         })
         .collect();
     let mut plans: Vec<Option<RankPlan>> = vec![None; config.size()];
+    let mut pipeline_ratios = None;
     if let (Some(runner), true) = (runner, budgets.iter().all(Option::is_some)) {
         let budgets: Vec<(u64, u64, u64)> = budgets.iter().map(|b| b.unwrap()).collect();
         match runner {
@@ -903,7 +947,8 @@ pub async fn run_preflight(
                 plan_tensor(config, &budgets, &mut report, &mut plans);
             }
             Runner::PipelineQwen4 => {
-                plan_pipeline(config, &exec, &budgets, &mut report, &mut plans).await;
+                pipeline_ratios =
+                    plan_pipeline(config, &exec, &budgets, &mut report, &mut plans).await;
             }
         }
     } else if runner.is_some() {
@@ -917,23 +962,29 @@ pub async fn run_preflight(
         let node = &config.nodes[rank];
         let plan = plans[rank].clone();
         if let (Some((reading, pressure)), Some(plan)) = (answer.memory, &plan) {
-            let head = format!(
-                "available {} of {} (pressure {}); budget {} = min(available × {:.2}, RAM × {:.2}); \
-                 planned {} (weights {} + state {} + workspace {} + prompt cache {}) × {:.2} = {}",
+            let measured = format!(
+                "available {} of {} (pressure {})",
                 gib(reading.available_bytes),
                 gib(reading.total_bytes),
                 pressure.as_str(),
-                gib(plan.budget_bytes),
-                super::AVAILABLE_HEADROOM_RATIO,
-                super::MEMORY_LIMIT_RATIO,
-                gib(plan.planned_bytes),
-                gib(plan.weights_bytes),
-                gib(plan.state_bytes),
-                gib(plan.workspace_bytes),
-                gib(plan.prompt_cache_bytes),
-                super::RUNTIME_OVERHEAD_RATIO,
-                gib(plan.with_overhead_bytes),
             );
+            let head = match &pipeline_ratios {
+                Some(ratios) => format!("{measured}; {}", pipeline_stage_line(plan, ratios)),
+                None => format!(
+                    "{measured}; budget {} = min(available × {:.2}, RAM × {:.2}); \
+                     planned {} (weights {} + state {} + workspace {} + prompt cache {}) × {:.2} = {}",
+                    gib(plan.budget_bytes),
+                    super::AVAILABLE_HEADROOM_RATIO,
+                    super::MEMORY_LIMIT_RATIO,
+                    gib(plan.planned_bytes),
+                    gib(plan.weights_bytes),
+                    gib(plan.state_bytes),
+                    gib(plan.workspace_bytes),
+                    gib(plan.prompt_cache_bytes),
+                    super::RUNTIME_OVERHEAD_RATIO,
+                    gib(plan.with_overhead_bytes),
+                ),
+            };
             let check = if pressure == Pressure::Critical {
                 Check::fail(
                     "memory",
@@ -944,7 +995,7 @@ pub async fn run_preflight(
                     "memory",
                     format!(
                         "{head} — exceeds the budget by {}",
-                        gib(plan.with_overhead_bytes - plan.budget_bytes)
+                        gib(plan.with_overhead_bytes.saturating_sub(plan.budget_bytes))
                     ),
                 )
             } else if pressure == Pressure::Warn {
@@ -1088,73 +1139,130 @@ fn plan_tensor(
     ));
 }
 
+/// One pipeline rank's plan line: its layers and the fork's bytes against the fork's budget.
+fn pipeline_stage_line(plan: &RankPlan, ratios: &PipelineRatios) -> String {
+    format!(
+        "layers [{}, {}): weights {} + state {} + workspace {} = {} of budget {} = \
+         min(available − RAM × {:.2}, RAM × {:.2}) (the fork's plan, {:.0}%) → {}",
+        plan.layer_start,
+        plan.layer_end,
+        gib(plan.weights_bytes),
+        gib(plan.state_bytes),
+        gib(plan.workspace_bytes),
+        gib(plan.with_overhead_bytes),
+        gib(plan.budget_bytes),
+        ratios.pressure_floor,
+        ratios.memory_limit,
+        100.0 * plan.with_overhead_bytes as f64 / plan.budget_bytes.max(1) as f64,
+        if plan.fits { "fits" } else { "DOES NOT FIT" },
+    )
+}
+
+/// Run the fork's planner once: `plan --json` over every node's RAM and goose's measured
+/// available memory, at the batch the ranks are launched with. Exit 0 = fits, 2 = does not fit
+/// (JSON either way); anything else is the planner failing, named with its own last words.
+async fn run_fork_planner(
+    config: &DistributedConfig,
+    exec: &Arc<dyn NodeExec>,
+    python: &str,
+    budgets: &[(u64, u64, u64)],
+    context: Option<u64>,
+) -> Result<PipelinePlan> {
+    let rank0 = &config.nodes[0];
+    let nodes: Vec<String> = config
+        .nodes
+        .iter()
+        .zip(budgets)
+        .map(|(node, (available, total, _))| plan::planner_node_arg(&node.name, *total, *available))
+        .collect();
+    let mut script = format!(
+        "{} -m {PIPELINE_MODULE} plan --json --model {}",
+        sh_quote(python),
+        sh_quote(&rank0.model_dir)
+    );
+    for node in &nodes {
+        script.push_str(&format!(" --node {}", sh_quote(node)));
+    }
+    script.push_str(&format!(" --batch {PIPELINE_MAX_BATCH}"));
+    if let Some(context) = context {
+        script.push_str(&format!(" --context {context}"));
+    }
+    let out = exec.run(None, &script).await?;
+    let failed = || {
+        let words: Vec<&str> = out
+            .stderr
+            .lines()
+            .chain(out.stdout.lines())
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        format!(
+            "the fork planner exited {:?} for nodes {nodes:?} (RAM GiB : available GiB): {}",
+            out.status,
+            words[words.len().saturating_sub(3)..].join(" | ")
+        )
+    };
+    let verdict = match out.status {
+        Some(0) => true,
+        Some(2) => false,
+        _ => anyhow::bail!(failed()),
+    };
+    let plan = plan::parse_pipeline_plan(&out.stdout).with_context(failed)?;
+    anyhow::ensure!(
+        plan.fits == verdict,
+        "the fork planner exited {:?} but its JSON says fits = {}",
+        out.status,
+        plan.fits
+    );
+    Ok(plan)
+}
+
+/// The qwen4_exp plan, read from the fork. A requested context is planned as asked. A derived one
+/// walks the planner's own ceiling to its fixed point: the first plan (at the model's full
+/// context) names the largest context ITS split fits; re-planning at that ceiling re-balances the
+/// split, whose ceiling is at least as large (the re-balanced split's worst rank is no worse), and
+/// so on until the ceiling equals the planned context. The walk ends on progress — a context
+/// already planned is never planned again — never on a count.
 async fn plan_pipeline(
     config: &DistributedConfig,
     exec: &Arc<dyn NodeExec>,
     budgets: &[(u64, u64, u64)],
     report: &mut PreflightReport,
     plans: &mut [Option<RankPlan>],
-) {
-    let rank0 = &config.nodes[0];
-    let Some(python) = &rank0.pipeline_python else {
-        return;
-    };
-    let run_plan = |context: Option<u64>| {
-        let mut script = format!(
-            "{} -m {PIPELINE_MODULE} plan --model {}",
-            sh_quote(python),
-            sh_quote(&rank0.model_dir)
-        );
-        for (node, (available, total, _)) in config.nodes.iter().zip(budgets) {
-            script.push_str(&format!(
-                " --node {}",
-                sh_quote(&plan::planner_node_arg(&node.name, *total, *available))
-            ));
-        }
-        if let Some(context) = context {
-            script.push_str(&format!(" --context {context}"));
-        }
-        script.push_str(" 2>&1");
-        let exec = Arc::clone(exec);
-        async move {
-            let out = exec.run(None, &script).await?;
-            plan::parse_pipeline_plan(&out.stdout)
-                .with_context(|| format!("the fork planner answered (exit {:?})", out.status))
-        }
-    };
-    let first = match run_plan(config.context).await {
+) -> Option<PipelineRatios> {
+    let python = config.nodes[0].pipeline_python.as_deref()?;
+    let mut planned = match run_fork_planner(config, exec, python, budgets, config.context).await {
         Ok(plan) => plan,
         Err(e) => {
             report.checks.push(Check::fail("plan", format!("{e:#}")));
-            return;
+            return None;
         }
     };
-    report.max_context_fits = first.max_context;
-    let (planned, context) = match (config.context, first.max_context) {
-        (Some(requested), _) => {
-            report.context_source = Some("requested".to_string());
-            (first, Some(requested))
+    report.context_source = Some(
+        if config.context.is_some() {
+            "requested"
+        } else {
+            "derived"
         }
-        (None, Some(ceiling)) => {
-            report.context_source = Some("derived".to_string());
-            match run_plan(Some(ceiling)).await {
-                Ok(plan) => (plan, Some(ceiling)),
+        .to_string(),
+    );
+    if config.context.is_none() {
+        let mut tried = std::collections::BTreeSet::from([planned.context]);
+        while let Some(ceiling) = planned
+            .max_context
+            .filter(|c| (*c > planned.context || !planned.fits) && tried.insert(*c))
+        {
+            planned = match run_fork_planner(config, exec, python, budgets, Some(ceiling)).await {
+                Ok(plan) => plan,
                 Err(e) => {
                     report.checks.push(Check::fail("plan", format!("{e:#}")));
-                    return;
+                    return None;
                 }
-            }
+            };
         }
-        (None, None) => {
-            report.context_source = Some("derived".to_string());
-            report.checks.push(Check::fail(
-                "plan",
-                "the fork planner found no context length that fits this split",
-            ));
-            (first, None)
-        }
-    };
-    report.context_limit = context;
+    }
+    report.context_limit = Some(planned.context);
+    report.max_context_fits = planned.max_context;
     if planned.stages.len() != config.size() {
         report.checks.push(Check::fail(
             "plan",
@@ -1164,26 +1272,52 @@ async fn plan_pipeline(
                 config.size()
             ),
         ));
-        return;
+        return None;
     }
-    for (rank, stage) in planned.stages.iter().enumerate() {
-        plans[rank] = Some(stage.rank_plan(budgets[rank].2));
+    let lines: Vec<String> = planned
+        .stages
+        .iter()
+        .map(|stage| {
+            let rank_plan = stage.rank_plan();
+            let line = format!(
+                "rank {} ({}) {}",
+                stage.rank,
+                config.nodes[stage.rank as usize].name,
+                pipeline_stage_line(&rank_plan, &planned.ratios)
+            );
+            plans[stage.rank as usize] = Some(rank_plan);
+            line
+        })
+        .collect();
+    let head = format!(
+        "pipeline split (fork planner {}), context {} ({}), batch {}, largest context this split \
+         fits {}: {}",
+        &PIPELINE_FORK_COMMIT[..9],
+        planned.context,
+        report.context_source.as_deref().unwrap_or_default(),
+        planned.batch,
+        planned
+            .max_context
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        lines.join("; ")
+    );
+    if planned.fits {
+        report.pipeline_starts = Some(planned.starts.clone());
+        report.checks.push(Check::pass("plan", head));
+    } else {
+        report.checks.push(Check::fail(
+            "plan",
+            match planned.max_context {
+                Some(_) if config.context.is_some() => {
+                    format!("{head} — the requested context does not fit this split")
+                }
+                Some(_) => head,
+                None => format!("{head} — no context length fits"),
+            },
+        ));
     }
-    report.checks.push(Check::pass(
-        "plan",
-        format!(
-            "pipeline split (fork planner): {}",
-            planned
-                .stages
-                .iter()
-                .map(|s| format!(
-                    "rank {} layers [{}, {})",
-                    s.rank, s.layer_start, s.layer_end
-                ))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    ));
+    Some(planned.ratios)
 }
 
 /// Toggle the node's TB service and re-apply its /30, then re-read the link until it reports the
@@ -1289,23 +1423,230 @@ mod tests {
         assert!(!needs_repair && checks.iter().all(|c| c.id != "rdmaGid"));
     }
 
-    #[test]
-    fn the_pipeline_runner_without_a_serve_entry_is_refused_by_name() {
+    fn pipeline_node(python: &str) -> NodeConfig {
         let mut node = two_mac_config().nodes.remove(0);
-        node.pipeline_python = Some("/p/.venv/bin/python".to_string());
-        // The fork's real usage line on lz/pipeline-qwen4 7a9b622a5.
-        let help = "usage: python -m rapid_mlx.distributed.pipeline_qwen4 [-h] {plan,run} ...\n"
+        node.pipeline_python = Some(python.to_string());
+        node
+    }
+
+    #[test]
+    fn the_pipeline_runner_passes_on_the_pinned_serve_and_fails_by_name_without_it() {
+        let managed = EnvSpec::pipeline().python("/Users/me");
+        let node = pipeline_node(&managed);
+        // The fork's real usage at 272cb0643 (argparse wraps the subcommands to line 2).
+        let help = "usage: python -m rapid_mlx.distributed.pipeline_qwen4 [-h]\n                                                      {plan,serve,run} ...\n".to_string();
+        let pinned = EnvSpec::pipeline().expect;
+        let check = pipeline_runner_check(&node, Some(&help), Some(&pinned));
+        assert_eq!(check.verdict, CheckVerdict::Pass, "{}", check.message);
+        assert!(check.message.contains("[\"plan\", \"serve\", \"run\"]"));
+
+        // The fork before `serve` existed (lz/pipeline-qwen4 7a9b622a5): refused by name.
+        let old = "usage: python -m rapid_mlx.distributed.pipeline_qwen4 [-h] {plan,run} ...\n"
             .to_string();
-        let check = pipeline_runner_check(&node, Some(&help));
+        let check = pipeline_runner_check(&node, Some(&old), Some(&pinned));
         assert_eq!(check.verdict, CheckVerdict::Fail);
         assert!(
-            check.message.contains("[\"plan\", \"run\"]") && check.message.contains("no `serve`")
+            check.message.contains("[\"plan\", \"run\"], not `serve`")
+                && check.message.contains(PIPELINE_FORK_COMMIT),
+            "{}",
+            check.message
         );
-        let with_serve = help.replace("{plan,run}", "{plan,run,serve}");
+
+        // `serve` offered, but a goose-managed env on another commit is stale: FAIL; an
+        // operator's own interpreter on another commit is used as configured: WARN.
+        let stale = "0.32.2 0.31.3 e7d49b355fe2692d54b04332c19fc541e5e120fd".to_string();
+        let check = pipeline_runner_check(&node, Some(&help), Some(&stale));
+        assert_eq!(check.verdict, CheckVerdict::Fail);
+        assert!(check.message.contains("stale"), "{}", check.message);
+        let own = pipeline_node("/Users/me/Projects/Rapid-MLX/.venv/bin/python");
+        let check = pipeline_runner_check(&own, Some(&help), Some(&stale));
+        assert_eq!(check.verdict, CheckVerdict::Warn, "{}", check.message);
+    }
+
+    /// Answers the fork planner by the `--context` it was given; records every script.
+    struct ScriptedPlanner {
+        seen: std::sync::Mutex<Vec<String>>,
+        answer: fn(Option<u64>) -> ExecOutput,
+    }
+
+    impl NodeExec for ScriptedPlanner {
+        fn run<'a>(
+            &'a self,
+            host: Option<&'a str>,
+            script: &'a str,
+        ) -> crate::distributed::exec::BoxFuture<'a, Result<ExecOutput>> {
+            assert!(host.is_none(), "the planner runs on this Mac");
+            self.seen.lock().unwrap().push(script.to_string());
+            let context = script
+                .split(" --context ")
+                .nth(1)
+                .map(|c| c.trim().parse().unwrap());
+            let out = (self.answer)(context);
+            Box::pin(async move { Ok(out) })
+        }
+    }
+
+    /// The real 32k answer with its context, ceiling and verdict replaced.
+    fn flash_answer(context: u64, max_context: u64, fits: bool) -> ExecOutput {
+        let json = plan::tests::FLASH_PLAN_32K
+            .replacen("\"context\": 32768", &format!("\"context\": {context}"), 1)
+            .replace(
+                "\"max_context\": 73216",
+                &format!("\"max_context\": {max_context}"),
+            )
+            .replace("\"fits\": true", &format!("\"fits\": {fits}"));
+        ExecOutput {
+            status: Some(if fits { 0 } else { 2 }),
+            stdout: json + "\n",
+            stderr: String::new(),
+        }
+    }
+
+    fn pipeline_config() -> DistributedConfig {
+        let mut config = two_mac_config();
+        for node in &mut config.nodes {
+            node.pipeline_python = Some("/fork/bin/python".to_string());
+        }
+        config
+    }
+
+    fn budgets() -> Vec<(u64, u64, u64)> {
+        vec![(90 * GIB, 128 * GIB, 0), (67 * GIB, 96 * GIB, 0)]
+    }
+
+    #[tokio::test]
+    async fn a_derived_pipeline_context_walks_the_forks_ceiling_to_its_fixed_point() {
+        // The planner's measured shape with no context (2026-09-24, 128:90 / 96:67 at batch 2):
+        // full context 262,144 does not fit and ITS split fits 16,308; re-balanced at 16,308 the
+        // split fits 73,216; at 73,216 the ceiling is the context itself.
+        let exec: Arc<dyn NodeExec> = Arc::new(ScriptedPlanner {
+            seen: Default::default(),
+            answer: |context| match context {
+                None => flash_answer(262_144, 16_308, false),
+                Some(16_308) => flash_answer(16_308, 73_216, true),
+                Some(73_216) => flash_answer(73_216, 73_216, true),
+                other => panic!("unexpected context {other:?}"),
+            },
+        });
+        let config = pipeline_config();
+        let mut report = empty_report(&config);
+        let mut plans = vec![None; 2];
+        let ratios = plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
+        assert!(ratios.is_some());
+        assert_eq!(report.context_limit, Some(73_216));
+        assert_eq!(report.context_source.as_deref(), Some("derived"));
+        assert_eq!(report.max_context_fits, Some(73_216));
+        assert_eq!(report.pipeline_starts, Some(vec![0, 19]));
+        let check = &report.checks[0];
+        assert_eq!(check.verdict, CheckVerdict::Pass, "{}", check.message);
+        assert!(
+            check.message.contains("rank 1 (workhorse) layers [19, 48)")
+                && check.message.contains("→ fits"),
+            "{}",
+            check.message
+        );
+        assert_eq!(plans[1].as_ref().unwrap().budget_bytes, 50_294_067_037);
+    }
+
+    #[tokio::test]
+    async fn the_planner_is_asked_with_goose_figures_at_the_launch_batch() {
+        let planner = Arc::new(ScriptedPlanner {
+            seen: Default::default(),
+            answer: |_| flash_answer(32_768, 73_216, true),
+        });
+        let exec: Arc<dyn NodeExec> = planner.clone();
+        let mut config = pipeline_config();
+        config.context = Some(32_768);
+        let mut report = empty_report(&config);
+        let mut plans = vec![None; 2];
+        plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
+        let seen = planner.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1, "a requested context is planned once");
         assert_eq!(
-            pipeline_runner_check(&node, Some(&with_serve)).verdict,
-            CheckVerdict::Pass
+            seen[0],
+            "'/fork/bin/python' -m rapid_mlx.distributed.pipeline_qwen4 plan --json --model \
+             '/Users/me/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx' \
+             --node 'MacBook-Pro:128.0000:90.0000' --node 'workhorse:96.0000:67.0000' \
+             --batch 2 --context 32768"
         );
+        assert_eq!(report.context_source.as_deref(), Some("requested"));
+        assert_eq!(report.pipeline_starts, Some(vec![0, 19]));
+    }
+
+    #[tokio::test]
+    async fn a_plan_that_does_not_fit_or_a_crashed_planner_is_a_named_failure() {
+        let exec: Arc<dyn NodeExec> = Arc::new(ScriptedPlanner {
+            seen: Default::default(),
+            answer: |_| {
+                let mut out = flash_answer(32_768, 8_192, true);
+                out.stdout = out.stdout.replacen(
+                    "\"budget_bytes\": 50294067037, \"ram_bytes\": 103079215104, \"budget_source\": \"free given\", \"fits\": true",
+                    "\"budget_bytes\": 40000000000, \"ram_bytes\": 103079215104, \"budget_source\": \"free given\", \"fits\": false",
+                    1,
+                ).replacen("\"fits\": true, \"checkpoint\"", "\"fits\": false, \"checkpoint\"", 1);
+                out.status = Some(2);
+                out
+            },
+        });
+        let mut config = pipeline_config();
+        config.context = Some(32_768);
+        let mut report = empty_report(&config);
+        let mut plans = vec![None; 2];
+        plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
+        assert_eq!(report.checks[0].verdict, CheckVerdict::Fail);
+        assert!(
+            report.checks[0].message.contains("DOES NOT FIT")
+                && report.checks[0]
+                    .message
+                    .contains("requested context does not fit"),
+            "{}",
+            report.checks[0].message
+        );
+        assert!(!plans[1].as_ref().unwrap().fits && plans[0].as_ref().unwrap().fits);
+        assert_eq!(
+            report.pipeline_starts, None,
+            "a split that does not fit is never approved"
+        );
+
+        // Measured 2026-09-24: a node whose available memory is below the fork's pressure floor
+        // crashes the planner (budget 0 → ZeroDivisionError, exit 1, no JSON).
+        let exec: Arc<dyn NodeExec> = Arc::new(ScriptedPlanner {
+            seen: Default::default(),
+            answer: |_| {
+                ExecOutput {
+                status: Some(1),
+                stdout: String::new(),
+                stderr: "Traceback (most recent call last):\n    return self.total_bytes / self.node.budget_bytes\nZeroDivisionError: division by zero\n".to_string(),
+            }
+            },
+        });
+        let mut report = empty_report(&config);
+        let ratios = plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
+        assert!(ratios.is_none());
+        let message = &report.checks[0].message;
+        assert!(
+            message.contains("exited Some(1)")
+                && message.contains("ZeroDivisionError")
+                && message.contains("workhorse:96.0000:67.0000"),
+            "{message}"
+        );
+    }
+
+    fn empty_report(config: &DistributedConfig) -> PreflightReport {
+        PreflightReport {
+            ok: false,
+            ran_at_ms: 0,
+            backend: config.backend,
+            runner: Some(Runner::PipelineQwen4),
+            model_type: Some("qwen4_exp".to_string()),
+            context_limit: None,
+            context_source: None,
+            max_context_fits: None,
+            pipeline_starts: None,
+            checks: Vec::new(),
+            nodes: Vec::new(),
+            repairs: Vec::new(),
+        }
     }
 
     #[test]
