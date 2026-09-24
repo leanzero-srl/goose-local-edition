@@ -26,7 +26,12 @@ use crate::{
 /// argv and for every router that sizes a sidecar node's slots.
 pub const MAX_CONCURRENT_REQUESTS: u32 = 8; // measured: 9th concurrent request got 503 (MLX busy-signal agent, 2026-09-02)
 
-/// v0.14.3-lz.3 = lz.2 + quantized live KV on GatedDeltaNet hybrids (fork 999d43ea6): lz.2 refused
+/// v0.14.3-lz.4 = lz.3 + a `logprobs` request on an MTP-mounted engine is answered instead of
+/// aborting the whole process (fork ce15b39ff): the speculative paths yielded LAZY logprob rows
+/// built on the engine's step-thread stream, and the route's `np.array` evaluated them on a thread
+/// that has no such stream — a C++ throw inside the buffer protocol, `libc++abi: terminating`.
+/// lz.4 schedules the rows on the step thread; a residual failure fails that request only.
+/// lz.3 = lz.2 + quantized live KV on GatedDeltaNet hybrids (fork 999d43ea6): lz.2 refused
 /// `--kv-cache-dtype int8|int4` on every qwen3_5 checkpoint pre-ready ("the loaded model is
 /// incompatible: ArraysCache"); lz.3 compresses the full-attention layers and leaves the
 /// linear-attention state alone, and prices the compressed cache in its admission gate. With no
@@ -37,7 +42,7 @@ pub const MAX_CONCURRENT_REQUESTS: u32 = 8; // measured: 9th concurrent request 
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.3",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.4",
     "rapid-mlx",
 ];
 
@@ -74,6 +79,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.2",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.3",
         "rapid-mlx",
     ],
 ];
@@ -1190,7 +1201,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.3",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.4",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -1521,7 +1532,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.3",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.4",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
@@ -2235,6 +2246,66 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
                 "rapid_mlx_kv_cache_dtype{{dtype=\"{expected}\"}} 1"
             ))
         );
+
+        // lz.4: a `logprobs` request on an MTP-mounted engine aborted the whole process
+        // (libc++abi "There is no Stream(gpu, 1) in current thread"). It must be answered — or
+        // refused with a 400 naming logprobs — and the SAME engine must still be serving.
+        let models: serde_json::Value = serde_json::from_str(
+            &reqwest::get(format!("http://127.0.0.1:{port}/v1/models"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let speculative = models["data"][0]["speculative_decoding"].clone();
+        let reply = reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+            .header("content-type", "application/json")
+            .body(
+                serde_json::json!({
+                    "model": "live-alias",
+                    "messages": [{"role": "user", "content": "Say hi."}],
+                    "max_tokens": 8,
+                    "logprobs": true,
+                    "top_logprobs": 2,
+                })
+                .to_string(),
+            )
+            .send()
+            .await
+            .expect("the engine must answer a logprobs request, not drop the connection");
+        let code = reply.status();
+        let body = reply.text().await.unwrap();
+        let logprobs = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["choices"][0]["logprobs"]["content"].as_array().cloned());
+        eprintln!(
+            "live: logprobs request → {code}, speculative {speculative}, {} logprob entries, first {:?}",
+            logprobs.as_ref().map_or(0, Vec::len),
+            logprobs.as_ref().and_then(|l| l.first())
+        );
+        if code.is_success() {
+            assert!(
+                logprobs.is_some_and(|l| !l.is_empty()),
+                "a 200 must carry per-token logprobs: {body}"
+            );
+        } else {
+            assert_eq!(code, reqwest::StatusCode::BAD_REQUEST, "{body}");
+            assert!(
+                body.contains("logprobs"),
+                "a refusal names logprobs: {body}"
+            );
+        }
+        let after = manager.status().await;
+        assert_eq!(after.state, "running", "{:?}", after.last_error);
+        assert_eq!(
+            after.pid,
+            Some(leader),
+            "the engine was restarted, not kept"
+        );
+        assert!(port_has_listener(port), "the engine stopped serving");
 
         manager.unmount().await;
         assert!(!port_has_listener(port), "port still served after unmount");

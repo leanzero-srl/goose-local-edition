@@ -111,13 +111,31 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   decode at 32k 17.3 → 12.0 (−31%) → 15.4 t/s (−11%); same-prompt greedy vs bf16: bf16 rerun 13/13 identical, int8 8/13
   (divergences only at exact ties, margin 0.0–0.25 nats), int4 4/13 (margins to 0.625); buried facts at 31k/35k/110k found by
   all; agent tool names unchanged. Verdict: default stays OFF; int8 is the opt-in for memory-bound long contexts.
-- TRAPS (each cost time): (1) a `logprobs:true` request on an MTP-mounted engine ABORTS the whole process ("There is no
-  Stream(gpu, 1) in current thread", helpers.py `_extract_token_logprob` on a lazy array) — never send logprobs to the owner's
-  engine. (2) `uvx --from "…@ file:///worktree"` caches the built wheel by pyproject mtime: .py edits after the first build are
+- TRAPS (each cost time): (1) through lz.3 a `logprobs:true` request on an MTP-mounted engine ABORTS the whole process
+  ("There is no Stream(gpu, 1) in current thread", helpers.py `_extract_token_logprob` on a lazy array) — FIXED in
+  v0.14.3-lz.4 (fork ce15b39ff, see "MTP logprobs" below); an engine still on lz.2/lz.3 (check `ps` for the tag) must
+  never get logprobs. (2) `uvx --from "…@ file:///worktree"` caches the built wheel by pyproject mtime: .py edits after the first build are
   NOT picked up — grep the archive (`~/.cache/uv/archive-v0/*/…/rapid_mlx`) for your change before trusting a run. (3) a second
   27B beside the owner's is a memory-gate BLOCK (43.4 GiB needed, ~31–42 available): unmount his via the tray menu, measure,
   remount via the tray. (4) other agents share the Mac — node/cargo at 100% CPU during a speed phase contaminates tok/s; check
   `ps -r` and say so.
+
+## MTP logprobs — the lz.4 fix (2026-09-24)
+- Mechanism: the speculative paths (vendored MTP, suffix, DSpark) yield LAZY rows (`lps[i]` views) made on the engine's
+  mlx-step thread stream; the route thread's `np.array` evaluated them inside the buffer protocol, where an MLX throw is a
+  libc++ `terminate`. Measured in isolation: `mx.eval`/`.item()`/`.tolist()` on such a row RAISE (catchable);
+  `np.array`/`np.asarray`/`memoryview` ABORT. Upstream 0.15.1 still carries it (no upstream fix/issue).
+- Fix (fork ce15b39ff, branch lz/mtp-logprobs, tag v0.14.3-lz.4): scheduler `_materialize_response_logprobs` =
+  one `mx.async_eval` per step on the step thread (a blocking `mx.eval` cost 900→620 tok/s on a tiny model; async is in
+  noise); `_extract_token_logprob` `mx.eval`s first so a residual failure fails ONE request with a named RuntimeError.
+  Tests: tests/test_logprobs_cross_thread.py (subprocess-isolated, abort as negative control).
+- Repro WITHOUT the 27B: a tiny random qwen3_5 + mtp.safetensors (hidden 256, 4 layers, the 27B's tokenizer copied)
+  mounts with MTP active in seconds; zeroing `model.norm` and `mtp.norm` makes every draft accepted (19/19) — the only
+  cheap way to exercise the accept path. Run fork code with `PYTHONPATH=<worktree> <uv-env python> -m rapid_mlx.cli serve`
+  (sidesteps trap (2)). `cp -R` of a model dir the engine had open produced a 0-byte model.safetensors — rewrite via
+  mx.load/save instead.
+- Live proof: the ignored `live_mount_of_the_real_engine…` test now sends a logprobs request and asserts 200-with-entries
+  (or a 400 naming logprobs) AND the same pid still serving — 27B with MTP active: 200, 8 entries, unmount clean.
 
 ## Placement planner + "Measure speed" (2026-09-24 — design local-edition/mlx/DESIGN-PLACEMENT.md, phases 1–2)
 - Code: `goose_sidecar::placement` (chip, model, predict, planner, store, bench); ACP `mlxEngine/{placementPlan,measureSpeed,
