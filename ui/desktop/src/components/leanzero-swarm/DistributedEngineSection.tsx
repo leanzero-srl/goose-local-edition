@@ -5,6 +5,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Radar,
   RefreshCw,
   Square,
   Stethoscope,
@@ -15,6 +16,7 @@ import { defineMessages, useIntl } from '../../i18n';
 import {
   Button,
   Chip,
+  Disclosure,
   EmptyState,
   KeyValue,
   Panel,
@@ -52,6 +54,7 @@ import {
   type MlxDistributedNodePreflight,
   type MlxDistributedNodeStatus,
   type MlxDistributedPreflight,
+  type MlxDistributedProvision,
   type MlxDistributedStartResponse,
   type MlxDistributedStatus,
   type MlxDistributedStopResponse,
@@ -66,8 +69,8 @@ import {
   gb1,
   gib,
   layerSpan,
+  configuredModeSummary,
   missingFields,
-  modeSummary,
   nodeStateTone,
   ownsTheMac,
   planForRank,
@@ -82,6 +85,7 @@ import {
   type NodeTextField,
 } from './mlxDistributed';
 import { distributedStateWord, formatMlxMode } from './mlxModeLabel';
+import { DistributedSetup } from './DistributedSetup';
 import { formatElapsed } from './mlxLiveStats';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
@@ -249,6 +253,29 @@ const i18n = defineMessages({
     defaultMessage: 'No distributed configuration is saved yet.',
   },
   setUp: { id: 'mlxDistributed.setUp', defaultMessage: 'Set up' },
+  notConfigured: { id: 'mlxDistributed.notConfigured', defaultMessage: 'Not configured' },
+  detectAgain: { id: 'mlxDistributed.detectAgain', defaultMessage: 'Detect again' },
+  advanced: { id: 'mlxDistributed.advanced', defaultMessage: 'Advanced' },
+  advancedMeta: {
+    id: 'mlxDistributed.advancedMeta',
+    defaultMessage: 'every field of the saved configuration',
+  },
+  summaryNode: {
+    id: 'mlxDistributed.summaryNode',
+    defaultMessage: 'rank {rank} · {name} · {where}',
+  },
+  provisionTitle: { id: 'mlxDistributed.provisionTitle', defaultMessage: 'Python on every node' },
+  provisionRunning: { id: 'mlxDistributed.provision.running', defaultMessage: 'Provisioning' },
+  provisionDone: { id: 'mlxDistributed.provision.done', defaultMessage: 'Ready' },
+  provisionFailed: { id: 'mlxDistributed.provision.failed', defaultMessage: 'Failed' },
+  provisionSkipped: {
+    id: 'mlxDistributed.provision.skipped',
+    defaultMessage: 'Your own Python',
+  },
+  provisionElapsed: {
+    id: 'mlxDistributed.provision.elapsed',
+    defaultMessage: '{seconds} s',
+  },
   backend: { id: 'mlxDistributed.field.backend', defaultMessage: 'Backend' },
   backendJaccl: {
     id: 'mlxDistributed.backend.jaccl',
@@ -1185,6 +1212,102 @@ function missingText(intl: IntlShape, missing: MissingField[], config: MlxDistri
     .join(', ');
 }
 
+function provisionTone(state: string): Tone {
+  if (state === 'done') return 'ok';
+  if (state === 'running') return 'accent';
+  if (state === 'skipped') return 'stopped';
+  return 'err';
+}
+
+/** The nodes' goose-managed Python: one row per env, its state, the step and the last line. */
+function ProvisionPanel({ provision }: { provision: MlxDistributedProvision }) {
+  const intl = useIntl();
+  const word: Record<string, MessageDescriptor> = {
+    running: i18n.provisionRunning,
+    done: i18n.provisionDone,
+    failed: i18n.provisionFailed,
+    skipped: i18n.provisionSkipped,
+  };
+  return (
+    <div data-testid="mlx-dist-provision" data-state={provision.state} className="flex flex-col gap-2">
+      <span className={TYPE.zone}>{intl.formatMessage(i18n.provisionTitle)}</span>
+      <ul className="flex flex-col gap-2">
+        {provision.nodes.map((n) => {
+          const last = n.lines.length ? n.lines[n.lines.length - 1] : null;
+          const elapsed =
+            n.finishedMs != null ? ((n.finishedMs - n.startedMs) / 1000).toFixed(1) : null;
+          return (
+            <li
+              key={`${n.rank}|${n.python}`}
+              data-testid="mlx-dist-provision-node"
+              data-state={n.state}
+              className={cx('flex min-w-0 flex-col gap-1 px-3 py-2', SURFACE.card)}
+            >
+              <span className="flex flex-wrap items-center gap-2">
+                <Chip
+                  tone={provisionTone(n.state)}
+                  icon={n.state === 'running' ? <Loader2 className="animate-spin" /> : undefined}
+                >
+                  {word[n.state] ? intl.formatMessage(word[n.state]) : n.state}
+                </Chip>
+                <span className={cx(TYPE.body, WEIGHT.semibold)}>{n.name}</span>
+                {n.step && <span className={TYPE.mono}>{n.step}</span>}
+                {elapsed && (
+                  <span className={META}>
+                    {intl.formatMessage(i18n.provisionElapsed, { seconds: elapsed })}
+                  </span>
+                )}
+              </span>
+              <span className={cx('break-all', TYPE.mono)}>{n.python}</span>
+              <span
+                className={cx(
+                  'break-words',
+                  n.state === 'failed' ? cx(TYPE.body, WEIGHT.semibold, TONE_TEXT.err) : TYPE.meta
+                )}
+              >
+                {n.detail}
+              </span>
+              {n.state === 'running' && last && last !== n.detail && (
+                <span className={cx('break-all', TYPE.meta)}>{last}</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+/** The saved configuration at a glance: backend, model, and each node where it runs. */
+function ConfigSummary({ config }: { config: MlxDistributedConfig }) {
+  const intl = useIntl();
+  return (
+    <div data-testid="mlx-dist-config-summary" className="flex flex-col gap-1.5">
+      <span className="flex flex-wrap items-center gap-2">
+        {backendName(config.backend) && <Chip tone="accent">{backendName(config.backend)}</Chip>}
+        <span className={cx('min-w-0 break-all', TYPE.mono)}>{config.modelId || '—'}</span>
+      </span>
+      <ul className="flex flex-col gap-1">
+        {config.nodes.map((n, rank) => (
+          <li key={rank} className={cx('break-all', TYPE.meta)}>
+            {intl.formatMessage(i18n.summaryNode, {
+              rank,
+              name: n.name || '—',
+              where: [
+                rank === 0 ? intl.formatMessage(i18n.thisMac) : n.ssh || '—',
+                n.tbIp,
+                n.python,
+              ]
+                .filter(Boolean)
+                .join(' · '),
+            })}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The section
 // ---------------------------------------------------------------------------
@@ -1236,6 +1359,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const [confirmUnmount, setConfirmUnmount] = useState<string | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [stopReport, setStopReport] = useState<MlxDistributedStopResponse['stop'] | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
 
   const owning = ownsTheMac(status);
   // A refusal is the answer to ONE start; once the run owns the Mac it no longer describes it.
@@ -1346,8 +1470,12 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
       setDraft(null);
     });
 
-  const summary = modeSummary(status);
-  const modeText = formatMlxMode(intl, summary, null);
+  // The section says what IT is: the distributed engine as configured (or running), never the
+  // single engine's "Single · this Mac" — that chip lives on the tab row and the tile.
+  const configured = configuredModeSummary(status);
+  const modeText = configured
+    ? formatMlxMode(intl, configured, null)
+    : intl.formatMessage(i18n.notConfigured);
   const state = status?.state ?? null;
   const stateTone = state ? runStateTone(state) : 'stopped';
   const nodeNames = (status?.nodes.length ? status.nodes : (config?.nodes ?? []))
@@ -1454,12 +1582,14 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
           <span data-testid="mlx-dist-mode-text" className={cx('text-lz-h1', TNUM)}>
             {modeText}
           </span>
-          <Chip
-            tone={stateTone}
-            icon={runStateInFlight(status.state) ? <Loader2 className="animate-spin" /> : undefined}
-          >
-            {distributedStateWord(intl, status.state)}
-          </Chip>
+          {configured && (
+            <Chip
+              tone={stateTone}
+              icon={runStateInFlight(status.state) ? <Loader2 className="animate-spin" /> : undefined}
+            >
+              {distributedStateWord(intl, status.state)}
+            </Chip>
+          )}
         </div>
       )}
       {status?.lastError && (
@@ -1553,40 +1683,80 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
         </div>
       )}
 
+      {status?.provision && <ProvisionPanel provision={status.provision} />}
+
       {status && (
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <span className={TYPE.zone}>{intl.formatMessage(i18n.configTitle)}</span>
-            {dirty && (
-              <span className="ml-auto flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setDraft(null)}
-                  disabled={busy != null}
-                >
-                  {intl.formatMessage(i18n.revert)}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="primary"
-                  icon={busy === 'save' ? <Loader2 className="animate-spin" /> : undefined}
-                  onClick={onSave}
-                  disabled={busy != null || owning || missing.length > 0}
-                >
-                  {intl.formatMessage(i18n.save)}
-                </Button>
-              </span>
+            {base && !setupOpen && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Radar />}
+                onClick={() => setSetupOpen(true)}
+                disabled={owning || busy != null}
+              >
+                {intl.formatMessage(i18n.detectAgain)}
+              </Button>
             )}
           </div>
-          {config ? (
+          {setupOpen ? (
+            <DistributedSetup
+              initialPeer={base?.nodes.find((n) => n.ssh)?.ssh ?? ''}
+              preferredModel={base?.modelId || null}
+              renderAdvanced={(d, onChange) => (
+                <ConfigEditor config={d} models={models} locked={false} onChange={onChange} />
+              )}
+              onCancel={() => setSetupOpen(false)}
+              onSaved={() => {
+                setSetupOpen(false);
+                setDraft(null);
+                void onRefresh();
+              }}
+            />
+          ) : config ? (
             <>
-              <ConfigEditor
-                config={config}
-                models={models}
-                locked={owning || busy != null}
-                onChange={setDraft}
-              />
+              <ConfigSummary config={config} />
+              <Disclosure
+                testId="mlx-dist-advanced"
+                title={intl.formatMessage(i18n.advanced)}
+                meta={
+                  dirty ? (
+                    <span className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setDraft(null)}
+                        disabled={busy != null}
+                      >
+                        {intl.formatMessage(i18n.revert)}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        icon={busy === 'save' ? <Loader2 className="animate-spin" /> : undefined}
+                        onClick={onSave}
+                        disabled={busy != null || owning || missing.length > 0}
+                      >
+                        {intl.formatMessage(i18n.save)}
+                      </Button>
+                    </span>
+                  ) : (
+                    <span className={TYPE.meta}>{intl.formatMessage(i18n.advancedMeta)}</span>
+                  )
+                }
+                defaultOpen={base == null}
+              >
+                <div className="p-4">
+                  <ConfigEditor
+                    config={config}
+                    models={models}
+                    locked={owning || busy != null}
+                    onChange={setDraft}
+                  />
+                </div>
+              </Disclosure>
               {missing.length > 0 && (
                 <p
                   data-testid="mlx-dist-missing"
@@ -1601,18 +1771,9 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
               <span className={TYPE.bodyMuted}>{intl.formatMessage(i18n.configNone)}</span>
               <Button
                 size="sm"
-                variant="secondary"
+                variant="primary"
                 icon={<Plus />}
-                onClick={() =>
-                  setDraft({
-                    modelId: '',
-                    backend: '',
-                    port: 0,
-                    coordinatorPort: 0,
-                    restartOnFailure: false,
-                    nodes: [emptyNode(), emptyNode()],
-                  })
-                }
+                onClick={() => setSetupOpen(true)}
               >
                 {intl.formatMessage(i18n.setUp)}
               </Button>

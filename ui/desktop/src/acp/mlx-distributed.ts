@@ -1,7 +1,14 @@
 import type {
   MlxDistributedCheckDto,
   MlxDistributedConfigDto,
+  MlxDistributedDiscoveredModelDto,
+  MlxDistributedDiscoveredNodeDto,
+  MlxDistributedDiscoveryDto,
   MlxDistributedEventDto,
+  MlxDistributedGapDto,
+  MlxDistributedPeerCandidateDto,
+  MlxDistributedProvisionDto,
+  MlxDistributedProvisionNodeDto,
   MlxDistributedNodeConfigDto,
   MlxDistributedNodePreflightDto,
   MlxDistributedNodeStatusDto,
@@ -36,6 +43,13 @@ export type MlxDistributedCheck = MlxDistributedCheckDto;
 export type MlxDistributedEvent = MlxDistributedEventDto;
 export type MlxDistributedStartResponse = MlxEngineDistributedStartResponse_unstable;
 export type MlxDistributedStopResponse = MlxEngineDistributedStopResponse_unstable;
+export type MlxDistributedDiscovery = MlxDistributedDiscoveryDto;
+export type MlxDistributedDiscoveredNode = MlxDistributedDiscoveredNodeDto;
+export type MlxDistributedDiscoveredModel = MlxDistributedDiscoveredModelDto;
+export type MlxDistributedGap = MlxDistributedGapDto;
+export type MlxDistributedPeerCandidate = MlxDistributedPeerCandidateDto;
+export type MlxDistributedProvision = MlxDistributedProvisionDto;
+export type MlxDistributedProvisionNode = MlxDistributedProvisionNodeDto;
 
 async function call<T>(method: string, params: Record<string, unknown>): Promise<T> {
   const client = await getAcpClient();
@@ -106,4 +120,42 @@ export async function mlxDistributedConfigUpdate(
     { config }
   );
   return response.config;
+}
+
+/** Every non-wildcard `Host` alias in ~/.ssh/config, each probed with a non-interactive ssh. */
+export async function mlxDistributedPeerCandidates(): Promise<MlxDistributedPeerCandidate[]> {
+  const response = await call<{ candidates: MlxDistributedPeerCandidate[] }>(
+    '_goose/unstable/mlxEngine/distributedPeerCandidates',
+    {}
+  );
+  return response.candidates;
+}
+
+/**
+ * Probe this Mac and each peer (read-only) and get a filled config back: every value with its
+ * evidence, every value not found as a named gap. `modelId` = prefer that model when it is on
+ * every node.
+ */
+export async function mlxDistributedDiscover(
+  peers: string[],
+  modelId: string | null
+): Promise<MlxDistributedDiscovery> {
+  const params: Record<string, unknown> = { peers };
+  if (modelId) params.modelId = modelId;
+  const response = await call<{ discovery: MlxDistributedDiscovery }>(
+    '_goose/unstable/mlxEngine/distributedDiscover',
+    params
+  );
+  return response.discovery;
+}
+
+/** Build every node's goose-managed Python in the background; progress rides `status.provision`. */
+export async function mlxDistributedProvision(
+  config: MlxDistributedConfig | null
+): Promise<MlxDistributedProvision> {
+  const response = await call<{ provision: MlxDistributedProvision }>(
+    '_goose/unstable/mlxEngine/distributedProvision',
+    config ? { config } : {}
+  );
+  return response.provision;
 }

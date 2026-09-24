@@ -44,6 +44,25 @@ export function modeSummary(
   };
 }
 
+/**
+ * The Distributed section's own headline: the engine as it is configured (or, while it owns the
+ * Mac, as it runs) — `null` when nothing is configured, so the section never borrows the single
+ * engine's words.
+ */
+export function configuredModeSummary(
+  status: Pick<MlxDistributedStatusDto, 'mode' | 'nodes' | 'backend' | 'config'> | null
+): MlxModeSummary | null {
+  if (!status) return null;
+  if (ownsTheMac(status)) return modeSummary(status);
+  const config = status.config;
+  if (!config) return null;
+  return {
+    mode: 'distributed',
+    nodeNames: config.nodes.map((n) => n.name),
+    backend: backendName(config.backend),
+  };
+}
+
 export type LayerSpan =
   | { kind: 'layers'; first: number; last: number; count: number }
   | { kind: 'shard'; index: number; count: number };
@@ -209,14 +228,16 @@ export type NodeTextField =
   | 'pipelinePython'
   | 'modelDir';
 
-/** The node fields the backend refuses empty (config.rs `validate`); ssh is required on peers. */
+/**
+ * The node fields the backend refuses empty (config.rs `validate`); ssh is required on peers and
+ * the RDMA device only under JACCL (ring uses none).
+ */
 export const REQUIRED_NODE_FIELDS: readonly NodeTextField[] = [
   'name',
   'tbIp',
   'tbNetmask',
   'tbInterface',
   'tbService',
-  'rdmaDevice',
   'python',
   'modelDir',
 ];
@@ -245,6 +266,9 @@ export function missingFields(config: MlxDistributedConfigDto): MissingField[] {
     for (const field of REQUIRED_NODE_FIELDS) {
       const value = node[field];
       if (typeof value !== 'string' || !value.trim()) missing.push({ node: i, field });
+    }
+    if (config.backend === 'jaccl' && !node.rdmaDevice?.trim()) {
+      missing.push({ node: i, field: 'rdmaDevice' });
     }
     if (i > 0 && !node.ssh?.trim()) missing.push({ node: i, field: 'ssh' });
   });

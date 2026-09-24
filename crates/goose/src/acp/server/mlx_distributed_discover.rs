@@ -1421,6 +1421,27 @@ x 3 me 1u IPv6 0x3 0t0 TCP [::1]:5000 (LISTEN)
         }
     }
 
+    /// Writes what Detect returns for the real pair (model not chosen, then the 27B asked for) as
+    /// the desktop's fixture, so the UI tests read the backend's own output.
+    /// `cargo test -p goose --lib export_discovery_ui_fixture -- --ignored`
+    #[test]
+    #[ignore = "rewrites ui/desktop's discovery fixture"]
+    fn export_discovery_ui_fixture() {
+        let asked = compose(
+            &hosts(),
+            &[parse_node(MACBOOK), parse_node(WORKHORSE)],
+            &Context {
+                preferred_model: Some("Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string()),
+                ..context()
+            },
+        );
+        let json = serde_json::json!({ "unchosen": real(), "chosen27b": asked });
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../ui/desktop/src/components/leanzero-swarm/mlxDistributedDiscovery.fixture.json",
+        );
+        std::fs::write(path, serde_json::to_string_pretty(&json).unwrap() + "\n").unwrap();
+    }
+
     #[test]
     fn the_script_never_lists_a_protected_folder_and_ends_with_its_marker() {
         let script = discover_script(&["/opt/models x".to_string()]);
