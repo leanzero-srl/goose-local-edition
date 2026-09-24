@@ -604,6 +604,11 @@ pub struct ReplicaProgress {
     /// Wall milliseconds since the job started (manifest, transfer, verification).
     pub elapsed_millis: u64,
     pub error: Option<String>,
+    /// The pull failed because macOS refused THIS node's app the local network (EHOSTUNREACH on
+    /// the direct path to a sender whose offer just arrived over Link): the owner's click in
+    /// System Settings › Privacy & Security › Local Network, not a dead cable.
+    #[serde(default)]
+    pub local_network_blocked: bool,
     /// The offer could not be released at the sender; it lapses when the sender exits.
     pub release_error: Option<String>,
 }
@@ -694,6 +699,7 @@ impl ReplicaTracker {
                         wire_millis: 0,
                         elapsed_millis: 0,
                         error: None,
+                        local_network_blocked: false,
                         release_error: None,
                     },
                     cancel: cancel.clone(),
@@ -711,7 +717,11 @@ impl ReplicaTracker {
             {
                 Ok(client) => client,
                 Err(e) => {
-                    tracker.finish(&spec.model_id, started, Err(format!("http client: {e}")));
+                    tracker.finish(
+                        &spec.model_id,
+                        started,
+                        Err(format!("http client: {e}").into()),
+                    );
                     return;
                 }
             };
@@ -760,7 +770,7 @@ impl ReplicaTracker {
         }
     }
 
-    fn finish(&self, model_id: &str, started: Instant, result: Result<JobEnd, String>) {
+    fn finish(&self, model_id: &str, started: Instant, result: Result<JobEnd, PullError>) {
         self.update(model_id, |p| {
             p.elapsed_millis = started.elapsed().as_millis() as u64;
             p.current_file = None;
@@ -773,7 +783,8 @@ impl ReplicaTracker {
                 }
                 Err(error) => {
                     p.state = ReplicaState::Failed;
-                    p.error = Some(error);
+                    p.error = Some(error.message);
+                    p.local_network_blocked = error.local_network_blocked;
                 }
             }
         });
@@ -786,7 +797,7 @@ impl ReplicaTracker {
         models_dir: &Path,
         preflight: &Preflight,
         cancel: &AtomicBool,
-    ) -> Result<JobEnd, String> {
+    ) -> Result<JobEnd, PullError> {
         let model = &spec.model_id;
         let manifest: ReplicaManifest = get_json(
             client,
@@ -799,7 +810,7 @@ impl ReplicaTracker {
             return Err(format!(
                 "the sender answered with the manifest of '{}', not '{model}'",
                 manifest.model_id
-            ));
+            ).into());
         }
         if let Some(bad) = manifest
             .files
@@ -809,7 +820,7 @@ impl ReplicaTracker {
             return Err(format!(
                 "the sender's manifest lists an unsafe path '{}'",
                 bad.path
-            ));
+            ).into());
         }
         preflight(&manifest)?;
 
@@ -860,7 +871,7 @@ impl ReplicaTracker {
         file: &ReplicaFile,
         done_bytes: u64,
         cancel: &AtomicBool,
-    ) -> Result<FileEnd, String> {
+    ) -> Result<FileEnd, PullError> {
         let model = &spec.model_id;
         let dest = dest_root.join(&file.path);
         if let Some(parent) = dest.parent() {
@@ -893,7 +904,7 @@ impl ReplicaTracker {
                          from the sender's (sha256 {} here, {} there); delete the model on this \
                          node and copy again",
                         file.path, local.1, sender.sha256
-                    ));
+                    ).into());
                 }
                 return Ok(FileEnd::AlreadyPresent);
             }
@@ -943,7 +954,7 @@ impl ReplicaTracker {
                             "{} failed verification: the sender's sha256 is {} ({} bytes), the \
                              received file's is {local_sha256}; the partial file was removed",
                             file.path, sender.sha256, sender.size
-                        ));
+                        ).into());
                     }
                     tokio::fs::rename(&part, &dest)
                         .await
@@ -965,17 +976,16 @@ impl ReplicaTracker {
         resume_from: u64,
         done_bytes: u64,
         cancel: &AtomicBool,
-    ) -> Result<Transfer, String> {
+    ) -> Result<Transfer, PullError> {
         let model = &spec.model_id;
         let began = Instant::now();
         let mut request = client.get(url).bearer_auth(&spec.offer_token);
         if resume_from > 0 {
             request = request.header(header::RANGE, format!("bytes={resume_from}-"));
         }
-        let mut response = request
-            .send()
-            .await
-            .map_err(|e| format!("GET {} from {}: {e}", file.path, spec.source_url))?;
+        let mut response = request.send().await.map_err(|e| {
+            request_failure(format!("GET {} from {}", file.path, spec.source_url), &e)
+        })?;
         let status = response.status();
         if resume_from > 0 {
             if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE
@@ -999,7 +1009,7 @@ impl ReplicaTracker {
                 file.path,
                 spec.source_url,
                 body.chars().take(300).collect::<String>()
-            ));
+            ).into());
         }
 
         let sinks = FileSinks::open(part, resume_from)?;
@@ -1038,7 +1048,7 @@ impl ReplicaTracker {
             Ok(false) => Ok(Transfer::Cancelled),
             Err(e) => {
                 finished?;
-                Err(e)
+                Err(e.into())
             }
             Ok(true) => {
                 let (length, local_sha256) = finished?;
@@ -1047,7 +1057,7 @@ impl ReplicaTracker {
                         "{} ended at {length} bytes but the manifest says {}; the partial file \
                          is kept for a resume",
                         file.path, file.size
-                    ));
+                    ).into());
                 }
                 Ok(Transfer::Received { local_sha256 })
             }
@@ -1195,13 +1205,13 @@ async fn get_json<T: serde::de::DeserializeOwned>(
     url: &str,
     token: &str,
     what: &str,
-) -> Result<T, String> {
+) -> Result<T, PullError> {
     let response = client
         .get(url)
         .bearer_auth(token)
         .send()
         .await
-        .map_err(|e| format!("fetching {what}: {e}"))?;
+        .map_err(|e| request_failure(format!("fetching {what}"), &e))?;
     let status = response.status();
     let body = response
         .text()
@@ -1211,9 +1221,63 @@ async fn get_json<T: serde::de::DeserializeOwned>(
         return Err(format!(
             "fetching {what}: HTTP {status}: {}",
             body.chars().take(300).collect::<String>()
-        ));
+        )
+        .into());
     }
-    serde_json::from_str(&body).map_err(|e| format!("fetching {what}: the body did not parse: {e}"))
+    serde_json::from_str(&body)
+        .map_err(|e| format!("fetching {what}: the body did not parse: {e}").into())
+}
+
+/// A pull's failure; `local_network_blocked` names macOS local network privacy.
+#[derive(Debug)]
+struct PullError {
+    message: String,
+    local_network_blocked: bool,
+}
+
+impl From<String> for PullError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            local_network_blocked: false,
+        }
+    }
+}
+
+const LOCAL_NETWORK_BLOCKED: &str = "macOS is blocking Goose Swarm from the local network on this \
+                                     node — allow it in System Settings › Privacy & Security › \
+                                     Local Network";
+
+/// reqwest's Display stops at "error sending request"; the cause (`No route to host (os error
+/// 65)`) is in the source chain, so the message carries the whole chain. EHOSTUNREACH on the
+/// direct path to a sender that just made its offer over Link is the refused Local Network
+/// privilege (Apple TN3179: denied local network operations fail as if there were no route).
+fn request_failure(what: String, error: &reqwest::Error) -> PullError {
+    let mut chain = error.to_string();
+    let mut blocked = false;
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !chain.contains(&text) {
+            chain.push_str(": ");
+            chain.push_str(&text);
+        }
+        if cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::HostUnreachable)
+        {
+            blocked = true;
+        }
+        source = cause.source();
+    }
+    PullError {
+        message: if blocked {
+            format!("{what}: {chain} — {LOCAL_NETWORK_BLOCKED}")
+        } else {
+            format!("{what}: {chain}")
+        },
+        local_network_blocked: blocked,
+    }
 }
 
 struct AbortOnDrop<T>(JoinHandle<T>);
@@ -1225,9 +1289,9 @@ impl<T> Drop for AbortOnDrop<T> {
 }
 
 async fn join_digest(
-    handle: &mut AbortOnDrop<Result<FileDigest, String>>,
+    handle: &mut AbortOnDrop<Result<FileDigest, PullError>>,
     file: &ReplicaFile,
-) -> Result<FileDigest, String> {
+) -> Result<FileDigest, PullError> {
     (&mut handle.0)
         .await
         .map_err(|e| format!("the sha256 request for {} ended: {e}", file.path))?

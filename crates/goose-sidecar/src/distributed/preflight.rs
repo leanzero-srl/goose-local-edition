@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use super::config::{Backend, DistributedConfig, NodeConfig, Runner};
 use super::exec::{sh_quote, ExecOutput, NodeExec};
+use super::local_network::{self, PeerAnswer, PingLine};
 use super::plan::{self, RankPlan};
 use super::probe::{self, Pressure};
 use crate::GIB;
@@ -37,7 +38,7 @@ impl CheckVerdict {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Check {
     /// reachable | foreignEngines | memory | model | modelManifest | python | tbIpv4 | ping |
-    /// rdmaGid | portRange | ports | runner | plan
+    /// rdmaGid | portRange | ports | runner | plan | localNetworkPermission
     pub id: String,
     pub verdict: CheckVerdict,
     pub message: String,
@@ -209,8 +210,10 @@ pub(crate) fn node_probe_script(
         .filter(|(i, _)| *i != rank)
         .map(|(_, n)| sh_quote(&n.tb_ip))
         .collect();
+    // A failure keeps ping's own error line (`ping: sendto: …`): EHOSTUNREACH there is how a
+    // local network privacy refusal shows (see `local_network`).
     add(format!(
-        "echo; echo @@ping; for ip in {}; do if /sbin/ping -c 2 -t 3 \"$ip\" >/dev/null 2>&1; then echo \"$ip ok\"; else echo \"$ip fail\"; fi; done",
+        "echo; echo @@ping; for ip in {}; do out=$(/sbin/ping -c 2 -t 3 \"$ip\" 2>&1); if [ $? -eq 0 ]; then echo \"$ip ok\"; else echo \"$ip fail $(printf '%s\\n' \"$out\" | /usr/bin/grep -m1 '^ping:')\"; fi; done",
         peers.join(" ")
     ));
     for port in ports_for(config, rank) {
@@ -359,6 +362,7 @@ struct NodeAnswer {
     link_speed: Option<String>,
     needs_repair: bool,
     services_text: Option<String>,
+    pings: Vec<PingLine>,
 }
 
 fn read_answer(
@@ -377,6 +381,7 @@ fn read_answer(
         link_speed: None,
         needs_repair: false,
         services_text: None,
+        pings: Vec::new(),
     };
     let output = match output {
         Ok(output) if output.ssh_failed() => {
@@ -464,10 +469,15 @@ fn read_answer(
 
     match probe::section(&sections, "ping") {
         Ok(text) => {
-            let failed: Vec<&str> = text
-                .lines()
-                .filter(|l| l.ends_with(" fail"))
-                .map(|l| l.trim_end_matches(" fail"))
+            answer.pings = local_network::parse_ping_lines(text);
+            let failed: Vec<String> = answer
+                .pings
+                .iter()
+                .filter(|p| !p.ok)
+                .map(|p| match &p.reason {
+                    Some(reason) => format!("{} ({reason})", p.ip),
+                    None => p.ip.clone(),
+                })
                 .collect();
             if failed.is_empty() {
                 answer.checks.push(Check::pass(
@@ -477,7 +487,10 @@ fn read_answer(
             } else {
                 answer.checks.push(Check::fail(
                     "ping",
-                    format!("no ping answer over the TB link from {failed:?}"),
+                    format!(
+                        "no ping answer over the TB link from {}",
+                        failed.join(", ")
+                    ),
                 ));
             }
         }
@@ -780,6 +793,8 @@ pub async fn run_preflight(
         answer.checks.push(Check::warn("linkRepair", note));
     }
 
+    local_network_checks(config, &mut answers);
+
     // Cross-node agreement: the same files at the same sizes, the same manifest, the same mlx.
     let reference = answers[0].model_files.as_ref().map(loaded_files);
     for (rank, answer) in answers.iter_mut().enumerate() {
@@ -966,6 +981,47 @@ pub async fn run_preflight(
     }
     report.ok = report.failures().is_empty() && report.nodes.iter().all(|n| n.plan.is_some());
     Ok(report)
+}
+
+/// Only THIS Mac's own process tree (the node with no ssh alias) is subject to the app's Local
+/// Network privilege; every peer is probed over ssh, which macOS exempts.
+fn local_network_checks(config: &DistributedConfig, answers: &mut [NodeAnswer]) {
+    let answered: Vec<bool> = answers
+        .iter()
+        .map(|a| {
+            a.checks
+                .iter()
+                .any(|c| c.id == "reachable" && c.verdict == CheckVerdict::Pass)
+        })
+        .collect();
+    let findings: Vec<(usize, String)> = config
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.ssh.is_none())
+        .filter_map(|(rank, node)| {
+            let peers: Vec<PeerAnswer> = config
+                .nodes
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != rank)
+                .map(|(i, peer)| PeerAnswer {
+                    name: &peer.name,
+                    tb_ip: &peer.tb_ip,
+                    answered: answered[i],
+                    pings: &answers[i].pings,
+                })
+                .collect();
+            local_network::diagnose(&node.tb_ip, &answers[rank].pings, &peers)
+                .map(|evidence| (rank, evidence))
+        })
+        .collect();
+    for (rank, evidence) in findings {
+        answers[rank].checks.push(Check::fail(
+            local_network::CHECK_ID,
+            format!("{} ({evidence})", local_network::BLOCKED),
+        ));
+    }
 }
 
 fn plan_tensor(

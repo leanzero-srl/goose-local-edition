@@ -16,6 +16,8 @@
 //! - [`plan`]: the per-rank memory arithmetic (tensor split computed here; the qwen4_exp
 //!   pipeline split read from the fork's own planner).
 //! - [`preflight`]: every check, per node, with its numbers; the documented TB link repair.
+//! - [`local_network`]: macOS local network privacy, named from the ping signature and the
+//!   peer's positive control.
 //! - [`provision`]: the ranks' Python, a goose-owned uv venv per node (pinned mlx + mlx_lm).
 //! - [`launch`]: the rank processes (goose's own launcher — see its doc for why not mlx.launch)
 //!   and the embedded rank wrapper (in-process memory caps, admission, progress counter).
@@ -25,6 +27,7 @@
 pub mod config;
 pub mod exec;
 pub mod launch;
+pub mod local_network;
 pub mod plan;
 pub mod preflight;
 pub mod probe;

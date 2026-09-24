@@ -3026,6 +3026,11 @@ pub struct MlxReplicaProgressDto {
     pub elapsed_millis: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The copy failed because macOS refused the RECEIVING node's app the local network
+    /// (EHOSTUNREACH on the direct path): allowed in System Settings › Privacy & Security ›
+    /// Local Network on that Mac.
+    #[serde(default)]
+    pub local_network_blocked: bool,
     /// The sender's offer could not be released (it lapses when the sender exits).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_error: Option<String>,

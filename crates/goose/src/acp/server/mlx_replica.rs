@@ -449,6 +449,7 @@ fn progress_to_dto(progress: ReplicaProgress) -> MlxReplicaProgressDto {
         wire_millis: progress.wire_millis,
         elapsed_millis: progress.elapsed_millis,
         error: progress.error,
+        local_network_blocked: progress.local_network_blocked,
         release_error: progress.release_error,
     }
 }
