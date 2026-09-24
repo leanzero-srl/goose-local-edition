@@ -3133,6 +3133,29 @@ export type MlxDistributedStatusDto = {
      * Requests the engine has accepted and not finished; absent when not measured.
      */
     inflight?: number | null;
+    /**
+     * Requests queued behind the running batch (rank 0's `/v1/status` `num_waiting`; the pipeline
+     * holds a request whose KV would overrun some rank's budget — FIFO, never dropped). Absent
+     * before the first poll or when it failed.
+     */
+    waiting?: number | null;
+    /**
+     * Pipeline only: the full-context sequences the split was planned for ("slots in use /
+     * slots"). Absent for the tensor runner, before the first poll, or when it failed.
+     */
+    slots?: number | null;
+    /**
+     * Pipeline only: the worst rank's KV reservation in slot units (rounded up).
+     */
+    slotsInUse?: number | null;
+    /**
+     * Pipeline only: sequences in the running batch.
+     */
+    sequencesInFlight?: number | null;
+    /**
+     * Why the last `/v1/status` poll failed or broke its contract; absent when it answered.
+     */
+    serverStatusError?: string | null;
     liveness?: MlxDistributedLivenessDto | null;
     nodes: Array<MlxDistributedNodeStatusDto>;
     lastPreflight?: MlxDistributedPreflightDto | null;
@@ -3222,6 +3245,13 @@ export type MlxDistributedNodeStatusDto = {
     memoryLimitGb?: number | null;
     wiredLimitGb?: number | null;
     cacheLimitGb?: number | null;
+    /**
+     * Pipeline only, from rank 0's `/v1/status`: the KV/state + workspace the requests in flight
+     * hold on this rank (0 when idle) and this rank's budget for them (its planned state +
+     * workspace for `slots` sequences). Absent for the tensor runner or when the poll failed.
+     */
+    kvReservedGb?: number | null;
+    kvBudgetGb?: number | null;
     link: MlxDistributedLinkDto;
 };
 
@@ -3265,6 +3295,11 @@ export type MlxDistributedPreflightDto = {
      * The largest context every rank fits on the measured memory.
      */
     maxContextFits?: number | null;
+    /**
+     * Pipeline only: the full-context sequences every rank's plan was made for (the same on
+     * every rank). Absent for the tensor runner, which has no slots.
+     */
+    slots?: number | null;
     /**
      * Cluster-wide checks (runner, cross-node versions, the plan).
      */
@@ -3316,8 +3351,11 @@ export type MlxDistributedNodePreflightDto = {
 /**
  * What one rank will hold, in bytes. Tensor split: every layer's shard (`shardIndex` of
  * `shardCount`, layers [layerStart, layerEnd) = all). Pipeline split: layers [layerStart, layerEnd).
- * `withOverheadBytes` = `plannedBytes` × the measured runtime-overhead ratio (1.10); `fits` =
- * `withOverheadBytes` ≤ `budgetBytes` = min(available × 0.90, RAM × 0.75).
+ * Tensor split: `withOverheadBytes` = `plannedBytes` × the measured runtime-overhead ratio (1.10),
+ * `fits` = `withOverheadBytes` ≤ `budgetBytes` = min(available × 0.90, RAM × 0.75). Pipeline split:
+ * the fork planner's figures verbatim — `withOverheadBytes` = `plannedBytes` (no multiplier),
+ * `budgetBytes` = min(available − RAM × 0.21, RAM × 0.75), `fits` is the planner's verdict; the
+ * state and workspace bytes are for the preflight's `slots` full-context sequences.
  */
 export type MlxDistributedRankPlanDto = {
     layerStart: number;
@@ -3369,6 +3407,11 @@ export type MlxDistributedConfigDto = {
      * The context to allow; absent = derived (the largest every rank fits, capped at the model's).
      */
     context?: number | null;
+    /**
+     * Pipeline runner (qwen4_exp) only: the full-context sequences the split is planned and
+     * KV-budgeted for — the most requests one batch runs. Absent = 2. The tensor runner has none.
+     */
+    slots?: number | null;
     /**
      * Restart automatically after a rank death or a hang (a breaker still applies; a memory
      * watchdog CRITICAL stop never restarts).

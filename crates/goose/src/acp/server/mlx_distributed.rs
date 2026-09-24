@@ -46,6 +46,7 @@ fn config_from_dto(dto: MlxDistributedConfigDto) -> anyhow::Result<DistributedCo
         port: dto.port,
         coordinator_port: dto.coordinator_port,
         context: dto.context,
+        slots: dto.slots,
         restart_on_failure: dto.restart_on_failure,
         hang_ratio_only: dto.hang_ratio_only,
         watchdog_warn_ratio: dto.watchdog_warn_ratio,
@@ -76,6 +77,7 @@ fn config_to_dto(config: DistributedConfig) -> MlxDistributedConfigDto {
         port: config.port,
         coordinator_port: config.coordinator_port,
         context: config.context,
+        slots: config.slots,
         restart_on_failure: config.restart_on_failure,
         hang_ratio_only: config.hang_ratio_only,
         watchdog_warn_ratio: config.watchdog_warn_ratio,
@@ -142,6 +144,7 @@ fn preflight_to_dto(report: PreflightReport) -> MlxDistributedPreflightDto {
         context_limit: report.context_limit,
         context_source: report.context_source,
         max_context_fits: report.max_context_fits,
+        slots: report.slots,
         checks: checks_to_dto(report.checks),
         nodes: report
             .nodes
@@ -187,6 +190,11 @@ fn status_to_dto(
         context_limit: status.context_limit,
         admission_open: status.admission_open,
         inflight: status.inflight,
+        waiting: status.waiting,
+        slots: status.slots,
+        slots_in_use: status.slots_in_use,
+        sequences_in_flight: status.sequences_in_flight,
+        server_status_error: status.server_status_error,
         liveness: status.liveness.map(liveness_to_dto),
         nodes: status
             .nodes
@@ -212,6 +220,8 @@ fn status_to_dto(
                 memory_limit_gb: n.memory_limit_bytes.map(gib),
                 wired_limit_gb: n.wired_limit_bytes.map(gib),
                 cache_limit_gb: n.cache_limit_bytes.map(gib),
+                kv_reserved_gb: n.kv_reserved_bytes.map(gib),
+                kv_budget_gb: n.kv_budget_bytes.map(gib),
                 link: MlxDistributedLinkDto {
                     backend: n.backend.as_str().to_string(),
                     tb_ip: n.tb_ip,
@@ -803,6 +813,7 @@ mod tests {
             port: 8190,
             coordinator_port: 32323,
             context: None,
+            slots: None,
             restart_on_failure: true,
             hang_ratio_only: false,
             watchdog_warn_ratio: None,

@@ -3127,6 +3127,10 @@ pub struct MlxDistributedConfigDto {
     /// The context to allow; absent = derived (the largest every rank fits, capped at the model's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<u64>,
+    /// Pipeline runner (qwen4_exp) only: the full-context sequences the split is planned and
+    /// KV-budgeted for — the most requests one batch runs. Absent = 2. The tensor runner has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots: Option<u32>,
     /// Restart automatically after a rank death or a hang (a breaker still applies; a memory
     /// watchdog CRITICAL stop never restarts).
     #[serde(default)]
@@ -3159,8 +3163,11 @@ pub struct MlxDistributedCheckDto {
 
 /// What one rank will hold, in bytes. Tensor split: every layer's shard (`shardIndex` of
 /// `shardCount`, layers [layerStart, layerEnd) = all). Pipeline split: layers [layerStart, layerEnd).
-/// `withOverheadBytes` = `plannedBytes` × the measured runtime-overhead ratio (1.10); `fits` =
-/// `withOverheadBytes` ≤ `budgetBytes` = min(available × 0.90, RAM × 0.75).
+/// Tensor split: `withOverheadBytes` = `plannedBytes` × the measured runtime-overhead ratio (1.10),
+/// `fits` = `withOverheadBytes` ≤ `budgetBytes` = min(available × 0.90, RAM × 0.75). Pipeline split:
+/// the fork planner's figures verbatim — `withOverheadBytes` = `plannedBytes` (no multiplier),
+/// `budgetBytes` = min(available − RAM × 0.21, RAM × 0.75), `fits` is the planner's verdict; the
+/// state and workspace bytes are for the preflight's `slots` full-context sequences.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxDistributedRankPlanDto {
@@ -3229,6 +3236,10 @@ pub struct MlxDistributedPreflightDto {
     /// The largest context every rank fits on the measured memory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_context_fits: Option<u64>,
+    /// Pipeline only: the full-context sequences every rank's plan was made for (the same on
+    /// every rank). Absent for the tensor runner, which has no slots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots: Option<u32>,
     /// Cluster-wide checks (runner, cross-node versions, the plan).
     pub checks: Vec<MlxDistributedCheckDto>,
     pub nodes: Vec<MlxDistributedNodePreflightDto>,
@@ -3299,6 +3310,13 @@ pub struct MlxDistributedNodeStatusDto {
     pub wired_limit_gb: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_limit_gb: Option<f64>,
+    /// Pipeline only, from rank 0's `/v1/status`: the KV/state + workspace the requests in flight
+    /// hold on this rank (0 when idle) and this rank's budget for them (its planned state +
+    /// workspace for `slots` sequences). Absent for the tensor runner or when the poll failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_reserved_gb: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_budget_gb: Option<f64>,
     pub link: MlxDistributedLinkDto,
 }
 
@@ -3360,6 +3378,24 @@ pub struct MlxDistributedStatusDto {
     /// Requests the engine has accepted and not finished; absent when not measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inflight: Option<u32>,
+    /// Requests queued behind the running batch (rank 0's `/v1/status` `num_waiting`; the pipeline
+    /// holds a request whose KV would overrun some rank's budget — FIFO, never dropped). Absent
+    /// before the first poll or when it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<u32>,
+    /// Pipeline only: the full-context sequences the split was planned for ("slots in use /
+    /// slots"). Absent for the tensor runner, before the first poll, or when it failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots: Option<u32>,
+    /// Pipeline only: the worst rank's KV reservation in slot units (rounded up).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots_in_use: Option<u32>,
+    /// Pipeline only: sequences in the running batch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequences_in_flight: Option<u32>,
+    /// Why the last `/v1/status` poll failed or broke its contract; absent when it answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_status_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liveness: Option<MlxDistributedLivenessDto>,
     pub nodes: Vec<MlxDistributedNodeStatusDto>,

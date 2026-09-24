@@ -1031,6 +1031,7 @@ pub(super) fn compose(
             port,
             coordinator_port,
             context: None,
+            slots: None,
             restart_on_failure: false,
             hang_ratio_only: false,
             watchdog_warn_ratio: None,

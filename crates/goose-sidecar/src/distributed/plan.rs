@@ -397,6 +397,9 @@ pub struct PipelinePlan {
     /// The largest context every rank fits on THIS split; `None` when none does.
     pub max_context: Option<u64>,
     pub starts: Vec<u32>,
+    /// The full-context sequences every stage's state and workspace were planned for (the
+    /// planner's `--batch`).
+    pub slots: u32,
     pub fits: bool,
     pub ratios: PipelineRatios,
     pub stages: Vec<PipelineStage>,
@@ -447,6 +450,12 @@ pub fn parse_pipeline_plan(stdout: &str) -> Result<PipelinePlan> {
         "starts {:?} do not describe {} stages from layer 0",
         plan.starts,
         plan.stages.len()
+    );
+    ensure!(
+        plan.slots == plan.batch,
+        "the planner planned batch {} but reports {} slots",
+        plan.batch,
+        plan.slots
     );
     ensure!(
         plan.fits == plan.stages.iter().all(|s| s.fits),
@@ -618,14 +627,14 @@ pub(crate) mod tests {
         facts.check_divisible(4).unwrap();
     }
 
-    /// The fork planner's real JSON for Flash (272cb0643, `plan --json --model <Flash> --node
+    /// The fork planner's real JSON for Flash (ea6f8dee1, `plan --json --model <Flash> --node
     /// m:128:90 --node w:96:67 --context 32768 --batch 2`, 2026-09-24): exit 0.
-    pub(crate) const FLASH_PLAN_32K: &str = r#"{"context": 32768, "batch": 2, "prefill_step": 2048, "max_context": 73216, "starts": [0, 19], "fits": true, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"memory_limit": 0.75, "wired_limit": 0.6, "pressure_floor": 0.21, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "m", "layer_start": 0, "layer_end": 19, "weight_bytes": 60098737464, "state_bytes": 650240032, "workspace_bytes": 4513071104, "total_bytes": 65262048600, "budget_bytes": 67774583931, "ram_bytes": 137438953472, "budget_source": "free given", "fits": true}, {"rank": 1, "node": "w", "layer_start": 19, "layer_end": 48, "weight_bytes": 42667415776, "state_bytes": 1242013696, "workspace_bytes": 4515057664, "total_bytes": 48424487136, "budget_bytes": 50294067037, "ram_bytes": 103079215104, "budget_source": "free given", "fits": true}]}"#;
+    pub(crate) const FLASH_PLAN_32K: &str = r#"{"context": 32768, "batch": 2, "prefill_step": 2048, "max_context": 73216, "starts": [0, 19], "slots": 2, "fits": true, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"memory_limit": 0.75, "wired_limit": 0.6, "pressure_floor": 0.21, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "m", "layer_start": 0, "layer_end": 19, "weight_bytes": 60098737464, "state_bytes": 650240032, "workspace_bytes": 4513071104, "total_bytes": 65262048600, "budget_bytes": 67774583931, "ram_bytes": 137438953472, "budget_source": "free given", "fits": true}, {"rank": 1, "node": "w", "layer_start": 19, "layer_end": 48, "weight_bytes": 42667415776, "state_bytes": 1242013696, "workspace_bytes": 4515057664, "total_bytes": 48424487136, "budget_bytes": 50294067037, "ram_bytes": 103079215104, "budget_source": "free given", "fits": true}]}"#;
 
     /// The measured soak's shape re-planned by the same planner: split 20, context 8,192, batch 2,
     /// the node figures recorded at that run (MacBook 92.7 of 128 GiB available, workhorse 61.6 of
     /// 96): exit 2 — the workhorse's 42.66 GiB exceeds the fork's 41.44 GiB budget.
-    const FLASH_SOAK_SHAPE: &str = r#"{"context": 8192, "batch": 2, "prefill_step": 2048, "max_context": 1536, "starts": [0, 20], "fits": false, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"memory_limit": 0.75, "wired_limit": 0.6, "pressure_floor": 0.21, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "macbook", "layer_start": 0, "layer_end": 20, "weight_bytes": 61554874840, "state_bytes": 269608992, "workspace_bytes": 4211081216, "total_bytes": 66035565048, "budget_bytes": 70673686855, "ram_bytes": 137438953472, "budget_source": "free given", "fits": true}, {"rank": 1, "node": "workhorse", "layer_start": 20, "layer_end": 48, "weight_bytes": 41211278400, "state_bytes": 376936448, "workspace_bytes": 4213067776, "total_bytes": 45801282624, "budget_bytes": 44495861187, "ram_bytes": 103079215104, "budget_source": "free given", "fits": false}]}"#;
+    const FLASH_SOAK_SHAPE: &str = r#"{"context": 8192, "batch": 2, "prefill_step": 2048, "max_context": 1536, "starts": [0, 20], "slots": 2, "fits": false, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"memory_limit": 0.75, "wired_limit": 0.6, "pressure_floor": 0.21, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "macbook", "layer_start": 0, "layer_end": 20, "weight_bytes": 61554874840, "state_bytes": 269608992, "workspace_bytes": 4211081216, "total_bytes": 66035565048, "budget_bytes": 70673686855, "ram_bytes": 137438953472, "budget_source": "free given", "fits": true}, {"rank": 1, "node": "workhorse", "layer_start": 20, "layer_end": 48, "weight_bytes": 41211278400, "state_bytes": 376936448, "workspace_bytes": 4213067776, "total_bytes": 45801282624, "budget_bytes": 44495861187, "ram_bytes": 103079215104, "budget_source": "free given", "fits": false}]}"#;
 
     #[test]
     fn the_plan_json_is_read_verbatim() {
@@ -636,6 +645,7 @@ pub(crate) mod tests {
         );
         assert_eq!(plan.max_context, Some(73_216));
         assert_eq!(plan.starts, vec![0, 19]);
+        assert_eq!(plan.slots, 2, "planned for 2 full-context sequences");
         assert_eq!(plan.split_arg(), "19");
         assert!(plan.fits);
         assert_eq!(plan.ratios.pressure_floor, 0.21);
@@ -681,6 +691,12 @@ pub(crate) mod tests {
         );
         assert!(parse_pipeline_plan(&lying).is_err());
         assert!(parse_pipeline_plan("Traceback (most recent call last):").is_err());
+        // A planner without `slots` (before ea6f8dee1), or one disagreeing with its batch.
+        assert!(parse_pipeline_plan(&FLASH_PLAN_32K.replace("\"slots\": 2, ", "")).is_err());
+        let err = parse_pipeline_plan(&FLASH_PLAN_32K.replace("\"slots\": 2", "\"slots\": 3"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("3 slots"), "{err}");
         // Anything the planner printed before its JSON line is not the plan.
         let noisy = format!("warning: something\n{FLASH_PLAN_32K}\n");
         assert!(parse_pipeline_plan(&noisy).is_ok());

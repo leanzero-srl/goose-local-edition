@@ -3390,6 +3390,14 @@ export const zMlxDistributedNodeStatusDto = z.object({
         z.number(),
         z.null()
     ]).optional(),
+    kvReservedGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    kvBudgetGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
     link: zMlxDistributedLinkDto
 });
 
@@ -3407,8 +3415,11 @@ export const zMlxDistributedCheckDto = z.object({
 /**
  * What one rank will hold, in bytes. Tensor split: every layer's shard (`shardIndex` of
  * `shardCount`, layers [layerStart, layerEnd) = all). Pipeline split: layers [layerStart, layerEnd).
- * `withOverheadBytes` = `plannedBytes` × the measured runtime-overhead ratio (1.10); `fits` =
- * `withOverheadBytes` ≤ `budgetBytes` = min(available × 0.90, RAM × 0.75).
+ * Tensor split: `withOverheadBytes` = `plannedBytes` × the measured runtime-overhead ratio (1.10),
+ * `fits` = `withOverheadBytes` ≤ `budgetBytes` = min(available × 0.90, RAM × 0.75). Pipeline split:
+ * the fork planner's figures verbatim — `withOverheadBytes` = `plannedBytes` (no multiplier),
+ * `budgetBytes` = min(available − RAM × 0.21, RAM × 0.75), `fits` is the planner's verdict; the
+ * state and workspace bytes are for the preflight's `slots` full-context sequences.
  */
 export const zMlxDistributedRankPlanDto = z.object({
     layerStart: z.number().int().gte(0),
@@ -3489,6 +3500,10 @@ export const zMlxDistributedPreflightDto = z.object({
         z.number().int().gte(0),
         z.null()
     ]).optional(),
+    slots: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
     checks: z.array(zMlxDistributedCheckDto),
     nodes: z.array(zMlxDistributedNodePreflightDto),
     repairs: z.array(z.string())
@@ -3538,6 +3553,10 @@ export const zMlxDistributedConfigDto = z.object({
     port: z.number().int().gte(0).lte(65535),
     coordinatorPort: z.number().int().gte(0).lte(65535),
     context: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    slots: z.union([
         z.number().int().gte(0),
         z.null()
     ]).optional(),
@@ -3656,6 +3675,26 @@ export const zMlxDistributedStatusDto = z.object({
     admissionOpen: z.boolean(),
     inflight: z.union([
         z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    waiting: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    slots: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    slotsInUse: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    sequencesInFlight: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    serverStatusError: z.union([
+        z.string(),
         z.null()
     ]).optional(),
     liveness: z.union([

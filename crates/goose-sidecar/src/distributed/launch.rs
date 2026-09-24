@@ -25,7 +25,7 @@ use tokio::process::{Child, Command};
 
 use super::config::{Backend, DistributedConfig, NodeConfig};
 use super::exec::{sh_quote, SSH_OPTIONS};
-use super::{MEMORY_LIMIT_RATIO, PIPELINE_MAX_BATCH, WIRED_LIMIT_RATIO};
+use super::{MEMORY_LIMIT_RATIO, WIRED_LIMIT_RATIO};
 
 /// The literal every goose rank carries on its command line, so `ps` can name a rank a previous
 /// goosed left behind (and `stop` can reclaim it per-pid).
@@ -97,9 +97,11 @@ pub fn rank_specs(
 }
 
 /// The `pipeline_qwen4 serve` arguments for one rank: this node's own model dir, the served id,
-/// rank 0's loopback port, the context preflight allowed, the batch the plan was made for, and the
-/// split preflight approved (`--split` = ranks 1..N-1's starts), so the fork loads exactly that
-/// split instead of re-balancing on its own load-time figures.
+/// rank 0's loopback port, the context preflight allowed, the slots the plan was made for
+/// (`--slots`: the fork re-plans at load for that many full-context sequences and admits requests
+/// by that KV budget; `--max-batch` = the same count, the rows proven per batch), and the split
+/// preflight approved (`--split` = ranks 1..N-1's starts), so the fork loads exactly that split
+/// instead of re-balancing on its own load-time figures.
 pub fn pipeline_serve_args(
     config: &DistributedConfig,
     node: &NodeConfig,
@@ -118,8 +120,10 @@ pub fn pipeline_serve_args(
         &config.port.to_string(),
         "--context",
         &context.to_string(),
+        "--slots",
+        &config.slots().to_string(),
         "--max-batch",
-        &PIPELINE_MAX_BATCH.to_string(),
+        &config.slots().to_string(),
         "--split",
         split,
     ]
@@ -493,6 +497,8 @@ mod tests {
                     "8190",
                     "--context",
                     "32768",
+                    "--slots",
+                    "2",
                     "--max-batch",
                     "2",
                     "--split",
@@ -514,6 +520,19 @@ mod tests {
         assert!(script.starts_with(
             "echo GOOSE_RANK_PID=$$; exec '/Users/workhorse/.goose/distributed/fork/bin/python' '-c' "
         ));
+
+        let mut four = config.clone();
+        four.slots = Some(4);
+        let RankProgram::PipelineServe { serve_args } =
+            &pipeline_rank_specs(&four, "node-alias", 8_192, "19", 2.0)[0].program
+        else {
+            unreachable!()
+        };
+        let joined = serve_args.join(" ");
+        assert!(
+            joined.contains("--slots 4 --max-batch 4 --split 19"),
+            "{joined}"
+        );
 
         let mut tensor_only = config.clone();
         tensor_only.nodes[1].pipeline_python = None;
@@ -560,6 +579,7 @@ mod tests {
              \x20   parser.add_argument('--host', default='127.0.0.1')\n\
              \x20   parser.add_argument('--port', type=int, required=True)\n\
              \x20   parser.add_argument('--context', type=int, required=True)\n\
+             \x20   parser.add_argument('--slots', type=int, default=2)\n\
              \x20   parser.add_argument('--max-batch', type=int, default=2)\n\
              \x20   parser.add_argument('--prefill-step', type=int)\n\
              \x20   parser.add_argument('--split')\n\
@@ -572,6 +592,7 @@ mod tests {
         )
         .unwrap();
         let mut config = pipeline_config();
+        config.slots = Some(3);
         config.nodes[1].pipeline_python = Some("/usr/bin/python3".into());
         let mut spec = pipeline_rank_specs(&config, "node-alias", 32_768, "19", 0.05).remove(1);
         spec.memory_report_seconds = 0.05;
@@ -610,7 +631,11 @@ mod tests {
         assert_eq!(ready["served_model_name"], "node-alias");
         assert_eq!(ready["port"], 8190);
         assert_eq!(ready["context"], 32_768);
-        assert_eq!(ready["max_batch"], 2);
+        assert_eq!(
+            ready["slots"], 3,
+            "the configured slots, not the fork's default"
+        );
+        assert_eq!(ready["max_batch"], 3);
         assert_eq!(ready["split"], "19");
         assert_eq!(ready["prefill_step"], serde_json::Value::Null);
         assert_eq!(ready["rank"], 1);

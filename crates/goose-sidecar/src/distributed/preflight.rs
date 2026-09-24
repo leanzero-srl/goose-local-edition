@@ -16,7 +16,7 @@ use super::local_network::{self, PeerAnswer, PingLine};
 use super::plan::{self, PipelinePlan, PipelineRatios, RankPlan};
 use super::probe::{self, Pressure};
 use super::provision::{EnvSpec, PIPELINE_FORK_COMMIT};
-use super::{DERIVED_CONTEXT_MARGIN_RATIO, PIPELINE_MAX_BATCH};
+use super::DERIVED_CONTEXT_MARGIN_RATIO;
 use crate::GIB;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +96,11 @@ pub struct PreflightReport {
     /// it with `--split`. `None` for the tensor runner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_starts: Option<Vec<u32>>,
+    /// Pipeline only: the full-context sequences every rank's plan (state + workspace) was made
+    /// for — the planner's `slots`, the server's `--slots`. `None` for the tensor runner, which
+    /// has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slots: Option<u32>,
     /// Cluster-wide checks (runner, cross-node model/version agreement, the plan).
     pub checks: Vec<Check>,
     pub nodes: Vec<NodePreflight>,
@@ -768,6 +773,7 @@ pub async fn run_preflight(
         context_source: None,
         max_context_fits: None,
         pipeline_starts: None,
+        slots: None,
         checks: Vec::new(),
         nodes: Vec::new(),
         repairs: Vec::new(),
@@ -1183,7 +1189,7 @@ async fn run_fork_planner(
     for node in &nodes {
         script.push_str(&format!(" --node {}", sh_quote(node)));
     }
-    script.push_str(&format!(" --batch {PIPELINE_MAX_BATCH}"));
+    script.push_str(&format!(" --batch {}", config.slots()));
     if let Some(context) = context {
         script.push_str(&format!(" --context {context}"));
     }
@@ -1303,6 +1309,18 @@ async fn plan_pipeline(
         ));
         return None;
     }
+    if planned.slots != config.slots() {
+        report.checks.push(Check::fail(
+            "plan",
+            format!(
+                "asked the planner for {} slots, it planned {}",
+                config.slots(),
+                planned.slots
+            ),
+        ));
+        return None;
+    }
+    report.slots = Some(planned.slots);
     let lines: Vec<String> = planned
         .stages
         .iter()
@@ -1319,17 +1337,19 @@ async fn plan_pipeline(
         })
         .collect();
     let head = format!(
-        "pipeline split (fork planner {}), context {} ({}), batch {}, largest context this split \
-         fits {}: {}",
+        "pipeline split (fork planner {}), context {} ({}), batch {slots} = {slots} full-context \
+         slots (each rank's state and workspace are planned for {slots} sequences of the whole \
+         context, so the context already accounts for the batch width), largest context this \
+         split fits {}: {}",
         &PIPELINE_FORK_COMMIT[..9],
         planned.context,
         report.context_source.as_deref().unwrap_or_default(),
-        planned.batch,
         planned
             .max_context
             .map(|c| c.to_string())
             .unwrap_or_else(|| "none".to_string()),
-        lines.join("; ")
+        lines.join("; "),
+        slots = planned.slots,
     );
     if planned.fits {
         report.pipeline_starts = Some(planned.starts.clone());
@@ -1636,6 +1656,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_planner_is_asked_for_the_configured_slots_and_must_plan_them() {
+        let planner = Arc::new(ScriptedPlanner {
+            seen: Default::default(),
+            answer: |_| flash_answer(32_768, 73_216, true),
+        });
+        let exec: Arc<dyn NodeExec> = planner.clone();
+        let mut config = pipeline_config();
+        config.context = Some(32_768);
+        let mut report = empty_report(&config);
+        let mut plans = vec![None; 2];
+        plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
+        assert_eq!(report.slots, Some(2));
+        assert!(
+            report.checks[0]
+                .message
+                .contains("batch 2 = 2 full-context slots"),
+            "{}",
+            report.checks[0].message
+        );
+
+        // 4 slots asked, the (scripted) planner answered for 2: refused by name, no split.
+        config.slots = Some(4);
+        let mut report = empty_report(&config);
+        plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
+        assert!(planner
+            .seen
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .contains(" --batch 4 "));
+        assert_eq!(report.checks[0].verdict, CheckVerdict::Fail);
+        assert!(
+            report.checks[0]
+                .message
+                .contains("asked the planner for 4 slots, it planned 2"),
+            "{}",
+            report.checks[0].message
+        );
+        assert_eq!(report.pipeline_starts, None);
+    }
+
+    #[tokio::test]
     async fn a_plan_that_does_not_fit_or_a_crashed_planner_is_a_named_failure() {
         let exec: Arc<dyn NodeExec> = Arc::new(ScriptedPlanner {
             seen: Default::default(),
@@ -1705,6 +1768,7 @@ mod tests {
             context_source: None,
             max_context_fits: None,
             pipeline_starts: None,
+            slots: None,
             checks: Vec::new(),
             nodes: Vec::new(),
             repairs: Vec::new(),

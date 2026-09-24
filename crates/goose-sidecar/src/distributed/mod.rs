@@ -67,8 +67,10 @@ pub const AVAILABLE_HEADROOM_RATIO: f64 = 0.90;
 // 61.0 / 42.5 — 0.992 / 0.996 — so multiplying again would double count.
 pub const RUNTIME_OVERHEAD_RATIO: f64 = 1.10;
 // measured: the fork's `serve` proves 2 rows bit-exact against single-process batches
-// (pipeline_qwen4_serve.py); the plan is made for the batch the ranks are launched with.
-pub const PIPELINE_MAX_BATCH: u32 = 2;
+// (pipeline_qwen4_serve.py). The default slot count (`DistributedConfig::slots`): the split is
+// planned and KV-budgeted for this many full-context sequences, and one batch carries at most as
+// many rows.
+pub const PIPELINE_DEFAULT_SLOTS: u32 = 2;
 // measured: a DERIVED pipeline context is planned against every node's available memory minus
 // this share of its RAM. The derivation's own ceiling sits at 100% of budget, and the ranks
 // re-check against LIVE memory at load: on 2026-09-24 (Flash, 16 s after a passing preflight) the

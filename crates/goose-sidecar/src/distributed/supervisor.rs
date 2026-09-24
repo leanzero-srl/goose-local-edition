@@ -200,6 +200,12 @@ pub struct NodeStatus {
     pub memory_limit_bytes: Option<u64>,
     pub wired_limit_bytes: Option<u64>,
     pub cache_limit_bytes: Option<u64>,
+    /// Pipeline only, from rank 0's `/v1/status`: the KV/state + workspace bytes the requests in
+    /// flight hold on this rank (0 when idle), and this rank's budget for them (its planned state +
+    /// workspace for `slots` full-context sequences). `None` for the tensor runner, before the
+    /// first poll, or when the poll failed (`DistributedStatus::server_status_error`).
+    pub kv_reserved_bytes: Option<u64>,
+    pub kv_budget_bytes: Option<u64>,
     pub backend: Backend,
     pub tb_ip: String,
     pub tb_interface: String,
@@ -228,6 +234,18 @@ pub struct DistributedStatus {
     pub context_limit: Option<u64>,
     pub admission_open: bool,
     pub inflight: Option<u32>,
+    /// Rank 0's `/v1/status`, read on every poll: requests queued behind the running batch (the
+    /// pipeline's KV admission holds a request that would overrun some rank's budget — it waits,
+    /// FIFO, never dropped).
+    pub waiting: Option<u32>,
+    /// Pipeline only: the full-context sequences the split was planned for, the worst rank's
+    /// reservation in slot units (ceil), and the sequences in the running batch. `None` for the
+    /// tensor runner (mlx_lm.server has no slots), before the first poll, or when it failed.
+    pub slots: Option<u32>,
+    pub slots_in_use: Option<u32>,
+    pub sequences_in_flight: Option<u32>,
+    /// Why the last `/v1/status` read failed or broke its contract; `None` when it answered.
+    pub server_status_error: Option<String>,
     pub liveness: Option<Liveness>,
     pub nodes: Vec<NodeStatus>,
     pub last_preflight: Option<PreflightReport>,
@@ -249,6 +267,11 @@ impl DistributedStatus {
             context_limit: None,
             admission_open: true,
             inflight: None,
+            waiting: None,
+            slots: None,
+            slots_in_use: None,
+            sequences_in_flight: None,
+            server_status_error: None,
             liveness: None,
             nodes: Vec::new(),
             last_preflight: None,
@@ -919,6 +942,117 @@ struct Progress {
     inflight: u32,
 }
 
+/// Rank 0's `/v1/status`. The tensor wrapper answers `{num_running, num_waiting, status}`; the
+/// pipeline server (fork ea6f8dee1) adds the slot figures and per-rank KV lists.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ServerStatus {
+    pub num_running: u32,
+    pub num_waiting: u32,
+    pub slots: Option<u32>,
+    pub slots_in_use: Option<u32>,
+    pub sequences_in_flight: Option<u32>,
+    pub kv_reserved_bytes: Option<Vec<u64>>,
+    pub kv_budget_bytes: Option<Vec<u64>>,
+}
+
+/// What the status poll publishes: the engine-wide figures and, per rank, (reserved, budget).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerLoad {
+    pub waiting: u32,
+    pub slots: Option<u32>,
+    pub slots_in_use: Option<u32>,
+    pub sequences_in_flight: Option<u32>,
+    pub kv: Option<Vec<(u64, u64)>>,
+}
+
+/// Read `/v1/status` for `runner` over `ranks` ranks. The pipeline server must carry its slot
+/// figures and one budget per rank (an empty reservation list means idle: 0 reserved on every
+/// rank); a missing figure is an error naming the broken contract, never a default. The tensor
+/// wrapper has no slots and its absence is the answer.
+pub fn server_load(body: &str, runner: Runner, ranks: usize) -> Result<ServerLoad> {
+    let status: ServerStatus = serde_json::from_str(body)
+        .map_err(|e| anyhow!("/v1/status is not the expected shape ({e}): {body}"))?;
+    if runner == Runner::MlxLmTensor {
+        return Ok(ServerLoad {
+            waiting: status.num_waiting,
+            slots: None,
+            slots_in_use: None,
+            sequences_in_flight: None,
+            kv: None,
+        });
+    }
+    let missing = |what: &str| {
+        anyhow!(
+            "the pipeline server's /v1/status carries no {what} (a fork before ea6f8dee1?): {body}"
+        )
+    };
+    let slots = status.slots.ok_or_else(|| missing("slots"))?;
+    let slots_in_use = status.slots_in_use.ok_or_else(|| missing("slots_in_use"))?;
+    let sequences = status
+        .sequences_in_flight
+        .ok_or_else(|| missing("sequences_in_flight"))?;
+    let budgets = status
+        .kv_budget_bytes
+        .ok_or_else(|| missing("kv_budget_bytes"))?;
+    let reserved = status
+        .kv_reserved_bytes
+        .ok_or_else(|| missing("kv_reserved_bytes"))?;
+    anyhow::ensure!(
+        budgets.len() == ranks && (reserved.is_empty() || reserved.len() == ranks),
+        "/v1/status lists {} budgets and {} reservations for {ranks} ranks: {body}",
+        budgets.len(),
+        reserved.len()
+    );
+    let kv = budgets
+        .iter()
+        .enumerate()
+        .map(|(rank, budget)| (reserved.get(rank).copied().unwrap_or(0), *budget))
+        .collect();
+    Ok(ServerLoad {
+        waiting: status.num_waiting,
+        slots: Some(slots),
+        slots_in_use: Some(slots_in_use),
+        sequences_in_flight: Some(sequences),
+        kv: Some(kv),
+    })
+}
+
+/// Publish a status poll's outcome; a failed poll clears every figure and names why.
+fn publish_server_load(status: &mut DistributedStatus, load: Result<ServerLoad>) {
+    let load = match load {
+        Ok(load) => {
+            status.server_status_error = None;
+            Some(load)
+        }
+        Err(e) => {
+            status.server_status_error = Some(format!("{e:#}"));
+            None
+        }
+    };
+    status.waiting = load.as_ref().map(|l| l.waiting);
+    status.slots = load.as_ref().and_then(|l| l.slots);
+    status.slots_in_use = load.as_ref().and_then(|l| l.slots_in_use);
+    status.sequences_in_flight = load.as_ref().and_then(|l| l.sequences_in_flight);
+    let kv = load.and_then(|l| l.kv);
+    for (rank, node) in status.nodes.iter_mut().enumerate() {
+        let pair = kv.as_ref().and_then(|kv| kv.get(rank)).copied();
+        node.kv_reserved_bytes = pair.map(|(reserved, _)| reserved);
+        node.kv_budget_bytes = pair.map(|(_, budget)| budget);
+    }
+}
+
+fn clear_server_load(status: &mut DistributedStatus) {
+    status.waiting = None;
+    status.slots = None;
+    status.slots_in_use = None;
+    status.sequences_in_flight = None;
+    status.server_status_error = None;
+    for node in &mut status.nodes {
+        node.kv_reserved_bytes = None;
+        node.kv_budget_bytes = None;
+    }
+}
+
 async fn set_admission(ctx: &RunContext, open: bool, reason: &str) -> Result<()> {
     let resp = ctx
         .http
@@ -989,6 +1123,20 @@ async fn monitor(
         }
         .await
         .ok();
+        let load = async {
+            let resp = ctx
+                .http
+                .get(format!("{}/v1/status", ctx.config.base_url()))
+                .send()
+                .await?;
+            anyhow::ensure!(
+                resp.status().is_success(),
+                "/v1/status answered HTTP {}",
+                resp.status()
+            );
+            server_load(&resp.text().await?, ctx.runner, ranks.len())
+        }
+        .await;
 
         let mut cpu: Vec<Option<u64>> = vec![None; ranks.len()];
         let mut stats: Vec<Option<String>> = vec![None; ranks.len()];
@@ -1105,6 +1253,7 @@ async fn monitor(
         let serving = progress.as_ref().is_some_and(|p| p.inflight > 0);
         ctx.update(|s| {
             s.status.inflight = progress.as_ref().map(|p| p.inflight);
+            publish_server_load(&mut s.status, load);
             s.status.liveness = Some(Liveness {
                 samples: meter.intervals.len(),
                 median_ms: reading.median.map(|m| m.as_millis() as u64),
@@ -1247,6 +1396,7 @@ async fn supervise(
             s.status.state = RunState::Starting;
             s.status.admission_open = true;
             s.status.inflight = None;
+            clear_server_load(&mut s.status);
             s.status.liveness = None;
             s.status.context_limit = Some(context);
             for (node, plan) in s.status.nodes.iter_mut().zip(&preflight.nodes) {
@@ -1309,6 +1459,7 @@ async fn supervise(
                 ctx.update(|s| {
                     s.status.state = RunState::Stopped;
                     s.status.inflight = None;
+                    clear_server_load(&mut s.status);
                     s.status
                         .nodes
                         .iter_mut()
@@ -1336,6 +1487,7 @@ async fn supervise(
                 ctx.update(|s| {
                     s.status.state = RunState::Stopped;
                     s.status.inflight = None;
+                    clear_server_load(&mut s.status);
                     s.status.last_error = Some(format!(
                         "stopped by the memory watchdog (CRITICAL, never restarted): {reason}"
                     ));
@@ -1363,6 +1515,7 @@ async fn supervise(
                     }
                     s.status.last_error = Some(message.clone());
                     s.status.state = RunState::Stopping;
+                    clear_server_load(&mut s.status);
                     for n in &mut s.status.nodes {
                         n.state = if Some(&n.name) == node.as_ref() {
                             NodeState::Failed
@@ -1654,6 +1807,8 @@ impl DistributedManager {
                     memory_limit_bytes: None,
                     wired_limit_bytes: None,
                     cache_limit_bytes: None,
+                    kv_reserved_bytes: None,
+                    kv_budget_bytes: None,
                     backend: config.backend,
                     tb_ip: node.tb_ip.clone(),
                     tb_interface: node.tb_interface.clone(),
@@ -2026,6 +2181,120 @@ mod tests {
         );
         assert!(!alive(stayer_pid));
         drop(stayer);
+    }
+
+    /// The pipeline server's real /v1/status shapes (fork ea6f8dee1 `_build_app.status`).
+    #[test]
+    fn the_pipeline_status_carries_slots_and_per_rank_kv() {
+        let busy = r#"{"num_running": 2, "num_waiting": 1, "slots": 2, "slots_in_use": 2,
+            "sequences_in_flight": 2, "kv_reserved_bytes": [3000000000, 3100000000],
+            "kv_budget_bytes": [5163311136, 5757071360], "status": "ok"}"#;
+        let load = server_load(busy, Runner::PipelineQwen4, 2).unwrap();
+        assert_eq!(
+            load,
+            ServerLoad {
+                waiting: 1,
+                slots: Some(2),
+                slots_in_use: Some(2),
+                sequences_in_flight: Some(2),
+                kv: Some(vec![
+                    (3_000_000_000, 5_163_311_136),
+                    (3_100_000_000, 5_757_071_360)
+                ]),
+            }
+        );
+        // Idle: the reservation list is empty — 0 reserved on every rank, budgets still known.
+        let idle = r#"{"num_running": 0, "num_waiting": 0, "slots": 2, "slots_in_use": 0,
+            "sequences_in_flight": 0, "kv_reserved_bytes": [], "kv_budget_bytes": [5, 6],
+            "status": "ok"}"#;
+        let load = server_load(idle, Runner::PipelineQwen4, 2).unwrap();
+        assert_eq!(load.kv, Some(vec![(0, 5), (0, 6)]));
+        assert_eq!(load.slots_in_use, Some(0));
+    }
+
+    #[test]
+    fn a_tensor_status_has_no_slots_and_a_pipeline_one_without_them_is_an_error() {
+        // The tensor wrapper's exact answer (rank_wrapper.py do_GET /v1/status).
+        let tensor = r#"{"num_running": 1, "num_waiting": 0, "status": "ok"}"#;
+        let load = server_load(tensor, Runner::MlxLmTensor, 2).unwrap();
+        assert_eq!(
+            (
+                load.waiting,
+                load.slots,
+                load.slots_in_use,
+                load.sequences_in_flight,
+                load.kv
+            ),
+            (0, None, None, None, None)
+        );
+        let err = server_load(tensor, Runner::PipelineQwen4, 2)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("carries no slots"), "{err}");
+        let short = r#"{"num_running": 0, "num_waiting": 0, "slots": 2, "slots_in_use": 0,
+            "sequences_in_flight": 0, "kv_reserved_bytes": [], "kv_budget_bytes": [5],
+            "status": "ok"}"#;
+        assert!(server_load(short, Runner::PipelineQwen4, 2).is_err());
+        assert!(server_load("<html>", Runner::MlxLmTensor, 2).is_err());
+    }
+
+    #[test]
+    fn a_failed_status_poll_clears_the_figures_and_names_why() {
+        let mut status = DistributedStatus::stopped();
+        status.nodes = vec![node_status(0), node_status(1)];
+        let body = r#"{"num_running": 1, "num_waiting": 3, "slots": 2, "slots_in_use": 1,
+            "sequences_in_flight": 1, "kv_reserved_bytes": [7, 8], "kv_budget_bytes": [70, 80],
+            "status": "ok"}"#;
+        publish_server_load(&mut status, server_load(body, Runner::PipelineQwen4, 2));
+        assert_eq!(
+            (status.waiting, status.slots, status.slots_in_use),
+            (Some(3), Some(2), Some(1))
+        );
+        assert_eq!(
+            (
+                status.nodes[1].kv_reserved_bytes,
+                status.nodes[1].kv_budget_bytes
+            ),
+            (Some(8), Some(80))
+        );
+        publish_server_load(&mut status, Err(anyhow!("connection refused")));
+        assert_eq!((status.waiting, status.slots), (None, None));
+        assert_eq!(status.nodes[1].kv_budget_bytes, None);
+        assert_eq!(
+            status.server_status_error.as_deref(),
+            Some("connection refused")
+        );
+    }
+
+    fn node_status(rank: usize) -> NodeStatus {
+        NodeStatus {
+            name: format!("node{rank}"),
+            rank,
+            role: "worker".to_string(),
+            host: None,
+            state: NodeState::Ready,
+            pid: None,
+            layer_start: None,
+            layer_end: None,
+            shard_index: None,
+            shard_count: None,
+            available_bytes: None,
+            total_bytes: None,
+            pressure: None,
+            memory_error: None,
+            active_bytes: None,
+            peak_bytes: None,
+            planned_bytes: None,
+            memory_limit_bytes: None,
+            wired_limit_bytes: None,
+            cache_limit_bytes: None,
+            kv_reserved_bytes: None,
+            kv_budget_bytes: None,
+            backend: Backend::Jaccl,
+            tb_ip: String::new(),
+            tb_interface: String::new(),
+            link_speed: None,
+        }
     }
 
     #[tokio::test]

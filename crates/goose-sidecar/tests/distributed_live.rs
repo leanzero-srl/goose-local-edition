@@ -41,6 +41,7 @@ pub fn recorded_config() -> DistributedConfig {
         port: env_or("GOOSE_DIST_PORT", "8190").parse().unwrap(),
         coordinator_port: 32323,
         context: None,
+        slots: None,
         restart_on_failure: false,
         hang_ratio_only: false,
         watchdog_warn_ratio: None,
