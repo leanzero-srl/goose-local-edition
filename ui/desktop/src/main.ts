@@ -145,6 +145,12 @@ import {
   type LinkTrayAction,
   type LinkTrayReport,
 } from './utils/linkTrayReport';
+import {
+  clipTrayText,
+  isMacsTrayReport,
+  pickMacsTrayReport,
+  type MacsTrayReport,
+} from './utils/macsTrayReport';
 import { MLX_STATUS_POLL_MS } from './components/leanzero-swarm/mlxLiveStats';
 import { findLmsBinary, resolveLmsOnce } from './utils/lmsBinary';
 import { hideDevOnlyMenuItems } from './utils/menuPolicy';
@@ -2185,6 +2191,10 @@ let linkTray: LinkTrayReport | null = null;
 // One report per window (each window runs its own goosed); the tray shows the one that speaks for
 // the Mac (pickLinkTrayReport).
 const linkTrayByWindow = new Map<number, LinkTrayReport | null>();
+// The linked Macs, one line each in My Macs's words and phase colours (utils/macsTrayReport), from
+// the renderer's roster read; while they are known they replace the bare "Link: connected" line.
+let macsTray: MacsTrayReport | null = null;
+const macsTrayByWindow = new Map<number, MacsTrayReport | null>();
 
 const runLinkTrayAction = (action: LinkTrayAction) => {
   const win = mlxActionWindow();
@@ -2200,6 +2210,22 @@ const runLinkTrayAction = (action: LinkTrayAction) => {
 };
 
 const linkTrayMenuItems = (): MenuItemConstructorOptions[] => {
+  if (macsTray && linkTray?.tone === 'ok') {
+    // One line per Mac; a state line with its phase dot is ENABLED (it opens My Macs): macOS draws
+    // a disabled item's image dimmed, and the palette is solid colour, never a faded one.
+    const canOpen = mlxActionWindow() != null;
+    return [
+      ...macsTray.lines.map(
+        (mac): MenuItemConstructorOptions => ({
+          label: clipTrayText(mac.text),
+          ...(mac.phase ? { icon: phaseDot(mac.phase) } : {}),
+          enabled: canOpen,
+          click: () => runLinkTrayAction('open'),
+        })
+      ),
+      { label: macsTray.openLabel, enabled: canOpen, click: () => runLinkTrayAction('open') },
+    ];
+  }
   if (!linkTray) return [];
   const { line, action, actionLabel } = linkTray;
   const items: MenuItemConstructorOptions[] = [{ label: line, enabled: false }];
@@ -2239,7 +2265,7 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
     tray.setTitle(silent ? '' : trayTitleText(model), { fontType: 'monospacedDigit' });
   }
   const items = silent ? [] : model.items;
-  const key = JSON.stringify({ items, linkTray, canAct: mlxActionWindow() != null });
+  const key = JSON.stringify({ items, linkTray, macsTray, canAct: mlxActionWindow() != null });
   if (key === lastMlxTrayMenu) return;
   lastMlxTrayMenu = key;
   const linkItems = linkTrayMenuItems();
@@ -2269,6 +2295,20 @@ ipcMain.on('link-report', (event, report: unknown) => {
   }
   linkTrayByWindow.set(sender.id, report);
   linkTray = pickLinkTrayReport(linkTrayByWindow.values());
+  renderMlxTray(mlxMonitor.current());
+});
+ipcMain.on('macs-report', (event, report: unknown) => {
+  if (!isMacsTrayReport(report)) return;
+  const sender = event.sender;
+  if (!macsTrayByWindow.has(sender.id)) {
+    sender.once('destroyed', () => {
+      macsTrayByWindow.delete(sender.id);
+      macsTray = pickMacsTrayReport(macsTrayByWindow.values());
+      renderMlxTray(mlxMonitor.current());
+    });
+  }
+  macsTrayByWindow.set(sender.id, report);
+  macsTray = pickMacsTrayReport(macsTrayByWindow.values());
   renderMlxTray(mlxMonitor.current());
 });
 ipcMain.on('mlx-remote-report', (_event, report: unknown) => {

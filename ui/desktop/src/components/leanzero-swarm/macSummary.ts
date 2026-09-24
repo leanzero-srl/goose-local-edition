@@ -206,3 +206,21 @@ export function macLine(intl: IntlShape, summary: MacSummary): string | null {
       return null;
   }
 }
+
+const TRAY = defineMessages({
+  line: { id: 'macs.tray.line', defaultMessage: '{name} — {what}' },
+  open: { id: 'macs.tray.open', defaultMessage: 'Open My Macs' },
+});
+
+/**
+ * The tray's line for one Mac: its name, then what My Macs's card says under it (or, for a Mac
+ * that is off or unreadable, the state word) — in the same phase colour.
+ */
+export function macTrayText(intl: IntlShape, mac: Mac, summary: MacSummary): string {
+  const what = macLine(intl, summary) ?? macStateWord(intl, summary.state);
+  return intl.formatMessage(TRAY.line, { name: mac.name, what });
+}
+
+export function macsTrayOpenLabel(intl: IntlShape): string {
+  return intl.formatMessage(TRAY.open);
+}

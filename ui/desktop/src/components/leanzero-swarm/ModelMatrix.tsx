@@ -71,6 +71,7 @@ const i18n = defineMessages({
       'Copies {name}’s files straight over {kind, select, thunderbolt {the Thunderbolt cable} other {the local network}}; every file is checked against the original.',
   },
   downloadHere: { id: 'modelMatrix.downloadHere', defaultMessage: 'Download here' },
+  noCopyPath: { id: 'modelMatrix.noCopyPath', defaultMessage: 'No copy from {name}: {reason}' },
   downloadHereTitle: {
     id: 'modelMatrix.downloadHereTitle',
     defaultMessage: 'Download {model} from Hugging Face onto {name}',
@@ -334,6 +335,15 @@ function MatrixCell({ mac, modelId, macs, onPending, onOpenSampling }: CellProps
     );
   });
   const link = source ? ctx.linkBetween(source.key, mac.key) : null;
+  // A Mac holds it but shares no path with this one: say why the copy is not offered.
+  const holder = source
+    ? undefined
+    : macs.find((other) => {
+        if (other.key === mac.key) return false;
+        const has = ctx.factsOf(other.key).models?.find((m) => m.id === modelId);
+        return has != null && has.complete && has.missingFiles === 0;
+      });
+  const noPath = holder ? ctx.whyNoLink(holder.key, mac.key) : null;
   return (
     <div
       className="flex min-w-0 flex-col items-start gap-1"
@@ -361,6 +371,11 @@ function MatrixCell({ mac, modelId, macs, onPending, onOpenSampling }: CellProps
         >
           {intl.formatMessage(i18n.downloadHere)}
         </Button>
+      )}
+      {holder && noPath && (
+        <span className={cx('break-words', TYPE.meta)} data-testid={`${testId}-no-copy`}>
+          {intl.formatMessage(i18n.noCopyPath, { name: holder.name, reason: noPath })}
+        </span>
       )}
       {downloadError && (
         <span className={cx('break-words text-lz-meta', WEIGHT.semibold, TONE_TEXT.err)}>

@@ -74,10 +74,10 @@ vi.mock('../../acp/mlx-replica', () => ({
   mlxEngineReplicaCancel: (...args: unknown[]) => mockReplicaCancel(...args),
 }));
 
-// The device picker sources the mesh roster from leanzeroLink and is gated on the
-// `leanzeroLink` capability. Default: capability OFF → the view is exactly as before, every
-// mlx op local (nodeId undefined). Tests that exercise the remote path flip mockFeatures and
-// hand the mesh a connected roster with peers.
+// The Macs (the Models columns, the Download-to choice, per-Mac sampling) come from the Link roster
+// and are gated on the `leanzeroLink` capability. Default: capability OFF → this Mac alone, every
+// mlx op local (nodeId undefined). Multi-Mac tests flip mockFeatures and hand the mesh a connected
+// roster with peers.
 const mockFeatures = { leanzeroLink: false, mlxDistributed: false };
 vi.mock('../../contexts/FeaturesContext', () => ({
   useFeatures: () => ({
@@ -177,7 +177,7 @@ function statusOf(overrides: Partial<MlxEngineStatus>): MlxEngineStatus {
 }
 
 // ---------------------------------------------------------------------------
-// Mesh roster fixtures for the device picker (leanzeroLink/nodes shape, snake_case).
+// Mesh roster fixtures (leanzeroLink/nodes shape, snake_case).
 // ---------------------------------------------------------------------------
 
 const SELF_NODE: NodeState = {
@@ -229,11 +229,18 @@ const TB_LINK = {
 
 const TB_TARGET = { nodeId: 'peer-workhorse', hostname: 'workhorse', link: TB_LINK };
 
-/** Turn on the capability + a connected roster with the given peers, so the picker renders. */
-function withMesh(peers: NodeState[]) {
+/** Turn on the capability + a connected roster with the given peers: every Mac becomes a column. */
+function withMesh(peers: NodeState[], self: NodeState = SELF_NODE) {
   mockFeatures.leanzeroLink = true;
   mockLinkStatus.mockResolvedValue(CONNECTED);
-  mockLinkNodes.mockResolvedValue({ self: SELF_NODE, peers } as NodesResponse);
+  mockLinkNodes.mockResolvedValue({ self, peers } as NodesResponse);
+}
+
+/** Run it's "Run on this Mac" — the one start (the planner is unreachable here: every way is offered). */
+async function runHere(): Promise<HTMLElement> {
+  const run = await screen.findByTestId('placement-run-local');
+  await waitFor(() => expect(run).toBeEnabled());
+  return run;
 }
 
 beforeEach(() => {
@@ -611,10 +618,7 @@ describe('MlxEngineView engine tab', () => {
       new Error('model directory is incomplete: missing weights.safetensors')
     );
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Mount$/ })).toBeEnabled();
-    });
-    await userEvent.click(screen.getByRole('button', { name: /^Mount$/ }));
+    await userEvent.click(await runHere());
     await waitFor(() => {
       expect(
         screen.getByText('model directory is incomplete: missing weights.safetensors')
@@ -635,10 +639,7 @@ describe('MlxEngineView engine tab', () => {
       })
     );
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Mount$/ })).toBeEnabled();
-    });
-    await userEvent.click(screen.getByRole('button', { name: /^Mount$/ }));
+    await userEvent.click(await runHere());
     await waitFor(() => {
       expect(
         screen.getByText('port 8090 has an unsupervised listener — unmount/reclaim it first')
@@ -668,10 +669,9 @@ describe('MlxEngineView engine tab', () => {
   it('stopped with NO stray listener offers no Unmount — there is nothing to unmount', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Mount$/ })).toBeEnabled();
-    });
+    await runHere();
     expect(screen.queryByRole('button', { name: /Unmount/ })).toBeNull();
+    expect(screen.queryByTestId('placement-stop-local')).toBeNull();
     unmount();
   });
 });
@@ -682,7 +682,7 @@ describe('MlxEngineView engine tab', () => {
 // ---------------------------------------------------------------------------
 
 describe('MlxEngineView status hero', () => {
-  it('STOPPED leads with a solid stopped tile, the headroom, and Mount beside the picker; the details fold away', async () => {
+  it('STOPPED leads with a solid stopped tile, the headroom and the picker; Run it starts it; the details fold away', async () => {
     mockStatus.mockResolvedValue(
       statusOf({ state: 'stopped', availableMemoryGb: 96.6, totalMemoryGb: 128 })
     );
@@ -695,11 +695,11 @@ describe('MlxEngineView status hero', () => {
     expect(tile.className).toContain('bg-lz-phase-unloaded');
     expect(within(hero).getByText('no model mounted')).toBeInTheDocument();
     expect(within(hero).getByText('96.6 GB available of 128.0 GB')).toBeInTheDocument();
-    // The primary action and the model it acts on share the hero.
+    // The hero picks the model; the ONE way to start it is Run it, right under the hero.
     expect(within(hero).getByRole('combobox', { name: 'Model to mount' })).toBeInTheDocument();
-    await waitFor(() =>
-      expect(within(hero).getByRole('button', { name: /^Mount$/ })).toBeEnabled()
-    );
+    expect(within(hero).queryByRole('button', { name: /^Mount$/ })).toBeNull();
+    expect(within(hero).getByText(/start it in Run it below/)).toBeInTheDocument();
+    await runHere();
     // The facts table is collapsed: a disclosure, not twelve rows of "—" leading the page.
     const toggle = screen.getByRole('button', { name: 'Engine details' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -750,7 +750,7 @@ describe('MlxEngineView status hero', () => {
     unmount();
   });
 
-  it('RUNNING names the served model in the hero, offers Unmount, and shows the details open', async () => {
+  it('RUNNING names the served model in the hero, Run it carries Stop, and the details are open', async () => {
     mockStatus.mockResolvedValue(
       statusOf({ state: 'running', modelId: QWEN, pid: 4242, toolCallParser: 'qwen3' })
     );
@@ -764,14 +764,19 @@ describe('MlxEngineView status hero', () => {
     expect(within(hero).getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-idle');
     // Named as the served model (display size), and again in the picker as the selection.
     expect(within(hero).getAllByText(QWEN)[0].className).toContain('text-lz-h2');
-    expect(within(hero).getByRole('button', { name: /Unmount/ })).toBeEnabled();
+    // Stopping is Run it's, on the way that runs — the hero keeps no second button for it.
+    expect(within(hero).queryByRole('button', { name: /Unmount/ })).toBeNull();
+    const local = await screen.findByTestId('placement-way-local');
+    expect(within(local).getByTestId('placement-live')).toHaveTextContent('Running');
+    await userEvent.click(within(local).getByTestId('placement-stop-local'));
+    await waitFor(() => expect(mockUnmount).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('button', { name: 'Engine details' })).toBeNull();
     expect(screen.getByLabelText('Engine status')).toBeVisible();
     expect(screen.getByText('4242')).toBeVisible();
     unmount();
   });
 
-  it('FAILED shows the error in the hero and Retry mounts the selection again', async () => {
+  it('FAILED shows the error in the hero, Run it names it failed and Run mounts the selection again', async () => {
     mockStatus.mockResolvedValue(
       statusOf({ state: 'failed', modelId: QWEN, lastError: 'port 9600 never opened' })
     );
@@ -781,10 +786,10 @@ describe('MlxEngineView status hero', () => {
       expect(within(hero).getByText('port 9600 never opened')).toBeInTheDocument()
     );
     expect(within(hero).getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-failed');
-    const retry = await within(hero).findByRole('button', { name: /Retry/ });
-    await waitFor(() => expect(retry).toBeEnabled());
-    await userEvent.click(retry);
-    await waitFor(() => expect(mockMount).toHaveBeenCalledWith(QWEN, undefined));
+    const local = await screen.findByTestId('placement-way-local');
+    expect(within(local).getByTestId('placement-live')).toHaveAttribute('data-phase', 'failed');
+    await userEvent.click(await runHere());
+    await waitFor(() => expect(mockMount).toHaveBeenCalledWith(QWEN));
     unmount();
   });
 
@@ -871,9 +876,10 @@ describe('MlxEngineView state tile instrument', () => {
     expect(within(tile).getByTestId('mlx-activity')).toHaveTextContent('Writing');
     expect(tile.className).toContain('bg-lz-phase-writing');
     expect(within(tile).getByText('Reading prompt · 32.3K tokens')).toBeInTheDocument();
-    // Mount/Retry are not on a running tile; the picker row keeps Mounted + Unmount.
+    // Nothing to press on the tile: Run it carries the running way's Stop and Measure.
     expect(within(tile).queryByRole('button')).toBeNull();
-    expect(screen.getByRole('button', { name: /Mounted/ })).toBeDisabled();
+    expect(await screen.findByTestId('placement-stop-local')).toBeEnabled();
+    expect(screen.queryByTestId('placement-run-local')).toBeNull();
     unmount();
   });
 
@@ -925,7 +931,7 @@ describe('MlxEngineView state tile instrument', () => {
     unmount();
   });
 
-  it('STOPPED draws the sidecar fit verdict for the picked model and mounts from the tile', async () => {
+  it('STOPPED draws the sidecar fit verdict for the picked model; Run on this Mac mounts it', async () => {
     const GIB = 1024 * 1024 * 1024;
     // The status asks the sidecar for the picked model's verdict (fitModelId) and the tile draws
     // it as given: 17 GB needed, a 32.2 GB budget of 40.2 GB free — 15.2 to spare.
@@ -961,10 +967,9 @@ describe('MlxEngineView state tile instrument', () => {
     expect(cost).toHaveAttribute('data-verdict', 'fits');
     expect(cost).toHaveTextContent('Fits, 15.2 GB to spare');
     const tile = screen.getByTestId('mlx-state-badge');
-    const mount = within(tile).getByRole('button', { name: /^Mount$/ });
-    await waitFor(() => expect(mount).toBeEnabled());
-    await userEvent.click(mount);
-    await waitFor(() => expect(mockMount).toHaveBeenCalledWith(QWEN, undefined));
+    expect(within(tile).queryByRole('button', { name: /^Mount$/ })).toBeNull();
+    await userEvent.click(await runHere());
+    await waitFor(() => expect(mockMount).toHaveBeenCalledWith(QWEN));
     unmount();
   });
 });
@@ -990,20 +995,21 @@ function forceStatusRefresh() {
   document.dispatchEvent(new Event('visibilitychange'));
 }
 
-describe('MlxEngineView mount card truth', () => {
-  it('running with the mounted model selected shows a DISABLED "Mounted" status button', async () => {
+describe('MlxEngineView — Run it tells the truth about the live engine', () => {
+  it('running with the mounted model picked: Run it says Running and offers Stop, never a second start', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'running', modelId: QWEN }));
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Mounted/ })).toBeInTheDocument();
-    });
-    expect(screen.getByRole('button', { name: /Mounted/ })).toBeDisabled();
+    const local = await screen.findByTestId('placement-way-local');
+    await waitFor(() =>
+      expect(within(local).getByTestId('placement-live')).toHaveTextContent('Running')
+    );
+    expect(within(local).getByTestId('placement-stop-local')).toBeEnabled();
+    expect(within(local).queryByTestId('placement-run-local')).toBeNull();
     expect(screen.queryByRole('button', { name: /^Mount$/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Switch model/ })).not.toBeInTheDocument();
     unmount();
   });
 
-  it('running with restartRequired keeps "Mounted" disabled — the amber banner owns the action', async () => {
+  it('running with restartRequired: the amber banner owns Remount; Run it offers no restart of its own', async () => {
     mockStatus.mockResolvedValue(
       statusOf({ state: 'running', modelId: QWEN, restartRequired: true })
     );
@@ -1011,55 +1017,37 @@ describe('MlxEngineView mount card truth', () => {
     await waitFor(() => {
       expect(screen.getByText('Settings changed — remount to apply.')).toBeInTheDocument();
     });
-    // The banner commits on the FIRST status render; the picker-follows-truth effect that turns
-    // the primary button into "Mounted" lands one commit later — wait for it, then assert.
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Mounted/ })).toBeInTheDocument();
-    });
-    expect(screen.getByRole('button', { name: /Mounted/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: /Remount/ })).toBeEnabled();
+    await waitFor(() => expect(screen.getByTestId('placement-stop-local')).toBeInTheDocument());
+    expect(screen.queryByTestId('placement-run-local')).toBeNull();
     unmount();
   });
 
-  it('running with a DIFFERENT selection offers an enabled "Switch model" that mounts the selection', async () => {
+  it('running with a DIFFERENT model picked: Run on this Mac switches to it', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'running', modelId: QWEN }));
     mockModelsList.mockResolvedValue(listOf(COMPLETE_MODELS));
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Mounted/ })).toBeInTheDocument();
-    });
+    await waitFor(() => expect(screen.getByTestId('placement-stop-local')).toBeInTheDocument());
     await userEvent.click(screen.getAllByRole('combobox')[0]);
     await userEvent.click(await screen.findByRole('option', { name: /Other-Model-4bit/ }));
-    const switchButton = await screen.findByRole('button', { name: /Switch model/ });
-    expect(switchButton).toBeEnabled();
-    await userEvent.click(switchButton);
-    await waitFor(() => {
-      expect(mockMount).toHaveBeenCalledWith(OTHER_MODEL, undefined);
-    });
+    await userEvent.click(await runHere());
+    await waitFor(() => expect(mockMount).toHaveBeenCalledWith(OTHER_MODEL));
     unmount();
   });
 
-  it('mounting shows a disabled spinner button, never an actionable Mount', async () => {
+  it('mounting: Run it says Mounting in the loading amber, and offers no start', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'mounting', modelId: QWEN }));
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Mounting/ })).toBeInTheDocument();
-    });
-    expect(screen.getByRole('button', { name: /Mounting/ })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: /^Mount$/ })).not.toBeInTheDocument();
+    const local = await screen.findByTestId('placement-way-local');
+    await waitFor(() =>
+      expect(within(local).getByTestId('placement-live')).toHaveAttribute('data-phase', 'loading')
+    );
+    expect(within(local).getByTestId('placement-live')).toHaveTextContent('Mounting');
+    expect(within(local).queryByTestId('placement-run-local')).toBeNull();
     unmount();
   });
 
-  it('stopped still offers the plain Mount action', async () => {
-    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
-    const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /^Mount$/ })).toBeEnabled();
-    });
-    unmount();
-  });
-
-  it('an explicit user selection is never overridden when the engine reports a mounted model', async () => {
+  it('an explicit pick is never overridden when the engine reports another model', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
     mockModelsList.mockResolvedValue(listOf(COMPLETE_MODELS));
     const { unmount } = render(<MlxEngineView />);
@@ -1075,10 +1063,10 @@ describe('MlxEngineView mount card truth', () => {
     await waitFor(() => {
       expect(screen.getAllByTestId('mlx-state-badge')[0]).toHaveTextContent('Running');
     });
-    // The user's pick survives: the button offers Switch model, not the Mounted status.
+    // The pick survives: Run it is about the picked model, which is not the one running.
     expect(screen.getByText(OTHER_MODEL)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Switch model/ })).toBeEnabled();
-    expect(screen.queryByRole('button', { name: /Mounted/ })).not.toBeInTheDocument();
+    expect(await runHere()).toBeInTheDocument();
+    expect(screen.queryByTestId('placement-live')).toBeNull();
     unmount();
   });
 });
@@ -1171,7 +1159,7 @@ describe('MlxEngineView sampling tab', () => {
 
     await userEvent.click(screen.getByRole('radio', { name: /Models/ }));
     await waitFor(() => {
-      expect(screen.getByLabelText('Search Hugging Face')).toBeInTheDocument();
+      expect(screen.getByTestId('model-matrix')).toBeInTheDocument();
     });
     await userEvent.click(screen.getByRole('radio', { name: 'Sampling' }));
     await waitFor(() => {
@@ -1500,18 +1488,12 @@ describe('MlxEngineView sampling tab', () => {
     second.unmount();
   });
 
-  it('the per-model Sampling affordance on the Downloaded rows preselects that row model', async () => {
+  it('the Sampling action in a model cell preselects that model on that Mac', async () => {
     mockModelsList.mockResolvedValue(listOf(COMPLETE_MODELS));
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => {
-      expect(screen.getByText('Models')).toBeInTheDocument();
-    });
-    await userEvent.click(screen.getByRole('radio', { name: /Models/ }));
-    await userEvent.click(screen.getByRole('radio', { name: /^Downloaded/ }));
-    await waitFor(() => {
-      expect(screen.getByLabelText(`Sampling for ${OTHER_MODEL}`)).toBeInTheDocument();
-    });
-    await userEvent.click(screen.getByLabelText(`Sampling for ${OTHER_MODEL}`));
+    await openModelsTab();
+    const cell = await screen.findByTestId(`model-cell-self-${OTHER_MODEL}`);
+    await userEvent.click(within(cell).getByRole('button', { name: 'Sampling on This Mac' }));
     await waitFor(() => {
       expect(
         screen.getByText(/per-request values sent by goose override them/)
@@ -1563,97 +1545,96 @@ const HIT_C: MlxBrowseHit = {
 
 async function openModelsTab() {
   await waitFor(() => {
-    expect(screen.getByRole('radio', { name: /Models/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /^Models/ })).toBeInTheDocument();
   });
-  await userEvent.click(screen.getByRole('radio', { name: /Models/ }));
+  await userEvent.click(screen.getByRole('radio', { name: /^Models/ }));
 }
 
-/** The owner's split: local content lives on the second-level Downloaded tab. */
-async function openDownloadedTab() {
+/** The browser is the Models tab's second pane; the first is every Mac's models. */
+async function openHfTab() {
   await openModelsTab();
-  await userEvent.click(screen.getByRole('radio', { name: /^Downloaded/ }));
+  await userEvent.click(screen.getByRole('radio', { name: 'Hugging Face' }));
 }
 
 describe('MlxEngineView models tab', () => {
-  it('splits into [Hugging Face | Downloaded]: the browser on one, the local library on the other', async () => {
+  it('splits into [On your Macs | Hugging Face]: the table of every Mac first, the browser apart', async () => {
     const { unmount } = render(<MlxEngineView />);
     await openModelsTab();
-    // Hugging Face is the default pane: the browser is here, the local library is not.
-    await waitFor(() => {
-      expect(screen.getByLabelText('Search Hugging Face')).toBeInTheDocument();
-    });
-    expect(screen.queryByText('/Users/x/mlx-models')).not.toBeInTheDocument();
-    expect(screen.queryByText(HALF)).not.toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('radio', { name: /^Downloaded/ }));
+    // "On your Macs" is the default pane: the models table and each Mac's folder.
+    expect(await screen.findByTestId('model-matrix')).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
     });
     expect(screen.getByTestId('mlx-disk-bar')).toBeInTheDocument();
     expect(screen.getByText(HALF)).toBeInTheDocument();
     expect(screen.queryByLabelText('Search Hugging Face')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Hugging Face' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Search Hugging Face')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('model-matrix')).not.toBeInTheDocument();
+    // One Mac: no "Download to" choice to make.
+    expect(screen.queryByTestId('mlx-download-to')).not.toBeInTheDocument();
     unmount();
   });
 
-  it('lists local models with sizes, flags incomplete downloads, counts what it shows', async () => {
+  it('lists the models with sizes, flags incomplete downloads, counts what it shows', async () => {
     const { unmount } = render(<MlxEngineView />);
-    await openDownloadedTab();
-    await waitFor(() => {
-      expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
-    });
-    expect(screen.getByText(HALF)).toBeInTheDocument();
-    expect(screen.getByText('incomplete — missing 2 file(s)')).toBeInTheDocument();
-    expect(screen.getByText('17 GB')).toBeInTheDocument();
-    // The tab chip and the section chip both say 2, and the body shows exactly 2 rows.
-    expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByLabelText(/^Delete /).length).toBe(2);
+    await openModelsTab();
+    const qwen = await screen.findByTestId(`model-cell-self-${QWEN}`);
+    expect(qwen).toHaveAttribute('data-cell', 'present');
+    expect(qwen).toHaveTextContent('On disk');
+    expect(qwen).toHaveTextContent('17 GB');
+    expect(screen.getByTestId(`model-cell-self-${HALF}`)).toHaveTextContent(
+      'Incomplete · 2 files missing'
+    );
+    // The tab chips say 2, and the table shows exactly 2 rows.
+    expect(screen.getByRole('radio', { name: /^Models/ })).toHaveTextContent('Models2');
+    expect(screen.getByRole('radio', { name: /^On your Macs/ })).toHaveTextContent('2');
+    expect(screen.getAllByTestId(/^model-row-/)).toHaveLength(2);
     unmount();
   });
 
-  it('an incomplete model offers Resume (works for untracked residue) and its progress row', async () => {
+  it('an incomplete model offers Resume (works for untracked residue), then shows its real bytes', async () => {
     const { unmount } = render(<MlxEngineView />);
-    await openDownloadedTab();
-    await waitFor(() => {
-      expect(screen.getByText('incomplete — missing 2 file(s)')).toBeInTheDocument();
-    });
-    // Incomplete rows trade the Sampling affordance for Resume; Delete stays.
-    expect(screen.queryByLabelText(`Sampling for ${HALF}`)).not.toBeInTheDocument();
+    await openModelsTab();
+    const cell = await screen.findByTestId(`model-cell-self-${HALF}`);
+    // Incomplete cells trade the Sampling action for Resume; Delete stays.
+    expect(within(cell).queryByRole('button', { name: /^Sampling on/ })).toBeNull();
     mockDownloadProgress.mockResolvedValue({
       state: 'downloading',
       totalBytes: 6 * GB,
       downloadedBytes: 3 * GB,
       currentFile: 'model-00002-of-00002.safetensors',
     });
-    await userEvent.click(screen.getByLabelText(`Resume ${HALF}`));
+    await userEvent.click(within(cell).getByRole('button', { name: 'Resume' }));
     await waitFor(() => {
       expect(mockDownloadResume).toHaveBeenCalledWith(HALF, undefined);
-      expect(screen.getByTestId(`mlx-download-${HALF}`)).toBeInTheDocument();
+      expect(screen.getByTestId(`model-cell-self-${HALF}`)).toHaveTextContent('Downloading 50%');
     });
-    expect(screen.getByText('3.00 GB / 6.00 GB')).toBeInTheDocument();
     unmount();
   });
 
-  it('the disk bar shows the models volume free space from the modelsList response', async () => {
+  it('each Mac folder carries the free space of its volume from the modelsList response', async () => {
     const { unmount } = render(<MlxEngineView />);
-    await openDownloadedTab();
-    await waitFor(() => {
-      expect(screen.getByTestId('mlx-disk-bar')).toBeInTheDocument();
-    });
-    expect(screen.getByText('250 GB free')).toBeInTheDocument();
-    expect(screen.getByText('of 500 GB')).toBeInTheDocument();
+    await openModelsTab();
+    const folder = await screen.findByTestId('models-folder-self');
+    await waitFor(() => expect(within(folder).getByTestId('mlx-disk-bar')).toBeInTheDocument());
+    expect(within(folder).getByText('250 GB free')).toBeInTheDocument();
+    expect(within(folder).getByText('of 500 GB')).toBeInTheDocument();
     unmount();
   });
 
   it('browses on open (top downloads, no cursor) and a row Download starts a tracked download', async () => {
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
     expect(mockBrowse).toHaveBeenCalledWith(
-      expect.objectContaining({ sort: 'downloads', limit: 20 }),
-      undefined
+      expect.objectContaining({ sort: 'downloads', limit: 20 })
     );
     expect(mockBrowse.mock.calls[0][0].cursor).toBeUndefined();
     // Downloads and likes are plain aligned figures now — no arrow, no heart glyph.
@@ -1675,7 +1656,7 @@ describe('MlxEngineView models tab', () => {
   it('reconnects a server-owned download after navigating away and back', async () => {
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     const first = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await userEvent.click(await screen.findByLabelText(`Download ${HIT_A.id}`));
     await waitFor(() => expect(mockDownload).toHaveBeenCalledOnce());
     first.unmount();
@@ -1688,7 +1669,7 @@ describe('MlxEngineView models tab', () => {
       currentFile: 'model.safetensors',
     });
     const second = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => expect(mockDownloadProgress).toHaveBeenCalledWith(HIT_A.id, undefined));
     expect(await screen.findByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
     expect(mockDownload).toHaveBeenCalledOnce();
@@ -1702,7 +1683,7 @@ describe('MlxEngineView models tab', () => {
       return { hits: [HIT_A], nextCursor: 'CUR1' };
     });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -1738,7 +1719,7 @@ describe('MlxEngineView models tab', () => {
       return { hits: [HIT_A] };
     });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -1746,7 +1727,7 @@ describe('MlxEngineView models tab', () => {
     await waitFor(() => {
       expect(screen.getByText(HIT_B.id)).toBeInTheDocument();
     });
-    expect(mockBrowse).toHaveBeenCalledWith(expect.objectContaining({ sort: 'newest' }), undefined);
+    expect(mockBrowse).toHaveBeenCalledWith(expect.objectContaining({ sort: 'newest' }));
     // createdAt 2026-08-28 renders as a date in the row.
     expect(screen.getByText(/Aug 28, 2026/)).toBeInTheDocument();
     unmount();
@@ -1755,7 +1736,7 @@ describe('MlxEngineView models tab', () => {
   it('a browse failure is loud and an empty result is honest', async () => {
     mockBrowse.mockRejectedValue(new Error('HuggingFace model browse returned HTTP 429'));
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText('HuggingFace model browse returned HTTP 429')).toBeInTheDocument();
     });
@@ -1771,18 +1752,17 @@ describe('MlxEngineView models tab', () => {
     unmount();
   });
 
-  it('deleting a model asks through the custom dialog, never window.confirm', async () => {
+  it('deleting a model asks through the custom dialog naming the Mac, never window.confirm', async () => {
     mockModelDelete.mockResolvedValue(undefined);
     const confirmSpy = vi.spyOn(window, 'confirm');
     const { unmount } = render(<MlxEngineView />);
-    await openDownloadedTab();
+    await openModelsTab();
+    const cell = await screen.findByTestId(`model-cell-self-${HALF}`);
+    await userEvent.click(within(cell).getByRole('button', { name: 'Delete from This Mac' }));
     await waitFor(() => {
-      expect(screen.getByLabelText(`Delete ${HALF}`)).toBeInTheDocument();
-    });
-    await userEvent.click(screen.getByLabelText(`Delete ${HALF}`));
-    // The custom confirmation dialog appears with the model named.
-    await waitFor(() => {
-      expect(screen.getByText(/Delete mlx-community\/Half-Model-8bit/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Delete mlx-community\/Half-Model-8bit \(3\.0 GB\) from This Mac\?/)
+      ).toBeInTheDocument();
     });
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => {
@@ -1792,7 +1772,7 @@ describe('MlxEngineView models tab', () => {
     unmount();
   });
 
-  it('a running download is visible from BOTH sub-tabs (Active downloads carries the orphans)', async () => {
+  it('a running download is visible from BOTH panes: inline in the browser, a cell in the table', async () => {
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     mockDownloadProgress.mockResolvedValue({
       state: 'downloading',
@@ -1800,25 +1780,24 @@ describe('MlxEngineView models tab', () => {
       downloadedBytes: 1 * GB,
     });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
-    // Started from the browser row: inline on the Hugging Face pane.
     await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
     await waitFor(() => {
       expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
     });
 
-    // The Downloaded pane shows the SAME download — HIT_A is not local, so the
-    // Active downloads card carries it. One row per repo per pane, never two.
-    await userEvent.click(screen.getByRole('radio', { name: /^Downloaded/ }));
+    // The table shows the SAME download as the model arriving on this Mac.
+    await userEvent.click(screen.getByRole('radio', { name: /^On your Macs/ }));
     await waitFor(() => {
-      expect(screen.getByText('Active downloads')).toBeInTheDocument();
+      expect(screen.getByTestId(`model-cell-self-${HIT_A.id}`)).toHaveTextContent(
+        'Downloading 25%'
+      );
     });
-    expect(screen.getAllByTestId(`mlx-download-${HIT_A.id}`)).toHaveLength(1);
 
-    // And back on Hugging Face it is inline again, still exactly once.
+    // And back on Hugging Face it is inline again, exactly once.
     await userEvent.click(screen.getByRole('radio', { name: 'Hugging Face' }));
     await waitFor(() => {
       expect(screen.getAllByTestId(`mlx-download-${HIT_A.id}`)).toHaveLength(1);
@@ -1833,14 +1812,14 @@ describe('MlxEngineView models tab', () => {
       return { hits: [HIT_A] };
     });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await userEvent.type(screen.getByLabelText('Search Hugging Face'), 'qwen{Enter}');
     await waitFor(() => {
       expect(screen.getByText(HIT_C.id)).toBeInTheDocument();
     });
     const browseCalls = mockBrowse.mock.calls.length;
 
-    await userEvent.click(screen.getByRole('radio', { name: /^Downloaded/ }));
+    await userEvent.click(screen.getByRole('radio', { name: /^On your Macs/ }));
     await waitFor(() => {
       expect(screen.getByText('/Users/x/mlx-models')).toBeInTheDocument();
     });
@@ -1865,7 +1844,7 @@ describe('MlxEngineView browse filter comboboxes', () => {
   it('typing in the Arch combobox filters the vocabulary, frequency order preserved, and selecting applies server-side', async () => {
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -1900,7 +1879,7 @@ describe('MlxEngineView browse filter comboboxes', () => {
       return { hits: [HIT_A] };
     });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -1931,7 +1910,7 @@ describe('MlxEngineView browse filter comboboxes', () => {
   it('a stale vocabulary (refreshError) and a failed vocabulary load both say so', async () => {
     mockBrowseFilters.mockResolvedValue({ ...FILTERS, refreshError: 'HTTP 500 from HF' });
     const first = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText('vocabulary may be stale')).toBeInTheDocument();
     });
@@ -1940,7 +1919,7 @@ describe('MlxEngineView browse filter comboboxes', () => {
 
     mockBrowseFilters.mockRejectedValue(new Error('crawl refused'));
     const second = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(
         screen.getByText('filter vocabulary unavailable — free text still works')
@@ -1976,7 +1955,7 @@ describe('MlxEngineView model card modal', () => {
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     mockModelCard.mockResolvedValue(CARD);
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -2004,7 +1983,7 @@ describe('MlxEngineView model card modal', () => {
   it('row action buttons do NOT open the card; Esc closes it; an absent README is honest', async () => {
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -2056,7 +2035,7 @@ describe('MlxEngineView download lifecycle', () => {
     }));
 
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -2096,7 +2075,7 @@ describe('MlxEngineView download lifecycle', () => {
     );
 
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -2118,33 +2097,31 @@ describe('MlxEngineView download lifecycle', () => {
     unmount();
   });
 
-  it('deleting a model clears its finished download row so Download comes back honest', async () => {
+  it('deleting a model clears its finished download so the browser offers Download again', async () => {
+    mockBrowse.mockResolvedValue({ hits: [{ ...HIT_A, id: HALF }] });
     mockDownloadProgress.mockResolvedValue({
       state: 'done',
       totalBytes: 3 * GB,
       downloadedBytes: 3 * GB,
     });
     const { unmount } = render(<MlxEngineView />);
-    await openDownloadedTab();
-    await waitFor(() => {
-      expect(screen.getByLabelText(`Resume ${HALF}`)).toBeInTheDocument();
-    });
-    await userEvent.click(screen.getByLabelText(`Resume ${HALF}`));
-    await waitFor(() => {
-      expect(screen.getByText('done')).toBeInTheDocument();
-    });
+    await openModelsTab();
+    const cell = await screen.findByTestId(`model-cell-self-${HALF}`);
+    await userEvent.click(within(cell).getByRole('button', { name: 'Resume' }));
+    await waitFor(() => expect(mockDownloadResume).toHaveBeenCalledWith(HALF, undefined));
 
-    await userEvent.click(screen.getByLabelText(`Delete ${HALF}`));
-    await waitFor(() => {
-      expect(screen.getByText(/Delete mlx-community\/Half-Model-8bit/)).toBeInTheDocument();
-    });
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => {
-      expect(mockModelDelete).toHaveBeenCalledWith(HALF, undefined);
-      // Caught live: without this, the deleted model's row kept saying "done" and the
-      // Download action never returned.
-      expect(screen.queryByTestId(`mlx-download-${HALF}`)).not.toBeInTheDocument();
-    });
+    await userEvent.click(
+      within(screen.getByTestId(`model-cell-self-${HALF}`)).getByRole('button', {
+        name: 'Delete from This Mac',
+      })
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(mockModelDelete).toHaveBeenCalledWith(HALF, undefined));
+
+    // Caught live once: a deleted model's row kept saying "done" and Download never came back.
+    await userEvent.click(screen.getByRole('radio', { name: 'Hugging Face' }));
+    expect(await screen.findByLabelText(`Download ${HALF}`)).toBeInTheDocument();
+    expect(screen.queryByTestId(`mlx-download-${HALF}`)).not.toBeInTheDocument();
     unmount();
   });
 
@@ -2156,7 +2133,7 @@ describe('MlxEngineView download lifecycle', () => {
       downloadedBytes: 1 * GB,
     });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -2175,8 +2152,14 @@ describe('MlxEngineView download lifecycle', () => {
       timeout: 3000,
     });
 
-    // Back on the Models tab the row is still there with the last REAL bytes.
-    await userEvent.click(screen.getByRole('radio', { name: /Models/ }));
+    // Back on the Models tab the download is still there with the last REAL bytes.
+    await userEvent.click(screen.getByRole('radio', { name: /^Models/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId(`model-cell-self-${HIT_A.id}`)).toHaveTextContent(
+        'Downloading 25%'
+      );
+    });
+    await userEvent.click(screen.getByRole('radio', { name: 'Hugging Face' }));
     await waitFor(() => {
       expect(screen.getByTestId(`mlx-download-${HIT_A.id}`)).toBeInTheDocument();
     });
@@ -2186,175 +2169,12 @@ describe('MlxEngineView download lifecycle', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Device picker — manage models on ANY linked device. The picker is sourced from
-// leanzeroLink/nodes and gated on the capability + a connected mesh; every op threads
-// the selected node's id. The common case now (no worker deployed) is capability-present-
-// but-not-connected OR capability-absent: no peers, no picker, byte-identical local view.
-// ---------------------------------------------------------------------------
-
-describe('MlxEngineView device picker (remote model management)', () => {
-  async function selectPeer(nodeId = 'peer-workhorse') {
-    await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: 'Manage models on device' })).toBeInTheDocument()
-    );
-    await userEvent.click(screen.getByRole('combobox', { name: 'Manage models on device' }));
-    await userEvent.click(screen.getByTestId(`mlx-device-target-option-${nodeId}`));
-  }
-
-  it('capability absent → no picker, every op targets THIS device (nodeId undefined)', async () => {
-    const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => expect(mockStatus).toHaveBeenCalled());
-    expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
-    expect(mockStatus.mock.calls.map((call) => call[0])).toContain(undefined);
-    expect(mockModelsList).toHaveBeenCalledWith(undefined);
-    expect(mockLinkNodes).not.toHaveBeenCalled();
-    unmount();
-  });
-
-  it('capability present but NOT connected → no picker, behaves exactly as today', async () => {
-    mockFeatures.leanzeroLink = true;
-    mockLinkStatus.mockResolvedValue({
-      auth: { state: 'loggedIn', email: 'm@x.co' },
-      nodeCount: 0,
-    });
-    const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => expect(mockLinkStatus).toHaveBeenCalled());
-    await waitFor(() => expect(mockStatus.mock.calls.map((call) => call[0])).toContain(undefined));
-    expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
-    unmount();
-  });
-
-  it('connected but zero peers → no picker (no clutter)', async () => {
-    withMesh([]);
-    const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
-    await waitFor(() => expect(mockStatus.mock.calls.map((call) => call[0])).toContain(undefined));
-    expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
-    unmount();
-  });
-
-  it('lists This device + each connected peer with an idle/busy chip', async () => {
-    withMesh([
-      peerNode({ hostname: 'workhorse', node_id: 'peer-workhorse' }),
-      peerNode({
-        hostname: 'studio',
-        node_id: 'peer-studio',
-        status: { type: 'Busy', session_id: 's1' },
-      }),
-    ]);
-    const { unmount } = render(<MlxEngineView />);
-    await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: 'Manage models on device' })).toBeInTheDocument()
-    );
-    await userEvent.click(screen.getByRole('combobox', { name: 'Manage models on device' }));
-    expect(screen.getByTestId('mlx-device-target-option-self')).toHaveTextContent('This device');
-    const wh = screen.getByTestId('mlx-device-target-option-peer-workhorse');
-    expect(wh).toHaveTextContent('workhorse');
-    expect(wh).toHaveTextContent('idle');
-    const st = screen.getByTestId('mlx-device-target-option-peer-studio');
-    expect(st).toHaveTextContent('studio');
-    expect(st).toHaveTextContent('busy');
-    unmount();
-  });
-
-  it('selecting a peer threads its nodeId into status, models and settings, and banners the device', async () => {
-    withMesh([peerNode()]);
-    const { unmount } = render(<MlxEngineView />);
-    await selectPeer();
-    await waitFor(() => {
-      expect(mockModelsList).toHaveBeenCalledWith('peer-workhorse');
-      expect(mockStatus.mock.calls.map((call) => call[0])).toContain('peer-workhorse');
-      expect(mockSettingsRead).toHaveBeenCalledWith('peer-workhorse');
-    });
-    expect(screen.getByText('Managing models on workhorse (remote)')).toBeInTheDocument();
-    unmount();
-  });
-
-  it("a remote node's mount-gate BLOCK renders verbatim in the existing banner", async () => {
-    const BLOCK = 'Not enough memory: model needs 22.0 GB, only 5.1 GB free';
-    mockStatus.mockImplementation(async (nodeId?: string) =>
-      nodeId === 'peer-workhorse'
-        ? statusOf({ gateMessage: BLOCK, gateVerdict: 'block' })
-        : statusOf({})
-    );
-    withMesh([peerNode()]);
-    const { unmount } = render(<MlxEngineView />);
-    await selectPeer();
-    await waitFor(() => expect(screen.getByText(BLOCK)).toBeInTheDocument());
-    expect(screen.getByText('Mount blocked')).toBeInTheDocument();
-    unmount();
-  });
-
-  it('an unreachable peer surfaces its error verbatim in the existing banner', async () => {
-    const ERR = 'not connected to the mesh';
-    mockStatus.mockImplementation(async (nodeId?: string) => {
-      if (nodeId === 'peer-workhorse') throw new Error(ERR);
-      return statusOf({});
-    });
-    withMesh([peerNode()]);
-    const { unmount } = render(<MlxEngineView />);
-    await selectPeer();
-    await waitFor(() => expect(screen.getByText(ERR)).toBeInTheDocument());
-    expect(screen.getByText('Engine unreachable')).toBeInTheDocument();
-    unmount();
-  });
-
-  it('deleting on a remote device names the device in the confirm dialog and targets it', async () => {
-    mockModelDelete.mockResolvedValue(undefined);
-    withMesh([peerNode()]);
-    const { unmount } = render(<MlxEngineView />);
-    await selectPeer();
-    await waitFor(() =>
-      expect(screen.getByText('Managing models on workhorse (remote)')).toBeInTheDocument()
-    );
-    await openDownloadedTab();
-    await waitFor(() => expect(screen.getByLabelText(`Delete ${HALF}`)).toBeInTheDocument());
-    await userEvent.click(screen.getByLabelText(`Delete ${HALF}`));
-    // Scope to the dialog message — "on workhorse" also appears in the remote banner above.
-    await waitFor(() =>
-      expect(
-        screen.getByText(/Delete mlx-community\/Half-Model-8bit.*on workhorse/)
-      ).toBeInTheDocument()
-    );
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(mockModelDelete).toHaveBeenCalledWith(HALF, 'peer-workhorse'));
-    unmount();
-  });
-
-  it('cancelling a remote download names the device in the confirm dialog and targets it', async () => {
-    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
-    withMesh([peerNode()]);
-    const { unmount } = render(<MlxEngineView />);
-    await selectPeer();
-    await openModelsTab();
-    await waitFor(() => expect(screen.getByText(HIT_A.id)).toBeInTheDocument());
-    await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
-    await waitFor(() => expect(screen.getByLabelText(`Cancel ${HIT_A.id}`)).toBeInTheDocument());
-    await userEvent.click(screen.getByLabelText(`Cancel ${HIT_A.id}`));
-    // A LOCAL cancel goes straight through; a remote one asks first, naming the device.
-    // Scope to the dialog message — the remote banner also contains "on workhorse".
-    await waitFor(() =>
-      expect(screen.getByText(/Cancel the download of.*on workhorse/)).toBeInTheDocument()
-    );
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel download' }));
-    await waitFor(() =>
-      expect(mockDownloadCancel).toHaveBeenCalledWith(HIT_A.id, 'peer-workhorse')
-    );
-    unmount();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The token doctrine on the Hugging Face browser (main.css `.local-edition`): ONE accent, the
-// node ramp for node identity ONLY, metadata as aligned neutral columns. The hot-pink tab and
-// the rainbow publisher chips were this view breaking that doctrine.
-// ---------------------------------------------------------------------------
 
 describe('MlxEngineView browser — one accent, neutral columns', () => {
   it('renders hits as aligned columns under a header row; the publisher is neutral text, not a hue', async () => {
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -2388,7 +2208,7 @@ describe('MlxEngineView browser — one accent, neutral columns', () => {
   it('the active sort segment and the row action are the single accent — never node-5 pink', async () => {
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -2464,7 +2284,7 @@ describe('MlxEngineView — Studio clean on every tab', () => {
       currentFile: 'model.safetensors',
     });
     const { unmount } = render(<MlxEngineView />);
-    await openModelsTab();
+    await openHfTab();
     await waitFor(() => {
       expect(screen.getByText(HIT_A.id)).toBeInTheDocument();
     });
@@ -2479,11 +2299,11 @@ describe('MlxEngineView — Studio clean on every tab', () => {
     expect(await missingUtilities(utilities())).toEqual([]);
 
     await userEvent.keyboard('{Escape}');
-    await openDownloadedTab();
+    await userEvent.click(screen.getByRole('radio', { name: /^On your Macs/ }));
     await waitFor(() => {
       expect(screen.getByTestId('mlx-disk-bar')).toBeInTheDocument();
     });
-    expect(screen.getByText('incomplete — missing 2 file(s)')).toBeInTheDocument();
+    expect(screen.getByText('Incomplete · 2 files missing')).toBeInTheDocument();
     studioClean();
     expect(await missingUtilities(utilities())).toEqual([]);
     unmount();
@@ -2506,32 +2326,59 @@ describe('MlxEngineView — Studio clean on every tab', () => {
   });
 });
 
-describe('MlxEngineView copy a model to a linked device', () => {
-  const copyButton = () => screen.queryByRole('button', { name: /^Copy to workhorse/ });
+const PEER = 'peer-workhorse';
+const STUDIO = 'Work’s Mac Studio';
+const LAPTOP = 'Mihai’s MacBook';
+const ME = { ...SELF_NODE, computer_name: LAPTOP };
 
-  it('a single machine shows no copy control and never reads the links', async () => {
+/** This Mac lists MODELS; the peer lists `peer` (or fails with `peerError`). */
+function peerHolds(peer: MlxLocalModel[], peerError?: unknown) {
+  mockModelsList.mockImplementation(async (nodeId?: string) => {
+    if (nodeId !== PEER) return listOf(MODELS);
+    if (peerError) throw peerError;
+    return { ...listOf(peer), modelsDir: '/Volumes/Studio/mlx-models' };
+  });
+}
+
+function studioCleanNow() {
+  assertStudioClean(document.body);
+}
+
+describe('MlxEngineView — Models: one row per model, one column per Mac', () => {
+  const copyButton = () => screen.queryByRole('button', { name: /^Copy from / });
+
+  it('a single Mac is one column, offers no copy and never asks for copy paths', async () => {
     const { unmount } = render(<MlxEngineView />);
-    await openDownloadedTab();
-    await waitFor(() => expect(screen.getByText(QWEN)).toBeInTheDocument());
-    expect(copyButton()).not.toBeInTheDocument();
-    expect(screen.queryByText('Linked devices')).not.toBeInTheDocument();
+    await openModelsTab();
+    expect(await screen.findByTestId(`model-cell-self-${QWEN}`)).toHaveAttribute(
+      'data-cell',
+      'present'
+    );
+    expect(screen.queryByTestId(`model-cell-${PEER}-${QWEN}`)).toBeNull();
+    expect(copyButton()).toBeNull();
     expect(mockReplicaTargets).not.toHaveBeenCalled();
     unmount();
   });
 
-  it('connected with zero peers reads nothing either', async () => {
-    withMesh([]);
+  it('connected with zero peers reads no copy paths either', async () => {
+    withMesh([], ME);
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
-    await openDownloadedTab();
-    await waitFor(() => expect(screen.getByText(QWEN)).toBeInTheDocument());
-    expect(copyButton()).not.toBeInTheDocument();
+    await openModelsTab();
+    const matrix = await screen.findByTestId('model-matrix');
+    await waitFor(() => expect(within(matrix).getByText(LAPTOP)).toBeInTheDocument());
+    expect(copyButton()).toBeNull();
     expect(mockReplicaTargets).not.toHaveBeenCalled();
     unmount();
   });
 
-  it('a Thunderbolt peer: a complete model offers the copy, the copy follows the RECEIVER to done', async () => {
-    withMesh([peerNode()]);
+  it('every Mac is a column under ONE name; "Copy from · Thunderbolt" fills the gap and the cell follows the receiver to done', async () => {
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    let landed = false;
+    mockModelsList.mockImplementation(async (nodeId?: string) =>
+      nodeId === PEER ? listOf(landed ? [MODELS[0]] : []) : listOf(MODELS)
+    );
+    mockReplicate.mockResolvedValue(undefined);
     mockReplicaProgress
       .mockResolvedValueOnce({
         state: 'copying',
@@ -2548,61 +2395,76 @@ describe('MlxEngineView copy a model to a linked device', () => {
         wireMillis: 2000,
         elapsedMillis: 2100,
       })
-      .mockResolvedValue({
-        state: 'done',
-        sourceUrl: 'http://192.168.0.1:54496',
-        link: 'thunderbolt',
-        linkDetail: 'Thunderbolt 3 en3 192.168.0.1 → 192.168.0.2 (80 Gb/s)',
-        totalBytes: 17 * GB,
-        copiedBytes: 17 * GB,
-        filesTotal: 4,
-        filesDone: 4,
-        wireBytes: 17 * GB,
-        wireMillis: 8000,
-        elapsedMillis: 8400,
+      .mockImplementation(async () => {
+        landed = true;
+        return {
+          state: 'done',
+          sourceUrl: 'http://192.168.0.1:54496',
+          link: 'thunderbolt',
+          linkDetail: 'Thunderbolt 3 en3 192.168.0.1 → 192.168.0.2 (80 Gb/s)',
+          totalBytes: 17 * GB,
+          copiedBytes: 17 * GB,
+          filesTotal: 4,
+          filesDone: 4,
+          wireBytes: 17 * GB,
+          wireMillis: 8000,
+          elapsedMillis: 8400,
+        };
       });
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
-    await openDownloadedTab();
-    await waitFor(() => expect(copyButton()).toBeInTheDocument());
-    expect(copyButton()).toHaveTextContent('Copy to workhorse · Thunderbolt');
-    // ONE button: the incomplete model offers Resume, never a copy of half a model.
-    expect(screen.getAllByRole('button', { name: /^Copy to workhorse/ })).toHaveLength(1);
-    expect(mockReplicaTargets).toHaveBeenCalledWith(undefined);
-    const links = screen.getByTestId('mlx-replica-target-peer-workhorse');
-    expect(links).toHaveTextContent('Thunderbolt · 80 Gb/s');
-    expect(links).toHaveTextContent('en3 192.168.0.1 → 192.168.0.2');
+    await openModelsTab();
+    const matrix = await screen.findByTestId('model-matrix');
+    // The names their owners gave them, once each — never a hostname beside it.
+    await waitFor(() => expect(within(matrix).getByText(STUDIO)).toBeInTheDocument());
+    expect(within(matrix).getByText(LAPTOP)).toBeInTheDocument();
+    expect(within(matrix).queryByText('workhorse')).toBeNull();
 
-    await userEvent.click(copyButton()!);
-    expect(mockReplicate).toHaveBeenCalledWith(QWEN, 'peer-workhorse', undefined);
+    const gap = await screen.findByTestId(`model-cell-${PEER}-${QWEN}`);
+    expect(gap).toHaveAttribute('data-cell', 'absent');
+    expect(gap).toHaveTextContent('Not here');
+    await waitFor(() =>
+      expect(within(gap).getByRole('button', { name: /^Copy from / })).toHaveTextContent(
+        `Copy from ${LAPTOP} · Thunderbolt`
+      )
+    );
+    // Half a model is never copied: the incomplete one offers a download on the other Mac.
+    expect(screen.getByTestId(`model-cell-${PEER}-${HALF}`)).toHaveTextContent('Download here');
+    expect(screen.getAllByRole('button', { name: /^Copy from / })).toHaveLength(1);
+
+    await userEvent.click(within(gap).getByRole('button', { name: /^Copy from / }));
+    expect(mockReplicate).toHaveBeenCalledWith(QWEN, PEER, undefined);
     await waitFor(
       () =>
-        expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent(
-          'Copying to workhorse over Thunderbolt'
+        expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveTextContent('Copying 24%'),
+      { timeout: 3000 }
+    );
+    expect(mockReplicaProgress).toHaveBeenCalledWith(QWEN, PEER);
+    const detail = screen.getByTestId(`mlx-replica-${QWEN}`);
+    expect(detail).toHaveTextContent(`Copying to ${STUDIO} over Thunderbolt`);
+    expect(detail).toHaveTextContent('1 of 4 files');
+    expect(detail).toHaveTextContent('2.00 GB/s');
+    await waitFor(
+      () =>
+        expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveAttribute(
+          'data-cell',
+          'present'
         ),
-      { timeout: 3000 }
+      { timeout: 4000 }
     );
-    expect(mockReplicaProgress).toHaveBeenCalledWith(QWEN, 'peer-workhorse');
-    const row = screen.getByTestId(`mlx-replica-${QWEN}`);
-    expect(row).toHaveTextContent('1 of 4 files');
-    expect(row).toHaveTextContent('4.00 GB / 17.00 GB');
-    expect(row).toHaveTextContent('2.00 GB/s');
-    await waitFor(
-      () =>
-        expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent('Copied to workhorse'),
-      { timeout: 3000 }
-    );
+    expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveTextContent('On disk');
     studioCleanNow();
     unmount();
   });
 
-  it('a network-only peer is labelled network and says there is no Thunderbolt link', async () => {
-    withMesh([peerNode()]);
+  it('a network-only path is labelled network', async () => {
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    peerHolds([]);
     mockReplicaTargets.mockResolvedValue({
       meshConnected: true,
       targets: [
         {
-          nodeId: 'peer-workhorse',
+          nodeId: PEER,
           hostname: 'workhorse',
           link: {
             kind: 'network',
@@ -2625,29 +2487,25 @@ describe('MlxEngineView copy a model to a linked device', () => {
       ],
     });
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
-    await openDownloadedTab();
-    await waitFor(() => expect(copyButton()).toBeInTheDocument());
-    expect(copyButton()).toHaveTextContent('Copy to workhorse · network');
-    expect(copyButton()).toHaveAttribute(
+    await openModelsTab();
+    const gap = await screen.findByTestId(`model-cell-${PEER}-${QWEN}`);
+    const copy = await within(gap).findByRole('button', { name: /^Copy from / });
+    expect(copy).toHaveTextContent(`Copy from ${LAPTOP} · network`);
+    expect(copy).toHaveAttribute(
       'title',
-      'No Thunderbolt link to workhorse, so the copy goes over the local network: 192.168.10.127 → 192.168.10.161'
+      `Copies ${LAPTOP}’s files straight over the local network; every file is checked against the original.`
     );
-    expect(screen.getByTestId('mlx-replica-target-peer-workhorse')).toHaveTextContent(
-      'No Thunderbolt link, so copies go over the local network.'
-    );
-    // Each read asks every peer for its interfaces: once per tab open, never a render loop.
-    expect(mockReplicaTargets).toHaveBeenCalledTimes(1);
     unmount();
   });
 
-  it('an unreachable peer states why and offers no copy', async () => {
-    withMesh([peerNode()]);
+  it('no path between the Macs: no copy, goose’s reason, and Download here instead', async () => {
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    peerHolds([]);
     mockReplicaTargets.mockResolvedValue({
       meshConnected: true,
       targets: [
         {
-          nodeId: 'peer-workhorse',
+          nodeId: PEER,
           hostname: 'workhorse',
           unavailable:
             'this node and workhorse share no Thunderbolt or LAN subnet; a copy needs a direct path',
@@ -2655,52 +2513,171 @@ describe('MlxEngineView copy a model to a linked device', () => {
       ],
     });
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
-    await openDownloadedTab();
-    await waitFor(() =>
-      expect(screen.getByTestId('mlx-replica-target-peer-workhorse')).toHaveTextContent(
-        'share no Thunderbolt or LAN subnet'
-      )
+    await openModelsTab();
+    const why = await screen.findByTestId(`model-cell-${PEER}-${QWEN}-no-copy`);
+    expect(why).toHaveTextContent(
+      `No copy from ${LAPTOP}: this node and workhorse share no Thunderbolt or LAN subnet`
     );
-    expect(copyButton()).not.toBeInTheDocument();
+    const gap = screen.getByTestId(`model-cell-${PEER}-${QWEN}`);
+    expect(within(gap).queryByRole('button', { name: /^Copy from / })).toBeNull();
+    expect(within(gap).getByRole('button', { name: 'Download here' })).toBeInTheDocument();
     unmount();
   });
 
-  it('a refused start shows the reason verbatim under the model', async () => {
-    withMesh([peerNode()]);
+  it('a refused copy says so in goose’s words and polls nothing', async () => {
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    peerHolds([]);
     mockReplicate.mockRejectedValue(
       Object.assign(new Error('Invalid params'), {
         data: "'mlx-community/Qwen3-30B-A3B-4bit' is already complete on this node",
       })
     );
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
-    await openDownloadedTab();
-    await waitFor(() => expect(copyButton()).toBeInTheDocument());
-    await userEvent.click(copyButton()!);
+    await openModelsTab();
+    const gap = await screen.findByTestId(`model-cell-${PEER}-${QWEN}`);
+    await userEvent.click(await within(gap).findByRole('button', { name: /^Copy from / }));
     await waitFor(() =>
       expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent(
         'is already complete on this node'
       )
     );
-    expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent('Copy to workhorse failed');
+    expect(screen.getByTestId(`mlx-replica-${QWEN}`)).toHaveTextContent(
+      `Copy to ${STUDIO} failed`
+    );
     expect(mockReplicaProgress).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it('a Mac whose owner turned model management off is a red Can’t read column naming the switch — never "0"', async () => {
+    withMesh(
+      [
+        peerNode({
+          computer_name: STUDIO,
+          allows: { manage_models: false, answer_chat: true, run_split: true },
+        }),
+      ],
+      ME
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    const why = await screen.findByTestId(`model-column-gap-${PEER}`);
+    expect(why).toHaveTextContent(
+      `is off on ${STUDIO} — turn on “Let my other Macs use this Mac” there`
+    );
+    expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveAttribute(
+      'data-cell',
+      'cantRead'
+    );
+    expect(screen.getByTestId(`model-cell-${PEER}-${QWEN}`)).toHaveTextContent('Can’t read');
+    // A Mac that refuses is never asked.
+    expect(mockModelsList).not.toHaveBeenCalledWith(PEER);
+    expect(document.body).not.toHaveTextContent('403');
+    unmount();
+  });
+
+  it('an older peer that answers the mesh 403 is described as its switch, not a raw 403', async () => {
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    peerHolds(
+      [],
+      Object.assign(new Error('Internal error'), {
+        data: 'leanzero-link 403 Forbidden: remote model management is disabled on this node',
+      })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    const why = await screen.findByTestId(`model-column-gap-${PEER}`);
+    expect(why).toHaveTextContent(
+      `is off on ${STUDIO} — turn on “Let my other Macs use this Mac” there`
+    );
+    expect(why).not.toHaveTextContent('403');
+    unmount();
+  });
+
+  it('Download to: the browser downloads onto the Mac you pick', async () => {
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    peerHolds([]);
+    mockBrowse.mockResolvedValue({ hits: [HIT_A] });
+    mockDownloadProgress.mockResolvedValue({
+      state: 'downloading',
+      totalBytes: 4 * GB,
+      downloadedBytes: 1 * GB,
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await openHfTab();
+    const to = await screen.findByTestId('mlx-download-to');
+    await userEvent.click(within(to).getByRole('radio', { name: STUDIO }));
+    await waitFor(() => expect(screen.getByText(HIT_A.id)).toBeInTheDocument());
+    await userEvent.click(screen.getByLabelText(`Download ${HIT_A.id}`));
+    await waitFor(() => expect(mockDownload).toHaveBeenCalledWith(HIT_A.id, PEER));
+    // The table shows it arriving on the Studio, not on this Mac.
+    await userEvent.click(screen.getByRole('radio', { name: /^On your Macs/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId(`model-cell-${PEER}-${HIT_A.id}`)).toHaveTextContent(
+        'Downloading 25%'
+      )
+    );
+    expect(screen.getByTestId(`model-cell-self-${HIT_A.id}`)).toHaveAttribute(
+      'data-cell',
+      'absent'
+    );
+    unmount();
+  });
+
+  it('deleting on another Mac names that Mac and deletes there', async () => {
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    peerHolds([MODELS[0]]);
+    mockModelDelete.mockResolvedValue(undefined);
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    const cell = await screen.findByTestId(`model-cell-${PEER}-${QWEN}`);
+    await waitFor(() => expect(cell).toHaveAttribute('data-cell', 'present'));
+    await userEvent.click(within(cell).getByRole('button', { name: `Delete from ${STUDIO}` }));
+    expect(
+      await screen.findByText(new RegExp(`Delete ${QWEN.replace('/', '\\/')} \\(.+\\) from ${STUDIO}\\?`))
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(mockModelDelete).toHaveBeenCalledWith(QWEN, PEER));
+    unmount();
+  });
+
+  it('each Mac shows its own models folder', async () => {
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    peerHolds([]);
+    mockSettingsRead.mockImplementation(async (nodeId?: string) =>
+      nodeId === PEER ? { ...SETTINGS, modelsDir: '/Volumes/Studio/mlx-models' } : SETTINGS
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    const folder = await screen.findByTestId(`models-folder-${PEER}`);
+    await waitFor(() =>
+      expect(folder).toHaveTextContent('/Volumes/Studio/mlx-models')
+    );
+    expect(folder).toHaveTextContent(STUDIO);
+    expect(screen.getByTestId('models-folder-self')).toHaveTextContent('/Users/x/mlx-models');
+    unmount();
+  });
+
+  it('sampling profiles are per Mac: picking the Studio reads the Studio’s settings', async () => {
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    peerHolds([MODELS[0]]);
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    const on = await screen.findByTestId('mlx-sampling-mac');
+    await userEvent.click(within(on).getByRole('radio', { name: STUDIO }));
+    await waitFor(() => expect(mockSettingsRead).toHaveBeenCalledWith(PEER));
     unmount();
   });
 });
 
-function studioCleanNow() {
-  assertStudioClean(document.body);
-}
-
 describe('Engine tab — which engine owns this Mac is always said', () => {
-  it('no distributed capability: "Single · this Mac" on the tab row and the tile; the section says why it is absent', async () => {
+  it('no distributed capability: "Single · this Mac" on the tab row and the tile; Run it offers no split', async () => {
     render(<MlxEngineView />);
     await waitFor(() =>
       expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent('Single · this Mac')
     );
     expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Single · this Mac');
-    expect(screen.getByText('Distributed inference is unavailable')).toBeInTheDocument();
+    await runHere();
+    expect(screen.queryByTestId('placement-way-split')).toBeNull();
     expect(mockDistributedStatus).not.toHaveBeenCalled();
   });
 
@@ -2719,9 +2696,11 @@ describe('Engine tab — which engine owns this Mac is always said', () => {
     expect(screen.getAllByTestId('mlx-dist-node')).toHaveLength(2);
     expect(screen.getByTestId('mlx-dist-slots')).toHaveTextContent('Slots 0 / 2');
     expect(screen.getByTestId('mlx-dist-tile-load')).toHaveTextContent('slots 0 of 2 · 0 waiting');
+    // This Mac's own start waits for the split to stop.
+    expect(screen.queryByTestId('placement-run-local')).toBeNull();
   });
 
-  it('a stopped distributed engine leaves the single engine in charge', async () => {
+  it('a stopped distributed engine leaves the single engine in charge; the split is one way in Run it', async () => {
     mockFeatures.mlxDistributed = true;
     mockDistributedStatus.mockResolvedValue(STOPPED_WITH_CONFIG);
     render(<MlxEngineView />);
@@ -2731,17 +2710,20 @@ describe('Engine tab — which engine owns this Mac is always said', () => {
     );
     expect(screen.getByTestId('mlx-state-badge')).toHaveAttribute('data-mode', 'single');
     expect(screen.queryByTestId('mlx-distributed-owns')).toBeNull();
-    expect(await screen.findByRole('button', { name: 'Start' })).toBeInTheDocument();
+    const split = await screen.findByTestId('placement-way-split');
+    expect(within(split).getByTestId('placement-split-details')).toBeInTheDocument();
+    // No second Start: the split's own section lives folded under that row.
+    expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
   });
 });
 
 /**
  * The owner's 3.0.25 test, 2026-09-24: he pressed Mount (single, "Single · this Mac") on
  * rapid-mlx/Qwen3.8-Flash-Next-4bit whose badge said "Needs both Macs"; it failed and the page showed
- * TWO red banners for the one failure. The tile's action now follows the plan, and one failure is
- * one banner.
+ * TWO red banners for the one failure. Run it now offers only the ways goose can start, and one
+ * failure is one banner.
  */
-describe('Engine tile — the mount follows the placement plan', () => {
+describe('Run it — the ways follow the placement plan', () => {
   const FLASH = 'rapid-mlx/Qwen3.8-Flash-Next-4bit';
   const SPLIT = 'pipeline:jaccl:local+workhorse';
   // PLAN_FLASH measured with room on both Macs: the pipeline split fits and goose can start it.
@@ -2764,24 +2746,20 @@ describe('Engine tile — the mount follows the placement plan', () => {
     mockPlacementPlan.mockResolvedValue({ plans: [plan], nodes: NODES });
   }
 
-  it('"Needs both Macs": the tile says "Start across both Macs" and starts the split — never a single mount', async () => {
+  it('"Needs both Macs": only the split has Run, and it starts the split — never a single mount', async () => {
     withFlash(NEEDS_BOTH);
     vi.mocked(mlxDistributedStart).mockResolvedValue({
       started: true,
     } as Awaited<ReturnType<typeof mlxDistributedStart>>);
     const { unmount } = render(<MlxEngineView />);
-    const hero = await screen.findByTestId('mlx-engine-hero');
-    const start = await within(hero).findByTestId('mlx-tile-start-placement');
-    expect(start).toHaveTextContent('Start across both Macs');
-    expect(start).toHaveAttribute('data-placement', SPLIT);
-    expect(within(hero).queryByTestId('mlx-tile-mount')).toBeNull();
-    expect(within(hero).getByTestId('mlx-tile-mount-why')).toHaveTextContent(
-      'Too big for this Mac alone — it runs split across Mihai Macbook + Work’s Mac Studio.'
-    );
-    await userEvent.click(start);
+    const split = await screen.findByTestId('placement-way-split');
+    expect(split).toHaveAttribute('data-way', SPLIT);
+    const run = await within(split).findByTestId('placement-run-split');
+    // Short on this Mac alone: no Run there to be refused.
+    expect(screen.queryByTestId('placement-run-local')).toBeNull();
+    await userEvent.click(run);
     await waitFor(() => expect(mlxDistributedStart).toHaveBeenCalledWith(null));
     expect(mockMount).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('mlx-tile-start-error')).toBeNull();
     unmount();
   });
 
@@ -2792,48 +2770,52 @@ describe('Engine tile — the mount follows the placement plan', () => {
       refusal: { code: 'preflightFailed', message: 'workhorse: 3.1 GiB short of its budget' },
     } as Awaited<ReturnType<typeof mlxDistributedStart>>);
     const { unmount } = render(<MlxEngineView />);
-    await userEvent.click(await screen.findByTestId('mlx-tile-start-placement'));
-    const banner = await screen.findByTestId('mlx-tile-start-error');
-    expect(banner).toHaveTextContent('Start refused');
-    expect(banner).toHaveTextContent('workhorse: 3.1 GiB short of its budget');
-    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    await userEvent.click(await screen.findByTestId('placement-run-split'));
+    await waitFor(() =>
+      expect(screen.getByTestId('placement-card')).toHaveTextContent(
+        'workhorse: 3.1 GiB short of its budget'
+      )
+    );
+    const alerts = screen.getAllByRole('alert').map((a) => a.textContent ?? '');
+    expect(alerts.filter((t) => t.includes('3.1 GiB short'))).toHaveLength(1);
     unmount();
   });
 
-  it('nothing fits: the Mount is disabled and the tile says the shortfall', async () => {
+  it('nothing fits: no way offers Run, and the picker badge says the shortfall', async () => {
     withFlash(PLAN_FLASH);
     const { unmount } = render(<MlxEngineView />);
-    const hero = await screen.findByTestId('mlx-engine-hero');
-    await waitFor(() =>
-      expect(within(hero).getByTestId('mlx-tile-mount-why')).toHaveTextContent(
-        'Fits no Mac you have: short 13.7 GB even split across all of them.'
-      )
-    );
-    expect(within(hero).getByTestId('mlx-tile-mount')).toBeDisabled();
-    expect(within(hero).queryByTestId('mlx-tile-start-placement')).toBeNull();
+    await screen.findByTestId('placement-way-split');
+    expect(screen.queryByTestId('placement-run-local')).toBeNull();
+    expect(screen.queryByTestId('placement-run-split')).toBeNull();
+    expect(screen.queryByTestId('placement-run-peer')).toBeNull();
     unmount();
   });
 
-  it('a split whose setup names another model: disabled, and it says what to do first', async () => {
+  it('a split whose setup names another model: no Run, and its Details open on what to do first', async () => {
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockResolvedValue(STOPPED_WITH_CONFIG);
     withFlash({ ...PLAN_27B, modelId: FLASH });
     const { unmount } = render(<MlxEngineView />);
-    const hero = await screen.findByTestId('mlx-engine-hero');
-    await waitFor(() =>
-      expect(within(hero).getByTestId('mlx-tile-mount-why')).toHaveTextContent(
-        'The distributed setup names another model'
-      )
+    const split = await screen.findByTestId('placement-way-split');
+    expect(within(split).queryByTestId('placement-run-split')).toBeNull();
+    expect(within(split).getByTestId('placement-split-details')).toHaveAttribute(
+      'data-state',
+      'open'
     );
-    expect(within(hero).getByTestId('mlx-tile-mount')).toBeDisabled();
     unmount();
   });
 
-  it('a model that fits this Mac keeps the plain Mount', async () => {
-    withFlash({ ...NEEDS_BOTH, badge: { kind: 'fitsThisMac' } });
+  it('a model that fits this Mac keeps Run on this Mac', async () => {
+    withFlash({
+      ...NEEDS_BOTH,
+      badge: { kind: 'fitsThisMac' },
+      candidates: (NEEDS_BOTH.candidates ?? []).map((c) =>
+        c.id === 'single:local' ? { ...c, fit: { ...c.fit, status: 'fits' } } : c
+      ),
+    });
     const { unmount } = render(<MlxEngineView />);
-    const hero = await screen.findByTestId('mlx-engine-hero');
-    await waitFor(() => expect(within(hero).getByTestId('mlx-tile-mount')).toBeEnabled());
-    expect(within(hero).getByTestId('mlx-tile-mount')).toHaveTextContent('Mount');
-    expect(within(hero).queryByTestId('mlx-tile-mount-why')).toBeNull();
+    await userEvent.click(await runHere());
+    await waitFor(() => expect(mockMount).toHaveBeenCalledWith(FLASH));
     unmount();
   });
 
@@ -2851,12 +2833,11 @@ describe('Engine tile — the mount follows the placement plan', () => {
       });
     });
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => expect(screen.getByTestId('mlx-tile-mount')).toBeEnabled());
-    await userEvent.click(screen.getByTestId('mlx-tile-mount'));
+    await userEvent.click(await runHere());
     const blocked = await screen.findByTestId('mlx-mount-blocked');
     expect(blocked).toHaveTextContent(gate);
     expect(screen.queryByTestId('mlx-mount-failed')).toBeNull();
-    // The one mount failure is one alert (the placement card's own "Could not plan" — the planner is
+    // The one mount failure is one alert (Run it's own "Could not plan" — the planner is
     // unreachable in this test — is a different failure and says so under its own name).
     const alerts = screen.getAllByRole('alert').map((a) => a.textContent ?? '');
     expect(alerts.filter((t) => t.includes(gate))).toHaveLength(1);
@@ -2864,9 +2845,11 @@ describe('Engine tile — the mount follows the placement plan', () => {
     unmount();
   });
 
-  it('no plan read, but goose REFUSES the mount with a split that fits: one banner, and the tile switches to "Start across both Macs"', async () => {
+  it('no plan read, but goose REFUSES the mount naming a split: one banner, and the split is the other way offered', async () => {
     const { MlxMountRefusedError } =
       await vi.importActual<typeof import('../../acp/mlx-engine')>('../../acp/mlx-engine');
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockResolvedValue(STOPPED_WITH_CONFIG);
     const fitMessage = 'needs 47.1 GiB, the budget is 31.2 GiB — short 15.9 GiB';
     mockSettingsRead.mockResolvedValue({ ...SETTINGS, modelId: FLASH });
     mockModelsList.mockResolvedValue(
@@ -2885,28 +2868,14 @@ describe('Engine tile — the mount follows the placement plan', () => {
       });
     });
     const { unmount } = render(<MlxEngineView />);
-    await waitFor(() => expect(screen.getByTestId('mlx-tile-mount')).toBeEnabled());
-    await userEvent.click(screen.getByTestId('mlx-tile-mount'));
-    const start = await screen.findByTestId('mlx-tile-start-placement');
-    expect(start).toHaveTextContent('Start across both Macs');
+    await userEvent.click(await runHere());
     await waitFor(() =>
       expect(screen.getByTestId('mlx-mount-blocked')).toHaveTextContent(fitMessage)
     );
     expect(screen.queryByTestId('mlx-mount-failed')).toBeNull();
     const alerts = screen.getAllByRole('alert').map((a) => a.textContent ?? '');
     expect(alerts.filter((t) => t.includes(fitMessage))).toHaveLength(1);
-    unmount();
-  });
-
-  it('"Needs both Macs" with a step first (goose names it): disabled, and that step is the line', async () => {
-    const step = 'allow this Mac to serve as a distributed node on Work’s Mac Studio first';
-    withFlash({ ...NEEDS_BOTH, badge: { kind: 'needsBothMacs', needs: step } as never });
-    const { unmount } = render(<MlxEngineView />);
-    const hero = await screen.findByTestId('mlx-engine-hero');
-    await waitFor(() =>
-      expect(within(hero).getByTestId('mlx-tile-mount-why')).toHaveTextContent(step)
-    );
-    expect(within(hero).getByTestId('mlx-tile-mount')).toBeDisabled();
+    expect(screen.getByTestId('placement-way-split')).toBeInTheDocument();
     unmount();
   });
 

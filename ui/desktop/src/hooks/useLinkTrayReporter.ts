@@ -1,8 +1,24 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { IpcRendererEvent } from 'electron';
-import { leanzeroLinkConnect, leanzeroLinkStatus, linkBannerText } from '../acp/leanzero-link';
+import type { IntlShape } from 'react-intl';
+import { useIntl } from '../i18n';
+import {
+  leanzeroLinkConnect,
+  leanzeroLinkNodes,
+  leanzeroLinkStatus,
+  linkBannerText,
+} from '../acp/leanzero-link';
 import type { LinkState } from '../acp/leanzero-link';
+import { mlxEngineStatus } from '../acp/mlx-engine';
 import { toastError } from '../toasts';
+import { macTarget, macsFrom, peerRefuses } from '../components/leanzero-swarm/macs';
+import {
+  macTrayText,
+  macsTrayOpenLabel,
+  summarizeMac,
+} from '../components/leanzero-swarm/macSummary';
+import { mlxErrorMessage } from '../components/leanzero-swarm/mlxErrorMessage';
+import type { MacsTrayReport } from '../utils/macsTrayReport';
 
 /** The Link tab's own cadence, used while the state is still moving (a launch reconnect). */
 export const LINK_TRAY_SETTLING_POLL_MS = 3000;
@@ -23,6 +39,42 @@ export function linkStateSettling(state: LinkState): boolean {
   );
 }
 
+function sendMacs(report: MacsTrayReport | null): void {
+  const send = (
+    window as unknown as { electron?: { macsReport?: (r: MacsTrayReport | null) => void } }
+  ).electron?.macsReport;
+  send?.(report);
+}
+
+/**
+ * One tray line per linked Mac, read the way My Macs reads it: the roster (names, switches), then
+ * each reachable Mac's engine status. A Mac whose owner turned model management off is not asked —
+ * its line says Off. Not connected: null, and the tray keeps the Link line.
+ */
+export async function readMacsTrayReport(
+  intl: IntlShape,
+  state: LinkState
+): Promise<MacsTrayReport | null> {
+  if (state.auth.state !== 'connected') return null;
+  const macs = macsFrom(await leanzeroLinkNodes(), '');
+  const lines = await Promise.all(
+    macs.map(async (mac) => {
+      let status = null;
+      let statusError: string | null = null;
+      if (mac.online && !peerRefuses(mac, 'manage')) {
+        try {
+          status = await mlxEngineStatus(macTarget(mac));
+        } catch (e) {
+          statusError = mlxErrorMessage(e, String(e));
+        }
+      }
+      const summary = summarizeMac(mac, { status, statusError, activity: null, decodeTps: null });
+      return { name: mac.name, phase: summary.phase, text: macTrayText(intl, mac, summary) };
+    })
+  );
+  return { lines, openLabel: macsTrayOpenLabel(intl) };
+}
+
 /**
  * Keep MAIN's LeanZero Link line current for the menu-bar tray — from app launch, not only while
  * the Link tab is open, because the launch reconnect runs with no window on that tab and its
@@ -30,6 +82,11 @@ export function linkStateSettling(state: LinkState): boolean {
  * Retry / Connect lands here (`link-tray-action`) and makes the SAME connect the Link tab makes.
  */
 export function useLinkTrayReporter(enabled: boolean): void {
+  const intl = useIntl();
+  const intlRef = useRef(intl);
+  useEffect(() => {
+    intlRef.current = intl;
+  }, [intl]);
   useEffect(() => {
     if (!enabled) return undefined;
     let disposed = false;
@@ -48,7 +105,13 @@ export function useLinkTrayReporter(enabled: boolean): void {
       reading = true;
       let settling = false;
       try {
-        settling = linkStateSettling(await leanzeroLinkStatus());
+        const state = await leanzeroLinkStatus();
+        settling = linkStateSettling(state);
+        try {
+          sendMacs(await readMacsTrayReport(intlRef.current, state));
+        } catch {
+          // The roster did not answer: main keeps the last Mac lines and the next read tries again.
+        }
       } catch {
         // No state to report; main keeps the last line and the next read tries again.
       } finally {

@@ -340,6 +340,8 @@ export function DistributedSetup({
   // under Advanced — never pre-filled with a guess.
   const [peer, setPeer] = useState(initialPeer);
   const [sshPeer, setSshPeer] = useState('');
+  // ssh opens by itself only once Link has said it has no Mac to offer; the person decides after.
+  const [sshOpen, setSshOpen] = useState<boolean | null>(null);
   const [candidates, setCandidates] = useState<MlxDistributedPeerCandidate[] | null>(null);
   const [link, setLink] = useState<MlxDistributedLinkDiscovery | null>(null);
   const [candidatesError, setCandidatesError] = useState<string | null>(null);
@@ -404,6 +406,8 @@ export function DistributedSetup({
     [discovery]
   );
   const answering = (candidates ?? []).filter((c) => c.answered);
+  const noLinkMac =
+    link != null && (link.state !== 'connected' || (link.peers ?? []).length === 0);
   const missing = draft ? missingFields(draft) : [];
 
   return (
@@ -428,7 +432,8 @@ export function DistributedSetup({
         testId="mlx-dist-setup-ssh"
         title={intl.formatMessage(i18n.overSsh)}
         meta={<span className={TYPE.meta}>{intl.formatMessage(i18n.overSshMeta)}</span>}
-        defaultOpen={link == null || link.state !== 'connected' || (link.peers ?? []).length === 0}
+        open={sshOpen ?? (noLinkMac || candidatesError != null)}
+        onOpenChange={setSshOpen}
       >
         <div className="flex flex-col gap-3">
           <form

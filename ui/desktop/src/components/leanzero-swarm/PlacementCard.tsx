@@ -715,11 +715,15 @@ function PlacementCardBody({
     const copyLink = needsCopy ? macs.linkBetween(SELF_KEY, needsCopy.key) : null;
     const setupFirst = action?.kind === 'startSplit' && !action.setupMatches;
     const blockedByDistributed = way.kind === 'local' && distributedOwns;
+    // A way goose judged short (or could not judge) is not offered: the start would be refused.
+    const fitsForGoose =
+      c == null || (c.supported && c.fit.status !== 'short' && c.fit.status !== 'unknown');
     const startable =
       !running &&
       !setupFirst &&
       !blockedByDistributed &&
       needsCopy == null &&
+      fitsForGoose &&
       (action == null || action.kind !== 'unavailable');
     const placementId = c?.id ?? (way.kind === 'local' ? 'single:local' : null);
     const measuring = busy === `measure:${placementId}`;

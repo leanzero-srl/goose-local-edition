@@ -13,6 +13,10 @@ vi.mock('./MlxEngineView', () => ({ default: () => <div data-testid="mlx-panel" 
 vi.mock('./CloudProvidersSection', () => ({ default: () => <div data-testid="cloud-panel" /> }));
 vi.mock('./SwarmNodesSection', () => ({ default: () => <div data-testid="swarm-panel" /> }));
 vi.mock('./LeanZeroLinkSection', () => ({ default: () => <div data-testid="link-panel" /> }));
+// The shell provides the linked Macs to every tab; the provider has its own suite.
+vi.mock('./useMacs', () => ({
+  MacsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 vi.mock('../Layout/MainPanelLayout', () => ({
   MainPanelLayout: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
@@ -71,16 +75,22 @@ describe('LeanZeroSwarmView shell', () => {
     expect(segment('LeanZero MLX').getAttribute('aria-checked')).toBe('false');
   });
 
-  it('hides the LeanZero Link segment when the capability is absent', () => {
+  it('hides the My Macs segment when the capability is absent', () => {
     mockLeanzeroLink = false;
     render();
-    expect(screen.queryByRole('radio', { name: 'LeanZero Link' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'My Macs' })).not.toBeInTheDocument();
   });
 
-  it('shows the LeanZero Link segment and mounts its section when the capability is present', async () => {
+  it('shows My Macs right after LeanZero MLX and mounts its section when the capability is present', async () => {
     mockLeanzeroLink = true;
     render();
-    const linkTab = segment('LeanZero Link');
+    expect(screen.getAllByRole('radio').map((r) => r.textContent)).toEqual([
+      'LeanZero MLX',
+      'My Macs',
+      'Cloud Providers',
+      'Swarm Settings',
+    ]);
+    const linkTab = segment('My Macs');
     await userEvent.click(linkTab);
     expect(screen.getByTestId('link-panel')).toBeInTheDocument();
     expect(screen.queryByTestId('mlx-panel')).not.toBeInTheDocument();

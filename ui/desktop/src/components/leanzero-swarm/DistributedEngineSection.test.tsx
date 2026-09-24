@@ -107,7 +107,8 @@ const LINK_CONNECTED = {
       hostname: 'mini',
       host: 'link:mini-01c2',
       state: 'servingDisabled',
-      detail: 'servingDisabled: "Allow this Mac to serve as a distributed node" is off on mini.lan',
+      detail:
+        'servingDisabled: "Let my other Macs use this Mac › Run part of a split model" is off on mini.lan',
       thunderbolt: [],
       rdma: [],
       models: [],
@@ -130,7 +131,6 @@ const onSingleChanged = vi.fn();
 function section(overrides: Partial<DistributedEngineSectionProps> = {}) {
   const props: DistributedEngineSectionProps = {
     capability: true,
-    peerHostname: null,
     status: FLASH_READY,
     statusError: null,
     onRefresh,
@@ -143,6 +143,11 @@ function section(overrides: Partial<DistributedEngineSectionProps> = {}) {
     ...overrides,
   };
   return rtlRender(<DistributedEngineSection {...props} />, { wrapper: IntlTestWrapper });
+}
+
+/** ssh is the Advanced way to name the other Mac: open its fold. */
+async function openSsh() {
+  await userEvent.click(await screen.findByRole('button', { name: 'Advanced: a Mac over ssh' }));
 }
 
 async function expectDesigned(container: HTMLElement) {
@@ -257,14 +262,18 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     expect(hang).toHaveTextContent('no progress for 41.0 s (bound 10 × median 4.1 s)');
     expect(within(events[1]).getByText('Restart')).toHaveAttribute('data-tone', 'warn');
     expect(within(events[5]).getByText('Link repaired')).toHaveAttribute('data-tone', 'warn');
-    // The header counts what the body shows.
-    expect(screen.getByText('Supervisor events').parentElement).toHaveTextContent(
-      String(FLASH_READY.events.length)
-    );
+    // The fold's header counts what its body shows.
+    expect(screen.getByTestId('mlx-dist-events-disclosure')).toHaveAttribute('data-state', 'closed');
+    expect(
+      screen.getByText('Supervisor events').closest('[data-testid="mlx-dist-events-disclosure"]')
+    ).toHaveTextContent(`Supervisor events${FLASH_READY.events.length}`);
   });
 
   it('the preflight shows every check with its numbers and the plan per rank', () => {
-    section();
+    // Stopped, with the preflight that ran: the preflight describes each Mac.
+    section({
+      status: { ...STOPPED_WITH_CONFIG, lastPreflight: FLASH_READY.lastPreflight },
+    });
     const report = screen.getByTestId('mlx-dist-preflight');
     expect(report).toHaveAttribute('data-ok', 'true');
     const plans = within(report).getAllByTestId('mlx-dist-plan');
@@ -695,6 +704,7 @@ describe('DistributedEngineSection — Set up detects everything from one peer n
     expect(screen.queryByText('Single · this Mac')).toBeNull();
     expect(screen.queryByText('Stopped')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    await openSsh();
     const setup = screen.getByTestId('mlx-dist-setup');
     expect(within(setup).getAllByRole('textbox')).toHaveLength(1);
     // Only the aliases that answered are offered.
@@ -708,6 +718,7 @@ describe('DistributedEngineSection — Set up detects everything from one peer n
     mockDiscover.mockResolvedValue(UNCHOSEN);
     section({ status: NONE });
     await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    await openSsh();
     await userEvent.click(await screen.findByTestId('mlx-dist-setup-candidate'));
     await userEvent.click(screen.getByRole('button', { name: 'Detect' }));
     expect(mockDiscover).toHaveBeenCalledWith(['workhorse'], null);
@@ -743,6 +754,7 @@ describe('DistributedEngineSection — Set up detects everything from one peer n
     mockProvision.mockResolvedValue({ state: 'running', startedMs: 1, nodes: [] });
     section({ status: NONE });
     await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    await openSsh();
     await userEvent.type(screen.getByTestId('mlx-dist-setup-peer'), 'workhorse');
     await userEvent.click(screen.getByRole('button', { name: 'Detect' }));
     await screen.findByTestId('mlx-dist-setup-result');
@@ -785,6 +797,7 @@ describe('DistributedEngineSection — Set up detects everything from one peer n
     });
     section({ status: NONE });
     await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
+    await openSsh();
     await userEvent.type(screen.getByTestId('mlx-dist-setup-peer'), 'nas');
     await userEvent.click(screen.getByRole('button', { name: 'Detect' }));
     expect(await screen.findByTestId('mlx-dist-setup-gaps')).toHaveTextContent(
@@ -850,12 +863,37 @@ describe('DistributedEngineSection — loud absence', () => {
     await expectDesigned(container);
   });
 
-  it('a linked device selected: it says the engine is supervised from this Mac', () => {
-    section({ peerHostname: 'workhorse', status: null });
-    expect(
-      screen.getByText('The distributed engine is supervised from this Mac')
-    ).toBeInTheDocument();
-    expect(screen.getByText(/You are managing workhorse/)).toBeInTheDocument();
+  it('while the run lives each Mac is its node card once — the preflight keeps its summary only', () => {
+    section();
+    expect(screen.getAllByTestId('mlx-dist-node').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('mlx-dist-preflight')).toBeInTheDocument();
+    expect(screen.queryAllByTestId('mlx-dist-preflight-node')).toHaveLength(0);
+  });
+
+  it('a stopped run shows no admission, no pids and no peaks — nothing a stopped engine has', () => {
+    section({ status: STOPPED_WITH_CONFIG });
+    expect(screen.queryByTestId('mlx-dist-admission')).toBeNull();
+    expect(screen.queryByText(/Admitting requests/)).toBeNull();
+    expect(screen.queryByTestId('mlx-dist-node')).toBeNull();
+    expect(screen.queryByText(/^pid /)).toBeNull();
+  });
+
+  it('passing checks fold under a count; what failed or warns stays in full', () => {
+    section({
+      status: { ...STOPPED_WITH_CONFIG, lastPreflight: FLASH_READY.lastPreflight },
+    });
+    const folds = screen.getAllByTestId('mlx-dist-checks-passed');
+    expect(folds.length).toBeGreaterThan(0);
+    expect(folds[0]).toHaveAttribute('data-state', 'closed');
+    expect(folds[0]).toHaveTextContent(/checks? passed/);
+  });
+
+  it('embedded under Run it: no title, no second Start or Stop — the row owns them', () => {
+    section({ embedded: true, status: STOPPED_WITH_CONFIG });
+    expect(screen.queryByText('Distributed engine')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
+    expect(screen.queryByTestId('mlx-dist-mode')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Preflight (dry run)' })).toBeInTheDocument();
   });
 
   it('an unreadable status claims nothing: no mode, no nodes, the reason and a retry', async () => {
@@ -1061,38 +1099,34 @@ describe('DistributedEngineSection — a run another window supervises', () => {
 describe('DistributedEngineSection — LeanZero Link finds the other Mac and runs it as a node', () => {
   const NONE: MlxDistributedStatus = { ...STOPPED_WITH_CONFIG, config: null };
 
-  it('offers the Link Macs FIRST, each as it described itself, then the headless ssh aliases', async () => {
+  it('offers the Link Macs, one row each; ssh waits under Advanced with an EMPTY host field', async () => {
     const { container } = section({ status: NONE });
     await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
     const setup = screen.getByTestId('mlx-dist-setup');
     const link = await within(setup).findByTestId('mlx-dist-link-peers');
-    const headless = within(setup).getByTestId('mlx-dist-setup-candidates');
+    const ssh = within(setup).getByTestId('mlx-dist-setup-ssh');
     expect(
-      link.compareDocumentPosition(headless) & Node.DOCUMENT_POSITION_FOLLOWING,
-      'the Link Macs come before the ssh aliases'
+      link.compareDocumentPosition(ssh) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the Link Macs come before ssh'
     ).toBeTruthy();
-    expect(within(setup).getByRole('textbox').compareDocumentPosition(link)).toBe(
-      Node.DOCUMENT_POSITION_PRECEDING
+    // Link is connected with a Mac on it: ssh is folded, its field empty — never a guessed host.
+    expect(ssh).toHaveAttribute('data-state', 'closed');
+    expect(within(setup).getByTestId('mlx-dist-setup-peer')).toHaveValue('');
+    expect(within(setup).getByTestId('mlx-dist-setup-peer')).toHaveAttribute(
+      'placeholder',
+      'ssh alias'
     );
-    expect(headless).toHaveTextContent('Headless (ssh)');
 
     const [ready, off] = within(link).getAllByTestId('mlx-dist-link-peer');
     expect(ready).toHaveAttribute('data-host', 'link:workhorse-7f3a');
     expect(ready).toHaveTextContent('Work’s Mac Studio');
-    expect(ready).toHaveTextContent('66.2 of 96.0 GiB available');
-    expect(within(ready).getByTestId('mlx-dist-link-peer-tb')).toHaveTextContent(
-      'en3 192.168.0.2/30 · Thunderbolt 2 · 80 Gb/s'
-    );
-    expect(within(ready).getByTestId('mlx-dist-link-peer-rdma')).toHaveTextContent(
-      'rdma_en3 · active · IPv4 GID 1, 2 more devices, ports down'
-    );
-    expect(ready).toHaveTextContent('Qwen3.8-27B-Atlassian-Q8-mlx · qwen3_5 · 30.5 GiB');
-
+    // What the Mac holds lives on My Macs — the row does not repeat it.
+    expect(ready).not.toHaveTextContent('GiB available');
     expect(off).toHaveAttribute('data-state', 'servingDisabled');
     expect(off).toHaveTextContent(
-      'Turn on “Allow this Mac to serve as a distributed node” on mini'
+      'Turn on “Let my other Macs use this Mac › Run part of a split model” on mini (Providers › My Macs there).'
     );
-    expect(within(off).queryByRole('button', { name: 'Use this Mac' })).toBeNull();
+    expect(within(off).queryByRole('button', { name: 'Detect with this Mac' })).toBeNull();
     await expectDesigned(container);
   });
 
@@ -1101,9 +1135,10 @@ describe('DistributedEngineSection — LeanZero Link finds the other Mac and run
     section({ status: NONE });
     await userEvent.click(screen.getByRole('button', { name: 'Set up' }));
     const link = await screen.findByTestId('mlx-dist-link-peers');
-    await userEvent.click(within(link).getByRole('button', { name: 'Use this Mac' }));
+    await userEvent.click(within(link).getByRole('button', { name: 'Detect with this Mac' }));
     expect(mockDiscover).toHaveBeenCalledWith(['link:workhorse-7f3a'], null);
-    expect(screen.getByTestId('mlx-dist-setup-peer')).toHaveValue('link:workhorse-7f3a');
+    // The ssh field stays empty: nothing was typed.
+    expect(screen.getByTestId('mlx-dist-setup-peer')).toHaveValue('');
     await screen.findByTestId('mlx-dist-setup-result');
   });
 
@@ -1147,26 +1182,13 @@ describe('DistributedEngineSection — LeanZero Link finds the other Mac and run
         },
       },
     });
-    expect(screen.getByTestId('mlx-dist-hosting')).toHaveTextContent(
-      "Rank 1 of MacBook Pro's distributed engine · Qwen3.8-27B-Atlassian-Q8-mlx · JACCL — rank pid 4242"
-    );
+    // Whose rank it is lives on the tile and on My Macs; here, the Mac's own Start is refused.
     expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
-    expect(
-      screen.getByRole('switch', { name: 'Allow this Mac to serve as a distributed node' })
-    ).toHaveAttribute('aria-checked', 'true');
+    // The owner's switch moved to My Macs ("Let my other Macs use this Mac").
+    expect(screen.queryByRole('switch', { name: /serve|split/i })).toBeNull();
     return expectDesigned(container);
   });
 
-  it('the switch writes the one config key the backend reads on every request', async () => {
-    section({ status: STOPPED_WITH_CONFIG });
-    const toggle = screen.getByRole('switch', {
-      name: 'Allow this Mac to serve as a distributed node',
-    });
-    expect(toggle).toHaveAttribute('aria-checked', 'false');
-    await userEvent.click(toggle);
-    expect(mockUpsertConfig).toHaveBeenCalledWith('LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE', true);
-    await waitFor(() => expect(onRefresh).toHaveBeenCalled());
-  });
 });
 
 describe('DistributedEngineSection — the engine-phase palette on the run and every node', () => {
@@ -1227,14 +1249,4 @@ describe('DistributedEngineSection — the engine-phase palette on the run and e
     ).toHaveAttribute('data-phase', 'failed');
   });
 
-  it('the peer serving a rank: "Loading rank 1 for MacBook Pro" as a solid amber block', async () => {
-    const { container } = section({
-      status: { ...HOSTING_RANK_1, hosting: { ...HOSTING_RANK_1.hosting!, state: 'loading' } },
-    });
-    const block = screen.getByTestId('mlx-dist-hosting');
-    expect(block).toHaveAttribute('data-phase', 'loading');
-    expect(block.className).toContain('bg-lz-phase-loading');
-    expect(block).toHaveTextContent('Loading rank 1 for MacBook Pro');
-    await expectDesigned(container);
-  });
 });

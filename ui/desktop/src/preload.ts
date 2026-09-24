@@ -14,6 +14,7 @@ import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
 import type { MlxEngineReport, MlxEngineSnapshot } from './utils/mlxEngineMonitor';
 import type { MlxDistributedReport } from './utils/mlxDistributedReport';
 import type { MlxRemoteReport } from './utils/mlxRemoteReport';
+import type { MacsTrayReport } from './utils/macsTrayReport';
 import type { LinkTrayReport } from './utils/linkTrayReport';
 import type { LocalNetworkTouch } from './localNetwork';
 
@@ -497,6 +498,8 @@ type ElectronAPI = {
   /** Hand MAIN where MLX chat goes (`remoteSingleStatus`); null = this Mac's own engine. */
   mlxRemoteReport: (report: MlxRemoteReport | null) => void;
   linkReport: (report: LinkTrayReport | null) => void;
+  /** Hand MAIN one line per linked Mac (My Macs's words and colours); null = not on the mesh. */
+  macsReport: (report: MacsTrayReport | null) => void;
 };
 
 type AppConfigAPI = {
@@ -576,6 +579,7 @@ const electronAPI: ElectronAPI = {
   mlxRemoteReport: (report: MlxRemoteReport | null) =>
     ipcRenderer.send('mlx-remote-report', report),
   linkReport: (report: LinkTrayReport | null) => ipcRenderer.send('link-report', report),
+  macsReport: (report: MacsTrayReport | null) => ipcRenderer.send('macs-report', report),
   writeFile: (filePath: string, content: string) =>
     ipcRenderer.invoke('write-file', filePath, content),
   swarmAddNote: (workingDir: string, text: string) =>

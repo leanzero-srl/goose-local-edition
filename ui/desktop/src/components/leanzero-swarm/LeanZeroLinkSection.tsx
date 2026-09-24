@@ -680,6 +680,14 @@ const LeanZeroLinkSectionBody: React.FC = () => {
   const auth = linkState?.auth ?? null;
   const reconnect = linkState?.reconnect;
 
+  // A connect, a disconnect or a logout changes who is on the mesh: My Macs re-reads the roster at
+  // once rather than at its next tick.
+  const authState = auth?.state ?? null;
+  const { refreshLink } = macs;
+  useEffect(() => {
+    void refreshLink();
+  }, [authState, refreshLink]);
+
   return (
     <div className="flex flex-col gap-4 pb-8">
       {deployBanner && (
