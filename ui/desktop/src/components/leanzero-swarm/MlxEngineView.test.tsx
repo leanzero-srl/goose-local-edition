@@ -11,7 +11,11 @@ import MlxEngineView, {
   sanitizeSettingsForWrite,
   settingsWithProfile,
   formatGb,
+  mountFailureBanners,
 } from './MlxEngineView';
+import { mlxDistributedStart } from '../../acp/mlx-distributed';
+import type { PlacementPlan } from '../../acp/mlx-placement';
+import { NODES, PLAN_27B, PLAN_FLASH } from './placement.fixtures';
 import { NAV_ITEMS } from '../../hooks/useNavigationItems';
 import type {
   MlxBrowseHit,
@@ -39,7 +43,9 @@ const mockDownloadCancel = vi.fn();
 const mockDownloadPause = vi.fn();
 const mockDownloadResume = vi.fn();
 
-vi.mock('../../acp/mlx-engine', () => ({
+vi.mock('../../acp/mlx-engine', async (importOriginal) => ({
+  MlxMountRefusedError: (await importOriginal<typeof import('../../acp/mlx-engine')>())
+    .MlxMountRefusedError,
   mlxEngineStatus: (...args: unknown[]) => mockStatus(...args),
   mlxEngineMount: (...args: unknown[]) => mockMount(...args),
   mlxEngineUnmount: (...args: unknown[]) => mockUnmount(...args),
@@ -91,6 +97,14 @@ vi.mock('../../acp/mlx-distributed', async (importOriginal) => ({
   mlxDistributedStart: vi.fn(),
   mlxDistributedStop: vi.fn(),
   mlxDistributedConfigUpdate: vi.fn(),
+}));
+
+// The placement planner: by default unreachable (no ACP in jsdom), so the tile keeps the plain
+// Mount; the mount-flow tests hand it a plan.
+const mockPlacementPlan = vi.fn();
+vi.mock('../../acp/mlx-placement', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../acp/mlx-placement')>()),
+  mlxPlacementPlan: (...a: unknown[]) => mockPlacementPlan(...a),
 }));
 
 const mockLinkStatus = vi.fn();
@@ -235,6 +249,7 @@ beforeEach(() => {
   mockModelsList.mockResolvedValue(listOf(MODELS));
   mockMount.mockResolvedValue(undefined);
   mockUnmount.mockResolvedValue(undefined);
+  mockPlacementPlan.mockRejectedValue(new Error('no ACP client in this test'));
   mockBrowse.mockResolvedValue({ hits: [] });
   mockBrowseFilters.mockResolvedValue(FILTERS);
   mockModelCard.mockResolvedValue({
@@ -677,7 +692,7 @@ describe('MlxEngineView status hero', () => {
       expect(within(hero).getByTestId('mlx-state-badge')).toHaveAttribute('data-state', 'stopped')
     );
     const tile = within(hero).getByTestId('mlx-state-badge');
-    expect(tile.className).toContain('bg-lz-stopped-solid');
+    expect(tile.className).toContain('bg-lz-phase-unloaded');
     expect(within(hero).getByText('no model mounted')).toBeInTheDocument();
     expect(within(hero).getByText('96.6 GB available of 128.0 GB')).toBeInTheDocument();
     // The primary action and the model it acts on share the hero.
@@ -745,8 +760,8 @@ describe('MlxEngineView status hero', () => {
       expect(within(hero).getByTestId('mlx-state-badge')).toHaveAttribute('data-state', 'running')
     );
     // No live read in this test (no bridge): what the engine is DOING is unknown, so the fill is the
-    // neutral slate — green is reserved for measured writing.
-    expect(within(hero).getByTestId('mlx-state-badge').className).toContain('bg-lz-stopped-solid');
+    // loaded model's idle grey — green is reserved for measured writing.
+    expect(within(hero).getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-idle');
     // Named as the served model (display size), and again in the picker as the selection.
     expect(within(hero).getAllByText(QWEN)[0].className).toContain('text-lz-h2');
     expect(within(hero).getByRole('button', { name: /Unmount/ })).toBeEnabled();
@@ -765,7 +780,7 @@ describe('MlxEngineView status hero', () => {
     await waitFor(() =>
       expect(within(hero).getByText('port 9600 never opened')).toBeInTheDocument()
     );
-    expect(within(hero).getByTestId('mlx-state-badge').className).toContain('bg-lz-err-solid');
+    expect(within(hero).getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-failed');
     const retry = await within(hero).findByRole('button', { name: /Retry/ });
     await waitFor(() => expect(retry).toBeEnabled());
     await userEvent.click(retry);
@@ -854,7 +869,7 @@ describe('MlxEngineView state tile instrument', () => {
     expect(live).toHaveBeenCalledWith('http://127.0.0.1:8090');
     const tile = screen.getByTestId('mlx-state-badge');
     expect(within(tile).getByTestId('mlx-activity')).toHaveTextContent('Writing');
-    expect(tile.className).toContain('bg-lz-ok-solid');
+    expect(tile.className).toContain('bg-lz-phase-writing');
     expect(within(tile).getByText('Reading prompt · 32.3K tokens')).toBeInTheDocument();
     // Mount/Retry are not on a running tile; the picker row keeps Mounted + Unmount.
     expect(within(tile).queryByRole('button')).toBeNull();
@@ -906,7 +921,7 @@ describe('MlxEngineView state tile instrument', () => {
     const fill = await screen.findByTestId('mlx-mount-fill');
     expect(fill).toHaveAttribute('data-measured', 'false');
     expect(fill).toHaveTextContent('17.0 GBLoading weights');
-    expect(within(fill).queryByRole('progressbar')).toBeNull();
+    expect(within(fill).getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
     unmount();
   });
 
@@ -2691,5 +2706,197 @@ describe('Engine tab — which engine owns this Mac is always said', () => {
     expect(screen.getByTestId('mlx-state-badge')).toHaveAttribute('data-mode', 'single');
     expect(screen.queryByTestId('mlx-distributed-owns')).toBeNull();
     expect(await screen.findByRole('button', { name: 'Start' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The owner's 3.0.25 test, 2026-09-24: he pressed Mount (single, "Single · this Mac") on
+ * rapid-mlx/Qwen3.8-Flash-Next-4bit whose badge said "Needs both Macs"; it failed and the page showed
+ * TWO red banners for the one failure. The tile's action now follows the plan, and one failure is
+ * one banner.
+ */
+describe('Engine tile — the mount follows the placement plan', () => {
+  const FLASH = 'rapid-mlx/Qwen3.8-Flash-Next-4bit';
+  const SPLIT = 'pipeline:jaccl:local+workhorse';
+  // PLAN_FLASH measured with room on both Macs: the pipeline split fits and goose can start it.
+  const NEEDS_BOTH: PlacementPlan = {
+    ...PLAN_FLASH,
+    best: SPLIT,
+    bestAvailable: SPLIT,
+    badge: { kind: 'needsBothMacs' },
+    candidates: (PLAN_FLASH.candidates ?? []).map((c) =>
+      c.id === SPLIT ? { ...c, fit: { ...c.fit, status: 'fits' }, outcome: { code: 'best' } } : c
+    ),
+  };
+
+  function withFlash(plan: PlacementPlan, status: Partial<MlxEngineStatus> = {}) {
+    mockSettingsRead.mockResolvedValue({ ...SETTINGS, modelId: FLASH });
+    mockModelsList.mockResolvedValue(
+      listOf([...MODELS, { id: FLASH, sizeBytes: 45 * GB, complete: true, missingFiles: 0 }])
+    );
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped', ...status }));
+    mockPlacementPlan.mockResolvedValue({ plans: [plan], nodes: NODES });
+  }
+
+  it('"Needs both Macs": the tile says "Start across both Macs" and starts the split — never a single mount', async () => {
+    withFlash(NEEDS_BOTH);
+    vi.mocked(mlxDistributedStart).mockResolvedValue({
+      started: true,
+    } as Awaited<ReturnType<typeof mlxDistributedStart>>);
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    const start = await within(hero).findByTestId('mlx-tile-start-placement');
+    expect(start).toHaveTextContent('Start across both Macs');
+    expect(start).toHaveAttribute('data-placement', SPLIT);
+    expect(within(hero).queryByTestId('mlx-tile-mount')).toBeNull();
+    expect(within(hero).getByTestId('mlx-tile-mount-why')).toHaveTextContent(
+      'Too big for this Mac alone — it runs split across Mihai Macbook + Work’s Mac Studio.'
+    );
+    await userEvent.click(start);
+    await waitFor(() => expect(mlxDistributedStart).toHaveBeenCalledWith(null));
+    expect(mockMount).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('mlx-tile-start-error')).toBeNull();
+    unmount();
+  });
+
+  it('a refused split start is ONE banner with goose’s own reason', async () => {
+    withFlash(NEEDS_BOTH);
+    vi.mocked(mlxDistributedStart).mockResolvedValue({
+      started: false,
+      refusal: { code: 'preflightFailed', message: 'workhorse: 3.1 GiB short of its budget' },
+    } as Awaited<ReturnType<typeof mlxDistributedStart>>);
+    const { unmount } = render(<MlxEngineView />);
+    await userEvent.click(await screen.findByTestId('mlx-tile-start-placement'));
+    const banner = await screen.findByTestId('mlx-tile-start-error');
+    expect(banner).toHaveTextContent('Start refused');
+    expect(banner).toHaveTextContent('workhorse: 3.1 GiB short of its budget');
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    unmount();
+  });
+
+  it('nothing fits: the Mount is disabled and the tile says the shortfall', async () => {
+    withFlash(PLAN_FLASH);
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    await waitFor(() =>
+      expect(within(hero).getByTestId('mlx-tile-mount-why')).toHaveTextContent(
+        'Fits no Mac you have: short 13.7 GB even split across all of them.'
+      )
+    );
+    expect(within(hero).getByTestId('mlx-tile-mount')).toBeDisabled();
+    expect(within(hero).queryByTestId('mlx-tile-start-placement')).toBeNull();
+    unmount();
+  });
+
+  it('a split whose setup names another model: disabled, and it says what to do first', async () => {
+    withFlash({ ...PLAN_27B, modelId: FLASH });
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    await waitFor(() =>
+      expect(within(hero).getByTestId('mlx-tile-mount-why')).toHaveTextContent(
+        'The distributed setup names another model'
+      )
+    );
+    expect(within(hero).getByTestId('mlx-tile-mount')).toBeDisabled();
+    unmount();
+  });
+
+  it('a model that fits this Mac keeps the plain Mount', async () => {
+    withFlash({ ...NEEDS_BOTH, badge: { kind: 'fitsThisMac' } });
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    await waitFor(() => expect(within(hero).getByTestId('mlx-tile-mount')).toBeEnabled());
+    expect(within(hero).getByTestId('mlx-tile-mount')).toHaveTextContent('Mount');
+    expect(within(hero).queryByTestId('mlx-tile-mount-why')).toBeNull();
+    unmount();
+  });
+
+  it('a gate-blocked mount is ONE banner, not "Mount blocked" + "Mount failed"', async () => {
+    const gate =
+      'model needs 45.0 GiB + an 8.0 GiB reserve, 31.7 GiB is available — short 21.3 GiB';
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    mockMount.mockImplementation(async () => {
+      // The sidecar records the gate, then rejects the mount with the same message.
+      mockStatus.mockResolvedValue(
+        statusOf({ state: 'stopped', gateVerdict: 'block', gateMessage: gate })
+      );
+      throw Object.assign(new Error('Internal error'), {
+        data: `memory gate BLOCK for '${QWEN}': ${gate}`,
+      });
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(screen.getByTestId('mlx-tile-mount')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('mlx-tile-mount'));
+    const blocked = await screen.findByTestId('mlx-mount-blocked');
+    expect(blocked).toHaveTextContent(gate);
+    expect(screen.queryByTestId('mlx-mount-failed')).toBeNull();
+    // The one mount failure is one alert (the placement card's own "Could not plan" — the planner is
+    // unreachable in this test — is a different failure and says so under its own name).
+    const alerts = screen.getAllByRole('alert').map((a) => a.textContent ?? '');
+    expect(alerts.filter((t) => t.includes(gate))).toHaveLength(1);
+    expect(alerts.filter((t) => t.includes('Mount'))).toEqual([`Mount blocked${gate}`]);
+    unmount();
+  });
+
+  it('no plan read, but goose REFUSES the mount with a split that fits: one banner, and the tile switches to "Start across both Macs"', async () => {
+    const { MlxMountRefusedError } =
+      await vi.importActual<typeof import('../../acp/mlx-engine')>('../../acp/mlx-engine');
+    const fitMessage = 'needs 47.1 GiB, the budget is 31.2 GiB — short 15.9 GiB';
+    mockSettingsRead.mockResolvedValue({ ...SETTINGS, modelId: FLASH });
+    mockModelsList.mockResolvedValue(
+      listOf([...MODELS, { id: FLASH, sizeBytes: 45 * GB, complete: true, missingFiles: 0 }])
+    );
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    const split = NEEDS_BOTH.candidates!.find((c) => c.id === SPLIT)!;
+    mockMount.mockImplementation(async () => {
+      mockStatus.mockResolvedValue(
+        statusOf({ state: 'stopped', gateVerdict: 'block', gateMessage: fitMessage })
+      );
+      throw new MlxMountRefusedError({
+        fit: { modelId: FLASH, verdict: 'block', message: fitMessage },
+        alternative: split,
+        badge: { kind: 'needsBothMacs' },
+      });
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await waitFor(() => expect(screen.getByTestId('mlx-tile-mount')).toBeEnabled());
+    await userEvent.click(screen.getByTestId('mlx-tile-mount'));
+    const start = await screen.findByTestId('mlx-tile-start-placement');
+    expect(start).toHaveTextContent('Start across both Macs');
+    await waitFor(() =>
+      expect(screen.getByTestId('mlx-mount-blocked')).toHaveTextContent(fitMessage)
+    );
+    expect(screen.queryByTestId('mlx-mount-failed')).toBeNull();
+    const alerts = screen.getAllByRole('alert').map((a) => a.textContent ?? '');
+    expect(alerts.filter((t) => t.includes(fitMessage))).toHaveLength(1);
+    unmount();
+  });
+
+  it('"Needs both Macs" with a step first (goose names it): disabled, and that step is the line', async () => {
+    const step = 'allow this Mac to serve as a distributed node on Work’s Mac Studio first';
+    withFlash({ ...NEEDS_BOTH, badge: { kind: 'needsBothMacs', needs: step } as never });
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    await waitFor(() =>
+      expect(within(hero).getByTestId('mlx-tile-mount-why')).toHaveTextContent(step)
+    );
+    expect(within(hero).getByTestId('mlx-tile-mount')).toBeDisabled();
+    unmount();
+  });
+
+  it('the dedupe is exact: a different failure beside a stale gate block still says so', () => {
+    const status = { gateVerdict: 'block', gateMessage: 'short 21.3 GiB' } as const;
+    expect(mountFailureBanners(status, "memory gate BLOCK for 'm': short 21.3 GiB")).toEqual({
+      gateBlock: 'short 21.3 GiB',
+      mountError: null,
+    });
+    expect(mountFailureBanners(status, 'port 8090 has an unsupervised listener')).toEqual({
+      gateBlock: 'short 21.3 GiB',
+      mountError: 'port 8090 has an unsupervised listener',
+    });
+    expect(mountFailureBanners({ gateVerdict: 'warn', gateMessage: 'tight' }, 'x')).toEqual({
+      gateBlock: null,
+      mountError: 'x',
+    });
   });
 });

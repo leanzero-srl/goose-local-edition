@@ -62,6 +62,7 @@ describe('toMlxDistributedReport — what main is told after every status read',
       modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
       backend: 'jaccl',
       state: 'serving',
+      load: null,
     });
     expect(isMlxDistributedReport(report)).toBe(true);
     expect(toMlxDistributedReport(FLASH_READY).hosting).toBeNull();

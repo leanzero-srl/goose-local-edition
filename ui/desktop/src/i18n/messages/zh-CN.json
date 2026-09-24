@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "这台 Mac 正在承担一个 rank"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "正在为 {requester} 加载 rank {rank}"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — rank PID {pid}。在 {requester} 停止运行之前，单机引擎和这台 Mac 自己的分布式引擎都会被拒绝。"
   },
@@ -3014,6 +3017,12 @@
   "mlxDistributed.livenessNone": {
     "defaultMessage": "尚未测得进度"
   },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "权重已加载"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "已加载 {done} / {total} GB"
+  },
   "mlxDistributed.locked": {
     "defaultMessage": "分布式引擎占用这台 Mac 时配置处于锁定状态。停止它才能更改节点或模型。"
   },
@@ -3043,6 +3052,12 @@
   },
   "mlxDistributed.noPlan": {
     "defaultMessage": "此 rank 没有计划"
+  },
+  "mlxDistributed.node.makingRoom": {
+    "defaultMessage": "正在腾出内存"
+  },
+  "mlxDistributed.node.warming": {
+    "defaultMessage": "正在预热"
   },
   "mlxDistributed.nodeDialog.add": {
     "defaultMessage": "添加节点"
@@ -3518,8 +3533,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "分布式引擎正占用这台 Mac：在下方“分布式引擎”部分停止它之前，单机引擎无法挂载。"
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "挂载被阻止"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "挂载失败"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "已拒绝，goose 未给出原因"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "跨多台 Mac 提供服务"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "启动失败"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "启动被拒绝"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "此模型无法仅在这台 Mac 上运行 — 请先卸载，再从卡片启动。"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}：每个 token {bytes} KiB，而不是 {bf16} KiB — 同样的内存可容纳 {ratio}× 的上下文。"
@@ -3791,6 +3824,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "槽位 {used} / {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "每台 Mac 加载自己那一部分的进度"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "{count} 个等待"
   },
@@ -3833,6 +3869,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "通过 LeanZero Link 服务 {requester} 的分布式引擎"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "正在为 {requester} 加载 rank {rank}"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "rank PID {pid}"
   },
@@ -3845,8 +3884,17 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "实时统计不可用"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "{node} 上已加载的权重"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{done} / {total} GB"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "正在加载权重"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "正在腾出内存"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "还需要 {gb} GB 可用内存"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "最近 {count} 次读数的生成速度"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "正在启动引擎"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "检查中"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "运行中的 swarm：{runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "这台 Mac"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, other {# 个请求不是来自本应用的对话或 /v1}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {个请求在等待}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "正在预热"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "GB 权重"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s（生成）"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · {cores} 核 GPU"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "失败"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "挂载中"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "运行中"
+  },
   "placementCard.measure": {
     "defaultMessage": "测量速度"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "在误差范围内同样快（~{mine} 对 ~{best} tok/s），但需要更多 Mac"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "挂载"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "对这台 Mac 来说太大，goose 能启动的任何方式都放不下：{reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "对这台 Mac 来说太大 — 它能放在 {name} 上，聊天通过 Link 发往那里。"
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "重试"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "你的任何 Mac 都放不下：即使分到所有 Mac 上也差 {gb}。"
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "仅这台 Mac 放不下 — 它分布在 {names} 上运行。"
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{在两台 Mac 上启动} other{在 # 台 Mac 上启动}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "在 {name} 上启动"
   },
   "placementCard.title": {
     "defaultMessage": "在哪里运行"

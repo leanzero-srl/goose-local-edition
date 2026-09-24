@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "이 Mac이 랭크를 담당 중"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "{requester}의 랭크 {rank} 로드 중"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — 랭크 PID {pid}. {requester}가 실행을 멈출 때까지 단일 엔진과 이 Mac 자체의 분산 엔진은 거부됩니다."
   },
@@ -3014,6 +3017,12 @@
   "mlxDistributed.livenessNone": {
     "defaultMessage": "아직 측정된 진행 상황이 없습니다"
   },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "가중치 로드"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "{total} GB 중 {done} GB 로드됨"
+  },
   "mlxDistributed.locked": {
     "defaultMessage": "분산 엔진이 이 Mac을 사용하는 동안 구성이 잠깁니다. 노드나 모델을 바꾸려면 중지하세요."
   },
@@ -3043,6 +3052,12 @@
   },
   "mlxDistributed.noPlan": {
     "defaultMessage": "이 랭크에 대한 계획 없음"
+  },
+  "mlxDistributed.node.makingRoom": {
+    "defaultMessage": "메모리 확보 중"
+  },
+  "mlxDistributed.node.warming": {
+    "defaultMessage": "워밍업 중"
   },
   "mlxDistributed.nodeDialog.add": {
     "defaultMessage": "노드 추가"
@@ -3518,8 +3533,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "분산 엔진이 이 Mac을 사용 중입니다. 아래의 분산 엔진 섹션에서 중지할 때까지 단일 엔진을 마운트할 수 없습니다."
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "마운트 차단됨"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "마운트 실패"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "거부되었으며 goose가 이유를 밝히지 않음"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "여러 Mac에서 제공 중"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "시작 실패"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "시작 거부됨"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "이 모델은 이 Mac 하나로는 실행되지 않습니다 — 언마운트한 다음 타일에서 시작하세요."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: 토큰당 {bf16} KiB 대신 {bytes} KiB — 같은 메모리에 {ratio}×의 컨텍스트가 들어갑니다."
@@ -3791,6 +3824,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "슬롯 {used} / {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "각 Mac이 자기 몫을 로드하는 모습"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "대기 {count}"
   },
@@ -3833,6 +3869,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "LeanZero Link를 통한 {requester}의 분산 엔진용"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "{requester}의 랭크 {rank} 로드 중"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "랭크 PID {pid}"
   },
@@ -3845,8 +3884,17 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "실시간 통계를 사용할 수 없음"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "{node}의 가중치 로드"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{total} GB 중 {done} GB"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "가중치 로드 중"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "메모리 확보 중"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "여유 메모리가 {gb}GB 더 필요합니다"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "최근 {count}회 측정의 작성 속도"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "엔진 시작 중"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "확인 중"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "실행 중인 swarm: {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "이 Mac"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, other {이 앱의 채팅이나 /v1이 아닌 요청 #개}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {개 요청 대기 중}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "워밍업 중"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "GB 가중치"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s (작성)"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · {cores}코어 GPU"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "실패"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "마운트 중"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "실행 중"
+  },
   "placementCard.measure": {
     "defaultMessage": "속도 측정"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "오차 범위 안에서 같은 속도(~{mine} 대 ~{best} tok/s)지만 Mac이 더 필요함"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "마운트"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "이 Mac에는 너무 크고, goose가 시작할 수 있는 어떤 구성에도 맞지 않습니다: {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "이 Mac에는 너무 큽니다 — {name}에는 맞으며, 채팅은 Link를 통해 그쪽으로 갑니다."
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "다시 시도"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "가진 어떤 Mac에도 맞지 않습니다: 모두에 나눠도 {gb} 부족합니다."
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "이 Mac 하나에는 너무 큽니다 — {names}에 나눠서 실행됩니다."
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{두 Mac에서 시작} other{Mac #대에서 시작}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "{name}에서 시작"
   },
   "placementCard.title": {
     "defaultMessage": "어디서 실행할지"

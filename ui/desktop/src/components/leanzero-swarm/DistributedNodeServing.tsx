@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { defineMessages, useIntl } from '../../i18n';
-import { TYPE, cx } from '../lz';
+import { Loader2, Network } from 'lucide-react';
+import { PHASE_FILL, RADIUS, TYPE, WEIGHT, cx } from '../lz';
 import { acpUpsertConfig } from '../../acp/config';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { hostingSummary } from './mlxDistributed';
-import { formatMlxMode } from './mlxModeLabel';
+import { distributedStateWord, formatMlxMode } from './mlxModeLabel';
+import { hostingPhase } from './mlxPhase';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { StudioSwitch, ToneBanner } from './studio';
 
@@ -35,6 +37,10 @@ const i18n = defineMessages({
     defaultMessage: 'Could not change the setting',
   },
   hostingLabel: { id: 'mlxDistributed.hosting.label', defaultMessage: 'This Mac serves a rank' },
+  hostingLoading: {
+    id: 'mlxDistributed.hosting.loading',
+    defaultMessage: 'Loading rank {rank} for {requester}',
+  },
   hostingText: {
     id: 'mlxDistributed.hosting.text',
     defaultMessage:
@@ -70,18 +76,42 @@ export function DistributedNodeServing({
 
   return (
     <div data-testid="mlx-dist-node-serving" className="flex flex-col gap-2">
-      {hosting && (
-        <ToneBanner
-          tone="accent"
-          live
-          label={intl.formatMessage(i18n.hostingLabel)}
-          text={intl.formatMessage(i18n.hostingText, {
-            line: formatMlxMode(intl, hosting, null),
-            pid: status.hosting?.pid ?? '—',
-            requester: hosting.requester,
-          })}
-          testId="mlx-dist-hosting"
-        />
+      {hosting && status.hosting && (
+        // The engine-phase palette (mlxPhase.ts): amber while the rank loads, then the rank's own
+        // state — the same colour the tile and the requester's node card show for it.
+        <div
+          role="status"
+          data-testid="mlx-dist-hosting"
+          data-phase={hostingPhase(status.hosting.state)}
+          className={cx(
+            'flex flex-col gap-1 px-4 py-3 [&_svg]:size-4',
+            RADIUS.card,
+            PHASE_FILL[hostingPhase(status.hosting.state)]
+          )}
+        >
+          <span className={cx('flex items-center gap-2 text-lz-h2', WEIGHT.semibold)}>
+            <span aria-hidden>
+              {status.hosting.state === 'loading' ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Network />
+              )}
+            </span>
+            {status.hosting.state === 'loading'
+              ? intl.formatMessage(i18n.hostingLoading, {
+                  rank: status.hosting.rank,
+                  requester: hosting.requester,
+                })
+              : `${intl.formatMessage(i18n.hostingLabel)} · ${distributedStateWord(intl, status.hosting.state)}`}
+          </span>
+          <span className="break-words text-lz-body">
+            {intl.formatMessage(i18n.hostingText, {
+              line: formatMlxMode(intl, hosting, null),
+              pid: status.hosting.pid ?? '—',
+              requester: hosting.requester,
+            })}
+          </span>
+        </div>
       )}
       <span className="flex items-center gap-2">
         <StudioSwitch

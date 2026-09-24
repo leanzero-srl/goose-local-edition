@@ -3,9 +3,12 @@ import {
   gib,
   layerSpan,
   modeSummary,
+  nodeLoadProgress,
+  nodeStartWord,
   planForRank,
   isAlarmOrNotice,
   type LayerSpan,
+  type LoadProgress,
 } from '../components/leanzero-swarm/mlxDistributed';
 
 /**
@@ -26,6 +29,10 @@ export interface MlxDistributedReportNode {
   budgetGb: number | null;
   pressure: string | null;
   memoryError: string | null;
+  /** While the rank loads: the backend's measured progress (null = no figure reported). */
+  load: LoadProgress | null;
+  /** `nodeStartWord`: makingRoom / warming while it starts, else `state`. */
+  startWord: string;
 }
 
 /** The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link. */
@@ -36,6 +43,7 @@ export interface MlxDistributedReportHosting {
   backend: string | null;
   /** "loading" | "serving". */
   state: string;
+  load: LoadProgress | null;
 }
 
 export interface MlxDistributedReport {
@@ -81,6 +89,8 @@ export function toMlxDistributedReport(status: MlxDistributedStatusDto): MlxDist
         budgetGb: plan ? gib(plan.budgetBytes) : null,
         pressure: n.pressure ?? null,
         memoryError: n.memoryError ?? null,
+        load: nodeLoadProgress(n),
+        startWord: nodeStartWord(status, n),
       };
     }),
     admissionOpen: status.admissionOpen,
@@ -97,6 +107,7 @@ export function toMlxDistributedReport(status: MlxDistributedStatusDto): MlxDist
           modelId: status.hosting.modelId,
           backend: status.hosting.backend ?? null,
           state: status.hosting.state,
+          load: nodeLoadProgress(status.hosting),
         }
       : null,
   };
@@ -116,6 +127,13 @@ function isLayerSpan(v: unknown): boolean {
   return false;
 }
 
+function isLoad(v: unknown): boolean {
+  if (v === null) return true;
+  if (v == null || typeof v !== 'object') return false;
+  const l = v as Record<string, unknown>;
+  return l.unit === 'bytes' && isNum(l.done) && isNum(l.total);
+}
+
 function isReportNode(v: unknown): boolean {
   if (v == null || typeof v !== 'object') return false;
   const n = v as Record<string, unknown>;
@@ -129,7 +147,9 @@ function isReportNode(v: unknown): boolean {
     numOrNull(n.totalGb) &&
     numOrNull(n.budgetGb) &&
     strOrNull(n.pressure) &&
-    strOrNull(n.memoryError)
+    strOrNull(n.memoryError) &&
+    isLoad(n.load) &&
+    isStr(n.startWord)
   );
 }
 
@@ -142,7 +162,8 @@ function isHosting(v: unknown): boolean {
     isStr(h.requester) &&
     isStr(h.modelId) &&
     strOrNull(h.backend) &&
-    isStr(h.state)
+    isStr(h.state) &&
+    isLoad(h.load)
   );
 }
 

@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "Questo Mac serve un rank"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "Caricamento del rank {rank} per {requester}"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — PID del rank {pid}. Il motore singolo e il motore distribuito di questo Mac sono rifiutati finché {requester} non ferma l’esecuzione."
   },
@@ -3014,6 +3017,12 @@
   "mlxDistributed.livenessNone": {
     "defaultMessage": "Nessun progresso misurato finora"
   },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "Pesi caricati"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "Caricati {done} di {total} GB"
+  },
   "mlxDistributed.locked": {
     "defaultMessage": "La configurazione è bloccata mentre il motore distribuito occupa questo Mac. Fermalo per cambiare i nodi o il modello."
   },
@@ -3043,6 +3052,12 @@
   },
   "mlxDistributed.noPlan": {
     "defaultMessage": "Nessun piano per questo rank"
+  },
+  "mlxDistributed.node.makingRoom": {
+    "defaultMessage": "Liberazione della memoria"
+  },
+  "mlxDistributed.node.warming": {
+    "defaultMessage": "Riscaldamento"
   },
   "mlxDistributed.nodeDialog.add": {
     "defaultMessage": "Aggiungi nodo"
@@ -3518,8 +3533,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Il motore distribuito occupa questo Mac: il motore singolo non può essere montato finché non viene fermato nella sezione Motore distribuito qui sotto."
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "Montaggio bloccato"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "Montaggio non riuscito"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "Rifiutato, e goose non ha indicato alcun motivo"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "In servizio su più Mac"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "Avvio non riuscito"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "Avvio rifiutato"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "Questo modello non gira su questo Mac da solo — smontalo, poi avvialo dal riquadro."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token invece di {bf16} KiB — la stessa memoria contiene {ratio}× il contesto."
@@ -3791,6 +3824,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slot {used} di {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "Ogni Mac, mentre carica la sua parte"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "{count} in attesa"
   },
@@ -3833,6 +3869,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "per il motore distribuito di {requester} tramite LeanZero Link"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "Caricamento del rank {rank} per {requester}"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "PID del rank {pid}"
   },
@@ -3845,8 +3884,17 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Statistiche in tempo reale non disponibili"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "Pesi caricati su {node}"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{done} di {total} GB"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "Caricamento dei pesi"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "Liberazione della memoria"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Servono altri {gb} GB di memoria libera"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "Velocità di scrittura nelle ultime {count} letture"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "Avvio del motore"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "Verifica"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "Esecuzione swarm attiva: {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "questo Mac"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, one {# richiesta non proveniente dalle chat di questa app né da /v1} other {# richieste non provenienti dalle chat di questa app né da /v1}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, one {richiesta in attesa} other {richieste in attesa}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "Riscaldamento"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "GB di pesi"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s in scrittura"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · GPU a {cores} core"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "Non riuscito"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "Montaggio"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "In esecuzione"
+  },
   "placementCard.measure": {
     "defaultMessage": "Misura la velocità"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Veloce uguale entro l’errore (~{mine} contro ~{best} tok/s), ma servono più Mac"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "Monta"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "Troppo grande per questo Mac, e nulla di ciò che goose può avviare lo contiene: {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "Troppo grande per questo Mac — sta su {name}, e la chat ci arriva tramite Link."
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "Riprova"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "Non sta su nessuno dei tuoi Mac: mancano {gb} anche diviso su tutti."
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "Troppo grande per questo Mac da solo — gira diviso su {names}."
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{Avvia su entrambi i Mac} other{Avvia su # Mac}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "Avvia su {name}"
   },
   "placementCard.title": {
     "defaultMessage": "Dove eseguirlo"

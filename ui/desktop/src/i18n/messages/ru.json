@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "Этот Mac обслуживает ранг"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "Загрузка ранга {rank} для {requester}"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — PID ранга {pid}. Одиночный движок и собственный распределённый движок этого Mac отклоняются, пока {requester} не остановит запуск."
   },
@@ -3014,6 +3017,12 @@
   "mlxDistributed.livenessNone": {
     "defaultMessage": "Прогресс ещё не измерен"
   },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "Веса загружены"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "Загружено {done} из {total} ГБ"
+  },
   "mlxDistributed.locked": {
     "defaultMessage": "Конфигурация заблокирована, пока распределённый движок занимает этот Mac. Остановите его, чтобы изменить узлы или модель."
   },
@@ -3043,6 +3052,12 @@
   },
   "mlxDistributed.noPlan": {
     "defaultMessage": "Для этого ранга нет плана"
+  },
+  "mlxDistributed.node.makingRoom": {
+    "defaultMessage": "Освобождение памяти"
+  },
+  "mlxDistributed.node.warming": {
+    "defaultMessage": "Прогрев"
   },
   "mlxDistributed.nodeDialog.add": {
     "defaultMessage": "Добавить узел"
@@ -3518,8 +3533,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Распределённый движок занимает этот Mac: одиночный движок нельзя загрузить, пока распределённый не остановлен в разделе «Распределённый движок» ниже."
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "Монтирование заблокировано"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "Сбой монтирования"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "Отказано, причина не названа"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Обслуживает на нескольких Mac"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "Сбой запуска"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "Запуск отклонён"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "Эта модель не работает на одном этом Mac — размонтируйте, затем запустите с плитки."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} КиБ на токен вместо {bf16} КиБ — в той же памяти помещается в {ratio}× больше контекста."
@@ -3791,6 +3824,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "слоты {used} из {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "Каждый Mac, пока загружает свою часть"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "в очереди {count}"
   },
@@ -3833,6 +3869,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "для распределённого движка {requester} через LeanZero Link"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "Загрузка ранга {rank} для {requester}"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "PID ранга {pid}"
   },
@@ -3845,8 +3884,17 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Живая статистика недоступна"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "Веса загружены на {node}"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{done} из {total} ГБ"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "Загрузка весов"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "Освобождение памяти"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Нужно ещё {gb} ГБ свободной памяти"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "Скорость записи за последние {count} замеров"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "Запуск движка"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "Проверка"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "Запуск swarm активен: {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "этот Mac"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, one {# запрос не из чатов этого приложения и не через /v1} few {# запроса не из чатов этого приложения и не через /v1} many {# запросов не из чатов этого приложения и не через /v1} other {# запроса не из чатов этого приложения и не через /v1}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, one {запрос ждёт} few {запроса ждут} many {запросов ждут} other {запроса ждут}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "Прогрев"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "ГБ весов"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s при записи"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · GPU на {cores} ядер"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "Сбой"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "Монтирование"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "Работает"
+  },
   "placementCard.measure": {
     "defaultMessage": "Измерить скорость"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Так же быстро в пределах погрешности (~{mine} против ~{best} ток/с), но нужно больше Mac"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "Смонтировать"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "Слишком велика для этого Mac, и ничто, что может запустить goose, её не вмещает: {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "Слишком велика для этого Mac — помещается на {name}, и чат идёт туда через Link."
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "Не помещается ни на один ваш Mac: не хватает {gb} даже при разделении на все."
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "Слишком велика для одного этого Mac — работает с разделением на {names}."
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{Запустить на обоих Mac} other{Запустить на # Mac}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "Запустить на {name}"
   },
   "placementCard.title": {
     "defaultMessage": "Где запускать"

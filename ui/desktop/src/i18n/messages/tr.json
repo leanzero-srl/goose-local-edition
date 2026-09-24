@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "Bu Mac bir rank hizmeti veriyor"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "{requester} için rank {rank} yükleniyor"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — rank PID {pid}. {requester} çalıştırmayı durdurana kadar tekli motor ve bu Mac’in kendi dağıtık motoru reddedilir."
   },
@@ -3014,6 +3017,12 @@
   "mlxDistributed.livenessNone": {
     "defaultMessage": "Henüz ilerleme ölçülmedi"
   },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "Ağırlıklar yüklendi"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "{total} GB’nin {done} GB’si yüklendi"
+  },
   "mlxDistributed.locked": {
     "defaultMessage": "Dağıtık motor bu Mac'i kullanırken yapılandırma kilitlidir. Düğümleri veya modeli değiştirmek için onu durdurun."
   },
@@ -3043,6 +3052,12 @@
   },
   "mlxDistributed.noPlan": {
     "defaultMessage": "Bu rank için plan yok"
+  },
+  "mlxDistributed.node.makingRoom": {
+    "defaultMessage": "Bellek boşaltılıyor"
+  },
+  "mlxDistributed.node.warming": {
+    "defaultMessage": "Isınıyor"
   },
   "mlxDistributed.nodeDialog.add": {
     "defaultMessage": "Düğüm ekle"
@@ -3518,8 +3533,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Dağıtık motor bu Mac'i kullanıyor: tekli motor, aşağıdaki Dağıtık motor bölümünde durdurulana kadar bağlanamaz."
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "Bağlama engellendi"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "Bağlama başarısız"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "Reddedildi ve goose bir neden belirtmedi"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Birden çok Mac üzerinde sunuluyor"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "Başlatma başarısız"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "Başlatma reddedildi"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "Bu model yalnızca bu Mac’te çalışmaz — bağlantıyı kaldırın, sonra kutucuktan başlatın."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: token başına {bf16} KiB yerine {bytes} KiB — aynı bellek {ratio}× bağlam tutar."
@@ -3791,6 +3824,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slotlar {used} / {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "Her Mac, kendi payını yüklerken"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "{count} bekliyor"
   },
@@ -3833,6 +3869,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "LeanZero Link üzerinden {requester} dağıtık motoru için"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "{requester} için rank {rank} yükleniyor"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "rank PID {pid}"
   },
@@ -3845,8 +3884,17 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Canlı istatistikler kullanılamıyor"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "{node} üzerinde yüklenen ağırlıklar"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{total} GB’nin {done} GB’si"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "Ağırlıklar yükleniyor"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "Bellek boşaltılıyor"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "{gb} GB daha boş bellek gerekiyor"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "Son {count} okumadaki yazma hızı"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "Motor başlatılıyor"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "Denetleniyor"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "Etkin swarm çalıştırması: {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "bu Mac"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, other {bu uygulamanın sohbetlerinden veya /v1 üzerinden gelmeyen # istek}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {istek bekliyor}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "Isınıyor"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "GB ağırlık"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s (yazma)"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · {cores} çekirdekli GPU"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "Başarısız"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "Bağlanıyor"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "Çalışıyor"
+  },
   "placementCard.measure": {
     "defaultMessage": "Hızı ölç"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Hata payı içinde aynı hızda (~{mine} ile ~{best} tok/sn), ama daha fazla Mac gerekiyor"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "Bağla"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "Bu Mac için çok büyük ve goose’un başlatabileceği hiçbir şeye sığmıyor: {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "Bu Mac için çok büyük — {name} üzerine sığıyor ve sohbet oraya Link üzerinden gidiyor."
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "Yeniden dene"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "Hiçbir Mac’inize sığmıyor: hepsine bölünse bile {gb} eksik."
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "Tek başına bu Mac için çok büyük — {names} üzerinde bölünerek çalışır."
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{İki Mac’te başlat} other{# Mac’te başlat}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "{name} üzerinde başlat"
   },
   "placementCard.title": {
     "defaultMessage": "Nerede çalıştırılsın"

@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "Este Mac sirve un rango"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "Cargando el rango {rank} para {requester}"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — PID del rango {pid}. El motor único y el motor distribuido propio de este Mac quedan rechazados hasta que {requester} detenga la ejecución."
   },
@@ -3014,6 +3017,12 @@
   "mlxDistributed.livenessNone": {
     "defaultMessage": "Aún no se ha medido progreso"
   },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "Pesos cargados"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "Cargados {done} de {total} GB"
+  },
   "mlxDistributed.locked": {
     "defaultMessage": "La configuración está bloqueada mientras el motor distribuido ocupa este Mac. Detenlo para cambiar los nodos o el modelo."
   },
@@ -3043,6 +3052,12 @@
   },
   "mlxDistributed.noPlan": {
     "defaultMessage": "No hay plan para este rank"
+  },
+  "mlxDistributed.node.makingRoom": {
+    "defaultMessage": "Liberando memoria"
+  },
+  "mlxDistributed.node.warming": {
+    "defaultMessage": "Calentando"
   },
   "mlxDistributed.nodeDialog.add": {
     "defaultMessage": "Añadir nodo"
@@ -3518,8 +3533,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "El motor distribuido ocupa este Mac: el motor único no puede montarse hasta que se detenga en la sección Motor distribuido de abajo."
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "Montaje bloqueado"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "El montaje falló"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "Rechazado, y goose no dio ningún motivo"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Sirviendo entre varios Mac"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "El inicio falló"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "Inicio rechazado"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "Este modelo no funciona solo en este Mac: desmóntalo y luego inícialo desde la tarjeta."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB por token en lugar de {bf16} KiB — la misma memoria admite {ratio}× más contexto."
@@ -3791,6 +3824,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slots {used} de {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "Cada Mac, mientras carga su parte"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "{count} en espera"
   },
@@ -3833,6 +3869,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "para el motor distribuido de {requester} por LeanZero Link"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "Cargando el rango {rank} para {requester}"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "PID del rango {pid}"
   },
@@ -3845,8 +3884,17 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Estadísticas en vivo no disponibles"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "Pesos cargados en {node}"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{done} de {total} GB"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "Cargando pesos"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "Liberando memoria"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Necesita {gb} GB más de memoria libre"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "Ritmo de escritura en las últimas {count} lecturas"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "Iniciando el motor"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "Comprobando"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "Ejecución de swarm activa: {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "este Mac"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, one {# solicitud que no viene de los chats de esta app ni de /v1} other {# solicitudes que no vienen de los chats de esta app ni de /v1}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, one {solicitud en espera} other {solicitudes en espera}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "Calentando"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "GB de pesos"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s escribiendo"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · GPU de {cores} núcleos"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "Falló"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "Montando"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "En ejecución"
+  },
   "placementCard.measure": {
     "defaultMessage": "Medir velocidad"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Igual de rápido dentro del error (~{mine} frente a ~{best} tok/s), pero necesita más Mac"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "Montar"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "Demasiado grande para este Mac, y nada que goose pueda iniciar le cabe: {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "Demasiado grande para este Mac: cabe en {name} y el chat va allí por Link."
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "Reintentar"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "No cabe en ningún Mac que tengas: faltan {gb} incluso repartido entre todos."
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "Demasiado grande para este Mac solo: se ejecuta repartido entre {names}."
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{Iniciar en ambos Mac} other{Iniciar en # Mac}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "Iniciar en {name}"
   },
   "placementCard.title": {
     "defaultMessage": "Dónde ejecutarlo"

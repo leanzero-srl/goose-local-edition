@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   MLX_DISTRIBUTED_STALE_MS,
+  PHASE_GLYPH,
   buildMlxTrayModel,
   mlxTrayTitle,
+  trayTitleText,
   type MlxTrayItem,
 } from './mlxTray';
+import { phaseDotBitmap } from './phaseDot';
+import type { MlxDistributedStatus } from '../acp/mlx-distributed';
 import { toMlxDistributedReport } from './mlxDistributedReport';
 import {
   FLASH_READY,
@@ -330,5 +334,151 @@ describe('the tray while this Mac SERVES a rank of another Mac over LeanZero Lin
     });
     expect(model.title).toBe('Rank · stale');
     expect(labels(model.items)).toContain('Not refreshed for 6s — open goose to read it again');
+  });
+});
+
+/**
+ * The tray speaks the tile's palette (lz tokens PHASE_*, mapped by mlxPhase.ts): the title leads
+ * with the phase's colour glyph, every state line carries its phase for main's exact-hex dot.
+ */
+describe('the tray in the engine-phase palette', () => {
+  const phases = (items: MlxTrayItem[]) =>
+    items.flatMap((i) => (i.type === 'info' && i.phase ? [[i.label, i.phase]] : []));
+
+  it.each<[string, MlxEngineSnapshot, string, string]>([
+    ['writing', running(GENERATING_STATUS), 'writing', '🟢 19.9 tok/s'],
+    ['reading', running(PREFILL_STATUS), 'reading', '🔵 Reading 32k'],
+    ['idle', running(IDLE_STATUS), 'idle', '⚪ Idle'],
+    ['mounting', { ...INITIAL_SNAPSHOT, mode: 'mounting' }, 'loading', '🟡 Mounting'],
+    ['failed', { ...INITIAL_SNAPSHOT, mode: 'failed' }, 'failed', '🔴 MLX failed'],
+  ])('single %s → the %s phase, title "%s"', (_name, snapshot, phase, title) => {
+    const model = buildMlxTrayModel(snapshot, OPTS);
+    expect(model.phase).toBe(phase);
+    expect(trayTitleText(model)).toBe(title);
+    expect(model.items[0]).toMatchObject({ type: 'info', phase });
+  });
+
+  it('queued requests are ORANGE', () => {
+    const queued = running({
+      status: 'idle',
+      num_waiting: 1,
+      requests: [{ request_id: 'q', status: 'waiting', phase: 'queued', prompt_tokens: 50 }],
+    });
+    const model = buildMlxTrayModel(queued, OPTS);
+    expect(model.phase).toBe('held');
+    expect(trayTitleText(model)).toBe(`${PHASE_GLYPH.held} Queued 1`);
+  });
+
+  it('not mounted: the dark dot on the menu line, and no title at all', () => {
+    const model = buildMlxTrayModel({ ...INITIAL_SNAPSHOT, mode: 'off' }, OPTS);
+    expect(trayTitleText(model)).toBe('');
+    expect(phases(model.items)).toEqual([['LeanZero MLX: not mounted', 'unloaded']]);
+  });
+
+  it('distributed: the run and EACH node carry their own phase; a closed admission is orange', () => {
+    const starting = toMlxDistributedReport({
+      ...FLASH_READY,
+      state: 'starting',
+      nodes: [
+        {
+          ...FLASH_READY.nodes[0],
+          state: 'loading',
+          activeMemoryGb: 12,
+          plannedWeightsGb: 48,
+        },
+        { ...FLASH_READY.nodes[1], state: 'ready' },
+      ],
+    } as MlxDistributedStatus);
+    const model = buildMlxTrayModel(INITIAL_SNAPSHOT, {
+      ...OPTS,
+      distributed: { report: starting, ageMs: 0 },
+    });
+    expect(model.phase).toBe('loading');
+    expect(trayTitleText(model)).toBe('🟡 Dist · starting');
+    expect(phases(model.items)).toEqual([
+      ['LeanZero MLX: distributed, starting', 'loading'],
+      [
+        'MacBook Pro (loading): L0–19 · loaded 12.0 of 48.0 GB · peak 61.0 of 83.4 GiB b…',
+        'loading',
+      ],
+      ['workhorse (ready): L20–47 · peak 42.5 of 55.4 GiB budget', 'idle'],
+    ]);
+    const held = buildMlxTrayModel(INITIAL_SNAPSHOT, {
+      ...OPTS,
+      distributed: {
+        report: toMlxDistributedReport({ ...FLASH_SERVING, admissionOpen: false }),
+        ageMs: 0,
+      },
+    });
+    expect(held.phase).toBe('held');
+    expect(trayTitleText(held)).toBe('🟠 Dist · held');
+  });
+
+  it('a Mac macOS is making room on is said so, amber, with no load figure', () => {
+    const report = toMlxDistributedReport({
+      ...FLASH_READY,
+      state: 'starting',
+      makingRoom: ['workhorse'],
+      nodes: [
+        FLASH_READY.nodes[0],
+        { ...FLASH_READY.nodes[1], state: 'loading', plannedWeightsGb: 80 },
+      ],
+    } as MlxDistributedStatus);
+    const model = buildMlxTrayModel(INITIAL_SNAPSHOT, {
+      ...OPTS,
+      distributed: { report, ageMs: 0 },
+    });
+    expect(phases(model.items)[2]).toEqual([
+      'workhorse (making room): L20–47 · peak 42.5 of 55.4 GiB budget',
+      'loading',
+    ]);
+  });
+
+  it('a stale read claims no colour — the words say stale', () => {
+    const model = buildMlxTrayModel(INITIAL_SNAPSHOT, {
+      ...OPTS,
+      distributed: {
+        report: toMlxDistributedReport(FLASH_SERVING),
+        ageMs: MLX_DISTRIBUTED_STALE_MS + 1,
+      },
+    });
+    expect(model.phase).toBeNull();
+    expect(trayTitleText(model)).toBe('Dist · stale');
+    expect(phases(model.items)).toEqual([]);
+  });
+
+  it('the peer serving a rank: "loading rank 1 for MacBook Pro" in amber, grey once joined', () => {
+    const loading = toMlxDistributedReport({
+      ...HOSTING_RANK_1,
+      hosting: {
+        ...HOSTING_RANK_1.hosting!,
+        state: 'loading',
+        loadedBytes: 6 * 2 ** 30,
+        plannedWeightBytes: 24 * 2 ** 30,
+      },
+    } as MlxDistributedStatus);
+    const model = buildMlxTrayModel(
+      { ...INITIAL_SNAPSHOT, mode: 'off' },
+      { ...OPTS, distributed: { report: loading, ageMs: 0 } }
+    );
+    expect(trayTitleText(model)).toBe('🟡 Rank 1 · loading');
+    expect(phases(model.items)).toEqual([
+      ['LeanZero MLX: loading rank 1 for MacBook Pro, loaded 6.0 of 24.0 GB', 'loading'],
+    ]);
+    const joined = buildMlxTrayModel(
+      { ...INITIAL_SNAPSHOT, mode: 'off' },
+      { ...OPTS, distributed: { report: toMlxDistributedReport(HOSTING_RANK_1), ageMs: 0 } }
+    );
+    expect(joined.phase).toBe('idle');
+  });
+
+  it("main's menu dot is the phase's exact hex, a solid anti-aliased disc", () => {
+    const px = 24;
+    const buf = phaseDotBitmap('#f59e0b', px);
+    const at = (x: number, y: number) => [...buf.subarray((y * px + x) * 4, (y * px + x) * 4 + 4)];
+    // centre: fully opaque amber, BGRA
+    expect(at(12, 12)).toEqual([0x0b, 0x9e, 0xf5, 255]);
+    // corner: outside the disc, transparent
+    expect(at(0, 0)).toEqual([0, 0, 0, 0]);
   });
 });

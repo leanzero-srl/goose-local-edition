@@ -70,6 +70,7 @@ import {
   mlxEngineSettingsUpdate,
   mlxEngineStatus,
   mlxEngineUnmount,
+  MlxMountRefusedError,
   type MlxBrowseFilters,
   type MlxBrowseHit,
   type MlxBrowseSort,
@@ -79,6 +80,7 @@ import {
   type MlxEngineStatus,
   type MlxLocalModel,
   type MlxModelProfile,
+  type MlxMountRefusal,
 } from '../../acp/mlx-engine';
 import {
   DownloadProgressRow,
@@ -105,9 +107,11 @@ import {
   advanceLastRates,
   advanceMountWatch,
   liveDecodeTps,
+  mlxActivity,
   mountCost,
   mountFill,
   MLX_STATUS_POLL_MS,
+  singleLoad,
   pushSample,
   readMlxLiveStatus,
   readMlxServing,
@@ -116,6 +120,7 @@ import {
   type MountWatch,
   type TpsSample,
 } from './mlxLiveStats';
+import { singlePhase } from './mlxPhase';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import { defineMessages, useIntl } from '../../i18n';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
@@ -123,7 +128,16 @@ import { DistributedEngineSection } from './DistributedEngineSection';
 import { modeSummary, ownsTheMac } from './mlxDistributed';
 import { formatMlxMode } from './mlxModeLabel';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
-import { PlacementBadge, PlacementCard, usePlacementBadges } from './PlacementCard';
+import {
+  PlacementBadge,
+  PlacementCard,
+  TileMountAction,
+  badgesOf,
+  runPlacementAction,
+  tileMountChoice,
+  usePlacementPlans,
+} from './PlacementCard';
+import type { PlacementCandidate } from '../../acp/mlx-placement';
 import type { PlacementBadge as PlacementBadgeDto } from '../../acp/mlx-placement';
 import {
   leanzeroLinkNodes,
@@ -134,15 +148,6 @@ import {
 
 // Formatters stay importable from this module — tests and older callers reach them here.
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
-
-// Engine state on the status triad: running = ok, failed = err, stopped = the stopped neutral,
-// and mounting is the same neutral with a LIVE dot (in flight) — the difference is motion.
-const STATE_TONE: Record<MlxEngineState, Tone> = {
-  running: 'ok',
-  mounting: 'stopped',
-  failed: 'err',
-  stopped: 'stopped',
-};
 
 const i18n = defineMessages({
   distributedOwns: { id: 'mlxEngineView.distributedOwns', defaultMessage: 'Distributed' },
@@ -155,7 +160,36 @@ const i18n = defineMessages({
     id: 'mlxEngineView.servingDistributed',
     defaultMessage: 'Serving across Macs',
   },
+  mountBlocked: { id: 'mlxEngineView.mountBlocked', defaultMessage: 'Mount blocked' },
+  mountFailed: { id: 'mlxEngineView.mountFailed', defaultMessage: 'Mount failed' },
+  startRefused: { id: 'mlxEngineView.startRefused', defaultMessage: 'Start refused' },
+  startFailed: { id: 'mlxEngineView.startFailed', defaultMessage: 'Start failed' },
+  refusedUnnamed: {
+    id: 'mlxEngineView.refusedUnnamed',
+    defaultMessage: 'Refused, and goose named no reason',
+  },
+  switchNeedsUnmount: {
+    id: 'mlxEngineView.switchNeedsUnmount',
+    defaultMessage:
+      'This model does not run on this Mac alone — unmount, then start it from the tile.',
+  },
 });
+
+/**
+ * The mount failure banners, ONE per failure. The sidecar's refusal of a mount the memory gate
+ * blocks arrives TWICE — the mount call rejects with "memory gate BLOCK for '<model>': <message>"
+ * and the status keeps that gate's `<message>` as `gateMessage` — so a mount error that carries the
+ * blocking gate's message is the same failure and renders once, as the gate's banner.
+ */
+export function mountFailureBanners(
+  status: Pick<MlxEngineStatus, 'gateVerdict' | 'gateMessage'> | null,
+  mountError: string | null
+): { gateBlock: string | null; mountError: string | null } {
+  const gateBlock =
+    status?.gateVerdict === 'block' && status.gateMessage ? status.gateMessage : null;
+  const same = mountError != null && gateBlock != null && mountError.includes(gateBlock);
+  return { gateBlock, mountError: same ? null : mountError };
+}
 
 /** A quiet table cell: the meta register in tabular figures. */
 const META = cx(TYPE.meta, TNUM);
@@ -320,14 +354,25 @@ export function draftsEqual(a: NumericDrafts, b: NumericDrafts): boolean {
 // Small building blocks on the Studio tokens (banner/progress row live in ./primitives)
 // ---------------------------------------------------------------------------
 
-/** The engine's state: a solid dot (pulsing while a mount is in flight) beside a toned chip. */
-function StateBadge({ state }: { state: MlxEngineState }) {
-  const tone = STATE_TONE[state];
+/**
+ * The engine's state on the tabs without the tile: a solid dot (pulsing while a mount is in
+ * flight) beside a chip, both in the engine-phase palette the tile uses (mlxPhase.ts).
+ */
+function StateBadge({ state, live }: { state: MlxEngineState; live: MlxLiveRead | null }) {
+  const phase = singlePhase(
+    state,
+    false,
+    state === 'running' && live?.ok ? mlxActivity(live.stats) : null
+  );
   return (
-    <span className="inline-flex items-center gap-2" data-testid="mlx-state-badge">
-      <StatusDot tone={tone} live={state === 'mounting'} label={`Engine ${state}`} />
+    <span
+      className="inline-flex items-center gap-2"
+      data-testid="mlx-state-badge"
+      data-phase={phase}
+    >
+      <StatusDot phase={phase} live={state === 'mounting'} label={`Engine ${state}`} />
       <Chip
-        tone={tone}
+        phase={phase}
         icon={state === 'mounting' ? <Loader2 className="animate-spin" /> : undefined}
       >
         {state}
@@ -677,6 +722,8 @@ interface EngineSectionProps {
   mountModelId: string | null;
   setMountModelId: (id: string | null) => void;
   mountError: string | null;
+  /** goose's structured refusal of the last Mount (the placement that would work). */
+  mountRefusal: MlxMountRefusal | null;
   engineBusy: boolean;
   onMount: () => void;
   onUnmount: () => void;
@@ -706,6 +753,7 @@ function EngineSection(props: EngineSectionProps) {
     mountModelId,
     setMountModelId,
     mountError,
+    mountRefusal,
     engineBusy,
     onMount,
     onUnmount,
@@ -720,11 +768,35 @@ function EngineSection(props: EngineSectionProps) {
   } = props;
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Re-planned whenever the model list or what this Mac serves changes: a mount moves every fit.
-  const badges = usePlacementBadges(
+  const plans = usePlacementPlans(
     [...models.map((m) => m.id), status?.state ?? '', status?.modelId ?? ''].join('\n')
   );
+  const badges = useMemo(() => badgesOf(plans), [plans]);
+  // The tile's primary action follows the picked model's plan: a model that only runs split (or
+  // only on a peer) is STARTED that way from the tile, never offered as a single mount here.
+  const choice = tileMountChoice(
+    intl,
+    mountModelId ? plans.get(mountModelId) : null,
+    mountRefusal && mountRefusal.fit.modelId === mountModelId ? mountRefusal : null
+  );
+  const [startBusy, setStartBusy] = useState(false);
+  const [startError, setStartError] = useState<{ refused: boolean; text: string } | null>(null);
+  const onStartPlacement = (candidate: PlacementCandidate) => {
+    if (!mountModelId) return;
+    setStartBusy(true);
+    setStartError(null);
+    runPlacementAction(candidate, mountModelId, onMount, intl.formatMessage(i18n.refusedUnnamed))
+      .then((refusal) => setStartError(refusal == null ? null : { refused: true, text: refusal }))
+      .catch((e: unknown) => setStartError({ refused: false, text: mlxErrorMessage(e, String(e)) }))
+      .finally(() => setStartBusy(false));
+  };
   // goose refuses a single mount while the distributed engine owns the Mac, so none is offered.
   const distributedOwns = ownsTheMac(distributed);
+  const banners = mountFailureBanners(status, mountError);
+  // A start's refusal answers THAT start: a new pick, or the run owning the Mac, retires it.
+  useEffect(() => {
+    setStartError(null);
+  }, [mountModelId, distributedOwns]);
 
   const state = status?.state ?? null;
   const running = state === 'running';
@@ -835,15 +907,18 @@ function EngineSection(props: EngineSectionProps) {
   // when failed, else the plain Mount. With the engine up it stays by the picker: a spinner while
   // mounting, "Mounted" as a disabled status for the mounted selection, "Switch model" for another
   // selection (the backend shuts the old model down).
-  const tileAction = distributedOwns ? null : state === 'failed' ? (
-    <Button variant="secondary" icon={<RefreshCw />} onClick={onMount} disabled={!canMount}>
-      Retry
-    </Button>
-  ) : state === 'stopped' || state === null ? (
-    <Button variant="secondary" icon={<Play />} onClick={onMount} disabled={!canMount}>
-      Mount
-    </Button>
-  ) : null;
+  const tileAction =
+    distributedOwns || !(state === 'failed' || state === 'stopped' || state === null) ? null : (
+      <TileMountAction
+        choice={choice}
+        retry={state === 'failed'}
+        canMount={canMount}
+        busy={startBusy || engineBusy}
+        onMount={onMount}
+        onStart={onStartPlacement}
+      />
+    );
+  const switchBlocked = canSwitch && choice.kind !== 'mount';
   const rowAction =
     state === 'mounting' ? (
       <Button variant="primary" disabled icon={<Loader2 className="animate-spin" />}>
@@ -854,7 +929,13 @@ function EngineSection(props: EngineSectionProps) {
         Mounted
       </Button>
     ) : running ? (
-      <Button variant="primary" icon={<Play />} onClick={onMount} disabled={!canSwitch}>
+      <Button
+        variant="primary"
+        icon={<Play />}
+        onClick={onMount}
+        disabled={!canSwitch || switchBlocked}
+        data-testid="mlx-switch-model"
+      >
         Switch model
       </Button>
     ) : null;
@@ -875,8 +956,13 @@ function EngineSection(props: EngineSectionProps) {
   return (
     <div className="flex flex-col gap-4 pb-8">
       {statusError && <ToneBanner tone="err" label="Engine unreachable" text={statusError} />}
-      {status?.gateMessage && status.gateVerdict === 'block' && (
-        <ToneBanner tone="err" label="Mount blocked" text={status.gateMessage} />
+      {banners.gateBlock && (
+        <ToneBanner
+          tone="err"
+          label={intl.formatMessage(i18n.mountBlocked)}
+          text={banners.gateBlock}
+          testId="mlx-mount-blocked"
+        />
       )}
       {status?.gateMessage && status.gateVerdict === 'warn' && (
         <ToneBanner tone="warn" label="Memory pressure" text={status.gateMessage} />
@@ -888,7 +974,22 @@ function EngineSection(props: EngineSectionProps) {
           text={`unsupervised engine on port ${strayPort} — Unmount reclaims it`}
         />
       )}
-      {mountError && <ToneBanner tone="err" label="Mount failed" text={mountError} />}
+      {banners.mountError && (
+        <ToneBanner
+          tone="err"
+          label={intl.formatMessage(i18n.mountFailed)}
+          text={banners.mountError}
+          testId="mlx-mount-failed"
+        />
+      )}
+      {startError && (
+        <ToneBanner
+          tone="err"
+          label={intl.formatMessage(startError.refused ? i18n.startRefused : i18n.startFailed)}
+          text={startError.text}
+          testId="mlx-tile-start-error"
+        />
+      )}
       {distributedOwns && (
         <ToneBanner
           tone="accent"
@@ -920,6 +1021,7 @@ function EngineSection(props: EngineSectionProps) {
           last={lastRates}
           serving={serving}
           mount={mount}
+          load={singleLoad(status)}
           cost={cost}
           failedError={failedError}
           action={tileAction}
@@ -997,6 +1099,14 @@ function EngineSection(props: EngineSectionProps) {
               </Button>
             )}
           </div>
+          {switchBlocked && (
+            <p
+              data-testid="mlx-switch-blocked"
+              className={cx('break-words text-lz-body', WEIGHT.semibold)}
+            >
+              {intl.formatMessage(i18n.switchNeedsUnmount)}
+            </p>
+          )}
           <p className={TYPE.meta}>
             Mount returns immediately and the engine flips to mounting; this card follows the live
             engine every 2 seconds. Each model mounts with its own sampling profile.
@@ -2521,6 +2631,7 @@ const MlxEngineView: React.FC = () => {
 
   const [mountModelId, setMountModelId] = useState<string | null>(null);
   const [mountError, setMountError] = useState<string | null>(null);
+  const [mountRefusal, setMountRefusal] = useState<MlxMountRefusal | null>(null);
   const [engineBusy, setEngineBusy] = useState(false);
 
   // Per-model sampling: ONLY models the user actually edited live here, keyed by model id
@@ -2940,10 +3051,12 @@ const MlxEngineView: React.FC = () => {
     void (async () => {
       setEngineBusy(true);
       setMountError(null);
+      setMountRefusal(null);
       try {
         await mlxEngineMount(mountModelId, activeNodeId);
       } catch (error) {
         setMountError(mlxErrorMessage(error, 'Mount failed.'));
+        if (error instanceof MlxMountRefusedError) setMountRefusal(error.refusal);
       } finally {
         setEngineBusy(false);
         void refreshStatus();
@@ -3101,7 +3214,7 @@ const MlxEngineView: React.FC = () => {
         {/* The Engine tab's hero owns the state; the other tabs keep the badge in view. */}
         {status && tab !== 'engine' && (
           <span className="pb-2">
-            <StateBadge state={status.state} />
+            <StateBadge state={status.state} live={live} />
           </span>
         )}
         {/* Which engine owns this Mac, on every tab. */}
@@ -3124,6 +3237,7 @@ const MlxEngineView: React.FC = () => {
           mountModelId={mountModelId}
           setMountModelId={pickMountModel}
           mountError={mountError}
+          mountRefusal={mountRefusal}
           engineBusy={engineBusy}
           onMount={onMount}
           onUnmount={onUnmount}

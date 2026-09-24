@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import { MlxStateTile, type MlxStateTileProps } from './MlxStateTile';
+import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { attributeServing, type MlxServingRow } from '../../utils/mlxServing';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
@@ -84,7 +85,7 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-state', 'running');
     expect(t).toHaveAttribute('data-activity', 'generating');
-    expect(t.className).toContain('bg-lz-ok-solid');
+    expect(t.className).toContain('bg-lz-phase-writing');
     expect(t.className).toContain('lg:w-[32rem]');
     expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Writing');
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');
@@ -129,7 +130,7 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     });
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-activity', 'prefill');
-    expect(t.className).toContain('bg-lz-accent');
+    expect(t.className).toContain('bg-lz-phase-reading');
     expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Reading prompt');
     expect(screen.getByTestId('mlx-live-prompt')).toHaveTextContent('32.3K');
     expect(within(t).getByText('prompt tokens, reading for 2m 45s')).toBeInTheDocument();
@@ -148,8 +149,8 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     });
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-activity', 'idle');
-    expect(t.className).toContain('bg-lz-stopped-solid');
-    expect(t.className).not.toContain('bg-lz-ok-solid');
+    expect(t.className).toContain('bg-lz-phase-idle');
+    expect(t.className).not.toContain('bg-lz-phase-writing');
     expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Idle');
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');
     expect(within(t).getByText('tok/s writing, last run')).toBeInTheDocument();
@@ -229,8 +230,8 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     expect(screen.getByTestId('mlx-live-unavailable')).toHaveTextContent(
       'Live stats unavailableunreachable: connect ECONNREFUSED 127.0.0.1:8090'
     );
-    // Activity unknown: the neutral slate, not a colour that claims work.
-    expect(screen.getByTestId('mlx-state-badge').className).toContain('bg-lz-stopped-solid');
+    // Activity unknown: the loaded model's idle grey, not a colour that claims work.
+    expect(screen.getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-idle');
     expect(screen.queryByTestId('mlx-live-tps')).toBeNull();
     expect(screen.queryByTestId('mlx-tps-sparkline')).toBeNull();
     await expectDesigned(container);
@@ -242,7 +243,7 @@ describe('MlxStateTile MOUNTING — memory claimed toward the model size', () =>
     const w = advanceMountWatch(advanceMountWatch(null, 'm', 90, 96.6), 'm', 80.6, null);
     const { container } = tile({ state: 'mounting', mount: mountFill(w, 80.6, 31 * GIB) });
     const t = screen.getByTestId('mlx-state-badge');
-    expect(t.className).toContain('bg-lz-accent');
+    expect(t.className).toContain('bg-lz-phase-loading');
     expect(screen.getByTestId('mlx-mount-fill')).toHaveAttribute('data-measured', 'true');
     expect(t).toHaveTextContent('16.0of 31.0 GB');
     expect(within(t).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '52');
@@ -256,7 +257,8 @@ describe('MlxStateTile MOUNTING — memory claimed toward the model size', () =>
     expect(screen.getByTestId('mlx-mount-fill')).toHaveAttribute('data-measured', 'false');
     expect(t).toHaveTextContent('31.0 GB');
     expect(t).toHaveTextContent('Loading weights');
-    expect(within(t).queryByRole('progressbar')).toBeNull();
+    expect(within(t).getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
+    expect(screen.getByTestId('mlx-load-indeterminate')).toBeInTheDocument();
   });
 });
 
@@ -268,7 +270,7 @@ describe('MlxStateTile STOPPED — what mounting would cost, and Mount on the ti
       action: <button type="button">Mount</button>,
     });
     const t = screen.getByTestId('mlx-state-badge');
-    expect(t.className).toContain('bg-lz-stopped-solid');
+    expect(t.className).toContain('bg-lz-phase-unloaded');
     expect(screen.getByTestId('mlx-mount-cost')).toHaveAttribute('data-verdict', 'fits');
     expect(t).toHaveTextContent('31.0GB to mount');
     expect(t).toHaveTextContent('Fits, 24.8 GB to spare');
@@ -300,7 +302,7 @@ describe('MlxStateTile FAILED — the error and Retry on the tile', () => {
       action: <button type="button">Retry</button>,
     });
     const t = screen.getByTestId('mlx-state-badge');
-    expect(t.className).toContain('bg-lz-err-solid');
+    expect(t.className).toContain('bg-lz-phase-failed');
     expect(screen.getByTestId('mlx-failed-excerpt')).toHaveTextContent('port 9600 never opened');
     expect(within(t).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     await expectDesigned(container);
@@ -325,7 +327,7 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-mode', 'distributed');
     expect(t).toHaveAttribute('data-state', 'ready');
-    expect(t.className).toContain('bg-lz-stopped-solid');
+    expect(t.className).toContain('bg-lz-phase-idle');
     expect(within(t).getByRole('status')).toHaveTextContent('Ready');
     expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Distributed · 2 nodes · JACCL');
     expect(t).toHaveTextContent('rapid-mlx/Qwen3.8-Flash-Next-4bit');
@@ -344,7 +346,7 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
   it('distributed SERVING is green with the requests in flight; a closed admission is warn', () => {
     const { unmount } = tile({ state: 'stopped', modeLabel: 'x', distributed: FLASH_SERVING });
     let t = screen.getByTestId('mlx-state-badge');
-    expect(t.className).toContain('bg-lz-ok-solid');
+    expect(t.className).toContain('bg-lz-phase-writing');
     expect(screen.getByTestId('mlx-dist-tile-inflight')).toHaveTextContent('2');
     expect(t).toHaveTextContent('requests in flight');
     unmount();
@@ -354,7 +356,7 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
       distributed: { ...FLASH_SERVING, admissionOpen: false },
     });
     t = screen.getByTestId('mlx-state-badge');
-    expect(t.className).toContain('bg-lz-warn-solid');
+    expect(t.className).toContain('bg-lz-phase-held');
     expect(t).toHaveTextContent('Admission closed: a node is low on memory');
   });
 
@@ -416,5 +418,202 @@ describe('MlxStateTile — this Mac serving a rank of another Mac over LeanZero 
     expect(within(t).getByRole('status')).toHaveTextContent('Serving');
     expect(screen.queryByRole('button', { name: 'Mount' })).toBeNull();
     await expectDesigned(container);
+  });
+});
+
+/**
+ * The owner's live test of 3.0.25 (2026-09-24): "grey should be for idle, some other color should
+ * be for mounting, then another color for working" and "while it was mounting I don't see the other
+ * mac as showing anything visual". Every state the tile can be in → its ONE palette colour.
+ */
+describe('MlxStateTile — the engine-phase palette, one colour per state', () => {
+  const phaseOf = () => screen.getByTestId('mlx-state-badge').getAttribute('data-phase');
+
+  it('stopped with no model: the dark neutral tile, OUTLINED', async () => {
+    const { container } = tile({ state: 'stopped', cost: mountCost(17 * GIB, 96.6, 128) });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(phaseOf()).toBe('unloaded');
+    expect(t.className).toContain('bg-lz-phase-unloaded');
+    expect(t.className).toContain('border-lz-phase-unloaded-line');
+    await expectDesigned(container);
+  });
+
+  it('queued: ORANGE, with how many requests wait', async () => {
+    const { container } = tile({
+      live: parseMlxLiveStatus({
+        status: 'idle',
+        num_running: 0,
+        num_waiting: 2,
+        requests: [
+          { request_id: 'a', status: 'waiting', phase: 'queued', prompt_tokens: 900 },
+          { request_id: 'b', status: 'waiting', phase: 'queued', prompt_tokens: 400 },
+        ],
+      }),
+    });
+    expect(phaseOf()).toBe('held');
+    expect(screen.getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-held');
+    expect(screen.getByTestId('mlx-live-queued')).toHaveTextContent('2');
+    expect(screen.getByTestId('mlx-state-badge')).toHaveTextContent('requests waiting');
+    await expectDesigned(container);
+  });
+
+  it('a measured start: AMBER, the phase in words and resident ÷ on-disk bytes as the bar', async () => {
+    const { container } = tile({
+      state: 'mounting',
+      load: { phase: 'loading', residentBytes: 15.75 * GIB, weightsBytes: 31.5 * GIB },
+    });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(phaseOf()).toBe('loading');
+    expect(t.className).toContain('bg-lz-phase-loading');
+    expect(screen.getByTestId('mlx-mount-load')).toHaveAttribute('data-measured', 'true');
+    expect(t).toHaveTextContent('Loading weights');
+    expect(within(t).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByTestId('mlx-load-figure')).toHaveTextContent('15.8 of 31.5 GB');
+    await expectDesigned(container);
+  });
+
+  it('making room before the engine flips to mounting is already AMBER, with no invented figure', async () => {
+    const { container } = tile({
+      state: 'stopped',
+      load: { phase: 'makingRoom', residentBytes: null, weightsBytes: 31.5 * GIB },
+    });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(phaseOf()).toBe('loading');
+    expect(t).toHaveAttribute('data-state', 'mounting');
+    expect(t).toHaveTextContent('Making room');
+    expect(within(t).getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
+    expect(screen.getByTestId('mlx-load-indeterminate')).toBeInTheDocument();
+    expect(screen.queryByTestId('mlx-mount-cost')).toBeNull();
+    await expectDesigned(container);
+  });
+
+  it('distributed STARTING: amber, and a strip with EACH Mac — its colour, layers and load', async () => {
+    const starting = {
+      ...FLASH_READY,
+      state: 'starting',
+      inflight: null,
+      nodes: [
+        // The backend's per-node load figure (binding point: nodeLoadProgress).
+        {
+          ...FLASH_READY.nodes[0],
+          state: 'loading',
+          // goose's figure: MLX's active memory on the rank against the weights planned on it.
+          activeMemoryGb: 12,
+          plannedWeightsGb: 48,
+        },
+        { ...FLASH_READY.nodes[1], state: 'loading' },
+      ],
+    } as MlxDistributedStatus;
+    const { container, unmount } = tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: starting,
+    });
+    expect(phaseOf()).toBe('loading');
+    const rows = screen.getAllByTestId('mlx-dist-strip-node');
+    expect(rows.map((r) => r.getAttribute('data-node'))).toEqual(['MacBook Pro', 'workhorse']);
+    expect(rows.map((r) => r.getAttribute('data-phase'))).toEqual(['loading', 'loading']);
+    expect(rows[0]).toHaveTextContent('L0–19');
+    expect(rows[0]).toHaveTextContent('Loading');
+    expect(within(rows[0]).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25');
+    expect(rows[0]).toHaveTextContent('12.0 of 48.0 GB');
+    expect(rows[1]).toHaveTextContent('L20–47');
+    // No figure reported for the workhorse: the indeterminate track, never a number.
+    expect(within(rows[1]).getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
+    await expectDesigned(container);
+    unmount();
+
+    // The workhorse joins first: its row turns grey while the MacBook still loads.
+    tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: {
+        ...starting,
+        nodes: [starting.nodes[0], { ...starting.nodes[1], state: 'ready' }],
+      },
+    });
+    const next = screen.getAllByTestId('mlx-dist-strip-node');
+    expect(next.map((r) => r.getAttribute('data-phase'))).toEqual(['loading', 'idle']);
+    expect(within(next[1]).queryByRole('progressbar')).toBeNull();
+  });
+
+  it('distributed PREFLIGHT lists no ranks yet: the configured Macs, each amber', () => {
+    tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: { ...FLASH_READY, state: 'preflight', nodes: [] },
+    });
+    const rows = screen.getAllByTestId('mlx-dist-strip-node');
+    expect(rows.map((r) => r.getAttribute('data-phase'))).toEqual(['loading', 'loading']);
+    expect(rows[0]).toHaveTextContent('Preflight');
+  });
+
+  it('making room and warming up are said per Mac, amber, with no bar while memory is reclaimed', () => {
+    const { unmount } = tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: {
+        ...FLASH_READY,
+        state: 'preflight',
+        nodes: [],
+        makingRoom: ['workhorse'],
+      } as MlxDistributedStatus,
+    });
+    let rows = screen.getAllByTestId('mlx-dist-strip-node');
+    expect(rows[0]).toHaveTextContent('Preflight');
+    expect(rows[1]).toHaveTextContent('Making room');
+    expect(rows.map((r) => r.getAttribute('data-phase'))).toEqual(['loading', 'loading']);
+    unmount();
+    tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: {
+        ...FLASH_READY,
+        state: 'starting',
+        nodes: [
+          {
+            ...FLASH_READY.nodes[0],
+            state: 'loading',
+            loadPhase: 'warming',
+            plannedWeightsGb: 58.4,
+          },
+          { ...FLASH_READY.nodes[1], state: 'loading', plannedWeightsGb: 80 },
+        ],
+        // the backend's new per-node fields, ahead of the regenerated SDK types
+      } as unknown as MlxDistributedStatus,
+    });
+    rows = screen.getAllByTestId('mlx-dist-strip-node');
+    expect(rows[0]).toHaveTextContent('Warming up');
+    expect(within(rows[0]).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+    expect(rows[1]).toHaveTextContent('Loading');
+    expect(within(rows[1]).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
+  });
+
+  it('distributed FAILED is red', () => {
+    tile({ state: 'stopped', modeLabel: 'x', distributed: { ...FLASH_READY, state: 'failed' } });
+    expect(phaseOf()).toBe('failed');
+  });
+
+  it('the peer’s own tile: "Loading rank 1 for MacBook Pro" in amber, then grey once joined', async () => {
+    const loading = {
+      ...HOSTING_RANK_1,
+      hosting: {
+        ...HOSTING_RANK_1.hosting!,
+        state: 'loading',
+        loadedBytes: 10 * GIB,
+        plannedWeightBytes: 24 * GIB,
+      },
+    } as MlxDistributedStatus;
+    const { container, unmount } = tile({ state: 'stopped', distributed: loading });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(phaseOf()).toBe('loading');
+    expect(within(t).getByRole('status')).toHaveTextContent('Loading rank 1 for MacBook Pro');
+    expect(within(t).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '42');
+    expect(screen.getByTestId('mlx-load-figure')).toHaveTextContent('10.0 of 24.0 GB');
+    await expectDesigned(container);
+    unmount();
+    tile({ state: 'stopped', distributed: HOSTING_RANK_1 });
+    expect(phaseOf()).toBe('idle');
+    expect(screen.getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-idle');
   });
 });

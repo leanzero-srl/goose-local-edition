@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "この Mac はランクを担当中"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "{requester} のランク {rank} を読み込み中"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — ランク PID {pid}。{requester} が実行を止めるまで、シングルエンジンとこの Mac 自身の分散エンジンは拒否されます。"
   },
@@ -3014,6 +3017,12 @@
   "mlxDistributed.livenessNone": {
     "defaultMessage": "進捗はまだ測定されていません"
   },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "重みの読み込み"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "{total} GB 中 {done} GB 読み込み済み"
+  },
   "mlxDistributed.locked": {
     "defaultMessage": "分散エンジンがこの Mac を使用している間、構成はロックされます。ノードやモデルを変更するには停止してください。"
   },
@@ -3043,6 +3052,12 @@
   },
   "mlxDistributed.noPlan": {
     "defaultMessage": "このランクの計画はありません"
+  },
+  "mlxDistributed.node.makingRoom": {
+    "defaultMessage": "メモリを空けています"
+  },
+  "mlxDistributed.node.warming": {
+    "defaultMessage": "ウォームアップ中"
   },
   "mlxDistributed.nodeDialog.add": {
     "defaultMessage": "ノードを追加"
@@ -3518,8 +3533,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "分散エンジンがこの Mac を使用中です。下の「分散エンジン」セクションで停止するまで、単一エンジンはマウントできません。"
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "マウントがブロックされました"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "マウントに失敗しました"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "拒否されました（goose は理由を示していません）"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "複数の Mac で提供中"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "起動に失敗しました"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "起動が拒否されました"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "このモデルはこの Mac だけでは動きません — アンマウントしてから、タイルで起動してください。"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: 1 トークンあたり {bf16} KiB ではなく {bytes} KiB — 同じメモリに {ratio}× のコンテキストが入ります。"
@@ -3791,6 +3824,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "スロット {used} / {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "各 Mac が自分の担当分を読み込む様子"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "待機中 {count}"
   },
@@ -3833,6 +3869,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "LeanZero Link 経由の {requester} の分散エンジン用"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "{requester} のランク {rank} を読み込み中"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "ランク PID {pid}"
   },
@@ -3845,8 +3884,17 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "ライブ統計を取得できません"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "{node} での重みの読み込み"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{total} GB 中 {done} GB"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "重みを読み込み中"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "メモリを空けています"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "あと {gb} GB の空きメモリが必要"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "直近 {count} 回の書き込み速度"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "エンジンを起動中"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "確認中"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "実行中の swarm: {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "この Mac"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, other {このアプリのチャットや /v1 以外からのリクエスト # 件}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {件のリクエストが待機中}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "ウォームアップ中"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "GB の重み"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s（書き込み）"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · {cores} コア GPU"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "失敗"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "マウント中"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "実行中"
+  },
   "placementCard.measure": {
     "defaultMessage": "速度を測定"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "誤差の範囲で同じ速さ（~{mine} 対 ~{best} tok/s）ですが、より多くの Mac が必要"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "マウント"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "この Mac には大きすぎ、goose が起動できるどの構成にも収まりません: {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "この Mac には大きすぎます — {name} には収まり、チャットは Link 経由でそちらに送られます。"
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "再試行"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "お持ちのどの Mac にも収まりません: すべてに分割しても {gb} 足りません。"
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "この Mac だけには大きすぎます — {names} に分割して動きます。"
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{両方の Mac で起動} other{# 台の Mac で起動}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "{name} で起動"
   },
   "placementCard.title": {
     "defaultMessage": "どこで実行するか"
