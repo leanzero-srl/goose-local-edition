@@ -28,12 +28,13 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// `/v1/status` (ea6f8dee1), idle worker ranks parked in a blocking recv instead of spinning a core in the collective (286ed77f7, 2026-09-24),
 /// the node budget = available − 7% of RAM capped at Metal's working set (2ce699589), and IMAGE
 /// INPUT — the vision tower on rank 0, (t, h, w) RoPE on every rank, OpenAI image content parts,
-/// `/v1/models` `capabilities: ["text", "vision", …]` (d40e9e363, dabcc67b2, 2f7cdf27c).
+/// `/v1/models` `capabilities: ["text", "vision", …]` (d40e9e363, dabcc67b2, 2f7cdf27c), and the
+/// available margin backed off 7% → 9.3% of RAM after the M4 Max warned at 7.3% (2f02ac645).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "2f7cdf27ce987278bd150f44cbbafa96bd9ff05c";
+pub const PIPELINE_FORK_COMMIT: &str = "2f02ac645a8d8a54bc184d008cfdcec855d09c80";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@2f7cdf27ce987278bd150f44cbbafa96bd9ff05c";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@2f02ac645a8d8a54bc184d008cfdcec855d09c80";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.

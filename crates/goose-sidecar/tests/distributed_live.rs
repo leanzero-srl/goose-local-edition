@@ -1021,6 +1021,20 @@ async fn live_flash_at_the_ceiling_rule_after_compaction() {
     let manager = DistributedManager::new(Arc::new(SystemExec));
     let t0 = Instant::now();
     let stamp = |what: &str| println!("[{:>7.1}s] {what}", t0.elapsed().as_secs_f64());
+    // "Make room" on every node first (GOOSE_FLASH_COMPACT_FIRST=0 skips it): the budgets are
+    // then built on post-compaction readings; the start still compacts a node that is short.
+    if env_or("GOOSE_FLASH_COMPACT_FIRST", "1") == "1" {
+        for node in &config.nodes {
+            stamp(&format!("make room on {}", node.name));
+            let record = manager.make_room(&config, &node.name).await.unwrap();
+            match (&record.report, &record.refusal, &record.error) {
+                (Some(report), _, _) => println!("{}", report.summary()),
+                (_, Some(refusal), _) => panic!("{} refused: {refusal:?}", node.name),
+                (_, _, Some(error)) => panic!("{} failed: {error}", node.name),
+                _ => unreachable!(),
+            }
+        }
+    }
     stamp("start (preflight, compaction when short)");
     let preflight = match manager.start(config.clone(), served.clone()).await.unwrap() {
         StartOutcome::Started { preflight } => preflight,
@@ -1057,6 +1071,15 @@ async fn live_flash_at_the_ceiling_rule_after_compaction() {
             gib(n.ceiling_bytes.unwrap()),
             n.wired_limit_mb
         );
+    }
+    for n in &preflight.nodes {
+        for c in n
+            .checks
+            .iter()
+            .filter(|c| c.id == "foreignEngines" || c.id == "memory")
+        {
+            println!("{} {:?} {}: {}", n.name, c.verdict, c.id, c.message);
+        }
     }
     println!(
         "context {:?} ({:?})",
@@ -1116,6 +1139,9 @@ async fn live_flash_at_the_ceiling_rule_after_compaction() {
             (status, started.elapsed(), body)
         }
     };
+    // Every answer is recorded, never asserted mid-run: a 503 from the watchdog's admission gate is
+    // a finding, and the run must still reach the status dump and the verified stop.
+    let answers = std::sync::Mutex::new(Vec::new());
     let report = |label: &str, (status, took, body): (u16, Duration, serde_json::Value)| {
         println!(
             "{label}: HTTP {status} in {:.1} s — usage {} — {}",
@@ -1123,12 +1149,10 @@ async fn live_flash_at_the_ceiling_rule_after_compaction() {
             body["usage"],
             body["choices"][0]["message"]["content"]
                 .as_str()
-                .unwrap_or("<no content>")
-                .chars()
-                .take(160)
-                .collect::<String>()
+                .map(|c| c.chars().take(160).collect::<String>())
+                .unwrap_or_else(|| body.to_string().chars().take(400).collect())
         );
-        assert_eq!(status, 200, "{body}");
+        answers.lock().unwrap().push((label.to_string(), status));
     };
     stamp("2k prompt");
     report("2k", ask(prompt_of(2_000), 128).await);
@@ -1159,6 +1183,11 @@ async fn live_flash_at_the_ceiling_rule_after_compaction() {
     }
     let stop = manager.stop().await;
     println!("stop verified {}: {:?}", stop.verified, stop.steps);
-    assert!(stop.verified);
     stamp("stopped");
+    assert!(stop.verified);
+    let answers = answers.into_inner().unwrap();
+    assert!(
+        answers.iter().all(|(_, status)| *status == 200),
+        "not every request was answered: {answers:?}"
+    );
 }

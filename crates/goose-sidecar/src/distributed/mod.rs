@@ -54,17 +54,19 @@ pub use supervisor::{
     NodeStatus, RefusalCode, RunState, StartOutcome, StopReport,
 };
 
-// derived: the share of each node's RAM that stays available under a rank's full budget —
+// measured: the share of each node's RAM that stays available under a rank's full budget —
 // budget = min(available − RAM × this, the node's GPU ceiling (Metal's
-// max_recommended_working_set_size)). The watchdog's WARN reserve plus the load-time drift margin:
-// a rank planned at 100% of its budget leaves the node above the level where the watchdog closes
-// admission, after the drift the ranks' own re-measure showed. MEASURED 2026-09-24 beside it: the
-// M3 Ultra (96 GB), under Apple's memory_pressure ballast, reached kernel WARN at 3.73 GiB
-// available = 3.9% of RAM — below this margin. It replaced the fork's 21% floor and the tensor
-// runner's min(available × 0.90, RAM × 0.75), which left 44.9 / 52.6 GiB budgets on 128 / 96 GB
-// Macs ("way too conservative"). The fork carries the same 0.07 (`AVAILABLE_MARGIN_RATIO` in
-// pipeline_qwen4.py, echoed in its plan JSON); both runners share this one rule.
-pub const AVAILABLE_MARGIN_RATIO: f64 = WATCHDOG_WARN_RESERVE_RATIO + DERIVED_CONTEXT_MARGIN_RATIO;
+// max_recommended_working_set_size)) — is the highest kernel-WARN point measured plus the load
+// drift. 2026-09-24, goose's own compaction (memory_pressure to WARN) read the kernel's WARN point
+// at 9.3 GiB available on the M4 Max 128 GB (7.3% of RAM) and 3.3–4.0 GiB on the M3 Ultra 96 GB;
+// + DERIVED_CONTEXT_MARGIN_RATIO (0.02, the ranks' re-measure drift) = 0.093. The first loosening
+// (0.07 = watchdog WARN 0.05 + 0.02, from the M3 Ultra alone) sat BELOW the M4 Max's WARN point: a
+// live Flash split with rank 0 at 96% of that budget served under kernel WARN (7.1 GiB available)
+// and the watchdog closed admission — backed off to this. It replaced the fork's 21% floor and the
+// tensor runner's min(available × 0.90, RAM × 0.75) (44.9 / 52.6 GiB budgets on 128 / 96 GB:
+// "way too conservative"). The fork carries the same value (pipeline_qwen4.py, echoed in its plan
+// JSON); both runners and the placement planner share this one rule.
+pub const AVAILABLE_MARGIN_RATIO: f64 = 0.093;
 // measured: TENSOR RUNNER ONLY — 27B tensor bench peak 19.9 GB (18.53 GiB) / 17.07 GiB planned at
 // 2,304 tokens = 1.086 (STEP1b); the planned slice is multiplied by this before it is compared
 // with a node's budget. The pipeline runner applies NO multiplier: the Flash soak's peaks were

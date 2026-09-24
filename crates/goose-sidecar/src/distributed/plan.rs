@@ -609,9 +609,9 @@ pub(crate) mod tests {
         // GPU ceilings (mx.device_info max_recommended_working_set_size) 107.52 / 77.76 GiB.
         let macbook = budget_bytes(gib(92.7), gib(128.0), M4_MAX_CEILING);
         let workhorse = budget_bytes(gib(61.6), gib(96.0), M3_ULTRA_CEILING);
-        // available − 7% of RAM: 92.7 − 8.96, 61.6 − 6.72 (the old rule gave 83.43 / 55.44).
-        assert!((macbook as f64 / GIB as f64 - 83.74).abs() < 0.01);
-        assert!((workhorse as f64 / GIB as f64 - 54.88).abs() < 0.01);
+        // available − 9.3% of RAM: 92.7 − 11.90, 61.6 − 8.93 (the old rule gave 83.43 / 55.44).
+        assert!((macbook as f64 / GIB as f64 - 80.80).abs() < 0.01);
+        assert!((workhorse as f64 / GIB as f64 - 52.67).abs() < 0.01);
         // The GPU ceiling binds when the node is idle (the old rule: RAM × 0.75 = 96 / 72 GiB).
         assert_eq!(
             budget_bytes(gib(127.0), gib(128.0), M4_MAX_CEILING),
@@ -632,8 +632,8 @@ pub(crate) mod tests {
         let before = budget_bytes(gib(72.4), gib(96.0), M3_ULTRA_CEILING);
         let after = budget_bytes(gib(78.0), gib(96.0), M3_ULTRA_CEILING);
         let old_rule = |available: f64| gib(available - 96.0 * 0.21);
-        assert!((before as f64 / GIB as f64 - 65.68).abs() < 0.01);
-        assert!((after as f64 / GIB as f64 - 71.28).abs() < 0.01);
+        assert!((before as f64 / GIB as f64 - 63.47).abs() < 0.01);
+        assert!((after as f64 / GIB as f64 - 69.07).abs() < 0.01);
         assert_eq!(
             after - before,
             gib(78.0) - gib(72.4),
@@ -641,9 +641,9 @@ pub(crate) mod tests {
         );
         // The old 21% floor: 52.24 → 57.84 GiB for the same two readings.
         assert!(old_rule(78.0) < before);
-        // The ceiling (77.76 GiB) binds only above 84.48 GiB available.
+        // The ceiling (77.76 GiB) binds only above 86.69 GiB available.
         assert_eq!(
-            budget_bytes(gib(85.0), gib(96.0), M3_ULTRA_CEILING),
+            budget_bytes(gib(87.0), gib(96.0), M3_ULTRA_CEILING),
             M3_ULTRA_CEILING
         );
     }
@@ -651,7 +651,7 @@ pub(crate) mod tests {
     #[test]
     fn a_node_that_cannot_hold_its_slice_is_refused_with_the_numbers() {
         let facts = qwen_27b();
-        // The workhorse with only 20 GiB available: budget 13.28 GiB < 16.79 GiB weights × 1.10.
+        // The workhorse with only 20 GiB available: budget 11.07 GiB < 16.79 GiB weights × 1.10.
         let budget = budget_bytes(gib(20.0), gib(96.0), M3_ULTRA_CEILING);
         let plan = facts.rank_plan(2, 1, 8_192, budget);
         assert!(!plan.fits);
@@ -663,7 +663,7 @@ pub(crate) mod tests {
         let facts = qwen_27b();
         let roomy = budget_bytes(gib(90.0), gib(128.0), M4_MAX_CEILING);
         assert_eq!(facts.max_context(2, roomy), 262_144);
-        let tight = budget_bytes(gib(27.0), gib(96.0), M3_ULTRA_CEILING);
+        let tight = budget_bytes(gib(29.0), gib(96.0), M3_ULTRA_CEILING);
         let ceiling = facts.max_context(2, tight);
         assert!(ceiling > 0 && ceiling < 262_144 && ceiling.is_multiple_of(KV_CACHE_STEP));
         assert!(facts.rank_plan(2, 0, ceiling, tight).fits);
@@ -677,15 +677,15 @@ pub(crate) mod tests {
         facts.check_divisible(4).unwrap();
     }
 
-    /// The fork planner's real JSON for Flash (2f7cdf27c, `plan --json --model <Flash> --node
+    /// The fork planner's real JSON for Flash (2f02ac645, `plan --json --model <Flash> --node
     /// m:128:90:107.52 --node w:96:67:77.76 --context 32768 --batch 2`, 2026-09-24 — the GPU
     /// ceilings are the two Macs' measured max_recommended_working_set_size): exit 0.
-    pub(crate) const FLASH_PLAN_32K: &str = r#"{"context": 32768, "batch": 2, "prefill_step": 2048, "max_context": 262144, "starts": [0, 19], "slots": 2, "fits": true, "vision": {"rank": 0, "weight_bytes": 448092512, "workspace_bytes": 1229312000}, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"available_margin": 0.07, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "m", "layer_start": 0, "layer_end": 19, "weight_bytes": 60546829976, "state_bytes": 650240032, "workspace_bytes": 4513071104, "total_bytes": 65710141112, "budget_bytes": 87016037417, "available_bytes": 96636764160, "ceiling_bytes": 115448720916, "ram_bytes": 137438953472, "budget_source": "free + GPU ceiling given", "fits": true}, {"rank": 1, "node": "w", "layer_start": 19, "layer_end": 48, "weight_bytes": 42667415776, "state_bytes": 1242013696, "workspace_bytes": 4515057664, "total_bytes": 48424487136, "budget_bytes": 64725157151, "available_bytes": 71940702208, "ceiling_bytes": 83494164234, "ram_bytes": 103079215104, "budget_source": "free + GPU ceiling given", "fits": true}]}"#;
+    pub(crate) const FLASH_PLAN_32K: &str = r#"{"context": 32768, "batch": 2, "prefill_step": 2048, "max_context": 262144, "starts": [0, 19], "slots": 2, "fits": true, "vision": {"rank": 0, "weight_bytes": 448092512, "workspace_bytes": 1229312000}, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"available_margin": 0.093, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "m", "layer_start": 0, "layer_end": 19, "weight_bytes": 60546829976, "state_bytes": 650240032, "workspace_bytes": 4513071104, "total_bytes": 65710141112, "budget_bytes": 83854941488, "available_bytes": 96636764160, "ceiling_bytes": 115448720916, "ram_bytes": 137438953472, "budget_source": "free + GPU ceiling given", "fits": true}, {"rank": 1, "node": "w", "layer_start": 19, "layer_end": 48, "weight_bytes": 42667415776, "state_bytes": 1242013696, "workspace_bytes": 4515057664, "total_bytes": 48424487136, "budget_bytes": 62354335204, "available_bytes": 71940702208, "ceiling_bytes": 83494164234, "ram_bytes": 103079215104, "budget_source": "free + GPU ceiling given", "fits": true}]}"#;
 
-    /// The measured soak's shape re-planned by the same planner (2f7cdf27c): split 20, context
+    /// The measured soak's shape re-planned by the same planner (2f02ac645): split 20, context
     /// 8,192, batch 2, the node figures recorded at that run (MacBook 92.7 of 128 GiB available,
     /// workhorse 61.6 of 96) with each Mac's GPU ceiling: exit 0.
-    const FLASH_SOAK_SHAPE: &str = r#"{"context": 8192, "batch": 2, "prefill_step": 2048, "max_context": 262144, "starts": [0, 20], "slots": 2, "fits": true, "vision": {"rank": 0, "weight_bytes": 448092512, "workspace_bytes": 1229312000}, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"available_margin": 0.07, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "macbook", "layer_start": 0, "layer_end": 20, "weight_bytes": 62002967352, "state_bytes": 269608992, "workspace_bytes": 4211081216, "total_bytes": 66483657560, "budget_bytes": 89915140341, "available_bytes": 99535867084, "ceiling_bytes": 115448720916, "ram_bytes": 137438953472, "budget_source": "free + GPU ceiling given", "fits": true}, {"rank": 1, "node": "workhorse", "layer_start": 20, "layer_end": 48, "weight_bytes": 41211278400, "state_bytes": 376936448, "workspace_bytes": 4213067776, "total_bytes": 45801282624, "budget_bytes": 58926951301, "available_bytes": 66142496358, "ceiling_bytes": 83494164234, "ram_bytes": 103079215104, "budget_source": "free + GPU ceiling given", "fits": true}]}"#;
+    const FLASH_SOAK_SHAPE: &str = r#"{"context": 8192, "batch": 2, "prefill_step": 2048, "max_context": 262144, "starts": [0, 20], "slots": 2, "fits": true, "vision": {"rank": 0, "weight_bytes": 448092512, "workspace_bytes": 1229312000}, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"available_margin": 0.093, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "macbook", "layer_start": 0, "layer_end": 20, "weight_bytes": 62002967352, "state_bytes": 269608992, "workspace_bytes": 4211081216, "total_bytes": 66483657560, "budget_bytes": 86754044412, "available_bytes": 99535867084, "ceiling_bytes": 115448720916, "ram_bytes": 137438953472, "budget_source": "free + GPU ceiling given", "fits": true}, {"rank": 1, "node": "workhorse", "layer_start": 20, "layer_end": 48, "weight_bytes": 41211278400, "state_bytes": 376936448, "workspace_bytes": 4213067776, "total_bytes": 45801282624, "budget_bytes": 56556129354, "available_bytes": 66142496358, "ceiling_bytes": 83494164234, "ram_bytes": 103079215104, "budget_source": "free + GPU ceiling given", "fits": true}]}"#;
 
     #[test]
     fn the_plan_json_is_read_verbatim() {
@@ -713,7 +713,7 @@ pub(crate) mod tests {
             "no multiplier on the fork's plan"
         );
         assert_eq!(
-            rank1.budget_bytes, 64_725_157_151,
+            rank1.budget_bytes, 62_354_335_204,
             "the fork's budget, not re-derived"
         );
         assert!(rank1.fits);
@@ -727,9 +727,9 @@ pub(crate) mod tests {
         let (macbook, workhorse) = (plan.stages[0].rank_plan(), plan.stages[1].rank_plan());
         assert!(macbook.planned_bytes >= gib(61.0) && workhorse.planned_bytes >= gib(42.5));
         // The soak ran this shape without a WARN. The old 21% floor refused it (61.6 − 96 × 0.21
-        // = 41.44 GiB < 42.66 planned); available − 7% of RAM gives 61.6 − 6.72 = 54.88 GiB.
+        // = 41.44 GiB < 42.66 planned); available − 9.3% of RAM gives 61.6 − 8.93 = 52.67 GiB.
         assert!(macbook.fits && workhorse.fits && plan.fits);
-        assert!((workhorse.budget_bytes as f64 / GIB as f64 - 54.88).abs() < 0.01);
+        assert!((workhorse.budget_bytes as f64 / GIB as f64 - 52.67).abs() < 0.01);
         assert!((plan.stages[1].ceiling_bytes as f64 / GIB as f64 - 77.76).abs() < 0.01);
     }
 

@@ -1735,7 +1735,7 @@ mod tests {
             "{}",
             check.message
         );
-        assert_eq!(plans[1].as_ref().unwrap().budget_bytes, 64_725_157_151);
+        assert_eq!(plans[1].as_ref().unwrap().budget_bytes, 62_354_335_204);
         assert!(
             check.message.contains("GPU ceiling 77.76 GiB"),
             "{}",
@@ -1852,7 +1852,7 @@ mod tests {
             answer: |_| {
                 let mut out = flash_answer(32_768, 8_192, true);
                 out.stdout = out.stdout.replacen(
-                    "\"budget_bytes\": 64725157151, \"available_bytes\": 71940702208, \"ceiling_bytes\": 83494164234, \"ram_bytes\": 103079215104, \"budget_source\": \"free + GPU ceiling given\", \"fits\": true",
+                    "\"budget_bytes\": 62354335204, \"available_bytes\": 71940702208, \"ceiling_bytes\": 83494164234, \"ram_bytes\": 103079215104, \"budget_source\": \"free + GPU ceiling given\", \"fits\": true",
                     "\"budget_bytes\": 40000000000, \"available_bytes\": 71940702208, \"ceiling_bytes\": 83494164234, \"ram_bytes\": 103079215104, \"budget_source\": \"free + GPU ceiling given\", \"fits\": false",
                     1,
                 ).replacen("\"fits\": true, \"vision\"", "\"fits\": false, \"vision\"", 1);
