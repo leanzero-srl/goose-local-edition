@@ -6680,6 +6680,13 @@
             "null"
           ],
           "description": "LeanZero Link mesh target. Absent or equal to the local node → runs on THIS node's\nMLX engine exactly as before. A peer's `nodeId` forwards the operation over the mesh\nto that node's control service, which runs it against ITS local engine and returns\nthe result. A named peer must be Connected on the mesh, else a loud\n`not connected to the mesh` error — never a local fallback."
+        },
+        "fitModelId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A model in the models folder: the status carries `mountFit`, the fit rule's verdict for it\non that node right now."
         }
       },
       "description": "Read the MLX engine's live status, including a `/v1/models` probe when running.",
@@ -6818,6 +6825,20 @@
           ],
           "description": "The OS memory probe failed; the memory figures are 0 and must not be read."
         },
+        "gpuCeilingBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Metal's recommended working-set ceiling on this Mac — the fit rule's other bound. Absent\nexactly when `gpuCeilingError` says why (and from a goose before it).",
+          "minimum": 0
+        },
+        "gpuCeilingError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "restartRequired": {
           "type": "boolean",
           "description": "True when the persisted settings would spawn the running engine differently\n(model, port, sampling): the engine keeps running with its old arguments until\nthe user remounts."
@@ -6827,6 +6848,45 @@
             "string",
             "null"
           ]
+        },
+        "mountFit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxMountFitDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The one fit rule's verdict for the request's `fitModelId` on this Mac right now — what a\nMount would be judged on. Absent when no `fitModelId` was asked, or exactly when\n`mountFitError` says why it could not be judged."
+        },
+        "mountFitError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "load": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxEngineLoadDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "While `state` is \"mounting\": how far the mount has come, measured. Absent otherwise."
+        },
+        "hosting": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedHostedRankDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set while THIS Mac serves a rank of another Mac's distributed engine over LeanZero Link\n(the same record as `distributedStatus.hosting`): the single engine is refused meanwhile,\nand this is what the Mac is doing instead."
         }
       },
       "required": [
@@ -6836,6 +6896,224 @@
         "restartRequired"
       ],
       "description": "Live MLX engine state. `state` is one of \"stopped\" | \"mounting\" | \"running\" | \"failed\".\n`context_window` / `tool_call_parser` come from a live `/v1/models` probe and are never\nfabricated: a failed probe leaves them unset and reports `probe_error` instead."
+    },
+    "MlxMountFitDto": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        },
+        "verdict": {
+          "type": "string",
+          "description": "\"allow\" | \"warn\" | \"block\"."
+        },
+        "needBytes": {
+          "type": "integer",
+          "description": "`weightsBytes + kvBytes`.",
+          "minimum": 0
+        },
+        "weightsBytes": {
+          "type": "integer",
+          "description": "The model directory's bytes on disk.",
+          "minimum": 0
+        },
+        "kvBytes": {
+          "type": "integer",
+          "description": "KV for `contextTokens` (the smallest useful context); 0 when `kvError` says it could not be\nsized (then only the weights are charged).",
+          "minimum": 0
+        },
+        "contextTokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kvError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "budgetBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "availableBytes": {
+          "type": "integer",
+          "description": "Available now (plus a mounted model's footprint, which a mount gets back).",
+          "minimum": 0
+        },
+        "totalBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ceilingBytes": {
+          "type": "integer",
+          "description": "Metal's recommended working-set ceiling on this Mac.",
+          "minimum": 0
+        },
+        "marginBytes": {
+          "type": "integer",
+          "description": "`totalBytes × marginRatio`.",
+          "minimum": 0
+        },
+        "marginRatio": {
+          "type": "number",
+          "format": "double"
+        },
+        "shortBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Block only: `needBytes − budgetBytes`.",
+          "minimum": 0
+        },
+        "spareBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Allow/warn only: `budgetBytes − needBytes`.",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string",
+          "description": "The rule's arithmetic in words (a refusal's text, verbatim — the same as `gateMessage`)."
+        }
+      },
+      "required": [
+        "modelId",
+        "verdict",
+        "needBytes",
+        "weightsBytes",
+        "kvBytes",
+        "contextTokens",
+        "budgetBytes",
+        "availableBytes",
+        "totalBytes",
+        "ceilingBytes",
+        "marginBytes",
+        "marginRatio",
+        "message"
+      ],
+      "description": "The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −\nRAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is \"warn\" when what is left\nis inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes."
+    },
+    "MlxEngineLoadDto": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "residentBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "weightsBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "phase",
+        "weightsBytes"
+      ],
+      "description": "A mount in flight. `phase`: \"makingRoom\" (macOS reclaims memory before the gate judges again)\n| \"starting\" (the process runs; the engine has not said it is loading) | \"loading\" | \"warming\"\n(weights in, compiling kernels). `residentBytes ÷ weightsBytes` is the load's progress\n(measured: a finished load holds 0.985–0.994× the bytes on disk); `residentBytes` is absent\nuntil the engine process exists — then the desktop shows the phase without a bar."
+    },
+    "MlxDistributedHostedRankDto": {
+      "type": "object",
+      "properties": {
+        "rank": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requesterName": {
+          "type": "string",
+          "description": "The requesting Mac's ComputerName, node id and hostname."
+        },
+        "requesterNodeId": {
+          "type": "string"
+        },
+        "requesterHostname": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "servedModelId": {
+          "type": "string"
+        },
+        "backend": {
+          "type": "string",
+          "description": "\"jaccl\" | \"ring\"."
+        },
+        "runner": {
+          "type": "string",
+          "description": "\"mlxLmTensor\" | \"pipelineQwen4\"."
+        },
+        "pid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "state": {
+          "type": "string",
+          "description": "\"loading\" (weights arriving, or warming up) | \"serving\" (the rank reported ready)."
+        },
+        "phase": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "\"loading\" | \"warming\" | \"ready\". Absent from a goose before it."
+        },
+        "loadedBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "MLX's active bytes on this rank; with `plannedWeightBytes` it is the load's progress.\nAbsent before the rank's first report.",
+          "minimum": 0
+        },
+        "plannedWeightBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The weights the requester's preflight planned on this rank; absent from a requester\nwhose goose predates it.",
+          "minimum": 0
+        },
+        "startedMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastPollMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "rank",
+        "size",
+        "requesterName",
+        "requesterNodeId",
+        "requesterHostname",
+        "modelId",
+        "servedModelId",
+        "backend",
+        "runner",
+        "state",
+        "startedMs",
+        "lastPollMs"
+      ],
+      "description": "The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link."
     },
     "MlxEngineMountRequest_unstable": {
       "type": "object",
@@ -6854,9 +7132,655 @@
       "required": [
         "modelId"
       ],
-      "description": "Mount a local model into the MLX engine. Returns once mounting has started;\npoll status for running/failed.",
+      "description": "Mount a local model into the MLX engine. Returns once mounting has started; poll status for\nrunning/failed. A memory-gate refusal is NOT an error: it is `refusal` (and status's\n`gateVerdict: \"block\"` / `gateMessage` carry the same verdict) — one failure, one carrier of\nits text. Every other failure (unknown or incomplete model, a foreign listener) is an error.",
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/mount"
+    },
+    "MlxEngineMountResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxMountRefusalDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set when the mount gate refused; absent = mounting started."
+        }
+      },
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/mount"
+    },
+    "MlxMountRefusalDto": {
+      "type": "object",
+      "properties": {
+        "fit": {
+          "$ref": "#/$defs/MlxMountFitDto"
+        },
+        "alternative": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxPlacementCandidateDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "badge": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxPlacementBadgeDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The model's badge from the same plan (\"needsBothMacs\", \"tooBig\" …)."
+        },
+        "alternativeError": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why no alternative could be planned (the planner failed, or nothing fits anywhere)."
+        }
+      },
+      "required": [
+        "fit"
+      ],
+      "description": "The mount gate's refusal: the fit rule's verdict and, when the model fits somewhere else, the\nplacement that would work (the planner's own candidate — `action` says how to start it:\n`startSplit` → \"Start across both Macs\", `remoteSingle`, or `unavailable` with the step first)."
+    },
+    "MlxPlacementCandidateDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "`single:local`, `tensor:jaccl:local+link:<id>` — what `measureSpeed` takes."
+        },
+        "key": {
+          "$ref": "#/$defs/MlxPlacementKeyDto"
+        },
+        "nodeNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "chips": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MlxChipDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "Per node; `null` = the node did not report its chip."
+        },
+        "backend": {
+          "type": "string",
+          "description": "\"rapid-mlx\" | \"mlx_lm\" | \"pipeline_qwen4\"."
+        },
+        "supported": {
+          "type": "boolean",
+          "description": "`false` = goose cannot run this placement for this architecture yet (listed, never offered)."
+        },
+        "fit": {
+          "$ref": "#/$defs/MlxPlacementFitDto"
+        },
+        "speed": {
+          "$ref": "#/$defs/MlxPlacementSpeedDto"
+        },
+        "action": {
+          "$ref": "#/$defs/MlxPlacementActionDto"
+        },
+        "outcome": {
+          "$ref": "#/$defs/MlxPlacementOutcomeDto"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "nodeNames",
+        "chips",
+        "backend",
+        "supported",
+        "fit",
+        "speed",
+        "action",
+        "outcome"
+      ]
+    },
+    "MlxPlacementKeyDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/MlxPlacementKindDto"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "link": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "nodes"
+      ],
+      "description": "A placement's identity: kind, node ids in rank order (`local` = this Mac, a peer by its\nconfigured host), the link of a split."
+    },
+    "MlxPlacementKindDto": {
+      "type": "string",
+      "enum": [
+        "single",
+        "tensor",
+        "pipeline"
+      ]
+    },
+    "MlxChipDto": {
+      "type": "object",
+      "properties": {
+        "hwModel": {
+          "type": "string"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "gpuCores": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "hwModel",
+        "brand"
+      ],
+      "description": "A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count."
+    },
+    "MlxPlacementFitDto": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/MlxFitStatusDto"
+        },
+        "context": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "shortBytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "shortNode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxNodeFitDto"
+          },
+          "default": []
+        },
+        "detail": {
+          "type": "string",
+          "description": "The arithmetic in words (English), a refusal's message verbatim."
+        }
+      },
+      "required": [
+        "status",
+        "detail"
+      ]
+    },
+    "MlxFitStatusDto": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "fits",
+            "short",
+            "unknown"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "smallerContext",
+          "description": "Fits only at a smaller context than wanted (`context` says which)."
+        }
+      ]
+    },
+    "MlxNodeFitDto": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "needBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "budgetBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "needBytes",
+        "budgetBytes"
+      ]
+    },
+    "MlxPlacementSpeedDto": {
+      "type": "object",
+      "properties": {
+        "decode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxSpeedFigureDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Writing speed of one conversation (tok/s) at a ~2k-token prompt."
+        },
+        "prefill": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxSpeedFigureDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Prompt reading speed (tok/s) at the goal's prompt size."
+        },
+        "throughput": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxSpeedFigureDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Total tok/s across `concurrency` requests (derived from decode × a measured gain)."
+        },
+        "concurrency": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "basis": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What the figures rest on, one line each (English diagnostics).",
+          "default": []
+        }
+      }
+    },
+    "MlxSpeedFigureDto": {
+      "type": "object",
+      "properties": {
+        "estimate": {
+          "$ref": "#/$defs/MlxEstimateDto"
+        },
+        "measured": {
+          "type": "boolean"
+        },
+        "runs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastMeasuredMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "estimate",
+        "measured",
+        "runs"
+      ],
+      "description": "`measured` = goose timed this placement (median of `runs`, range = their extremes); else the\ncalibrated formula's estimate."
+    },
+    "MlxEstimateDto": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number",
+          "format": "double"
+        },
+        "low": {
+          "type": "number",
+          "format": "double"
+        },
+        "high": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "value",
+        "low",
+        "high"
+      ],
+      "description": "A figure and its range (tok/s)."
+    },
+    "MlxPlacementActionDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "mountHere"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Mount on this Mac's single engine (`mlxEngine/mount`)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "setupMatches": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "startSplit"
+            }
+          },
+          "required": [
+            "kind",
+            "setupMatches"
+          ],
+          "description": "Start the distributed engine (`mlxEngine/distributedStart`); `setupMatches` = the saved\nsetup already names this model (else Set up must pick it first)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "remoteSingle"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Start the single engine on the peer and chat through Link."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unavailable"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "description": "Nothing goose can start for it today — why (English)."
+        }
+      ],
+      "description": "What [Use this] does. Internally tagged on `kind`."
+    },
+    "MlxPlacementOutcomeDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "best"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "bestAvailableNow"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "notSupported"
+            }
+          },
+          "required": [
+            "code",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "const": "doesNotFit"
+            }
+          },
+          "required": [
+            "code"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "fitUnknown"
+            }
+          },
+          "required": [
+            "code",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string",
+              "const": "noFigure"
+            }
+          },
+          "required": [
+            "code",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mine": {
+              "type": "number",
+              "format": "double"
+            },
+            "best": {
+              "type": "number",
+              "format": "double"
+            },
+            "code": {
+              "type": "string",
+              "const": "slower"
+            }
+          },
+          "required": [
+            "code",
+            "mine",
+            "best"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mine": {
+              "type": "number",
+              "format": "double"
+            },
+            "best": {
+              "type": "number",
+              "format": "double"
+            },
+            "code": {
+              "type": "string",
+              "const": "tiedNeedsMoreMacs"
+            }
+          },
+          "required": [
+            "code",
+            "mine",
+            "best"
+          ]
+        }
+      ],
+      "description": "Why a candidate won or lost. Internally tagged on `code`; `mine`/`best` are the goal's tok/s."
+    },
+    "MlxPlacementBadgeDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "fitsThisMac"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "fitsPeer"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "needs": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "needsBothMacs"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Only a split fits. `needs` = the step before it can start (\"allow this Mac to serve as a\ndistributed node on <name> …\", \"set up the distributed engine with this model …\");\nabsent = [Use this] starts it now."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "shortBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "tooBig"
+            }
+          },
+          "required": [
+            "kind",
+            "shortBytes"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        }
+      ],
+      "description": "The model-picker badge. Internally tagged on `kind`."
     },
     "MlxEngineUnmountRequest_unstable": {
       "type": "object",
@@ -8230,6 +9154,13 @@
             "$ref": "#/$defs/MlxDistributedCompactionDto"
           },
           "description": "The latest memory compaction per node (automatic or Make room), newest last."
+        },
+        "makingRoom": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The Macs macOS is reclaiming memory on right now (the start's \"making room\" step, before\npreflight judges them again); empty otherwise."
         }
       },
       "required": [
@@ -8416,6 +9347,20 @@
           "description": "Pipeline only, from rank 0's `/v1/status`: the KV/state + workspace the requests in flight\nhold on this rank (0 when idle) and this rank's budget for them (its planned state +\nworkspace for `slots` sequences). Absent for the tensor runner or when the poll failed."
         },
         "kvBudgetGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "loadPhase": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "While `state` is \"loading\": \"loading\" | \"warming\" | \"ready\" — the rank's own reports.\n`activeMemoryGb ÷ plannedWeightsGb` is the load (MLX's active bytes on the rank against\nthe weights preflight planned on it). Layers loaded is not measurable (the fork loads a\nstage's layers in one `mx.eval`), so no such figure exists."
+        },
+        "plannedWeightsGb": {
           "type": [
             "number",
             "null"
@@ -9088,77 +10033,6 @@
         "state"
       ],
       "description": "Another goosed's distributed run, from the record it published under the goose state dir."
-    },
-    "MlxDistributedHostedRankDto": {
-      "type": "object",
-      "properties": {
-        "rank": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "size": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "requesterName": {
-          "type": "string",
-          "description": "The requesting Mac's ComputerName, node id and hostname."
-        },
-        "requesterNodeId": {
-          "type": "string"
-        },
-        "requesterHostname": {
-          "type": "string"
-        },
-        "modelId": {
-          "type": "string"
-        },
-        "servedModelId": {
-          "type": "string"
-        },
-        "backend": {
-          "type": "string",
-          "description": "\"jaccl\" | \"ring\"."
-        },
-        "runner": {
-          "type": "string",
-          "description": "\"mlxLmTensor\" | \"pipelineQwen4\"."
-        },
-        "pid": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "minimum": 0
-        },
-        "state": {
-          "type": "string",
-          "description": "\"loading\" | \"serving\"."
-        },
-        "startedMs": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "lastPollMs": {
-          "type": "integer",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "rank",
-        "size",
-        "requesterName",
-        "requesterNodeId",
-        "requesterHostname",
-        "modelId",
-        "servedModelId",
-        "backend",
-        "runner",
-        "state",
-        "startedMs",
-        "lastPollMs"
-      ],
-      "description": "The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link."
     },
     "MlxDistributedCompactionDto": {
       "type": "object",
@@ -10650,587 +11524,6 @@
         "goal"
       ],
       "description": "One model's plan, or why it could not be planned (`error`)."
-    },
-    "MlxPlacementCandidateDto": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "`single:local`, `tensor:jaccl:local+link:<id>` — what `measureSpeed` takes."
-        },
-        "key": {
-          "$ref": "#/$defs/MlxPlacementKeyDto"
-        },
-        "nodeNames": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "chips": {
-          "type": "array",
-          "items": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/MlxChipDto"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "description": "Per node; `null` = the node did not report its chip."
-        },
-        "backend": {
-          "type": "string",
-          "description": "\"rapid-mlx\" | \"mlx_lm\" | \"pipeline_qwen4\"."
-        },
-        "supported": {
-          "type": "boolean",
-          "description": "`false` = goose cannot run this placement for this architecture yet (listed, never offered)."
-        },
-        "fit": {
-          "$ref": "#/$defs/MlxPlacementFitDto"
-        },
-        "speed": {
-          "$ref": "#/$defs/MlxPlacementSpeedDto"
-        },
-        "action": {
-          "$ref": "#/$defs/MlxPlacementActionDto"
-        },
-        "outcome": {
-          "$ref": "#/$defs/MlxPlacementOutcomeDto"
-        }
-      },
-      "required": [
-        "id",
-        "key",
-        "nodeNames",
-        "chips",
-        "backend",
-        "supported",
-        "fit",
-        "speed",
-        "action",
-        "outcome"
-      ]
-    },
-    "MlxPlacementKeyDto": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "$ref": "#/$defs/MlxPlacementKindDto"
-        },
-        "nodes": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "link": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "kind",
-        "nodes"
-      ],
-      "description": "A placement's identity: kind, node ids in rank order (`local` = this Mac, a peer by its\nconfigured host), the link of a split."
-    },
-    "MlxPlacementKindDto": {
-      "type": "string",
-      "enum": [
-        "single",
-        "tensor",
-        "pipeline"
-      ]
-    },
-    "MlxChipDto": {
-      "type": "object",
-      "properties": {
-        "hwModel": {
-          "type": "string"
-        },
-        "brand": {
-          "type": "string"
-        },
-        "gpuCores": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "minimum": 0
-        }
-      },
-      "required": [
-        "hwModel",
-        "brand"
-      ],
-      "description": "A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count."
-    },
-    "MlxPlacementFitDto": {
-      "type": "object",
-      "properties": {
-        "status": {
-          "$ref": "#/$defs/MlxFitStatusDto"
-        },
-        "context": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "minimum": 0
-        },
-        "shortBytes": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "minimum": 0
-        },
-        "shortNode": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "nodes": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/MlxNodeFitDto"
-          },
-          "default": []
-        },
-        "detail": {
-          "type": "string",
-          "description": "The arithmetic in words (English), a refusal's message verbatim."
-        }
-      },
-      "required": [
-        "status",
-        "detail"
-      ]
-    },
-    "MlxFitStatusDto": {
-      "oneOf": [
-        {
-          "type": "string",
-          "enum": [
-            "fits",
-            "short",
-            "unknown"
-          ]
-        },
-        {
-          "type": "string",
-          "const": "smallerContext",
-          "description": "Fits only at a smaller context than wanted (`context` says which)."
-        }
-      ]
-    },
-    "MlxNodeFitDto": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "needBytes": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "budgetBytes": {
-          "type": "integer",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "name",
-        "needBytes",
-        "budgetBytes"
-      ]
-    },
-    "MlxPlacementSpeedDto": {
-      "type": "object",
-      "properties": {
-        "decode": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MlxSpeedFigureDto"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Writing speed of one conversation (tok/s) at a ~2k-token prompt."
-        },
-        "prefill": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MlxSpeedFigureDto"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Prompt reading speed (tok/s) at the goal's prompt size."
-        },
-        "throughput": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MlxSpeedFigureDto"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Total tok/s across `concurrency` requests (derived from decode × a measured gain)."
-        },
-        "concurrency": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "minimum": 0
-        },
-        "basis": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "What the figures rest on, one line each (English diagnostics).",
-          "default": []
-        }
-      }
-    },
-    "MlxSpeedFigureDto": {
-      "type": "object",
-      "properties": {
-        "estimate": {
-          "$ref": "#/$defs/MlxEstimateDto"
-        },
-        "measured": {
-          "type": "boolean"
-        },
-        "runs": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "lastMeasuredMs": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "minimum": 0
-        }
-      },
-      "required": [
-        "estimate",
-        "measured",
-        "runs"
-      ],
-      "description": "`measured` = goose timed this placement (median of `runs`, range = their extremes); else the\ncalibrated formula's estimate."
-    },
-    "MlxEstimateDto": {
-      "type": "object",
-      "properties": {
-        "value": {
-          "type": "number",
-          "format": "double"
-        },
-        "low": {
-          "type": "number",
-          "format": "double"
-        },
-        "high": {
-          "type": "number",
-          "format": "double"
-        }
-      },
-      "required": [
-        "value",
-        "low",
-        "high"
-      ],
-      "description": "A figure and its range (tok/s)."
-    },
-    "MlxPlacementActionDto": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "mountHere"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "description": "Mount on this Mac's single engine (`mlxEngine/mount`)."
-        },
-        {
-          "type": "object",
-          "properties": {
-            "setupMatches": {
-              "type": "boolean"
-            },
-            "kind": {
-              "type": "string",
-              "const": "startSplit"
-            }
-          },
-          "required": [
-            "kind",
-            "setupMatches"
-          ],
-          "description": "Start the distributed engine (`mlxEngine/distributedStart`); `setupMatches` = the saved\nsetup already names this model (else Set up must pick it first)."
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "remoteSingle"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "description": "Start the single engine on the peer and chat through Link."
-        },
-        {
-          "type": "object",
-          "properties": {
-            "reason": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "unavailable"
-            }
-          },
-          "required": [
-            "kind",
-            "reason"
-          ],
-          "description": "Nothing goose can start for it today — why (English)."
-        }
-      ],
-      "description": "What [Use this] does. Internally tagged on `kind`."
-    },
-    "MlxPlacementOutcomeDto": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "code": {
-              "type": "string",
-              "const": "best"
-            }
-          },
-          "required": [
-            "code"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "code": {
-              "type": "string",
-              "const": "bestAvailableNow"
-            }
-          },
-          "required": [
-            "code"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "reason": {
-              "type": "string"
-            },
-            "code": {
-              "type": "string",
-              "const": "notSupported"
-            }
-          },
-          "required": [
-            "code",
-            "reason"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "code": {
-              "type": "string",
-              "const": "doesNotFit"
-            }
-          },
-          "required": [
-            "code"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "reason": {
-              "type": "string"
-            },
-            "code": {
-              "type": "string",
-              "const": "fitUnknown"
-            }
-          },
-          "required": [
-            "code",
-            "reason"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "reason": {
-              "type": "string"
-            },
-            "code": {
-              "type": "string",
-              "const": "noFigure"
-            }
-          },
-          "required": [
-            "code",
-            "reason"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "mine": {
-              "type": "number",
-              "format": "double"
-            },
-            "best": {
-              "type": "number",
-              "format": "double"
-            },
-            "code": {
-              "type": "string",
-              "const": "slower"
-            }
-          },
-          "required": [
-            "code",
-            "mine",
-            "best"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "mine": {
-              "type": "number",
-              "format": "double"
-            },
-            "best": {
-              "type": "number",
-              "format": "double"
-            },
-            "code": {
-              "type": "string",
-              "const": "tiedNeedsMoreMacs"
-            }
-          },
-          "required": [
-            "code",
-            "mine",
-            "best"
-          ]
-        }
-      ],
-      "description": "Why a candidate won or lost. Internally tagged on `code`; `mine`/`best` are the goal's tok/s."
-    },
-    "MlxPlacementBadgeDto": {
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "fitsThisMac"
-            }
-          },
-          "required": [
-            "kind"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "name": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "fitsPeer"
-            }
-          },
-          "required": [
-            "kind",
-            "name"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "needsBothMacs"
-            }
-          },
-          "required": [
-            "kind"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "shortBytes": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "kind": {
-              "type": "string",
-              "const": "tooBig"
-            }
-          },
-          "required": [
-            "kind",
-            "shortBytes"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "reason": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "const": "unknown"
-            }
-          },
-          "required": [
-            "kind",
-            "reason"
-          ]
-        }
-      ],
-      "description": "The model-picker badge. Internally tagged on `kind`."
     },
     "MlxPlacementNodeDto": {
       "type": "object",
@@ -14797,6 +15090,14 @@
                         }
                       ],
                       "title": "MlxEngineStatusResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineMountResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineMountResponse_unstable"
                     },
                     {
                       "allOf": [

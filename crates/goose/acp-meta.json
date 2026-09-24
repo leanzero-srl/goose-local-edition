@@ -573,7 +573,7 @@
     {
       "method": "_goose/unstable/mlxEngine/mount",
       "requestType": "MlxEngineMountRequest_unstable",
-      "responseType": "EmptyResponse"
+      "responseType": "MlxEngineMountResponse_unstable"
     },
     {
       "method": "_goose/unstable/mlxEngine/unmount",

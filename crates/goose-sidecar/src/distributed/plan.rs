@@ -14,7 +14,7 @@ use std::path::Path;
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::{AVAILABLE_MARGIN_RATIO, PROMPT_CACHE_CONTEXTS, RUNTIME_OVERHEAD_RATIO};
+use super::{PROMPT_CACHE_CONTEXTS, RUNTIME_OVERHEAD_RATIO};
 
 /// mlx_lm `KVCache.step`: the KV buffer grows in 256-token blocks (models/cache.py), so a context
 /// costs its size rounded up to the step. An algorithm constant of the engine, not a policy.
@@ -46,14 +46,9 @@ pub struct RankPlan {
     pub fits: bool,
 }
 
-/// The tensor runner's per-rank budget (the pipeline runner reads the fork's from its plan, built
-/// by the same rule): the node's GPU ceiling, or its available memory less
-/// `AVAILABLE_MARGIN_RATIO` of its RAM, whichever is smaller.
-pub fn budget_bytes(available_bytes: u64, total_bytes: u64, ceiling_bytes: u64) -> u64 {
-    available_bytes
-        .saturating_sub((total_bytes as f64 * AVAILABLE_MARGIN_RATIO) as u64)
-        .min(ceiling_bytes)
-}
+/// The tensor runner's per-rank budget is the ONE fit rule's (`crate::fit`); the pipeline
+/// runner reads the fork's, built by the same rule.
+pub use crate::fit::budget_bytes;
 
 pub fn with_overhead(planned_bytes: u64) -> u64 {
     (planned_bytes as f64 * RUNTIME_OVERHEAD_RATIO).ceil() as u64

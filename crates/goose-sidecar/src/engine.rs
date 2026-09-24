@@ -15,10 +15,11 @@ use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::fit::{self, FitVerdict, Need, NodeMemoryFacts, Verdict};
 use crate::hf::{self, LocalModel};
 use crate::kv_cache::{self, KvCacheMode};
 use crate::{
-    listening_pids, measure, port_has_listener, MemoryGate, Sidecar, SidecarConfig, Verdict, GIB,
+    listening_pids, measure, port_has_listener, Sidecar, SidecarConfig, StartupWatch, GIB,
 };
 
 /// Rapid-MLX's `--max-concurrent-requests` is a HARD ADMISSION CAP, not a queue: the request past
@@ -520,6 +521,8 @@ enum ManagerState {
     Stopped,
     Mounting {
         model_id: String,
+        watch: Arc<StartupWatch>,
+        weights_bytes: u64,
     },
     Running {
         model_id: String,
@@ -570,6 +573,87 @@ pub struct EngineStatus {
     pub memory_error: Option<String>,
     pub restart_required: bool,
     pub last_error: Option<String>,
+    /// While a mount is in flight: how far the load has come. `None` otherwise.
+    pub load: Option<EngineLoad>,
+}
+
+/// A mount in flight, measured — never a guessed percentage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EngineLoad {
+    /// "makingRoom" (macOS is asked to reclaim memory before the gate judges again) |
+    /// "starting" (the process runs; the engine has not said it is loading) | "loading" |
+    /// "warming" (weights in; compiling kernels before it answers).
+    pub phase: String,
+    /// Resident bytes of the engine process (see `StartupWatch`); `None` before it exists.
+    pub resident_bytes: Option<u64>,
+    /// The model's bytes on disk — what a finished load holds (measured 0.985–0.994×).
+    pub weights_bytes: u64,
+}
+
+/// Rapid-MLX's own words for where its start is (v0.14.3-lz.4, stderr, measured 2026-09-24):
+/// "Loading model with BatchedEngine" / "Loading MLLM" open the weight load, "Warming up
+/// (compiling Metal shaders)" the warm-up. Before either, the process is starting (uv resolving,
+/// python importing MLX).
+pub fn start_phase(stderr_tail: &[String]) -> &'static str {
+    for line in stderr_tail.iter().rev() {
+        if line.contains("Warming up") {
+            return "warming";
+        }
+        if line.contains("Loading MLLM") || line.contains("Loading model") {
+            return "loading";
+        }
+    }
+    "starting"
+}
+
+/// The mount gate refused: the one fit rule's verdict on this Mac, typed so the ACP layer can hand
+/// the desktop a structured refusal (and the split that would work) instead of a string.
+#[derive(Debug, Clone)]
+pub struct MountRefused {
+    pub model_id: String,
+    pub verdict: FitVerdict,
+}
+
+impl std::fmt::Display for MountRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "memory gate BLOCK for '{}': {}",
+            self.model_id, self.verdict.message
+        )
+    }
+}
+
+impl std::error::Error for MountRefused {}
+
+#[cfg(unix)]
+pub fn local_gpu_ceiling() -> Result<u64> {
+    crate::placement::chip::local_gpu_ceiling()
+}
+
+#[cfg(not(unix))]
+pub fn local_gpu_ceiling() -> Result<u64> {
+    anyhow::bail!("the GPU ceiling is read from Metal, which exists only on macOS")
+}
+
+/// The single engine's need for `model` — the placement planner's own (`single_engine_need`).
+#[cfg(unix)]
+fn single_engine_need(dir: &Path, weights_bytes: u64, kv_mode: Option<KvCacheMode>) -> Need {
+    let facts = crate::placement::model::read_model_facts(dir).map_err(|e| format!("{e:#}"));
+    crate::placement::planner::single_engine_need(
+        weights_bytes,
+        facts.as_ref().map_err(Clone::clone),
+        kv_mode,
+    )
+}
+
+#[cfg(not(unix))]
+fn single_engine_need(_dir: &Path, weights_bytes: u64, _kv_mode: Option<KvCacheMode>) -> Need {
+    Need::single_engine(
+        weights_bytes,
+        Err("model facts are read on macOS only".to_string()),
+        0,
+    )
 }
 
 /// A fixed, standard spawn PATH for the engine process. goosed's own PATH is a grab-bag of
@@ -653,22 +737,19 @@ fn engine_exit_message(exit: &crate::SidecarExit) -> String {
 pub struct MlxEngineManager {
     state: Arc<Mutex<ManagerState>>,
     settings: StdMutex<EngineSettings>,
-    last_gate: StdMutex<Option<crate::GateResult>>,
-    gate: MemoryGate,
+    last_gate: StdMutex<Option<FitVerdict>>,
+    /// The model a mount is making room for (macOS compaction runs before the gate judges again).
+    making_room: StdMutex<Option<(String, u64)>>,
     probe_client: reqwest::Client,
 }
 
 impl MlxEngineManager {
     pub fn new() -> Self {
-        Self::with_gate(MemoryGate::default())
-    }
-
-    pub fn with_gate(gate: MemoryGate) -> Self {
         Self {
             state: Arc::new(Mutex::new(ManagerState::Stopped)),
             settings: StdMutex::new(EngineSettings::default()),
             last_gate: StdMutex::new(None),
-            gate,
+            making_room: StdMutex::new(None),
             probe_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -688,54 +769,136 @@ impl MlxEngineManager {
         self.settings.lock().unwrap().clone()
     }
 
-    /// Validate the model and the memory gate, flip to `Mounting`, and return; the engine
-    /// start continues in a spawned task. A gate `Block` refuses the mount outright.
-    /// Any already-running engine is shut down first — one model per engine — and once
-    /// this manager supervises nothing, a listener still on the port is somebody else's:
-    /// the mount is refused with [`UnsupervisedListenerError`] rather than started over it.
-    pub async fn mount(&self, model_id: &str) -> Result<()> {
+    fn local_model(&self, settings: &EngineSettings, model_id: &str) -> Result<LocalModel> {
         hf::validate_model_id(model_id)?;
-        let settings = self.settings();
         let models_dir = expand_tilde(&settings.models_dir);
         let models = hf::list_local_models(&models_dir)?;
-        let model: &LocalModel = models.iter().find(|m| m.id == model_id).with_context(|| {
-            format!(
-                "model '{model_id}' not found in {} (download it first)",
-                models_dir.display()
-            )
-        })?;
+        let model = models
+            .into_iter()
+            .find(|m| m.id == model_id)
+            .with_context(|| {
+                format!(
+                    "model '{model_id}' not found in {} (download it first)",
+                    models_dir.display()
+                )
+            })?;
+        Ok(model)
+    }
+
+    /// The one fit rule (`crate::fit`) for `model_id` on this Mac right now — the verdict the mount
+    /// gate acts on and the desktop draws (`mlxEngine/status` `fitModelId`). A model mounted here
+    /// counts as available, as the placement planner counts it: a mount replaces it (or keeps it,
+    /// when it is this model).
+    pub async fn mount_fit(&self, model_id: &str) -> Result<FitVerdict> {
+        let settings = self.settings();
+        let model = self.local_model(&settings, model_id)?;
+        self.judge_model(&settings, &model).await
+    }
+
+    async fn judge_model(
+        &self,
+        settings: &EngineSettings,
+        model: &LocalModel,
+    ) -> Result<FitVerdict> {
+        let reading = measure()?;
+        let ceiling = local_gpu_ceiling().context("reading the GPU ceiling the fit rule needs")?;
+        let (freed, note) = self.mounted_footprint(settings).await;
+        let need = single_engine_need(
+            &expand_tilde(&settings.models_dir).join(&model.id),
+            model.size_bytes,
+            settings
+                .model_profiles
+                .get(&model.id)
+                .and_then(|p| p.kv_cache),
+        );
+        let mut verdict = fit::judge(
+            need,
+            NodeMemoryFacts {
+                available_bytes: reading.available_bytes.saturating_add(freed),
+                total_bytes: reading.total_bytes,
+                ceiling_bytes: ceiling,
+            },
+        );
+        if let Some(note) = note {
+            verdict.append(note);
+        }
+        Ok(verdict)
+    }
+
+    /// The running engine's resident bytes (what a mount gets back), with the sentence that says
+    /// so — or 0 and the sentence that says why it could not be counted.
+    async fn mounted_footprint(&self, settings: &EngineSettings) -> (u64, Option<String>) {
+        let mounted = match &*self.state.lock().await {
+            ManagerState::Running { model_id, .. } => model_id.clone(),
+            _ => return (0, None),
+        };
+        #[cfg(unix)]
+        let read = crate::placement::engine_resident_bytes(settings.port).await;
+        #[cfg(not(unix))]
+        let read: Result<u64> = Err(anyhow::anyhow!("process footprints are read on unix only"));
+        match read {
+            Ok(bytes) => (
+                bytes,
+                Some(format!(
+                    "{mounted} is mounted here: its {:.1} GiB count as available, the mount \
+                     replaces it",
+                    bytes as f64 / GIB as f64
+                )),
+            ),
+            Err(e) => (
+                0,
+                Some(format!(
+                    "{mounted} is mounted here but its memory could not be read ({e:#}); it \
+                     counts as in use"
+                )),
+            ),
+        }
+    }
+
+    /// Validate the model and the one fit rule, flip to `Mounting`, and return; the engine start
+    /// continues in a spawned task. A `Block` refuses the mount with [`MountRefused`] (after Make
+    /// room had its chance). Any already-running engine is shut down first — one model per engine
+    /// — and once this manager supervises nothing, a listener still on the port is somebody
+    /// else's: the mount is refused with [`UnsupervisedListenerError`] rather than started over it.
+    pub async fn mount(&self, model_id: &str) -> Result<()> {
+        let settings = self.settings();
+        let model = self.local_model(&settings, model_id)?;
         ensure!(
             model.complete,
             "model '{model_id}' is incomplete: a .part file remains or no .safetensors is present"
         );
 
-        let reading = measure()?;
         #[allow(unused_mut)]
-        let mut gate = self.gate.evaluate(
-            model.size_bytes,
-            reading.available_bytes,
-            reading.total_bytes,
-        );
+        let mut gate = self.judge_model(&settings, &model).await?;
         #[cfg(unix)]
         if gate.verdict == Verdict::Block {
-            gate = self.make_room_then_gate(model.size_bytes, gate).await?;
+            gate = self.make_room_then_gate(&settings, &model, gate).await?;
         }
-        let blocked = gate.verdict == Verdict::Block;
-        let block_message = gate.message.clone();
-        *self.last_gate.lock().unwrap() = Some(gate);
-        if blocked {
-            bail!("memory gate BLOCK for '{model_id}': {block_message}");
+        *self.last_gate.lock().unwrap() = Some(gate.clone());
+        if gate.verdict == Verdict::Block {
+            return Err(MountRefused {
+                model_id: model_id.to_string(),
+                verdict: gate,
+            }
+            .into());
         }
+        let weights_bytes = model.size_bytes;
 
         let argv = build_serve_command(&settings, model_id)?;
         let mut state = self.state.lock().await;
-        if let ManagerState::Mounting { model_id: current } = &*state {
+        if let ManagerState::Mounting {
+            model_id: current, ..
+        } = &*state
+        {
             bail!("mount already in progress for '{current}'");
         }
+        let watch = Arc::new(StartupWatch::default());
         let previous = std::mem::replace(
             &mut *state,
             ManagerState::Mounting {
                 model_id: model_id.to_string(),
+                watch: Arc::clone(&watch),
+                weights_bytes,
             },
         );
         // The IDENTICAL configuration already has a supervisor: keep it and let its circuit
@@ -778,6 +941,7 @@ impl MlxEngineManager {
                     let mut config =
                         SidecarConfig::new("mlx-engine", argv.clone(), base_url, expected_model_id);
                     config.env = sidecar_spawn_env();
+                    config.startup_watch = Some(watch);
                     Sidecar::start(config).await.map(Box::new)
                 }
             };
@@ -786,7 +950,7 @@ impl MlxEngineManager {
                     let mut state = state_arc.lock().await;
                     let still_mounting = matches!(
                         &*state,
-                        ManagerState::Mounting { model_id: current } if *current == model_id
+                        ManagerState::Mounting { model_id: current, .. } if *current == model_id
                     );
                     if still_mounting {
                         *state = ManagerState::Running {
@@ -803,7 +967,7 @@ impl MlxEngineManager {
                     let mut state = state_arc.lock().await;
                     let still_mounting = matches!(
                         &*state,
-                        ManagerState::Mounting { model_id: current } if *current == model_id
+                        ManagerState::Mounting { model_id: current, .. } if *current == model_id
                     );
                     if still_mounting {
                         *state = ManagerState::Failed {
@@ -817,51 +981,49 @@ impl MlxEngineManager {
         Ok(())
     }
 
-    /// The gate said the model does not fit: when nothing of ours is loaded on this Mac, ask macOS
-    /// to reclaim memory (`distributed::compaction`: pressure to the kernel's WARN, released at
-    /// once, settled on progress) and gate again on the new reading. The outcome — freed, refused
-    /// beside a loaded engine, or failed — is appended to the gate's message either way, so the
-    /// refusal the owner reads says what was tried.
+    /// The gate said the model does not fit: when nothing of ours is loaded on this Mac and some
+    /// amount of reclaimed memory could let it through, ask macOS to reclaim memory
+    /// (`distributed::compaction`: pressure to the kernel's WARN, released at once, settled on
+    /// progress) and judge again on the new reading. The outcome — freed, refused beside a loaded
+    /// engine, or failed — is appended to the verdict's message either way, so the refusal the
+    /// owner reads says what was tried. Status reports the mount as `makingRoom` meanwhile.
     #[cfg(unix)]
     async fn make_room_then_gate(
         &self,
-        model_bytes: u64,
-        blocked: crate::GateResult,
-    ) -> Result<crate::GateResult> {
+        settings: &EngineSettings,
+        model: &LocalModel,
+        blocked: FitVerdict,
+    ) -> Result<FitVerdict> {
         use crate::distributed::compaction::{compact_node, CompactionOutcome};
         let loaded = matches!(
             &*self.state.lock().await,
             ManagerState::Running { .. } | ManagerState::Mounting { .. }
         );
-        let total = measure()?.total_bytes;
-        if loaded || !self.gate.could_ever_fit(model_bytes, total) {
+        if loaded || !blocked.could_ever_fit() {
             return Ok(blocked);
         }
+        *self.making_room.lock().unwrap() = Some((model.id.clone(), model.size_bytes));
         let outcome = compact_node(&crate::distributed::SystemExec, None, "this Mac").await;
+        *self.making_room.lock().unwrap() = None;
         Ok(match outcome {
             Ok(CompactionOutcome::Compacted(report)) => {
-                let reading = measure()?;
-                let mut gate =
-                    self.gate
-                        .evaluate(model_bytes, reading.available_bytes, reading.total_bytes);
-                gate.message = format!(
-                    "{} — Make room ran first: {}",
-                    gate.message,
-                    report.summary()
-                );
-                gate
+                let mut verdict = self.judge_model(settings, model).await?;
+                verdict.append(format!("Make room ran first: {}", report.summary()));
+                verdict
             }
-            Ok(CompactionOutcome::Refused(refusal)) => crate::GateResult {
-                message: format!(
-                    "{} — Make room did not run ({}): {}",
-                    blocked.message, refusal.code, refusal.message
-                ),
-                ..blocked
-            },
-            Err(e) => crate::GateResult {
-                message: format!("{} — Make room failed: {e:#}", blocked.message),
-                ..blocked
-            },
+            Ok(CompactionOutcome::Refused(refusal)) => {
+                let mut verdict = blocked;
+                verdict.append(format!(
+                    "Make room did not run ({}): {}",
+                    refusal.code, refusal.message
+                ));
+                verdict
+            }
+            Err(e) => {
+                let mut verdict = blocked;
+                verdict.append(format!("Make room failed: {e:#}"));
+                verdict
+            }
         })
     }
 
@@ -897,17 +1059,7 @@ impl MlxEngineManager {
         };
         let gib_of = |bytes: u64| bytes as f64 / GIB as f64;
         let (gate_message, gate_verdict) = match self.last_gate.lock().unwrap().clone() {
-            Some(g) => (
-                Some(g.message),
-                Some(
-                    match g.verdict {
-                        Verdict::Allow => "allow",
-                        Verdict::Warn => "warn",
-                        Verdict::Block => "block",
-                    }
-                    .to_string(),
-                ),
-            ),
+            Some(g) => (Some(g.message), Some(g.verdict.as_str().to_string())),
             None => (None, None),
         };
         let mut status = EngineStatus {
@@ -930,15 +1082,26 @@ impl MlxEngineManager {
             memory_error,
             restart_required: false,
             last_error: None,
+            load: None,
         };
 
         let running = {
             let state = self.state.lock().await;
             match &*state {
                 ManagerState::Stopped => None,
-                ManagerState::Mounting { model_id } => {
+                ManagerState::Mounting {
+                    model_id,
+                    watch,
+                    weights_bytes,
+                } => {
                     status.state = "mounting".to_string();
                     status.model_id = Some(model_id.clone());
+                    let seen = watch.seen();
+                    status.load = Some(EngineLoad {
+                        phase: start_phase(&seen.stderr_tail).to_string(),
+                        resident_bytes: seen.resident_bytes,
+                        weights_bytes: *weights_bytes,
+                    });
                     None
                 }
                 ManagerState::Failed { model_id, error } => {
@@ -981,6 +1144,15 @@ impl MlxEngineManager {
             }
         };
 
+        if let Some((model_id, weights_bytes)) = self.making_room.lock().unwrap().clone() {
+            status.state = "mounting".to_string();
+            status.model_id = Some(model_id);
+            status.load = Some(EngineLoad {
+                phase: "makingRoom".to_string(),
+                resident_bytes: None,
+                weights_bytes,
+            });
+        }
         if running.is_none() && port_has_listener(settings.port) {
             status.stray_listener_port = Some(settings.port);
         }
@@ -1152,6 +1324,25 @@ mod tests {
     }
 
     use super::*;
+
+    /// Rapid-MLX v0.14.3-lz.4's own stderr on a 27B mount (2026-09-24), in order.
+    #[test]
+    fn the_start_phase_is_the_engines_own_words() {
+        let lines = [
+            "INFO:rapid_mlx.gdn_prefill:[gdn_prefill] blocked-seq GDN prefill kernel installed",
+            "INFO:rapid_mlx.server:Loading model with BatchedEngine: /m",
+            "INFO:rapid_mlx.models.mllm:Loading MLLM: /m",
+            "INFO:rapid_mlx.models.mllm:MLLM loaded successfully: /m",
+            "INFO:rapid_mlx.server:Warming up (compiling Metal shaders)...",
+            "INFO:rapid_mlx.server:Warmup complete (0.0s)",
+        ]
+        .map(String::from);
+        assert_eq!(start_phase(&lines[..1]), "starting");
+        assert_eq!(start_phase(&lines[..2]), "loading");
+        assert_eq!(start_phase(&lines[..4]), "loading");
+        assert_eq!(start_phase(&lines), "warming");
+        assert_eq!(start_phase(&[]), "starting");
+    }
 
     #[test]
     fn serve_command_uses_served_model_name_alias_when_set() {
@@ -2379,7 +2570,13 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         });
 
         // 4 TiB exceeds any Mac's RAM, so the gate refuses without asking macOS to make room.
-        let err = manager.mount("pub/huge").await.unwrap_err().to_string();
+        let err = manager.mount("pub/huge").await.unwrap_err();
+        let refused = err
+            .downcast_ref::<MountRefused>()
+            .expect("a gate refusal is typed, so the ACP layer can structure it");
+        assert_eq!(refused.verdict.verdict, Verdict::Block);
+        assert!(!refused.verdict.could_ever_fit());
+        let err = err.to_string();
         assert!(err.contains("memory gate BLOCK"), "unexpected error: {err}");
         assert!(
             !err.contains("Make room"),
@@ -2388,7 +2585,18 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
 
         let status = manager.status().await;
         assert_eq!(status.state, "stopped");
-        assert!(status.gate_message.unwrap().contains("exceeds available"));
+        assert_eq!(status.gate_verdict.as_deref(), Some("block"));
+        let message = status.gate_message.unwrap();
+        assert!(
+            message.contains("budget") && message.contains("short"),
+            "{message}"
+        );
+        let fit = manager.mount_fit("pub/huge").await.unwrap();
+        assert_eq!(
+            (fit.verdict, &fit.need),
+            (Verdict::Block, &refused.verdict.need),
+            "the status verdict and the mount are one rule on one need"
+        );
     }
 
     #[tokio::test]

@@ -6,8 +6,10 @@
 use super::*;
 use crate::config::ConfigError;
 use goose_sidecar::engine::{
-    expand_tilde, global_manager, EngineSettings, MlxEngineManager, ModelProfile, ThinkingMode,
+    expand_tilde, global_manager, EngineLoad, EngineSettings, MlxEngineManager, ModelProfile,
+    MountRefused, ThinkingMode,
 };
+use goose_sidecar::fit::{FitVerdict, AVAILABLE_MARGIN_RATIO};
 use goose_sidecar::hf::{self, DownloadTracker};
 use goose_sidecar::kv_cache::{
     self, KvCacheFacts, KvCacheMeasurement, KvCacheMode, KvModeMeasurement,
@@ -350,8 +352,43 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         total_memory_gb: status.total_memory_gb,
         reclaimable_cache_gb: status.reclaimable_cache_gb,
         memory_error: status.memory_error,
+        gpu_ceiling_bytes: None,
+        gpu_ceiling_error: None,
         restart_required: status.restart_required,
         last_error: status.last_error,
+        mount_fit: None,
+        mount_fit_error: None,
+        load: status.load.map(load_to_dto),
+        hosting: None,
+    }
+}
+
+fn load_to_dto(load: EngineLoad) -> MlxEngineLoadDto {
+    MlxEngineLoadDto {
+        phase: load.phase,
+        resident_bytes: load.resident_bytes,
+        weights_bytes: load.weights_bytes,
+    }
+}
+
+pub(super) fn fit_to_dto(model_id: &str, fit: &FitVerdict) -> MlxMountFitDto {
+    MlxMountFitDto {
+        model_id: model_id.to_string(),
+        verdict: fit.verdict.as_str().to_string(),
+        need_bytes: fit.need.total_bytes(),
+        weights_bytes: fit.need.weights_bytes,
+        kv_bytes: fit.need.kv_bytes,
+        context_tokens: fit.need.context_tokens,
+        kv_error: fit.need.kv_gap.clone(),
+        budget_bytes: fit.budget_bytes,
+        available_bytes: fit.facts.available_bytes,
+        total_bytes: fit.facts.total_bytes,
+        ceiling_bytes: fit.facts.ceiling_bytes,
+        margin_bytes: fit.facts.margin_bytes(),
+        margin_ratio: AVAILABLE_MARGIN_RATIO,
+        short_bytes: fit.short_bytes(),
+        spare_bytes: fit.spare_bytes(),
+        message: fit.message.clone(),
     }
 }
 
@@ -384,20 +421,65 @@ fn progress_to_dto(progress: hf::DownloadProgress) -> MlxDownloadProgressDto {
 // everything else is here so there is a single implementation to reuse, never a second.
 // ============================================================================
 
-async fn core_status() -> Result<MlxEngineStatusResponse, agent_client_protocol::Error> {
+async fn core_status(
+    req: MlxEngineStatusRequest,
+) -> Result<MlxEngineStatusResponse, agent_client_protocol::Error> {
     let manager = synced_manager()?;
-    Ok(MlxEngineStatusResponse {
-        status: status_to_dto(manager.status().await),
-    })
+    let mut status = status_to_dto(manager.status().await);
+    match goose_sidecar::engine::local_gpu_ceiling() {
+        Ok(bytes) => status.gpu_ceiling_bytes = Some(bytes),
+        Err(e) => status.gpu_ceiling_error = Some(format!("{e:#}")),
+    }
+    if let Some(model_id) = &req.fit_model_id {
+        match manager.mount_fit(model_id).await {
+            Ok(fit) => status.mount_fit = Some(fit_to_dto(model_id, &fit)),
+            Err(e) => status.mount_fit_error = Some(format!("{e:#}")),
+        }
+    }
+    status.hosting = super::mlx_distributed::hosting_dto();
+    Ok(MlxEngineStatusResponse { status })
 }
 
+/// A memory-gate refusal is the response's `refusal` (with the placement that WOULD work), not an
+/// RPC error: status's `gateVerdict`/`gateMessage` already carry the same verdict, and the
+/// desktop showed the one failure twice ("Mount blocked" + "Mount failed") while it was both.
 async fn core_mount(
     req: MlxEngineMountRequest,
-) -> Result<EmptyResponse, agent_client_protocol::Error> {
+) -> Result<MlxEngineMountResponse, agent_client_protocol::Error> {
     super::mlx_distributed::refuse_single_mount_while_distributed().await?;
     let manager = synced_manager()?;
-    manager.mount(&req.model_id).await.invalid_params_err()?;
-    Ok(EmptyResponse {})
+    match manager.mount(&req.model_id).await {
+        Ok(()) => Ok(MlxEngineMountResponse { refusal: None }),
+        Err(e) => match e.downcast::<MountRefused>() {
+            Ok(refused) => Ok(MlxEngineMountResponse {
+                refusal: Some(mount_refusal(&refused).await),
+            }),
+            Err(e) => Err(e).invalid_params_err(),
+        },
+    }
+}
+
+async fn mount_refusal(refused: &MountRefused) -> MlxMountRefusalDto {
+    let alternative = super::mlx_placement::mount_alternative(
+        &refused.model_id,
+        refused.verdict.need.weights_bytes,
+    )
+    .await;
+    let (alternative, badge, alternative_error) = match alternative {
+        Ok((candidate, badge)) => {
+            let missing = candidate.is_none().then(|| {
+                "no other placement fits this model on the Macs goose can reach".to_string()
+            });
+            (candidate, badge, missing)
+        }
+        Err(e) => (None, None, Some(e)),
+    };
+    MlxMountRefusalDto {
+        fit: fit_to_dto(&refused.model_id, &refused.verdict),
+        alternative,
+        badge,
+        alternative_error,
+    }
 }
 
 async fn core_unmount(
@@ -670,7 +752,7 @@ impl GooseAcpAgent {
         if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
             return self.mlx_engine_relay(&node, MlxOp::Status, &req).await;
         }
-        let response = core_status().await?;
+        let response = core_status(req).await?;
         let entered_running = {
             let mut last = LAST_ENGINE_STATE.lock().unwrap();
             let entered = response.status.state == "running" && *last != "running";
@@ -695,7 +777,7 @@ impl GooseAcpAgent {
     pub(super) async fn on_mlx_engine_mount(
         &self,
         req: MlxEngineMountRequest,
-    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    ) -> Result<MlxEngineMountResponse, agent_client_protocol::Error> {
         if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
             return self.mlx_engine_relay(&node, MlxOp::Mount, &req).await;
         }
@@ -930,7 +1012,7 @@ impl MlxControl for GoosedMlxControl {
         request: serde_json::Value,
     ) -> Result<serde_json::Value, MlxControlError> {
         match op {
-            MlxOp::Status => mlx_response_to_value(core_status().await),
+            MlxOp::Status => mlx_response_to_value(core_status(mlx_req_from_value(request)?).await),
             MlxOp::Mount => mlx_response_to_value(core_mount(mlx_req_from_value(request)?).await),
             MlxOp::Unmount => {
                 mlx_response_to_value(core_unmount(mlx_req_from_value(request)?).await)

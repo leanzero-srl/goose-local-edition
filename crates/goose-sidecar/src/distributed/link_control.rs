@@ -281,6 +281,9 @@ pub struct RankSnapshot {
     pub group_joined: bool,
     pub caps: Option<serde_json::Value>,
     pub memory: Option<RankMemory>,
+    /// The rank printed `GOOSE_READY` (absent from peers before it: they report the tail only).
+    #[serde(default)]
+    pub ready: bool,
     pub exit: Option<RankExit>,
 }
 
@@ -688,6 +691,7 @@ fn mirror(live: &StdMutex<RankLive>, snapshot: &RankSnapshot) {
     live.lines = snapshot.lines;
     live.group_joined = snapshot.group_joined;
     live.caps = snapshot.caps.clone();
+    live.ready = snapshot.ready;
     if snapshot.memory.is_some() {
         live.memory = snapshot.memory;
     }

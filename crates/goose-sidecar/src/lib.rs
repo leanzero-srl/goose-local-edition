@@ -31,6 +31,7 @@
 #[cfg(unix)]
 pub mod distributed;
 pub mod engine;
+pub mod fit;
 pub mod hf;
 pub mod kv_cache;
 mod memory;
@@ -40,9 +41,8 @@ pub mod placement;
 mod subprocess;
 pub mod thinking;
 
-pub use memory::{
-    dir_size_bytes, disk_space, measure, GateResult, MemoryGate, MemoryReading, Verdict, GIB,
-};
+pub use fit::{FitVerdict, Verdict, GIB};
+pub use memory::{dir_size_bytes, disk_space, measure, MemoryReading};
 
 use std::collections::{BTreeSet, VecDeque};
 use std::process::Stdio;
@@ -50,7 +50,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -87,6 +87,39 @@ pub struct SidecarConfig {
     pub max_restarts_in_window: u32,
     pub backoff_initial: Duration,
     pub backoff_cap: Duration,
+    /// Where a start publishes what it has seen so far, for whoever reports the start.
+    pub startup_watch: Option<Arc<StartupWatch>>,
+}
+
+/// What a starting engine has shown so far: the resident bytes of the largest process in the
+/// child's tree (the engine itself — its `uv` launcher stays a few MiB) and the engine's last
+/// stderr lines. Measured 2026-09-24 on a warm 27B Q8 load (Rapid-MLX v0.14.3-lz.4): that
+/// process's RSS rose 0.18 → 31.5 GB over the ~5 s between "Loading MLLM" and "MLLM loaded", ending
+/// at 0.985 × the model's bytes on disk (0.994 once ready) — so resident ÷ on-disk IS the load's
+/// progress, and nothing else is.
+#[derive(Debug, Default)]
+pub struct StartupWatch {
+    seen: StdMutex<StartupSeen>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StartupSeen {
+    pub resident_bytes: Option<u64>,
+    pub stderr_tail: Vec<String>,
+}
+
+impl StartupWatch {
+    pub fn seen(&self) -> StartupSeen {
+        self.seen.lock().unwrap().clone()
+    }
+
+    fn publish(&self, mark: &ProgressMark, handle: &ChildHandle) {
+        let seen = StartupSeen {
+            resident_bytes: mark.tree.iter().map(|(_, _, memory)| *memory).max(),
+            stderr_tail: handle.stderr_tail.lock().unwrap().iter().cloned().collect(),
+        };
+        *self.seen.lock().unwrap() = seen;
+    }
 }
 
 impl SidecarConfig {
@@ -107,6 +140,7 @@ impl SidecarConfig {
             max_restarts_in_window: 3,
             backoff_initial: Duration::from_secs(1),
             backoff_cap: Duration::from_secs(30),
+            startup_watch: None,
         }
     }
 }
@@ -341,6 +375,9 @@ impl Sidecar {
                 );
             }
             let mark = progress_mark(&mut sys, &handle);
+            if let Some(watch) = &self.config.startup_watch {
+                watch.publish(&mark, &handle);
+            }
             let not_ready = match self.probe().await {
                 Ok(()) => {
                     state.handle = Some(handle);
@@ -788,19 +825,6 @@ fn stderr_tail_string(tail: &Arc<StdMutex<VecDeque<String>>>) -> String {
     tail.lock()
         .map(|t| t.iter().cloned().collect::<Vec<_>>().join("\n"))
         .unwrap_or_default()
-}
-
-/// Convenience: gate a model mount against live memory before asking the engine to load.
-pub fn gate_mount(model_bytes: u64, gate: &MemoryGate) -> Result<GateResult> {
-    let reading = measure()?;
-    Ok(gate.evaluate(model_bytes, reading.available_bytes, reading.total_bytes))
-}
-
-pub fn mount_block_error(result: &GateResult) -> Option<anyhow::Error> {
-    match result.verdict {
-        Verdict::Block => Some(anyhow!("memory gate BLOCK: {}", result.message)),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

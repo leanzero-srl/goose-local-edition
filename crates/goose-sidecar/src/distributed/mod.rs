@@ -54,19 +54,7 @@ pub use supervisor::{
     NodeStatus, RefusalCode, RunState, StartOutcome, StopReport,
 };
 
-// measured: the share of each node's RAM that stays available under a rank's full budget —
-// budget = min(available − RAM × this, the node's GPU ceiling (Metal's
-// max_recommended_working_set_size)) — is the highest kernel-WARN point measured plus the load
-// drift. 2026-09-24, goose's own compaction (memory_pressure to WARN) read the kernel's WARN point
-// at 9.3 GiB available on the M4 Max 128 GB (7.3% of RAM) and 3.3–4.0 GiB on the M3 Ultra 96 GB;
-// + DERIVED_CONTEXT_MARGIN_RATIO (0.02, the ranks' re-measure drift) = 0.093. The first loosening
-// (0.07 = watchdog WARN 0.05 + 0.02, from the M3 Ultra alone) sat BELOW the M4 Max's WARN point: a
-// live Flash split with rank 0 at 96% of that budget served under kernel WARN (7.1 GiB available)
-// and the watchdog closed admission — backed off to this. It replaced the fork's 21% floor and the
-// tensor runner's min(available × 0.90, RAM × 0.75) (44.9 / 52.6 GiB budgets on 128 / 96 GB:
-// "way too conservative"). The fork carries the same value (pipeline_qwen4.py, echoed in its plan
-// JSON); both runners and the placement planner share this one rule.
-pub const AVAILABLE_MARGIN_RATIO: f64 = 0.093;
+pub use crate::fit::{AVAILABLE_MARGIN_RATIO, DERIVED_CONTEXT_MARGIN_RATIO};
 // measured: TENSOR RUNNER ONLY — 27B tensor bench peak 19.9 GB (18.53 GiB) / 17.07 GiB planned at
 // 2,304 tokens = 1.086 (STEP1b); the planned slice is multiplied by this before it is compared
 // with a node's budget. The pipeline runner applies NO multiplier: the Flash soak's peaks were
@@ -80,13 +68,6 @@ pub const RUNTIME_OVERHEAD_RATIO: f64 = 1.10;
 // planned and KV-budgeted for this many full-context sequences, and one batch carries at most as
 // many rows.
 pub const PIPELINE_DEFAULT_SLOTS: u32 = 2;
-// measured: a DERIVED pipeline context is planned against every node's available memory minus
-// this share of its RAM. The derivation's own ceiling sits at 100% of budget, and the ranks
-// re-check against LIVE memory at load: on 2026-09-24 (Flash, 16 s after a passing preflight) the
-// rank-0 budget read 62.55 GiB against preflight's 63.30 (−0.75 GiB = 0.6% of 128 GiB RAM) and
-// rank 1's 48.74 against 49.21 (−0.47 GiB = 0.5% of 96), so both ranks refused at 101%. 2% of RAM
-// is 3.4x the larger drift; a REQUESTED context is planned as asked, without it.
-pub const DERIVED_CONTEXT_MARGIN_RATIO: f64 = 0.02;
 // ratio: the soak's hang rule (STEP1b REPORT: "no progress for 10x the running median of that
 // measure"); the worst healthy ratio observed across 326 requests was 2.73x.
 pub const HANG_MEDIAN_MULTIPLE: f64 = 10.0;

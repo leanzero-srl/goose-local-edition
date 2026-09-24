@@ -275,6 +275,8 @@ fn status_to_dto(
                 cache_limit_gb: n.cache_limit_bytes.map(gib),
                 kv_reserved_gb: n.kv_reserved_bytes.map(gib),
                 kv_budget_gb: n.kv_budget_bytes.map(gib),
+                load_phase: n.load_phase.map(|p| p.as_str().to_string()),
+                planned_weights_gb: n.planned_weight_bytes.map(gib),
                 link: MlxDistributedLinkDto {
                     backend: n.backend.as_str().to_string(),
                     tb_ip: n.tb_ip,
@@ -306,6 +308,7 @@ fn status_to_dto(
             .into_iter()
             .map(compaction_to_dto)
             .collect(),
+        making_room: status.making_room,
     }
 }
 
@@ -351,6 +354,11 @@ fn resolve_config(
         )));
     }
     Ok(config)
+}
+
+/// The rank this Mac serves for another Mac's engine, for the single engine's status too.
+pub(super) fn hosting_dto() -> Option<MlxDistributedHostedRankDto> {
+    link::hosting_dto()
 }
 
 /// The single engine's mount path calls this: while the distributed engine owns the Mac, a mount

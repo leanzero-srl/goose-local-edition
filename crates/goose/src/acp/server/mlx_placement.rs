@@ -10,10 +10,16 @@ use super::*;
 #[cfg(unix)]
 mod imp {
     use super::*;
+    use goose_sidecar::distributed::exec::ExecOutput;
+    use goose_sidecar::distributed::link_control::{
+        self, DiscoverRequest, ExecAnswer, LinkCallError, LinkOp,
+    };
     use goose_sidecar::distributed::plan::{self as dplan};
     use goose_sidecar::distributed::preflight::{loaded_files, run_fork_planner, NodeFigures};
     use goose_sidecar::distributed::probe::parse_gpu_ceiling;
-    use goose_sidecar::distributed::{DistributedConfig, NodeExec, Runner, SystemExec};
+    use goose_sidecar::distributed::{
+        DistributedConfig, NodeExec, Runner, SystemExec, PIPELINE_DEFAULT_SLOTS,
+    };
     use goose_sidecar::engine::{expand_tilde, global_manager, EngineSettings};
     use goose_sidecar::hf;
     use goose_sidecar::placement::bench::{self, Workload};
@@ -26,7 +32,8 @@ mod imp {
     use goose_sidecar::placement::store::{
         context_bucket, PlacementKey, PlacementKind, RecordSource, SpeedRecord,
     };
-    use goose_sidecar::MemoryGate;
+    use leanzero_link::state::MlxOp;
+    use leanzero_link::wire::NodeStatus;
     use serde::de::DeserializeOwned;
     use serde::Serialize;
     use std::collections::BTreeMap;
@@ -146,6 +153,7 @@ mod imp {
             memory,
             has_model: Ok(true),
             remote_single: Ok(()),
+            split_refusal: None,
         };
         Measured {
             dto: node_dto(&input),
@@ -194,6 +202,7 @@ mod imp {
                     "{name} is set up over ssh; a single engine on another Mac runs over LeanZero Link"
                 ))
             },
+            split_refusal: None,
         };
         Measured {
             dto: node_dto(&input),
@@ -202,20 +211,142 @@ mod imp {
         }
     }
 
-    /// This Mac and every configured peer, measured in parallel.
-    pub(super) async fn measure_nodes(config: Option<&DistributedConfig>) -> Vec<Measured> {
-        let peers: Vec<(String, String)> = config
-            .map(|c| {
+    /// A Link peer whose "Allow this Mac to serve as a distributed node" is off answers no
+    /// discovery probe — but its goose still answers `mlxEngine/status` over the mesh, which
+    /// carries its memory and GPU ceiling. The split stays planned (the model may need both Macs
+    /// whatever the switch says) and names the switch as the step before it can start.
+    async fn switched_off_peer(host: &str, node_id: &str, name: &str, why: &str) -> Measured {
+        let status: Result<MlxEngineStatusResponse, String> = async {
+            let manager = super::super::link::existing_link_manager()
+                .ok_or_else(|| "LeanZero Link is not running in this goose".to_string())?;
+            let body = serde_json::to_value(MlxEngineStatusRequest::default())
+                .map_err(|e| e.to_string())?;
+            let value = manager
+                .mlx_proxy(node_id, MlxOp::Status, body)
+                .await
+                .map_err(|e| format!("its engine status over LeanZero Link: {e}"))?;
+            serde_json::from_value(value).map_err(|e| format!("its engine status: {e}"))
+        }
+        .await;
+        let gib = |v: f64| (v * goose_sidecar::GIB as f64) as u64;
+        let memory = status.and_then(|s| {
+            let s = s.status;
+            if let Some(e) = s.memory_error {
+                return Err(e);
+            }
+            Ok(NodeMemory {
+                total_bytes: gib(s.total_memory_gb),
+                available_bytes: gib(s.available_memory_gb),
+                ceiling_bytes: s.gpu_ceiling_bytes.ok_or_else(|| {
+                    s.gpu_ceiling_error.unwrap_or_else(|| {
+                        format!(
+                            "{name}'s goose does not report its GPU ceiling — update goose there"
+                        )
+                    })
+                }),
+            })
+        });
+        let unprobed = format!("not probed — {why}");
+        let input = NodeInput {
+            id: host.to_string(),
+            name: name.to_string(),
+            chip: Err(format!("{name}'s chip was {unprobed}")),
+            memory,
+            has_model: Err("not checked yet".to_string()),
+            remote_single: Ok(()),
+            split_refusal: Some(format!(
+                "allow this Mac to serve as a distributed node on {name} (LeanZero Link → \
+                 \"Allow this Mac to serve as a distributed node\" is off there)"
+            )),
+        };
+        Measured {
+            dto: node_dto(&input),
+            input,
+            models: Some(Err(format!("{name}'s models folder was {unprobed}"))),
+        }
+    }
+
+    /// A Link peer, probed by its own goose (`LinkOp::Discover`); a switched-off peer is read
+    /// through its engine status instead.
+    async fn link_peer_measured(
+        host: &str,
+        node_id: &str,
+        name: &str,
+        roots: &[String],
+    ) -> Measured {
+        let answer: Result<ExecAnswer, LinkCallError> = link_control::call_typed(
+            node_id,
+            LinkOp::Discover,
+            &DiscoverRequest {
+                extra_roots: roots.to_vec(),
+            },
+        )
+        .await;
+        match answer {
+            Ok(answer) => {
+                let out: ExecOutput = answer.into();
+                let probe = discover::parse_node(&out.stdout);
+                let name = match &probe {
+                    Ok(p) if !p.computer_name.is_empty() => p.computer_name.clone(),
+                    _ => name.to_string(),
+                };
+                peer_measured(host, &name, probe)
+            }
+            Err(LinkCallError::Disabled(why)) => switched_off_peer(host, node_id, name, &why).await,
+            Err(e) => peer_measured(
+                host,
+                name,
+                Err(format!("discovery over LeanZero Link: {e}")),
+            ),
+        }
+    }
+
+    /// With no distributed setup on this Mac, the Macs it reaches over LeanZero Link are the ones
+    /// a split would use — the badge must say "needs both Macs" from either side. `Err` = why
+    /// there are none to ask.
+    async fn link_peers() -> Result<Vec<(String, String)>, String> {
+        link::ensure_link_transport();
+        let manager = super::super::link::existing_link_manager()
+            .ok_or_else(|| "LeanZero Link has not started in this goose".to_string())?;
+        let registry = manager
+            .active_registry()
+            .await
+            .ok_or_else(|| "this Mac is not connected to LeanZero Link".to_string())?;
+        let self_id = super::super::link::stable_node_id();
+        Ok(registry
+            .peer_nodes()
+            .into_iter()
+            .filter(|p| p.node_id != self_id && p.status != NodeStatus::Offline)
+            .map(|p| (link_control::link_host(&p.node_id), p.hostname))
+            .collect())
+    }
+
+    /// This Mac and every configured peer — or, with no distributed setup here, every Mac on
+    /// LeanZero Link — measured in parallel. The second value says why no peer could be asked.
+    pub(super) async fn measure_nodes(
+        config: Option<&DistributedConfig>,
+    ) -> (Vec<Measured>, Option<String>) {
+        let (peers, peer_gap): (Vec<(String, String)>, Option<String>) = match config {
+            Some(c) => (
                 c.nodes
                     .iter()
                     .filter_map(|n| n.ssh.clone().map(|h| (h, n.name.clone())))
-                    .collect()
-            })
-            .unwrap_or_default();
+                    .collect(),
+                None,
+            ),
+            None => match link_peers().await {
+                Ok(peers) => (peers, None),
+                Err(why) => (Vec::new(), Some(why)),
+            },
+        };
         if peers.iter().any(|(h, _)| h.starts_with("link:")) {
             link::ensure_link_transport();
         }
-        let hosts: Vec<Option<String>> = peers.iter().map(|(h, _)| Some(h.clone())).collect();
+        let ssh_peers: Vec<&(String, String)> = peers
+            .iter()
+            .filter(|(h, _)| link_control::link_peer(Some(h)).is_none())
+            .collect();
+        let hosts: Vec<Option<String>> = ssh_peers.iter().map(|(h, _)| Some(h.clone())).collect();
         let mut roots: BTreeMap<Option<String>, Vec<String>> = BTreeMap::new();
         for node in config.iter().flat_map(|c| c.nodes.iter()) {
             if let Some(parent) = Path::new(&node.model_dir).parent() {
@@ -226,18 +357,31 @@ mod imp {
             }
         }
         let exec: Arc<dyn NodeExec> = Arc::new(SystemExec);
-        let (local, probes) = tokio::join!(
+        let link_measures = futures::future::join_all(peers.iter().filter_map(|(host, name)| {
+            let node_id = link_control::link_peer(Some(host))?;
+            let roots = roots.get(&Some(host.clone())).cloned().unwrap_or_default();
+            Some(async move { link_peer_measured(host, node_id, name, &roots).await })
+        }));
+        let (local, probes, linked) = tokio::join!(
             measure_local(config),
-            discover::probe_nodes(exec, &hosts, &roots)
+            discover::probe_nodes(exec, &hosts, &roots),
+            link_measures
         );
-        std::iter::once(local)
-            .chain(
-                peers
-                    .iter()
-                    .zip(probes)
-                    .map(|((host, name), probe)| peer_measured(host, name, probe)),
-            )
-            .collect()
+        let mut by_ssh = ssh_peers
+            .iter()
+            .zip(probes)
+            .map(|((host, name), probe)| peer_measured(host, name, probe));
+        let mut by_link = linked.into_iter();
+        let measured = std::iter::once(local)
+            .chain(peers.iter().filter_map(|(host, _)| {
+                if link_control::link_peer(Some(host)).is_some() {
+                    by_link.next()
+                } else {
+                    by_ssh.next()
+                }
+            }))
+            .collect();
+        (measured, peer_gap)
     }
 
     fn local_loaded_files(dir: &Path) -> Result<BTreeMap<String, u64>, String> {
@@ -455,8 +599,13 @@ mod imp {
         let settings = load_engine_settings()?;
         let models_dir = expand_tilde(&settings.models_dir);
         let config = persisted_config()?;
-        let (mut measured, serving) =
+        let ((mut measured, peer_gap), mut serving) =
             tokio::join!(measure_nodes(config.as_ref()), serving(&settings));
+        if let Some(why) = peer_gap {
+            serving
+                .notes
+                .push(format!("no other Mac could be asked: {why}"));
+        }
         if let Some((_, bytes)) = &serving.single_footprint {
             if let Some(local) = measured.iter_mut().find(|m| m.input.id == LOCAL) {
                 if let Ok(memory) = local.input.memory.as_mut() {
@@ -478,30 +627,17 @@ mod imp {
         })
     }
 
-    async fn plan_model(
+    /// The planner's own answer for one model; `Err` = its files could not be read.
+    async fn plan_raw(
         ctx: &Context,
         model_id: &str,
         bytes_on_disk: u64,
-        goal_dto: MlxPlacementGoalDto,
+        goal: Goal,
         context: Option<u64>,
         calibration: &Calibration,
-    ) -> Result<MlxPlacementPlanDto, agent_client_protocol::Error> {
-        let goal = goal_of(goal_dto);
+    ) -> Result<planner::Plan, String> {
         let dir = ctx.models_dir.join(model_id);
-        let failed = |error: String| MlxPlacementPlanDto {
-            model_id: model_id.to_string(),
-            goal: goal_dto,
-            candidates: Vec::new(),
-            best: None,
-            best_available: None,
-            badge: None,
-            notes: Vec::new(),
-            error: Some(error),
-        };
-        let facts: ModelFacts = match read_model_facts(&dir) {
-            Ok(f) => f,
-            Err(e) => return Ok(failed(format!("{e:#}"))),
-        };
+        let facts: ModelFacts = read_model_facts(&dir).map_err(|e| format!("{e:#}"))?;
         let local_files = local_loaded_files(&dir);
         let mut nodes: Vec<NodeInput> = Vec::new();
         let mut peer_dirs = Vec::new();
@@ -522,12 +658,20 @@ mod imp {
             }
             _ => None,
         };
-        let cluster = ctx.config.as_ref().map(|c| ClusterInput {
-            link: backend_name(c.backend).to_string(),
-            slots: c.slots(),
-            config_model_id: c.model_id.clone(),
-        });
-        let plan = planner::plan(&PlanInput {
+        let cluster = match &ctx.config {
+            Some(c) => Some(ClusterInput {
+                link: Some(backend_name(c.backend).to_string()),
+                slots: c.slots(),
+                config_model_id: Some(c.model_id.clone()),
+            }),
+            None if nodes.len() >= 2 => Some(ClusterInput {
+                link: None,
+                slots: PIPELINE_DEFAULT_SLOTS,
+                config_model_id: None,
+            }),
+            None => None,
+        };
+        Ok(planner::plan(&PlanInput {
             model_id,
             model: &facts,
             bytes_on_disk,
@@ -544,14 +688,47 @@ mod imp {
             context,
             records: &ctx.records,
             calibration,
-            gate: &MemoryGate::default(),
             running: ctx
                 .serving
                 .running
                 .iter()
                 .find(|(model, _, _)| model == model_id)
                 .map(|(_, id, context)| (id.clone(), *context)),
-        });
+        }))
+    }
+
+    async fn plan_model(
+        ctx: &Context,
+        model_id: &str,
+        bytes_on_disk: u64,
+        goal_dto: MlxPlacementGoalDto,
+        context: Option<u64>,
+        calibration: &Calibration,
+    ) -> Result<MlxPlacementPlanDto, agent_client_protocol::Error> {
+        let plan = match plan_raw(
+            ctx,
+            model_id,
+            bytes_on_disk,
+            goal_of(goal_dto),
+            context,
+            calibration,
+        )
+        .await
+        {
+            Ok(plan) => plan,
+            Err(error) => {
+                return Ok(MlxPlacementPlanDto {
+                    model_id: model_id.to_string(),
+                    goal: goal_dto,
+                    candidates: Vec::new(),
+                    best: None,
+                    best_available: None,
+                    badge: None,
+                    notes: Vec::new(),
+                    error: Some(error),
+                })
+            }
+        };
         let mut dto: MlxPlacementPlanDto = mirror(&plan)?;
         if let Some((mounted, bytes)) = &ctx.serving.single_footprint {
             if mounted != model_id {
@@ -564,6 +741,39 @@ mod imp {
         }
         dto.notes.extend(ctx.serving.notes.iter().cloned());
         Ok(dto)
+    }
+
+    /// What the single engine's mount refusal offers instead: the planner's placement for this
+    /// model that is not this Mac alone (`planner::alternative_to_this_mac`), and the model's badge.
+    pub(in crate::acp::server) async fn mount_alternative(
+        model_id: &str,
+        bytes_on_disk: u64,
+    ) -> Result<
+        (
+            Option<MlxPlacementCandidateDto>,
+            Option<MlxPlacementBadgeDto>,
+        ),
+        String,
+    > {
+        let ctx = context()
+            .await
+            .map_err(|e| format!("measuring the Macs for a placement: {}", e.message))?;
+        let calibration = Calibration::fit(&BTreeMap::new());
+        let plan = plan_raw(
+            &ctx,
+            model_id,
+            bytes_on_disk,
+            Goal::Chat,
+            None,
+            &calibration,
+        )
+        .await?;
+        let candidate = planner::alternative_to_this_mac(&plan.candidates)
+            .map(mirror)
+            .transpose()
+            .map_err(|e| e.message.to_string())?;
+        let badge = mirror(&plan.badge).map_err(|e| e.message.to_string())?;
+        Ok((candidate, Some(badge)))
     }
 
     pub(super) async fn placement_plan(
@@ -678,7 +888,7 @@ mod imp {
                     route.model_id, route.peer
                 )));
             }
-            let measured = measure_nodes(config.as_ref()).await;
+            let (measured, _) = measure_nodes(config.as_ref()).await;
             let node = measured.iter().find(|m| m.input.id == host);
             return Ok(Target {
                 base_url: route.base_url,
@@ -737,7 +947,7 @@ mod imp {
                 key.id()
             )));
         }
-        let measured = measure_nodes(Some(&config_run)).await;
+        let (measured, _) = measure_nodes(Some(&config_run)).await;
         Ok(Target {
             base_url: status
                 .base_url
@@ -845,6 +1055,23 @@ impl GooseAcpAgent {
     }
 }
 
+#[cfg(unix)]
+pub(super) use imp::mount_alternative;
+
+#[cfg(not(unix))]
+pub(super) async fn mount_alternative(
+    _model_id: &str,
+    _bytes_on_disk: u64,
+) -> Result<
+    (
+        Option<MlxPlacementCandidateDto>,
+        Option<MlxPlacementBadgeDto>,
+    ),
+    String,
+> {
+    Err("the MLX placement planner requires macOS".to_string())
+}
+
 #[cfg(not(unix))]
 impl GooseAcpAgent {
     fn placement_unsupported<T>() -> Result<T, agent_client_protocol::Error> {
@@ -938,7 +1165,10 @@ mod tests {
         for badge in [
             Badge::FitsThisMac,
             Badge::FitsPeer { name: "n".into() },
-            Badge::NeedsBothMacs,
+            Badge::NeedsBothMacs { needs: None },
+            Badge::NeedsBothMacs {
+                needs: Some("allow it".into()),
+            },
             Badge::TooBig { short_bytes: 5 },
             Badge::Unknown { reason: "r".into() },
         ] {
@@ -947,6 +1177,11 @@ mod tests {
         assert_eq!(
             serde_json::to_value(Badge::TooBig { short_bytes: 5 }).unwrap(),
             serde_json::json!({"kind": "tooBig", "shortBytes": 5})
+        );
+        // A 3.0.25 desktop reads `{"kind": "needsBothMacs"}` — unchanged while nothing is needed.
+        assert_eq!(
+            serde_json::to_value(Badge::NeedsBothMacs { needs: None }).unwrap(),
+            serde_json::json!({"kind": "needsBothMacs"})
         );
         let record = SpeedRecord {
             model_id: "m".into(),

@@ -190,6 +190,7 @@ import type {
   MlxEngineModelsListRequest_unstable,
   MlxEngineModelsListResponse_unstable,
   MlxEngineMountRequest_unstable,
+  MlxEngineMountResponse_unstable,
   MlxEnginePlacementPlanRequest_unstable,
   MlxEnginePlacementPlanResponse_unstable,
   MlxEngineRemoteSingleStartRequest_unstable,
@@ -362,6 +363,7 @@ import {
   zMlxEngineMeasureSpeedResponse_unstable,
   zMlxEngineModelCardResponse_unstable,
   zMlxEngineModelsListResponse_unstable,
+  zMlxEngineMountResponse_unstable,
   zMlxEnginePlacementPlanResponse_unstable,
   zMlxEngineRemoteSingleStartResponse_unstable,
   zMlxEngineRemoteSingleStatusResponse_unstable,
@@ -1599,8 +1601,14 @@ export class GooseExtClient {
 
   async mlxEngineMount_unstable(
     params: MlxEngineMountRequest_unstable,
-  ): Promise<void> {
-    await this.conn.extMethod("_goose/unstable/mlxEngine/mount", params);
+  ): Promise<MlxEngineMountResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/mount",
+      params,
+    );
+    return zMlxEngineMountResponse_unstable.parse(
+      raw,
+    ) as MlxEngineMountResponse_unstable;
   }
 
   async mlxEngineUnmount_unstable(

@@ -2567,6 +2567,11 @@ export type MlxEngineStatusRequest_unstable = {
      * `not connected to the mesh` error — never a local fallback.
      */
     nodeId?: string | null;
+    /**
+     * A model in the models folder: the status carries `mountFit`, the fit rule's verdict for it
+     * on that node right now.
+     */
+    fitModelId?: string | null;
 };
 
 export type MlxEngineStatusResponse_unstable = {
@@ -2631,17 +2636,155 @@ export type MlxEngineStatusDto = {
      */
     memoryError?: string | null;
     /**
+     * Metal's recommended working-set ceiling on this Mac — the fit rule's other bound. Absent
+     * exactly when `gpuCeilingError` says why (and from a goose before it).
+     */
+    gpuCeilingBytes?: number | null;
+    gpuCeilingError?: string | null;
+    /**
      * True when the persisted settings would spawn the running engine differently
      * (model, port, sampling): the engine keeps running with its old arguments until
      * the user remounts.
      */
     restartRequired: boolean;
     lastError?: string | null;
+    /**
+     * The one fit rule's verdict for the request's `fitModelId` on this Mac right now — what a
+     * Mount would be judged on. Absent when no `fitModelId` was asked, or exactly when
+     * `mountFitError` says why it could not be judged.
+     */
+    mountFit?: MlxMountFitDto | null;
+    mountFitError?: string | null;
+    /**
+     * While `state` is "mounting": how far the mount has come, measured. Absent otherwise.
+     */
+    load?: MlxEngineLoadDto | null;
+    /**
+     * Set while THIS Mac serves a rank of another Mac's distributed engine over LeanZero Link
+     * (the same record as `distributedStatus.hosting`): the single engine is refused meanwhile,
+     * and this is what the Mac is doing instead.
+     */
+    hosting?: MlxDistributedHostedRankDto | null;
 };
 
 /**
- * Mount a local model into the MLX engine. Returns once mounting has started;
- * poll status for running/failed.
+ * The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
+ * RAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is "warn" when what is left
+ * is inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes.
+ */
+export type MlxMountFitDto = {
+    modelId: string;
+    /**
+     * "allow" | "warn" | "block".
+     */
+    verdict: string;
+    /**
+     * `weightsBytes + kvBytes`.
+     */
+    needBytes: number;
+    /**
+     * The model directory's bytes on disk.
+     */
+    weightsBytes: number;
+    /**
+     * KV for `contextTokens` (the smallest useful context); 0 when `kvError` says it could not be
+     * sized (then only the weights are charged).
+     */
+    kvBytes: number;
+    contextTokens: number;
+    kvError?: string | null;
+    budgetBytes: number;
+    /**
+     * Available now (plus a mounted model's footprint, which a mount gets back).
+     */
+    availableBytes: number;
+    totalBytes: number;
+    /**
+     * Metal's recommended working-set ceiling on this Mac.
+     */
+    ceilingBytes: number;
+    /**
+     * `totalBytes × marginRatio`.
+     */
+    marginBytes: number;
+    marginRatio: number;
+    /**
+     * Block only: `needBytes − budgetBytes`.
+     */
+    shortBytes?: number | null;
+    /**
+     * Allow/warn only: `budgetBytes − needBytes`.
+     */
+    spareBytes?: number | null;
+    /**
+     * The rule's arithmetic in words (a refusal's text, verbatim — the same as `gateMessage`).
+     */
+    message: string;
+};
+
+/**
+ * A mount in flight. `phase`: "makingRoom" (macOS reclaims memory before the gate judges again)
+ * | "starting" (the process runs; the engine has not said it is loading) | "loading" | "warming"
+ * (weights in, compiling kernels). `residentBytes ÷ weightsBytes` is the load's progress
+ * (measured: a finished load holds 0.985–0.994× the bytes on disk); `residentBytes` is absent
+ * until the engine process exists — then the desktop shows the phase without a bar.
+ */
+export type MlxEngineLoadDto = {
+    phase: string;
+    residentBytes?: number | null;
+    weightsBytes: number;
+};
+
+/**
+ * The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link.
+ */
+export type MlxDistributedHostedRankDto = {
+    rank: number;
+    size: number;
+    /**
+     * The requesting Mac's ComputerName, node id and hostname.
+     */
+    requesterName: string;
+    requesterNodeId: string;
+    requesterHostname: string;
+    modelId: string;
+    servedModelId: string;
+    /**
+     * "jaccl" | "ring".
+     */
+    backend: string;
+    /**
+     * "mlxLmTensor" | "pipelineQwen4".
+     */
+    runner: string;
+    pid?: number | null;
+    /**
+     * "loading" (weights arriving, or warming up) | "serving" (the rank reported ready).
+     */
+    state: string;
+    /**
+     * "loading" | "warming" | "ready". Absent from a goose before it.
+     */
+    phase?: string | null;
+    /**
+     * MLX's active bytes on this rank; with `plannedWeightBytes` it is the load's progress.
+     * Absent before the rank's first report.
+     */
+    loadedBytes?: number | null;
+    /**
+     * The weights the requester's preflight planned on this rank; absent from a requester
+     * whose goose predates it.
+     */
+    plannedWeightBytes?: number | null;
+    startedMs: number;
+    lastPollMs: number;
+};
+
+/**
+ * Mount a local model into the MLX engine. Returns once mounting has started; poll status for
+ * running/failed. A memory-gate refusal is NOT an error: it is `refusal` (and status's
+ * `gateVerdict: "block"` / `gateMessage` carry the same verdict) — one failure, one carrier of
+ * its text. Every other failure (unknown or incomplete model, a foreign listener) is an error.
  */
 export type MlxEngineMountRequest_unstable = {
     modelId: string;
@@ -2650,6 +2793,199 @@ export type MlxEngineMountRequest_unstable = {
      * forwards over the mesh.
      */
     nodeId?: string | null;
+};
+
+export type MlxEngineMountResponse_unstable = {
+    /**
+     * Set when the mount gate refused; absent = mounting started.
+     */
+    refusal?: MlxMountRefusalDto | null;
+};
+
+/**
+ * The mount gate's refusal: the fit rule's verdict and, when the model fits somewhere else, the
+ * placement that would work (the planner's own candidate — `action` says how to start it:
+ * `startSplit` → "Start across both Macs", `remoteSingle`, or `unavailable` with the step first).
+ */
+export type MlxMountRefusalDto = {
+    fit: MlxMountFitDto;
+    alternative?: MlxPlacementCandidateDto | null;
+    /**
+     * The model's badge from the same plan ("needsBothMacs", "tooBig" …).
+     */
+    badge?: MlxPlacementBadgeDto | null;
+    /**
+     * Why no alternative could be planned (the planner failed, or nothing fits anywhere).
+     */
+    alternativeError?: string | null;
+};
+
+export type MlxPlacementCandidateDto = {
+    /**
+     * `single:local`, `tensor:jaccl:local+link:<id>` — what `measureSpeed` takes.
+     */
+    id: string;
+    key: MlxPlacementKeyDto;
+    nodeNames: Array<string>;
+    /**
+     * Per node; `null` = the node did not report its chip.
+     */
+    chips: Array<MlxChipDto | null>;
+    /**
+     * "rapid-mlx" | "mlx_lm" | "pipeline_qwen4".
+     */
+    backend: string;
+    /**
+     * `false` = goose cannot run this placement for this architecture yet (listed, never offered).
+     */
+    supported: boolean;
+    fit: MlxPlacementFitDto;
+    speed: MlxPlacementSpeedDto;
+    action: MlxPlacementActionDto;
+    outcome: MlxPlacementOutcomeDto;
+};
+
+/**
+ * A placement's identity: kind, node ids in rank order (`local` = this Mac, a peer by its
+ * configured host), the link of a split.
+ */
+export type MlxPlacementKeyDto = {
+    kind: MlxPlacementKindDto;
+    nodes: Array<string>;
+    link?: string | null;
+};
+
+export type MlxPlacementKindDto = 'single' | 'tensor' | 'pipeline';
+
+/**
+ * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
+ */
+export type MlxChipDto = {
+    hwModel: string;
+    brand: string;
+    gpuCores?: number | null;
+};
+
+export type MlxPlacementFitDto = {
+    status: MlxFitStatusDto;
+    context?: number | null;
+    shortBytes?: number | null;
+    shortNode?: string | null;
+    nodes?: Array<MlxNodeFitDto>;
+    /**
+     * The arithmetic in words (English), a refusal's message verbatim.
+     */
+    detail: string;
+};
+
+export type MlxFitStatusDto = 'fits' | 'short' | 'unknown' | 'smallerContext';
+
+export type MlxNodeFitDto = {
+    name: string;
+    needBytes: number;
+    budgetBytes: number;
+};
+
+export type MlxPlacementSpeedDto = {
+    /**
+     * Writing speed of one conversation (tok/s) at a ~2k-token prompt.
+     */
+    decode?: MlxSpeedFigureDto | null;
+    /**
+     * Prompt reading speed (tok/s) at the goal's prompt size.
+     */
+    prefill?: MlxSpeedFigureDto | null;
+    /**
+     * Total tok/s across `concurrency` requests (derived from decode × a measured gain).
+     */
+    throughput?: MlxSpeedFigureDto | null;
+    concurrency?: number | null;
+    /**
+     * What the figures rest on, one line each (English diagnostics).
+     */
+    basis?: Array<string>;
+};
+
+/**
+ * `measured` = goose timed this placement (median of `runs`, range = their extremes); else the
+ * calibrated formula's estimate.
+ */
+export type MlxSpeedFigureDto = {
+    estimate: MlxEstimateDto;
+    measured: boolean;
+    runs: number;
+    lastMeasuredMs?: number | null;
+};
+
+/**
+ * A figure and its range (tok/s).
+ */
+export type MlxEstimateDto = {
+    value: number;
+    low: number;
+    high: number;
+};
+
+/**
+ * What [Use this] does. Internally tagged on `kind`.
+ */
+export type MlxPlacementActionDto = {
+    kind: 'mountHere';
+} | {
+    setupMatches: boolean;
+    kind: 'startSplit';
+} | {
+    kind: 'remoteSingle';
+} | {
+    reason: string;
+    kind: 'unavailable';
+};
+
+/**
+ * Why a candidate won or lost. Internally tagged on `code`; `mine`/`best` are the goal's tok/s.
+ */
+export type MlxPlacementOutcomeDto = {
+    code: 'best';
+} | {
+    code: 'bestAvailableNow';
+} | {
+    reason: string;
+    code: 'notSupported';
+} | {
+    code: 'doesNotFit';
+} | {
+    reason: string;
+    code: 'fitUnknown';
+} | {
+    reason: string;
+    code: 'noFigure';
+} | {
+    mine: number;
+    best: number;
+    code: 'slower';
+} | {
+    mine: number;
+    best: number;
+    code: 'tiedNeedsMoreMacs';
+};
+
+/**
+ * The model-picker badge. Internally tagged on `kind`.
+ */
+export type MlxPlacementBadgeDto = {
+    kind: 'fitsThisMac';
+} | {
+    name: string;
+    kind: 'fitsPeer';
+} | {
+    needs?: string | null;
+    kind: 'needsBothMacs';
+} | {
+    shortBytes: number;
+    kind: 'tooBig';
+} | {
+    reason: string;
+    kind: 'unknown';
 };
 
 /**
@@ -3276,6 +3612,11 @@ export type MlxDistributedStatusDto = {
      * The latest memory compaction per node (automatic or Make room), newest last.
      */
     compactions?: Array<MlxDistributedCompactionDto>;
+    /**
+     * The Macs macOS is reclaiming memory on right now (the start's "making room" step, before
+     * preflight judges them again); empty otherwise.
+     */
+    makingRoom?: Array<string>;
 };
 
 /**
@@ -3349,6 +3690,14 @@ export type MlxDistributedNodeStatusDto = {
      */
     kvReservedGb?: number | null;
     kvBudgetGb?: number | null;
+    /**
+     * While `state` is "loading": "loading" | "warming" | "ready" — the rank's own reports.
+     * `activeMemoryGb ÷ plannedWeightsGb` is the load (MLX's active bytes on the rank against
+     * the weights preflight planned on it). Layers loaded is not measurable (the fork loads a
+     * stage's layers in one `mx.eval`), so no such figure exists.
+     */
+    loadPhase?: string | null;
+    plannedWeightsGb?: number | null;
     link: MlxDistributedLinkDto;
 };
 
@@ -3657,37 +4006,6 @@ export type MlxDistributedOwnerDto = {
      * Why the engine is not answering, or why the record could not be read.
      */
     detail?: string | null;
-};
-
-/**
- * The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link.
- */
-export type MlxDistributedHostedRankDto = {
-    rank: number;
-    size: number;
-    /**
-     * The requesting Mac's ComputerName, node id and hostname.
-     */
-    requesterName: string;
-    requesterNodeId: string;
-    requesterHostname: string;
-    modelId: string;
-    servedModelId: string;
-    /**
-     * "jaccl" | "ring".
-     */
-    backend: string;
-    /**
-     * "mlxLmTensor" | "pipelineQwen4".
-     */
-    runner: string;
-    pid?: number | null;
-    /**
-     * "loading" | "serving".
-     */
-    state: string;
-    startedMs: number;
-    lastPollMs: number;
 };
 
 /**
@@ -4398,173 +4716,6 @@ export type MlxPlacementPlanDto = {
     error?: string | null;
 };
 
-export type MlxPlacementCandidateDto = {
-    /**
-     * `single:local`, `tensor:jaccl:local+link:<id>` — what `measureSpeed` takes.
-     */
-    id: string;
-    key: MlxPlacementKeyDto;
-    nodeNames: Array<string>;
-    /**
-     * Per node; `null` = the node did not report its chip.
-     */
-    chips: Array<MlxChipDto | null>;
-    /**
-     * "rapid-mlx" | "mlx_lm" | "pipeline_qwen4".
-     */
-    backend: string;
-    /**
-     * `false` = goose cannot run this placement for this architecture yet (listed, never offered).
-     */
-    supported: boolean;
-    fit: MlxPlacementFitDto;
-    speed: MlxPlacementSpeedDto;
-    action: MlxPlacementActionDto;
-    outcome: MlxPlacementOutcomeDto;
-};
-
-/**
- * A placement's identity: kind, node ids in rank order (`local` = this Mac, a peer by its
- * configured host), the link of a split.
- */
-export type MlxPlacementKeyDto = {
-    kind: MlxPlacementKindDto;
-    nodes: Array<string>;
-    link?: string | null;
-};
-
-export type MlxPlacementKindDto = 'single' | 'tensor' | 'pipeline';
-
-/**
- * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
- */
-export type MlxChipDto = {
-    hwModel: string;
-    brand: string;
-    gpuCores?: number | null;
-};
-
-export type MlxPlacementFitDto = {
-    status: MlxFitStatusDto;
-    context?: number | null;
-    shortBytes?: number | null;
-    shortNode?: string | null;
-    nodes?: Array<MlxNodeFitDto>;
-    /**
-     * The arithmetic in words (English), a refusal's message verbatim.
-     */
-    detail: string;
-};
-
-export type MlxFitStatusDto = 'fits' | 'short' | 'unknown' | 'smallerContext';
-
-export type MlxNodeFitDto = {
-    name: string;
-    needBytes: number;
-    budgetBytes: number;
-};
-
-export type MlxPlacementSpeedDto = {
-    /**
-     * Writing speed of one conversation (tok/s) at a ~2k-token prompt.
-     */
-    decode?: MlxSpeedFigureDto | null;
-    /**
-     * Prompt reading speed (tok/s) at the goal's prompt size.
-     */
-    prefill?: MlxSpeedFigureDto | null;
-    /**
-     * Total tok/s across `concurrency` requests (derived from decode × a measured gain).
-     */
-    throughput?: MlxSpeedFigureDto | null;
-    concurrency?: number | null;
-    /**
-     * What the figures rest on, one line each (English diagnostics).
-     */
-    basis?: Array<string>;
-};
-
-/**
- * `measured` = goose timed this placement (median of `runs`, range = their extremes); else the
- * calibrated formula's estimate.
- */
-export type MlxSpeedFigureDto = {
-    estimate: MlxEstimateDto;
-    measured: boolean;
-    runs: number;
-    lastMeasuredMs?: number | null;
-};
-
-/**
- * A figure and its range (tok/s).
- */
-export type MlxEstimateDto = {
-    value: number;
-    low: number;
-    high: number;
-};
-
-/**
- * What [Use this] does. Internally tagged on `kind`.
- */
-export type MlxPlacementActionDto = {
-    kind: 'mountHere';
-} | {
-    setupMatches: boolean;
-    kind: 'startSplit';
-} | {
-    kind: 'remoteSingle';
-} | {
-    reason: string;
-    kind: 'unavailable';
-};
-
-/**
- * Why a candidate won or lost. Internally tagged on `code`; `mine`/`best` are the goal's tok/s.
- */
-export type MlxPlacementOutcomeDto = {
-    code: 'best';
-} | {
-    code: 'bestAvailableNow';
-} | {
-    reason: string;
-    code: 'notSupported';
-} | {
-    code: 'doesNotFit';
-} | {
-    reason: string;
-    code: 'fitUnknown';
-} | {
-    reason: string;
-    code: 'noFigure';
-} | {
-    mine: number;
-    best: number;
-    code: 'slower';
-} | {
-    mine: number;
-    best: number;
-    code: 'tiedNeedsMoreMacs';
-};
-
-/**
- * The model-picker badge. Internally tagged on `kind`.
- */
-export type MlxPlacementBadgeDto = {
-    kind: 'fitsThisMac';
-} | {
-    name: string;
-    kind: 'fitsPeer';
-} | {
-    kind: 'needsBothMacs';
-} | {
-    shortBytes: number;
-    kind: 'tooBig';
-} | {
-    reason: string;
-    kind: 'unknown';
-};
-
 /**
  * One Mac as the planner measured it. Every figure it could not read is absent with its `*Error`.
  */
@@ -5151,7 +5302,7 @@ export type ExtRequest = {
 
 export type ExtResponse = {
     id: string;
-    result?: EmptyResponse | GetToolsResponse_unstable | SetToolPermissionsResponse_unstable | GooseToolCallResponse_unstable | ReadResourceResponse_unstable | AppsListResponse_unstable | AppsExportResponse_unstable | AppsImportResponse_unstable | SteerSessionResponse_unstable | DiagnosticsGetResponse_unstable | ListPromptsResponse_unstable | GetPromptResponse_unstable | PromptOperationResponse_unstable | InspectConfigExtensionResponse_unstable | GetConfigExtensionsResponse_unstable | GetAvailableExtensionsResponse_unstable | GetSessionExtensionsResponse_unstable | ListProvidersResponse_unstable | ProviderSupportedModelsListResponse_unstable | ProviderCatalogListResponse_unstable | ProviderSetupCatalogListResponse_unstable | ProviderCatalogTemplateResponse_unstable | CustomProviderCreateResponse_unstable | CustomProviderReadResponse_unstable | CustomProviderUpdateResponse_unstable | CustomProviderDeleteResponse_unstable | RefreshProviderInventoryResponse_unstable | ProviderConfigReadResponse_unstable | ProviderConfigStatusResponse_unstable | ProviderConfigChangeResponse_unstable | ProviderSecretsListResponse_unstable | CanonicalModelInfoResponse_unstable | PreferencesReadResponse_unstable | ConfigReadResponse_unstable | ConfigReadAllResponse_unstable | DefaultsReadResponse_unstable | OnboardingImportScanResponse_unstable | OnboardingImportApplyResponse_unstable | ExportSessionResponse_unstable | ImportSessionResponse_unstable | ShareSessionNostrResponse_unstable | EncodeRecipeResponse_unstable | DecodeRecipeResponse_unstable | ScanRecipeResponse_unstable | ListRecipesResponse_unstable | SaveRecipeResponse_unstable | CreateRecipeResponse_unstable | ParseRecipeResponse_unstable | RecipeToYamlResponse_unstable | ListSchedulesResponse_unstable | ListScheduleSessionsResponse_unstable | CreateScheduleResponse_unstable | UpdateScheduleResponse_unstable | RunScheduleNowResponse_unstable | KillRunningJobResponse_unstable | InspectRunningJobResponse_unstable | GetSessionInfoResponse_unstable | CreateSourceResponse_unstable | ListSourcesResponse_unstable | ListAgentMentionsResponse_unstable | ListSlashCommandsResponse_unstable | UpdateSourceResponse_unstable | ExportSourceResponse_unstable | ImportSourcesResponse_unstable | DictationTranscribeResponse_unstable | DictationConfigResponse_unstable | DictationModelsListResponse_unstable | DictationModelDownloadProgressResponse_unstable | LocalInferenceModelsListResponse_unstable | LocalInferenceModelDownloadResponse_unstable | LocalInferenceModelDownloadProgressResponse_unstable | LocalInferenceModelSettingsReadResponse_unstable | LocalInferenceModelSettingsUpdateResponse_unstable | LocalInferenceHuggingFaceSearchResponse_unstable | LocalInferenceHuggingFaceRepoVariantsResponse_unstable | LocalInferenceBuiltinChatTemplatesListResponse_unstable | MlxEngineStatusResponse_unstable | MlxEngineSettingsResponse_unstable | MlxEngineModelsListResponse_unstable | MlxEngineHfSearchResponse_unstable | MlxEngineBrowseResponse_unstable | MlxEngineDownloadProgressResponse_unstable | MlxEngineBrowseFiltersResponse_unstable | MlxEngineModelCardResponse_unstable | MlxEngineDistributedStatusResponse_unstable | MlxEngineDistributedPreflightResponse_unstable | MlxEngineDistributedStartResponse_unstable | MlxEngineDistributedStopResponse_unstable | MlxEngineRemoteSingleStartResponse_unstable | MlxEngineRemoteSingleStopResponse_unstable | MlxEngineRemoteSingleStatusResponse_unstable | MlxEngineDistributedMakeRoomResponse_unstable | MlxEngineDistributedPeerCandidatesResponse_unstable | MlxEngineDistributedDiscoverResponse_unstable | MlxEngineDistributedProvisionResponse_unstable | MlxEngineDistributedConfigResponse_unstable | MlxEngineLinkFactsResponse_unstable | MlxEngineReplicaTargetsResponse_unstable | MlxEngineReplicateResponse_unstable | MlxEnginePlacementPlanResponse_unstable | MlxEngineMeasureSpeedResponse_unstable | MlxEngineSpeedHistoryResponse_unstable | MlxEngineReplicaProgressResponse_unstable | LeanzeroLinkHealthResponse_unstable | LeanzeroLinkRequestCodeResponse_unstable | LeanzeroLinkVerifyResponse_unstable | LeanzeroLinkStateResponse_unstable | LeanzeroLinkNodesResponse_unstable | ListMemoryProposalsResponse_unstable | AnswerMemoryProposalResponse_unstable | LeanzeroLinkRemoteExecuteResponse_unstable | unknown;
+    result?: EmptyResponse | GetToolsResponse_unstable | SetToolPermissionsResponse_unstable | GooseToolCallResponse_unstable | ReadResourceResponse_unstable | AppsListResponse_unstable | AppsExportResponse_unstable | AppsImportResponse_unstable | SteerSessionResponse_unstable | DiagnosticsGetResponse_unstable | ListPromptsResponse_unstable | GetPromptResponse_unstable | PromptOperationResponse_unstable | InspectConfigExtensionResponse_unstable | GetConfigExtensionsResponse_unstable | GetAvailableExtensionsResponse_unstable | GetSessionExtensionsResponse_unstable | ListProvidersResponse_unstable | ProviderSupportedModelsListResponse_unstable | ProviderCatalogListResponse_unstable | ProviderSetupCatalogListResponse_unstable | ProviderCatalogTemplateResponse_unstable | CustomProviderCreateResponse_unstable | CustomProviderReadResponse_unstable | CustomProviderUpdateResponse_unstable | CustomProviderDeleteResponse_unstable | RefreshProviderInventoryResponse_unstable | ProviderConfigReadResponse_unstable | ProviderConfigStatusResponse_unstable | ProviderConfigChangeResponse_unstable | ProviderSecretsListResponse_unstable | CanonicalModelInfoResponse_unstable | PreferencesReadResponse_unstable | ConfigReadResponse_unstable | ConfigReadAllResponse_unstable | DefaultsReadResponse_unstable | OnboardingImportScanResponse_unstable | OnboardingImportApplyResponse_unstable | ExportSessionResponse_unstable | ImportSessionResponse_unstable | ShareSessionNostrResponse_unstable | EncodeRecipeResponse_unstable | DecodeRecipeResponse_unstable | ScanRecipeResponse_unstable | ListRecipesResponse_unstable | SaveRecipeResponse_unstable | CreateRecipeResponse_unstable | ParseRecipeResponse_unstable | RecipeToYamlResponse_unstable | ListSchedulesResponse_unstable | ListScheduleSessionsResponse_unstable | CreateScheduleResponse_unstable | UpdateScheduleResponse_unstable | RunScheduleNowResponse_unstable | KillRunningJobResponse_unstable | InspectRunningJobResponse_unstable | GetSessionInfoResponse_unstable | CreateSourceResponse_unstable | ListSourcesResponse_unstable | ListAgentMentionsResponse_unstable | ListSlashCommandsResponse_unstable | UpdateSourceResponse_unstable | ExportSourceResponse_unstable | ImportSourcesResponse_unstable | DictationTranscribeResponse_unstable | DictationConfigResponse_unstable | DictationModelsListResponse_unstable | DictationModelDownloadProgressResponse_unstable | LocalInferenceModelsListResponse_unstable | LocalInferenceModelDownloadResponse_unstable | LocalInferenceModelDownloadProgressResponse_unstable | LocalInferenceModelSettingsReadResponse_unstable | LocalInferenceModelSettingsUpdateResponse_unstable | LocalInferenceHuggingFaceSearchResponse_unstable | LocalInferenceHuggingFaceRepoVariantsResponse_unstable | LocalInferenceBuiltinChatTemplatesListResponse_unstable | MlxEngineStatusResponse_unstable | MlxEngineMountResponse_unstable | MlxEngineSettingsResponse_unstable | MlxEngineModelsListResponse_unstable | MlxEngineHfSearchResponse_unstable | MlxEngineBrowseResponse_unstable | MlxEngineDownloadProgressResponse_unstable | MlxEngineBrowseFiltersResponse_unstable | MlxEngineModelCardResponse_unstable | MlxEngineDistributedStatusResponse_unstable | MlxEngineDistributedPreflightResponse_unstable | MlxEngineDistributedStartResponse_unstable | MlxEngineDistributedStopResponse_unstable | MlxEngineRemoteSingleStartResponse_unstable | MlxEngineRemoteSingleStopResponse_unstable | MlxEngineRemoteSingleStatusResponse_unstable | MlxEngineDistributedMakeRoomResponse_unstable | MlxEngineDistributedPeerCandidatesResponse_unstable | MlxEngineDistributedDiscoverResponse_unstable | MlxEngineDistributedProvisionResponse_unstable | MlxEngineDistributedConfigResponse_unstable | MlxEngineLinkFactsResponse_unstable | MlxEngineReplicaTargetsResponse_unstable | MlxEngineReplicateResponse_unstable | MlxEnginePlacementPlanResponse_unstable | MlxEngineMeasureSpeedResponse_unstable | MlxEngineSpeedHistoryResponse_unstable | MlxEngineReplicaProgressResponse_unstable | LeanzeroLinkHealthResponse_unstable | LeanzeroLinkRequestCodeResponse_unstable | LeanzeroLinkVerifyResponse_unstable | LeanzeroLinkStateResponse_unstable | LeanzeroLinkNodesResponse_unstable | ListMemoryProposalsResponse_unstable | AnswerMemoryProposalResponse_unstable | LeanzeroLinkRemoteExecuteResponse_unstable | unknown;
 } | {
     error: {
         code: number;

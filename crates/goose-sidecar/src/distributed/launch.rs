@@ -71,6 +71,10 @@ pub struct RankSpec {
     pub model_dir: String,
     pub port: u16,
     pub memory_report_seconds: f64,
+    /// The weights preflight planned on this rank (`RankPlan::weights_bytes`): with the rank's own
+    /// MLX active bytes it is the load's progress — on this Mac and on a Link peer hosting it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_weight_bytes: Option<u64>,
     #[serde(flatten)]
     pub program: RankProgram,
 }
@@ -192,6 +196,7 @@ fn base_specs(
             model_dir: node.model_dir.clone(),
             port: config.port,
             memory_report_seconds,
+            planned_weight_bytes: None,
             program: program(rank, node),
         })
         .collect()
@@ -262,11 +267,46 @@ pub struct RankLive {
     pub group_joined: bool,
     pub caps: Option<serde_json::Value>,
     pub memory: Option<RankMemory>,
+    /// The rank printed its `GOOSE_READY` (the pipeline server, after its warm-up batch).
+    pub ready: bool,
+}
+
+/// Where a rank's start is, from its own reports. Both rank programs report `RANK_CAPS` once the
+/// weights are in (the fork after `load_stage`, the tensor wrapper as its server starts), so
+/// before it the rank is loading; the pipeline server then runs a warm-up batch and prints
+/// `READY`. The tensor wrapper prints no READY of its own — rank 0's readiness completion is its
+/// warm-up, judged by the coordinator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RankPhase {
+    Loading,
+    Warming,
+    Ready,
+}
+
+impl RankPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RankPhase::Loading => "loading",
+            RankPhase::Warming => "warming",
+            RankPhase::Ready => "ready",
+        }
+    }
 }
 
 impl RankLive {
     pub fn tail_text(&self) -> String {
         self.tail.iter().cloned().collect::<Vec<_>>().join("\n")
+    }
+
+    pub fn phase(&self) -> RankPhase {
+        if self.ready {
+            RankPhase::Ready
+        } else if self.caps.is_some() {
+            RankPhase::Warming
+        } else {
+            RankPhase::Loading
+        }
     }
 
     fn take_line(&mut self, line: &str) {
@@ -279,6 +319,8 @@ impl RankLive {
             self.group_joined = true;
         } else if let Some(caps) = line.strip_prefix("GOOSE_RANK_CAPS ") {
             self.caps = serde_json::from_str(caps).ok();
+        } else if line.starts_with("GOOSE_READY ") {
+            self.ready = true;
         } else if let Some(memory) = line.strip_prefix("GOOSE_RANK_MEM ") {
             if let Ok(memory) = serde_json::from_str::<RankMemory>(memory) {
                 self.memory = Some(memory);
@@ -647,6 +689,24 @@ mod tests {
             "one backend's env only"
         );
         assert_eq!(ready["offline"], "1");
+    }
+
+    /// The phases a pipeline rank walks, from its own lines (the 27B's figures as a reporter thread
+    /// read them mid-`mx.eval`, 2026-09-24): loading until RANK_CAPS, warming until READY.
+    #[test]
+    fn a_ranks_phase_is_its_own_reports() {
+        let mut live = RankLive::default();
+        assert_eq!(live.phase(), RankPhase::Loading);
+        live.take_line("GOOSE_RANK_GROUP {\"rank\": 1, \"size\": 2}");
+        live.take_line(
+            "GOOSE_RANK_MEM {\"active\": 21861391624, \"peak\": 21861391624, \"cache\": 0}",
+        );
+        assert_eq!(live.phase(), RankPhase::Loading);
+        assert_eq!(live.memory.map(|m| m.active), Some(21_861_391_624));
+        live.take_line("GOOSE_RANK_CAPS {\"memory_limit\": 1, \"planned\": 2}");
+        assert_eq!(live.phase(), RankPhase::Warming);
+        live.take_line("GOOSE_READY {\"rank\": 1, \"pid\": 7, \"layers\": [20, 48]}");
+        assert_eq!(live.phase(), RankPhase::Ready);
     }
 
     #[test]

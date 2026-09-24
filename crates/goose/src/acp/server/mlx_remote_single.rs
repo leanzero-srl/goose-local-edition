@@ -240,7 +240,10 @@ async fn route_status(
                 manager,
                 &route.peer,
                 MlxOp::Status,
-                &MlxEngineStatusRequest { node_id: None },
+                &MlxEngineStatusRequest {
+                    node_id: None,
+                    fit_model_id: None,
+                },
             )
             .await
         }
@@ -393,7 +396,10 @@ impl GooseAcpAgent {
             &manager,
             &req.peer,
             MlxOp::Status,
-            &MlxEngineStatusRequest { node_id: None },
+            &MlxEngineStatusRequest {
+                node_id: None,
+                fit_model_id: None,
+            },
         )
         .await?;
         let capacity = peer_status.status.max_concurrent_requests.ok_or_else(|| {
@@ -423,7 +429,7 @@ impl GooseAcpAgent {
             && peer_status.status.state == "running"
             && peer_status.status.served_model_id.as_deref() == Some(served.as_str());
         if !already_serving {
-            let _: EmptyResponse = peer_op(
+            let mounted: MlxEngineMountResponse = peer_op(
                 &manager,
                 &req.peer,
                 MlxOp::Mount,
@@ -433,6 +439,15 @@ impl GooseAcpAgent {
                 },
             )
             .await?;
+            if let Some(refused) = mounted.refusal {
+                return Err(refusal(
+                    "peerMountFailed",
+                    format!(
+                        "{peer_hostname}'s memory gate refused '{}': {}",
+                        req.model_id, refused.fit.message
+                    ),
+                ));
+            }
         }
 
         let route = PublishedRoute {

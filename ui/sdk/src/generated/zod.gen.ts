@@ -2740,7 +2740,94 @@ export const zMlxEngineStatusRequest_unstable = z.object({
     nodeId: z.union([
         z.string(),
         z.null()
+    ]).optional(),
+    fitModelId: z.union([
+        z.string(),
+        z.null()
     ]).optional()
+});
+
+/**
+ * The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
+ * RAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is "warn" when what is left
+ * is inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes.
+ */
+export const zMlxMountFitDto = z.object({
+    modelId: z.string(),
+    verdict: z.string(),
+    needBytes: z.number().int().gte(0),
+    weightsBytes: z.number().int().gte(0),
+    kvBytes: z.number().int().gte(0),
+    contextTokens: z.number().int().gte(0),
+    kvError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    budgetBytes: z.number().int().gte(0),
+    availableBytes: z.number().int().gte(0),
+    totalBytes: z.number().int().gte(0),
+    ceilingBytes: z.number().int().gte(0),
+    marginBytes: z.number().int().gte(0),
+    marginRatio: z.number(),
+    shortBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    spareBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    message: z.string()
+});
+
+/**
+ * A mount in flight. `phase`: "makingRoom" (macOS reclaims memory before the gate judges again)
+ * | "starting" (the process runs; the engine has not said it is loading) | "loading" | "warming"
+ * (weights in, compiling kernels). `residentBytes ÷ weightsBytes` is the load's progress
+ * (measured: a finished load holds 0.985–0.994× the bytes on disk); `residentBytes` is absent
+ * until the engine process exists — then the desktop shows the phase without a bar.
+ */
+export const zMlxEngineLoadDto = z.object({
+    phase: z.string(),
+    residentBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    weightsBytes: z.number().int().gte(0)
+});
+
+/**
+ * The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link.
+ */
+export const zMlxDistributedHostedRankDto = z.object({
+    rank: z.number().int().gte(0),
+    size: z.number().int().gte(0),
+    requesterName: z.string(),
+    requesterNodeId: z.string(),
+    requesterHostname: z.string(),
+    modelId: z.string(),
+    servedModelId: z.string(),
+    backend: z.string(),
+    runner: z.string(),
+    pid: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    state: z.string(),
+    phase: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    loadedBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    plannedWeightBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    startedMs: z.number().int().gte(0),
+    lastPollMs: z.number().int().gte(0)
 });
 
 /**
@@ -2812,9 +2899,33 @@ export const zMlxEngineStatusDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    gpuCeilingBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    gpuCeilingError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     restartRequired: z.boolean(),
     lastError: z.union([
         z.string(),
+        z.null()
+    ]).optional(),
+    mountFit: z.union([
+        zMlxMountFitDto,
+        z.null()
+    ]).optional(),
+    mountFitError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    load: z.union([
+        zMlxEngineLoadDto,
+        z.null()
+    ]).optional(),
+    hosting: z.union([
+        zMlxDistributedHostedRankDto,
         z.null()
     ]).optional()
 });
@@ -2824,13 +2935,246 @@ export const zMlxEngineStatusResponse_unstable = z.object({
 });
 
 /**
- * Mount a local model into the MLX engine. Returns once mounting has started;
- * poll status for running/failed.
+ * Mount a local model into the MLX engine. Returns once mounting has started; poll status for
+ * running/failed. A memory-gate refusal is NOT an error: it is `refusal` (and status's
+ * `gateVerdict: "block"` / `gateMessage` carry the same verdict) — one failure, one carrier of
+ * its text. Every other failure (unknown or incomplete model, a foreign listener) is an error.
  */
 export const zMlxEngineMountRequest_unstable = z.object({
     modelId: z.string(),
     nodeId: z.union([
         z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxPlacementKindDto = z.enum([
+    'single',
+    'tensor',
+    'pipeline'
+]);
+
+/**
+ * A placement's identity: kind, node ids in rank order (`local` = this Mac, a peer by its
+ * configured host), the link of a split.
+ */
+export const zMlxPlacementKeyDto = z.object({
+    kind: zMlxPlacementKindDto,
+    nodes: z.array(z.string()),
+    link: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
+ */
+export const zMlxChipDto = z.object({
+    hwModel: z.string(),
+    brand: z.string(),
+    gpuCores: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxFitStatusDto = z.union([
+    z.literal('fits'),
+    z.literal('short'),
+    z.literal('unknown'),
+    z.literal('smallerContext')
+]);
+
+export const zMlxNodeFitDto = z.object({
+    name: z.string(),
+    needBytes: z.number().int().gte(0),
+    budgetBytes: z.number().int().gte(0)
+});
+
+export const zMlxPlacementFitDto = z.object({
+    status: zMlxFitStatusDto,
+    context: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    shortBytes: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    shortNode: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    nodes: z.array(zMlxNodeFitDto).optional().default([]),
+    detail: z.string()
+});
+
+/**
+ * A figure and its range (tok/s).
+ */
+export const zMlxEstimateDto = z.object({
+    value: z.number(),
+    low: z.number(),
+    high: z.number()
+});
+
+/**
+ * `measured` = goose timed this placement (median of `runs`, range = their extremes); else the
+ * calibrated formula's estimate.
+ */
+export const zMlxSpeedFigureDto = z.object({
+    estimate: zMlxEstimateDto,
+    measured: z.boolean(),
+    runs: z.number().int().gte(0),
+    lastMeasuredMs: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxPlacementSpeedDto = z.object({
+    decode: z.union([
+        zMlxSpeedFigureDto,
+        z.null()
+    ]).optional(),
+    prefill: z.union([
+        zMlxSpeedFigureDto,
+        z.null()
+    ]).optional(),
+    throughput: z.union([
+        zMlxSpeedFigureDto,
+        z.null()
+    ]).optional(),
+    concurrency: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    basis: z.array(z.string()).optional().default([])
+});
+
+/**
+ * What [Use this] does. Internally tagged on `kind`.
+ */
+export const zMlxPlacementActionDto = z.union([
+    z.object({
+        kind: z.literal('mountHere')
+    }),
+    z.object({
+        setupMatches: z.boolean(),
+        kind: z.literal('startSplit')
+    }),
+    z.object({
+        kind: z.literal('remoteSingle')
+    }),
+    z.object({
+        reason: z.string(),
+        kind: z.literal('unavailable')
+    })
+]);
+
+/**
+ * Why a candidate won or lost. Internally tagged on `code`; `mine`/`best` are the goal's tok/s.
+ */
+export const zMlxPlacementOutcomeDto = z.union([
+    z.object({
+        code: z.literal('best')
+    }),
+    z.object({
+        code: z.literal('bestAvailableNow')
+    }),
+    z.object({
+        reason: z.string(),
+        code: z.literal('notSupported')
+    }),
+    z.object({
+        code: z.literal('doesNotFit')
+    }),
+    z.object({
+        reason: z.string(),
+        code: z.literal('fitUnknown')
+    }),
+    z.object({
+        reason: z.string(),
+        code: z.literal('noFigure')
+    }),
+    z.object({
+        mine: z.number(),
+        best: z.number(),
+        code: z.literal('slower')
+    }),
+    z.object({
+        mine: z.number(),
+        best: z.number(),
+        code: z.literal('tiedNeedsMoreMacs')
+    })
+]);
+
+export const zMlxPlacementCandidateDto = z.object({
+    id: z.string(),
+    key: zMlxPlacementKeyDto,
+    nodeNames: z.array(z.string()),
+    chips: z.array(z.union([zMlxChipDto, z.null()])),
+    backend: z.string(),
+    supported: z.boolean(),
+    fit: zMlxPlacementFitDto,
+    speed: zMlxPlacementSpeedDto,
+    action: zMlxPlacementActionDto,
+    outcome: zMlxPlacementOutcomeDto
+});
+
+/**
+ * The model-picker badge. Internally tagged on `kind`.
+ */
+export const zMlxPlacementBadgeDto = z.union([
+    z.object({
+        kind: z.literal('fitsThisMac')
+    }),
+    z.object({
+        name: z.string(),
+        kind: z.literal('fitsPeer')
+    }),
+    z.object({
+        needs: z.union([
+            z.string(),
+            z.null()
+        ]).optional(),
+        kind: z.literal('needsBothMacs')
+    }),
+    z.object({
+        shortBytes: z.number().int().gte(0),
+        kind: z.literal('tooBig')
+    }),
+    z.object({
+        reason: z.string(),
+        kind: z.literal('unknown')
+    })
+]);
+
+/**
+ * The mount gate's refusal: the fit rule's verdict and, when the model fits somewhere else, the
+ * placement that would work (the planner's own candidate — `action` says how to start it:
+ * `startSplit` → "Start across both Macs", `remoteSingle`, or `unavailable` with the step first).
+ */
+export const zMlxMountRefusalDto = z.object({
+    fit: zMlxMountFitDto,
+    alternative: z.union([
+        zMlxPlacementCandidateDto,
+        z.null()
+    ]).optional(),
+    badge: z.union([
+        zMlxPlacementBadgeDto,
+        z.null()
+    ]).optional(),
+    alternativeError: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineMountResponse_unstable = z.object({
+    refusal: z.union([
+        zMlxMountRefusalDto,
         z.null()
     ]).optional()
 });
@@ -3486,6 +3830,14 @@ export const zMlxDistributedNodeStatusDto = z.object({
         z.number(),
         z.null()
     ]).optional(),
+    loadPhase: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    plannedWeightsGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
     link: zMlxDistributedLinkDto
 });
 
@@ -3756,28 +4108,6 @@ export const zMlxDistributedOwnerDto = z.object({
 });
 
 /**
- * The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link.
- */
-export const zMlxDistributedHostedRankDto = z.object({
-    rank: z.number().int().gte(0),
-    size: z.number().int().gte(0),
-    requesterName: z.string(),
-    requesterNodeId: z.string(),
-    requesterHostname: z.string(),
-    modelId: z.string(),
-    servedModelId: z.string(),
-    backend: z.string(),
-    runner: z.string(),
-    pid: z.union([
-        z.number().int().gte(0),
-        z.null()
-    ]).optional(),
-    state: z.string(),
-    startedMs: z.number().int().gte(0),
-    lastPollMs: z.number().int().gte(0)
-});
-
-/**
  * One node's latest memory compaction ("Make room"): goose raised memory pressure to the
  * kernel's WARN with Apple's `memory_pressure`, released it at once, and sampled until available
  * memory stopped rising. Nothing is quit; macOS compresses idle apps and apps drop caches.
@@ -3906,7 +4236,8 @@ export const zMlxDistributedStatusDto = z.object({
         z.null()
     ]).optional(),
     allowDistributedNode: z.boolean().optional().default(false),
-    compactions: z.array(zMlxDistributedCompactionDto).optional()
+    compactions: z.array(zMlxDistributedCompactionDto).optional(),
+    makingRoom: z.array(z.string()).optional()
 });
 
 export const zMlxEngineDistributedStatusResponse_unstable = z.object({
@@ -4532,205 +4863,6 @@ export const zMlxEnginePlacementPlanRequest_unstable = z.object({
         z.null()
     ]).optional()
 });
-
-export const zMlxPlacementKindDto = z.enum([
-    'single',
-    'tensor',
-    'pipeline'
-]);
-
-/**
- * A placement's identity: kind, node ids in rank order (`local` = this Mac, a peer by its
- * configured host), the link of a split.
- */
-export const zMlxPlacementKeyDto = z.object({
-    kind: zMlxPlacementKindDto,
-    nodes: z.array(z.string()),
-    link: z.union([
-        z.string(),
-        z.null()
-    ]).optional()
-});
-
-/**
- * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
- */
-export const zMlxChipDto = z.object({
-    hwModel: z.string(),
-    brand: z.string(),
-    gpuCores: z.union([
-        z.number().int().gte(0),
-        z.null()
-    ]).optional()
-});
-
-export const zMlxFitStatusDto = z.union([
-    z.literal('fits'),
-    z.literal('short'),
-    z.literal('unknown'),
-    z.literal('smallerContext')
-]);
-
-export const zMlxNodeFitDto = z.object({
-    name: z.string(),
-    needBytes: z.number().int().gte(0),
-    budgetBytes: z.number().int().gte(0)
-});
-
-export const zMlxPlacementFitDto = z.object({
-    status: zMlxFitStatusDto,
-    context: z.union([
-        z.number().int().gte(0),
-        z.null()
-    ]).optional(),
-    shortBytes: z.union([
-        z.number().int().gte(0),
-        z.null()
-    ]).optional(),
-    shortNode: z.union([
-        z.string(),
-        z.null()
-    ]).optional(),
-    nodes: z.array(zMlxNodeFitDto).optional().default([]),
-    detail: z.string()
-});
-
-/**
- * A figure and its range (tok/s).
- */
-export const zMlxEstimateDto = z.object({
-    value: z.number(),
-    low: z.number(),
-    high: z.number()
-});
-
-/**
- * `measured` = goose timed this placement (median of `runs`, range = their extremes); else the
- * calibrated formula's estimate.
- */
-export const zMlxSpeedFigureDto = z.object({
-    estimate: zMlxEstimateDto,
-    measured: z.boolean(),
-    runs: z.number().int().gte(0),
-    lastMeasuredMs: z.union([
-        z.number().int().gte(0),
-        z.null()
-    ]).optional()
-});
-
-export const zMlxPlacementSpeedDto = z.object({
-    decode: z.union([
-        zMlxSpeedFigureDto,
-        z.null()
-    ]).optional(),
-    prefill: z.union([
-        zMlxSpeedFigureDto,
-        z.null()
-    ]).optional(),
-    throughput: z.union([
-        zMlxSpeedFigureDto,
-        z.null()
-    ]).optional(),
-    concurrency: z.union([
-        z.number().int().gte(0),
-        z.null()
-    ]).optional(),
-    basis: z.array(z.string()).optional().default([])
-});
-
-/**
- * What [Use this] does. Internally tagged on `kind`.
- */
-export const zMlxPlacementActionDto = z.union([
-    z.object({
-        kind: z.literal('mountHere')
-    }),
-    z.object({
-        setupMatches: z.boolean(),
-        kind: z.literal('startSplit')
-    }),
-    z.object({
-        kind: z.literal('remoteSingle')
-    }),
-    z.object({
-        reason: z.string(),
-        kind: z.literal('unavailable')
-    })
-]);
-
-/**
- * Why a candidate won or lost. Internally tagged on `code`; `mine`/`best` are the goal's tok/s.
- */
-export const zMlxPlacementOutcomeDto = z.union([
-    z.object({
-        code: z.literal('best')
-    }),
-    z.object({
-        code: z.literal('bestAvailableNow')
-    }),
-    z.object({
-        reason: z.string(),
-        code: z.literal('notSupported')
-    }),
-    z.object({
-        code: z.literal('doesNotFit')
-    }),
-    z.object({
-        reason: z.string(),
-        code: z.literal('fitUnknown')
-    }),
-    z.object({
-        reason: z.string(),
-        code: z.literal('noFigure')
-    }),
-    z.object({
-        mine: z.number(),
-        best: z.number(),
-        code: z.literal('slower')
-    }),
-    z.object({
-        mine: z.number(),
-        best: z.number(),
-        code: z.literal('tiedNeedsMoreMacs')
-    })
-]);
-
-export const zMlxPlacementCandidateDto = z.object({
-    id: z.string(),
-    key: zMlxPlacementKeyDto,
-    nodeNames: z.array(z.string()),
-    chips: z.array(z.union([zMlxChipDto, z.null()])),
-    backend: z.string(),
-    supported: z.boolean(),
-    fit: zMlxPlacementFitDto,
-    speed: zMlxPlacementSpeedDto,
-    action: zMlxPlacementActionDto,
-    outcome: zMlxPlacementOutcomeDto
-});
-
-/**
- * The model-picker badge. Internally tagged on `kind`.
- */
-export const zMlxPlacementBadgeDto = z.union([
-    z.object({
-        kind: z.literal('fitsThisMac')
-    }),
-    z.object({
-        name: z.string(),
-        kind: z.literal('fitsPeer')
-    }),
-    z.object({
-        kind: z.literal('needsBothMacs')
-    }),
-    z.object({
-        shortBytes: z.number().int().gte(0),
-        kind: z.literal('tooBig')
-    }),
-    z.object({
-        reason: z.string(),
-        kind: z.literal('unknown')
-    })
-]);
 
 /**
  * One model's plan, or why it could not be planned (`error`).
@@ -5630,6 +5762,7 @@ export const zExtResponse = z.union([
                 zLocalInferenceHuggingFaceRepoVariantsResponse_unstable,
                 zLocalInferenceBuiltinChatTemplatesListResponse_unstable,
                 zMlxEngineStatusResponse_unstable,
+                zMlxEngineMountResponse_unstable,
                 zMlxEngineSettingsResponse_unstable,
                 zMlxEngineModelsListResponse_unstable,
                 zMlxEngineHfSearchResponse_unstable,

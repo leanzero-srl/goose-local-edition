@@ -13,6 +13,10 @@
 #   memory watchdog stop admitting new requests.
 group = mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
+# MLX's counters from before the load, so the weights arriving are the load's progress (measured
+# 2026-09-24: a reporter thread read 21.9 of 31.0 GB active mid `mx.eval(model.parameters())` —
+# the eval releases the GIL).
+threading.Thread(target=report_memory, daemon=True).start()
 if group.rank() != spec["rank"] or group.size() != spec["size"]:
     raise SystemExit(
         f"goose rank wrapper: MLX reports rank {group.rank()} of {group.size()}, "
@@ -72,7 +76,6 @@ def run(host, port, model_provider, *args, **kwargs):
     # so a request naming it loads nothing new and the response echoes the id that was asked for.
     model_provider._model_map[served] = model_provider.cli_args.model
     apply_caps()
-    threading.Thread(target=report_memory, daemon=True).start()
     return original_run(host, port, model_provider, *args, **kwargs)
 
 
