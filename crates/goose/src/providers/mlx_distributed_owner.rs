@@ -118,7 +118,7 @@ pub fn own_active_base_url() -> Option<String> {
 }
 
 #[cfg(unix)]
-fn pid_alive(pid: u32) -> bool {
+pub(crate) fn pid_alive(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
@@ -128,7 +128,7 @@ fn pid_alive(pid: u32) -> bool {
 }
 
 #[cfg(not(unix))]
-fn pid_alive(_pid: u32) -> bool {
+pub(crate) fn pid_alive(_pid: u32) -> bool {
     true
 }
 

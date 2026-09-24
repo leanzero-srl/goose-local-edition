@@ -28,6 +28,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::base::{MessageStream, Provider};
 use super::mlx_distributed_owner;
+use super::mlx_remote::{self, PublishedRoute, RouteRecord};
 use crate::config::{Config, ConfigError};
 use crate::conversation::message::Message;
 use goose_providers::errors::ProviderError;
@@ -109,9 +110,25 @@ fn cloud_registry_name(family: &str) -> &str {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NodeKind {
-    LmStudio { endpoint: String },
+    LmStudio {
+        endpoint: String,
+    },
     MlxSidecar,
-    Cloud { registry: String },
+    /// The single engine on a LeanZero Link peer, reached through this Mac's relay to the
+    /// peer's chat proxy (`mlx_remote`). Never from config: one node per live remote route.
+    MlxRemote(RemoteTarget),
+    Cloud {
+        registry: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RemoteTarget {
+    pub peer_hostname: String,
+    /// The relay's base URL — it carries the relay's capability, so it never enters a reason.
+    pub base_url: String,
+    /// The peer profile's thinking choices for the served model.
+    pub template_kwargs: Option<Map<String, Value>>,
 }
 
 #[derive(Debug, Clone)]
@@ -130,7 +147,7 @@ impl Node {
     fn provider_name(&self) -> &str {
         match &self.kind {
             NodeKind::LmStudio { .. } => "lmstudio",
-            NodeKind::MlxSidecar => "omlx",
+            NodeKind::MlxSidecar | NodeKind::MlxRemote(_) => "omlx",
             NodeKind::Cloud { registry } => registry,
         }
     }
@@ -142,6 +159,7 @@ impl Node {
                 "omlx@{}",
                 std::env::var(OMLX_HOST_ENV).unwrap_or_else(|_| "unset".to_string())
             ),
+            NodeKind::MlxRemote(target) => format!("omlx-remote@{}", target.base_url),
             NodeKind::Cloud { registry } => registry.clone(),
         }
     }
@@ -182,6 +200,44 @@ pub(crate) fn nodes_from_config(cfg: &PoolConfig) -> Vec<Node> {
             }
         })
         .collect()
+}
+
+/// The pool plus the live remote route's node. The route's node takes the heaviest configured
+/// weight, so a tie on free slots goes to the placement the user chose; its capacity is the
+/// peer's own admission cap.
+pub(crate) fn with_remote_route(mut nodes: Vec<Node>, route: Option<&PublishedRoute>) -> Vec<Node> {
+    if let Some(route) = route {
+        let weight = nodes.iter().map(|n| n.weight).max().unwrap_or(1);
+        nodes.push(Node {
+            id: route.node_id(),
+            model_id: route.served_model_id.clone(),
+            weight,
+            capacity: route.capacity,
+            kind: NodeKind::MlxRemote(RemoteTarget {
+                peer_hostname: route.peer_hostname.clone(),
+                base_url: route.base_url.clone(),
+                template_kwargs: route.template_kwargs.clone(),
+            }),
+        });
+    }
+    nodes
+}
+
+/// Why this Mac's own sidecar node is not a candidate while chat is routed to a peer, or
+/// `None` when no route is up. An unreadable route record refuses to guess which engine serves.
+fn sidecar_routed_away(record: &RouteRecord) -> Option<String> {
+    match record {
+        RouteRecord::Mine(route) | RouteRecord::Other(route) => Some(format!(
+            "this Mac's MLX chat is served from {} (remote single, node {}) — stop it to use this Mac's own engine",
+            route.peer_hostname,
+            route.node_id()
+        )),
+        RouteRecord::Unreadable { path, error } => Some(format!(
+            "the remote-single route record {} is unreadable ({error}); which engine serves this Mac's chat is unknown",
+            path.display()
+        )),
+        RouteRecord::Absent | RouteRecord::Stale(_) => None,
+    }
 }
 
 /// A missing or unreadable `swarm` block is a named error, never an empty pool.
@@ -269,13 +325,36 @@ impl ProviderSource for LiveProviders {
         if let Some(p) = cache.get(&key) {
             return Ok(p.clone());
         }
-        let name = node.provider_name();
-        let p = crate::providers::create(name, vec![])
-            .await
-            .map_err(|e| format!("creating the '{name}' provider: {e}"))?;
+        let p = match &node.kind {
+            NodeKind::MlxRemote(target) => remote_provider(target)?,
+            _ => {
+                let name = node.provider_name();
+                crate::providers::create(name, vec![])
+                    .await
+                    .map_err(|e| format!("creating the '{name}' provider: {e}"))?
+            }
+        };
         cache.insert(key, p.clone());
         Ok(p)
     }
+}
+
+/// The `omlx` provider aimed at ONE relay rather than at `OMLX_HOST` (one per process): the same
+/// declarative definition, its base URL replaced before it is built, so the remote node has its
+/// own instance and host while the local engine keeps `OMLX_HOST`.
+fn remote_provider(target: &RemoteTarget) -> Result<Arc<dyn Provider>, String> {
+    let mut config = crate::config::declarative_providers::load_provider("omlx")
+        .map_err(|e| format!("loading the 'omlx' provider definition: {e}"))?
+        .config;
+    config.base_url = format!("{}/v1/chat/completions", target.base_url);
+    config.env_vars = None;
+    let provider = super::openai_def::from_custom_config(config, None).map_err(|e| {
+        format!(
+            "creating the provider for {}'s engine: {e}",
+            target.peer_hostname
+        )
+    })?;
+    Ok(Arc::new(provider))
 }
 
 /// The real servability probe: LM Studio's `/v1/models` must list the device's model id, the MLX
@@ -378,6 +457,9 @@ impl LiveProbe {
     /// the base URL the local manager reports when it is the one running it, else the configured
     /// port; the local manager only enriches the reason when nothing listens.
     async fn probe_mlx(&self, model_id: &str) -> Result<Servable, String> {
+        if let Some(reason) = sidecar_routed_away(&mlx_remote::read()) {
+            return Err(reason);
+        }
         let stale = match distributed_target(
             mlx_distributed_owner::own_active_base_url(),
             mlx_distributed_owner::read(),
@@ -438,7 +520,6 @@ impl LiveProbe {
                 ))
             }
         }
-        align_host_env(OMLX_HOST_ENV, &OMLX_HOST_USER_OWNED, base);
         let status_url = format!("{base}/v1/status");
         let live_in_flight = match self.http.get(&status_url).send().await {
             Ok(resp) => match resp.text().await {
@@ -455,6 +536,72 @@ impl LiveProbe {
                     target: "swarm_router",
                     error = %err,
                     "MLX engine reported no in-flight count; routing on in-process leases alone"
+                );
+                None
+            }
+        };
+        align_host_env(OMLX_HOST_ENV, &OMLX_HOST_USER_OWNED, base);
+        Ok(Servable {
+            live_in_flight,
+            context_window,
+        })
+    }
+
+    /// A peer's engine through the relay. Servable = the peer's `/v1/models` lists the route's
+    /// served id; in-flight = the peer engine's own `/v1/status`. A refusal carries the peer's
+    /// named reason (its `chatServingDisabled` 403, `engineUnreachable` 502, the relay's
+    /// `linkRelayFailed`) and names the peer — never the relay URL, which holds its capability.
+    async fn probe_remote(
+        &self,
+        target: &RemoteTarget,
+        model_id: &str,
+    ) -> Result<Servable, String> {
+        let peer = &target.peer_hostname;
+        let get = |path: &'static str| {
+            let url = format!("{}/{path}", target.base_url);
+            let http = self.http.clone();
+            async move {
+                let resp = http
+                    .get(url)
+                    .send()
+                    .await
+                    .map_err(|e| format!("this Mac's Link relay did not answer ({e})"))?;
+                let status = resp.status();
+                let body = resp
+                    .text()
+                    .await
+                    .map_err(|e| format!("{path} body unreadable ({e})"))?;
+                if status.is_success() {
+                    Ok(body)
+                } else {
+                    Err(format!("{path} answered {status}: {}", body.trim()))
+                }
+            }
+        };
+        let models = get("v1/models")
+            .await
+            .map_err(|e| format!("{peer}'s MLX engine is not serving through Link — {e}"))?;
+        let (served, context_window, _parser) =
+            goose_sidecar::engine::parse_model_info(&models).map_err(|e| format!("{e:#}"))?;
+        match served.as_deref() {
+            Some(served) if served == model_id => {}
+            Some(served) => {
+                return Err(format!(
+                    "{peer}'s MLX engine serves '{served}', the route wants '{model_id}'"
+                ))
+            }
+            None => return Err(format!("{peer}'s MLX engine lists a model without an id")),
+        }
+        let live_in_flight = match get("v1/status").await.and_then(|body| {
+            goose_sidecar::engine::parse_active_requests(&body).map_err(|e| format!("{e:#}"))
+        }) {
+            Ok(n) => Some(n),
+            Err(err) => {
+                tracing::warn!(
+                    target: "swarm_router",
+                    peer = %peer,
+                    error = %err,
+                    "the peer's MLX engine reported no in-flight count; routing on in-process leases alone"
                 );
                 None
             }
@@ -545,6 +692,7 @@ impl NodeProbe for LiveProbe {
         match &node.kind {
             NodeKind::LmStudio { endpoint } => self.probe_lmstudio(endpoint, &node.model_id).await,
             NodeKind::MlxSidecar => self.probe_mlx(&node.model_id).await,
+            NodeKind::MlxRemote(target) => self.probe_remote(target, &node.model_id).await,
             NodeKind::Cloud { .. } => self
                 .providers
                 .provider_for(node)
@@ -864,6 +1012,15 @@ impl SessionTemplateKwargs {
     }
 }
 
+/// A remote node's choices: the PEER's profile for the model it serves, read at route start.
+struct PeerProfileKwargs(Option<Map<String, Value>>);
+
+impl TemplateKwargsSource for PeerProfileKwargs {
+    fn template_kwargs(&self, _: &str) -> Result<Option<Map<String, Value>>, String> {
+        Ok(self.0.clone())
+    }
+}
+
 /// Adds the kwargs under `request_params.chat_template_kwargs`, which the OpenAI format copies into
 /// the body verbatim. A key the session's own request params already set wins.
 fn add_template_kwargs(
@@ -916,10 +1073,16 @@ pub(crate) async fn route_stream(
             .map_err(ProviderError::ExecutionError)?;
         let mut node_cfg = model_config.clone();
         node_cfg.model_name = lease.node.model_id.clone();
-        if matches!(lease.node.kind, NodeKind::MlxSidecar) {
-            if let Some(kwargs) = session.for_model(&lease.node.model_id, kwargs_source)? {
-                add_template_kwargs(&mut node_cfg, kwargs)?;
-            }
+        let kwargs = match &lease.node.kind {
+            NodeKind::MlxSidecar => session.for_model(&lease.node.model_id, kwargs_source)?,
+            NodeKind::MlxRemote(target) => session.for_model(
+                &lease.node.model_id,
+                &PeerProfileKwargs(target.template_kwargs.clone()),
+            )?,
+            _ => None,
+        };
+        if let Some(kwargs) = kwargs {
+            add_template_kwargs(&mut node_cfg, kwargs)?;
         }
         match provider.stream(&node_cfg, system, messages, tools).await {
             Ok(inner) => return Ok(leased_stream(inner, lease)),
@@ -982,7 +1145,7 @@ pub(crate) async fn route_chat(
     session: &SessionTemplateKwargs,
 ) -> Result<MessageStream, ProviderError> {
     let cfg = load_pool()?;
-    let nodes = nodes_from_config(&cfg);
+    let nodes = with_remote_route(nodes_from_config(&cfg), mlx_remote::read().live().as_ref());
     if nodes.is_empty() {
         let disabled: Vec<String> = cfg
             .devices
@@ -1893,6 +2056,207 @@ devices:
         assert!(down.contains("MLX engine is not listening on"), "{down}");
         assert!(down.contains("mount it in the MLX window"), "{down}");
         assert!(down.contains("this process's manager: stopped"), "{down}");
+    }
+
+    fn remote_route(capacity: u32) -> PublishedRoute {
+        PublishedRoute {
+            pid: 4242,
+            base_url: "http://127.0.0.1:61001/relay/cafe".to_string(),
+            peer: "worksmacstudio-lan-9c1e2a".to_string(),
+            peer_hostname: "WorksMacStudio.lan".to_string(),
+            model_id: HF_ID.to_string(),
+            served_model_id: SERVED.to_string(),
+            capacity,
+            template_kwargs: Some(
+                serde_json::json!({"enable_thinking": false})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        }
+    }
+
+    #[test]
+    fn a_live_remote_route_is_one_node_with_the_peers_cap_and_the_heaviest_weight() {
+        let pool = vec![node("lm", 2, 3), mlx_node()];
+        assert_eq!(
+            with_remote_route(pool.clone(), None).len(),
+            2,
+            "no route, no node"
+        );
+
+        let nodes = with_remote_route(pool, Some(&remote_route(6)));
+        let remote = nodes.last().unwrap();
+        assert_eq!(remote.id, "remote:WorksMacStudio.lan");
+        assert_eq!(remote.model_id, SERVED, "the served id the peer derived");
+        assert_eq!(remote.capacity, 6, "the peer's own admission cap");
+        assert_eq!(
+            remote.weight, 3,
+            "a tie on free slots goes to the placement chosen"
+        );
+        assert_eq!(remote.provider_name(), "omlx");
+        assert_eq!(
+            remote.provider_cache_key(),
+            "omlx-remote@http://127.0.0.1:61001/relay/cafe",
+            "its own provider instance, never the OMLX_HOST one"
+        );
+        assert_ne!(remote.provider_cache_key(), nodes[1].provider_cache_key());
+    }
+
+    #[test]
+    fn while_chat_is_routed_to_a_peer_this_macs_sidecar_is_not_a_candidate() {
+        let mine = sidecar_routed_away(&RouteRecord::Mine(remote_route(8))).unwrap();
+        assert!(mine.contains("served from WorksMacStudio.lan"), "{mine}");
+        assert!(
+            !mine.contains("/relay/"),
+            "the capability never enters a reason: {mine}"
+        );
+        assert!(sidecar_routed_away(&RouteRecord::Other(remote_route(8))).is_some());
+        let torn = sidecar_routed_away(&RouteRecord::Unreadable {
+            path: "/state/mlx-remote-route.json".into(),
+            error: "EOF".into(),
+        })
+        .unwrap();
+        assert!(torn.contains("unreadable"), "{torn}");
+        assert!(sidecar_routed_away(&RouteRecord::Absent).is_none());
+        assert!(
+            sidecar_routed_away(&RouteRecord::Stale(remote_route(8))).is_none(),
+            "a dead owner's route is ignored"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_remote_node_is_probed_through_the_relay_and_names_the_peer_not_the_url() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let relay = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/relay/cafe/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"object":"list","data":[{{"id":"{SERVED}","object":"model","context_window":262144}}]}}"#
+            )))
+            .mount(&relay)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/relay/cafe/v1/status"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"num_running":2,"num_waiting":1}"#),
+            )
+            .mount(&relay)
+            .await;
+        let probe = LiveProbe {
+            http: reqwest::Client::new(),
+            providers: Arc::new(LiveProviders::new()),
+        };
+        let target = RemoteTarget {
+            peer_hostname: "WorksMacStudio.lan".to_string(),
+            base_url: format!("{}/relay/cafe", relay.uri()),
+            template_kwargs: None,
+        };
+        let facts = probe.probe_remote(&target, SERVED).await.unwrap();
+        assert_eq!(facts.live_in_flight, Some(3), "the peer engine's own count");
+        assert_eq!(facts.context_window, Some(262_144));
+
+        let wrong = probe.probe_remote(&target, "other").await.unwrap_err();
+        assert!(
+            wrong.contains("WorksMacStudio.lan's MLX engine serves"),
+            "{wrong}"
+        );
+
+        let refusing = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(403).set_body_string(
+                "chatServingDisabled: \"Allow this Mac to serve chat to linked devices\" is off on WorksMacStudio.lan",
+            ))
+            .mount(&refusing)
+            .await;
+        let off = RemoteTarget {
+            base_url: format!("{}/relay/cafe", refusing.uri()),
+            ..target
+        };
+        let reason = probe.probe_remote(&off, SERVED).await.unwrap_err();
+        assert!(reason.contains("chatServingDisabled"), "{reason}");
+        assert!(
+            reason.starts_with("WorksMacStudio.lan's MLX engine is not serving"),
+            "{reason}"
+        );
+        assert!(
+            !reason.contains("cafe"),
+            "the capability never enters a reason: {reason}"
+        );
+    }
+
+    /// The remote node's provider is the `omlx` definition aimed at the relay's capability path:
+    /// the chat request lands under `/relay/<cap>/v1/chat/completions`, the peer profile's
+    /// kwargs ride it, and a stream that ends without its marker is still the named cut
+    /// (50ca4247d) — the proxy passes it through unchanged and the parser names it here.
+    #[tokio::test]
+    async fn the_remote_provider_posts_under_the_relay_path_and_a_cut_stream_stays_an_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let relay = MockServer::start().await;
+        let cut = "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Par\"}}]}\n\n";
+        Mock::given(method("POST"))
+            .and(path("/relay/cafe/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(cut),
+            )
+            .mount(&relay)
+            .await;
+        let target = RemoteTarget {
+            peer_hostname: "WorksMacStudio.lan".to_string(),
+            base_url: format!("{}/relay/cafe", relay.uri()),
+            template_kwargs: None,
+        };
+        let provider = remote_provider(&target).expect("the omlx definition builds");
+        let messages = vec![Message::user().with_text("Capital of France?")];
+        let mut cfg = ModelConfig::new(SERVED);
+        add_template_kwargs(
+            &mut cfg,
+            serde_json::json!({"enable_thinking": false})
+                .as_object()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+        let mut stream = provider.stream(&cfg, "sys", &messages, &[]).await.unwrap();
+        let mut outcome = Ok(());
+        while let Some(item) = stream.next().await {
+            if let Err(e) = item {
+                outcome = Err(e);
+                break;
+            }
+        }
+        let err = outcome.expect_err("a stream without finish_reason/[DONE] is not an answer");
+        assert!(
+            err.to_string()
+                .contains(goose_providers::errors::STREAM_TRUNCATED),
+            "{err}"
+        );
+        let requests = relay.received_requests().await.unwrap();
+        let posts: Vec<_> = requests
+            .iter()
+            .filter(|r| r.method == wiremock::http::Method::POST)
+            .collect();
+        assert_eq!(posts.len(), 1, "one chat request, not retried");
+        assert!(
+            requests
+                .iter()
+                .all(|r| r.url.path().starts_with("/relay/cafe/v1/")),
+            "every call stays under the relay's capability path: {:?}",
+            requests
+                .iter()
+                .map(|r| r.url.path().to_string())
+                .collect::<Vec<_>>()
+        );
+        let body: Value = serde_json::from_slice(&posts[0].body).unwrap();
+        assert_eq!(body["model"], SERVED);
+        assert_eq!(
+            body["chat_template_kwargs"],
+            serde_json::json!({"enable_thinking": false})
+        );
     }
 
     /// Live 2026-09-24 (3.0.19): the distributed engine served the HF id while the `mihai-mlx` node

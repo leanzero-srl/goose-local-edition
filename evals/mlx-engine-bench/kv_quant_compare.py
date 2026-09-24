@@ -77,7 +77,14 @@ def quality_table(ref: dict, cand: dict) -> tuple[list[str], dict]:
         elif key.startswith("c-agent"):
             extra = f"tools {'=' if row['tool_calls_equal'] else '≠'} {row['tool_names']}"
         lines.append(f"| {key} | {row['prefix']}/{row['ref_tokens']} | {div} | {extra} |")
+    arith = (cand["quality"].get("arithmetic") or {}).get("content") or ""
     summary = {
+        "arithmetic_correct": "30" in arith and "54" not in arith,
+        "tools_equal": sum(
+            compare_prompt(ref["quality"][k], cand["quality"][k])["tool_calls_equal"]
+            for k in ref["quality"]
+            if k.startswith("c-agent") and k in cand["quality"]
+        ),
         "agreement": matched / total if total else None,
         "identical": identical,
         "prompts": len(ref["quality"]),
@@ -189,22 +196,59 @@ def main():
             "",
         ]
     md += [
-        "## memory and speed (streaming, MTP on, no logprobs)",
+        "## quality summary",
         "",
-        "| config | context | prompt tok | TTFT s | prefill tok/s | decode tok/s | Δactive decode GB | Δactive prefill-peak GB | 128k answer |",
+        "| config vs reference | agreement to first divergence | identical answers | median / max reference margin at divergence (nats) | fact at 31k | arithmetic (30) | agent tool calls equal |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for label in labels:
+        sm = summaries[label]
+        cand = load(args.results_dir, label)
+        md.append(
+            f"| {label} vs {args.reference} | {100 * sm['agreement']:.1f}% | {sm['identical']}/{sm['prompts']} | "
+            f"{sm['median_margin']} / {sm['max_margin']} | {'found' if retrieval_found(cand) else 'MISSED'} | "
+            f"{'correct' if sm['arithmetic_correct'] else 'WRONG'} | {sm['tools_equal']}/4 |"
+        )
+    md += [
+        "",
+        "## memory and prefill (streaming, MTP on, no logprobs; one fresh engine per configuration)",
+        "",
+        "Peak = the engine's Metal peak after the request (process-wide, contexts run in ascending order).",
+        "Prefix cache = the engine's retained entries after the request, within its fixed memory budget.",
+        "",
+        "| config | context | prompt tok | TTFT s | prefill tok/s | peak GB | Δ peak vs bf16 | prefix cache after (entries, GB) | 128k answer |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
+    ref_peaks = {r["ctx"]: r["peak_after"] for r in memory_rows(ref)}
+    for label in [args.reference] + [l for l in labels if "memory" in load(args.results_dir, l)]:
+        run = load(args.results_dir, label)
+        for r, (ctx, m) in zip(memory_rows(run), sorted(run["memory"].items(), key=lambda kv: int(kv[0]))):
+            ans = r["answer"].replace("\n", " / ")[:60] if r["ctx"] >= 100000 else ""
+            cache = m["cache_after"]
+            delta = r["peak_after"] - ref_peaks.get(r["ctx"], r["peak_after"])
+            md.append(
+                f"| {label} | {r['ctx']} | {r['prompt']} | {r['ttft']:.0f} | {r['prefill']:.0f} | {r['peak_after']:.2f} | "
+                f"{delta:+.2f} | {cache['entry_count']}, {cache['current_memory_mb'] / 1024:.1f} | {ans} |"
+            )
+    decode_rows = []
     for label in [args.reference] + labels:
         run = load(args.results_dir, label)
-        for r in memory_rows(run):
-            ans = r["answer"].replace("\n", " / ")[:80] if r["ctx"] >= 100000 else ""
-            md.append(
-                f"| {label} | {r['ctx']} | {r['prompt']} | {r['ttft']:.1f} | {r['prefill']:.0f} | "
-                f"{(r['decode'] or 0):.1f} | {r['decode_delta_gb']:.2f} | {r['prefill_delta_gb']:.2f} | {ans} |"
+        if "decode" in run:
+            warm = [x for x in run["decode"]["runs"] if not x["cold"]]
+            tps = sorted(x["decode_tps"] for x in warm if x["decode_tps"])
+            decode_rows.append(
+                f"| {label} | {warm[0]['prompt_tokens']} | {', '.join(f'{t:.1f}' for t in tps)} | "
+                f"{statistics.median(tps):.1f} | {', '.join(str(x['completion_tokens']) for x in warm)} |"
             )
-        s = slope_bytes_per_token(memory_rows(run))
-        if s is not None:
-            md.append(f"| {label} | slope | | | | | {s / 1024:.1f} KiB/token (last two contexts) | | |")
+    if decode_rows:
+        md += [
+            "",
+            "## decode at ~32k context (MTP on, prefix cached, 300-token answers)",
+            "",
+            "| config | prompt tok | decode tok/s per request | median | completion tokens |",
+            "|---|---|---|---|---|",
+            *decode_rows,
+        ]
     if args.record:
         runs = {label: load(args.results_dir, label) for label in labels}
         write_record(args.record, args.results_dir, args.engine, ref, args.noise, summaries, runs)

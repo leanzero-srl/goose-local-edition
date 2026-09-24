@@ -33,6 +33,8 @@ pub mod distributed;
 pub mod engine;
 pub mod hf;
 pub mod kv_cache;
+#[cfg(unix)]
+pub mod placement;
 mod memory;
 mod model_parsers;
 mod subprocess;

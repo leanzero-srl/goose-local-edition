@@ -2452,6 +2452,10 @@ pub struct MlxEngineStatusDto {
     pub active_requests: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_requests_error: Option<String>,
+    /// The admission cap this goose starts its engine with (`--max-concurrent-requests`) — what
+    /// a Link peer routing chat here sizes its node to. Absent from goose builds before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_requests: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_message: Option<String>,
     /// The last memory-gate verdict for `gate_message`: "allow" | "warn" | "block".
@@ -4058,6 +4062,126 @@ pub struct MlxEngineDistributedProvisionRequest {
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineDistributedProvisionResponse {
     pub provision: MlxDistributedProvisionDto,
+}
+
+// ============================================================================
+// Remote single: the single MLX engine on ANOTHER Mac, this Mac's chat routed to it through
+// LeanZero Link's inference proxy (the placement planner's "<Mac> alone" when <Mac> is a peer).
+// ============================================================================
+
+/// Why a remote-single start did not happen — one named code the caller acts on, and the
+/// message to show verbatim. Codes: `linkNotConnected` · `unknownPeer` · `chatServingDisabled`
+/// (the peer's "Allow this Mac to serve chat to linked devices" is off) ·
+/// `remoteManagementDisabled` (the peer does not let linked devices mount models) ·
+/// `peerTooOld` (its goose has no chat proxy / reports no admission cap) · `peerMountFailed`
+/// (the peer's own mount refusal, e.g. its memory gate) · `distributedOwnsThisMac` ·
+/// `remoteSingleActive` (a route to a different peer or model is up — stop it first).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxRemoteSingleRefusalDto {
+    pub code: String,
+    pub message: String,
+}
+
+/// The remote-single route of THIS goosed. `state`: `off` (no route) · `mounting` (the peer is
+/// loading the model) · `ready` (the peer's engine serves `servedModelId` through the proxy —
+/// chat goes there) · `failed` (the peer's engine failed or went away; `lastError` says why).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxRemoteSingleStatusDto {
+    pub state: String,
+    /// The peer as the caller named it (a Link `nodeId`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer: Option<String>,
+    /// The peer's hostname as the mesh reports it — what "Serving from <peer>" shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_hostname: Option<String>,
+    /// The HF directory id mounted on the peer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    /// `served_model_id` over the PEER's saved settings — the id chat requests carry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub served_model_id: Option<String>,
+    /// The peer's admission cap (its `maxConcurrentRequests`) — the router node's capacity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<u32>,
+    /// The peer engine's live in-flight count (`/v1/status` through the proxy). Absent when it
+    /// did not answer — never a fabricated 0; `activeRequestsError` says why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_requests: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_requests_error: Option<String>,
+    /// The peer engine's own decode rate over its last generation (`generation_tps`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_tps: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+/// Mount `modelId` on Link peer `peer` (the existing `mlxEngine/mount` over the mesh — the
+/// peer's memory gate decides) and route this Mac's MLX chat to it through the peer's chat
+/// proxy. Returns once the mount is accepted (`state: mounting`) or the engine already serves
+/// it (`state: ready`); poll `remoteSingleStatus` for `ready`. Idempotent for the same
+/// peer + model. While a route is up, the swarm router's MLX node is the peer's engine
+/// (`remote:<peerHostname>`) and this Mac's own sidecar node is not a candidate.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/remoteSingleStart",
+    response = MlxEngineRemoteSingleStartResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineRemoteSingleStartRequest {
+    pub peer: String,
+    pub model_id: String,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineRemoteSingleStartResponse {
+    pub started: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<MlxRemoteSingleRefusalDto>,
+    pub status: MlxRemoteSingleStatusDto,
+}
+
+/// Drop the route (chat returns to this Mac's own engine) and, unless `keepMounted`, unmount
+/// the model on the peer. `unmounted` reports the peer's answer; `unmountError` its failure
+/// verbatim (the route is dropped either way).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/remoteSingleStop",
+    response = MlxEngineRemoteSingleStopResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineRemoteSingleStopRequest {
+    #[serde(default)]
+    pub keep_mounted: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineRemoteSingleStopResponse {
+    pub unmounted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unmount_error: Option<String>,
+    pub status: MlxRemoteSingleStatusDto,
+}
+
+/// The route's state, re-probed through the proxy on every call.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/remoteSingleStatus",
+    response = MlxEngineRemoteSingleStatusResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineRemoteSingleStatusRequest {}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineRemoteSingleStatusResponse {
+    pub status: MlxRemoteSingleStatusDto,
 }
 
 // ============================================================================

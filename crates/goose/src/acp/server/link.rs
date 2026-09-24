@@ -1065,6 +1065,9 @@ impl GooseAcpAgent {
                 super::mlx_distributed_link::GoosedDistributedNode,
             ));
         }
+        // This Mac's single engine answering linked devices' chat (the inference proxy); its
+        // owner's switch (`LEANZERO_LINK_ALLOW_CHAT_SERVING`, off by default) gates every call.
+        manager = manager.with_chat_serving(Arc::new(super::mlx_remote_single::GoosedChatServing));
         Ok(Arc::new(manager))
     }
 

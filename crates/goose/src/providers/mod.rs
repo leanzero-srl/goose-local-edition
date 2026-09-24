@@ -53,6 +53,7 @@ pub mod litellm;
 #[cfg(feature = "local-inference")]
 pub mod local_inference;
 pub mod mlx_distributed_owner;
+pub mod mlx_remote;
 pub mod mlx_serving;
 pub mod nanogpt;
 pub mod oauth;

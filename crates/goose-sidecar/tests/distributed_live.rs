@@ -1021,6 +1021,20 @@ async fn live_flash_at_the_ceiling_rule_after_compaction() {
     let manager = DistributedManager::new(Arc::new(SystemExec));
     let t0 = Instant::now();
     let stamp = |what: &str| println!("[{:>7.1}s] {what}", t0.elapsed().as_secs_f64());
+    // "Make room" on every node first (GOOSE_FLASH_COMPACT_FIRST=0 skips it): the budgets are
+    // then built on post-compaction readings; the start still compacts a node that is short.
+    if env_or("GOOSE_FLASH_COMPACT_FIRST", "1") == "1" {
+        for node in &config.nodes {
+            stamp(&format!("make room on {}", node.name));
+            let record = manager.make_room(&config, &node.name).await.unwrap();
+            match (&record.report, &record.refusal, &record.error) {
+                (Some(report), _, _) => println!("{}", report.summary()),
+                (_, Some(refusal), _) => panic!("{} refused: {refusal:?}", node.name),
+                (_, _, Some(error)) => panic!("{} failed: {error}", node.name),
+                _ => unreachable!(),
+            }
+        }
+    }
     stamp("start (preflight, compaction when short)");
     let preflight = match manager.start(config.clone(), served.clone()).await.unwrap() {
         StartOutcome::Started { preflight } => preflight,
