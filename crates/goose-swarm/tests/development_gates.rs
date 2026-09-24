@@ -775,10 +775,18 @@ fn the_read_the_words_gate_is_carried() {
         );
     }
     let home = std::env::var("HOME").expect("HOME set");
-    let skill = std::fs::read_to_string(
-        std::path::Path::new(&home).join(".agents/skills/goose-swarm-campaign/SKILL.md"),
-    )
-    .expect("campaign skill readable");
+    let path = std::path::Path::new(&home).join(".agents/skills/goose-swarm-campaign/SKILL.md");
+    // The skill lives outside the repo, on the MacBook (CI panicked on every push here, 2026-09-24:
+    // "campaign skill readable: No such file"). Elsewhere the doc half above still asserted; this
+    // half says by name that it had nothing to read, like the value gate's instrument half.
+    let Ok(skill) = std::fs::read_to_string(&path) else {
+        eprintln!(
+            "the_read_the_words_gate_is_carried: skill half SKIPPED — {} is absent on this \
+             machine; the doc half above still asserted",
+            path.display()
+        );
+        return;
+    };
     assert!(
         skill.contains("READ THE WORDS FIRST") && skill.contains("tail -c 4000"),
         "the campaign skill lost the words-first checkpoint procedure"
