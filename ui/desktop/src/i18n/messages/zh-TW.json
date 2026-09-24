@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "新增 OpenAI 相容端點"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "分散式引擎提供 {served}；該節點需要 {wanted}。"
+  },
   "composerReadiness.failed": {
     "defaultMessage": "上次掛載失敗:{error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "此節點的所有槽位都已佔用。"
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "分散式引擎提供 {served}；此節點需要 {wanted}。"
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} 未在 LM Studio 中載入。"

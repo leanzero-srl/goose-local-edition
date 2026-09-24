@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "OpenAI uyumlu uç nokta ekle"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "Dağıtık motor {served} sunuyor; düğüm {wanted} istiyor."
+  },
   "composerReadiness.failed": {
     "defaultMessage": "Son takma başarısız oldu: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "Bu düğümdeki tüm yuvalar dolu."
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "Dağıtık motor {served} sunuyor; bu düğüm {wanted} istiyor."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} LM Studio’da yüklü değil."

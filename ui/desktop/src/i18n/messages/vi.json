@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Thêm endpoint tương thích OpenAI"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "Công cụ phân tán phục vụ {served}; nút cần {wanted}."
+  },
   "composerReadiness.failed": {
     "defaultMessage": "Lần gắn gần nhất thất bại: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "Mọi vị trí trên nút này đều đang bận."
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "Công cụ phân tán phục vụ {served}; nút này cần {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} chưa được tải trong LM Studio."

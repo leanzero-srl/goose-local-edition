@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "OpenAI-संगत एंडपॉइंट जोड़ें"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "वितरित इंजन {served} सर्व करता है; नोड को {wanted} चाहिए।"
+  },
   "composerReadiness.failed": {
     "defaultMessage": "पिछला माउंट विफल रहा: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "इस नोड के सभी स्लॉट व्यस्त हैं।"
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "वितरित इंजन {served} सर्व करता है; इस नोड को {wanted} चाहिए।"
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} LM Studio में लोड नहीं है।"

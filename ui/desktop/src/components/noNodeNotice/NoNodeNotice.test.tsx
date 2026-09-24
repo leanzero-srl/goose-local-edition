@@ -10,6 +10,8 @@ import GooseMessage from '../GooseMessage';
 import NoNodeNotice from './NoNodeNotice';
 import { resolveMountTarget, shortModelName } from './mlxMount';
 import { parseNoNodeError } from './parseNoNodeError';
+import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
+import { FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
 
 const mockStatus = vi.fn<() => Promise<MlxEngineStatus>>();
 const mockMount = vi.fn<(modelId: string, nodeId?: string) => Promise<void>>();
@@ -18,6 +20,11 @@ vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineStatus: () => mockStatus(),
   mlxEngineMount: (modelId: string, nodeId?: string) => mockMount(modelId, nodeId),
   mlxEngineSettingsRead: () => mockSettings(),
+}));
+
+const mockExtMethod = vi.fn();
+vi.mock('../../acp/acpConnection', () => ({
+  getAcpClient: async () => ({ extMethod: mockExtMethod }),
 }));
 
 const mockRead = vi.fn();
@@ -221,6 +228,48 @@ describe('NoNodeNotice', () => {
     expect(retry.getAttribute('data-variant')).toBe('primary');
     await user.click(retry);
     expect(onRetry).toHaveBeenCalledWith('tell me about this skill');
+  });
+
+  it('while the distributed engine owns the Mac the row names it and its state — never Mount', async () => {
+    const user = userEvent.setup();
+    const starting: MlxDistributedStatus = {
+      ...FLASH_READY,
+      state: 'starting',
+      modelId: HF,
+      servedModelId: ALIAS,
+    };
+    mockExtMethod.mockResolvedValue({ status: starting });
+    await mlxDistributedStatus();
+    const onRetry = vi.fn();
+    wrap(<NoNodeNotice rows={rows} live retryText="hello" onRetry={onRetry} />);
+    const cell = await screen.findByTestId('no-node-distributed-mihai-mlx');
+    expect(cell.textContent).toBe('Distributed · 2 nodes · JACCL · Starting');
+    expect(screen.queryByTestId('no-node-mount-mihai-mlx')).toBeNull();
+    expect(screen.getByTestId('no-node-retry')).toBeDisabled();
+
+    mockExtMethod.mockResolvedValue({ status: { ...starting, state: 'ready' } });
+    await act(async () => {
+      await mlxDistributedStatus();
+    });
+    expect(screen.getByTestId('no-node-distributed-mihai-mlx').textContent).toBe(
+      'Distributed · 2 nodes · JACCL · Ready'
+    );
+    await user.click(screen.getByTestId('no-node-retry'));
+    expect(onRetry).toHaveBeenCalledWith('hello');
+
+    mockExtMethod.mockResolvedValue({ status: { ...starting, state: 'ready', servedModelId: HF } });
+    await act(async () => {
+      await mlxDistributedStatus();
+    });
+    expect(
+      screen.getByText(`The distributed engine serves ${HF}; this node wants ${ALIAS}.`)
+    ).toBeInTheDocument();
+
+    mockExtMethod.mockRejectedValue(new Error('gone'));
+    await act(async () => {
+      await mlxDistributedStatus().catch(() => undefined);
+    });
+    expect(await screen.findByTestId('no-node-mount-mihai-mlx')).toBeInTheDocument();
   });
 
   it('a config read failure is stated, not hidden', async () => {

@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Tambah endpoint yang kompatibel dengan OpenAI"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "Mesin terdistribusi melayani {served}; node ini meminta {wanted}."
+  },
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "Semua slot di node ini sedang sibuk."
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "Mesin terdistribusi melayani {served}; node ini meminta {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} tidak dimuat di LM Studio."

@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Добавить OpenAI-совместимую конечную точку"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "Распределённый движок обслуживает {served}; узлу нужна {wanted}."
+  },
   "composerReadiness.failed": {
     "defaultMessage": "Последнее монтирование не удалось: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "Все слоты этого узла заняты."
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "Распределённый движок обслуживает {served}; этому узлу нужна {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} не загружена в LM Studio."

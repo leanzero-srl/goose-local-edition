@@ -7,10 +7,14 @@ import type { SwarmConfig } from '../settings/swarm/golden';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, Chip, SURFACE, SPACE, StatusDot, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 import type { NoNodeRow, NodeReason } from './parseNoNodeError';
+import { modeSummary } from '../leanzero-swarm/mlxDistributed';
+import { distributedStateWord, formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import {
+  distributedFact,
   engineFact,
   resolveMountTarget,
   shortModelName,
+  useLatestMlxDistributedStatus,
   useMlxMount,
   useMountLookup,
   type EngineFact,
@@ -45,6 +49,14 @@ const i18n = defineMessages({
   mount: { id: 'noNodeNotice.mount', defaultMessage: 'Mount {model}' },
   mounting: { id: 'noNodeNotice.mounting', defaultMessage: 'Mounting' },
   mounted: { id: 'noNodeNotice.mounted', defaultMessage: 'Mounted' },
+  distributedState: {
+    id: 'noNodeNotice.distributedState',
+    defaultMessage: '{mode} · {state}',
+  },
+  distributedWrongModel: {
+    id: 'noNodeNotice.distributedWrongModel',
+    defaultMessage: 'The distributed engine serves {served}; this node wants {wanted}.',
+  },
   mountFailed: { id: 'noNodeNotice.mountFailed', defaultMessage: 'Mount failed' },
   aliasMismatch: {
     id: 'noNodeNotice.aliasMismatch',
@@ -124,13 +136,20 @@ export default function NoNodeNotice({
   );
   const lookup = useMountLookup(armed, readSwarm, read);
   const { status } = useMlxEngineStatusPoll(armed, 2000);
+  const distributed = useLatestMlxDistributedStatus();
   const { requestingNodeId, mountErrors, mount: onMount } = useMlxMount(status);
 
   const targetOf = (nodeId: string): MountTarget | null =>
     lookup.state === 'ready' ? resolveMountTarget(nodeId, lookup.devices, lookup.settings) : null;
+  const nodeModelOf = (nodeId: string): string | null =>
+    lookup.state === 'ready'
+      ? (lookup.devices.find((d) => d.id === nodeId)?.model_id ?? null)
+      : null;
 
   const liveFactOf = (row: NoNodeRow): EngineFact | null => {
     if (!armed || row.reason.kind !== 'mlx-down' || row.nodeId == null) return null;
+    const owned = distributedFact(distributed, nodeModelOf(row.nodeId));
+    if (owned) return owned;
     const target = targetOf(row.nodeId);
     return engineFact(status, target?.kind === 'ok' ? target.servedId : null);
   };
@@ -150,6 +169,43 @@ export default function NoNodeNotice({
         <p className={cx(TYPE.meta, TONE_TEXT.err)}>
           {intl.formatMessage(i18n.lookupFailed, { error: lookup.error })}
         </p>
+      );
+    }
+    // The distributed engine owns this Mac: it is the node's engine, a single mount would be
+    // refused — say which engine and its state, offer no Mount.
+    const owned = distributedFact(distributed, nodeModelOf(nodeId));
+    if (owned && distributed) {
+      const label = intl.formatMessage(i18n.distributedState, {
+        mode: formatMlxMode(intl, modeSummary(distributed), null),
+        state: distributedStateWord(intl, distributed.state),
+      });
+      const wanted = nodeModelOf(nodeId);
+      const wrongModel =
+        (distributed.state === 'ready' || distributed.state === 'serving') &&
+        distributed.servedModelId != null &&
+        wanted != null &&
+        distributed.servedModelId !== wanted;
+      return (
+        <div
+          data-testid={`no-node-distributed-${nodeId}`}
+          className="flex min-w-0 flex-col items-end gap-1.5"
+        >
+          <Chip
+            tone={owned === 'up' ? 'ok' : 'warn'}
+            icon={owned === 'mounting' ? <Loader2 className="animate-spin" /> : undefined}
+            title={distributed.servedModelId ?? undefined}
+          >
+            {label}
+          </Chip>
+          {wrongModel && (
+            <p className={cx(TYPE.meta, 'break-words text-right')}>
+              {intl.formatMessage(i18n.distributedWrongModel, {
+                served: distributed.servedModelId,
+                wanted,
+              })}
+            </p>
+          )}
+        </div>
       );
     }
     const target = resolveMountTarget(nodeId, lookup.devices, lookup.settings);

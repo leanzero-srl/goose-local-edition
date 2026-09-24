@@ -14,9 +14,26 @@ vi.mock('../acp/mlx-engine', () => ({
 vi.mock('../components/leanzero-swarm/mlxLiveStats', () => ({ MLX_STATUS_POLL_MS: 0 }));
 const distributedStop = vi.fn();
 const distributedStatus = vi.fn();
+const store = vi.hoisted(() => {
+  let latest: { mode: string } | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    latest: () => latest,
+    subscribe: (fn: () => void) => {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    publish: (status: { mode: string } | null) => {
+      latest = status;
+      for (const fn of listeners) fn();
+    },
+  };
+});
 vi.mock('../acp/mlx-distributed', () => ({
   mlxDistributedStop: (...a: unknown[]) => distributedStop(...a),
   mlxDistributedStatus: (...a: unknown[]) => distributedStatus(...a),
+  latestMlxDistributedStatus: () => store.latest(),
+  subscribeMlxDistributedStatus: (fn: () => void) => store.subscribe(fn),
 }));
 
 import { renderHook, waitFor } from '@testing-library/react';
@@ -106,6 +123,21 @@ describe('useMlxDistributedReporter — keeps main’s copy of the distributed e
     await waitFor(() => expect(distributedStatus).toHaveBeenCalledTimes(4));
     unmount();
     expect(listeners.has('mlx-distributed-wake')).toBe(false);
+  });
+
+  it('a run another read saw first (the Engine tab started it) pulls the reporter into its loop', async () => {
+    distributedStatus.mockResolvedValue({ mode: 'single' });
+    renderHook(() => useMlxDistributedReporter(true));
+    await waitFor(() => expect(distributedStatus).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(distributedStatus).toHaveBeenCalledTimes(1);
+    distributedStatus
+      .mockResolvedValueOnce({ mode: 'distributed' })
+      .mockResolvedValue({ mode: 'single' });
+    store.publish({ mode: 'distributed' });
+    await waitFor(() => expect(distributedStatus).toHaveBeenCalledTimes(3));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(distributedStatus).toHaveBeenCalledTimes(3);
   });
 
   it('without the capability nothing is read', async () => {

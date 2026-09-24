@@ -7,7 +7,12 @@ import {
   mlxEngineStatus,
   mlxEngineUnmount,
 } from '../acp/mlx-engine';
-import { mlxDistributedStatus, mlxDistributedStop } from '../acp/mlx-distributed';
+import {
+  latestMlxDistributedStatus,
+  mlxDistributedStatus,
+  mlxDistributedStop,
+  subscribeMlxDistributedStatus,
+} from '../acp/mlx-distributed';
 import { MLX_STATUS_POLL_MS } from '../components/leanzero-swarm/mlxLiveStats';
 import { useFeatures } from '../contexts/FeaturesContext';
 import { toastError } from '../toasts';
@@ -107,9 +112,19 @@ export function useMlxDistributedReporter(enabled: boolean): void {
     void read();
     const onWake = () => void read();
     window.electron.on('mlx-distributed-wake', onWake);
+    // A run started from the Engine tab is first seen by ITS read: join the loop then, so the
+    // latest status (the composer's readiness reads it) stays current after that view closes.
+    const unsubscribe = subscribeMlxDistributedStatus(() => {
+      if (disposed || reading || timer || latestMlxDistributedStatus()?.mode !== 'distributed') {
+        return;
+      }
+      owned = true;
+      timer = setTimeout(() => void read(), MLX_STATUS_POLL_MS);
+    });
     return () => {
       disposed = true;
       if (timer) clearTimeout(timer);
+      unsubscribe();
       window.electron.off('mlx-distributed-wake', onWake);
     };
   }, [enabled]);

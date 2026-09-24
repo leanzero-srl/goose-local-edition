@@ -1,10 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   mlxEngineMount,
   mlxEngineSettingsRead,
   type MlxEngineSettings,
   type MlxEngineStatus,
 } from '../../acp/mlx-engine';
+import {
+  latestMlxDistributedStatus,
+  subscribeMlxDistributedStatus,
+  type MlxDistributedStatus,
+} from '../../acp/mlx-distributed';
+import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
 import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
 import { errorMessage } from '../../utils/conversionUtils';
 
@@ -49,8 +55,38 @@ export function shortModelName(modelId: string): string {
 
 export type EngineFact = 'up' | 'mounting' | 'failed' | 'down';
 
-/** The live engine against the id a node needs served. No status is `down` — the caller decides
- *  whether "no status" is knowable (a poll that has not answered yet is not a fact). */
+/**
+ * While the distributed engine owns this Mac it IS the local MLX node: the swarm router probes ITS
+ * port (swarm_router.rs `probe_mlx`) and a single mount is refused, so the single engine's status
+ * says nothing and Mount is never offered. `null` = it does not own the Mac. The id compared is the
+ * one the ranks serve (`servedModelId`, derived by the backend exactly like the single engine's
+ * served name) — never re-derived here.
+ */
+export function distributedFact(
+  distributed: MlxDistributedStatus | null,
+  servedId: string | null
+): EngineFact | null {
+  if (!distributed || !ownsTheMac(distributed)) return null;
+  const { state } = distributed;
+  if (state === 'preflight' || state === 'starting') return 'mounting';
+  if (
+    (state === 'ready' || state === 'serving') &&
+    servedId != null &&
+    distributed.servedModelId === servedId
+  ) {
+    return 'up';
+  }
+  return 'down';
+}
+
+/** The distributed status the rest of the window last read — no poll of its own. */
+export function useLatestMlxDistributedStatus(): MlxDistributedStatus | null {
+  return useSyncExternalStore(subscribeMlxDistributedStatus, latestMlxDistributedStatus);
+}
+
+/** The live SINGLE engine against the id a node needs served. No status is `down` — the caller
+ *  decides whether "no status" is knowable (a poll that has not answered yet is not a fact). Callers
+ *  ask `distributedFact` first: while the distributed engine owns the Mac this status is moot. */
 export function engineFact(status: MlxEngineStatus | null, servedId: string | null): EngineFact {
   if (!status) return 'down';
   if (status.state === 'mounting') return 'mounting';

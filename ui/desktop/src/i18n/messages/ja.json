@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "OpenAI 互換エンドポイントを追加"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "分散エンジンは {served} を提供していますが、ノードは {wanted} を必要としています。"
+  },
   "composerReadiness.failed": {
     "defaultMessage": "前回のマウントに失敗しました: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "このノードのスロットはすべて使用中です。"
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "分散エンジンは {served} を提供していますが、このノードは {wanted} を必要としています。"
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} は LM Studio に読み込まれていません。"

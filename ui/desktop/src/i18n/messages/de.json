@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "OpenAI-kompatiblen Endpunkt hinzufügen"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "Die verteilte Engine stellt {served} bereit; der Knoten erwartet {wanted}."
+  },
   "composerReadiness.failed": {
     "defaultMessage": "Das letzte Einbinden ist fehlgeschlagen: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "Alle Plätze auf diesem Knoten sind belegt."
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "Die verteilte Engine stellt {served} bereit; dieser Knoten erwartet {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} ist in LM Studio nicht geladen."

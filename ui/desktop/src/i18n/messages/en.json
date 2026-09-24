@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Add an OpenAI-compatible endpoint"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "The distributed engine serves {served}; the node wants {wanted}."
+  },
   "composerReadiness.failed": {
     "defaultMessage": "The last mount failed: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "Every slot on this node is busy."
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "The distributed engine serves {served}; this node wants {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} is not loaded in LM Studio."

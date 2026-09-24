@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Añadir un endpoint compatible con OpenAI"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "El motor distribuido sirve {served}; el nodo espera {wanted}."
+  },
   "composerReadiness.failed": {
     "defaultMessage": "El último montaje falló: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "Todas las plazas de este nodo están ocupadas."
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "El motor distribuido sirve {served}; este nodo espera {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} no está cargado en LM Studio."

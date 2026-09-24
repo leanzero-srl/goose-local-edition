@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "OpenAI 호환 엔드포인트 추가"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "분산 엔진은 {served}을(를) 제공하지만 노드는 {wanted}을(를) 원합니다."
+  },
   "composerReadiness.failed": {
     "defaultMessage": "마지막 마운트에 실패했습니다: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "이 노드의 모든 슬롯이 사용 중입니다."
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "분산 엔진은 {served}을(를) 제공하지만 이 노드는 {wanted}을(를) 원합니다."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model}이(가) LM Studio에 로드되지 않았습니다."

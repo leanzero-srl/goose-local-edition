@@ -69,12 +69,44 @@ function reportToMain(status: MlxDistributedStatus): void {
   report?.(toMlxDistributedReport(status));
 }
 
+/**
+ * The latest distributed status ANY read in this window saw — the Engine tab's poll, the tray
+ * reporter's loop, a stop's response — for surfaces that must know which engine owns this Mac
+ * without a poll of their own (the composer's readiness strip, the no-node notice). A failed read
+ * clears it: a state claim never outlives the read that ended it.
+ */
+let latestStatus: MlxDistributedStatus | null = null;
+const latestListeners = new Set<() => void>();
+
+function publishLatest(status: MlxDistributedStatus | null): void {
+  latestStatus = status;
+  for (const listener of latestListeners) listener();
+}
+
+export function latestMlxDistributedStatus(): MlxDistributedStatus | null {
+  return latestStatus;
+}
+
+export function subscribeMlxDistributedStatus(listener: () => void): () => void {
+  latestListeners.add(listener);
+  return () => {
+    latestListeners.delete(listener);
+  };
+}
+
 export async function mlxDistributedStatus(): Promise<MlxDistributedStatus> {
-  const response = await call<{ status: MlxDistributedStatus }>(
-    '_goose/unstable/mlxEngine/distributedStatus',
-    {}
-  );
+  let response: { status: MlxDistributedStatus };
+  try {
+    response = await call<{ status: MlxDistributedStatus }>(
+      '_goose/unstable/mlxEngine/distributedStatus',
+      {}
+    );
+  } catch (e) {
+    publishLatest(null);
+    throw e;
+  }
   reportToMain(response.status);
+  publishLatest(response.status);
   return response.status;
 }
 
@@ -109,6 +141,7 @@ export async function mlxDistributedStop(): Promise<MlxDistributedStopResponse> 
     {}
   );
   reportToMain(response.status);
+  publishLatest(response.status);
   return response;
 }
 

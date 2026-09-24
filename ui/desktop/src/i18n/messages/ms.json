@@ -701,6 +701,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Tambah titik akhir yang serasi dengan OpenAI"
   },
+  "composerReadiness.distributed": {
+    "defaultMessage": "{mode} · {state} — {nodes}"
+  },
+  "composerReadiness.distributedMismatch": {
+    "defaultMessage": "Enjin teragih menyajikan {served}; nod ini mahukan {wanted}."
+  },
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"
   },
@@ -3994,6 +4000,12 @@
   },
   "noNodeNotice.busy": {
     "defaultMessage": "Semua slot pada nod ini sibuk."
+  },
+  "noNodeNotice.distributedState": {
+    "defaultMessage": "{mode} · {state}"
+  },
+  "noNodeNotice.distributedWrongModel": {
+    "defaultMessage": "Enjin teragih menyajikan {served}; nod ini mahukan {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} tidak dimuatkan dalam LM Studio."

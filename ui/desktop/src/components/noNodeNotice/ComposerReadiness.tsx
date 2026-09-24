@@ -3,15 +3,20 @@ import { useNavigate } from 'react-router-dom';
 import { Loader2, ServerOff, Settings2 } from 'lucide-react';
 import { acpReadConfig } from '../../acp/config';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
+import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
+import { modeSummary, ownsTheMac } from '../leanzero-swarm/mlxDistributed';
+import { distributedStateWord, formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, RADIUS, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
 import {
+  distributedFact,
   engineFact,
   resolveMountTarget,
   shortModelName,
+  useLatestMlxDistributedStatus,
   useMlxMount,
   useMountLookup,
   type EngineFact,
@@ -41,6 +46,14 @@ const i18n = defineMessages({
     id: 'composerReadiness.noTarget',
     defaultMessage: 'No saved MLX model — pick one in Providers.',
   },
+  distributed: {
+    id: 'composerReadiness.distributed',
+    defaultMessage: '{mode} · {state} — {nodes}',
+  },
+  distributedMismatch: {
+    id: 'composerReadiness.distributedMismatch',
+    defaultMessage: 'The distributed engine serves {served}; the node wants {wanted}.',
+  },
   mount: { id: 'composerReadiness.mount', defaultMessage: 'Mount {model}' },
   mounting: { id: 'composerReadiness.mounting', defaultMessage: 'Mounting {model}' },
   openProviders: { id: 'composerReadiness.openProviders', defaultMessage: 'Open Providers' },
@@ -59,12 +72,17 @@ const i18n = defineMessages({
  *
  * A status poll that has not answered, or failed, is `unknown`; so is a stray listener on the
  * engine's port (something serves there that this app's manager does not know about).
+ *
+ * While the DISTRIBUTED engine owns this Mac it is the local MLX node (the router probes it, a
+ * single mount is refused): serving the node's id is `ready`, anything else is `distributed` —
+ * its state and mode, never a Mount offer.
  */
 export type ComposerReadiness =
   | { kind: 'unknown' }
   | { kind: 'ready' }
   | { kind: 'no-nodes' }
-  | { kind: 'unmounted'; nodes: string[]; target: MountTarget; fact: EngineFact };
+  | { kind: 'unmounted'; nodes: string[]; target: MountTarget; fact: EngineFact }
+  | { kind: 'distributed'; nodes: string[]; status: MlxDistributedStatus; wanted: string | null };
 
 const UNKNOWN: ComposerReadiness = { kind: 'unknown' };
 
@@ -74,7 +92,8 @@ function statusIsKnowable(status: MlxEngineStatus | null): status is MlxEngineSt
 
 export function swarmReadiness(
   lookup: MountLookup,
-  status: MlxEngineStatus | null
+  status: MlxEngineStatus | null,
+  distributed: MlxDistributedStatus | null
 ): ComposerReadiness {
   if (lookup.state !== 'ready') return UNKNOWN;
   const enabled = lookup.devices.filter((d) => d.enabled === true);
@@ -84,6 +103,17 @@ export function swarmReadiness(
     d.host == null &&
     (d.provider == null || d.provider.toLowerCase() === 'lmstudio');
   if (!enabled.every(localMlx)) return UNKNOWN;
+  if (distributed && ownsTheMac(distributed)) {
+    if (enabled.some((d) => distributedFact(distributed, d.model_id) === 'up')) {
+      return { kind: 'ready' };
+    }
+    return {
+      kind: 'distributed',
+      nodes: enabled.map((d) => d.id),
+      status: distributed,
+      wanted: enabled[0].model_id,
+    };
+  }
   if (!statusIsKnowable(status)) return UNKNOWN;
   const targets = enabled.map((d) => resolveMountTarget(d.id, lookup.devices, lookup.settings));
   const facts = enabled.map((d) => engineFact(status, d.model_id));
@@ -100,8 +130,16 @@ export function swarmReadiness(
 export function mlxProviderReadiness(
   settings: MlxEngineSettings | null,
   status: MlxEngineStatus | null,
+  distributed: MlxDistributedStatus | null,
   engineLabel: string
 ): ComposerReadiness {
+  if (distributed && ownsTheMac(distributed)) {
+    // The omlx provider follows the distributed engine's port while it owns the Mac
+    // (mlx_engine.rs align_omlx_host_env) and asks for whatever id that engine lists.
+    return distributed.state === 'ready' || distributed.state === 'serving'
+      ? { kind: 'ready' }
+      : { kind: 'distributed', nodes: [engineLabel], status: distributed, wanted: null };
+  }
   if (!settings || !statusIsKnowable(status)) return UNKNOWN;
   if (status.state === 'running') return { kind: 'ready' };
   const target: MountTarget = settings.modelId
@@ -148,14 +186,16 @@ export function ComposerReadinessStrip({ provider }: { provider: string | null |
       (isSwarm &&
         lookup.devices.some((d) => d.enabled === true && d.engine === 'mlx-sidecar' && !d.host)));
   const { status } = useMlxEngineStatusPoll(pollsEngine, 3000);
+  const distributed = useLatestMlxDistributedStatus();
   const { requestingNodeId, mountErrors, mount } = useMlxMount(status);
 
   const readiness: ComposerReadiness = isSwarm
-    ? swarmReadiness(lookup, status)
+    ? swarmReadiness(lookup, status, distributed)
     : isMlx
       ? mlxProviderReadiness(
           lookup.state === 'ready' ? lookup.settings : null,
           status,
+          distributed,
           intl.formatMessage(i18n.mlxEngine)
         )
       : UNKNOWN;
@@ -195,10 +235,34 @@ function ReadinessStripBody({
   const headline =
     readiness.kind === 'no-nodes'
       ? intl.formatMessage(i18n.noNodes)
-      : intl.formatMessage(i18n.unmounted, { nodes: readiness.nodes.join(', ') });
+      : readiness.kind === 'distributed'
+        ? intl.formatMessage(i18n.distributed, {
+            mode: formatMlxMode(intl, modeSummary(readiness.status), null),
+            state: distributedStateWord(intl, readiness.status.state),
+            nodes: readiness.nodes.join(', '),
+          })
+        : intl.formatMessage(i18n.unmounted, { nodes: readiness.nodes.join(', ') });
 
   let detail: string | null = null;
   let action: ReactNode = null;
+  if (readiness.kind === 'distributed') {
+    const { status: dist, wanted } = readiness;
+    const serves = dist.state === 'ready' || dist.state === 'serving';
+    if (serves && wanted != null && dist.servedModelId != null && dist.servedModelId !== wanted) {
+      detail = intl.formatMessage(i18n.distributedMismatch, { served: dist.servedModelId, wanted });
+    } else if (dist.lastError) {
+      detail = dist.lastError;
+    }
+    if (dist.state === 'preflight' || dist.state === 'starting') {
+      action = (
+        <Loader2
+          aria-hidden
+          data-testid="composer-readiness-distributed-starting"
+          className="size-4 animate-spin text-white"
+        />
+      );
+    }
+  }
   if (readiness.kind === 'unmounted') {
     const { target, fact } = readiness;
     const failure =
