@@ -325,6 +325,7 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
     expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Distributed · 2 nodes · JACCL');
     expect(t).toHaveTextContent('rapid-mlx/Qwen3.8-Flash-Next-4bit');
     expect(screen.getByTestId('mlx-dist-tile-inflight')).toHaveTextContent('0');
+    expect(screen.getByTestId('mlx-dist-tile-load')).toHaveTextContent('slots 0 of 2 · 0 waiting');
     const nodes = screen.getAllByTestId('mlx-dist-tile-node');
     expect(nodes[0]).toHaveTextContent('MacBook Pro · L0–19');
     expect(nodes[0]).toHaveTextContent('61.0 of 83.4 GiB peak');
@@ -350,5 +351,42 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
     t = screen.getByTestId('mlx-state-badge');
     expect(t.className).toContain('bg-lz-warn-solid');
     expect(t).toHaveTextContent('Admission closed: a node is low on memory');
+  });
+
+  it('distributed slots: the pipeline says slots and the queue, tensor the queue only, a failed poll nothing', () => {
+    const { unmount } = tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: { ...FLASH_SERVING, waiting: 1 },
+    });
+    expect(screen.getByTestId('mlx-dist-tile-load')).toHaveTextContent('slots 2 of 2 · 1 waiting');
+    unmount();
+    const tensor = tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: {
+        ...FLASH_SERVING,
+        runner: 'mlxLmTensor',
+        waiting: 0,
+        slots: undefined,
+        slotsInUse: undefined,
+        sequencesInFlight: undefined,
+      },
+    });
+    expect(screen.getByTestId('mlx-dist-tile-load').textContent).toBe('0 waiting');
+    tensor.unmount();
+    tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: {
+        ...FLASH_SERVING,
+        waiting: undefined,
+        slots: undefined,
+        slotsInUse: undefined,
+        sequencesInFlight: undefined,
+        serverStatusError: '/v1/status did not answer',
+      },
+    });
+    expect(screen.queryByTestId('mlx-dist-tile-load')).toBeNull();
   });
 });

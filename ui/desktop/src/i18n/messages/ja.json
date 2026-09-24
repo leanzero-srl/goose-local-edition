@@ -2939,6 +2939,9 @@
   "mlxDistributed.field.restart": {
     "defaultMessage": "ランクが終了またはハングしたら再起動"
   },
+  "mlxDistributed.field.slots": {
+    "defaultMessage": "スロット（パイプラインランナー）"
+  },
   "mlxDistributed.field.ssh": {
     "defaultMessage": "ssh エイリアス"
   },
@@ -2962,6 +2965,12 @@
   },
   "mlxDistributed.intro": {
     "defaultMessage": "Thunderbolt で複数の Mac に分割した 1 つのモデル。この Mac はランク 0 で、API を提供し、すべてのランクを監視します。"
+  },
+  "mlxDistributed.kv": {
+    "defaultMessage": "KV {reserved} / {budget} GiB"
+  },
+  "mlxDistributed.kvBar": {
+    "defaultMessage": "予算に対する予約済み KV"
   },
   "mlxDistributed.lastError": {
     "defaultMessage": "最後のエラー"
@@ -3152,11 +3161,26 @@
   "mlxDistributed.save": {
     "defaultMessage": "構成を保存"
   },
+  "mlxDistributed.sequencesInFlight": {
+    "defaultMessage": "{count, plural, other {バッチ内 # シーケンス}}"
+  },
+  "mlxDistributed.serverStatusError": {
+    "defaultMessage": "サーバーステータスを読み取れません: {error}"
+  },
   "mlxDistributed.setUp": {
     "defaultMessage": "設定する"
   },
   "mlxDistributed.shard": {
     "defaultMessage": "シャード {index} / {count}"
+  },
+  "mlxDistributed.slotsDefault": {
+    "defaultMessage": "ランナーの既定値"
+  },
+  "mlxDistributed.slotsHint": {
+    "defaultMessage": "各ランクが計画されるフルコンテキストのシーケンス数。超過するリクエストは待機します。テンソルランナーにはありません。"
+  },
+  "mlxDistributed.slotsInUse": {
+    "defaultMessage": "スロット {used} / {slots}"
   },
   "mlxDistributed.source.derived": {
     "defaultMessage": "算出"
@@ -3229,6 +3253,9 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "警告"
+  },
+  "mlxDistributed.waiting": {
+    "defaultMessage": "待機中 {count}"
   },
   "mlxDistributedSetup.advanced": {
     "defaultMessage": "詳細設定"
@@ -3574,6 +3601,12 @@
   },
   "mlxStateTile.dist.peakNoBudget": {
     "defaultMessage": "ピーク {peak} GiB"
+  },
+  "mlxStateTile.dist.slots": {
+    "defaultMessage": "スロット {used} / {slots}"
+  },
+  "mlxStateTile.dist.waiting": {
+    "defaultMessage": "待機中 {count}"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "のキャッシュ参照がヒット"

@@ -2550,6 +2550,8 @@ describe('Engine tab — which engine owns this Mac is always said', () => {
     expect(within(tile).queryByRole('button', { name: 'Mount' })).toBeNull();
     expect(screen.getByTestId('mlx-distributed-owns')).toBeInTheDocument();
     expect(screen.getAllByTestId('mlx-dist-node')).toHaveLength(2);
+    expect(screen.getByTestId('mlx-dist-slots')).toHaveTextContent('Slots 0 / 2');
+    expect(screen.getByTestId('mlx-dist-tile-load')).toHaveTextContent('slots 0 of 2 · 0 waiting');
   });
 
   it('a stopped distributed engine leaves the single engine in charge', async () => {

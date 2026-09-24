@@ -14,6 +14,7 @@ import {
   FLASH_PREFLIGHT_OK,
   FLASH_PREFLIGHT_REFUSED,
   FLASH_READY,
+  FLASH_SERVING,
   STOPPED_WITH_CONFIG,
 } from './mlxDistributed.fixtures';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
@@ -354,6 +355,89 @@ describe('DistributedEngineSection — starting', () => {
   });
 });
 
+/** The tensor runner: rank 0's /v1/status reports the queue only — no slots, no per-rank KV. */
+const TENSOR_SERVING: MlxDistributedStatus = {
+  ...FLASH_SERVING,
+  runner: 'mlxLmTensor',
+  waiting: 0,
+  slots: undefined,
+  slotsInUse: undefined,
+  sequencesInFlight: undefined,
+  nodes: FLASH_SERVING.nodes.map((n) => ({ ...n, kvReservedGb: undefined, kvBudgetGb: undefined })),
+};
+
+describe('DistributedEngineSection — pipeline slots (rank 0’s /v1/status)', () => {
+  it('idle: slots 0 / 2, nothing in the batch, nothing waiting, each rank’s KV against its budget', async () => {
+    const { container } = section();
+    expect(screen.getByTestId('mlx-dist-slots')).toHaveTextContent('Slots 0 / 2');
+    expect(screen.getByTestId('mlx-dist-slots').className).not.toContain('text-lz-warn');
+    expect(screen.getByTestId('mlx-dist-sequences')).toHaveTextContent('0 sequences in the batch');
+    expect(screen.getByTestId('mlx-dist-waiting')).toHaveTextContent('Waiting 0');
+    expect(screen.getByTestId('mlx-dist-waiting').className).not.toContain('text-lz-warn');
+    const [macbook, workhorse] = screen.getAllByTestId('mlx-dist-node');
+    expect(within(macbook).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.0 of 0.5 GiB');
+    expect(within(workhorse).getByTestId('mlx-dist-node-kv')).toHaveTextContent(
+      'KV 0.0 of 0.5 GiB'
+    );
+    expect(
+      within(macbook).getByRole('progressbar', { name: 'KV reserved against the budget' })
+    ).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.queryByTestId('mlx-dist-server-status-error')).toBeNull();
+    await expectDesigned(container);
+  });
+
+  it('full: both slots held and a request waiting are warn, the KV bars at their budget', () => {
+    section({ status: { ...FLASH_SERVING, waiting: 1 } });
+    const slots = screen.getByTestId('mlx-dist-slots');
+    expect(slots).toHaveTextContent('Slots 2 / 2');
+    expect(slots.className).toContain('text-lz-warn');
+    expect(screen.getByTestId('mlx-dist-sequences')).toHaveTextContent('2 sequences in the batch');
+    const waiting = screen.getByTestId('mlx-dist-waiting');
+    expect(waiting).toHaveTextContent('Waiting 1');
+    expect(waiting.className).toContain('text-lz-warn');
+    const [macbook] = screen.getAllByTestId('mlx-dist-node');
+    expect(within(macbook).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.5 of 0.5 GiB');
+    expect(
+      within(macbook).getByRole('progressbar', { name: 'KV reserved against the budget' })
+    ).toHaveAttribute('aria-valuenow', '100');
+  });
+
+  it('tensor runner: the queue only — no slots, no batch count, no KV line, never a 0 or a dash', () => {
+    section({ status: TENSOR_SERVING });
+    expect(screen.getByTestId('mlx-dist-waiting')).toHaveTextContent('Waiting 0');
+    expect(screen.queryByTestId('mlx-dist-slots')).toBeNull();
+    expect(screen.queryByTestId('mlx-dist-sequences')).toBeNull();
+    expect(screen.queryByTestId('mlx-dist-node-kv')).toBeNull();
+    expect(screen.queryByText(/^Slots \d/)).toBeNull();
+  });
+
+  it('a broken /v1/status answer is a red problem line; the figures it cleared draw nothing', () => {
+    section({
+      status: {
+        ...FLASH_SERVING,
+        waiting: undefined,
+        slots: undefined,
+        slotsInUse: undefined,
+        sequencesInFlight: undefined,
+        serverStatusError: '/v1/status: `ranks` has 1 entries for 2 ranks',
+        nodes: FLASH_SERVING.nodes.map((n) => ({
+          ...n,
+          kvReservedGb: undefined,
+          kvBudgetGb: undefined,
+        })),
+      },
+    });
+    const line = screen.getByTestId('mlx-dist-server-status-error');
+    expect(line).toHaveTextContent(
+      'Server status unreadable: /v1/status: `ranks` has 1 entries for 2 ranks'
+    );
+    expect(line.className).toContain('text-lz-err');
+    expect(screen.queryByTestId('mlx-dist-slots')).toBeNull();
+    expect(screen.queryByTestId('mlx-dist-waiting')).toBeNull();
+    expect(screen.queryByTestId('mlx-dist-node-kv')).toBeNull();
+  });
+});
+
 describe('DistributedEngineSection — configuration', () => {
   it('a model change moves each node’s folder to the new id and Save keeps fields this build does not know', async () => {
     mockConfigUpdate.mockImplementation(async (c: unknown) => c);
@@ -371,6 +455,25 @@ describe('DistributedEngineSection — configuration', () => {
     expect(saved.nodes[0].ssh).toBeUndefined();
     expect(saved.hangRatioOnly).toBe(true);
     expect(saved.watchdogWarnRatio).toBe(0.05);
+  });
+
+  it('slots is an editable number: a typed value is saved, a cleared one is omitted (runner default)', async () => {
+    mockConfigUpdate.mockImplementation(async (c: unknown) => c);
+    section({ status: { ...STOPPED_WITH_CONFIG, config: { ...FLASH_CONFIG, slots: 2 } } });
+    await openAdvanced();
+    const field = screen.getByRole('textbox', { name: 'Slots (pipeline runner)' });
+    expect(field).toHaveValue('2');
+    await userEvent.clear(field);
+    expect(field).toHaveAttribute('placeholder', 'runner default');
+    await userEvent.type(field, '3');
+    await userEvent.click(screen.getByRole('button', { name: 'Save configuration' }));
+    await waitFor(() => expect(mockConfigUpdate).toHaveBeenCalledTimes(1));
+    expect(mockConfigUpdate.mock.calls[0][0].slots).toBe(3);
+
+    await userEvent.clear(screen.getByRole('textbox', { name: 'Slots (pipeline runner)' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save configuration' }));
+    await waitFor(() => expect(mockConfigUpdate).toHaveBeenCalledTimes(2));
+    expect('slots' in mockConfigUpdate.mock.calls[1][0]).toBe(false);
   });
 
   it('an edited draft is what Start sends', async () => {

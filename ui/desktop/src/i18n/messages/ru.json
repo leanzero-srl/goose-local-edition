@@ -2939,6 +2939,9 @@
   "mlxDistributed.field.restart": {
     "defaultMessage": "Перезапускать, если ранг умер или завис"
   },
+  "mlxDistributed.field.slots": {
+    "defaultMessage": "Слоты (конвейерный раннер)"
+  },
   "mlxDistributed.field.ssh": {
     "defaultMessage": "Псевдоним ssh"
   },
@@ -2962,6 +2965,12 @@
   },
   "mlxDistributed.intro": {
     "defaultMessage": "Одна модель, разделённая между несколькими Mac по Thunderbolt. Этот Mac — ранг 0: он обслуживает API и следит за каждым рангом."
+  },
+  "mlxDistributed.kv": {
+    "defaultMessage": "KV {reserved} из {budget} ГиБ"
+  },
+  "mlxDistributed.kvBar": {
+    "defaultMessage": "Зарезервированный KV относительно бюджета"
   },
   "mlxDistributed.lastError": {
     "defaultMessage": "Последняя ошибка"
@@ -3152,11 +3161,26 @@
   "mlxDistributed.save": {
     "defaultMessage": "Сохранить конфигурацию"
   },
+  "mlxDistributed.sequencesInFlight": {
+    "defaultMessage": "{count, plural, one {# последовательность в пакете} few {# последовательности в пакете} many {# последовательностей в пакете} other {# последовательности в пакете}}"
+  },
+  "mlxDistributed.serverStatusError": {
+    "defaultMessage": "Статус сервера не читается: {error}"
+  },
   "mlxDistributed.setUp": {
     "defaultMessage": "Настроить"
   },
   "mlxDistributed.shard": {
     "defaultMessage": "Шард {index} из {count}"
+  },
+  "mlxDistributed.slotsDefault": {
+    "defaultMessage": "по умолчанию раннера"
+  },
+  "mlxDistributed.slotsHint": {
+    "defaultMessage": "Последовательности с полным контекстом, на которые рассчитан каждый ранг; запрос, который превысил бы бюджет, ждёт. У тензорного раннера их нет."
+  },
+  "mlxDistributed.slotsInUse": {
+    "defaultMessage": "Слоты {used} / {slots}"
   },
   "mlxDistributed.source.derived": {
     "defaultMessage": "выведено"
@@ -3229,6 +3253,9 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "внимание"
+  },
+  "mlxDistributed.waiting": {
+    "defaultMessage": "В очереди {count}"
   },
   "mlxDistributedSetup.advanced": {
     "defaultMessage": "Дополнительно"
@@ -3574,6 +3601,12 @@
   },
   "mlxStateTile.dist.peakNoBudget": {
     "defaultMessage": "{peak} ГиБ пик"
+  },
+  "mlxStateTile.dist.slots": {
+    "defaultMessage": "слоты {used} из {slots}"
+  },
+  "mlxStateTile.dist.waiting": {
+    "defaultMessage": "в очереди {count}"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "обращений к кешу — попадания"

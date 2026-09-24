@@ -2939,6 +2939,9 @@
   "mlxDistributed.field.restart": {
     "defaultMessage": "Restart after a rank dies or hangs"
   },
+  "mlxDistributed.field.slots": {
+    "defaultMessage": "Slots (pipeline runner)"
+  },
   "mlxDistributed.field.ssh": {
     "defaultMessage": "ssh alias"
   },
@@ -2962,6 +2965,12 @@
   },
   "mlxDistributed.intro": {
     "defaultMessage": "One model split across several Macs over Thunderbolt. This Mac is rank 0: it serves the API and supervises every rank."
+  },
+  "mlxDistributed.kv": {
+    "defaultMessage": "KV {reserved} of {budget} GiB"
+  },
+  "mlxDistributed.kvBar": {
+    "defaultMessage": "KV reserved against the budget"
   },
   "mlxDistributed.lastError": {
     "defaultMessage": "Last error"
@@ -3152,11 +3161,26 @@
   "mlxDistributed.save": {
     "defaultMessage": "Save configuration"
   },
+  "mlxDistributed.sequencesInFlight": {
+    "defaultMessage": "{count,plural,one{# sequence in the batch} other{# sequences in the batch}}"
+  },
+  "mlxDistributed.serverStatusError": {
+    "defaultMessage": "Server status unreadable: {error}"
+  },
   "mlxDistributed.setUp": {
     "defaultMessage": "Set up"
   },
   "mlxDistributed.shard": {
     "defaultMessage": "Shard {index} of {count}"
+  },
+  "mlxDistributed.slotsDefault": {
+    "defaultMessage": "runner default"
+  },
+  "mlxDistributed.slotsHint": {
+    "defaultMessage": "Full-context sequences each rank is planned for; a request that would overrun waits. The tensor runner has none."
+  },
+  "mlxDistributed.slotsInUse": {
+    "defaultMessage": "Slots {used} / {slots}"
   },
   "mlxDistributed.source.derived": {
     "defaultMessage": "derived"
@@ -3229,6 +3253,9 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "warn"
+  },
+  "mlxDistributed.waiting": {
+    "defaultMessage": "Waiting {count}"
   },
   "mlxDistributedSetup.advanced": {
     "defaultMessage": "Advanced"
@@ -3574,6 +3601,12 @@
   },
   "mlxStateTile.dist.peakNoBudget": {
     "defaultMessage": "{peak} GiB peak"
+  },
+  "mlxStateTile.dist.slots": {
+    "defaultMessage": "slots {used} of {slots}"
+  },
+  "mlxStateTile.dist.waiting": {
+    "defaultMessage": "{count} waiting"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "of cache lookups hit"

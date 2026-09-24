@@ -2939,6 +2939,9 @@
   "mlxDistributed.field.restart": {
     "defaultMessage": "Bir rank ölürse ya da takılırsa yeniden başlat"
   },
+  "mlxDistributed.field.slots": {
+    "defaultMessage": "Slotlar (pipeline çalıştırıcı)"
+  },
   "mlxDistributed.field.ssh": {
     "defaultMessage": "ssh takma adı"
   },
@@ -2962,6 +2965,12 @@
   },
   "mlxDistributed.intro": {
     "defaultMessage": "Thunderbolt üzerinden birkaç Mac'e bölünmüş tek bir model. Bu Mac rank 0'dır: API'yi sunar ve her rank'ı denetler."
+  },
+  "mlxDistributed.kv": {
+    "defaultMessage": "KV {reserved} / {budget} GiB"
+  },
+  "mlxDistributed.kvBar": {
+    "defaultMessage": "Bütçeye göre ayrılmış KV"
   },
   "mlxDistributed.lastError": {
     "defaultMessage": "Son hata"
@@ -3152,11 +3161,26 @@
   "mlxDistributed.save": {
     "defaultMessage": "Yapılandırmayı kaydet"
   },
+  "mlxDistributed.sequencesInFlight": {
+    "defaultMessage": "{count, plural, one {Toplu işte # dizi} other {Toplu işte # dizi}}"
+  },
+  "mlxDistributed.serverStatusError": {
+    "defaultMessage": "Sunucu durumu okunamıyor: {error}"
+  },
   "mlxDistributed.setUp": {
     "defaultMessage": "Kur"
   },
   "mlxDistributed.shard": {
     "defaultMessage": "Parça {index} / {count}"
+  },
+  "mlxDistributed.slotsDefault": {
+    "defaultMessage": "çalıştırıcı varsayılanı"
+  },
+  "mlxDistributed.slotsHint": {
+    "defaultMessage": "Her rank için planlanan tam bağlamlı dizi sayısı; bunu aşacak bir istek bekler. Tensör çalıştırıcıda yoktur."
+  },
+  "mlxDistributed.slotsInUse": {
+    "defaultMessage": "Slotlar {used} / {slots}"
   },
   "mlxDistributed.source.derived": {
     "defaultMessage": "türetildi"
@@ -3229,6 +3253,9 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "uyarı"
+  },
+  "mlxDistributed.waiting": {
+    "defaultMessage": "Bekleyen {count}"
   },
   "mlxDistributedSetup.advanced": {
     "defaultMessage": "Gelişmiş"
@@ -3574,6 +3601,12 @@
   },
   "mlxStateTile.dist.peakNoBudget": {
     "defaultMessage": "{peak} GiB tepe"
+  },
+  "mlxStateTile.dist.slots": {
+    "defaultMessage": "slotlar {used} / {slots}"
+  },
+  "mlxStateTile.dist.waiting": {
+    "defaultMessage": "{count} bekliyor"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "önbellek aramasında isabet"

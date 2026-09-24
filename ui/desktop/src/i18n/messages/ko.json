@@ -2939,6 +2939,9 @@
   "mlxDistributed.field.restart": {
     "defaultMessage": "랭크가 종료되거나 멈추면 재시작"
   },
+  "mlxDistributed.field.slots": {
+    "defaultMessage": "슬롯 (파이프라인 러너)"
+  },
   "mlxDistributed.field.ssh": {
     "defaultMessage": "ssh 별칭"
   },
@@ -2962,6 +2965,12 @@
   },
   "mlxDistributed.intro": {
     "defaultMessage": "Thunderbolt로 여러 Mac에 나눈 하나의 모델입니다. 이 Mac은 랭크 0으로, API를 제공하고 모든 랭크를 감독합니다."
+  },
+  "mlxDistributed.kv": {
+    "defaultMessage": "KV {reserved} / {budget} GiB"
+  },
+  "mlxDistributed.kvBar": {
+    "defaultMessage": "예산 대비 예약된 KV"
   },
   "mlxDistributed.lastError": {
     "defaultMessage": "마지막 오류"
@@ -3152,11 +3161,26 @@
   "mlxDistributed.save": {
     "defaultMessage": "구성 저장"
   },
+  "mlxDistributed.sequencesInFlight": {
+    "defaultMessage": "{count, plural, other {배치의 시퀀스 #개}}"
+  },
+  "mlxDistributed.serverStatusError": {
+    "defaultMessage": "서버 상태를 읽을 수 없음: {error}"
+  },
   "mlxDistributed.setUp": {
     "defaultMessage": "설정"
   },
   "mlxDistributed.shard": {
     "defaultMessage": "샤드 {index}/{count}"
+  },
+  "mlxDistributed.slotsDefault": {
+    "defaultMessage": "러너 기본값"
+  },
+  "mlxDistributed.slotsHint": {
+    "defaultMessage": "각 랭크가 계획된 전체 컨텍스트 시퀀스 수입니다. 이를 초과하는 요청은 대기합니다. 텐서 러너에는 없습니다."
+  },
+  "mlxDistributed.slotsInUse": {
+    "defaultMessage": "슬롯 {used} / {slots}"
   },
   "mlxDistributed.source.derived": {
     "defaultMessage": "계산됨"
@@ -3229,6 +3253,9 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "경고"
+  },
+  "mlxDistributed.waiting": {
+    "defaultMessage": "대기 {count}"
   },
   "mlxDistributedSetup.advanced": {
     "defaultMessage": "고급"
@@ -3574,6 +3601,12 @@
   },
   "mlxStateTile.dist.peakNoBudget": {
     "defaultMessage": "최고 {peak} GiB"
+  },
+  "mlxStateTile.dist.slots": {
+    "defaultMessage": "슬롯 {used} / {slots}"
+  },
+  "mlxStateTile.dist.waiting": {
+    "defaultMessage": "대기 {count}"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "캐시 조회 적중"

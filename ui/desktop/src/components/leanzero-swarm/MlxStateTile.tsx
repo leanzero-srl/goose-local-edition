@@ -171,6 +171,8 @@ const i18n = defineMessages({
     id: 'mlxStateTile.dist.inflightUnknown',
     defaultMessage: 'in flight: not measured',
   },
+  distSlots: { id: 'mlxStateTile.dist.slots', defaultMessage: 'slots {used} of {slots}' },
+  distWaiting: { id: 'mlxStateTile.dist.waiting', defaultMessage: '{count} waiting' },
   distPeak: { id: 'mlxStateTile.dist.peak', defaultMessage: '{peak} of {budget} GiB peak' },
   distPeakNoBudget: { id: 'mlxStateTile.dist.peakNoBudget', defaultMessage: '{peak} GiB peak' },
   distNoPeak: { id: 'mlxStateTile.dist.noPeak', defaultMessage: 'no peak yet' },
@@ -730,6 +732,13 @@ function StoppedInstrument({ cost }: { cost: MountCost | null }) {
 /** The distributed run on the tile: requests in flight, then every rank's peak against its budget. */
 function DistributedInstrument({ status }: { status: MlxDistributedStatus }) {
   const intl = useIntl();
+  // Pipeline slots and the queue from rank 0's /v1/status; the tensor runner reports no slots.
+  const load = [
+    status.slots != null && status.slotsInUse != null
+      ? intl.formatMessage(i18n.distSlots, { used: status.slotsInUse, slots: status.slots })
+      : null,
+    status.waiting != null ? intl.formatMessage(i18n.distWaiting, { count: status.waiting }) : null,
+  ].filter((part): part is string => part != null);
   return (
     <div data-testid="mlx-dist-tile" className="flex flex-col gap-4">
       {status.modelId && (
@@ -749,6 +758,11 @@ function DistributedInstrument({ status }: { status: MlxDistributedStatus }) {
       ) : (
         <span className={cx(LINE, WEIGHT.semibold)}>
           {intl.formatMessage(i18n.distInflightUnknown)}
+        </span>
+      )}
+      {load.length > 0 && (
+        <span data-testid="mlx-dist-tile-load" className={LINE}>
+          {load.join(' · ')}
         </span>
       )}
       {!status.admissionOpen && (

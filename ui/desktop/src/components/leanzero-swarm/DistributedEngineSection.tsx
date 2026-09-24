@@ -165,6 +165,16 @@ const i18n = defineMessages({
     defaultMessage: "A node's memory is low: new requests wait until it recovers.",
   },
   inflight: { id: 'mlxDistributed.inflight', defaultMessage: 'In flight' },
+  slotsInUse: { id: 'mlxDistributed.slotsInUse', defaultMessage: 'Slots {used} / {slots}' },
+  sequencesInFlight: {
+    id: 'mlxDistributed.sequencesInFlight',
+    defaultMessage: '{count, plural, one {# sequence} other {# sequences}} in the batch',
+  },
+  waiting: { id: 'mlxDistributed.waiting', defaultMessage: 'Waiting {count}' },
+  serverStatusError: {
+    id: 'mlxDistributed.serverStatusError',
+    defaultMessage: 'Server status unreadable: {error}',
+  },
   notMeasured: { id: 'mlxDistributed.notMeasured', defaultMessage: 'not measured' },
   liveness: { id: 'mlxDistributed.liveness', defaultMessage: 'Liveness' },
   livenessLine: {
@@ -214,6 +224,8 @@ const i18n = defineMessages({
     defaultMessage: 'Caps: memory {memory} · wired {wired} · cache {cache} GiB',
   },
   limitsNone: { id: 'mlxDistributed.limitsNone', defaultMessage: 'Caps not reported yet' },
+  kv: { id: 'mlxDistributed.kv', defaultMessage: 'KV {reserved} of {budget} GiB' },
+  kvBar: { id: 'mlxDistributed.kvBar', defaultMessage: 'KV reserved against the budget' },
   pressureNormal: { id: 'mlxDistributed.pressure.normal', defaultMessage: 'Pressure normal' },
   pressureWarn: { id: 'mlxDistributed.pressure.warn', defaultMessage: 'Pressure warn' },
   pressureCritical: {
@@ -305,6 +317,13 @@ const i18n = defineMessages({
   contextDerived: {
     id: 'mlxDistributed.contextDerived',
     defaultMessage: 'derived from memory',
+  },
+  slots: { id: 'mlxDistributed.field.slots', defaultMessage: 'Slots (pipeline runner)' },
+  slotsDefault: { id: 'mlxDistributed.slotsDefault', defaultMessage: 'runner default' },
+  slotsHint: {
+    id: 'mlxDistributed.slotsHint',
+    defaultMessage:
+      'Full-context sequences each rank is planned for; a request that would overrun waits. The tensor runner has none.',
   },
   port: { id: 'mlxDistributed.field.port', defaultMessage: 'API port' },
   coordinatorPort: {
@@ -741,6 +760,10 @@ function NodeCard({ node, budgetGb }: { node: MlxDistributedNodeStatus; budgetGb
   const peak = node.peakMemoryGb ?? null;
   const fraction = peak != null && budgetGb != null && budgetGb > 0 ? peak / budgetGb : null;
   const pTone = pressureTone(node.pressure);
+  const kvFraction =
+    node.kvReservedGb != null && node.kvBudgetGb != null && node.kvBudgetGb > 0
+      ? node.kvReservedGb / node.kvBudgetGb
+      : null;
   const limits =
     node.memoryLimitGb != null || node.wiredLimitGb != null || node.cacheLimitGb != null
       ? intl.formatMessage(i18n.limits, {
@@ -830,6 +853,21 @@ function NodeCard({ node, budgetGb }: { node: MlxDistributedNodeStatus; budgetGb
           </span>
         )}
       </div>
+      {kvFraction != null && node.kvReservedGb != null && node.kvBudgetGb != null && (
+        <div data-testid="mlx-dist-node-kv" className="flex flex-col gap-1.5">
+          <span className={cx(TYPE.body, TNUM)}>
+            {intl.formatMessage(i18n.kv, {
+              reserved: gb1(node.kvReservedGb),
+              budget: gb1(node.kvBudgetGb),
+            })}
+          </span>
+          <Track
+            fraction={kvFraction}
+            tone={budgetTone(kvFraction)}
+            label={intl.formatMessage(i18n.kvBar)}
+          />
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         {node.pressure && (
           <Chip tone={pTone ?? undefined}>{pressureWord(intl, node.pressure)}</Chip>
@@ -839,6 +877,52 @@ function NodeCard({ node, budgetGb }: { node: MlxDistributedNodeStatus; budgetGb
       <span data-testid="mlx-dist-node-link" className={cx('break-words', TYPE.mono)}>
         {link}
       </span>
+    </div>
+  );
+}
+
+/**
+ * Rank 0's /v1/status: the pipeline's slots (absent for the tensor runner — nothing is drawn for
+ * them), the requests queued behind the batch, and the named reason when the poll broke.
+ */
+function ServerLoad({ status }: { status: MlxDistributedStatus }) {
+  const intl = useIntl();
+  const { slots, slotsInUse, sequencesInFlight, waiting, serverStatusError } = status;
+  const slotLoad = slots != null && slotsInUse != null ? { used: slotsInUse, slots } : null;
+  if (!slotLoad && sequencesInFlight == null && waiting == null && !serverStatusError) return null;
+  return (
+    <div className="flex flex-col gap-1.5 pt-1">
+      <div className={cx('flex flex-wrap gap-x-3 gap-y-1', TYPE.body, TNUM)}>
+        {slotLoad && (
+          <span
+            data-testid="mlx-dist-slots"
+            className={cx(slotLoad.used >= slotLoad.slots && cx(WEIGHT.semibold, TONE_TEXT.warn))}
+          >
+            {intl.formatMessage(i18n.slotsInUse, slotLoad)}
+          </span>
+        )}
+        {sequencesInFlight != null && (
+          <span data-testid="mlx-dist-sequences">
+            {intl.formatMessage(i18n.sequencesInFlight, { count: sequencesInFlight })}
+          </span>
+        )}
+        {waiting != null && (
+          <span
+            data-testid="mlx-dist-waiting"
+            className={cx(waiting > 0 && cx(WEIGHT.semibold, TONE_TEXT.warn))}
+          >
+            {intl.formatMessage(i18n.waiting, { count: waiting })}
+          </span>
+        )}
+      </div>
+      {serverStatusError && (
+        <p
+          data-testid="mlx-dist-server-status-error"
+          className={cx('break-words', TYPE.body, WEIGHT.semibold, TONE_TEXT.err)}
+        >
+          {intl.formatMessage(i18n.serverStatusError, { error: serverStatusError })}
+        </p>
+      )}
     </div>
   );
 }
@@ -877,6 +961,7 @@ function RunFacts({ status }: { status: MlxDistributedStatus }) {
             {intl.formatMessage(i18n.notMeasured)}
           </span>
         )}
+        <ServerLoad status={status} />
       </div>
       <div
         data-testid="mlx-dist-liveness"
@@ -1150,16 +1235,28 @@ function ConfigEditor({
             optionTestId={(o) => `mlx-dist-model-${o.value}`}
           />
         </label>
-        <label className="flex min-w-0 flex-col gap-1">
-          <span className={TYPE.meta}>{intl.formatMessage(i18n.context)}</span>
-          <NumberInput
-            value={config.context}
-            onChange={(n) => onChange({ ...config, context: n })}
-            label={intl.formatMessage(i18n.context)}
-            placeholder={intl.formatMessage(i18n.contextDerived)}
-            disabled={locked}
-          />
-        </label>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className={TYPE.meta}>{intl.formatMessage(i18n.context)}</span>
+            <NumberInput
+              value={config.context}
+              onChange={(n) => onChange({ ...config, context: n })}
+              label={intl.formatMessage(i18n.context)}
+              placeholder={intl.formatMessage(i18n.contextDerived)}
+              disabled={locked}
+            />
+          </label>
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className={TYPE.meta}>{intl.formatMessage(i18n.slots)}</span>
+            <NumberInput
+              value={config.slots}
+              onChange={(n) => onChange({ ...config, slots: n || null })}
+              label={intl.formatMessage(i18n.slots)}
+              placeholder={intl.formatMessage(i18n.slotsDefault)}
+              disabled={locked}
+            />
+          </label>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <label className="flex min-w-0 flex-col gap-1">
             <span className={TYPE.meta}>{intl.formatMessage(i18n.port)}</span>
@@ -1181,6 +1278,7 @@ function ConfigEditor({
           </label>
         </div>
       </div>
+      <p className={TYPE.meta}>{intl.formatMessage(i18n.slotsHint)}</p>
       <div className="flex items-center gap-3">
         <StudioSwitch
           checked={config.restartOnFailure ?? false}

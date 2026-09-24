@@ -2939,6 +2939,9 @@
   "mlxDistributed.field.restart": {
     "defaultMessage": "rank 退出或卡死时重启"
   },
+  "mlxDistributed.field.slots": {
+    "defaultMessage": "槽位（流水线运行器）"
+  },
   "mlxDistributed.field.ssh": {
     "defaultMessage": "ssh 别名"
   },
@@ -2962,6 +2965,12 @@
   },
   "mlxDistributed.intro": {
     "defaultMessage": "通过 Thunderbolt 将一个模型拆分到多台 Mac 上。这台 Mac 是 rank 0：它提供 API 并监督每个 rank。"
+  },
+  "mlxDistributed.kv": {
+    "defaultMessage": "KV {reserved} / {budget} GiB"
+  },
+  "mlxDistributed.kvBar": {
+    "defaultMessage": "已预留 KV 占预算比例"
   },
   "mlxDistributed.lastError": {
     "defaultMessage": "最近错误"
@@ -3152,11 +3161,26 @@
   "mlxDistributed.save": {
     "defaultMessage": "保存配置"
   },
+  "mlxDistributed.sequencesInFlight": {
+    "defaultMessage": "{count, plural, other {批次中 # 个序列}}"
+  },
+  "mlxDistributed.serverStatusError": {
+    "defaultMessage": "服务器状态无法读取：{error}"
+  },
   "mlxDistributed.setUp": {
     "defaultMessage": "设置"
   },
   "mlxDistributed.shard": {
     "defaultMessage": "分片 {index}/{count}"
+  },
+  "mlxDistributed.slotsDefault": {
+    "defaultMessage": "运行器默认值"
+  },
+  "mlxDistributed.slotsHint": {
+    "defaultMessage": "每个 rank 按此数量的完整上下文序列规划；超出的请求会排队等待。张量运行器没有槽位。"
+  },
+  "mlxDistributed.slotsInUse": {
+    "defaultMessage": "槽位 {used} / {slots}"
   },
   "mlxDistributed.source.derived": {
     "defaultMessage": "推算"
@@ -3229,6 +3253,9 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "警告"
+  },
+  "mlxDistributed.waiting": {
+    "defaultMessage": "等待 {count}"
   },
   "mlxDistributedSetup.advanced": {
     "defaultMessage": "高级"
@@ -3574,6 +3601,12 @@
   },
   "mlxStateTile.dist.peakNoBudget": {
     "defaultMessage": "峰值 {peak} GiB"
+  },
+  "mlxStateTile.dist.slots": {
+    "defaultMessage": "槽位 {used} / {slots}"
+  },
+  "mlxStateTile.dist.waiting": {
+    "defaultMessage": "{count} 个等待"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "的缓存查询命中"

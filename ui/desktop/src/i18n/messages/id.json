@@ -2939,6 +2939,9 @@
   "mlxDistributed.field.restart": {
     "defaultMessage": "Restart jika sebuah rank mati atau macet"
   },
+  "mlxDistributed.field.slots": {
+    "defaultMessage": "Slot (runner pipeline)"
+  },
   "mlxDistributed.field.ssh": {
     "defaultMessage": "Alias ssh"
   },
@@ -2962,6 +2965,12 @@
   },
   "mlxDistributed.intro": {
     "defaultMessage": "Satu model dibagi ke beberapa Mac melalui Thunderbolt. Mac ini adalah rank 0: melayani API dan mengawasi setiap rank."
+  },
+  "mlxDistributed.kv": {
+    "defaultMessage": "KV {reserved} dari {budget} GiB"
+  },
+  "mlxDistributed.kvBar": {
+    "defaultMessage": "KV yang dipesan terhadap anggaran"
   },
   "mlxDistributed.lastError": {
     "defaultMessage": "Galat terakhir"
@@ -3152,11 +3161,26 @@
   "mlxDistributed.save": {
     "defaultMessage": "Simpan konfigurasi"
   },
+  "mlxDistributed.sequencesInFlight": {
+    "defaultMessage": "{count, plural, other {# urutan dalam batch}}"
+  },
+  "mlxDistributed.serverStatusError": {
+    "defaultMessage": "Status server tidak terbaca: {error}"
+  },
   "mlxDistributed.setUp": {
     "defaultMessage": "Siapkan"
   },
   "mlxDistributed.shard": {
     "defaultMessage": "Shard {index} dari {count}"
+  },
+  "mlxDistributed.slotsDefault": {
+    "defaultMessage": "bawaan runner"
+  },
+  "mlxDistributed.slotsHint": {
+    "defaultMessage": "Urutan konteks penuh yang direncanakan untuk setiap rank; permintaan yang akan melampauinya menunggu. Runner tensor tidak memilikinya."
+  },
+  "mlxDistributed.slotsInUse": {
+    "defaultMessage": "Slot {used} / {slots}"
   },
   "mlxDistributed.source.derived": {
     "defaultMessage": "diturunkan"
@@ -3229,6 +3253,9 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "peringatan"
+  },
+  "mlxDistributed.waiting": {
+    "defaultMessage": "Menunggu {count}"
   },
   "mlxDistributedSetup.advanced": {
     "defaultMessage": "Lanjutan"
@@ -3574,6 +3601,12 @@
   },
   "mlxStateTile.dist.peakNoBudget": {
     "defaultMessage": "{peak} GiB puncak"
+  },
+  "mlxStateTile.dist.slots": {
+    "defaultMessage": "slot {used} dari {slots}"
+  },
+  "mlxStateTile.dist.waiting": {
+    "defaultMessage": "{count} menunggu"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "pencarian cache yang kena"

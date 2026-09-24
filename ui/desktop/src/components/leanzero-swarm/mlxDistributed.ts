@@ -350,5 +350,6 @@ export function cleanConfig(config: MlxDistributedConfigDto): MlxDistributedConf
     nodes: config.nodes.map((n, i) => cleanNode(n, i)),
   };
   if (next.context == null) delete next.context;
+  if (next.slots == null) delete next.slots;
   return next;
 }

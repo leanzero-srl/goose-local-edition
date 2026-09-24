@@ -2939,6 +2939,9 @@
   "mlxDistributed.field.restart": {
     "defaultMessage": "कोई रैंक बंद हो या अटके तो रीस्टार्ट करें"
   },
+  "mlxDistributed.field.slots": {
+    "defaultMessage": "स्लॉट (पाइपलाइन रनर)"
+  },
   "mlxDistributed.field.ssh": {
     "defaultMessage": "ssh उपनाम"
   },
@@ -2962,6 +2965,12 @@
   },
   "mlxDistributed.intro": {
     "defaultMessage": "Thunderbolt के ज़रिए कई Mac में बँटा एक मॉडल। यह Mac रैंक 0 है: यह API परोसता है और हर रैंक की निगरानी करता है।"
+  },
+  "mlxDistributed.kv": {
+    "defaultMessage": "KV {reserved} / {budget} GiB"
+  },
+  "mlxDistributed.kvBar": {
+    "defaultMessage": "बजट के मुकाबले आरक्षित KV"
   },
   "mlxDistributed.lastError": {
     "defaultMessage": "अंतिम त्रुटि"
@@ -3152,11 +3161,26 @@
   "mlxDistributed.save": {
     "defaultMessage": "कॉन्फ़िगरेशन सहेजें"
   },
+  "mlxDistributed.sequencesInFlight": {
+    "defaultMessage": "{count, plural, one {बैच में # अनुक्रम} other {बैच में # अनुक्रम}}"
+  },
+  "mlxDistributed.serverStatusError": {
+    "defaultMessage": "सर्वर स्थिति पढ़ी नहीं जा सकी: {error}"
+  },
   "mlxDistributed.setUp": {
     "defaultMessage": "सेट अप करें"
   },
   "mlxDistributed.shard": {
     "defaultMessage": "शार्ड {index} / {count}"
+  },
+  "mlxDistributed.slotsDefault": {
+    "defaultMessage": "रनर डिफ़ॉल्ट"
+  },
+  "mlxDistributed.slotsHint": {
+    "defaultMessage": "पूर्ण-संदर्भ अनुक्रम जिनके लिए हर रैंक की योजना बनी है; जो अनुरोध इससे अधिक होगा वह प्रतीक्षा करता है। टेंसर रनर में ये नहीं होते।"
+  },
+  "mlxDistributed.slotsInUse": {
+    "defaultMessage": "स्लॉट {used} / {slots}"
   },
   "mlxDistributed.source.derived": {
     "defaultMessage": "निकाला गया"
@@ -3229,6 +3253,9 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "चेतावनी"
+  },
+  "mlxDistributed.waiting": {
+    "defaultMessage": "प्रतीक्षारत {count}"
   },
   "mlxDistributedSetup.advanced": {
     "defaultMessage": "उन्नत"
@@ -3574,6 +3601,12 @@
   },
   "mlxStateTile.dist.peakNoBudget": {
     "defaultMessage": "{peak} GiB शिखर"
+  },
+  "mlxStateTile.dist.slots": {
+    "defaultMessage": "स्लॉट {used} / {slots}"
+  },
+  "mlxStateTile.dist.waiting": {
+    "defaultMessage": "{count} प्रतीक्षारत"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "कैश लुकअप सफल"

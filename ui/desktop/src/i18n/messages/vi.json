@@ -2939,6 +2939,9 @@
   "mlxDistributed.field.restart": {
     "defaultMessage": "Khởi động lại khi một rank chết hoặc treo"
   },
+  "mlxDistributed.field.slots": {
+    "defaultMessage": "Slot (runner pipeline)"
+  },
   "mlxDistributed.field.ssh": {
     "defaultMessage": "Bí danh ssh"
   },
@@ -2962,6 +2965,12 @@
   },
   "mlxDistributed.intro": {
     "defaultMessage": "Một mô hình được chia trên nhiều máy Mac qua Thunderbolt. Máy Mac này là rank 0: nó phục vụ API và giám sát mọi rank."
+  },
+  "mlxDistributed.kv": {
+    "defaultMessage": "KV {reserved} / {budget} GiB"
+  },
+  "mlxDistributed.kvBar": {
+    "defaultMessage": "KV đã giữ so với ngân sách"
   },
   "mlxDistributed.lastError": {
     "defaultMessage": "Lỗi gần nhất"
@@ -3152,11 +3161,26 @@
   "mlxDistributed.save": {
     "defaultMessage": "Lưu cấu hình"
   },
+  "mlxDistributed.sequencesInFlight": {
+    "defaultMessage": "{count, plural, other {# chuỗi trong lô}}"
+  },
+  "mlxDistributed.serverStatusError": {
+    "defaultMessage": "Không đọc được trạng thái máy chủ: {error}"
+  },
   "mlxDistributed.setUp": {
     "defaultMessage": "Thiết lập"
   },
   "mlxDistributed.shard": {
     "defaultMessage": "Phân đoạn {index} trên {count}"
+  },
+  "mlxDistributed.slotsDefault": {
+    "defaultMessage": "mặc định của runner"
+  },
+  "mlxDistributed.slotsHint": {
+    "defaultMessage": "Số chuỗi đủ ngữ cảnh mà mỗi rank được lập kế hoạch; yêu cầu vượt quá sẽ chờ. Runner tensor không có."
+  },
+  "mlxDistributed.slotsInUse": {
+    "defaultMessage": "Slot {used} / {slots}"
   },
   "mlxDistributed.source.derived": {
     "defaultMessage": "suy ra"
@@ -3229,6 +3253,9 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "cảnh báo"
+  },
+  "mlxDistributed.waiting": {
+    "defaultMessage": "Đang chờ {count}"
   },
   "mlxDistributedSetup.advanced": {
     "defaultMessage": "Nâng cao"
@@ -3574,6 +3601,12 @@
   },
   "mlxStateTile.dist.peakNoBudget": {
     "defaultMessage": "{peak} GiB đỉnh"
+  },
+  "mlxStateTile.dist.slots": {
+    "defaultMessage": "slot {used} / {slots}"
+  },
+  "mlxStateTile.dist.waiting": {
+    "defaultMessage": "{count} đang chờ"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "lượt tra cứu cache trúng"

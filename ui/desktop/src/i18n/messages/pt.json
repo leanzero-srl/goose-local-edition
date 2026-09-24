@@ -2939,6 +2939,9 @@
   "mlxDistributed.field.restart": {
     "defaultMessage": "Reiniciar se um rank morrer ou travar"
   },
+  "mlxDistributed.field.slots": {
+    "defaultMessage": "Slots (runner de pipeline)"
+  },
   "mlxDistributed.field.ssh": {
     "defaultMessage": "Alias ssh"
   },
@@ -2962,6 +2965,12 @@
   },
   "mlxDistributed.intro": {
     "defaultMessage": "Um modelo dividido entre vários Macs via Thunderbolt. Este Mac é o rank 0: ele serve a API e supervisiona cada rank."
+  },
+  "mlxDistributed.kv": {
+    "defaultMessage": "KV {reserved} de {budget} GiB"
+  },
+  "mlxDistributed.kvBar": {
+    "defaultMessage": "KV reservado em relação ao orçamento"
   },
   "mlxDistributed.lastError": {
     "defaultMessage": "Último erro"
@@ -3152,11 +3161,26 @@
   "mlxDistributed.save": {
     "defaultMessage": "Salvar configuração"
   },
+  "mlxDistributed.sequencesInFlight": {
+    "defaultMessage": "{count, plural, one {# sequência no lote} other {# sequências no lote}}"
+  },
+  "mlxDistributed.serverStatusError": {
+    "defaultMessage": "Status do servidor ilegível: {error}"
+  },
   "mlxDistributed.setUp": {
     "defaultMessage": "Configurar"
   },
   "mlxDistributed.shard": {
     "defaultMessage": "Fragmento {index} de {count}"
+  },
+  "mlxDistributed.slotsDefault": {
+    "defaultMessage": "padrão do runner"
+  },
+  "mlxDistributed.slotsHint": {
+    "defaultMessage": "Sequências de contexto completo para as quais cada rank é planejado; uma solicitação que excederia isso aguarda. O runner tensor não tem."
+  },
+  "mlxDistributed.slotsInUse": {
+    "defaultMessage": "Slots {used} / {slots}"
   },
   "mlxDistributed.source.derived": {
     "defaultMessage": "derivado"
@@ -3229,6 +3253,9 @@
   },
   "mlxDistributed.verdict.warn": {
     "defaultMessage": "aviso"
+  },
+  "mlxDistributed.waiting": {
+    "defaultMessage": "Aguardando {count}"
   },
   "mlxDistributedSetup.advanced": {
     "defaultMessage": "Avançado"
@@ -3574,6 +3601,12 @@
   },
   "mlxStateTile.dist.peakNoBudget": {
     "defaultMessage": "{peak} GiB de pico"
+  },
+  "mlxStateTile.dist.slots": {
+    "defaultMessage": "slots {used} de {slots}"
+  },
+  "mlxStateTile.dist.waiting": {
+    "defaultMessage": "{count} aguardando"
   },
   "mlxStateTile.fact.cacheHits": {
     "defaultMessage": "das consultas ao cache acertadas"

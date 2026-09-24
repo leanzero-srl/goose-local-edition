@@ -211,6 +211,11 @@ export const FLASH_READY: MlxDistributedStatus = {
   contextLimit: 8192,
   admissionOpen: true,
   inflight: 0,
+  // Rank 0's /v1/status for the pipeline runner, idle: 2 slots planned, none reserved.
+  waiting: 0,
+  slots: 2,
+  slotsInUse: 0,
+  sequencesInFlight: 0,
   liveness: { samples: 12, medianMs: 410, boundMs: 4100, silentMs: 800 },
   nodes: [
     {
@@ -230,6 +235,9 @@ export const FLASH_READY: MlxDistributedStatus = {
       memoryLimitGb: 96,
       wiredLimitGb: 76.8,
       cacheLimitGb: 8,
+      // The plan's state + workspace for 2 full-context sequences (0.13 + 0.36 GiB).
+      kvReservedGb: 0,
+      kvBudgetGb: 0.49,
       link: { backend: 'jaccl', tbIp: '192.168.0.1', interface: 'en3', speed: '80 Gb/s' },
     },
     {
@@ -250,6 +258,8 @@ export const FLASH_READY: MlxDistributedStatus = {
       memoryLimitGb: 72,
       wiredLimitGb: 57.6,
       cacheLimitGb: 8,
+      kvReservedGb: 0,
+      kvBudgetGb: 0.54,
       link: { backend: 'jaccl', tbIp: '192.168.0.2', interface: 'en3', speed: '80 Gb/s' },
     },
   ],
@@ -259,10 +269,14 @@ export const FLASH_READY: MlxDistributedStatus = {
   config: FLASH_CONFIG,
 };
 
+/** Two requests running: both slots held, every rank's KV budget reserved. */
 export const FLASH_SERVING: MlxDistributedStatus = {
   ...FLASH_READY,
   state: 'serving',
   inflight: 2,
+  slotsInUse: 2,
+  sequencesInFlight: 2,
+  nodes: FLASH_READY.nodes.map((n) => ({ ...n, kvReservedGb: n.kvBudgetGb })),
 };
 
 /** Nothing supervised: the persisted config is reported, the Mac belongs to the single engine. */
