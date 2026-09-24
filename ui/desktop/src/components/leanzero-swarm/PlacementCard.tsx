@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Gauge, Loader2, Play, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Gauge, Loader2, Network, Play, RefreshCw, Square, Zap } from 'lucide-react';
 import {
   Button,
   Chip,
@@ -8,6 +8,7 @@ import {
   SURFACE,
   Segmented,
   TNUM,
+  TONE_DOT,
   TONE_TEXT,
   TYPE,
   WEIGHT,
@@ -15,6 +16,7 @@ import {
   type EnginePhase,
   type Tone,
 } from '../lz';
+import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { ToneBanner } from './studio';
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
@@ -26,25 +28,41 @@ import {
   type PlacementBadge as PlacementBadgeDto,
   type PlacementCandidate,
   type PlacementGoal,
-  type PlacementNode,
   type PlacementPlan,
   type SpeedFigure,
 } from '../../acp/mlx-placement';
-import type { MlxEngineStatus, MlxMountRefusal } from '../../acp/mlx-engine';
-import { mlxDistributedStart, type MlxDistributedStatus } from '../../acp/mlx-distributed';
+import type { MlxEngineStatus } from '../../acp/mlx-engine';
+import {
+  mlxDistributedStart,
+  mlxDistributedStop,
+  type MlxDistributedStatus,
+} from '../../acp/mlx-distributed';
 import {
   latestMlxRemoteSingleStatus,
   mlxRemoteSingleStart,
   mlxRemoteSingleStatus,
+  mlxRemoteSingleStop,
   subscribeMlxRemoteSingleStatus,
 } from '../../acp/mlx-remote-single';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { ownsTheMac } from './mlxDistributed';
 import { distributedStateWord } from './mlxModeLabel';
 import { runPhase, singlePhase } from './mlxPhase';
+import { formatGb } from './primitives';
+import { macForPlacementNode, minutesAt, peerRefuses, SELF_KEY, type Mac } from './macs';
+import { WithMacs, copyKey, copyRunning, useMacs } from './useMacs';
+
+/**
+ * RUN IT — the one way to start a model: on this Mac, on another Mac (its single engine, chat over
+ * LeanZero Link), or split across your Macs. Every way carries goose's speed figure for the goal and
+ * why it lost; the running one carries Stop, Measure speed and its state in the engine-phase
+ * palette. A Mac that does not hold the model yet gets "Copy to <Mac> first" — and the start goes
+ * on by itself when the copy lands. The split's own controls (preflight, checks, set up, the
+ * supervisor's events) fold under its Details.
+ */
 
 const i18n = defineMessages({
-  title: { id: 'placementCard.title', defaultMessage: 'Where to run it' },
+  title: { id: 'placementCard.runIt', defaultMessage: 'Run it' },
   goalLabel: { id: 'placementCard.goalLabel', defaultMessage: 'What matters most' },
   goalChat: { id: 'placementCard.goalChat', defaultMessage: 'Chat' },
   goalLong: { id: 'placementCard.goalLong', defaultMessage: 'Long documents' },
@@ -54,22 +72,21 @@ const i18n = defineMessages({
     defaultMessage: 'Measuring your Macs and the model…',
   },
   planFailed: { id: 'placementCard.planFailed', defaultMessage: 'Could not plan' },
+  noPlanWays: {
+    id: 'placementCard.noPlanWays',
+    defaultMessage: 'Without a plan there is no speed figure — every way can still be started.',
+  },
   best: { id: 'placementCard.best', defaultMessage: 'Best' },
   bestNow: { id: 'placementCard.bestNow', defaultMessage: 'Best you can start now' },
-  nothingFits: {
-    id: 'placementCard.nothingFits',
-    defaultMessage: 'Nothing fits right now',
+  runHere: { id: 'placementCard.runHere', defaultMessage: 'Run on this Mac' },
+  runOn: { id: 'placementCard.runOn', defaultMessage: 'Run on {name}' },
+  runAcross: {
+    id: 'placementCard.runAcross',
+    defaultMessage: 'Run across {count, plural, =2 {both Macs} other {# Macs}}',
   },
-  single: { id: 'placementCard.single', defaultMessage: '{name} alone' },
-  tensor: {
-    id: 'placementCard.tensor',
-    defaultMessage: '{count, plural, one {# Mac} other {# Macs}} · tensor split · {link}',
-  },
-  pipeline: {
-    id: 'placementCard.pipeline',
-    defaultMessage: '{count, plural, one {# Mac} other {# Macs}} · pipeline split · {link}',
-  },
-  thisMac: { id: 'placementCard.thisMac', defaultMessage: 'this Mac' },
+  runAcrossAny: { id: 'placementCard.runAcrossAny', defaultMessage: 'Run across your Macs' },
+  tensor: { id: 'placementCard.tensorKind', defaultMessage: 'tensor split · {link}' },
+  pipeline: { id: 'placementCard.pipelineKind', defaultMessage: 'pipeline split · {link}' },
   writes: { id: 'placementCard.writes', defaultMessage: '~{value} tok/s writing' },
   reads: { id: 'placementCard.reads', defaultMessage: '~{value} tok/s reading' },
   total: {
@@ -83,9 +100,9 @@ const i18n = defineMessages({
     defaultMessage: '{runs, plural, one {measured} other {measured · # runs}}',
   },
   estimated: { id: 'placementCard.estimated', defaultMessage: 'estimated' },
-  noFigure: { id: 'placementCard.noFigure', defaultMessage: 'no speed figure' },
-  useThis: { id: 'placementCard.useThis', defaultMessage: 'Use this' },
+  run: { id: 'placementCard.run', defaultMessage: 'Run' },
   starting: { id: 'placementCard.starting', defaultMessage: 'Starting…' },
+  stop: { id: 'placementCard.stop', defaultMessage: 'Stop' },
   measure: { id: 'placementCard.measure', defaultMessage: 'Measure speed' },
   measuring: {
     id: 'placementCard.measuring',
@@ -96,19 +113,19 @@ const i18n = defineMessages({
     defaultMessage:
       'Running and not measured yet — Measure speed replaces the estimate with this Mac’s own number.',
   },
-  measureLater: {
-    id: 'placementCard.measureLater',
-    defaultMessage: 'Measure speed becomes available once it runs.',
-  },
   setupFirst: {
     id: 'placementCard.setupFirst',
     defaultMessage:
-      'The distributed setup names another model — pick this one in Distributed › Set up, then start it.',
+      'The split is set up with another model — open Details › Set up, pick this one, then Run.',
+  },
+  distributedOwns: {
+    id: 'placementCard.distributedOwns',
+    defaultMessage: 'The split owns this Mac — stop it to run a model here alone.',
   },
   refresh: { id: 'placementCard.refresh', defaultMessage: 'Plan again' },
   others: {
     id: 'placementCard.others',
-    defaultMessage: '{count, plural, one {# other way} other {# other ways}}',
+    defaultMessage: '{count, plural, one {# other split} other {# other splits}}',
   },
   slower: {
     id: 'placementCard.slower',
@@ -135,17 +152,11 @@ const i18n = defineMessages({
     id: 'placementCard.storeErrors',
     defaultMessage: 'Unreadable lines in the measurement store',
   },
-  nodeLine: {
-    id: 'placementCard.nodeLine',
-    defaultMessage: '{name}: {chip} · {bandwidth} GB/s · GPU ceiling {ceiling}',
-  },
-  nodeGap: { id: 'placementCard.nodeGap', defaultMessage: '{name}: {reason}' },
   badgeThisMac: { id: 'placementCard.badgeThisMac', defaultMessage: 'Fits this Mac' },
   badgePeer: { id: 'placementCard.badgePeer', defaultMessage: 'Fits {name}' },
   badgeBoth: { id: 'placementCard.badgeBoth', defaultMessage: 'Needs both Macs' },
   badgeTooBig: { id: 'placementCard.badgeTooBig', defaultMessage: 'Too big, short {gb}' },
   badgeUnknown: { id: 'placementCard.badgeUnknown', defaultMessage: 'Fit unknown' },
-  gpuCores: { id: 'placementCard.gpuCores', defaultMessage: '{brand} · {cores}-core GPU' },
   actionFailed: { id: 'placementCard.actionFailed', defaultMessage: 'The action failed' },
   refusedUnnamed: {
     id: 'placementCard.refusedUnnamed',
@@ -154,29 +165,44 @@ const i18n = defineMessages({
   liveMounting: { id: 'placementCard.live.mounting', defaultMessage: 'Mounting' },
   liveRunning: { id: 'placementCard.live.running', defaultMessage: 'Running' },
   liveFailed: { id: 'placementCard.live.failed', defaultMessage: 'Failed' },
-  mount: { id: 'placementCard.tile.mount', defaultMessage: 'Mount' },
-  retry: { id: 'placementCard.tile.retry', defaultMessage: 'Retry' },
-  startAcross: {
-    id: 'placementCard.tile.startAcross',
-    defaultMessage: 'Start across {count, plural, =2 {both Macs} other {# Macs}}',
+  copyFirst: {
+    id: 'placementCard.copyFirst',
+    defaultMessage:
+      'Copy to {name} first · {kind, select, thunderbolt {Thunderbolt} other {network}}',
   },
-  startOn: { id: 'placementCard.tile.startOn', defaultMessage: 'Start on {name}' },
-  tileSplitWhy: {
-    id: 'placementCard.tile.splitWhy',
-    defaultMessage: 'Too big for this Mac alone — it runs split across {names}.',
+  copyFirstMinutes: {
+    id: 'placementCard.copyFirstMinutes',
+    defaultMessage:
+      'Copy to {name} first (~{minutes} min over {kind, select, thunderbolt {Thunderbolt} other {the network}})',
   },
-  tilePeerWhy: {
-    id: 'placementCard.tile.peerWhy',
-    defaultMessage: 'Too big for this Mac — it fits {name}, and chat goes there over Link.',
+  copyFirstWhy: {
+    id: 'placementCard.copyFirstWhy',
+    defaultMessage:
+      '{model} ({size}) is not on {name} yet; the start goes on by itself once it lands.',
   },
-  tileShort: {
-    id: 'placementCard.tile.short',
-    defaultMessage: 'Fits no Mac you have: short {gb} even split across all of them.',
+  copyingThen: {
+    id: 'placementCard.copyingThen',
+    defaultMessage: 'Copying to {name} — {pct}% · it starts when the copy lands',
   },
-  tileNothing: {
-    id: 'placementCard.tile.nothing',
-    defaultMessage: 'Too big for this Mac, and nothing goose can start fits it: {reason}',
+  copyThenFailed: {
+    id: 'placementCard.copyThenFailed',
+    defaultMessage: 'The copy to {name} did not finish, so nothing started: {reason}',
   },
+  details: { id: 'placementCard.details', defaultMessage: 'Details' },
+  detailsMeta: {
+    id: 'placementCard.detailsMeta',
+    defaultMessage: 'set up, preflight, checks, events',
+  },
+  stopSplitTitle: {
+    id: 'placementCard.stopSplitTitle',
+    defaultMessage: 'Stop the split?',
+  },
+  stopSplitMessage: {
+    id: 'placementCard.stopSplitMessage',
+    defaultMessage:
+      'Every part on {nodes} is stopped and verified gone. Requests in flight are cut off.',
+  },
+  keepRunning: { id: 'placementCard.keepRunning', defaultMessage: 'Keep running' },
 });
 
 type NoticeTone = Exclude<Tone, 'secondary'>;
@@ -191,208 +217,8 @@ function tps(value: number): string {
   return value >= 100 ? value.toFixed(0) : value.toFixed(1);
 }
 
-/**
- * What [Use this] does for a candidate — the ONE runner the card and the Engine tile share, so a
- * split started from either is the same distributed start (Make room included: the backend frees
- * memory on each node whose `freeMemoryAutomatically` is on). `mountHere` is the view's own mount.
- * Resolves to the refusal/failure text, or null when it started.
- */
-export async function runPlacementAction(
-  candidate: PlacementCandidate,
-  modelId: string,
-  onMountHere: () => void,
-  refusedUnnamed: string
-): Promise<string | null> {
-  const action = candidate.action;
-  if (action.kind === 'mountHere') {
-    onMountHere();
-    return null;
-  }
-  if (action.kind === 'startSplit') {
-    const response = await mlxDistributedStart(null);
-    return response.started ? null : (response.refusal?.message ?? refusedUnnamed);
-  }
-  if (action.kind === 'remoteSingle') {
-    const peer = linkPeerOf(candidate);
-    if (peer == null) return refusedUnnamed;
-    const response = await mlxRemoteSingleStart(peer, modelId);
-    return response.started ? null : (response.refusal?.message ?? refusedUnnamed);
-  }
-  return action.reason;
-}
-
-/**
- * The Engine tile's primary action for the picked model, from its placement plan: the plain
- * single mount when this Mac can hold it (or no plan was read — the mount gate still judges), else
- * the placement the planner says goose can start today (a split across Macs, or a peer's single
- * engine), else nothing — with the shortfall in words. Never a single mount that cannot fit.
- */
-export type TileMountChoice =
-  | { kind: 'mount' }
-  | { kind: 'split'; candidate: PlacementCandidate }
-  | { kind: 'peer'; candidate: PlacementCandidate }
-  | { kind: 'blocked'; reason: string };
-
-/** How the tile starts a candidate goose named — or why it cannot yet; `null` = the plain mount. */
-function choiceFromCandidate(
-  intl: IntlShape,
-  candidate: PlacementCandidate | null | undefined
-): TileMountChoice | null {
-  const action = candidate?.action;
-  if (!candidate || !action) return null;
-  if (action.kind === 'startSplit') {
-    return action.setupMatches
-      ? { kind: 'split', candidate }
-      : { kind: 'blocked', reason: intl.formatMessage(i18n.setupFirst) };
-  }
-  if (action.kind === 'remoteSingle') return { kind: 'peer', candidate };
-  if (action.kind === 'mountHere') return { kind: 'mount' };
-  return {
-    kind: 'blocked',
-    reason: intl.formatMessage(i18n.tileNothing, { reason: action.reason }),
-  };
-}
-
-/**
- * `refusal` = goose's answer to the last Mount of THIS model (`MlxMountRefusalDto`): when the plan
- * had not said so (none read, or read before memory moved), the refusal's own alternative decides.
- */
-export function tileMountChoice(
-  intl: IntlShape,
-  plan: PlacementPlan | null | undefined,
-  refusal?: Pick<MlxMountRefusal, 'alternative' | 'badge' | 'alternativeError'> | null
-): TileMountChoice {
-  const fromPlan = planChoice(intl, plan);
-  if (fromPlan.kind !== 'mount' || !refusal) return fromPlan;
-  const alternative = choiceFromCandidate(intl, refusal.alternative);
-  if (alternative && alternative.kind !== 'mount') return alternative;
-  if (refusal.badge?.kind === 'tooBig') {
-    return {
-      kind: 'blocked',
-      reason: intl.formatMessage(i18n.tileShort, { gb: gb(refusal.badge.shortBytes) }),
-    };
-  }
-  if (refusal.alternativeError) {
-    return {
-      kind: 'blocked',
-      reason: intl.formatMessage(i18n.tileNothing, { reason: refusal.alternativeError }),
-    };
-  }
-  return fromPlan;
-}
-
-function planChoice(intl: IntlShape, plan: PlacementPlan | null | undefined): TileMountChoice {
-  const badge = plan?.badge;
-  if (!plan || plan.error || !badge || badge.kind === 'fitsThisMac' || badge.kind === 'unknown') {
-    return { kind: 'mount' };
-  }
-  // "Needs both Macs" with the step goose says comes first (allow the peer to serve as a node,
-  // set the split up with this model): that step IS the reason, verbatim.
-  const needs = (badge as { needs?: unknown }).needs;
-  if (badge.kind === 'needsBothMacs' && typeof needs === 'string' && needs) {
-    return { kind: 'blocked', reason: needs };
-  }
-  const byId = (id: string | null | undefined) =>
-    id ? (plan.candidates?.find((c) => c.id === id) ?? null) : null;
-  const startable = choiceFromCandidate(intl, byId(plan.bestAvailable));
-  if (startable) return startable;
-  if (badge.kind === 'tooBig') {
-    return {
-      kind: 'blocked',
-      reason: intl.formatMessage(i18n.tileShort, { gb: gb(badge.shortBytes) }),
-    };
-  }
-  const best = byId(plan.best);
-  const reason =
-    (best?.action.kind === 'unavailable' ? best.action.reason : null) ??
-    (best ? outcomeText(intl, best) : null) ??
-    intl.formatMessage(i18n.refusedUnnamed);
-  return { kind: 'blocked', reason: intl.formatMessage(i18n.tileNothing, { reason }) };
-}
-
-/** The tile's button and the one line that says why it is not a plain Mount. */
-export function TileMountAction({
-  choice,
-  retry,
-  canMount,
-  busy,
-  onMount,
-  onStart,
-}: {
-  choice: TileMountChoice;
-  /** The engine failed: the plain mount reads Retry. */
-  retry: boolean;
-  canMount: boolean;
-  busy: boolean;
-  onMount: () => void;
-  onStart: (candidate: PlacementCandidate) => void;
-}) {
-  const intl = useIntl();
-  if (choice.kind === 'mount' || choice.kind === 'blocked') {
-    return (
-      <div className="flex flex-col gap-2">
-        <Button
-          variant="secondary"
-          icon={retry ? <RefreshCw /> : <Play />}
-          onClick={onMount}
-          disabled={!canMount || choice.kind === 'blocked'}
-          data-testid="mlx-tile-mount"
-        >
-          {intl.formatMessage(retry ? i18n.retry : i18n.mount)}
-        </Button>
-        {choice.kind === 'blocked' && (
-          <span
-            data-testid="mlx-tile-mount-why"
-            className={cx('break-words text-lz-body', WEIGHT.semibold)}
-          >
-            {choice.reason}
-          </span>
-        )}
-      </div>
-    );
-  }
-  const c = choice.candidate;
-  const names = c.nodeNames.join(' + ');
-  return (
-    <div className="flex flex-col gap-2">
-      <Button
-        variant="secondary"
-        icon={busy ? <Loader2 className="animate-spin" /> : <Play />}
-        onClick={() => onStart(c)}
-        disabled={busy}
-        data-testid="mlx-tile-start-placement"
-        data-placement={c.id}
-      >
-        {choice.kind === 'split'
-          ? intl.formatMessage(i18n.startAcross, { count: c.key.nodes.length })
-          : intl.formatMessage(i18n.startOn, { name: c.nodeNames[0] ?? '' })}
-      </Button>
-      <span
-        data-testid="mlx-tile-mount-why"
-        className={cx('break-words text-lz-body', WEIGHT.semibold)}
-      >
-        {choice.kind === 'split'
-          ? intl.formatMessage(i18n.tileSplitWhy, { names })
-          : intl.formatMessage(i18n.tilePeerWhy, { name: c.nodeNames[0] ?? '' })}
-      </span>
-    </div>
-  );
-}
-
-/** The words a candidate is called by. */
-export function candidateLabel(intl: IntlShape, candidate: PlacementCandidate): string {
-  const link = candidate.key.link === 'jaccl' ? 'JACCL' : (candidate.key.link ?? '');
-  if (candidate.key.kind === 'single') {
-    const local = candidate.key.nodes[0] === 'local';
-    const name = candidate.nodeNames[0] ?? candidate.key.nodes[0];
-    return intl.formatMessage(i18n.single, {
-      name: local ? `${name} (${intl.formatMessage(i18n.thisMac)})` : name,
-    });
-  }
-  return intl.formatMessage(candidate.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
-    count: candidate.key.nodes.length,
-    link,
-  });
+function linkWord(candidate: PlacementCandidate): string {
+  return candidate.key.link === 'jaccl' ? 'JACCL' : (candidate.key.link ?? '');
 }
 
 function figureText(
@@ -442,89 +268,10 @@ export function outcomeText(intl: IntlShape, candidate: PlacementCandidate): str
     case 'fitUnknown':
       return `${intl.formatMessage(i18n.fitUnknown)}: ${o.reason}`;
     case 'notSupported':
-      // goose's reason already opens with "not supported yet" / "not offered" in its own words.
       return o.reason;
     case 'noFigure':
       return `${intl.formatMessage(i18n.noFigureReason)}: ${o.reason}`;
   }
-}
-
-/** Is this candidate the engine running right now (so Measure speed can reach it)? */
-export function candidateRunning(
-  candidate: PlacementCandidate,
-  modelId: string,
-  single: MlxEngineStatus | null,
-  distributed: MlxDistributedStatus | null
-): boolean {
-  if (candidate.id === 'single:local') {
-    return single?.state === 'running' && single.modelId === modelId;
-  }
-  const peer = linkPeerOf(candidate);
-  if (peer != null) {
-    const remote = latestMlxRemoteSingleStatus();
-    return remote?.state === 'ready' && remote.peer === peer && remote.modelId === modelId;
-  }
-  if (candidate.key.kind === 'single') return false;
-  return (
-    distributed != null &&
-    (distributed.state === 'ready' || distributed.state === 'serving') &&
-    distributed.modelId === modelId
-  );
-}
-
-/**
- * The engine a candidate IS right now, in the engine-phase palette the tile uses — so "this card
- * follows it" is true: amber while it loads or starts, then its serving colour, red when it failed.
- * `null` = this candidate is not the engine on this model now.
- */
-export function candidateLive(
-  candidate: PlacementCandidate,
-  modelId: string,
-  single: MlxEngineStatus | null,
-  distributed: MlxDistributedStatus | null
-): { phase: EnginePhase; state: string } | null {
-  if (candidate.id === 'single:local') {
-    if (single?.modelId !== modelId) return null;
-    if (single.state !== 'mounting' && single.state !== 'running' && single.state !== 'failed') {
-      return null;
-    }
-    return { phase: singlePhase(single.state, false, null), state: single.state };
-  }
-  const peer = linkPeerOf(candidate);
-  if (peer != null) {
-    const remote = latestMlxRemoteSingleStatus();
-    if (remote?.peer !== peer || remote.modelId !== modelId || remote.state === 'off') return null;
-    const phase: EnginePhase =
-      remote.state === 'ready' ? 'idle' : remote.state === 'failed' ? 'failed' : 'loading';
-    const state = remote.state === 'ready' ? 'running' : remote.state;
-    return { phase, state };
-  }
-  if (candidate.key.kind === 'single') return null;
-  if (!distributed || distributed.modelId !== modelId) return null;
-  if (!ownsTheMac(distributed) && distributed.state !== 'failed') return null;
-  return {
-    phase: runPhase(distributed.state, distributed.admissionOpen),
-    state: distributed.state,
-  };
-}
-
-function LiveChip({ live }: { live: { phase: EnginePhase; state: string } }) {
-  const intl = useIntl();
-  const word =
-    live.state === 'mounting'
-      ? intl.formatMessage(i18n.liveMounting)
-      : live.state === 'running'
-        ? intl.formatMessage(i18n.liveRunning)
-        : live.state === 'failed'
-          ? intl.formatMessage(i18n.liveFailed)
-          : distributedStateWord(intl, live.state);
-  return (
-    <Chip phase={live.phase}>
-      <span data-testid="placement-live" data-phase={live.phase}>
-        {word}
-      </span>
-    </Chip>
-  );
 }
 
 function badgeTone(badge: PlacementBadgeDto): Tone | undefined {
@@ -563,9 +310,8 @@ export function PlacementBadge({ badge }: { badge: PlacementBadgeDto }) {
 }
 
 /**
- * Every local model's plan, planned once per change of `modelKey` (the Engine tab's mount and every
- * change of the model list): the picker's badges and the tile's primary action both read it. A
- * failed plan leaves no entry — the card names the failure, and the tile keeps the plain mount.
+ * Every local model's plan, planned once per change of `modelKey`: the picker's badges read it. A
+ * failed plan leaves no entry — the Run it card names the failure.
  */
 export function usePlacementPlans(modelKey: string): Map<string, PlacementPlan> {
   const [plans, setPlans] = useState<Map<string, PlacementPlan>>(new Map());
@@ -593,30 +339,138 @@ export function badgesOf(plans: Map<string, PlacementPlan>): Map<string, Placeme
   return out;
 }
 
-function NodeFacts({ nodes }: { nodes: PlacementNode[] }) {
+// ---------------------------------------------------------------------------------------------
+// The ways
+// ---------------------------------------------------------------------------------------------
+
+/** One way to run the model; `candidate` = goose's plan for it (null when no plan could be read). */
+export interface Way {
+  key: string;
+  kind: 'local' | 'peer' | 'split';
+  candidate: PlacementCandidate | null;
+  /** A peer way: the Mac, and the Link node id its single engine is started by. */
+  mac: Mac | null;
+  peerNodeId: string | null;
+}
+
+function splitRank(c: PlacementCandidate): number {
+  if (!c.supported) return 2;
+  return c.action.kind === 'unavailable' ? 1 : 0;
+}
+
+/**
+ * The plan's candidates as the ways a person picks between: every single-Mac candidate (this Mac
+ * first), then ONE split — the supported, startable one first; the other splits fold away with
+ * their reason. With no plan, the ways goose can start anyway: this Mac, each peer that lets this
+ * Mac load models, the split when goose offers it.
+ */
+export function waysOf(
+  plan: PlacementPlan | null,
+  macs: readonly Mac[],
+  distributedCapability: boolean
+): { ways: Way[]; otherSplits: PlacementCandidate[] } {
+  if (plan && !plan.error && (plan.candidates?.length ?? 0) > 0) {
+    const singles = (plan.candidates ?? []).filter((c) => c.key.kind === 'single');
+    const splits = [...(plan.candidates ?? []).filter((c) => c.key.kind !== 'single')].sort(
+      (a, b) => splitRank(a) - splitRank(b)
+    );
+    const local = singles.filter((c) => c.key.nodes[0] === 'local');
+    const peers = singles.filter((c) => c.key.nodes[0] !== 'local');
+    const ways: Way[] = [
+      ...local.map((c) => ({
+        key: c.id,
+        kind: 'local' as const,
+        candidate: c,
+        mac: null,
+        peerNodeId: null,
+      })),
+      ...peers.map((c) => ({
+        key: c.id,
+        kind: 'peer' as const,
+        candidate: c,
+        mac: macForPlacementNode(macs, c.key.nodes[0] ?? ''),
+        peerNodeId: linkPeerOf(c),
+      })),
+      ...(splits[0]
+        ? [
+            {
+              key: splits[0].id,
+              kind: 'split' as const,
+              candidate: splits[0],
+              mac: null,
+              peerNodeId: null,
+            },
+          ]
+        : []),
+    ];
+    return { ways, otherSplits: splits.slice(1) };
+  }
+  const ways: Way[] = [
+    { key: 'local', kind: 'local', candidate: null, mac: null, peerNodeId: null },
+  ];
+  for (const mac of macs) {
+    if (mac.isSelf || !mac.online || peerRefuses(mac, 'manage') || !mac.nodeId) continue;
+    ways.push({
+      key: `peer:${mac.key}`,
+      kind: 'peer',
+      candidate: null,
+      mac,
+      peerNodeId: mac.nodeId,
+    });
+  }
+  if (distributedCapability) {
+    ways.push({ key: 'split', kind: 'split', candidate: null, mac: null, peerNodeId: null });
+  }
+  return { ways, otherSplits: [] };
+}
+
+/** The engine a way IS right now, in the engine-phase palette; null = not this way. */
+export function wayLive(
+  way: Way,
+  modelId: string,
+  single: MlxEngineStatus | null,
+  distributed: MlxDistributedStatus | null
+): { phase: EnginePhase; state: string } | null {
+  if (way.kind === 'local') {
+    if (single?.modelId !== modelId) return null;
+    if (single.state !== 'mounting' && single.state !== 'running' && single.state !== 'failed') {
+      return null;
+    }
+    return { phase: singlePhase(single.state, false, null), state: single.state };
+  }
+  if (way.kind === 'peer') {
+    const remote = latestMlxRemoteSingleStatus();
+    if (!way.peerNodeId || remote?.peer !== way.peerNodeId || remote.modelId !== modelId)
+      return null;
+    if (remote.state === 'off') return null;
+    const phase: EnginePhase =
+      remote.state === 'ready' ? 'idle' : remote.state === 'failed' ? 'failed' : 'loading';
+    return { phase, state: remote.state === 'ready' ? 'running' : remote.state };
+  }
+  if (!distributed || distributed.modelId !== modelId) return null;
+  if (!ownsTheMac(distributed) && distributed.state !== 'failed') return null;
+  return {
+    phase: runPhase(distributed.state, distributed.admissionOpen),
+    state: distributed.state,
+  };
+}
+
+function LiveChip({ live }: { live: { phase: EnginePhase; state: string } }) {
   const intl = useIntl();
+  const word =
+    live.state === 'mounting'
+      ? intl.formatMessage(i18n.liveMounting)
+      : live.state === 'running'
+        ? intl.formatMessage(i18n.liveRunning)
+        : live.state === 'failed'
+          ? intl.formatMessage(i18n.liveFailed)
+          : distributedStateWord(intl, live.state);
   return (
-    <ul className="flex flex-col gap-0.5" data-testid="placement-nodes">
-      {nodes.map((n) => {
-        const gap = n.chipError ?? n.bandwidthError ?? n.memoryError ?? n.ceilingError;
-        const chip = n.chip
-          ? n.chip.gpuCores != null
-            ? intl.formatMessage(i18n.gpuCores, { brand: n.chip.brand, cores: n.chip.gpuCores })
-            : n.chip.brand
-          : '—';
-        return (
-          <li key={n.id} className={cx(TYPE.meta, TNUM, gap && TONE_TEXT.err)}>
-            {intl.formatMessage(i18n.nodeLine, {
-              name: n.name,
-              chip,
-              bandwidth: n.bandwidthGbs != null ? n.bandwidthGbs.toFixed(0) : '—',
-              ceiling: n.ceilingBytes != null ? gb(n.ceilingBytes) : '—',
-            })}
-            {gap && ` — ${intl.formatMessage(i18n.nodeGap, { name: n.name, reason: gap })}`}
-          </li>
-        );
-      })}
-    </ul>
+    <Chip phase={live.phase}>
+      <span data-testid="placement-live" data-phase={live.phase}>
+        {word}
+      </span>
+    </Chip>
   );
 }
 
@@ -626,31 +480,37 @@ interface PlacementCardProps {
   distributed: MlxDistributedStatus | null;
   /** Mount the model on this Mac's single engine (the view's own mount path, gate and all). */
   onMountHere: () => void;
+  /** Unmount this Mac's single engine. */
+  onStopHere: () => void;
   mountBusy: boolean;
+  /** goose offers the split at all (the `mlxDistributed` capability). */
+  distributedCapability?: boolean;
+  /** The split's own controls — set up, preflight, checks, events — folded under its Details. */
+  splitDetails?: ReactNode;
 }
 
-/**
- * The recommendation for the picked model: the best placement for the goal with its speed
- * (measured or estimated, with its range) and context, [Use this] and [Measure speed], and every
- * other placement folded with the reason it lost.
- */
-export function PlacementCard({
+function PlacementCardBody({
   modelId,
   single,
   distributed,
   onMountHere,
+  onStopHere,
   mountBusy,
+  distributedCapability = false,
+  splitDetails,
 }: PlacementCardProps) {
   const intl = useIntl();
+  const macs = useMacs();
   const [goal, setGoal] = useState<PlacementGoal>('chat');
   const [plan, setPlan] = useState<PlacementPlan | null>(null);
-  const [nodes, setNodes] = useState<PlacementNode[]>([]);
   const [storeErrors, setStoreErrors] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: NoticeTone; text: string } | null>(null);
   const [othersOpen, setOthersOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [confirmStopSplit, setConfirmStopSplit] = useState(false);
   const [, setRemoteTick] = useState(0);
   const request = useRef(0);
 
@@ -660,14 +520,12 @@ export function PlacementCard({
     const mine = ++request.current;
     setLoading(true);
     setError(null);
-    // Where chat goes now decides which candidate is running (Measure speed reaches only that one);
-    // a failed read publishes "unknown", which offers no measurement.
+    // Where chat goes now decides which way is running; a failed read publishes "unknown".
     mlxRemoteSingleStatus().catch(() => undefined);
     try {
       const response = await mlxPlacementPlan(goal, modelId);
       if (mine !== request.current) return;
       setPlan(response.plans[0] ?? null);
-      setNodes(response.nodes);
       setStoreErrors(response.storeErrors ?? []);
     } catch (e) {
       if (mine !== request.current) return;
@@ -683,25 +541,60 @@ export function PlacementCard({
     void load();
   }, [load]);
 
-  const use = async (candidate: PlacementCandidate) => {
+  const refused = intl.formatMessage(i18n.refusedUnnamed);
+
+  /** Start one way; the refusal/failure text, or null when it started. */
+  const startWay = useCallback(
+    async (way: Way): Promise<string | null> => {
+      if (way.kind === 'local') {
+        onMountHere();
+        return null;
+      }
+      if (way.kind === 'peer') {
+        if (!way.peerNodeId) return refused;
+        const response = await mlxRemoteSingleStart(way.peerNodeId, modelId);
+        return response.started ? null : (response.refusal?.message ?? refused);
+      }
+      const response = await mlxDistributedStart(null);
+      return response.started ? null : (response.refusal?.message ?? refused);
+    },
+    [modelId, onMountHere, refused]
+  );
+
+  const run = async (way: Way) => {
     setNotice(null);
-    if (candidate.action.kind === 'mountHere') {
+    if (way.kind === 'local') {
       onMountHere();
       return;
     }
-    setBusy(`use:${candidate.id}`);
+    setBusy(`run:${way.key}`);
     try {
-      const refusal = await runPlacementAction(
-        candidate,
-        modelId,
-        onMountHere,
-        intl.formatMessage(i18n.refusedUnnamed)
-      );
+      const refusal = await startWay(way);
       setNotice(
         refusal == null
           ? { tone: 'accent', text: intl.formatMessage(i18n.started) }
-          : { tone: 'err', text: refusal }
+          : { tone: 'err', text: way.mac ? macs.describeError(way.mac, refusal) : refusal }
       );
+    } catch (e) {
+      const text = mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed));
+      setNotice({ tone: 'err', text: way.mac ? macs.describeError(way.mac, text) : text });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const stop = async (way: Way) => {
+    if (way.kind === 'local') {
+      onStopHere();
+      return;
+    }
+    if (way.kind === 'split') {
+      setConfirmStopSplit(true);
+      return;
+    }
+    setBusy(`stop:${way.key}`);
+    try {
+      await mlxRemoteSingleStop(false);
     } catch (e) {
       setNotice({ tone: 'err', text: mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed)) });
     } finally {
@@ -709,11 +602,23 @@ export function PlacementCard({
     }
   };
 
-  const measure = async (candidate: PlacementCandidate) => {
-    setNotice(null);
-    setBusy(`measure:${candidate.id}`);
+  const stopSplit = async () => {
+    setConfirmStopSplit(false);
+    setBusy('stop:split');
     try {
-      const response = await mlxMeasureSpeed(modelId, candidate.id, goal === 'longDocuments');
+      await mlxDistributedStop();
+    } catch (e) {
+      setNotice({ tone: 'err', text: mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed)) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const measure = async (placementId: string) => {
+    setNotice(null);
+    setBusy(`measure:${placementId}`);
+    try {
+      const response = await mlxMeasureSpeed(modelId, placementId, goal === 'longDocuments');
       const chat = response.records.find((r) => r.workload === 'chat') ?? response.records[0];
       if (chat) {
         setNotice({
@@ -732,113 +637,284 @@ export function PlacementCard({
     }
   };
 
-  const byId = (id: string | null | undefined) =>
-    id ? (plan?.candidates?.find((c) => c.id === id) ?? null) : null;
-  const best = byId(plan?.best);
-  const bestNow =
-    plan?.bestAvailable && plan.bestAvailable !== plan.best ? byId(plan.bestAvailable) : null;
-  const others = (plan?.candidates ?? []).filter((c) => c !== best && c !== bestNow);
-
-  const actionFor = (candidate: PlacementCandidate, primary: boolean) => {
-    const running = candidateRunning(candidate, modelId, single, distributed);
-    const action = candidate.action;
-    const decode = candidate.speed.decode;
-    const measuring = busy === `measure:${candidate.id}`;
+  // The Mac that must receive the model before this way can start: a peer (or the split's other
+  // Macs) whose models folder was READ and holds no complete copy — never guessed from a gap.
+  const missingOn = (way: Way): Mac | null => {
+    const targets: Mac[] =
+      way.kind === 'peer'
+        ? way.mac
+          ? [way.mac]
+          : []
+        : way.kind === 'split'
+          ? (way.candidate?.key.nodes ?? [])
+              .map((id) => macForPlacementNode(macs.macs, id))
+              .filter((m): m is Mac => m != null && !m.isSelf)
+          : [];
     return (
-      <div className="flex flex-col gap-2">
+      targets.find((mac) => {
+        const models = macs.factsOf(mac.key).models;
+        return models != null && !models.some((m) => m.id === modelId && m.complete);
+      }) ?? null
+    );
+  };
+  const selfModel = macs.factsOf(SELF_KEY).models?.find((m) => m.id === modelId && m.complete);
+
+  const copyFirst = (way: Way, to: Mac) => {
+    const key = copyKey(modelId, to.key);
+    macs.copy(modelId, SELF_KEY, to.key);
+    macs.whenCopied(key, () => {
+      setBusy(`run:${way.key}`);
+      void startWay(way)
+        .then((refusal) =>
+          setNotice(
+            refusal == null
+              ? { tone: 'accent', text: intl.formatMessage(i18n.started) }
+              : { tone: 'err', text: macs.describeError(to, refusal) }
+          )
+        )
+        .catch((e: unknown) =>
+          setNotice({
+            tone: 'err',
+            text: mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed)),
+          })
+        )
+        .finally(() => {
+          setBusy(null);
+          void load();
+        });
+    });
+  };
+
+  const { ways, otherSplits } = waysOf(plan, macs.macs, distributedCapability);
+  const distributedOwns = ownsTheMac(distributed);
+
+  const title = (way: Way): string => {
+    if (way.kind === 'local') return intl.formatMessage(i18n.runHere);
+    if (way.kind === 'peer') {
+      return intl.formatMessage(i18n.runOn, {
+        name: way.mac?.name ?? way.candidate?.nodeNames[0] ?? '—',
+      });
+    }
+    const count = way.candidate?.key.nodes.length;
+    return count
+      ? intl.formatMessage(i18n.runAcross, { count })
+      : intl.formatMessage(i18n.runAcrossAny);
+  };
+
+  const renderWay = (way: Way) => {
+    const c = way.candidate;
+    const live = wayLive(way, modelId, single, distributed);
+    const running = live != null && live.state !== 'failed';
+    const figure = c ? goalFigure(c, goal) : null;
+    const action = c?.action ?? null;
+    const isBest = c != null && plan?.best === c.id;
+    const isBestNow = c != null && plan?.bestAvailable === c.id && plan.bestAvailable !== plan.best;
+    const why = c ? outcomeText(intl, c) : null;
+    const needsCopy = missingOn(way);
+    const copyJob = needsCopy ? macs.copies[copyKey(modelId, needsCopy.key)] : undefined;
+    const copyLink = needsCopy ? macs.linkBetween(SELF_KEY, needsCopy.key) : null;
+    const setupFirst = action?.kind === 'startSplit' && !action.setupMatches;
+    const blockedByDistributed = way.kind === 'local' && distributedOwns;
+    // A way goose judged short (or could not judge) is not offered: the start would be refused.
+    const fitsForGoose =
+      c == null || (c.supported && c.fit.status !== 'short' && c.fit.status !== 'unknown');
+    const startable =
+      !running &&
+      !setupFirst &&
+      !blockedByDistributed &&
+      needsCopy == null &&
+      fitsForGoose &&
+      (action == null || action.kind !== 'unavailable');
+    const placementId = c?.id ?? (way.kind === 'local' ? 'single:local' : null);
+    const measuring = busy === `measure:${placementId}`;
+    const rate = needsCopy ? macs.copyRate(SELF_KEY, needsCopy.key) : null;
+    const minutes = rate && selfModel ? minutesAt(selfModel.sizeBytes, rate) : 0;
+
+    return (
+      <li
+        key={way.key}
+        data-testid={`placement-way-${way.kind}`}
+        data-way={way.key}
+        className={cx('flex flex-col gap-2 p-3', SURFACE.inset, RADIUS.card)}
+      >
         <div className="flex flex-wrap items-center gap-2">
-          {!running &&
-            action.kind !== 'unavailable' &&
-            !(action.kind === 'startSplit' && !action.setupMatches) && (
-              <Button
-                variant={primary ? 'primary' : 'secondary'}
-                icon={
-                  busy === `use:${candidate.id}` ? <Loader2 className="animate-spin" /> : <Play />
-                }
-                disabled={busy != null || (action.kind === 'mountHere' && mountBusy)}
-                onClick={() => void use(candidate)}
-                data-testid={`placement-use-${candidate.id}`}
-              >
-                {busy === `use:${candidate.id}`
-                  ? intl.formatMessage(i18n.starting)
-                  : intl.formatMessage(i18n.useThis)}
-              </Button>
+          <span className={TYPE.h2}>{title(way)}</span>
+          {isBest && <Chip tone="accent">{intl.formatMessage(i18n.best)}</Chip>}
+          {isBestNow && <Chip tone="ok">{intl.formatMessage(i18n.bestNow)}</Chip>}
+          {c && way.kind === 'split' && (
+            <Chip>
+              {intl.formatMessage(c.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
+                link: linkWord(c),
+              })}
+            </Chip>
+          )}
+          {live && <LiveChip live={live} />}
+        </div>
+        {c && (
+          <div className="flex flex-wrap items-center gap-2">
+            {figure && (
+              <>
+                <span className={cx('text-lz-body', WEIGHT.semibold, TNUM, TONE_TEXT.accent)}>
+                  {figureText(intl, goal, figure, c.speed.concurrency)}
+                </span>
+                <span className={cx(TYPE.meta, TNUM)}>
+                  {intl.formatMessage(i18n.range, {
+                    low: tps(figure.estimate.low),
+                    high: tps(figure.estimate.high),
+                  })}
+                </span>
+                <SourceChip figure={figure} />
+              </>
             )}
+            {c.fit.context != null && (
+              <Chip>
+                {intl.formatMessage(
+                  c.fit.status === 'smallerContext' ? i18n.smallerContext : i18n.context,
+                  { tokens: c.fit.context.toLocaleString() }
+                )}
+              </Chip>
+            )}
+          </div>
+        )}
+        {why && (
+          <p className={cx('break-words', TYPE.meta)} title={c?.fit.detail}>
+            {why}
+          </p>
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {startable && (
+            <Button
+              variant={isBest || (!plan && way.kind === 'local') ? 'primary' : 'secondary'}
+              icon={busy === `run:${way.key}` ? <Loader2 className="animate-spin" /> : <Play />}
+              disabled={busy != null || (way.kind === 'local' && mountBusy)}
+              onClick={() => void run(way)}
+              data-testid={`placement-run-${way.kind}`}
+            >
+              {busy === `run:${way.key}`
+                ? intl.formatMessage(i18n.starting)
+                : intl.formatMessage(i18n.run)}
+            </Button>
+          )}
           {running && (
             <Button
-              variant={decode?.measured ? 'secondary' : 'primary'}
+              variant="secondary"
+              icon={busy === `stop:${way.key}` ? <Loader2 className="animate-spin" /> : <Square />}
+              disabled={busy != null}
+              onClick={() => void stop(way)}
+              data-testid={`placement-stop-${way.kind}`}
+            >
+              {intl.formatMessage(i18n.stop)}
+            </Button>
+          )}
+          {running && placementId && live?.state !== 'mounting' && (
+            <Button
+              variant={figure?.measured ? 'secondary' : 'primary'}
               icon={measuring ? <Loader2 className="animate-spin" /> : <Gauge />}
               disabled={busy != null}
-              onClick={() => void measure(candidate)}
-              data-testid={`placement-measure-${candidate.id}`}
+              onClick={() => void measure(placementId)}
+              data-testid={`placement-measure-${way.kind}`}
             >
               {intl.formatMessage(i18n.measure)}
             </Button>
           )}
+          {needsCopy && !running && !(copyJob && copyRunning(copyJob)) && selfModel && copyLink && (
+            <Button
+              variant="primary"
+              icon={copyLink.kind === 'thunderbolt' ? <Zap /> : <Network />}
+              disabled={busy != null}
+              onClick={() => copyFirst(way, needsCopy)}
+              data-testid={`placement-copy-first-${way.kind}`}
+            >
+              {minutes > 0
+                ? intl.formatMessage(i18n.copyFirstMinutes, {
+                    name: needsCopy.name,
+                    minutes,
+                    kind: copyLink.kind,
+                  })
+                : intl.formatMessage(i18n.copyFirst, { name: needsCopy.name, kind: copyLink.kind })}
+            </Button>
+          )}
         </div>
         {measuring && <p className={TYPE.meta}>{intl.formatMessage(i18n.measuring)}</p>}
-        {running && !decode?.measured && !measuring && (
+        {running && figure && !figure.measured && !measuring && (
           <p className={cx(TYPE.meta, WEIGHT.semibold)}>{intl.formatMessage(i18n.measureFirst)}</p>
         )}
-        {action.kind === 'unavailable' && (
-          <p className={cx('break-words', TYPE.meta)}>{action.reason}</p>
+        {needsCopy && selfModel && !(copyJob && copyRunning(copyJob)) && !copyJob?.error && (
+          <p className={TYPE.meta}>
+            {intl.formatMessage(i18n.copyFirstWhy, {
+              model: modelId,
+              size: formatGb(selfModel.sizeBytes),
+              name: needsCopy.name,
+            })}
+          </p>
         )}
-        {action.kind === 'startSplit' && !action.setupMatches && (
-          <p className={cx('break-words', TYPE.meta)}>{intl.formatMessage(i18n.setupFirst)}</p>
+        {copyJob && copyRunning(copyJob) && needsCopy && (
+          <div className="flex flex-col gap-1" data-testid={`placement-copying-${way.kind}`}>
+            <span className={cx(TYPE.body, WEIGHT.semibold, TNUM)}>
+              {intl.formatMessage(i18n.copyingThen, {
+                name: needsCopy.name,
+                pct:
+                  copyJob.progress && copyJob.progress.totalBytes > 0
+                    ? Math.round((copyJob.progress.copiedBytes / copyJob.progress.totalBytes) * 100)
+                    : 0,
+              })}
+            </span>
+            <div className={cx('h-1.5 w-full overflow-hidden', RADIUS.pill, SURFACE.card)}>
+              <div
+                className={cx('h-full', TONE_DOT.accent)}
+                style={{
+                  width: `${
+                    copyJob.progress && copyJob.progress.totalBytes > 0
+                      ? Math.min(
+                          100,
+                          (copyJob.progress.copiedBytes / copyJob.progress.totalBytes) * 100
+                        )
+                      : 0
+                  }%`,
+                }}
+              />
+            </div>
+          </div>
         )}
-        {!running && action.kind !== 'unavailable' && primary && (
-          <p className={TYPE.meta}>{intl.formatMessage(i18n.measureLater)}</p>
-        )}
-      </div>
-    );
-  };
-
-  const headline = (candidate: PlacementCandidate, label: string, primary: boolean) => {
-    const figure = goalFigure(candidate, goal);
-    const live = candidateLive(candidate, modelId, single, distributed);
-    const context = candidate.fit.context;
-    return (
-      <div
-        className={cx('flex flex-col gap-2 p-3', SURFACE.inset, RADIUS.card)}
-        data-testid={primary ? 'placement-best' : 'placement-best-now'}
-      >
-        <span
-          className={cx('text-lz-meta', WEIGHT.semibold, primary ? TONE_TEXT.accent : TONE_TEXT.ok)}
-        >
-          {label}
-        </span>
-        <span className="flex flex-wrap items-center gap-2">
-          <span className={TYPE.h2}>{candidateLabel(intl, candidate)}</span>
-          {live && <LiveChip live={live} />}
-        </span>
-        <div className="flex flex-wrap items-center gap-2">
-          {figure ? (
-            <>
-              <span className={cx('text-lz-h2', WEIGHT.semibold, TNUM, TONE_TEXT.accent)}>
-                {figureText(intl, goal, figure, candidate.speed.concurrency)}
-              </span>
-              <span className={cx(TYPE.meta, TNUM)}>
-                {intl.formatMessage(i18n.range, {
-                  low: tps(figure.estimate.low),
-                  high: tps(figure.estimate.high),
-                })}
-              </span>
-              <SourceChip figure={figure} />
-            </>
-          ) : (
-            <Chip>{intl.formatMessage(i18n.noFigure)}</Chip>
+        {copyJob &&
+          !copyRunning(copyJob) &&
+          (copyJob.error || copyJob.progress?.state === 'failed') &&
+          needsCopy && (
+            <p className={cx('break-words', TYPE.body, WEIGHT.semibold, TONE_TEXT.err)}>
+              {intl.formatMessage(i18n.copyThenFailed, {
+                name: needsCopy.name,
+                reason: copyJob.error ?? copyJob.progress?.error ?? '—',
+              })}
+            </p>
           )}
-          {context != null && (
-            <Chip>
-              {intl.formatMessage(
-                candidate.fit.status === 'smallerContext' ? i18n.smallerContext : i18n.context,
-                { tokens: context.toLocaleString() }
-              )}
-            </Chip>
-          )}
-        </div>
-        {actionFor(candidate, primary)}
-      </div>
+        {blockedByDistributed && !running && (
+          <p className={cx('break-words', TYPE.meta, WEIGHT.semibold)}>
+            {intl.formatMessage(i18n.distributedOwns)}
+          </p>
+        )}
+        {action?.kind === 'unavailable' && !needsCopy && (
+          <p className={cx('break-words', TYPE.meta)}>
+            {way.mac ? macs.describeError(way.mac, action.reason) : action.reason}
+          </p>
+        )}
+        {setupFirst && (
+          <p className={cx('break-words', TYPE.meta, WEIGHT.semibold)}>
+            {intl.formatMessage(i18n.setupFirst)}
+          </p>
+        )}
+        {way.kind === 'split' && splitDetails && (
+          <Disclosure
+            variant="plain"
+            title={intl.formatMessage(i18n.details)}
+            meta={<span className={TYPE.meta}>{intl.formatMessage(i18n.detailsMeta)}</span>}
+            open={detailsOpen || setupFirst}
+            onOpenChange={setDetailsOpen}
+            testId="placement-split-details"
+          >
+            {splitDetails}
+          </Disclosure>
+        )}
+      </li>
     );
   };
 
@@ -879,6 +955,7 @@ export function PlacementCard({
       {plan?.error && (
         <ToneBanner tone="err" label={intl.formatMessage(i18n.planFailed)} text={plan.error} />
       )}
+      {(error || plan?.error) && <p className={TYPE.meta}>{intl.formatMessage(i18n.noPlanWays)}</p>}
       {notice && (
         <ToneBanner tone={notice.tone} label={intl.formatMessage(i18n.title)} text={notice.text} />
       )}
@@ -889,65 +966,63 @@ export function PlacementCard({
           text={storeErrors.join('; ')}
         />
       )}
-      {plan && !plan.error && (
-        <>
-          {best ? (
-            headline(best, intl.formatMessage(i18n.best), true)
-          ) : (
-            <p className={cx(TYPE.body, WEIGHT.semibold, TONE_TEXT.err)}>
-              {intl.formatMessage(i18n.nothingFits)}
-            </p>
-          )}
-          {bestNow && headline(bestNow, intl.formatMessage(i18n.bestNow), false)}
-          {(plan.notes ?? []).map((note) => (
-            <p key={note} className={TYPE.meta}>
-              {note}
-            </p>
-          ))}
-          {others.length > 0 && (
-            <Disclosure
-              title={intl.formatMessage(i18n.others, { count: others.length })}
-              open={othersOpen}
-              onOpenChange={setOthersOpen}
-              testId="placement-others"
-            >
-              <ul className="flex flex-col gap-2">
-                {others.map((c) => {
-                  const figure = goalFigure(c, goal);
-                  const live = candidateLive(c, modelId, single, distributed);
-                  return (
-                    <li
-                      key={c.id}
-                      className="flex flex-col gap-0.5"
-                      data-testid={`placement-other-${c.id}`}
-                    >
-                      <span className="flex flex-wrap items-center gap-2">
-                        <span className={cx(TYPE.body, WEIGHT.semibold)}>
-                          {candidateLabel(intl, c)}
-                        </span>
-                        {live && <LiveChip live={live} />}
-                        {figure && (
-                          <span className={cx(TYPE.meta, TNUM)}>
-                            {figureText(intl, goal, figure, c.speed.concurrency)}
-                          </span>
-                        )}
-                        {figure && <SourceChip figure={figure} />}
-                      </span>
-                      <span className={cx('break-words', TYPE.meta)} title={c.fit.detail}>
-                        {outcomeText(intl, c)}
-                      </span>
-                      {c.supported && c.fit.status !== 'short' && c.fit.status !== 'unknown' && (
-                        <div className="mt-1">{actionFor(c, false)}</div>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </Disclosure>
-          )}
-          <NodeFacts nodes={nodes} />
-        </>
+      {!(loading && !plan && !error) && (
+        <ul className="flex flex-col gap-2" data-testid="placement-ways">
+          {ways.map(renderWay)}
+        </ul>
       )}
+      {(plan?.notes ?? []).map((note) => (
+        <p key={note} className={TYPE.meta}>
+          {note}
+        </p>
+      ))}
+      {otherSplits.length > 0 && (
+        <Disclosure
+          title={intl.formatMessage(i18n.others, { count: otherSplits.length })}
+          open={othersOpen}
+          onOpenChange={setOthersOpen}
+          testId="placement-others"
+        >
+          <ul className="flex flex-col gap-2">
+            {otherSplits.map((c) => (
+              <li
+                key={c.id}
+                className="flex flex-col gap-0.5"
+                data-testid={`placement-other-${c.id}`}
+              >
+                <span className={cx(TYPE.body, WEIGHT.semibold)}>
+                  {intl.formatMessage(c.key.kind === 'tensor' ? i18n.tensor : i18n.pipeline, {
+                    link: linkWord(c),
+                  })}
+                </span>
+                <span className={cx('break-words', TYPE.meta)} title={c.fit.detail}>
+                  {outcomeText(intl, c)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Disclosure>
+      )}
+      <ConfirmationModal
+        isOpen={confirmStopSplit}
+        title={intl.formatMessage(i18n.stopSplitTitle)}
+        message={intl.formatMessage(i18n.stopSplitMessage, {
+          nodes: distributed?.nodes.map((n) => n.name).join(', ') || '—',
+        })}
+        confirmLabel={intl.formatMessage(i18n.stop)}
+        cancelLabel={intl.formatMessage(i18n.keepRunning)}
+        confirmVariant="destructive"
+        onConfirm={() => void stopSplit()}
+        onCancel={() => setConfirmStopSplit(false)}
+      />
     </section>
+  );
+}
+
+export function PlacementCard(props: PlacementCardProps) {
+  return (
+    <WithMacs>
+      <PlacementCardBody {...props} />
+    </WithMacs>
   );
 }

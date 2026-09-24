@@ -20,7 +20,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::sync::Mutex as StdMutex;
 
-/// The owner's switch ("Allow this Mac to serve chat to linked devices"): a goose config key, or
+/// The owner's switch ("Let my other Macs use this Mac › Answer chat"): a goose config key, or
 /// the same name as an env override (`Config::get_param` upper-cases the key). Absent = OFF.
 pub const ALLOW_CHAT_SERVING_KEY: &str = "LEANZERO_LINK_ALLOW_CHAT_SERVING";
 
@@ -628,7 +628,7 @@ mod tests {
     fn a_peer_that_has_not_opted_in_is_refused_before_any_mount() {
         let off = serving_refusal(&RelayAnswer::Status {
             code: 403,
-            body: "chatServingDisabled: \"Allow this Mac to serve chat to linked devices\" is off on WorksMacStudio.lan".into(),
+            body: "chatServingDisabled: \"Let my other Macs use this Mac › Answer chat\" is off on WorksMacStudio.lan".into(),
         })
         .unwrap();
         assert_eq!(off.code, "chatServingDisabled");

@@ -101,6 +101,14 @@ export interface LinkState {
   intentError?: string;
   /** Absent only from a goosed that predates the launch reconnect. */
   reconnect?: ReconnectState;
+  /** "Load and download models" as configured now (`LEANZERO_LINK_ALLOW_REMOTE_EXECUTION`). */
+  remoteExecutionAllowed?: boolean;
+  /** What the RUNNING control service enforces (connected only); differs until a reconnect. */
+  remoteExecutionAllowedLive?: boolean;
+  /** "Answer chat" (`LEANZERO_LINK_ALLOW_CHAT_SERVING`), read by goose on every request. */
+  chatServingAllowed?: boolean;
+  /** "Run part of a split model" (`LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`), read on every request. */
+  distributedNodeAllowed?: boolean;
 }
 
 export interface RequestCodeResult {
@@ -126,6 +134,16 @@ export type NodeStatus =
   | { type: 'Busy'; session_id?: string }
   | { type: 'Offline' };
 
+/** The owner's three switches, as a node reports them about itself (snake_case, verbatim). */
+export interface NodeAllows {
+  /** Load, download, copy and delete models there (`LEANZERO_LINK_ALLOW_REMOTE_EXECUTION`). */
+  manage_models: boolean;
+  /** Its single engine answers another Mac's chat (`LEANZERO_LINK_ALLOW_CHAT_SERVING`). */
+  answer_chat: boolean;
+  /** It runs part of another Mac's split model (`LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`). */
+  run_split: boolean;
+}
+
 /** The `/v1/swarm` `NodeState` — snake_case, consumed verbatim. */
 export interface NodeState {
   node_id: string;
@@ -134,6 +152,12 @@ export interface NodeState {
   status: NodeStatus;
   sessions_active: number;
   updated_at: string;
+  /** Why this Mac's last poll of the peer failed; absent after a clean poll and on `self`. */
+  last_poll_error?: string;
+  /** The name its owner gave it (macOS ComputerName); absent from a goose that predates it. */
+  computer_name?: string;
+  /** What it lets the other Macs do there, as it enforces it now; absent = unknown (older goose). */
+  allows?: NodeAllows;
 }
 
 /** Body of `leanzeroLink/nodes`: the local node (`self`) plus its reachable peers. */

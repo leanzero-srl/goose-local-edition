@@ -2642,6 +2642,13 @@ export type MlxEngineStatusDto = {
     gpuCeilingBytes?: number | null;
     gpuCeilingError?: string | null;
     /**
+     * This Mac's chip (`hw.model`, the brand, the GPU cores), probed once per goose process —
+     * what the owner reads beside the Mac's name. Absent exactly when `chipError` says why, and
+     * from a goose before it.
+     */
+    chip?: MlxChipDto | null;
+    chipError?: string | null;
+    /**
      * True when the persisted settings would spawn the running engine differently
      * (model, port, sampling): the engine keeps running with its old arguments until
      * the user remounts.
@@ -2665,6 +2672,15 @@ export type MlxEngineStatusDto = {
      * and this is what the Mac is doing instead.
      */
     hosting?: MlxDistributedHostedRankDto | null;
+};
+
+/**
+ * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
+ */
+export type MlxChipDto = {
+    hwModel: string;
+    brand: string;
+    gpuCores?: number | null;
 };
 
 /**
@@ -2856,15 +2872,6 @@ export type MlxPlacementKeyDto = {
 };
 
 export type MlxPlacementKindDto = 'single' | 'tensor' | 'pipeline';
-
-/**
- * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
- */
-export type MlxChipDto = {
-    hwModel: string;
-    brand: string;
-    gpuCores?: number | null;
-};
 
 export type MlxPlacementFitDto = {
     status: MlxFitStatusDto;
@@ -3609,7 +3616,7 @@ export type MlxDistributedStatusDto = {
      */
     hosting?: MlxDistributedHostedRankDto | null;
     /**
-     * This Mac's switch "Allow this Mac to serve as a distributed node" (config key
+     * This Mac's switch "Let my other Macs use this Mac › Run part of a split model" (config key
      * `LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`, off by default), as the control route reads it.
      */
     allowDistributedNode?: boolean;
@@ -4146,7 +4153,7 @@ export type MlxEngineRemoteSingleStartResponse_unstable = {
 /**
  * Why a remote-single start did not happen — one named code the caller acts on, and the
  * message to show verbatim. Codes: `linkNotConnected` · `unknownPeer` · `chatServingDisabled`
- * (the peer's "Allow this Mac to serve chat to linked devices" is off) ·
+ * (the peer's "Let my other Macs use this Mac › Answer chat" is off) ·
  * `remoteManagementDisabled` (the peer does not let linked devices mount models) ·
  * `peerTooOld` (its goose has no chat proxy / reports no admission cap) · `peerMountFailed`
  * (the peer's own mount refusal, e.g. its memory gate) · `distributedOwnsThisMac` ·
@@ -4971,6 +4978,16 @@ export type LeanzeroLinkStateResponse_unstable = {
      * it differs from `remote_execution_allowed`, the change applies at the next connect.
      */
     remoteExecutionAllowedLive?: boolean | null;
+    /**
+     * The chat-serving switch (config key `LEANZERO_LINK_ALLOW_CHAT_SERVING`): this Mac's single
+     * engine answers a linked Mac's chat. Read on every request, so NOW is also what is enforced.
+     */
+    chatServingAllowed?: boolean;
+    /**
+     * The distributed-node switch (config key `LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`): a linked
+     * Mac runs a rank of its split model here. Read on every request, like chat serving.
+     */
+    distributedNodeAllowed?: boolean;
     /**
      * Discovery's verdict on the mesh binaries at manager build — shown before any click.
      */

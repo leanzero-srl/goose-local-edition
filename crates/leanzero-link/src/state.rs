@@ -305,7 +305,7 @@ pub enum DistributedNodeError {
 /// beside the [`MlxControl`]; `None` there means the route answers `501`.
 #[async_trait::async_trait]
 pub trait DistributedNode: Send + Sync + 'static {
-    /// The node owner's switch ("Allow this Mac to serve as a distributed node"), read on
+    /// The node owner's switch ("Let my other Macs use this Mac › Run part of a split model"), read on
     /// EVERY request so a change applies at once, not at the next connect. `false` → `403`.
     fn serving_allowed(&self) -> bool;
 
@@ -322,7 +322,7 @@ pub trait DistributedNode: Send + Sync + 'static {
 /// proxy forwards to whatever listens at [`Self::engine_base_url`], and nothing listening is the
 /// proxy's loud `502`. Injected beside the [`DistributedNode`]; `None` → the routes answer `501`.
 pub trait ChatServing: Send + Sync + 'static {
-    /// The node owner's switch ("Allow this Mac to serve chat to linked devices"), read on EVERY
+    /// The node owner's switch ("Let my other Macs use this Mac › Answer chat"), read on EVERY
     /// request so turning it off stops the next request, not the next connect. `false` → `403`.
     fn serving_allowed(&self) -> bool;
 
@@ -486,6 +486,8 @@ impl PeerRegistry {
                 sessions_active: 0,
                 updated_at: Utc::now(),
                 last_poll_error: None,
+                computer_name: None,
+                allows: None,
             };
             let mut tasks = Vec::new();
             match (target.base_url(), target.ws_base()) {

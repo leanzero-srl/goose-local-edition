@@ -223,6 +223,8 @@ impl SwarmStateSource for FakeStateSource {
             sessions_active: 0,
             updated_at: Utc::now(),
             last_poll_error: None,
+            computer_name: None,
+            allows: None,
         }
     }
     async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String> {
@@ -259,6 +261,8 @@ impl SwarmStateSource for NamedIdleSource {
             sessions_active: 0,
             updated_at: Utc::now(),
             last_poll_error: None,
+            computer_name: None,
+            allows: None,
         }
     }
     async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String> {
@@ -1946,7 +1950,7 @@ async fn distributed_proxy_carries_every_class_of_a_peers_answer() {
         Err(LinkError::DistributedNode(DistributedNodeError::Disabled(text))) => {
             assert_eq!(
                 text,
-                "servingDisabled: \"Allow this Mac to serve as a distributed node\" is off on \
+                "servingDisabled: \"Let my other Macs use this Mac › Run part of a split model\" is off on \
                  node-b-host"
             )
         }

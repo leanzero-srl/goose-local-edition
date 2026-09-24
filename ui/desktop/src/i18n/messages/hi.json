@@ -2231,8 +2231,8 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "क्लाउड प्रदाता"
   },
-  "leanzeroSwarm.tabLink": {
-    "defaultMessage": "LeanZero Link"
+  "leanzeroSwarm.tabMacs": {
+    "defaultMessage": "मेरे Mac"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "स्वार्म सेटिंग्स"
@@ -2494,6 +2494,126 @@
   },
   "loopView.stopCheck": {
     "defaultMessage": "Stop check: {command}"
+  },
+  "macs.cancelDownloadFailed": {
+    "defaultMessage": "रद्द नहीं हो सका।"
+  },
+  "macs.cancelFailed": {
+    "defaultMessage": "कॉपी रद्द नहीं हो सकी।"
+  },
+  "macs.copyFailed": {
+    "defaultMessage": "कॉपी शुरू नहीं हुई।"
+  },
+  "macs.downloadFailed": {
+    "defaultMessage": "डाउनलोड शुरू नहीं हुआ।"
+  },
+  "macs.line.checking": {
+    "defaultMessage": "इसका इंजन पढ़ा जा रहा है…"
+  },
+  "macs.line.failed": {
+    "defaultMessage": "{model} विफल: {reason}"
+  },
+  "macs.line.failedNoModel": {
+    "defaultMessage": "इंजन विफल: {reason}"
+  },
+  "macs.line.hosting": {
+    "defaultMessage": "{model} · {requester} के विभाजन का हिस्सा"
+  },
+  "macs.line.loading": {
+    "defaultMessage": "{model} लोड हो रहा है"
+  },
+  "macs.line.notLoaded": {
+    "defaultMessage": "कोई मॉडल लोड नहीं"
+  },
+  "macs.line.offline": {
+    "defaultMessage": "LeanZero Link से पहुँच नहीं"
+  },
+  "macs.line.running": {
+    "defaultMessage": "{model}"
+  },
+  "macs.line.split": {
+    "defaultMessage": "{count,plural,one{{model} · # Mac पर विभाजित} other{{model} · # Mac पर विभाजित}}"
+  },
+  "macs.line.writing": {
+    "defaultMessage": "{model} · {tps} टोकन/से"
+  },
+  "macs.linksFailed": {
+    "defaultMessage": "कनेक्शन पढ़े नहीं जा सके।"
+  },
+  "macs.listFailed": {
+    "defaultMessage": "मॉडल फ़ोल्डर पढ़ा नहीं जा सका।"
+  },
+  "macs.offThere": {
+    "defaultMessage": "{name} पर {what} बंद है — वहाँ “मेरे दूसरे Mac इस Mac का उपयोग कर सकें” चालू करें (प्रदाता › मेरे Mac)"
+  },
+  "macs.pauseFailed": {
+    "defaultMessage": "रोका नहीं जा सका।"
+  },
+  "macs.permission.chat": {
+    "defaultMessage": "चैट का उत्तर देना"
+  },
+  "macs.permission.manage": {
+    "defaultMessage": "मॉडल लोड और डाउनलोड करना"
+  },
+  "macs.permission.split": {
+    "defaultMessage": "विभाजित मॉडल का एक हिस्सा चलाना"
+  },
+  "macs.resumeFailed": {
+    "defaultMessage": "फिर से शुरू नहीं हो सका।"
+  },
+  "macs.state.checking": {
+    "defaultMessage": "जाँच हो रही है"
+  },
+  "macs.state.failed": {
+    "defaultMessage": "विफल"
+  },
+  "macs.state.held": {
+    "defaultMessage": "रोका गया"
+  },
+  "macs.state.hosting": {
+    "defaultMessage": "विभाजन का हिस्सा"
+  },
+  "macs.state.idle": {
+    "defaultMessage": "निष्क्रिय"
+  },
+  "macs.state.loading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "macs.state.notLoaded": {
+    "defaultMessage": "लोड नहीं"
+  },
+  "macs.state.off": {
+    "defaultMessage": "बंद"
+  },
+  "macs.state.offline": {
+    "defaultMessage": "ऑफ़लाइन"
+  },
+  "macs.state.reading": {
+    "defaultMessage": "पढ़ रहा है"
+  },
+  "macs.state.split": {
+    "defaultMessage": "विभाजित"
+  },
+  "macs.state.unreadable": {
+    "defaultMessage": "पढ़ा नहीं जा सकता"
+  },
+  "macs.state.writing": {
+    "defaultMessage": "लिख रहा है"
+  },
+  "macs.statusFailed": {
+    "defaultMessage": "इंजन पढ़ा नहीं जा सका।"
+  },
+  "macs.thisMac": {
+    "defaultMessage": "यह Mac"
+  },
+  "macs.trackingFailed": {
+    "defaultMessage": "चल रहे डाउनलोड दोबारा जोड़े नहीं जा सके।"
+  },
+  "macs.tray.line": {
+    "defaultMessage": "{name} — {what}"
+  },
+  "macs.tray.open": {
+    "defaultMessage": "मेरे Mac खोलें"
   },
   "markdownContent.cancel": {
     "defaultMessage": "रद्द करें"
@@ -2783,6 +2903,9 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "रद्द करें"
   },
+  "mlxDistributed.checksPassed": {
+    "defaultMessage": "{count,plural,one{# जाँच पास} other{# जाँचें पास}}"
+  },
   "mlxDistributed.clusterChecks": {
     "defaultMessage": "क्लस्टर जाँचें"
   },
@@ -2969,15 +3092,6 @@
   "mlxDistributed.fits": {
     "defaultMessage": "समाता है"
   },
-  "mlxDistributed.hosting.label": {
-    "defaultMessage": "यह Mac एक रैंक चला रहा है"
-  },
-  "mlxDistributed.hosting.loading": {
-    "defaultMessage": "{requester} के लिए रैंक {rank} लोड हो रहा है"
-  },
-  "mlxDistributed.hosting.text": {
-    "defaultMessage": "{line} — रैंक PID {pid}। जब तक {requester} रन नहीं रोकता, सिंगल इंजन और इस Mac का अपना वितरित इंजन अस्वीकार हैं।"
-  },
   "mlxDistributed.inflight": {
     "defaultMessage": "प्रगति में"
   },
@@ -3104,12 +3218,6 @@
   "mlxDistributed.peakOf": {
     "defaultMessage": "GiB शिखर, {budget} GiB बजट में से"
   },
-  "mlxDistributed.peerBody": {
-    "defaultMessage": "आप {host} प्रबंधित कर रहे हैं। इसे कॉन्फ़िगर करने, जाँचने, शुरू करने या रोकने के लिए “Manage on” को वापस “This device” पर करें।"
-  },
-  "mlxDistributed.peerTitle": {
-    "defaultMessage": "वितरित इंजन की निगरानी इसी Mac से होती है"
-  },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
   },
@@ -3226,15 +3334,6 @@
   },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {बैच में # अनुक्रम} other {बैच में # अनुक्रम}}"
-  },
-  "mlxDistributed.serveNode": {
-    "defaultMessage": "इस Mac को वितरित नोड के रूप में सेवा देने दें"
-  },
-  "mlxDistributed.serveNodeError": {
-    "defaultMessage": "सेटिंग बदली नहीं जा सकी"
-  },
-  "mlxDistributed.serveNodeHint": {
-    "defaultMessage": "आपके LeanZero Link पर मौजूद दूसरे Mac तब यहाँ अपने वितरित इंजन का एक रैंक चला सकते हैं — केवल goose के अपने रैंक प्रोग्राम और जाँचें, कोई मनमाना कमांड कभी नहीं। डिफ़ॉल्ट रूप से बंद।"
   },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "सर्वर स्थिति पढ़ी नहीं जा सकी: {error}"
@@ -3417,28 +3516,10 @@
     "defaultMessage": "हेडलेस (ssh)"
   },
   "mlxDistributedSetup.intro": {
-    "defaultMessage": "दूसरे Mac का नाम एक बार दें। goose इस Mac और उसे ssh से जाँचता है और लिंक, RDMA, बैकएंड, मॉडल, पोर्ट और Python भर देता है।"
+    "defaultMessage": "अपना दूसरा Mac चुनें। goose LeanZero Link से दोनों Mac से पूछता है और लिंक, RDMA, बैकएंड, मॉडल, पोर्ट और Python भर देता है।"
   },
-  "mlxDistributedSetup.link.gid": {
-    "defaultMessage": "IPv4 GID {index}"
-  },
-  "mlxDistributedSetup.link.intro": {
-    "defaultMessage": "एक ही खाते से साइन इन। हर एक ने मेश पर खुद का वर्णन किया; एक चुनें और goose उसे उसके अपने goose के ज़रिए चलाएगा — बिना ssh।"
-  },
-  "mlxDistributedSetup.link.memory": {
-    "defaultMessage": "{total} में से {available} GiB उपलब्ध"
-  },
-  "mlxDistributedSetup.link.models": {
-    "defaultMessage": "{count, plural, one {# मॉडल} other {# मॉडल}}"
-  },
-  "mlxDistributedSetup.link.noGid": {
-    "defaultMessage": "कोई IPv4 GID नहीं"
-  },
-  "mlxDistributedSetup.link.noRdma": {
-    "defaultMessage": "कोई RDMA डिवाइस नहीं"
-  },
-  "mlxDistributedSetup.link.noThunderbolt": {
-    "defaultMessage": "कोई Thunderbolt पता नहीं"
+  "mlxDistributedSetup.link.detectWith": {
+    "defaultMessage": "इस Mac से पहचानें"
   },
   "mlxDistributedSetup.link.none": {
     "defaultMessage": "इस खाते का कोई दूसरा Mac अभी LeanZero Link पर नहीं है।"
@@ -3446,14 +3527,11 @@
   "mlxDistributedSetup.link.notConnected": {
     "defaultMessage": "LeanZero Link कनेक्ट नहीं है"
   },
-  "mlxDistributedSetup.link.rdmaActive": {
-    "defaultMessage": "सक्रिय"
+  "mlxDistributedSetup.link.pick": {
+    "defaultMessage": "दूसरा Mac"
   },
-  "mlxDistributedSetup.link.rdmaDownCount": {
-    "defaultMessage": "{count, plural, one {# और डिवाइस, पोर्ट बंद} other {# और डिवाइस, पोर्ट बंद}}"
-  },
-  "mlxDistributedSetup.link.servingOff": {
-    "defaultMessage": "{name} पर “इस Mac को वितरित नोड के रूप में सेवा देने दें” चालू करें (Providers › LeanZero MLX › Engine › Distributed)।"
+  "mlxDistributedSetup.link.servingOffMyMacs": {
+    "defaultMessage": "{name} पर “मेरे दूसरे Mac इस Mac का उपयोग कर सकें › विभाजित मॉडल का एक हिस्सा चलाना” चालू करें (वहाँ प्रदाता › मेरे Mac में)।"
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "इसका goose सेवा नहीं दे सकता"
@@ -3472,12 +3550,6 @@
   },
   "mlxDistributedSetup.link.state.unreadable": {
     "defaultMessage": "उत्तर दिया, पढ़ा नहीं जा सका"
-  },
-  "mlxDistributedSetup.link.title": {
-    "defaultMessage": "LeanZero Link पर आपके Mac"
-  },
-  "mlxDistributedSetup.link.use": {
-    "defaultMessage": "यह Mac इस्तेमाल करें"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS मेल खाते हैं"
@@ -3500,11 +3572,17 @@
   "mlxDistributedSetup.noneAnswering": {
     "defaultMessage": "~/.ssh/config के किसी भी उपनाम ने गैर-इंटरैक्टिव ssh का जवाब नहीं दिया।"
   },
+  "mlxDistributedSetup.overSsh": {
+    "defaultMessage": "उन्नत: ssh के ज़रिए एक Mac"
+  },
+  "mlxDistributedSetup.overSshMeta": {
+    "defaultMessage": "ऐसे Mac के लिए जो LeanZero Link पर नहीं है"
+  },
   "mlxDistributedSetup.peer": {
     "defaultMessage": "दूसरा Mac (ssh उपनाम या होस्ट)"
   },
   "mlxDistributedSetup.peerPlaceholder": {
-    "defaultMessage": "workhorse"
+    "defaultMessage": "ssh उपनाम"
   },
   "mlxDistributedSetup.probed": {
     "defaultMessage": "{count, plural, one {{ms} ms में # नोड जाँचा गया} other {{ms} ms में # नोड जाँचे गए}}"
@@ -3539,20 +3617,17 @@
   "mlxEngineView.mountFailed": {
     "defaultMessage": "माउंट विफल"
   },
-  "mlxEngineView.refusedUnnamed": {
-    "defaultMessage": "अस्वीकृत, और goose ने कोई कारण नहीं बताया"
+  "mlxEngineView.pickThenRun": {
+    "defaultMessage": "एक मॉडल चुनें, फिर नीचे “चलाएँ” में उसे शुरू करें — इस Mac पर, अपने किसी दूसरे Mac पर, या उनके बीच विभाजित करके।"
+  },
+  "mlxEngineView.samplingOn": {
+    "defaultMessage": "प्रोफ़ाइल कहाँ"
   },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "कई Mac पर परोसा जा रहा है"
   },
-  "mlxEngineView.startFailed": {
-    "defaultMessage": "शुरू करना विफल"
-  },
-  "mlxEngineView.startRefused": {
-    "defaultMessage": "शुरू करना अस्वीकृत"
-  },
-  "mlxEngineView.switchNeedsUnmount": {
-    "defaultMessage": "यह मॉडल अकेले इस Mac पर नहीं चलता — अनमाउंट करें, फिर टाइल से शुरू करें।"
+  "mlxEngineView.settingsFailed": {
+    "defaultMessage": "इंजन सेटिंग पढ़ी नहीं जा सकीं।"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: हर टोकन पर {bf16} KiB की जगह {bytes} KiB — उसी मेमोरी में {ratio}× संदर्भ आता है।"
@@ -3650,6 +3725,39 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "रुक रहा है"
   },
+  "mlxModels.cancelMessage": {
+    "defaultMessage": "{name} पर {model} का डाउनलोड रद्द करें और वहाँ की अधूरी फ़ाइलें हटाएँ?"
+  },
+  "mlxModels.cancelTitle": {
+    "defaultMessage": "डाउनलोड रद्द करें"
+  },
+  "mlxModels.downloadTo": {
+    "defaultMessage": "यहाँ डाउनलोड करें"
+  },
+  "mlxModels.edit": {
+    "defaultMessage": "संपादित करें"
+  },
+  "mlxModels.folderUnread": {
+    "defaultMessage": "पढ़ा नहीं जा सकता: {reason}"
+  },
+  "mlxModels.folders": {
+    "defaultMessage": "मॉडल फ़ोल्डर"
+  },
+  "mlxModels.foldersHint": {
+    "defaultMessage": "हर Mac का एक फ़ोल्डर, जिसे डाउनलोड, कॉपी और लोड तीनों इस्तेमाल करते हैं; बार उसके वॉल्यूम की खाली जगह है।"
+  },
+  "mlxModels.huggingFace": {
+    "defaultMessage": "Hugging Face"
+  },
+  "mlxModels.keep": {
+    "defaultMessage": "रखें"
+  },
+  "mlxModels.onYourMacs": {
+    "defaultMessage": "आपके Mac पर"
+  },
+  "mlxModels.settingsFailed": {
+    "defaultMessage": "इंजन सेटिंग पढ़ी नहीं जा सकीं।"
+  },
   "mlxMount.foreignAnswering": {
     "defaultMessage": "तैयार · दूसरी विंडो के स्वामित्व में"
   },
@@ -3659,23 +3767,8 @@
   "mlxReplica.cancel": {
     "defaultMessage": "रद्द करें"
   },
-  "mlxReplica.cancelConfirmMessage": {
-    "defaultMessage": "{model} को {host} पर कॉपी करना रोकें? {host} पर अधूरी कॉपी हटा दी जाएगी।"
-  },
-  "mlxReplica.cancelConfirmTitle": {
-    "defaultMessage": "कॉपी रद्द करें"
-  },
-  "mlxReplica.cancelFailed": {
-    "defaultMessage": "कॉपी रद्द नहीं की जा सकी।"
-  },
   "mlxReplica.cancelTitle": {
     "defaultMessage": "कॉपी रोकें और {host} पर अधूरी कॉपी हटाएँ"
-  },
-  "mlxReplica.checkLinks": {
-    "defaultMessage": "लिंक जाँचें"
-  },
-  "mlxReplica.checking": {
-    "defaultMessage": "लिंक जाँचे जा रहे हैं…"
   },
   "mlxReplica.copiedTo": {
     "defaultMessage": "{host} पर कॉपी हो गया"
@@ -3686,15 +3779,6 @@
   "mlxReplica.copyFailed": {
     "defaultMessage": "{host} पर कॉपी विफल रही"
   },
-  "mlxReplica.copyTitleNetwork": {
-    "defaultMessage": "{host} से कोई Thunderbolt लिंक नहीं है, इसलिए कॉपी लोकल नेटवर्क से जाती है: {local} → {peer}"
-  },
-  "mlxReplica.copyTitleThunderbolt": {
-    "defaultMessage": "Thunderbolt केबल से कॉपी: {local} → {peer}"
-  },
-  "mlxReplica.copyTo": {
-    "defaultMessage": "{kind,select,thunderbolt{{host} पर कॉपी करें · Thunderbolt} other{{host} पर कॉपी करें · नेटवर्क}}"
-  },
   "mlxReplica.copyingTo": {
     "defaultMessage": "{kind,select,thunderbolt{Thunderbolt से {host} पर कॉपी हो रहा है} other{नेटवर्क से {host} पर कॉपी हो रहा है}}"
   },
@@ -3703,39 +3787,6 @@
   },
   "mlxReplica.files": {
     "defaultMessage": "{total} में से {done} फ़ाइलें"
-  },
-  "mlxReplica.keepCopying": {
-    "defaultMessage": "कॉपी जारी रखें"
-  },
-  "mlxReplica.linkNetwork": {
-    "defaultMessage": "नेटवर्क"
-  },
-  "mlxReplica.linkThunderbolt": {
-    "defaultMessage": "Thunderbolt"
-  },
-  "mlxReplica.linkThunderboltSpeed": {
-    "defaultMessage": "Thunderbolt · {speed}"
-  },
-  "mlxReplica.linksError": {
-    "defaultMessage": "आपके दूसरे डिवाइस के लिंक नहीं जाँचे जा सके: {reason}"
-  },
-  "mlxReplica.linksFailed": {
-    "defaultMessage": "लिंक पढ़े नहीं जा सके।"
-  },
-  "mlxReplica.linksNote": {
-    "defaultMessage": "इस डिवाइस पर मौजूद मॉडल को दोबारा डाउनलोड करने के बजाय किसी लिंक किए गए डिवाइस पर कॉपी किया जा सकता है। हर फ़ाइल इस्तेमाल से पहले मूल से मिलाई जाती है।"
-  },
-  "mlxReplica.linksTitle": {
-    "defaultMessage": "लिंक किए गए डिवाइस"
-  },
-  "mlxReplica.networkNote": {
-    "defaultMessage": "कोई Thunderbolt लिंक नहीं है, इसलिए कॉपी लोकल नेटवर्क से जाती हैं।"
-  },
-  "mlxReplica.offerLabel": {
-    "defaultMessage": "डाउनलोड हो गया"
-  },
-  "mlxReplica.offerText": {
-    "defaultMessage": "{model} अब इस डिवाइस पर है। {host} Thunderbolt से जुड़ा है: दोबारा डाउनलोड करने के बजाय इसे वहाँ कॉपी करें।"
   },
   "mlxReplica.progressLabel": {
     "defaultMessage": "{model} की {host} पर कॉपी की प्रगति"
@@ -3751,9 +3802,6 @@
   },
   "mlxReplica.resumed": {
     "defaultMessage": "{count,plural,one{अधूरी कॉपी से जारी: # फ़ाइल} other{अधूरी कॉपी से जारी: # फ़ाइलें}}"
-  },
-  "mlxReplica.startFailed": {
-    "defaultMessage": "कॉपी शुरू नहीं हुई।"
   },
   "mlxReplica.starting": {
     "defaultMessage": "{host} पर कॉपी शुरू हो रही है…"
@@ -4112,6 +4160,123 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "प्रदाता का नाम लुकअप"
   },
+  "modelMatrix.cancel": {
+    "defaultMessage": "रद्द करें"
+  },
+  "modelMatrix.cancelCopyMessage": {
+    "defaultMessage": "{model} को {name} पर कॉपी करना रोकें? {name} पर अधूरी कॉपी हटा दी जाएगी।"
+  },
+  "modelMatrix.cancelCopyTitle": {
+    "defaultMessage": "कॉपी रद्द करें"
+  },
+  "modelMatrix.cancelDownloadMessage": {
+    "defaultMessage": "{name} पर {model} का डाउनलोड रद्द करें और वहाँ की अधूरी फ़ाइलें हटाएँ?"
+  },
+  "modelMatrix.cancelDownloadTitle": {
+    "defaultMessage": "डाउनलोड रद्द करें"
+  },
+  "modelMatrix.cantRead": {
+    "defaultMessage": "पढ़ा नहीं जा सकता"
+  },
+  "modelMatrix.checking": {
+    "defaultMessage": "जाँच हो रही है…"
+  },
+  "modelMatrix.copyFailed": {
+    "defaultMessage": "कॉपी विफल"
+  },
+  "modelMatrix.copyFrom": {
+    "defaultMessage": "{kind,select,thunderbolt{{name} से कॉपी करें · Thunderbolt} other{{name} से कॉपी करें · नेटवर्क}}"
+  },
+  "modelMatrix.copyFromTitle": {
+    "defaultMessage": "{kind,select,thunderbolt{{name} की फ़ाइलें सीधे Thunderbolt केबल से कॉपी करता है; हर फ़ाइल मूल से मिलाई जाती है।} other{{name} की फ़ाइलें सीधे लोकल नेटवर्क से कॉपी करता है; हर फ़ाइल मूल से मिलाई जाती है।}}"
+  },
+  "modelMatrix.copyStarting": {
+    "defaultMessage": "कॉपी शुरू हो रही है"
+  },
+  "modelMatrix.copying": {
+    "defaultMessage": "कॉपी हो रहा है {pct}%"
+  },
+  "modelMatrix.delete": {
+    "defaultMessage": "{name} से हटाएँ"
+  },
+  "modelMatrix.deleteConfirm": {
+    "defaultMessage": "हटाएँ"
+  },
+  "modelMatrix.deleteFailed": {
+    "defaultMessage": "{model} हटाया नहीं जा सका।"
+  },
+  "modelMatrix.deleteMessage": {
+    "defaultMessage": "{name} से {model} ({size}) हटाएँ? इसकी फ़ाइलें उस Mac की डिस्क से हटा दी जाती हैं।"
+  },
+  "modelMatrix.deleteTitle": {
+    "defaultMessage": "मॉडल हटाएँ"
+  },
+  "modelMatrix.dismiss": {
+    "defaultMessage": "बंद करें"
+  },
+  "modelMatrix.downloadFailed": {
+    "defaultMessage": "डाउनलोड विफल"
+  },
+  "modelMatrix.downloadHere": {
+    "defaultMessage": "यहाँ डाउनलोड करें"
+  },
+  "modelMatrix.downloadHereTitle": {
+    "defaultMessage": "{model} को Hugging Face से {name} पर डाउनलोड करें"
+  },
+  "modelMatrix.downloading": {
+    "defaultMessage": "डाउनलोड हो रहा है {pct}%"
+  },
+  "modelMatrix.empty": {
+    "defaultMessage": "आपके Mac पर अभी कोई मॉडल नहीं है — Hugging Face टैब से एक डाउनलोड करें।"
+  },
+  "modelMatrix.free": {
+    "defaultMessage": "{free} खाली"
+  },
+  "modelMatrix.incomplete": {
+    "defaultMessage": "{count,plural,one{अधूरा · # फ़ाइल गायब} other{अधूरा · # फ़ाइलें गायब}}"
+  },
+  "modelMatrix.keep": {
+    "defaultMessage": "रखें"
+  },
+  "modelMatrix.keepCopying": {
+    "defaultMessage": "कॉपी जारी रखें"
+  },
+  "modelMatrix.loaded": {
+    "defaultMessage": "लोड है"
+  },
+  "modelMatrix.loading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "modelMatrix.model": {
+    "defaultMessage": "मॉडल"
+  },
+  "modelMatrix.noCopyPath": {
+    "defaultMessage": "{name} से कॉपी नहीं: {reason}"
+  },
+  "modelMatrix.notHere": {
+    "defaultMessage": "यहाँ नहीं"
+  },
+  "modelMatrix.offline": {
+    "defaultMessage": "ऑफ़लाइन"
+  },
+  "modelMatrix.onDisk": {
+    "defaultMessage": "डिस्क पर"
+  },
+  "modelMatrix.pause": {
+    "defaultMessage": "रोकें"
+  },
+  "modelMatrix.paused": {
+    "defaultMessage": "रुका {pct}%"
+  },
+  "modelMatrix.queued": {
+    "defaultMessage": "कतार में"
+  },
+  "modelMatrix.resume": {
+    "defaultMessage": "फिर शुरू करें"
+  },
+  "modelMatrix.sampling": {
+    "defaultMessage": "{name} पर सैंपलिंग"
+  },
   "modelSettingsButtons.configureProviders": {
     "defaultMessage": "प्रदाताओं को कॉन्फ़िगर करें"
   },
@@ -4309,6 +4474,111 @@
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "प्रदाता और मॉडल रीसेट करें"
+  },
+  "myMacs.account": {
+    "defaultMessage": "खाता"
+  },
+  "myMacs.applyOnReconnect": {
+    "defaultMessage": "“मॉडल लोड और डाउनलोड करना” तब लागू होगा जब यह Mac LeanZero Link से दोबारा जुड़ेगा।"
+  },
+  "myMacs.cantRead": {
+    "defaultMessage": "पढ़ा नहीं जा सकता: {reason}"
+  },
+  "myMacs.chatHint": {
+    "defaultMessage": "यहाँ लोड किया गया मॉडल आपके दूसरे Mac पर शुरू की गई चैट का उत्तर देता है।"
+  },
+  "myMacs.chip": {
+    "defaultMessage": "चिप"
+  },
+  "myMacs.chipCores": {
+    "defaultMessage": "{brand} · {cores}-कोर GPU"
+  },
+  "myMacs.details": {
+    "defaultMessage": "विवरण"
+  },
+  "myMacs.disconnect": {
+    "defaultMessage": "डिस्कनेक्ट करें"
+  },
+  "myMacs.disk": {
+    "defaultMessage": "डिस्क"
+  },
+  "myMacs.diskFree": {
+    "defaultMessage": "{total} में से {free} खाली"
+  },
+  "myMacs.hostname": {
+    "defaultMessage": "होस्टनाम"
+  },
+  "myMacs.intro": {
+    "defaultMessage": "आपके LeanZero Link खाते में साइन इन हर Mac। मॉडल टैब से किसी पर भी मॉडल लोड करें, और इंजन टैब से चुनें कि मॉडल कहाँ चले।"
+  },
+  "myMacs.lastPoll": {
+    "defaultMessage": "पिछली बार पढ़ना विफल रहा"
+  },
+  "myMacs.lets": {
+    "defaultMessage": "आपके दूसरे Mac को अनुमति"
+  },
+  "myMacs.letsUnknown": {
+    "defaultMessage": "इसका goose नहीं बताता कि वह क्या अनुमति देता है — वहाँ goose अपडेट करें।"
+  },
+  "myMacs.logout": {
+    "defaultMessage": "लॉग आउट / खाता बदलें"
+  },
+  "myMacs.manageHint": {
+    "defaultMessage": "आपके दूसरे Mac इस Mac के मॉडल देखते, डाउनलोड, कॉपी और हटाते हैं।"
+  },
+  "myMacs.master": {
+    "defaultMessage": "मेरे दूसरे Mac इस Mac का उपयोग कर सकें"
+  },
+  "myMacs.masterHint": {
+    "defaultMessage": "केवल आपके LeanZero Link खाते में साइन इन Mac। हर स्विच goose के अपने ही काम खोलता है — कभी कोई मनमाना कमांड नहीं।"
+  },
+  "myMacs.memory": {
+    "defaultMessage": "मेमोरी"
+  },
+  "myMacs.memoryFree": {
+    "defaultMessage": "{total} GB में से {free} GB खाली"
+  },
+  "myMacs.mesh": {
+    "defaultMessage": "मेश"
+  },
+  "myMacs.meshIp": {
+    "defaultMessage": "मेश IP"
+  },
+  "myMacs.meshLine": {
+    "defaultMessage": "{online,select,true{{count,plural,one{{state} · ऑनलाइन · # Mac} other{{state} · ऑनलाइन · # Mac}}} other{{count,plural,one{{state} · ऑफ़लाइन · # Mac} other{{state} · ऑफ़लाइन · # Mac}}}}"
+  },
+  "myMacs.models": {
+    "defaultMessage": "मॉडल"
+  },
+  "myMacs.none": {
+    "defaultMessage": "आपके LeanZero Link खाते में अभी कोई दूसरा Mac नहीं है — उसे यहाँ देखने के लिए उस पर साइन इन करें।"
+  },
+  "myMacs.off": {
+    "defaultMessage": "बंद"
+  },
+  "myMacs.on": {
+    "defaultMessage": "चालू"
+  },
+  "myMacs.reconnect": {
+    "defaultMessage": "अभी दोबारा जोड़ें"
+  },
+  "myMacs.reconnecting": {
+    "defaultMessage": "दोबारा जुड़ रहा है… (इस Mac के goose से संपर्क टूट गया)"
+  },
+  "myMacs.saveFailed": {
+    "defaultMessage": "स्विच सहेजा नहीं गया"
+  },
+  "myMacs.sessions": {
+    "defaultMessage": "सक्रिय सत्र"
+  },
+  "myMacs.splitHint": {
+    "defaultMessage": "यह Mac एक ऐसे मॉडल का हिस्सा रखता है जो एक Mac के लिए बहुत बड़ा है, और जिसे दूसरे Mac से चलाया जाता है।"
+  },
+  "myMacs.thisMac": {
+    "defaultMessage": "यह Mac"
+  },
+  "myMacs.title": {
+    "defaultMessage": "मेरे Mac"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -4625,6 +4895,30 @@
   "placementCard.context": {
     "defaultMessage": "{tokens} संदर्भ"
   },
+  "placementCard.copyFirst": {
+    "defaultMessage": "{kind,select,thunderbolt{पहले {name} पर कॉपी करें · Thunderbolt} other{पहले {name} पर कॉपी करें · नेटवर्क}}"
+  },
+  "placementCard.copyFirstMinutes": {
+    "defaultMessage": "{kind,select,thunderbolt{पहले {name} पर कॉपी करें (Thunderbolt से ~{minutes} मिनट)} other{पहले {name} पर कॉपी करें (नेटवर्क से ~{minutes} मिनट)}}"
+  },
+  "placementCard.copyFirstWhy": {
+    "defaultMessage": "{model} ({size}) अभी {name} पर नहीं है; कॉपी पहुँचते ही शुरुआत अपने आप जारी रहेगी।"
+  },
+  "placementCard.copyThenFailed": {
+    "defaultMessage": "{name} पर कॉपी पूरी नहीं हुई, इसलिए कुछ शुरू नहीं हुआ: {reason}"
+  },
+  "placementCard.copyingThen": {
+    "defaultMessage": "{name} पर कॉपी हो रहा है — {pct}% · कॉपी पहुँचते ही शुरू होगा"
+  },
+  "placementCard.details": {
+    "defaultMessage": "विवरण"
+  },
+  "placementCard.detailsMeta": {
+    "defaultMessage": "सेटअप, प्रीफ़्लाइट, जाँचें, इवेंट"
+  },
+  "placementCard.distributedOwns": {
+    "defaultMessage": "विभाजन इस Mac को इस्तेमाल कर रहा है — यहाँ अकेले मॉडल चलाने के लिए इसे रोकें।"
+  },
   "placementCard.estimated": {
     "defaultMessage": "अनुमानित"
   },
@@ -4643,8 +4937,8 @@
   "placementCard.goalMany": {
     "defaultMessage": "बहुत सारे अनुरोध"
   },
-  "placementCard.gpuCores": {
-    "defaultMessage": "{brand} · {cores}-कोर GPU"
+  "placementCard.keepRunning": {
+    "defaultMessage": "चलने दें"
   },
   "placementCard.live.failed": {
     "defaultMessage": "विफल"
@@ -4661,9 +4955,6 @@
   "placementCard.measureFirst": {
     "defaultMessage": "चल रहा है और अभी मापा नहीं गया — गति मापें अनुमान को इस Mac की अपनी संख्या से बदल देता है।"
   },
-  "placementCard.measureLater": {
-    "defaultMessage": "चलने के बाद गति मापें उपलब्ध होगा।"
-  },
   "placementCard.measured": {
     "defaultMessage": "{runs, plural, one {मापा गया} other {मापा गया · # बार}}"
   },
@@ -4673,26 +4964,17 @@
   "placementCard.measuring": {
     "defaultMessage": "माप रहे हैं: ~2k टोकन का प्रॉम्प्ट, फिर 256 टोकन…"
   },
-  "placementCard.noFigure": {
-    "defaultMessage": "गति का आँकड़ा नहीं"
-  },
   "placementCard.noFigureReason": {
     "defaultMessage": "गति का आँकड़ा नहीं"
   },
-  "placementCard.nodeGap": {
-    "defaultMessage": "{name}: {reason}"
-  },
-  "placementCard.nodeLine": {
-    "defaultMessage": "{name}: {chip} · {bandwidth} GB/s · GPU सीमा {ceiling}"
-  },
-  "placementCard.nothingFits": {
-    "defaultMessage": "अभी कुछ भी नहीं समाता"
+  "placementCard.noPlanWays": {
+    "defaultMessage": "योजना के बिना गति का कोई आँकड़ा नहीं — फिर भी हर तरीका शुरू किया जा सकता है।"
   },
   "placementCard.others": {
-    "defaultMessage": "{count, plural, one {# और तरीका} other {# और तरीके}}"
+    "defaultMessage": "{count,plural,one{# अन्य विभाजन} other{# अन्य विभाजन}}"
   },
-  "placementCard.pipeline": {
-    "defaultMessage": "{count, plural, one {# Mac · पाइपलाइन विभाजन · {link}} other {# Mac · पाइपलाइन विभाजन · {link}}}"
+  "placementCard.pipelineKind": {
+    "defaultMessage": "पाइपलाइन विभाजन · {link}"
   },
   "placementCard.planFailed": {
     "defaultMessage": "योजना नहीं बन सकी"
@@ -4712,17 +4994,32 @@
   "placementCard.refusedUnnamed": {
     "defaultMessage": "अस्वीकृत, और goose ने कोई कारण नहीं बताया"
   },
+  "placementCard.run": {
+    "defaultMessage": "चलाएँ"
+  },
+  "placementCard.runAcross": {
+    "defaultMessage": "{count,plural,=2{दोनों Mac पर चलाएँ} other{# Mac पर चलाएँ}}"
+  },
+  "placementCard.runAcrossAny": {
+    "defaultMessage": "अपने Mac पर चलाएँ"
+  },
+  "placementCard.runHere": {
+    "defaultMessage": "इस Mac पर चलाएँ"
+  },
+  "placementCard.runIt": {
+    "defaultMessage": "चलाएँ"
+  },
+  "placementCard.runOn": {
+    "defaultMessage": "{name} पर चलाएँ"
+  },
   "placementCard.setupFirst": {
-    "defaultMessage": "वितरित सेटअप में दूसरा मॉडल है — वितरित › सेट अप में यह मॉडल चुनें, फिर शुरू करें।"
+    "defaultMessage": "विभाजन किसी दूसरे मॉडल के साथ सेट है — विवरण › सेट अप खोलें, यह मॉडल चुनें, फिर चलाएँ।"
   },
   "placementCard.short": {
     "defaultMessage": "नहीं समाता: {node} पर {gb} कम"
   },
   "placementCard.shortSplit": {
     "defaultMessage": "नहीं समाता: {gb} कम"
-  },
-  "placementCard.single": {
-    "defaultMessage": "केवल {name}"
   },
   "placementCard.slower": {
     "defaultMessage": "इसके लिए धीमा: ~{mine} बनाम ~{best} tok/s"
@@ -4736,50 +5033,26 @@
   "placementCard.starting": {
     "defaultMessage": "शुरू हो रहा है…"
   },
+  "placementCard.stop": {
+    "defaultMessage": "रोकें"
+  },
+  "placementCard.stopSplitMessage": {
+    "defaultMessage": "{nodes} पर हर हिस्सा रोका जाता है और उसके बंद होने की पुष्टि होती है। चल रहे अनुरोध कट जाते हैं।"
+  },
+  "placementCard.stopSplitTitle": {
+    "defaultMessage": "विभाजन रोकें?"
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "माप भंडार में न पढ़ी जा सकने वाली पंक्तियाँ"
   },
-  "placementCard.tensor": {
-    "defaultMessage": "{count, plural, one {# Mac · टेंसर विभाजन · {link}} other {# Mac · टेंसर विभाजन · {link}}}"
-  },
-  "placementCard.thisMac": {
-    "defaultMessage": "यह Mac"
+  "placementCard.tensorKind": {
+    "defaultMessage": "टेंसर विभाजन · {link}"
   },
   "placementCard.tied": {
     "defaultMessage": "त्रुटि की सीमा में उतना ही तेज़ (~{mine} बनाम ~{best} tok/s), पर ज़्यादा Mac चाहिए"
   },
-  "placementCard.tile.mount": {
-    "defaultMessage": "माउंट करें"
-  },
-  "placementCard.tile.nothing": {
-    "defaultMessage": "इस Mac के लिए बहुत बड़ा, और goose जो कुछ शुरू कर सकता है उसमें यह नहीं समाता: {reason}"
-  },
-  "placementCard.tile.peerWhy": {
-    "defaultMessage": "इस Mac के लिए बहुत बड़ा — यह {name} पर समाता है, और चैट Link से वहाँ जाती है।"
-  },
-  "placementCard.tile.retry": {
-    "defaultMessage": "फिर से कोशिश करें"
-  },
-  "placementCard.tile.short": {
-    "defaultMessage": "आपके किसी Mac पर नहीं समाता: सब पर बाँटने पर भी {gb} कम।"
-  },
-  "placementCard.tile.splitWhy": {
-    "defaultMessage": "अकेले इस Mac के लिए बहुत बड़ा — यह {names} पर बँटकर चलता है।"
-  },
-  "placementCard.tile.startAcross": {
-    "defaultMessage": "{count,plural,=2{दोनों Mac पर शुरू करें} other{# Mac पर शुरू करें}}"
-  },
-  "placementCard.tile.startOn": {
-    "defaultMessage": "{name} पर शुरू करें"
-  },
-  "placementCard.title": {
-    "defaultMessage": "इसे कहाँ चलाएँ"
-  },
   "placementCard.total": {
     "defaultMessage": "एक साथ {concurrency} पर कुल ~{value} tok/s"
-  },
-  "placementCard.useThis": {
-    "defaultMessage": "इसे उपयोग करें"
   },
   "placementCard.writes": {
     "defaultMessage": "लिखना ~{value} tok/s"

@@ -1,4 +1,5 @@
 import type {
+  MlxDistributedHostedRankDto,
   MlxMountFitDto,
   MlxPlacementBadgeDto,
   MlxPlacementCandidateDto,
@@ -60,6 +61,9 @@ export interface MlxEngineStatus {
   reclaimableCacheGb?: number;
   /** The OS memory probe failed; the memory figures are 0 and must not be read as a measurement. */
   memoryError?: string;
+  /** This Mac's chip, probed once per goose; absent exactly when `chipError` says why. */
+  chip?: { hwModel: string; brand: string; gpuCores?: number | null } | null;
+  chipError?: string | null;
   lastError?: string;
   /**
    * While mounting: the sidecar's measure of the start — `phase` makingRoom | starting | loading |
@@ -72,6 +76,8 @@ export interface MlxEngineStatus {
    */
   mountFit?: MlxMountFitDto | null;
   mountFitError?: string | null;
+  /** Set while THIS Mac holds part of another Mac's split model (the single engine is refused). */
+  hosting?: MlxDistributedHostedRankDto | null;
 }
 
 /**

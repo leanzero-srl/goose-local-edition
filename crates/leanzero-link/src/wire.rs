@@ -28,6 +28,27 @@ pub struct NodeState {
     /// parse; every constructor in every crate must now name it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_poll_error: Option<String>,
+    /// The name the owner gave the machine (macOS `scutil --get ComputerName`, "Work's Mac
+    /// Studio") — the one name every surface calls it by. Absent when the node's goose
+    /// predates it or could not read one; the hostname is then all there is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_name: Option<String>,
+    /// What the node's owner lets the other same-account machines do there, as the node
+    /// enforces it NOW. Absent from a node whose goose predates it — unknown, never "all off".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allows: Option<NodeAllows>,
+}
+
+/// The owner's three switches as a node reports them about itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeAllows {
+    /// `/v1/swarm/mlx/*` and `/v1/swarm/execute`: list, download, copy, load and delete
+    /// models there (`allow_remote_execution`).
+    pub manage_models: bool,
+    /// The node's single engine answers a peer's chat (the inference proxy).
+    pub answer_chat: bool,
+    /// A peer runs a rank of its distributed engine there.
+    pub run_split: bool,
 }
 
 /// Wire: `{"type":"Idle"}`, `{"type":"Busy","session_id":"..."}`, `{"type":"Offline"}`.
@@ -186,6 +207,8 @@ mod tests {
             sessions_active: 0,
             updated_at: ts(1_700_000_000),
             last_poll_error: None,
+            computer_name: None,
+            allows: None,
         };
         let value = serde_json::to_value(LinkEvent::NodeStateChanged(node.clone())).unwrap();
         assert_eq!(value["type"], "NodeStateChanged");
@@ -208,6 +231,8 @@ mod tests {
             sessions_active: 0,
             updated_at: ts(1),
             last_poll_error: None,
+            computer_name: None,
+            allows: None,
         };
         let value = serde_json::to_value(&node).unwrap();
         assert!(
@@ -236,6 +261,40 @@ mod tests {
         assert_eq!(back, with_error);
     }
 
+    /// `computer_name` and `allows` are additive: omitted when `None`, absent from an older
+    /// peer's JSON (unknown — never read as "all off"), snake_case when set.
+    #[test]
+    fn computer_name_and_allows_are_additive_and_snake_case() {
+        let older_peer_json = serde_json::json!({
+            "node_id": "node-b", "hostname": "b", "mesh_ip": null,
+            "status": {"type": "Idle"}, "sessions_active": 0,
+            "updated_at": "2023-11-14T22:13:20Z"
+        });
+        let parsed: NodeState = serde_json::from_value(older_peer_json).unwrap();
+        assert_eq!(parsed.computer_name, None);
+        assert_eq!(parsed.allows, None);
+        let value = serde_json::to_value(&parsed).unwrap();
+        assert!(value.get("computer_name").is_none() && value.get("allows").is_none());
+
+        let named = NodeState {
+            computer_name: Some("Work's Mac Studio".to_string()),
+            allows: Some(NodeAllows {
+                manage_models: true,
+                answer_chat: false,
+                run_split: true,
+            }),
+            ..parsed
+        };
+        let value = serde_json::to_value(&named).unwrap();
+        assert_eq!(value["computer_name"], "Work's Mac Studio");
+        assert_eq!(
+            value["allows"],
+            serde_json::json!({"manage_models": true, "answer_chat": false, "run_split": true})
+        );
+        let back: NodeState = serde_json::from_value(value).unwrap();
+        assert_eq!(back, named);
+    }
+
     #[test]
     fn nodes_response_uses_self_key() {
         let response = SwarmNodesResponse {
@@ -247,6 +306,8 @@ mod tests {
                 sessions_active: 0,
                 updated_at: ts(1),
                 last_poll_error: None,
+                computer_name: None,
+                allows: None,
             },
             peers: Vec::new(),
         };

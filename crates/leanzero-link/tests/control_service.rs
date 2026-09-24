@@ -114,6 +114,8 @@ impl SwarmStateSource for FakeStateSource {
             sessions_active: sessions.iter().filter(|s| s.live).count() as u32,
             updated_at: *self.updated_at.lock().unwrap(),
             last_poll_error: None,
+            computer_name: None,
+            allows: None,
         }
     }
 
@@ -791,6 +793,8 @@ async fn spawn_stub_peer(
             sessions_active: 0,
             updated_at: ts(1_700_000_000),
             last_poll_error: None,
+            computer_name: None,
+            allows: None,
         },
         unauthorized,
     };

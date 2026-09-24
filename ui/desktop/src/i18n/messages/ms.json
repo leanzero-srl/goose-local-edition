@@ -2231,8 +2231,8 @@
   "leanzeroSwarm.tabCloud": {
     "defaultMessage": "Penyedia Awan"
   },
-  "leanzeroSwarm.tabLink": {
-    "defaultMessage": "LeanZero Link"
+  "leanzeroSwarm.tabMacs": {
+    "defaultMessage": "Mac Saya"
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Tetapan Swarm"
@@ -2494,6 +2494,126 @@
   },
   "loopView.stopCheck": {
     "defaultMessage": "Stop check: {command}"
+  },
+  "macs.cancelDownloadFailed": {
+    "defaultMessage": "Gagal membatalkan."
+  },
+  "macs.cancelFailed": {
+    "defaultMessage": "Salinan tidak dapat dibatalkan."
+  },
+  "macs.copyFailed": {
+    "defaultMessage": "Salinan tidak bermula."
+  },
+  "macs.downloadFailed": {
+    "defaultMessage": "Muat turun tidak bermula."
+  },
+  "macs.line.checking": {
+    "defaultMessage": "Membaca enjinnya…"
+  },
+  "macs.line.failed": {
+    "defaultMessage": "{model} gagal: {reason}"
+  },
+  "macs.line.failedNoModel": {
+    "defaultMessage": "Enjin gagal: {reason}"
+  },
+  "macs.line.hosting": {
+    "defaultMessage": "{model} · sebahagian daripada pembahagian {requester}"
+  },
+  "macs.line.loading": {
+    "defaultMessage": "Memuatkan {model}"
+  },
+  "macs.line.notLoaded": {
+    "defaultMessage": "Tiada model dimuatkan"
+  },
+  "macs.line.offline": {
+    "defaultMessage": "Tidak dapat dicapai melalui LeanZero Link"
+  },
+  "macs.line.running": {
+    "defaultMessage": "{model}"
+  },
+  "macs.line.split": {
+    "defaultMessage": "{count,plural,one{{model} · dibahagikan kepada # Mac} other{{model} · dibahagikan kepada # Mac}}"
+  },
+  "macs.line.writing": {
+    "defaultMessage": "{model} · {tps} tok/s"
+  },
+  "macs.linksFailed": {
+    "defaultMessage": "Pautan tidak dapat dibaca."
+  },
+  "macs.listFailed": {
+    "defaultMessage": "Folder model tidak dapat dibaca."
+  },
+  "macs.offThere": {
+    "defaultMessage": "{what} dimatikan pada {name} — hidupkan “Benarkan Mac saya yang lain menggunakan Mac ini” di sana (Penyedia › Mac Saya)"
+  },
+  "macs.pauseFailed": {
+    "defaultMessage": "Gagal menjeda."
+  },
+  "macs.permission.chat": {
+    "defaultMessage": "Menjawab sembang"
+  },
+  "macs.permission.manage": {
+    "defaultMessage": "Memuatkan dan memuat turun model"
+  },
+  "macs.permission.split": {
+    "defaultMessage": "Menjalankan sebahagian model terbahagi"
+  },
+  "macs.resumeFailed": {
+    "defaultMessage": "Gagal menyambung semula."
+  },
+  "macs.state.checking": {
+    "defaultMessage": "Menyemak"
+  },
+  "macs.state.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "macs.state.held": {
+    "defaultMessage": "Ditahan"
+  },
+  "macs.state.hosting": {
+    "defaultMessage": "Sebahagian pembahagian"
+  },
+  "macs.state.idle": {
+    "defaultMessage": "Melahu"
+  },
+  "macs.state.loading": {
+    "defaultMessage": "Memuatkan"
+  },
+  "macs.state.notLoaded": {
+    "defaultMessage": "Tidak dimuatkan"
+  },
+  "macs.state.off": {
+    "defaultMessage": "Mati"
+  },
+  "macs.state.offline": {
+    "defaultMessage": "Luar talian"
+  },
+  "macs.state.reading": {
+    "defaultMessage": "Membaca"
+  },
+  "macs.state.split": {
+    "defaultMessage": "Terbahagi"
+  },
+  "macs.state.unreadable": {
+    "defaultMessage": "Tidak boleh dibaca"
+  },
+  "macs.state.writing": {
+    "defaultMessage": "Menulis"
+  },
+  "macs.statusFailed": {
+    "defaultMessage": "Enjin tidak dapat dibaca."
+  },
+  "macs.thisMac": {
+    "defaultMessage": "Mac ini"
+  },
+  "macs.trackingFailed": {
+    "defaultMessage": "Muat turun yang sedang berjalan tidak dapat disambung semula."
+  },
+  "macs.tray.line": {
+    "defaultMessage": "{name} — {what}"
+  },
+  "macs.tray.open": {
+    "defaultMessage": "Buka Mac Saya"
   },
   "markdownContent.cancel": {
     "defaultMessage": "Batal"
@@ -2783,6 +2903,9 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "Batal"
   },
+  "mlxDistributed.checksPassed": {
+    "defaultMessage": "{count,plural,one{# semakan lulus} other{# semakan lulus}}"
+  },
   "mlxDistributed.clusterChecks": {
     "defaultMessage": "Semakan kluster"
   },
@@ -2969,15 +3092,6 @@
   "mlxDistributed.fits": {
     "defaultMessage": "muat"
   },
-  "mlxDistributed.hosting.label": {
-    "defaultMessage": "Mac ini melayan satu rank"
-  },
-  "mlxDistributed.hosting.loading": {
-    "defaultMessage": "Memuatkan rank {rank} untuk {requester}"
-  },
-  "mlxDistributed.hosting.text": {
-    "defaultMessage": "{line} — PID rank {pid}. Enjin tunggal dan enjin teragih Mac ini sendiri ditolak sehingga {requester} menghentikan larian."
-  },
   "mlxDistributed.inflight": {
     "defaultMessage": "Sedang diproses"
   },
@@ -3104,12 +3218,6 @@
   "mlxDistributed.peakOf": {
     "defaultMessage": "GiB puncak daripada bajet {budget} GiB"
   },
-  "mlxDistributed.peerBody": {
-    "defaultMessage": "Anda sedang mengurus {host}. Tukar “Manage on” kembali ke “This device” untuk mengkonfigurasi, menyemak, memulakan atau menghentikannya."
-  },
-  "mlxDistributed.peerTitle": {
-    "defaultMessage": "Enjin teragih diselia dari Mac ini"
-  },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
   },
@@ -3226,15 +3334,6 @@
   },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {# jujukan dalam kelompok}}"
-  },
-  "mlxDistributed.serveNode": {
-    "defaultMessage": "Benarkan Mac ini berkhidmat sebagai nod teragih"
-  },
-  "mlxDistributed.serveNodeError": {
-    "defaultMessage": "Tetapan tidak dapat ditukar"
-  },
-  "mlxDistributed.serveNodeHint": {
-    "defaultMessage": "Mac anda yang lain di LeanZero Link kemudian boleh menjalankan satu rank enjin teragih mereka di sini — hanya program rank dan probe goose sendiri, tidak sekali-kali arahan sewenang-wenang. Mati secara lalai."
   },
   "mlxDistributed.serverStatusError": {
     "defaultMessage": "Status pelayan tidak boleh dibaca: {error}"
@@ -3417,28 +3516,10 @@
     "defaultMessage": "Tanpa antara muka (ssh)"
   },
   "mlxDistributedSetup.intro": {
-    "defaultMessage": "Namakan Mac yang satu lagi sekali sahaja. goose memeriksa Mac ini dan Mac itu melalui ssh dan mengisi pautan, RDMA, backend, model, port dan Python."
+    "defaultMessage": "Pilih Mac anda yang lain. goose bertanya kepada kedua-dua Mac melalui LeanZero Link dan mengisi pautan, RDMA, backend, model, port dan Python."
   },
-  "mlxDistributedSetup.link.gid": {
-    "defaultMessage": "GID IPv4 {index}"
-  },
-  "mlxDistributedSetup.link.intro": {
-    "defaultMessage": "Log masuk dengan akaun yang sama. Setiap satu menerangkan dirinya melalui mesh; pilih satu dan goose memandunya melalui goose miliknya sendiri — tanpa ssh."
-  },
-  "mlxDistributedSetup.link.memory": {
-    "defaultMessage": "{available} daripada {total} GiB tersedia"
-  },
-  "mlxDistributedSetup.link.models": {
-    "defaultMessage": "{count, plural, other {# model}}"
-  },
-  "mlxDistributedSetup.link.noGid": {
-    "defaultMessage": "tiada GID IPv4"
-  },
-  "mlxDistributedSetup.link.noRdma": {
-    "defaultMessage": "Tiada peranti RDMA"
-  },
-  "mlxDistributedSetup.link.noThunderbolt": {
-    "defaultMessage": "Tiada alamat Thunderbolt"
+  "mlxDistributedSetup.link.detectWith": {
+    "defaultMessage": "Kesan dengan Mac ini"
   },
   "mlxDistributedSetup.link.none": {
     "defaultMessage": "Tiada Mac lain daripada akaun ini di LeanZero Link sekarang."
@@ -3446,14 +3527,11 @@
   "mlxDistributedSetup.link.notConnected": {
     "defaultMessage": "LeanZero Link tidak bersambung"
   },
-  "mlxDistributedSetup.link.rdmaActive": {
-    "defaultMessage": "aktif"
+  "mlxDistributedSetup.link.pick": {
+    "defaultMessage": "Mac yang lain"
   },
-  "mlxDistributedSetup.link.rdmaDownCount": {
-    "defaultMessage": "{count, plural, other {# lagi peranti, port mati}}"
-  },
-  "mlxDistributedSetup.link.servingOff": {
-    "defaultMessage": "Hidupkan “Benarkan Mac ini berkhidmat sebagai nod teragih” pada {name} (Pembekal › LeanZero MLX › Enjin › Teragih)."
+  "mlxDistributedSetup.link.servingOffMyMacs": {
+    "defaultMessage": "Hidupkan “Benarkan Mac saya yang lain menggunakan Mac ini › Menjalankan sebahagian model terbahagi” pada {name} (Penyedia › Mac Saya di sana)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "goose-nya tidak boleh berkhidmat"
@@ -3472,12 +3550,6 @@
   },
   "mlxDistributedSetup.link.state.unreadable": {
     "defaultMessage": "Menjawab, tidak boleh dibaca"
-  },
-  "mlxDistributedSetup.link.title": {
-    "defaultMessage": "Mac anda di LeanZero Link"
-  },
-  "mlxDistributedSetup.link.use": {
-    "defaultMessage": "Guna Mac ini"
   },
   "mlxDistributedSetup.manifestAgree": {
     "defaultMessage": "SHA256SUMS sepadan"
@@ -3500,11 +3572,17 @@
   "mlxDistributedSetup.noneAnswering": {
     "defaultMessage": "Tiada alias dalam ~/.ssh/config membalas ssh bukan interaktif."
   },
+  "mlxDistributedSetup.overSsh": {
+    "defaultMessage": "Lanjutan: Mac melalui ssh"
+  },
+  "mlxDistributedSetup.overSshMeta": {
+    "defaultMessage": "untuk Mac yang tiada dalam LeanZero Link"
+  },
   "mlxDistributedSetup.peer": {
     "defaultMessage": "Mac lain (alias ssh atau hos)"
   },
   "mlxDistributedSetup.peerPlaceholder": {
-    "defaultMessage": "workhorse"
+    "defaultMessage": "alias ssh"
   },
   "mlxDistributedSetup.probed": {
     "defaultMessage": "{count, plural, other {# nod diperiksa dalam {ms} ms}}"
@@ -3539,20 +3617,17 @@
   "mlxEngineView.mountFailed": {
     "defaultMessage": "Lekapan gagal"
   },
-  "mlxEngineView.refusedUnnamed": {
-    "defaultMessage": "Ditolak, dan goose tidak memberi sebab"
+  "mlxEngineView.pickThenRun": {
+    "defaultMessage": "Pilih model, kemudian mulakannya dalam “Jalankan” di bawah — pada Mac ini, pada Mac anda yang lain, atau dibahagikan antara mereka."
+  },
+  "mlxEngineView.samplingOn": {
+    "defaultMessage": "Profil pada"
   },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Menyediakan merentas Mac"
   },
-  "mlxEngineView.startFailed": {
-    "defaultMessage": "Gagal dimulakan"
-  },
-  "mlxEngineView.startRefused": {
-    "defaultMessage": "Permulaan ditolak"
-  },
-  "mlxEngineView.switchNeedsUnmount": {
-    "defaultMessage": "Model ini tidak berjalan pada Mac ini sahaja — nyahlekap, kemudian mulakan dari jubin."
+  "mlxEngineView.settingsFailed": {
+    "defaultMessage": "Tidak dapat membaca tetapan enjin."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB bagi setiap token dan bukan {bf16} KiB — memori yang sama memuatkan {ratio}× konteks."
@@ -3650,6 +3725,39 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "Menghentikan"
   },
+  "mlxModels.cancelMessage": {
+    "defaultMessage": "Batalkan muat turun {model} pada {name} dan padam fail separanya di sana?"
+  },
+  "mlxModels.cancelTitle": {
+    "defaultMessage": "Batalkan muat turun"
+  },
+  "mlxModels.downloadTo": {
+    "defaultMessage": "Muat turun ke"
+  },
+  "mlxModels.edit": {
+    "defaultMessage": "Edit"
+  },
+  "mlxModels.folderUnread": {
+    "defaultMessage": "Tidak boleh dibaca: {reason}"
+  },
+  "mlxModels.folders": {
+    "defaultMessage": "Folder model"
+  },
+  "mlxModels.foldersHint": {
+    "defaultMessage": "Satu folder bagi setiap Mac, digunakan untuk muat turun, salinan dan pemuatan; bar ialah ruang kosong pada volumnya."
+  },
+  "mlxModels.huggingFace": {
+    "defaultMessage": "Hugging Face"
+  },
+  "mlxModels.keep": {
+    "defaultMessage": "Simpan"
+  },
+  "mlxModels.onYourMacs": {
+    "defaultMessage": "Pada Mac anda"
+  },
+  "mlxModels.settingsFailed": {
+    "defaultMessage": "Tetapan enjin tidak dapat dibaca."
+  },
   "mlxMount.foreignAnswering": {
     "defaultMessage": "Sedia · dimiliki tetingkap lain"
   },
@@ -3659,23 +3767,8 @@
   "mlxReplica.cancel": {
     "defaultMessage": "Batal"
   },
-  "mlxReplica.cancelConfirmMessage": {
-    "defaultMessage": "Hentikan salinan {model} ke {host}? Salinan separa pada {host} akan dipadam."
-  },
-  "mlxReplica.cancelConfirmTitle": {
-    "defaultMessage": "Batalkan salinan"
-  },
-  "mlxReplica.cancelFailed": {
-    "defaultMessage": "Salinan tidak dapat dibatalkan."
-  },
   "mlxReplica.cancelTitle": {
     "defaultMessage": "Hentikan salinan dan padam salinan separa pada {host}"
-  },
-  "mlxReplica.checkLinks": {
-    "defaultMessage": "Semak pautan"
-  },
-  "mlxReplica.checking": {
-    "defaultMessage": "Menyemak pautan…"
   },
   "mlxReplica.copiedTo": {
     "defaultMessage": "Disalin ke {host}"
@@ -3686,15 +3779,6 @@
   "mlxReplica.copyFailed": {
     "defaultMessage": "Salinan ke {host} gagal"
   },
-  "mlxReplica.copyTitleNetwork": {
-    "defaultMessage": "Tiada pautan Thunderbolt ke {host}, jadi salinan melalui rangkaian setempat: {local} → {peer}"
-  },
-  "mlxReplica.copyTitleThunderbolt": {
-    "defaultMessage": "Menyalin melalui kabel Thunderbolt: {local} → {peer}"
-  },
-  "mlxReplica.copyTo": {
-    "defaultMessage": "{kind,select,thunderbolt{Salin ke {host} · Thunderbolt} other{Salin ke {host} · rangkaian}}"
-  },
   "mlxReplica.copyingTo": {
     "defaultMessage": "{kind,select,thunderbolt{Menyalin ke {host} melalui Thunderbolt} other{Menyalin ke {host} melalui rangkaian}}"
   },
@@ -3703,39 +3787,6 @@
   },
   "mlxReplica.files": {
     "defaultMessage": "{done} daripada {total} fail"
-  },
-  "mlxReplica.keepCopying": {
-    "defaultMessage": "Teruskan menyalin"
-  },
-  "mlxReplica.linkNetwork": {
-    "defaultMessage": "rangkaian"
-  },
-  "mlxReplica.linkThunderbolt": {
-    "defaultMessage": "Thunderbolt"
-  },
-  "mlxReplica.linkThunderboltSpeed": {
-    "defaultMessage": "Thunderbolt · {speed}"
-  },
-  "mlxReplica.linksError": {
-    "defaultMessage": "Pautan ke peranti anda yang lain tidak dapat disemak: {reason}"
-  },
-  "mlxReplica.linksFailed": {
-    "defaultMessage": "Pautan tidak dapat dibaca."
-  },
-  "mlxReplica.linksNote": {
-    "defaultMessage": "Model pada peranti ini boleh disalin ke peranti terpaut dan bukannya dimuat turun semula. Setiap fail disemak dengan yang asal sebelum digunakan."
-  },
-  "mlxReplica.linksTitle": {
-    "defaultMessage": "Peranti terpaut"
-  },
-  "mlxReplica.networkNote": {
-    "defaultMessage": "Tiada pautan Thunderbolt, jadi salinan melalui rangkaian setempat."
-  },
-  "mlxReplica.offerLabel": {
-    "defaultMessage": "Dimuat turun"
-  },
-  "mlxReplica.offerText": {
-    "defaultMessage": "{model} kini ada pada peranti ini. {host} terpaut melalui Thunderbolt: salin ke sana dan bukannya memuat turun semula."
   },
   "mlxReplica.progressLabel": {
     "defaultMessage": "Kemajuan salinan {model} ke {host}"
@@ -3751,9 +3802,6 @@
   },
   "mlxReplica.resumed": {
     "defaultMessage": "{count,plural,one{disambung daripada salinan separa: # fail} other{disambung daripada salinan separa: # fail}}"
-  },
-  "mlxReplica.startFailed": {
-    "defaultMessage": "Salinan tidak bermula."
   },
   "mlxReplica.starting": {
     "defaultMessage": "Memulakan salinan ke {host}…"
@@ -4112,6 +4160,123 @@
   "modelAndProviderContext.unknownProviderTitle": {
     "defaultMessage": "Carian nama penyedia"
   },
+  "modelMatrix.cancel": {
+    "defaultMessage": "Batal"
+  },
+  "modelMatrix.cancelCopyMessage": {
+    "defaultMessage": "Hentikan penyalinan {model} ke {name}? Salinan separa pada {name} akan dipadam."
+  },
+  "modelMatrix.cancelCopyTitle": {
+    "defaultMessage": "Batalkan salinan"
+  },
+  "modelMatrix.cancelDownloadMessage": {
+    "defaultMessage": "Batalkan muat turun {model} pada {name} dan padam fail separanya di sana?"
+  },
+  "modelMatrix.cancelDownloadTitle": {
+    "defaultMessage": "Batalkan muat turun"
+  },
+  "modelMatrix.cantRead": {
+    "defaultMessage": "Tidak boleh dibaca"
+  },
+  "modelMatrix.checking": {
+    "defaultMessage": "Menyemak…"
+  },
+  "modelMatrix.copyFailed": {
+    "defaultMessage": "Salinan gagal"
+  },
+  "modelMatrix.copyFrom": {
+    "defaultMessage": "{kind,select,thunderbolt{Salin dari {name} · Thunderbolt} other{Salin dari {name} · rangkaian}}"
+  },
+  "modelMatrix.copyFromTitle": {
+    "defaultMessage": "{kind,select,thunderbolt{Menyalin fail {name} terus melalui kabel Thunderbolt; setiap fail disemak dengan yang asal.} other{Menyalin fail {name} terus melalui rangkaian setempat; setiap fail disemak dengan yang asal.}}"
+  },
+  "modelMatrix.copyStarting": {
+    "defaultMessage": "Memulakan salinan"
+  },
+  "modelMatrix.copying": {
+    "defaultMessage": "Menyalin {pct}%"
+  },
+  "modelMatrix.delete": {
+    "defaultMessage": "Padam dari {name}"
+  },
+  "modelMatrix.deleteConfirm": {
+    "defaultMessage": "Padam"
+  },
+  "modelMatrix.deleteFailed": {
+    "defaultMessage": "Tidak dapat memadam {model}."
+  },
+  "modelMatrix.deleteMessage": {
+    "defaultMessage": "Padam {model} ({size}) dari {name}? Failnya dibuang dari cakera Mac itu."
+  },
+  "modelMatrix.deleteTitle": {
+    "defaultMessage": "Padam model"
+  },
+  "modelMatrix.dismiss": {
+    "defaultMessage": "Tutup"
+  },
+  "modelMatrix.downloadFailed": {
+    "defaultMessage": "Muat turun gagal"
+  },
+  "modelMatrix.downloadHere": {
+    "defaultMessage": "Muat turun di sini"
+  },
+  "modelMatrix.downloadHereTitle": {
+    "defaultMessage": "Muat turun {model} dari Hugging Face ke {name}"
+  },
+  "modelMatrix.downloading": {
+    "defaultMessage": "Memuat turun {pct}%"
+  },
+  "modelMatrix.empty": {
+    "defaultMessage": "Belum ada model pada Mac anda — muat turun satu dari tab Hugging Face."
+  },
+  "modelMatrix.free": {
+    "defaultMessage": "{free} kosong"
+  },
+  "modelMatrix.incomplete": {
+    "defaultMessage": "{count,plural,one{Tidak lengkap · # fail hilang} other{Tidak lengkap · # fail hilang}}"
+  },
+  "modelMatrix.keep": {
+    "defaultMessage": "Simpan"
+  },
+  "modelMatrix.keepCopying": {
+    "defaultMessage": "Teruskan menyalin"
+  },
+  "modelMatrix.loaded": {
+    "defaultMessage": "Dimuatkan"
+  },
+  "modelMatrix.loading": {
+    "defaultMessage": "Memuatkan"
+  },
+  "modelMatrix.model": {
+    "defaultMessage": "Model"
+  },
+  "modelMatrix.noCopyPath": {
+    "defaultMessage": "Tiada salinan dari {name}: {reason}"
+  },
+  "modelMatrix.notHere": {
+    "defaultMessage": "Tiada di sini"
+  },
+  "modelMatrix.offline": {
+    "defaultMessage": "Luar talian"
+  },
+  "modelMatrix.onDisk": {
+    "defaultMessage": "Pada cakera"
+  },
+  "modelMatrix.pause": {
+    "defaultMessage": "Jeda"
+  },
+  "modelMatrix.paused": {
+    "defaultMessage": "Dijeda {pct}%"
+  },
+  "modelMatrix.queued": {
+    "defaultMessage": "Dalam baris gilir"
+  },
+  "modelMatrix.resume": {
+    "defaultMessage": "Sambung semula"
+  },
+  "modelMatrix.sampling": {
+    "defaultMessage": "Pensampelan pada {name}"
+  },
   "modelSettingsButtons.configureProviders": {
     "defaultMessage": "Konfigurasikan penyedia"
   },
@@ -4309,6 +4474,111 @@
   },
   "modelsSection.resetTitle": {
     "defaultMessage": "Set Semula Penyedia dan Model"
+  },
+  "myMacs.account": {
+    "defaultMessage": "Akaun"
+  },
+  "myMacs.applyOnReconnect": {
+    "defaultMessage": "“Memuatkan dan memuat turun model” berkuat kuasa apabila Mac ini bersambung semula ke LeanZero Link."
+  },
+  "myMacs.cantRead": {
+    "defaultMessage": "Tidak boleh dibaca: {reason}"
+  },
+  "myMacs.chatHint": {
+    "defaultMessage": "Model yang dimuatkan di sini menjawab sembang yang dimulakan pada Mac anda yang lain."
+  },
+  "myMacs.chip": {
+    "defaultMessage": "Cip"
+  },
+  "myMacs.chipCores": {
+    "defaultMessage": "{brand} · GPU {cores} teras"
+  },
+  "myMacs.details": {
+    "defaultMessage": "Butiran"
+  },
+  "myMacs.disconnect": {
+    "defaultMessage": "Putuskan sambungan"
+  },
+  "myMacs.disk": {
+    "defaultMessage": "Cakera"
+  },
+  "myMacs.diskFree": {
+    "defaultMessage": "{free} kosong daripada {total}"
+  },
+  "myMacs.hostname": {
+    "defaultMessage": "Nama hos"
+  },
+  "myMacs.intro": {
+    "defaultMessage": "Setiap Mac yang log masuk ke akaun LeanZero Link anda. Muatkan model pada mana-mana satu dari tab Model, dan pilih tempat model berjalan dari tab Enjin."
+  },
+  "myMacs.lastPoll": {
+    "defaultMessage": "Bacaan terakhir gagal"
+  },
+  "myMacs.lets": {
+    "defaultMessage": "Membenarkan Mac anda yang lain"
+  },
+  "myMacs.letsUnknown": {
+    "defaultMessage": "goose-nya tidak menyatakan apa yang dibenarkan — kemas kini goose di sana."
+  },
+  "myMacs.logout": {
+    "defaultMessage": "Log keluar / Tukar akaun"
+  },
+  "myMacs.manageHint": {
+    "defaultMessage": "Mac anda yang lain melihat, memuat turun, menyalin dan memadam model pada Mac ini."
+  },
+  "myMacs.master": {
+    "defaultMessage": "Benarkan Mac saya yang lain menggunakan Mac ini"
+  },
+  "myMacs.masterHint": {
+    "defaultMessage": "Hanya Mac yang log masuk ke akaun LeanZero Link anda. Setiap suis hanya membuka operasi goose sendiri — tidak sekali-kali arahan sewenang-wenang."
+  },
+  "myMacs.memory": {
+    "defaultMessage": "Memori"
+  },
+  "myMacs.memoryFree": {
+    "defaultMessage": "{free} GB kosong daripada {total} GB"
+  },
+  "myMacs.mesh": {
+    "defaultMessage": "Mesh"
+  },
+  "myMacs.meshIp": {
+    "defaultMessage": "IP mesh"
+  },
+  "myMacs.meshLine": {
+    "defaultMessage": "{online,select,true{{count,plural,one{{state} · dalam talian · # Mac} other{{state} · dalam talian · # Mac}}} other{{count,plural,one{{state} · luar talian · # Mac} other{{state} · luar talian · # Mac}}}}"
+  },
+  "myMacs.models": {
+    "defaultMessage": "Model"
+  },
+  "myMacs.none": {
+    "defaultMessage": "Belum ada Mac lain dalam akaun LeanZero Link anda — log masuk padanya untuk melihatnya di sini."
+  },
+  "myMacs.off": {
+    "defaultMessage": "mati"
+  },
+  "myMacs.on": {
+    "defaultMessage": "hidup"
+  },
+  "myMacs.reconnect": {
+    "defaultMessage": "Sambung semula sekarang"
+  },
+  "myMacs.reconnecting": {
+    "defaultMessage": "Menyambung semula… (hilang hubungan dengan goose Mac ini)"
+  },
+  "myMacs.saveFailed": {
+    "defaultMessage": "Suis tidak disimpan"
+  },
+  "myMacs.sessions": {
+    "defaultMessage": "Sesi aktif"
+  },
+  "myMacs.splitHint": {
+    "defaultMessage": "Mac ini menyimpan sebahagian model yang terlalu besar untuk satu Mac, dijalankan dari Mac lain."
+  },
+  "myMacs.thisMac": {
+    "defaultMessage": "Mac ini"
+  },
+  "myMacs.title": {
+    "defaultMessage": "Mac Saya"
   },
   "navigation.itemLeanzeroSwarm": {
     "defaultMessage": "Providers"
@@ -4625,6 +4895,30 @@
   "placementCard.context": {
     "defaultMessage": "konteks {tokens}"
   },
+  "placementCard.copyFirst": {
+    "defaultMessage": "{kind,select,thunderbolt{Salin ke {name} dahulu · Thunderbolt} other{Salin ke {name} dahulu · rangkaian}}"
+  },
+  "placementCard.copyFirstMinutes": {
+    "defaultMessage": "{kind,select,thunderbolt{Salin ke {name} dahulu (~{minutes} min melalui Thunderbolt)} other{Salin ke {name} dahulu (~{minutes} min melalui rangkaian)}}"
+  },
+  "placementCard.copyFirstWhy": {
+    "defaultMessage": "{model} ({size}) belum ada pada {name}; permulaan diteruskan sendiri sebaik sahaja ia tiba."
+  },
+  "placementCard.copyThenFailed": {
+    "defaultMessage": "Salinan ke {name} tidak selesai, jadi tiada apa yang bermula: {reason}"
+  },
+  "placementCard.copyingThen": {
+    "defaultMessage": "Menyalin ke {name} — {pct}% · bermula apabila salinan tiba"
+  },
+  "placementCard.details": {
+    "defaultMessage": "Butiran"
+  },
+  "placementCard.detailsMeta": {
+    "defaultMessage": "persediaan, pra-semakan, semakan, peristiwa"
+  },
+  "placementCard.distributedOwns": {
+    "defaultMessage": "Pembahagian sedang menggunakan Mac ini — hentikannya untuk menjalankan model di sini secara bersendirian."
+  },
   "placementCard.estimated": {
     "defaultMessage": "anggaran"
   },
@@ -4643,8 +4937,8 @@
   "placementCard.goalMany": {
     "defaultMessage": "Banyak permintaan"
   },
-  "placementCard.gpuCores": {
-    "defaultMessage": "{brand} · GPU {cores} teras"
+  "placementCard.keepRunning": {
+    "defaultMessage": "Terus berjalan"
   },
   "placementCard.live.failed": {
     "defaultMessage": "Gagal"
@@ -4661,9 +4955,6 @@
   "placementCard.measureFirst": {
     "defaultMessage": "Sedang berjalan dan belum diukur — Ukur kelajuan menggantikan anggaran dengan nombor Mac ini sendiri."
   },
-  "placementCard.measureLater": {
-    "defaultMessage": "Ukur kelajuan tersedia setelah ia berjalan."
-  },
   "placementCard.measured": {
     "defaultMessage": "{runs, plural, other {diukur · # kali}}"
   },
@@ -4673,26 +4964,17 @@
   "placementCard.measuring": {
     "defaultMessage": "Mengukur: prompt ~2k token, kemudian 256 token…"
   },
-  "placementCard.noFigure": {
-    "defaultMessage": "tiada angka kelajuan"
-  },
   "placementCard.noFigureReason": {
     "defaultMessage": "Tiada angka kelajuan"
   },
-  "placementCard.nodeGap": {
-    "defaultMessage": "{name}: {reason}"
-  },
-  "placementCard.nodeLine": {
-    "defaultMessage": "{name}: {chip} · {bandwidth} GB/s · had GPU {ceiling}"
-  },
-  "placementCard.nothingFits": {
-    "defaultMessage": "Tiada apa yang muat sekarang"
+  "placementCard.noPlanWays": {
+    "defaultMessage": "Tanpa pelan tiada angka kelajuan — setiap cara masih boleh dimulakan."
   },
   "placementCard.others": {
-    "defaultMessage": "{count, plural, other {# cara lain}}"
+    "defaultMessage": "{count,plural,one{# pembahagian lain} other{# pembahagian lain}}"
   },
-  "placementCard.pipeline": {
-    "defaultMessage": "{count, plural, other {# Mac · pembahagian saluran paip · {link}}}"
+  "placementCard.pipelineKind": {
+    "defaultMessage": "pembahagian saluran paip · {link}"
   },
   "placementCard.planFailed": {
     "defaultMessage": "Tidak dapat merancang"
@@ -4712,17 +4994,32 @@
   "placementCard.refusedUnnamed": {
     "defaultMessage": "Ditolak, dan goose tidak memberi sebab"
   },
+  "placementCard.run": {
+    "defaultMessage": "Jalankan"
+  },
+  "placementCard.runAcross": {
+    "defaultMessage": "{count,plural,=2{Jalankan pada kedua-dua Mac} other{Jalankan pada # Mac}}"
+  },
+  "placementCard.runAcrossAny": {
+    "defaultMessage": "Jalankan pada Mac anda"
+  },
+  "placementCard.runHere": {
+    "defaultMessage": "Jalankan pada Mac ini"
+  },
+  "placementCard.runIt": {
+    "defaultMessage": "Jalankan"
+  },
+  "placementCard.runOn": {
+    "defaultMessage": "Jalankan pada {name}"
+  },
   "placementCard.setupFirst": {
-    "defaultMessage": "Persediaan teragih menamakan model lain — pilih yang ini dalam Teragih › Sediakan, kemudian mulakan."
+    "defaultMessage": "Pembahagian disediakan dengan model lain — buka Butiran › Sediakan, pilih model ini, kemudian Jalankan."
   },
   "placementCard.short": {
     "defaultMessage": "Tidak muat: kurang {gb} pada {node}"
   },
   "placementCard.shortSplit": {
     "defaultMessage": "Tidak muat: kurang {gb}"
-  },
-  "placementCard.single": {
-    "defaultMessage": "{name} sahaja"
   },
   "placementCard.slower": {
     "defaultMessage": "Lebih perlahan untuk ini: ~{mine} lwn ~{best} tok/s"
@@ -4736,50 +5033,26 @@
   "placementCard.starting": {
     "defaultMessage": "Memulakan…"
   },
+  "placementCard.stop": {
+    "defaultMessage": "Hentikan"
+  },
+  "placementCard.stopSplitMessage": {
+    "defaultMessage": "Setiap bahagian pada {nodes} dihentikan dan disahkan telah tamat. Permintaan yang sedang berjalan akan terputus."
+  },
+  "placementCard.stopSplitTitle": {
+    "defaultMessage": "Hentikan pembahagian?"
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Baris tidak boleh dibaca dalam storan pengukuran"
   },
-  "placementCard.tensor": {
-    "defaultMessage": "{count, plural, other {# Mac · pembahagian tensor · {link}}}"
-  },
-  "placementCard.thisMac": {
-    "defaultMessage": "Mac ini"
+  "placementCard.tensorKind": {
+    "defaultMessage": "pembahagian tensor · {link}"
   },
   "placementCard.tied": {
     "defaultMessage": "Sama laju dalam julat ralat (~{mine} lwn ~{best} tok/s), tetapi perlu lebih banyak Mac"
   },
-  "placementCard.tile.mount": {
-    "defaultMessage": "Lekap"
-  },
-  "placementCard.tile.nothing": {
-    "defaultMessage": "Terlalu besar untuk Mac ini, dan tiada apa yang boleh dimulakan goose yang muat: {reason}"
-  },
-  "placementCard.tile.peerWhy": {
-    "defaultMessage": "Terlalu besar untuk Mac ini — ia muat pada {name}, dan sembang pergi ke sana melalui Link."
-  },
-  "placementCard.tile.retry": {
-    "defaultMessage": "Cuba lagi"
-  },
-  "placementCard.tile.short": {
-    "defaultMessage": "Tidak muat pada mana-mana Mac anda: kurang {gb} walaupun dibahagi ke semuanya."
-  },
-  "placementCard.tile.splitWhy": {
-    "defaultMessage": "Terlalu besar untuk Mac ini sahaja — ia berjalan terbahagi pada {names}."
-  },
-  "placementCard.tile.startAcross": {
-    "defaultMessage": "{count,plural,=2{Mulakan pada kedua-dua Mac} other{Mulakan pada # Mac}}"
-  },
-  "placementCard.tile.startOn": {
-    "defaultMessage": "Mulakan pada {name}"
-  },
-  "placementCard.title": {
-    "defaultMessage": "Di mana hendak menjalankannya"
-  },
   "placementCard.total": {
     "defaultMessage": "Jumlah ~{value} tok/s dengan {concurrency} serentak"
-  },
-  "placementCard.useThis": {
-    "defaultMessage": "Guna ini"
   },
   "placementCard.writes": {
     "defaultMessage": "menulis ~{value} tok/s"

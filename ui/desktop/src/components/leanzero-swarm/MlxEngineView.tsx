@@ -1,21 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  Check,
   Download,
   Folder,
   HardDrive,
-  Laptop,
   Loader2,
   Network,
   Minus,
   Pencil,
-  Play,
   Plus,
   RefreshCw,
   Search,
-  SlidersHorizontal,
   Square,
-  Trash2,
   X,
 } from 'lucide-react';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
@@ -58,19 +53,11 @@ import { MlxKvCacheFields } from './MlxKvCacheFields';
 import {
   mlxEngineBrowse,
   mlxEngineBrowseFilters,
-  mlxEngineDownload,
-  mlxEngineDownloadCancel,
-  mlxEngineDownloadPause,
-  mlxEngineDownloadProgress,
-  mlxEngineDownloadResume,
-  mlxEngineModelDelete,
-  mlxEngineModelsList,
   mlxEngineMount,
   mlxEngineSettingsRead,
   mlxEngineSettingsUpdate,
   mlxEngineStatus,
   mlxEngineUnmount,
-  MlxMountRefusedError,
   type MlxBrowseFilters,
   type MlxBrowseHit,
   type MlxBrowseSort,
@@ -80,7 +67,6 @@ import {
   type MlxEngineStatus,
   type MlxLocalModel,
   type MlxModelProfile,
-  type MlxMountRefusal,
 } from '../../acp/mlx-engine';
 import {
   DownloadProgressRow,
@@ -92,14 +78,9 @@ import {
 import { FilterCombobox } from './FilterCombobox';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
 import { ModelCardModal } from './ModelCardModal';
-import {
-  ReplicaCopyButtons,
-  ReplicaDownloadOffers,
-  ReplicaLinksPanel,
-  ReplicaModelControls,
-  useModelReplicas,
-  type ModelReplicas,
-} from './ModelReplica';
+import { ModelMatrix, matrixRowCount } from './ModelMatrix';
+import { SELF_KEY, macTarget, peerRefuses, type Mac } from './macs';
+import { WithMacs, useMacs } from './useMacs';
 import { MlxStateTile } from './MlxStateTile';
 import type { MlxServing } from '../../utils/mlxServing';
 import {
@@ -128,23 +109,8 @@ import { DistributedEngineSection } from './DistributedEngineSection';
 import { modeSummary, ownsTheMac } from './mlxDistributed';
 import { formatMlxMode } from './mlxModeLabel';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
-import {
-  PlacementBadge,
-  PlacementCard,
-  TileMountAction,
-  badgesOf,
-  runPlacementAction,
-  tileMountChoice,
-  usePlacementPlans,
-} from './PlacementCard';
-import type { PlacementCandidate } from '../../acp/mlx-placement';
+import { PlacementBadge, PlacementCard, badgesOf, usePlacementPlans } from './PlacementCard';
 import type { PlacementBadge as PlacementBadgeDto } from '../../acp/mlx-placement';
-import {
-  leanzeroLinkNodes,
-  leanzeroLinkStatus,
-  type NodeStatus,
-  type NodesResponse,
-} from '../../acp/leanzero-link';
 
 // Formatters stay importable from this module — tests and older callers reach them here.
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
@@ -162,16 +128,10 @@ const i18n = defineMessages({
   },
   mountBlocked: { id: 'mlxEngineView.mountBlocked', defaultMessage: 'Mount blocked' },
   mountFailed: { id: 'mlxEngineView.mountFailed', defaultMessage: 'Mount failed' },
-  startRefused: { id: 'mlxEngineView.startRefused', defaultMessage: 'Start refused' },
-  startFailed: { id: 'mlxEngineView.startFailed', defaultMessage: 'Start failed' },
-  refusedUnnamed: {
-    id: 'mlxEngineView.refusedUnnamed',
-    defaultMessage: 'Refused, and goose named no reason',
-  },
-  switchNeedsUnmount: {
-    id: 'mlxEngineView.switchNeedsUnmount',
+  pickThenRun: {
+    id: 'mlxEngineView.pickThenRun',
     defaultMessage:
-      'This model does not run on this Mac alone — unmount, then start it from the tile.',
+      'Pick a model, then start it in Run it below — on this Mac, on another of your Macs, or split across them.',
   },
 });
 
@@ -722,8 +682,6 @@ interface EngineSectionProps {
   mountModelId: string | null;
   setMountModelId: (id: string | null) => void;
   mountError: string | null;
-  /** goose's structured refusal of the last Mount (the placement that would work). */
-  mountRefusal: MlxMountRefusal | null;
   engineBusy: boolean;
   onMount: () => void;
   onUnmount: () => void;
@@ -739,6 +697,10 @@ interface EngineSectionProps {
   mountWatch: MountWatch | null;
   /** The distributed engine (this Mac only); while it owns the Mac the single engine cannot mount. */
   distributed: MlxDistributedStatus | null;
+  /** goose offers the split (the `mlxDistributed` capability). */
+  distributedCapability: boolean;
+  /** The split's own controls, folded under Run it's split row. */
+  splitDetails: ReactNode;
   /** Which engine owns this Mac, in words — on the tile. */
   modeLabel: string;
 }
@@ -753,7 +715,6 @@ function EngineSection(props: EngineSectionProps) {
     mountModelId,
     setMountModelId,
     mountError,
-    mountRefusal,
     engineBusy,
     onMount,
     onUnmount,
@@ -764,6 +725,8 @@ function EngineSection(props: EngineSectionProps) {
     serving,
     mountWatch,
     distributed,
+    distributedCapability,
+    splitDetails,
     modeLabel,
   } = props;
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -772,45 +735,19 @@ function EngineSection(props: EngineSectionProps) {
     [...models.map((m) => m.id), status?.state ?? '', status?.modelId ?? ''].join('\n')
   );
   const badges = useMemo(() => badgesOf(plans), [plans]);
-  // The tile's primary action follows the picked model's plan: a model that only runs split (or
-  // only on a peer) is STARTED that way from the tile, never offered as a single mount here.
-  const choice = tileMountChoice(
-    intl,
-    mountModelId ? plans.get(mountModelId) : null,
-    mountRefusal && mountRefusal.fit.modelId === mountModelId ? mountRefusal : null
-  );
-  const [startBusy, setStartBusy] = useState(false);
-  const [startError, setStartError] = useState<{ refused: boolean; text: string } | null>(null);
-  const onStartPlacement = (candidate: PlacementCandidate) => {
-    if (!mountModelId) return;
-    setStartBusy(true);
-    setStartError(null);
-    runPlacementAction(candidate, mountModelId, onMount, intl.formatMessage(i18n.refusedUnnamed))
-      .then((refusal) => setStartError(refusal == null ? null : { refused: true, text: refusal }))
-      .catch((e: unknown) => setStartError({ refused: false, text: mlxErrorMessage(e, String(e)) }))
-      .finally(() => setStartBusy(false));
-  };
-  // goose refuses a single mount while the distributed engine owns the Mac, so none is offered.
+  // goose refuses a single mount while the distributed engine owns the Mac.
   const distributedOwns = ownsTheMac(distributed);
   const banners = mountFailureBanners(status, mountError);
-  // A start's refusal answers THAT start: a new pick, or the run owning the Mac, retires it.
-  useEffect(() => {
-    setStartError(null);
-  }, [mountModelId, distributedOwns]);
 
   const state = status?.state ?? null;
   const running = state === 'running';
   const mountedModelId = status?.modelId ?? null;
   const strayPort = state === 'stopped' ? status?.strayListenerPort : undefined;
-  const selectionIsMounted = running && !!mountModelId && mountModelId === mountedModelId;
-  const canMount =
-    !!mountModelId && !engineBusy && (state === 'stopped' || state === 'failed' || state === null);
-  const canSwitch = running && !!mountModelId && mountModelId !== mountedModelId && !engineBusy;
-  const canUnmount =
-    !engineBusy && (state === 'running' || state === 'mounting' || strayPort != null);
-  // Unmount is on offer only where it does something: a live or mounting engine, or a stray
-  // listener to reclaim. A stopped engine has nothing to unmount, so the button is not drawn.
-  const offerUnmount = state === 'running' || state === 'mounting' || strayPort != null;
+  // Starting and stopping belong to Run it; the one thing left here is reclaiming an engine a
+  // previous goose left listening on the port.
+  const offerReclaim = strayPort != null;
+  // What Run it is about: the split's model while the split owns this Mac, else the picked one.
+  const runModelId = distributedOwns ? (distributed?.modelId ?? null) : mountModelId;
   const failedError =
     state === 'failed' && status?.lastError && status.lastError !== mountError
       ? status.lastError
@@ -902,44 +839,6 @@ function EngineSection(props: EngineSectionProps) {
     </div>
   );
 
-  // The primary action is the STATE'S action and tells the truth about the live engine, not just
-  // mount intent. With the engine down it lives ON the tile, beside what the mount would cost: Retry
-  // when failed, else the plain Mount. With the engine up it stays by the picker: a spinner while
-  // mounting, "Mounted" as a disabled status for the mounted selection, "Switch model" for another
-  // selection (the backend shuts the old model down).
-  const tileAction =
-    distributedOwns || !(state === 'failed' || state === 'stopped' || state === null) ? null : (
-      <TileMountAction
-        choice={choice}
-        retry={state === 'failed'}
-        canMount={canMount}
-        busy={startBusy || engineBusy}
-        onMount={onMount}
-        onStart={onStartPlacement}
-      />
-    );
-  const switchBlocked = canSwitch && choice.kind !== 'mount';
-  const rowAction =
-    state === 'mounting' ? (
-      <Button variant="primary" disabled icon={<Loader2 className="animate-spin" />}>
-        Mounting
-      </Button>
-    ) : selectionIsMounted ? (
-      <Button variant="secondary" disabled icon={<Check />}>
-        Mounted
-      </Button>
-    ) : running ? (
-      <Button
-        variant="primary"
-        icon={<Play />}
-        onClick={onMount}
-        disabled={!canSwitch || switchBlocked}
-        data-testid="mlx-switch-model"
-      >
-        Switch model
-      </Button>
-    ) : null;
-
   // The tile's instrument inputs — each a measured fact or absent, never a stand-in.
   const sizeOf = (id: string | null | undefined) =>
     (id ? models.find((m) => m.id === id)?.sizeBytes : undefined) ?? null;
@@ -948,8 +847,7 @@ function EngineSection(props: EngineSectionProps) {
       ? mountFill(mountWatch, status.availableMemoryGb, sizeOf(mountedModelId))
       : null;
   const fit = status?.mountFit;
-  const cost =
-    state === 'stopped' && fit && fit.modelId === mountModelId ? mountCostOf(fit) : null;
+  const cost = state === 'stopped' && fit && fit.modelId === mountModelId ? mountCostOf(fit) : null;
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -978,14 +876,6 @@ function EngineSection(props: EngineSectionProps) {
           label={intl.formatMessage(i18n.mountFailed)}
           text={banners.mountError}
           testId="mlx-mount-failed"
-        />
-      )}
-      {startError && (
-        <ToneBanner
-          tone="err"
-          label={intl.formatMessage(startError.refused ? i18n.startRefused : i18n.startFailed)}
-          text={startError.text}
-          testId="mlx-tile-start-error"
         />
       )}
       {distributedOwns && (
@@ -1022,7 +912,7 @@ function EngineSection(props: EngineSectionProps) {
           load={singleLoad(status)}
           cost={cost}
           failedError={failedError}
-          action={tileAction}
+          action={null}
           modeLabel={modeLabel}
           distributed={distributed}
         />
@@ -1085,40 +975,31 @@ function EngineSection(props: EngineSectionProps) {
                 badges={badges}
               />
             </div>
-            {rowAction}
-            {offerUnmount && (
+            {offerReclaim && (
               <Button
                 variant="secondary"
                 icon={<Square />}
                 onClick={onUnmount}
-                disabled={!canUnmount}
+                disabled={engineBusy}
               >
                 Unmount
               </Button>
             )}
           </div>
-          {switchBlocked && (
-            <p
-              data-testid="mlx-switch-blocked"
-              className={cx('break-words text-lz-body', WEIGHT.semibold)}
-            >
-              {intl.formatMessage(i18n.switchNeedsUnmount)}
-            </p>
-          )}
-          <p className={TYPE.meta}>
-            Mount returns immediately and the engine flips to mounting; this card follows the live
-            engine every 2 seconds. Each model mounts with its own sampling profile.
-          </p>
+          <p className={TYPE.meta}>{intl.formatMessage(i18n.pickThenRun)}</p>
         </div>
       </section>
 
-      {mountModelId && (
+      {runModelId && (
         <PlacementCard
-          modelId={mountModelId}
+          modelId={runModelId}
           single={status}
           distributed={distributed}
           onMountHere={onMount}
+          onStopHere={onUnmount}
           mountBusy={engineBusy || state === 'mounting' || distributedOwns}
+          distributedCapability={distributedCapability}
+          splitDetails={splitDetails}
         />
       )}
 
@@ -1147,6 +1028,8 @@ function EngineSection(props: EngineSectionProps) {
 // ---------------------------------------------------------------------------
 
 interface SamplingSectionProps {
+  /** Which Mac's profiles are edited — shown when more than one Mac can be managed. */
+  macPicker: ReactNode;
   status: MlxEngineStatus | null;
   settings: MlxEngineSettings | null;
   engineBusy: boolean;
@@ -1164,6 +1047,7 @@ interface SamplingSectionProps {
 
 function SamplingSection(props: SamplingSectionProps) {
   const {
+    macPicker,
     status,
     settings,
     engineBusy,
@@ -1186,6 +1070,7 @@ function SamplingSection(props: SamplingSectionProps) {
 
   return (
     <div className="flex flex-col gap-4 pb-8">
+      {macPicker}
       <RestartRequiredBanner
         status={status}
         settings={settings}
@@ -1546,7 +1431,7 @@ interface HfBrowserState {
   loadMore: () => void;
 }
 
-function useHfBrowserState(nodeId?: string): HfBrowserState {
+function useHfBrowserState(): HfBrowserState {
   const [queryText, setQueryText] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
   const [author, setAuthor] = useState<string | null>(null);
@@ -1582,7 +1467,7 @@ function useHfBrowserState(nodeId?: string): HfBrowserState {
     setNextCursor(null);
     void (async () => {
       try {
-        const page = await mlxEngineBrowse(baseParams, nodeId);
+        const page = await mlxEngineBrowse(baseParams);
         if (epoch.current !== id) return;
         setHits(page.hits);
         setNextCursor(page.nextCursor ?? null);
@@ -1594,7 +1479,7 @@ function useHfBrowserState(nodeId?: string): HfBrowserState {
         if (epoch.current === id) setLoading(false);
       }
     })();
-  }, [baseParams, nodeId]);
+  }, [baseParams]);
 
   const loadMore = useCallback(() => {
     if (!nextCursor) return;
@@ -1602,7 +1487,7 @@ function useHfBrowserState(nodeId?: string): HfBrowserState {
     setLoadingMore(true);
     void (async () => {
       try {
-        const page = await mlxEngineBrowse({ ...baseParams, cursor: nextCursor }, nodeId);
+        const page = await mlxEngineBrowse({ ...baseParams, cursor: nextCursor });
         if (epoch.current !== id) return;
         setHits((prev) => {
           const seen = new Set((prev ?? []).map((h) => h.id));
@@ -1616,7 +1501,7 @@ function useHfBrowserState(nodeId?: string): HfBrowserState {
         if (epoch.current === id) setLoadingMore(false);
       }
     })();
-  }, [baseParams, nextCursor, nodeId]);
+  }, [baseParams, nextCursor]);
 
   const commitQuery = useCallback(() => setAppliedQuery(queryText.trim()), [queryText]);
 
@@ -1986,219 +1871,257 @@ function ActiveDownloadsCard({
   );
 }
 
-type ModelsSubTab = 'hf' | 'downloaded';
+type ModelsSubTab = 'macs' | 'hf';
+
+const MODELS_I18N = defineMessages({
+  onYourMacs: { id: 'mlxModels.onYourMacs', defaultMessage: 'On your Macs' },
+  huggingFace: { id: 'mlxModels.huggingFace', defaultMessage: 'Hugging Face' },
+  downloadTo: { id: 'mlxModels.downloadTo', defaultMessage: 'Download to' },
+  folders: { id: 'mlxModels.folders', defaultMessage: 'Models folders' },
+  foldersHint: {
+    id: 'mlxModels.foldersHint',
+    defaultMessage:
+      'One folder per Mac, used by downloads, copies and loads alike; the bar is the free space on its volume.',
+  },
+  edit: { id: 'mlxModels.edit', defaultMessage: 'Edit' },
+  folderUnread: { id: 'mlxModels.folderUnread', defaultMessage: 'Can’t read: {reason}' },
+  settingsFailed: {
+    id: 'mlxModels.settingsFailed',
+    defaultMessage: 'The engine settings could not be read.',
+  },
+  cancelTitle: { id: 'mlxModels.cancelTitle', defaultMessage: 'Cancel download' },
+  cancelMessage: {
+    id: 'mlxModels.cancelMessage',
+    defaultMessage: 'Cancel the download of {model} on {name} and delete its partial files there?',
+  },
+  keep: { id: 'mlxModels.keep', defaultMessage: 'Keep' },
+});
+
+/** One Mac's models folder: its path, its disk, and Edit — read from THAT Mac's settings. */
+function FolderRow({
+  mac,
+  settings,
+  saveSettings,
+}: {
+  mac: Mac;
+  /** This Mac's settings (the view already holds them); a peer's are read here. */
+  settings: MlxEngineSettings | null;
+  saveSettings: (macKey: string, next: MlxEngineSettings) => Promise<MlxEngineSettings>;
+}) {
+  const intl = useIntl();
+  const ctx = useMacs();
+  const facts = ctx.factsOf(mac.key);
+  const [peerSettings, setPeerSettings] = useState<MlxEngineSettings | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  useEffect(() => {
+    if (mac.isSelf) return undefined;
+    let live = true;
+    mlxEngineSettingsRead(macTarget(mac))
+      .then((s) => live && setPeerSettings(s))
+      .catch(
+        (e) =>
+          live &&
+          setReadError(
+            ctx.describeError(
+              mac,
+              mlxErrorMessage(e, intl.formatMessage(MODELS_I18N.settingsFailed))
+            )
+          )
+      );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mac.key, mac.isSelf]);
+  const current = mac.isSelf ? settings : peerSettings;
+  const save = async (dir: string) => {
+    if (!current) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const saved = await saveSettings(mac.key, {
+        ...sanitizeSettingsForWrite(current),
+        modelsDir: dir,
+      });
+      if (!mac.isSelf) setPeerSettings(saved);
+      setOpen(false);
+      void ctx.refreshModels(mac.key);
+    } catch (e) {
+      setSaveError(ctx.describeError(mac, mlxErrorMessage(e, String(e))));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div
+      className={cx('flex flex-col gap-2 border-t py-3 first:border-t-0', SURFACE.hairline)}
+      data-testid={`models-folder-${mac.key}`}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={cx('w-40 shrink-0 truncate', TYPE.body, WEIGHT.semibold)}>{mac.name}</span>
+        <Folder className="size-4 shrink-0 text-lz-ink-3" />
+        {readError ? (
+          <span
+            className={cx('min-w-0 flex-1 break-words', TYPE.body, WEIGHT.semibold, TONE_TEXT.err)}
+          >
+            {intl.formatMessage(MODELS_I18N.folderUnread, { reason: readError })}
+          </span>
+        ) : (
+          <span
+            className={cx(
+              'min-w-0 flex-1 truncate px-3 py-1.5 font-mono text-lz-mono text-lz-ink',
+              SURFACE.inset,
+              RADIUS.control
+            )}
+            title={current?.modelsDir}
+          >
+            {current?.modelsDir ?? '…'}
+          </span>
+        )}
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<Pencil />}
+          onClick={() => {
+            setSaveError(null);
+            setOpen(true);
+          }}
+          disabled={!current}
+        >
+          {intl.formatMessage(MODELS_I18N.edit)}
+        </Button>
+      </div>
+      {facts.disk && (
+        <DiskBar availableBytes={facts.disk.availableBytes} totalBytes={facts.disk.totalBytes} />
+      )}
+      <ModelsDirDialog
+        open={open}
+        initial={current?.modelsDir ?? ''}
+        saving={saving}
+        error={saveError}
+        onSave={(dir) => void save(dir)}
+        onClose={() => setOpen(false)}
+      />
+    </div>
+  );
+}
 
 interface ModelsSectionProps {
   settings: MlxEngineSettings | null;
-  models: MlxLocalModel[];
-  disk: { availableBytes: number; totalBytes: number } | null;
-  mountedModelId: string | null;
-  refreshModels: () => void;
-  saveSettings: (next: MlxEngineSettings) => Promise<void>;
-  onOpenSampling: (modelId: string) => void;
-  downloads: Record<string, MlxDownloadProgress>;
-  downloadErrors: Record<string, string>;
-  downloadHandlers: DownloadHandlers;
-  onModelDeleted: (modelId: string) => void;
+  saveSettings: (macKey: string, next: MlxEngineSettings) => Promise<MlxEngineSettings>;
+  onOpenSampling: (macKey: string, modelId: string) => void;
   filters: MlxBrowseFilters | null;
   filtersError: string | null;
-  /** The device every model op targets — undefined = local, byte-identical to before. */
-  nodeId?: string;
-  /** Hostname of the selected REMOTE device, or null when local — names the delete confirm. */
-  remoteHostname: string | null;
-  /** Copies of the shown device's models to linked devices; inert without a linked peer. */
-  replicas: ModelReplicas;
 }
 
 function ModelsSection({
   settings,
-  models,
-  disk,
-  mountedModelId,
-  refreshModels,
   saveSettings,
   onOpenSampling,
-  downloads,
-  downloadErrors,
-  downloadHandlers,
-  onModelDeleted,
   filters,
   filtersError,
-  nodeId,
-  remoteHostname,
-  replicas,
 }: ModelsSectionProps) {
-  // Owner amendment: the Models area splits into [Hugging Face | Downloaded] — the local models
-  // used to sit at the bottom of one long column and were hard to see. The browser's state lives
-  // in the section (useHfBrowserState) so switching sub-tabs never loses query/filters/pages.
-  const [view, setView] = useState<ModelsSubTab>('hf');
-  const browser = useHfBrowserState(nodeId);
-
-  const [dirDialogOpen, setDirDialogOpen] = useState(false);
-  const [dirSaving, setDirSaving] = useState(false);
-  const [dirError, setDirError] = useState<string | null>(null);
-
+  const intl = useIntl();
+  const ctx = useMacs();
+  // [On your Macs | Hugging Face]: the models every Mac holds, one table; the browser apart. The
+  // browser's state lives in the section so switching sub-tabs never loses query/filters/pages.
+  const [view, setView] = useState<ModelsSubTab>('macs');
+  const browser = useHfBrowserState();
+  const readable = ctx.macs.filter((m) => m.online && !peerRefuses(m, 'manage'));
+  const [target, setTarget] = useState<string>(SELF_KEY);
+  const targetMac = readable.find((m) => m.key === target) ?? ctx.self;
+  const targetKey = targetMac.key;
+  const downloads = useMemo(() => ctx.downloads[targetKey] ?? {}, [ctx.downloads, targetKey]);
+  const downloadErrors = useMemo(
+    () => ctx.downloadErrors[targetKey] ?? {},
+    [ctx.downloadErrors, targetKey]
+  );
+  const [pendingCancel, setPendingCancel] = useState<string | null>(null);
   const [cardRepoId, setCardRepoId] = useState<string | null>(null);
 
-  const [pendingDelete, setPendingDelete] = useState<MlxLocalModel | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const handlers = useMemo<DownloadHandlers>(
+    () => ({
+      onDownload: (repoId) => void ctx.download(targetKey, repoId),
+      onPause: (repoId) => void ctx.pauseDownload(targetKey, repoId),
+      onResume: (repoId) => void ctx.resumeDownload(targetKey, repoId),
+      // A cancel deletes the partial from disk; on another Mac that is ITS disk — asked first.
+      onCancel: (repoId) =>
+        targetMac.isSelf ? void ctx.cancelDownload(targetKey, repoId) : setPendingCancel(repoId),
+    }),
+    [ctx, targetKey, targetMac.isSelf]
+  );
 
-  // Every tracked download must be visible on the ACTIVE sub-tab: rows already shown inline
-  // (browse hits on Hugging Face, local models on Downloaded) stay where they are; the rest
-  // render in the Active downloads card above the pane content.
   const hfOrphanDownloads = useMemo(() => {
     const hitIds = new Set((browser.hits ?? []).map((h) => h.id));
     return Object.entries(downloads).filter(([repoId]) => !hitIds.has(repoId));
   }, [browser.hits, downloads]);
-  const downloadedOrphanDownloads = useMemo(() => {
-    const localIds = new Set(models.map((m) => m.id));
-    return Object.entries(downloads).filter(([repoId]) => !localIds.has(repoId));
-  }, [models, downloads]);
 
-  const saveDir = useCallback(
-    async (dir: string) => {
-      if (!settings) return;
-      setDirSaving(true);
-      setDirError(null);
-      try {
-        await saveSettings({ ...sanitizeSettingsForWrite(settings), modelsDir: dir });
-        setDirDialogOpen(false);
-        refreshModels();
-      } catch (error) {
-        setDirError(mlxErrorMessage(error, 'Could not save the models folder.'));
-      } finally {
-        setDirSaving(false);
-      }
-    },
-    [settings, saveSettings, refreshModels]
-  );
-
-  const confirmDelete = useCallback(async () => {
-    if (!pendingDelete) return;
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      await mlxEngineModelDelete(pendingDelete.id, nodeId);
-      onModelDeleted(pendingDelete.id);
-      setPendingDelete(null);
-      refreshModels();
-    } catch (error) {
-      setDeleteError(mlxErrorMessage(error, `Could not delete ${pendingDelete.id}.`));
-    } finally {
-      setDeleting(false);
-    }
-  }, [pendingDelete, refreshModels, onModelDeleted, nodeId]);
-
-  const isIncomplete = (model: MlxLocalModel) => model.missingFiles > 0 || !model.complete;
-
-  // The local library as a table: model | state (a tone, or "—") | size; the actions ride the
-  // trailing slot. Errors and live downloads sit under the model id, as on the browser.
-  const localColumns = useMemo<DataTableColumn<MlxLocalModel>[]>(
-    () => [
-      {
-        key: 'model',
-        header: 'Model',
-        className: 'min-w-[220px]',
-        cell: (model) => (
-          <div className="flex min-w-0 flex-col gap-1 py-1">
-            <span className="flex min-w-0 items-center gap-2">
-              <HardDrive
-                className={cx(
-                  'size-4 shrink-0',
-                  isIncomplete(model) ? TONE_TEXT.warn : 'text-lz-ink-3'
-                )}
-              />
-              <span className="truncate font-mono text-lz-mono text-lz-ink" title={model.id}>
-                {model.id}
-              </span>
-            </span>
-            {downloadErrors[model.id] && (
-              <span className={cx('break-words text-lz-meta', WEIGHT.semibold, TONE_TEXT.err)}>
-                {downloadErrors[model.id]}
-              </span>
-            )}
-            {downloads[model.id] && (
-              <DownloadProgressRow
-                repoId={model.id}
-                progress={downloads[model.id]}
-                onPause={() => downloadHandlers.onPause(model.id)}
-                onResume={() => downloadHandlers.onResume(model.id)}
-                onCancel={() => downloadHandlers.onCancel(model.id)}
-              />
-            )}
-            <ReplicaModelControls modelId={model.id} replicas={replicas} />
-          </div>
-        ),
-      },
-      {
-        key: 'state',
-        header: 'State',
-        cell: (model) => {
-          const mounted = model.id === mountedModelId;
-          const incomplete = isIncomplete(model);
-          if (!mounted && !incomplete) return <Absent />;
-          return (
-            <span className="inline-flex flex-wrap items-center gap-1">
-              {mounted && <Chip tone="ok">mounted</Chip>}
-              {incomplete && (
-                <Chip
-                  tone="warn"
-                  title="Files the repo's safetensors index names are absent or unfinished — Resume continues the download"
-                >
-                  incomplete — missing {model.missingFiles} file(s)
-                </Chip>
-              )}
-            </span>
-          );
-        },
-      },
-      {
-        key: 'size',
-        header: 'Size',
-        numeric: true,
-        cell: (model) => <span className={META}>{formatGb(model.sizeBytes)}</span>,
-      },
-    ],
-    [downloads, downloadErrors, downloadHandlers, mountedModelId, replicas]
-  );
+  const rowCount = matrixRowCount(ctx);
 
   return (
     <div className="flex flex-col gap-4 pb-8">
-      {/* Second-level switch (owner): the browser and the local library are separate tabs so
-          neither buries the other. */}
       <Segmented<ModelsSubTab>
         aria-label="Models view"
         options={[
-          { value: 'hf', label: 'Hugging Face' },
           {
-            value: 'downloaded',
+            value: 'macs',
             label: (
               <>
-                Downloaded
-                <span className={cx('text-lz-meta', TNUM)}>{models.length}</span>
+                {intl.formatMessage(MODELS_I18N.onYourMacs)}
+                <span className={cx('text-lz-meta', TNUM)}>{rowCount}</span>
               </>
             ),
           },
+          { value: 'hf', label: intl.formatMessage(MODELS_I18N.huggingFace) },
         ]}
         value={view}
         onChange={setView}
       />
 
-      <ReplicaDownloadOffers downloads={downloads} models={models} replicas={replicas} />
+      {view === 'macs' && (
+        <>
+          <ModelMatrix onOpenSampling={onOpenSampling} />
+          <Panel title={intl.formatMessage(MODELS_I18N.folders)}>
+            {readable.map((mac) => (
+              <FolderRow
+                key={mac.key}
+                mac={mac}
+                settings={mac.isSelf ? settings : null}
+                saveSettings={saveSettings}
+              />
+            ))}
+            <p className={cx('mt-3', TYPE.meta)}>{intl.formatMessage(MODELS_I18N.foldersHint)}</p>
+          </Panel>
+        </>
+      )}
 
       {view === 'hf' && (
         <>
+          {readable.length > 1 && (
+            <div className="flex flex-wrap items-center gap-2" data-testid="mlx-download-to">
+              <span className={TYPE.meta}>{intl.formatMessage(MODELS_I18N.downloadTo)}</span>
+              <Segmented<string>
+                size="sm"
+                aria-label={intl.formatMessage(MODELS_I18N.downloadTo)}
+                options={readable.map((m) => ({ value: m.key, label: m.name }))}
+                value={targetKey}
+                onChange={setTarget}
+              />
+            </div>
+          )}
           <ActiveDownloadsCard
             entries={hfOrphanDownloads}
             errors={downloadErrors}
-            handlers={downloadHandlers}
+            handlers={handlers}
           />
           <HfBrowser
             browser={browser}
             downloads={downloads}
             downloadErrors={downloadErrors}
-            handlers={downloadHandlers}
+            handlers={handlers}
             filters={filters}
             filtersError={filtersError}
             onOpenCard={setCardRepoId}
@@ -2206,309 +2129,41 @@ function ModelsSection({
         </>
       )}
 
-      {view === 'downloaded' && (
-        <>
-          <ActiveDownloadsCard
-            entries={downloadedOrphanDownloads}
-            errors={downloadErrors}
-            handlers={downloadHandlers}
-          />
-
-          {/* Local models */}
-          <Panel
-            title="Downloaded models"
-            count={models.length}
-            headerRight={
-              <Button size="sm" variant="ghost" icon={<RefreshCw />} onClick={refreshModels}>
-                Refresh
-              </Button>
-            }
-            padded={false}
-          >
-            {deleteError && (
-              <div className={cx('border-b px-4 py-3', SURFACE.hairline)}>
-                <ToneBanner tone="err" label="Delete failed" text={deleteError} />
-              </div>
-            )}
-            <DataTable
-              aria-label="Downloaded models"
-              columns={localColumns}
-              rows={models}
-              rowKey={(model) => model.id}
-              rowAction={(model) => (
-                <span className="inline-flex items-center gap-1">
-                  {isIncomplete(model) ? (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      icon={<Play />}
-                      onClick={() => downloadHandlers.onResume(model.id)}
-                      aria-label={`Resume ${model.id}`}
-                      title="Resume the download — complete files are skipped, partials continue"
-                    >
-                      Resume
-                    </Button>
-                  ) : (
-                    <>
-                      <ReplicaCopyButtons modelId={model.id} replicas={replicas} />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon={<SlidersHorizontal />}
-                        onClick={() => onOpenSampling(model.id)}
-                        aria-label={`Sampling for ${model.id}`}
-                        title="This model's sampling profile — opens the Sampling tab"
-                      >
-                        Sampling
-                      </Button>
-                    </>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon={<Trash2 />}
-                    onClick={() => {
-                      setDeleteError(null);
-                      setPendingDelete(model);
-                    }}
-                    aria-label={`Delete ${model.id}`}
-                    title="Delete from the models folder"
-                  />
-                </span>
-              )}
-              empty={
-                <EmptyState
-                  icon={<HardDrive />}
-                  title="Nothing downloaded yet"
-                  body="Browse the Hugging Face tab to download an MLX model."
-                />
-              }
-            />
-          </Panel>
-
-          <ReplicaLinksPanel replicas={replicas} />
-
-          {/* Models folder + disk — the local library's home, so it lives on the Downloaded tab. */}
-          <Panel title="Models folder">
-            <div className="flex items-center gap-2">
-              <Folder className="size-4 shrink-0 text-lz-ink-3" />
-              <span
-                className={cx(
-                  'min-w-0 flex-1 truncate px-3 py-1.5 font-mono text-lz-mono text-lz-ink',
-                  SURFACE.inset,
-                  RADIUS.control
-                )}
-                title={settings?.modelsDir}
-              >
-                {settings?.modelsDir ?? '…'}
-              </span>
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={<Pencil />}
-                onClick={() => {
-                  setDirError(null);
-                  setDirDialogOpen(true);
-                }}
-                disabled={!settings}
-              >
-                Edit
-              </Button>
-            </div>
-            {disk && (
-              <div className="mt-3">
-                <DiskBar availableBytes={disk.availableBytes} totalBytes={disk.totalBytes} />
-              </div>
-            )}
-            <p className={cx('mt-3', TYPE.meta)}>
-              One directory used by downloads and mounts alike; the bar is the free space on its
-              volume.
-            </p>
-          </Panel>
-        </>
-      )}
-
       {cardRepoId != null && (
         <ModelCardModal
           repoId={cardRepoId}
-          nodeId={nodeId}
           onClose={() => setCardRepoId(null)}
           progress={downloads[cardRepoId]}
           startError={downloadErrors[cardRepoId]}
-          onDownload={() => downloadHandlers.onDownload(cardRepoId)}
-          onPause={() => downloadHandlers.onPause(cardRepoId)}
-          onResume={() => downloadHandlers.onResume(cardRepoId)}
-          onCancel={() => downloadHandlers.onCancel(cardRepoId)}
+          onDownload={() => handlers.onDownload(cardRepoId)}
+          onPause={() => handlers.onPause(cardRepoId)}
+          onResume={() => handlers.onResume(cardRepoId)}
+          onCancel={() => handlers.onCancel(cardRepoId)}
         />
       )}
 
-      <ModelsDirDialog
-        open={dirDialogOpen}
-        initial={settings?.modelsDir ?? ''}
-        saving={dirSaving}
-        error={dirError}
-        onSave={(dir) => void saveDir(dir)}
-        onClose={() => setDirDialogOpen(false)}
-      />
-
       <ConfirmationModal
-        isOpen={pendingDelete !== null}
-        title="Delete model"
+        isOpen={pendingCancel !== null}
+        title={intl.formatMessage(MODELS_I18N.cancelTitle)}
         message={
-          pendingDelete
-            ? `Delete ${pendingDelete.id} (${formatGb(pendingDelete.sizeBytes)})${
-                remoteHostname ? ` on ${remoteHostname}` : ''
-              } from the models folder? This removes the files from ${
-                remoteHostname ? "that device's disk" : 'disk'
-              }.`
+          pendingCancel
+            ? intl.formatMessage(MODELS_I18N.cancelMessage, {
+                model: pendingCancel,
+                name: targetMac.name,
+              })
             : ''
         }
-        confirmLabel="Delete"
+        confirmLabel={intl.formatMessage(MODELS_I18N.cancelTitle)}
+        cancelLabel={intl.formatMessage(MODELS_I18N.keep)}
         confirmVariant="destructive"
-        isSubmitting={deleting}
-        onConfirm={() => void confirmDelete()}
-        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingCancel) void ctx.cancelDownload(targetKey, pendingCancel);
+          setPendingCancel(null);
+        }}
+        onCancel={() => setPendingCancel(null)}
       />
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Device target picker — manage models on ANY linked device, not just the local
-// one. Node list comes from `leanzeroLink/nodes` (self + peers). Never a native
-// <select>: the hub's StudioSelect listbox.
-// ---------------------------------------------------------------------------
-
-interface DeviceTarget {
-  /** null = THIS device (local). A peer carries its `node_id`. */
-  nodeId: string | null;
-  hostname: string;
-  isSelf: boolean;
-  /** Peers carry a live status for the idle/busy chip; self shows none. */
-  status?: NodeStatus;
-}
-
-function deviceLabel(t: DeviceTarget): string {
-  return t.isSelf ? 'This device' : t.hostname;
-}
-
-const NODE_STATUS: Record<NodeStatus['type'], { tone: Tone; label: string }> = {
-  Idle: { tone: 'ok', label: 'idle' },
-  Busy: { tone: 'warn', label: 'busy' },
-  Offline: { tone: 'stopped', label: 'offline' },
-};
-
-function NodeStatusChip({ status }: { status: NodeStatus }) {
-  const v = NODE_STATUS[status.type] ?? NODE_STATUS.Offline;
-  return <Chip tone={v.tone}>{v.label}</Chip>;
-}
-
-interface DeviceOption extends StudioSelectOption {
-  target: DeviceTarget;
-}
-
-/**
- * The node dropdown — a Studio listbox. "This device" (self) is always first and default;
- * each connected peer follows with its hostname and a live idle/busy chip. A peer stays
- * selectable even when busy — model management (list/browse/download) works while a node
- * runs a session; an unreachable/offline peer surfaces its backend error in the ops below.
- */
-function DeviceTargetPicker({
-  targets,
-  value,
-  onChange,
-  disabled,
-}: {
-  targets: DeviceTarget[];
-  value: string | null;
-  onChange: (nodeId: string | null) => void;
-  disabled?: boolean;
-}) {
-  const options: DeviceOption[] = targets.map((t) => ({
-    value: t.nodeId ?? 'self',
-    label: deviceLabel(t),
-    target: t,
-  }));
-  const selected = options.find((o) => o.target.nodeId === value) ?? options[0] ?? null;
-  return (
-    <StudioSelect
-      className="min-w-[240px]"
-      aria-label="Manage models on device"
-      options={options}
-      value={selected}
-      disabled={disabled}
-      placeholder="This device"
-      renderOption={(o) => (
-        <span className="flex min-w-0 items-center gap-2 [&_svg]:size-4 [&_svg]:shrink-0">
-          <Laptop className="text-lz-ink-3" />
-          <span className={cx('min-w-0 truncate', WEIGHT.medium)}>{o.label}</span>
-          {o.target.status && <NodeStatusChip status={o.target.status} />}
-        </span>
-      )}
-      optionTestId={(o) => `mlx-device-target-option-${o.target.nodeId ?? 'self'}`}
-      onChange={(o) => onChange(o ? o.target.nodeId : null)}
-    />
-  );
-}
-
-/**
- * Poll the mesh roster for the device picker. Gated on the `leanzeroLink` capability and a
- * `connected` auth state — the common case right now (no worker deployed) yields no peers, so
- * the picker is hidden and the whole view behaves exactly as before. A transient status blip
- * keeps the last roster rather than yanking the user's selection back to local; a definitive
- * "not connected" clears the peers.
- */
-function useLinkNodes(enabled: boolean): NodesResponse | null {
-  const [nodes, setNodes] = useState<NodesResponse | null>(null);
-  useEffect(() => {
-    if (!enabled) {
-      setNodes(null);
-      return undefined;
-    }
-    let disposed = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const poll = async () => {
-      try {
-        const st = await leanzeroLinkStatus();
-        if (disposed) return;
-        if (st.auth.state === 'connected') {
-          try {
-            const n = await leanzeroLinkNodes();
-            if (!disposed) setNodes(n);
-          } catch {
-            // Keep the last roster on a transient nodes() failure — "connected" still holds.
-          }
-        } else {
-          setNodes(null);
-        }
-      } catch {
-        // Status read failed (worker unreachable): keep the last roster, don't yank selection.
-      }
-    };
-    const start = () => {
-      if (timer != null) return;
-      void poll();
-      timer = setInterval(() => void poll(), 5000);
-    };
-    const stop = () => {
-      if (timer != null) {
-        clearInterval(timer);
-        timer = null;
-      }
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') start();
-      else stop();
-    };
-    onVisibility();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      disposed = true;
-      stop();
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, [enabled]);
-  return nodes;
 }
 
 // ---------------------------------------------------------------------------
@@ -2517,125 +2172,49 @@ function useLinkNodes(enabled: boolean): NodesResponse | null {
 
 type MlxTab = 'engine' | 'models' | 'sampling';
 
-const MlxEngineView: React.FC = () => {
+const VIEW_I18N = defineMessages({
+  samplingOn: { id: 'mlxEngineView.samplingOn', defaultMessage: 'Profiles on' },
+  settingsFailed: {
+    id: 'mlxEngineView.settingsFailed',
+    defaultMessage: 'Could not read the engine settings.',
+  },
+});
+
+/** A draft's key: the Mac and the model (two Macs keep separate profiles for the same model). */
+function draftKey(macKey: string, modelId: string): string {
+  return `${macKey}\n${modelId}`;
+}
+
+function MlxEngineViewBody() {
   const [tab, setTab] = useState<MlxTab>('engine');
-
-  // Which linked device every op targets. `targetNodeId === null` means THIS device (local):
-  // activeNodeId is then `undefined`, omitted from the wire, so the local path is byte-identical.
-  const { leanzeroLink, mlxDistributed } = useFeatures();
+  const { mlxDistributed } = useFeatures();
   const intl = useIntl();
-  const linkNodes = useLinkNodes(leanzeroLink);
-  const peers = useMemo(() => linkNodes?.peers ?? [], [linkNodes]);
-  const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
-  const [nodeSwitching, setNodeSwitching] = useState(false);
+  const macsCtx = useMacs();
+  const selfFacts = macsCtx.factsOf(SELF_KEY);
+  const models = useMemo(() => selfFacts.models ?? [], [selfFacts.models]);
 
-  const selectedPeer = useMemo(
-    () => (targetNodeId != null ? (peers.find((p) => p.node_id === targetNodeId) ?? null) : null),
-    [peers, targetNodeId]
-  );
-  const activeNodeId = selectedPeer ? selectedPeer.node_id : undefined;
-  const remoteHostname = selectedPeer ? selectedPeer.hostname : null;
-
-  // The distributed engine is supervised by THIS Mac only: read while this device is the target.
-  const distributed = useMlxDistributedStatus(mlxDistributed && activeNodeId === undefined);
-  const modeLabel = formatMlxMode(intl, modeSummary(distributed.status), remoteHostname);
-
-  // Copying a model to a linked device exists only when a peer is linked: with no peer nothing
-  // is fetched and no copy control renders — a single machine is exactly as before.
-  const peerKey = useMemo(
-    () =>
-      peers
-        .map((p) => p.node_id)
-        .sort()
-        .join(','),
-    [peers]
-  );
-  const replicas = useModelReplicas({
-    enabled: leanzeroLink && peers.length > 0 && tab === 'models',
-    selfNodeId: linkNodes?.self.node_id ?? null,
-    senderNodeId: activeNodeId,
-    peerKey,
-  });
-
-  const deviceTargets = useMemo<DeviceTarget[]>(() => {
-    const self: DeviceTarget = {
-      nodeId: null,
-      hostname: linkNodes?.self.hostname ?? 'This device',
-      isSelf: true,
-    };
-    return [
-      self,
-      ...peers.map((p) => ({
-        nodeId: p.node_id,
-        hostname: p.hostname,
-        isSelf: false,
-        status: p.status,
-      })),
-    ];
-  }, [linkNodes, peers]);
-
-  // A selected peer that drops off the roster (disabled / removed) falls back to This device —
-  // never leave a stale peer id driving the ops once it is gone.
-  useEffect(() => {
-    if (targetNodeId != null && !peers.some((p) => p.node_id === targetNodeId)) {
-      setTargetNodeId(null);
-    }
-  }, [peers, targetNodeId]);
-
-  // The live target, mirrored into a ref so an in-flight fetch that resolves AFTER a device
-  // switch is DROPPED rather than writing the previous node's data over the new one (TRUTH LAYER).
-  const activeNodeRef = useRef(activeNodeId);
-  useEffect(() => {
-    activeNodeRef.current = activeNodeId;
-  }, [activeNodeId]);
+  // The distributed engine is supervised by THIS Mac.
+  const distributed = useMlxDistributedStatus(mlxDistributed);
+  const modeLabel = formatMlxMode(intl, modeSummary(distributed.status), null);
 
   const [status, setStatus] = useState<MlxEngineStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [settings, setSettings] = useState<MlxEngineSettings | null>(null);
-  const [models, setModels] = useState<MlxLocalModel[]>([]);
-  const [disk, setDisk] = useState<{ availableBytes: number; totalBytes: number } | null>(null);
-
-  // Download tracking lives in the VIEW SHELL, not the Models tab: switching tabs
-  // mid-download must keep the rows live and the poll running while the view is open.
-  const [downloads, setDownloads] = useState<Record<string, MlxDownloadProgress>>({});
-  useEffect(() => {
-    let disposed = false;
-    const ids = readTrackedDownloads(activeNodeId ?? 'local');
-    void Promise.all(
-      [...ids].map(async (id) => {
-        const progress = await mlxEngineDownloadProgress(id, activeNodeId);
-        if (!disposed && progress && progress.state !== 'cancelled') {
-          setDownloads((prev) => ({ ...prev, [id]: progress }));
-        }
-      })
-    ).catch((error) => {
-      if (!disposed)
-        setDownloadErrors({ tracking: mlxErrorMessage(error, 'Could not reconnect downloads.') });
-    });
-    return () => {
-      disposed = true;
-    };
-  }, [activeNodeId]);
-  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
-  // A cancel DELETES the partial on disk. On a REMOTE device that is another machine's disk, so
-  // it goes through a confirm that names the device; a local cancel stays immediate (as before).
-  const [pendingCancel, setPendingCancel] = useState<string | null>(null);
 
   const [browseFilters, setBrowseFilters] = useState<MlxBrowseFilters | null>(null);
   const [browseFiltersError, setBrowseFiltersError] = useState<string | null>(null);
-  // The device whose filter vocabulary is loaded (null = none yet). A node switch re-crawls
-  // for the new device — a peer's backend keeps its own cache.
-  const browseFiltersFor = useRef<{ node: string | undefined } | null>(null);
+  const browseFiltersLoaded = useRef(false);
 
   const [mountModelId, setMountModelId] = useState<string | null>(null);
   const [mountError, setMountError] = useState<string | null>(null);
-  const [mountRefusal, setMountRefusal] = useState<MlxMountRefusal | null>(null);
   const [engineBusy, setEngineBusy] = useState(false);
 
-  // Per-model sampling: ONLY models the user actually edited live here, keyed by model id
-  // — so two models keep separate unsaved drafts and both survive tab/model switches.
+  // Per-model sampling, per Mac: ONLY profiles the user actually edited live here, keyed by Mac and
+  // model — two models keep separate unsaved drafts and both survive tab/model/Mac switches.
   const [profileDrafts, setProfileDrafts] = useState<Record<string, NumericDrafts>>({});
+  const [samplingMac, setSamplingMac] = useState<string>(SELF_KEY);
   const [samplingModelId, setSamplingModelId] = useState<string | null>(null);
+  const [peerSettings, setPeerSettings] = useState<Record<string, MlxEngineSettings>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -2669,73 +2248,61 @@ const MlxEngineView: React.FC = () => {
   // The engine the live figures came from: a switch between engines starts the history afresh.
   const liveSource = useRef<string | null>(null);
 
-  const refreshLive = useCallback(
-    async (next: MlxEngineStatus) => {
-      const dist = activeNodeId === undefined ? distributedNow.current : null;
-      const distUp =
-        dist && ownsTheMac(dist) && (dist.state === 'ready' || dist.state === 'serving')
-          ? dist
-          : null;
-      const source = distUp ? 'distributed' : next.state === 'running' ? 'single' : null;
-      if (source !== liveSource.current) {
-        liveSource.current = source;
-        setTpsHistory([]);
-        setLastRates(NO_RATES);
-      }
-      if (source === null) {
-        setLive(null);
-        setServing(null);
-        return;
-      }
-      if (activeNodeId !== undefined) {
-        // The engine's base URL is loopback on the PEER; reading it here would read this Mac's engine.
-        setLive({
-          ok: false,
-          detail: `live stats are read on this device only — this engine runs on ${remoteHostname ?? 'a linked device'}`,
-        });
-        return;
-      }
-      const baseUrl = distUp ? distUp.baseUrl : next.baseUrl;
-      if (!baseUrl) {
-        setLive({
-          ok: false,
-          detail: distUp
-            ? 'the distributed engine reported no base URL'
-            : 'the running engine reported no base URL',
-        });
-        return;
-      }
-      if (liveInFlight.current) return;
-      liveInFlight.current = true;
-      try {
-        const [read, who] = await Promise.all([readMlxLiveStatus(baseUrl), readMlxServing()]);
-        if (activeNodeRef.current !== activeNodeId) return;
-        setLive(read);
-        setServing(who);
-        if (read.ok) {
-          const stats = read.stats;
-          setLastRates((prev) => advanceLastRates(prev, stats));
-          if (stats.uptimeS != null) {
-            const sample = { uptimeS: stats.uptimeS, tps: liveDecodeTps(stats) };
-            setTpsHistory((h) => pushSample(h, sample));
-          }
+  const refreshLive = useCallback(async (next: MlxEngineStatus) => {
+    // The page manages this Mac only now (the Manage-on switch is gone): the live read is this Mac's
+    // distributed rank 0 while that engine owns the Mac, else the single engine.
+    const dist = distributedNow.current;
+    const distUp =
+      dist && ownsTheMac(dist) && (dist.state === 'ready' || dist.state === 'serving')
+        ? dist
+        : null;
+    const source = distUp ? 'distributed' : next.state === 'running' ? 'single' : null;
+    if (source !== liveSource.current) {
+      liveSource.current = source;
+      setTpsHistory([]);
+      setLastRates(NO_RATES);
+    }
+    if (source === null) {
+      setLive(null);
+      setServing(null);
+      return;
+    }
+    const baseUrl = distUp ? distUp.baseUrl : next.baseUrl;
+    if (!baseUrl) {
+      setLive({
+        ok: false,
+        detail: distUp
+          ? 'the distributed engine reported no base URL'
+          : 'the running engine reported no base URL',
+      });
+      return;
+    }
+    if (liveInFlight.current) return;
+    liveInFlight.current = true;
+    try {
+      const [read, who] = await Promise.all([readMlxLiveStatus(baseUrl), readMlxServing()]);
+      setLive(read);
+      setServing(who);
+      if (read.ok) {
+        const stats = read.stats;
+        setLastRates((prev) => advanceLastRates(prev, stats));
+        if (stats.uptimeS != null) {
+          const sample = { uptimeS: stats.uptimeS, tps: liveDecodeTps(stats) };
+          setTpsHistory((h) => pushSample(h, sample));
         }
-      } finally {
-        liveInFlight.current = false;
       }
-    },
-    [activeNodeId, remoteHostname]
-  );
+    } finally {
+      liveInFlight.current = false;
+    }
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     let next: MlxEngineStatus;
     try {
-      next = await mlxEngineStatus(activeNodeId, mountModelId);
-      if (activeNodeRef.current !== activeNodeId) return; // switched away mid-flight — drop
+      next = await mlxEngineStatus(undefined, mountModelId);
       setStatus(next);
       setStatusError(null);
     } catch (error) {
-      if (activeNodeRef.current !== activeNodeId) return;
       setStatusError(mlxErrorMessage(error, 'Could not read the engine status.'));
       return;
     }
@@ -2748,7 +2315,7 @@ const MlxEngineView: React.FC = () => {
       setMountWatch(null);
     }
     await refreshLive(next);
-  }, [activeNodeId, refreshLive, mountModelId]);
+  }, [refreshLive, mountModelId]);
 
   // Poll status every 2s while this window is actually visible; stop when hidden.
   useEffect(() => {
@@ -2776,267 +2343,33 @@ const MlxEngineView: React.FC = () => {
     };
   }, [refreshStatus]);
 
-  const refreshModels = useCallback(async () => {
-    try {
-      const list = await mlxEngineModelsList(activeNodeId);
-      if (activeNodeRef.current !== activeNodeId) return; // switched away mid-flight — drop
-      setModels(list.models);
-      setDisk({ availableBytes: list.diskAvailableBytes, totalBytes: list.diskTotalBytes });
-    } catch (error) {
-      if (activeNodeRef.current !== activeNodeId) return;
-      // The models list failing is a real fact; show it where models are picked.
-      setMountError(mlxErrorMessage(error, 'Could not list local models.'));
-    } finally {
-      // The node's models have landed (or failed loudly) — the switch is done.
-      if (activeNodeRef.current === activeNodeId) setNodeSwitching(false);
-    }
-  }, [activeNodeId]);
-
-  // Filter vocabularies load once per (device, view-open) (cached backend-side), on the first
-  // visit to the Models tab; a failure leaves free text working and says so. Switching the
-  // device re-loads for the new node.
+  // Filter vocabularies load once per view-open (cached backend-side), on the first visit to the
+  // Models tab; a failure leaves free text working and says so.
   useEffect(() => {
-    if (tab !== 'models') return;
-    if (browseFiltersFor.current && browseFiltersFor.current.node === activeNodeId) return;
-    browseFiltersFor.current = { node: activeNodeId };
-    setBrowseFilters(null);
-    setBrowseFiltersError(null);
+    if (tab !== 'models' || browseFiltersLoaded.current) return;
+    browseFiltersLoaded.current = true;
     void (async () => {
       try {
-        setBrowseFilters(await mlxEngineBrowseFilters(activeNodeId));
+        setBrowseFilters(await mlxEngineBrowseFilters());
       } catch (error) {
         setBrowseFiltersError(mlxErrorMessage(error, 'Could not load the filter vocabularies.'));
       }
     })();
-  }, [tab, activeNodeId]);
+  }, [tab]);
 
-  const setDownloadError = useCallback((repoId: string, message: string) => {
-    setDownloadErrors((prev) => ({ ...prev, [repoId]: message }));
-  }, []);
-
-  const clearDownloadError = useCallback((repoId: string) => {
-    setDownloadErrors((prev) => {
-      if (!(repoId in prev)) return prev;
-      const next = { ...prev };
-      delete next[repoId];
-      return next;
-    });
-  }, []);
-
-  /**
-   * Pull one download's real progress. "cancelled" DROPS the row — the backend deleted
-   * its partial repo dir — and refreshes the local list so the dir's absence shows.
-   */
-  const syncProgress = useCallback(
-    async (repoId: string, opts: { dropIfUntracked?: boolean } = {}) => {
-      try {
-        const progress = await mlxEngineDownloadProgress(repoId, activeNodeId);
-        if (activeNodeRef.current !== activeNodeId) return;
-        if (!progress) {
-          if (opts.dropIfUntracked) {
-            setDownloads((prev) => {
-              const next = { ...prev };
-              delete next[repoId];
-              return next;
-            });
-          }
-          return;
-        }
-        if (progress.state === 'cancelled') {
-          setDownloads((prev) => {
-            const next = { ...prev };
-            delete next[repoId];
-            return next;
-          });
-          refreshModels();
-          return;
-        }
-        setDownloads((prev) => ({ ...prev, [repoId]: progress }));
-        if (progress.state === 'done') refreshModels();
-      } catch {
-        // transient poll failure — keep the last real numbers rather than inventing any
-      }
-    },
-    [refreshModels, activeNodeId]
-  );
-
-  const startDownload = useCallback(
-    async (repoId: string) => {
-      const key = activeNodeId ?? 'local';
-      const tracked = readTrackedDownloads(key);
-      tracked.add(repoId);
-      sessionStorage.setItem(`mlx-downloads:${key}`, JSON.stringify([...tracked]));
-      clearDownloadError(repoId);
-      setDownloads((prev) => ({
-        ...prev,
-        [repoId]: { state: 'queued', totalBytes: 0, downloadedBytes: 0 },
-      }));
-      try {
-        await mlxEngineDownload(repoId, activeNodeId);
-      } catch (error) {
-        setDownloads((prev) => {
-          const next = { ...prev };
-          delete next[repoId];
-          return next;
-        });
-        setDownloadError(repoId, mlxErrorMessage(error, 'Download failed to start.'));
-      }
-    },
-    [clearDownloadError, setDownloadError, activeNodeId]
-  );
-
-  const pauseDownload = useCallback(
-    async (repoId: string) => {
-      try {
-        await mlxEngineDownloadPause(repoId, activeNodeId);
-      } catch (error) {
-        setDownloadError(repoId, mlxErrorMessage(error, 'Pause failed.'));
-      }
-      await syncProgress(repoId);
-    },
-    [setDownloadError, syncProgress, activeNodeId]
-  );
-
-  /** Also the entry point for UNTRACKED partial residue on disk (incomplete local models). */
-  const resumeDownload = useCallback(
-    async (repoId: string) => {
-      const key = activeNodeId ?? 'local';
-      const tracked = readTrackedDownloads(key);
-      tracked.add(repoId);
-      sessionStorage.setItem(`mlx-downloads:${key}`, JSON.stringify([...tracked]));
-      clearDownloadError(repoId);
-      setDownloads((prev) =>
-        prev[repoId] != null
-          ? prev
-          : { ...prev, [repoId]: { state: 'queued', totalBytes: 0, downloadedBytes: 0 } }
-      );
-      try {
-        await mlxEngineDownloadResume(repoId, activeNodeId);
-      } catch (error) {
-        setDownloadError(repoId, mlxErrorMessage(error, 'Resume failed.'));
-      }
-      // Real state replaces the optimistic entry; a refused untracked resume drops it.
-      await syncProgress(repoId, { dropIfUntracked: true });
-    },
-    [clearDownloadError, setDownloadError, syncProgress, activeNodeId]
-  );
-
-  const cancelDownload = useCallback(
-    async (repoId: string) => {
-      try {
-        await mlxEngineDownloadCancel(repoId, activeNodeId);
-      } catch (error) {
-        setDownloadError(repoId, mlxErrorMessage(error, 'Cancel failed.'));
-        return;
-      }
-      // Paused/failed cancels delete synchronously — this sync sees "cancelled" and the
-      // row disappears now. An active cancel stops between chunks; the 1s poll below
-      // keeps following it until the backend reports "cancelled".
-      await syncProgress(repoId, { dropIfUntracked: true });
-    },
-    [setDownloadError, syncProgress, activeNodeId]
-  );
-
-  const downloadHandlers = useMemo<DownloadHandlers>(
-    () => ({
-      onDownload: (repoId) => void startDownload(repoId),
-      onPause: (repoId) => void pauseDownload(repoId),
-      onResume: (repoId) => void resumeDownload(repoId),
-      // A cancel deletes the partial from disk. On a remote device that is ANOTHER machine's
-      // disk — confirm first, naming the device. Local stays immediate, byte-identical.
-      onCancel: (repoId) => {
-        if (remoteHostname) setPendingCancel(repoId);
-        else void cancelDownload(repoId);
-      },
-    }),
-    [startDownload, pauseDownload, resumeDownload, cancelDownload, remoteHostname]
-  );
-
-  /**
-   * Deleting a model orphans any finished download row for it (caught live: a deleted
-   * model's row kept saying "done" and the Download action never came back). Drop it.
-   */
-  const clearDownloadFor = useCallback(
-    (repoId: string) => {
-      setDownloads((prev) => {
-        if (!(repoId in prev)) return prev;
-        const next = { ...prev };
-        delete next[repoId];
-        return next;
-      });
-      clearDownloadError(repoId);
-    },
-    [clearDownloadError]
-  );
-
-  // Poll live downloads every second — real bytes, never a fake animation. This runs at
-  // the shell so it survives tab switches; it stops only when nothing is active.
-  const activeDownloadKey = useMemo(
-    () =>
-      Object.entries(downloads)
-        .filter(([, p]) => p.state === 'queued' || p.state === 'downloading')
-        .map(([id]) => id)
-        .sort()
-        .join('\n'),
-    [downloads]
-  );
   useEffect(() => {
-    if (activeDownloadKey === '') return undefined;
-    const repoIds = activeDownloadKey.split('\n');
-    const timer = setInterval(() => {
-      for (const repoId of repoIds) void syncProgress(repoId);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [activeDownloadKey, syncProgress]);
-
-  // First load AND every device switch. On a switch the previous device's data is dropped so
-  // nothing stale reads as the new node's truth (TRUTH LAYER); a loading state shows until this
-  // node's models + settings + status land. On first mount there is nothing to drop — the local
-  // load is byte-identical to before.
-  const nodeInitialized = useRef(false);
-  useEffect(() => {
-    if (nodeInitialized.current) {
-      setNodeSwitching(true);
-      setStatus(null);
-      setSettings(null);
-      setModels([]);
-      setDisk(null);
-      setStatusError(null);
-      setMountError(null);
-      setSaveError(null);
-      setDownloads({});
-      setDownloadErrors({});
-      setPendingCancel(null);
-      setMountModelId(null);
-      setSamplingModelId(null);
-      setProfileDrafts({});
-      setLive(null);
-      setTpsHistory([]);
-      setLastRates(NO_RATES);
-      setServing(null);
-      setMountWatch(null);
-      settledFreeGb.current = null;
-      defaultedPicker.current = false;
-      userPickedModel.current = false;
-    }
-    nodeInitialized.current = true;
-    refreshModels();
     void (async () => {
       try {
-        const next = await mlxEngineSettingsRead(activeNodeId);
-        if (activeNodeRef.current !== activeNodeId) return; // switched away mid-flight — drop
-        setSettings(next);
+        setSettings(await mlxEngineSettingsRead());
       } catch (error) {
-        if (activeNodeRef.current !== activeNodeId) return;
-        setSaveError(mlxErrorMessage(error, 'Could not read the engine settings.'));
+        setSaveError(mlxErrorMessage(error, intl.formatMessage(VIEW_I18N.settingsFailed)));
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeNodeId]);
+  }, [intl]);
 
   // Picker follows truth: while the engine is running or mounting and the user has not
   // explicitly picked something else this visit, the picker shows the mounted model — so a
-  // window opened onto an already-running engine reads "Mounted", never a stale "Mount".
+  // window opened onto an already-running engine reads the live model, never a stale pick.
   // An explicit user selection is never overridden. With the engine down, the picker defaults
   // once to the persisted model.
   useEffect(() => {
@@ -3054,43 +2387,73 @@ const MlxEngineView: React.FC = () => {
     }
   }, [status?.state, status?.modelId, settings?.modelId]);
 
-  // Sampling picker default: the mounted model when running, else the last-mounted
-  // settings.modelId, else the first complete local model. Once set (default, explicit
-  // pick, or the Models-tab shortcut) it is never yanked from under the user.
+  // The Mac whose sampling profiles the Sampling tab edits: its settings, models and engine.
+  const samplingMacObj = macsCtx.macByKey(samplingMac) ?? macsCtx.self;
+  const samplingIsSelf = samplingMacObj.isSelf;
+  const samplingSettings = samplingIsSelf ? settings : (peerSettings[samplingMac] ?? null);
+  const samplingModels = useMemo(
+    () => (samplingIsSelf ? models : (macsCtx.factsOf(samplingMac).models ?? [])),
+    [samplingIsSelf, models, macsCtx, samplingMac]
+  );
+  const samplingStatus = samplingIsSelf ? status : macsCtx.factsOf(samplingMac).status;
+
+  useEffect(() => {
+    if (samplingIsSelf || peerSettings[samplingMac]) return;
+    const mac = macsCtx.macByKey(samplingMac);
+    if (!mac) return;
+    let live = true;
+    mlxEngineSettingsRead(macTarget(mac))
+      .then((s) => live && setPeerSettings((prev) => ({ ...prev, [samplingMac]: s })))
+      .catch(
+        (e) =>
+          live &&
+          setSaveError(
+            macsCtx.describeError(
+              mac,
+              mlxErrorMessage(e, intl.formatMessage(VIEW_I18N.settingsFailed))
+            )
+          )
+      );
+    return () => {
+      live = false;
+    };
+  }, [samplingIsSelf, samplingMac, peerSettings, macsCtx, intl]);
+
+  // Sampling picker default: the running model, else the last-mounted settings.modelId, else the
+  // first complete model on that Mac. Once set (default, explicit pick, or the Models-tab shortcut)
+  // it is never yanked from under the user.
   useEffect(() => {
     if (samplingModelId != null) return;
     const candidate =
-      (status?.state === 'running' && status.modelId) ||
-      settings?.modelId ||
-      models.find((m) => m.complete)?.id ||
+      (samplingStatus?.state === 'running' && samplingStatus.modelId) ||
+      samplingSettings?.modelId ||
+      samplingModels.find((m) => m.complete)?.id ||
       null;
     if (candidate) setSamplingModelId(candidate);
-  }, [samplingModelId, status?.state, status?.modelId, settings?.modelId, models]);
+  }, [samplingModelId, samplingStatus, samplingSettings?.modelId, samplingModels]);
 
   const onMount = useCallback(() => {
     if (!mountModelId) return;
     void (async () => {
       setEngineBusy(true);
       setMountError(null);
-      setMountRefusal(null);
       try {
-        await mlxEngineMount(mountModelId, activeNodeId);
+        await mlxEngineMount(mountModelId);
       } catch (error) {
         setMountError(mlxErrorMessage(error, 'Mount failed.'));
-        if (error instanceof MlxMountRefusedError) setMountRefusal(error.refusal);
       } finally {
         setEngineBusy(false);
         void refreshStatus();
       }
     })();
-  }, [mountModelId, refreshStatus, activeNodeId]);
+  }, [mountModelId, refreshStatus]);
 
   const onUnmount = useCallback(() => {
     void (async () => {
       setEngineBusy(true);
       setMountError(null);
       try {
-        await mlxEngineUnmount(activeNodeId);
+        await mlxEngineUnmount();
       } catch (error) {
         setMountError(mlxErrorMessage(error, 'Unmount failed.'));
       } finally {
@@ -3098,70 +2461,93 @@ const MlxEngineView: React.FC = () => {
         void refreshStatus();
       }
     })();
-  }, [refreshStatus, activeNodeId]);
+  }, [refreshStatus]);
 
-  const onRemount = useCallback(() => {
-    const modelId = status?.modelId ?? settings?.modelId;
-    if (!modelId) return;
-    void (async () => {
-      setEngineBusy(true);
-      setMountError(null);
-      try {
-        await mlxEngineUnmount(activeNodeId);
-        await mlxEngineMount(modelId, activeNodeId);
-      } catch (error) {
-        setMountError(mlxErrorMessage(error, 'Remount failed.'));
-      } finally {
-        setEngineBusy(false);
+  /** Remount the Mac whose profiles changed: this Mac's engine, or the other Mac's over Link. */
+  const remountOn = useCallback(
+    (macKey: string) => {
+      const mac = macsCtx.macByKey(macKey) ?? macsCtx.self;
+      const macStatus = mac.isSelf ? status : macsCtx.factsOf(mac.key).status;
+      const macSettings = mac.isSelf ? settings : peerSettings[mac.key];
+      const modelId = macStatus?.modelId ?? macSettings?.modelId;
+      if (!modelId) return;
+      void (async () => {
+        setEngineBusy(true);
+        setMountError(null);
+        try {
+          await mlxEngineUnmount(macTarget(mac));
+          await mlxEngineMount(modelId, macTarget(mac));
+        } catch (error) {
+          setMountError(macsCtx.describeError(mac, mlxErrorMessage(error, 'Remount failed.')));
+        } finally {
+          setEngineBusy(false);
+          if (mac.isSelf) void refreshStatus();
+          else void macsCtx.refreshStatus(mac.key);
+        }
+      })();
+    },
+    [macsCtx, peerSettings, refreshStatus, settings, status]
+  );
+  const onRemount = useCallback(() => remountOn(SELF_KEY), [remountOn]);
+
+  const saveSettingsOn = useCallback(
+    async (macKey: string, next: MlxEngineSettings): Promise<MlxEngineSettings> => {
+      const mac = macsCtx.macByKey(macKey) ?? macsCtx.self;
+      const saved = await mlxEngineSettingsUpdate(next, macTarget(mac));
+      if (mac.isSelf) {
+        setSettings(saved);
         void refreshStatus();
+      } else {
+        setPeerSettings((prev) => ({ ...prev, [mac.key]: saved }));
+        void macsCtx.refreshStatus(mac.key);
       }
-    })();
-  }, [status?.modelId, settings?.modelId, refreshStatus, activeNodeId]);
+      return saved;
+    },
+    [macsCtx, refreshStatus]
+  );
 
   const savedDraftsForSelected = useMemo(
     () =>
-      settings && samplingModelId
-        ? draftsFromProfile(settings.modelProfiles?.[samplingModelId])
+      samplingSettings && samplingModelId
+        ? draftsFromProfile(samplingSettings.modelProfiles?.[samplingModelId])
         : null,
-    [settings, samplingModelId]
+    [samplingSettings, samplingModelId]
   );
   const draftsForSelected =
-    samplingModelId != null ? (profileDrafts[samplingModelId] ?? savedDraftsForSelected) : null;
+    samplingModelId != null
+      ? (profileDrafts[draftKey(samplingMac, samplingModelId)] ?? savedDraftsForSelected)
+      : null;
 
   const setProfileDraft = useCallback(
     (key: ProfileDraftKey, text: string) => {
-      if (!samplingModelId || !settings) return;
+      if (!samplingModelId || !samplingSettings) return;
+      const k = draftKey(samplingMac, samplingModelId);
       setProfileDrafts((prev) => {
         const base =
-          prev[samplingModelId] ?? draftsFromProfile(settings.modelProfiles?.[samplingModelId]);
-        return { ...prev, [samplingModelId]: { ...base, [key]: text } };
+          prev[k] ?? draftsFromProfile(samplingSettings.modelProfiles?.[samplingModelId]);
+        return { ...prev, [k]: { ...base, [key]: text } };
       });
     },
-    [samplingModelId, settings]
-  );
-
-  const saveSettings = useCallback(
-    async (next: MlxEngineSettings) => {
-      const saved = await mlxEngineSettingsUpdate(next, activeNodeId);
-      setSettings(saved);
-      void refreshStatus();
-    },
-    [refreshStatus, activeNodeId]
+    [samplingMac, samplingModelId, samplingSettings]
   );
 
   const onSaveProfile = useCallback(() => {
-    if (!settings || !samplingModelId) return;
-    const drafts = profileDrafts[samplingModelId];
+    if (!samplingSettings || !samplingModelId) return;
+    const k = draftKey(samplingMac, samplingModelId);
+    const drafts = profileDrafts[k];
     if (!drafts) return;
     void (async () => {
       setSaving(true);
       setSaveError(null);
       try {
-        await saveSettings(settingsWithProfile(settings, samplingModelId, drafts));
+        await saveSettingsOn(
+          samplingMac,
+          settingsWithProfile(samplingSettings, samplingModelId, drafts)
+        );
         // This model's edits are now the saved truth; other models keep their own drafts.
         setProfileDrafts((prev) => {
           const next = { ...prev };
-          delete next[samplingModelId];
+          delete next[k];
           return next;
         });
       } catch (error) {
@@ -3170,45 +2556,49 @@ const MlxEngineView: React.FC = () => {
         setSaving(false);
       }
     })();
-  }, [settings, samplingModelId, profileDrafts, saveSettings]);
+  }, [samplingSettings, samplingModelId, samplingMac, profileDrafts, saveSettingsOn]);
 
-  const openSamplingFor = useCallback((modelId: string) => {
+  const openSamplingFor = useCallback((macKey: string, modelId: string) => {
+    setSamplingMac(macKey);
     setSamplingModelId(modelId);
     setTab('sampling');
   }, []);
 
+  const managed = macsCtx.macs.filter((m) => m.online && !peerRefuses(m, 'manage'));
+  const samplingMacPicker =
+    managed.length > 1 ? (
+      <div className="flex flex-wrap items-center gap-2" data-testid="mlx-sampling-mac">
+        <span className={TYPE.meta}>{intl.formatMessage(VIEW_I18N.samplingOn)}</span>
+        <Segmented<string>
+          size="sm"
+          aria-label={intl.formatMessage(VIEW_I18N.samplingOn)}
+          options={managed.map((m) => ({ value: m.key, label: m.name }))}
+          value={samplingMac}
+          onChange={(key) => {
+            setSamplingMac(key);
+            setSamplingModelId(null);
+          }}
+        />
+      </div>
+    ) : null;
+
+  const splitDetails = mlxDistributed ? (
+    <DistributedEngineSection
+      capability={mlxDistributed}
+      embedded
+      status={distributed.status}
+      statusError={distributed.error}
+      onRefresh={distributed.refresh}
+      models={models}
+      singleStatus={status}
+      onSingleChanged={() => void refreshStatus()}
+    />
+  ) : null;
+
   // The page shell (MainPanelLayout, the Goose Swarm header, the top-level tab bar and the
-  // scroll area) belongs to LeanZeroSwarmView — this component is the LeanZero MLX tab's content:
-  // the engine sub-tabs (Engine / Models / Sampling) plus everything under them, unchanged.
+  // scroll area) belongs to LeanZeroSwarmView — this component is the LeanZero MLX tab's content.
   return (
     <div className="flex flex-col gap-4">
-      {/* Device picker — only when there ARE peers (capability present + connected + a peer on
-          the mesh). With no worker deployed the mesh is not connected, so this is hidden and the
-          view behaves exactly as before, all ops on THIS device. */}
-      {peers.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={TYPE.meta}>Manage on</span>
-          <DeviceTargetPicker
-            targets={deviceTargets}
-            value={targetNodeId}
-            onChange={setTargetNodeId}
-            disabled={engineBusy || nodeSwitching}
-          />
-          {nodeSwitching && (
-            <Chip tone="warn" icon={<Loader2 className="animate-spin" />}>
-              switching device
-            </Chip>
-          )}
-        </div>
-      )}
-      {selectedPeer && (
-        <ToneBanner
-          tone="accent"
-          label="Remote"
-          text={`Managing models on ${selectedPeer.hostname} (remote)`}
-        />
-      )}
-
       {/* The engine's own section switch sits UNDER the Providers strip, so it is the subordinate
           underline register, on the row's hairline — never a second solid strip that reads as
           another top nav. */}
@@ -3223,7 +2613,7 @@ const MlxEngineView: React.FC = () => {
               label: (
                 <>
                   Models
-                  <span className={cx('text-lz-meta', TNUM)}>{models.length}</span>
+                  <span className={cx('text-lz-meta', TNUM)}>{matrixRowCount(macsCtx)}</span>
                 </>
               ),
             },
@@ -3258,7 +2648,6 @@ const MlxEngineView: React.FC = () => {
           mountModelId={mountModelId}
           setMountModelId={pickMountModel}
           mountError={mountError}
-          mountRefusal={mountRefusal}
           engineBusy={engineBusy}
           onMount={onMount}
           onUnmount={onUnmount}
@@ -3269,48 +2658,28 @@ const MlxEngineView: React.FC = () => {
           serving={serving}
           mountWatch={mountWatch}
           distributed={distributed.status}
+          distributedCapability={mlxDistributed}
+          splitDetails={splitDetails}
           modeLabel={modeLabel}
-        />
-      )}
-      {tab === 'engine' && (
-        <DistributedEngineSection
-          capability={mlxDistributed}
-          peerHostname={remoteHostname}
-          status={distributed.status}
-          statusError={distributed.error}
-          onRefresh={distributed.refresh}
-          models={models}
-          singleStatus={status}
-          onSingleChanged={() => void refreshStatus()}
         />
       )}
       {tab === 'models' && (
         <ModelsSection
           settings={settings}
-          models={models}
-          disk={disk}
-          mountedModelId={status?.modelId ?? null}
-          refreshModels={refreshModels}
-          saveSettings={saveSettings}
+          saveSettings={saveSettingsOn}
           onOpenSampling={openSamplingFor}
-          downloads={downloads}
-          downloadErrors={downloadErrors}
-          downloadHandlers={downloadHandlers}
-          onModelDeleted={clearDownloadFor}
           filters={browseFilters}
           filtersError={browseFiltersError}
-          nodeId={activeNodeId}
-          remoteHostname={remoteHostname}
-          replicas={replicas}
         />
       )}
       {tab === 'sampling' && (
         <SamplingSection
-          status={status}
-          settings={settings}
+          macPicker={samplingMacPicker}
+          status={samplingStatus}
+          settings={samplingSettings}
           engineBusy={engineBusy}
-          onRemount={onRemount}
-          models={models}
+          onRemount={() => remountOn(samplingMac)}
+          models={samplingModels}
           selectedModelId={samplingModelId}
           onSelectModel={setSamplingModelId}
           drafts={draftsForSelected}
@@ -3321,42 +2690,15 @@ const MlxEngineView: React.FC = () => {
           saveError={saveError}
         />
       )}
-
-      {/* Cancelling a remote download deletes the partial from THAT device's disk — a destructive
-          op on another machine, so it names the device and asks first (a local cancel does not). */}
-      <ConfirmationModal
-        isOpen={pendingCancel !== null}
-        title="Cancel download"
-        message={
-          pendingCancel
-            ? `Cancel the download of ${pendingCancel}${
-                remoteHostname ? ` on ${remoteHostname}` : ''
-              } and delete its partial files from ${
-                remoteHostname ? "that device's disk" : 'disk'
-              }?`
-            : ''
-        }
-        confirmLabel="Cancel download"
-        cancelLabel="Keep"
-        confirmVariant="destructive"
-        onConfirm={() => {
-          if (pendingCancel) void cancelDownload(pendingCancel);
-          setPendingCancel(null);
-        }}
-        onCancel={() => setPendingCancel(null)}
-      />
     </div>
   );
-};
+}
+
+/** The LeanZero MLX tab: inside the Providers view's MacsProvider, or its own when rendered alone. */
+const MlxEngineView: React.FC = () => (
+  <WithMacs>
+    <MlxEngineViewBody />
+  </WithMacs>
+);
 
 export default MlxEngineView;
-
-function readTrackedDownloads(nodeId: string): Set<string> {
-  const stored = sessionStorage.getItem(`mlx-downloads:${nodeId}`);
-  if (!stored) return new Set();
-  const ids: unknown = JSON.parse(stored);
-  if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string')) {
-    throw new Error('Saved download tracking is invalid.');
-  }
-  return new Set(ids);
-}

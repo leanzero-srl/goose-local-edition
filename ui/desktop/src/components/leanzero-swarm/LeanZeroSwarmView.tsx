@@ -8,6 +8,7 @@ import LeanZeroLinkSection from './LeanZeroLinkSection';
 import { PageHeader, SURFACE, Segmented, cx, type SegmentedOption } from '../lz';
 import { defineMessages, useIntl } from '../../i18n';
 import { useFeatures } from '../../contexts/FeaturesContext';
+import { MacsProvider } from './useMacs';
 
 const i18n = defineMessages({
   subtitle: {
@@ -17,7 +18,7 @@ const i18n = defineMessages({
   },
   tabCloud: { id: 'leanzeroSwarm.tabCloud', defaultMessage: 'Cloud Providers' },
   tabSwarm: { id: 'leanzeroSwarm.tabSwarm', defaultMessage: 'Swarm Settings' },
-  tabLink: { id: 'leanzeroSwarm.tabLink', defaultMessage: 'LeanZero Link' },
+  tabMacs: { id: 'leanzeroSwarm.tabMacs', defaultMessage: 'My Macs' },
 });
 
 type SwarmTab = 'mlx' | 'cloud' | 'swarm' | 'link';
@@ -25,7 +26,8 @@ type SwarmTab = 'mlx' | 'cloud' | 'swarm' | 'link';
 /**
  * The "Goose Swarm" primary view — the single swarm/engine management surface:
  *
- *   LeanZero MLX     — the engine window (Engine / Models / Sampling sub-tabs), unchanged.
+ *   LeanZero MLX     — the engine window: Engine (with Run it), Models (every Mac's), Sampling.
+ *   My Macs          — every Mac on LeanZero Link, and what this Mac lets the others do.
  *   Cloud Providers  — provider credentials, relocated from Settings, cloud-only.
  *   Swarm Settings   — NODES ONLY (owner amendment): add node, per-node provider, per-node
  *                      weight, remove. The full lever panel stays in Settings until the
@@ -49,41 +51,45 @@ const LeanZeroSwarmView: React.FC<{ requestedTab?: string | null }> = ({ request
 
   const tabs: SegmentedOption<SwarmTab>[] = [
     { value: 'mlx', label: 'LeanZero MLX' },
+    ...(leanzeroLink ? [{ value: 'link' as const, label: intl.formatMessage(i18n.tabMacs) }] : []),
     { value: 'cloud', label: intl.formatMessage(i18n.tabCloud) },
     { value: 'swarm', label: intl.formatMessage(i18n.tabSwarm) },
-    ...(leanzeroLink
-      ? [{ value: 'link' as const, label: intl.formatMessage(i18n.tabLink) }]
-      : []),
   ];
 
   return (
     <MainPanelLayout>
-      <div className={cx('flex min-h-0 flex-1 flex-col', SURFACE.page)}>
-        <div className={cx('border-b px-lz-page pb-6 pt-16', SURFACE.hairline)}>
-          <PageHeader
-            className="page-transition"
-            title="Providers"
-            subtitle={<span className="block max-w-[70ch]">{intl.formatMessage(i18n.subtitle)}</span>}
-            actions={
-              <Segmented
-                aria-label="Providers sections"
-                options={tabs}
-                value={tab}
-                onChange={setTab}
-              />
-            }
-          />
-        </div>
+      <MacsProvider>
+        <div className={cx('flex min-h-0 flex-1 flex-col', SURFACE.page)}>
+          <div className={cx('border-b px-lz-page pb-6 pt-16', SURFACE.hairline)}>
+            <PageHeader
+              className="page-transition"
+              title="Providers"
+              subtitle={
+                <span className="block max-w-[70ch]">{intl.formatMessage(i18n.subtitle)}</span>
+              }
+              actions={
+                <Segmented
+                  aria-label="Providers sections"
+                  options={tabs}
+                  value={tab}
+                  onChange={setTab}
+                />
+              }
+            />
+          </div>
 
-        <div className="relative min-h-0 flex-1 px-lz-page pt-6">
-          <ScrollArea className="h-full">
-            {tab === 'mlx' && <MlxEngineView />}
-            {tab === 'cloud' && <CloudProvidersSection />}
-            {tab === 'swarm' && <SwarmNodesSection onOpenCloudProviders={() => setTab('cloud')} />}
-            {tab === 'link' && leanzeroLink && <LeanZeroLinkSection />}
-          </ScrollArea>
+          <div className="relative min-h-0 flex-1 px-lz-page pt-6">
+            <ScrollArea className="h-full">
+              {tab === 'mlx' && <MlxEngineView />}
+              {tab === 'cloud' && <CloudProvidersSection />}
+              {tab === 'swarm' && (
+                <SwarmNodesSection onOpenCloudProviders={() => setTab('cloud')} />
+              )}
+              {tab === 'link' && leanzeroLink && <LeanZeroLinkSection />}
+            </ScrollArea>
+          </div>
         </div>
-      </div>
+      </MacsProvider>
     </MainPanelLayout>
   );
 };

@@ -6839,6 +6839,23 @@
             "null"
           ]
         },
+        "chip": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxChipDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "This Mac's chip (`hw.model`, the brand, the GPU cores), probed once per goose process —\nwhat the owner reads beside the Mac's name. Absent exactly when `chipError` says why, and\nfrom a goose before it."
+        },
+        "chipError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "restartRequired": {
           "type": "boolean",
           "description": "True when the persisted settings would spawn the running engine differently\n(model, port, sampling): the engine keeps running with its old arguments until\nthe user remounts."
@@ -6896,6 +6913,29 @@
         "restartRequired"
       ],
       "description": "Live MLX engine state. `state` is one of \"stopped\" | \"mounting\" | \"running\" | \"failed\".\n`context_window` / `tool_call_parser` come from a live `/v1/models` probe and are never\nfabricated: a failed probe leaves them unset and reports `probe_error` instead."
+    },
+    "MlxChipDto": {
+      "type": "object",
+      "properties": {
+        "hwModel": {
+          "type": "string"
+        },
+        "brand": {
+          "type": "string"
+        },
+        "gpuCores": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "hwModel",
+        "brand"
+      ],
+      "description": "A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count."
     },
     "MlxMountFitDto": {
       "type": "object",
@@ -7290,29 +7330,6 @@
         "tensor",
         "pipeline"
       ]
-    },
-    "MlxChipDto": {
-      "type": "object",
-      "properties": {
-        "hwModel": {
-          "type": "string"
-        },
-        "brand": {
-          "type": "string"
-        },
-        "gpuCores": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "minimum": 0
-        }
-      },
-      "required": [
-        "hwModel",
-        "brand"
-      ],
-      "description": "A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count."
     },
     "MlxPlacementFitDto": {
       "type": "object",
@@ -9145,7 +9162,7 @@
         },
         "allowDistributedNode": {
           "type": "boolean",
-          "description": "This Mac's switch \"Allow this Mac to serve as a distributed node\" (config key\n`LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`, off by default), as the control route reads it.",
+          "description": "This Mac's switch \"Let my other Macs use this Mac › Run part of a split model\" (config key\n`LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`, off by default), as the control route reads it.",
           "default": false
         },
         "compactions": {
@@ -10328,7 +10345,7 @@
         "code",
         "message"
       ],
-      "description": "Why a remote-single start did not happen — one named code the caller acts on, and the\nmessage to show verbatim. Codes: `linkNotConnected` · `unknownPeer` · `chatServingDisabled`\n(the peer's \"Allow this Mac to serve chat to linked devices\" is off) ·\n`remoteManagementDisabled` (the peer does not let linked devices mount models) ·\n`peerTooOld` (its goose has no chat proxy / reports no admission cap) · `peerMountFailed`\n(the peer's own mount refusal, e.g. its memory gate) · `distributedOwnsThisMac` ·\n`remoteSingleActive` (a route to a different peer or model is up — stop it first)."
+      "description": "Why a remote-single start did not happen — one named code the caller acts on, and the\nmessage to show verbatim. Codes: `linkNotConnected` · `unknownPeer` · `chatServingDisabled`\n(the peer's \"Let my other Macs use this Mac › Answer chat\" is off) ·\n`remoteManagementDisabled` (the peer does not let linked devices mount models) ·\n`peerTooOld` (its goose has no chat proxy / reports no admission cap) · `peerMountFailed`\n(the peer's own mount refusal, e.g. its memory gate) · `distributedOwnsThisMac` ·\n`remoteSingleActive` (a route to a different peer or model is up — stop it first)."
     },
     "MlxRemoteSingleStatusDto": {
       "type": "object",
@@ -12128,6 +12145,16 @@
             "null"
           ],
           "description": "The value the RUNNING control service enforces, present only while connected. When\nit differs from `remote_execution_allowed`, the change applies at the next connect."
+        },
+        "chatServingAllowed": {
+          "type": "boolean",
+          "description": "The chat-serving switch (config key `LEANZERO_LINK_ALLOW_CHAT_SERVING`): this Mac's single\nengine answers a linked Mac's chat. Read on every request, so NOW is also what is enforced.",
+          "default": false
+        },
+        "distributedNodeAllowed": {
+          "type": "boolean",
+          "description": "The distributed-node switch (config key `LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`): a linked\nMac runs a rank of its split model here. Read on every request, like chat serving.",
+          "default": false
         },
         "meshBinaries": {
           "$ref": "#/$defs/LeanzeroLinkMeshBinariesDto",

@@ -2196,7 +2196,7 @@ devices:
         let refusing = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(403).set_body_string(
-                "chatServingDisabled: \"Allow this Mac to serve chat to linked devices\" is off on WorksMacStudio.lan",
+                "chatServingDisabled: \"Let my other Macs use this Mac › Answer chat\" is off on WorksMacStudio.lan",
             ))
             .mount(&refusing)
             .await;

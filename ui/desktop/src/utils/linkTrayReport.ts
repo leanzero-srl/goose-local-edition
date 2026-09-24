@@ -11,14 +11,14 @@ import type { LinkState } from '../acp/leanzero-link';
  * "Link: reconnect failed — <reason>" with Retry.
  */
 export type LinkTrayTone = 'ok' | 'busy' | 'off' | 'failed';
-/** `connect` calls the same Connect the Link tab does; `open` shows the Link tab. */
+/** `connect` calls the same Connect My Macs does; `open` shows My Macs. */
 export type LinkTrayAction = 'connect' | 'open';
 
 export interface LinkTrayReport {
   tone: LinkTrayTone;
   line: string;
   action: LinkTrayAction | null;
-  /** The action's menu label ("Retry", "Connect", "Open LeanZero Link"). */
+  /** The action's menu label ("Retry", "Connect", "Open My Macs"). */
   actionLabel: string | null;
 }
 
@@ -57,7 +57,7 @@ export function toLinkTrayReport(state: LinkState | null): LinkTrayReport | null
       tone: 'failed',
       line: `Link: reconnect failed — ${clip(reconnect.reason)}`,
       action: signedIn ? 'connect' : 'open',
-      actionLabel: signedIn ? 'Retry' : 'Open LeanZero Link',
+      actionLabel: signedIn ? 'Retry' : 'Open My Macs',
     };
   }
   if (auth.state !== 'loggedIn') return null;
@@ -66,7 +66,7 @@ export function toLinkTrayReport(state: LinkState | null): LinkTrayReport | null
       tone: 'failed',
       line: `Link: intent unreadable — ${clip(intentError)}`,
       action: 'open',
-      actionLabel: 'Open LeanZero Link',
+      actionLabel: 'Open My Macs',
     };
   }
   if (reconnect?.state === 'skipped' && intent?.intent === 'connected') {

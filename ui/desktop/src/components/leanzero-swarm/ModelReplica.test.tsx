@@ -2,128 +2,23 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { cleanup, render as rtlRender, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
-import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
-import { missingUtilities } from '../lz/compileStudioCss';
-import {
-  ReplicaDownloadOffers,
-  ReplicaModelControls,
-  type ModelReplicas,
-  type ReplicaJob,
-} from './ModelReplica';
-import type { ReplicaTarget } from '../../acp/mlx-replica';
-import type { MlxDownloadProgress, MlxLocalModel } from '../../acp/mlx-engine';
+import { ReplicaJobRow, type ReplicaJob } from './ModelReplica';
 
 const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: IntlTestWrapper });
 const GB = 1024 * 1024 * 1024;
 const MODEL = 'mlx-community/Qwen3-30B-A3B-4bit';
 
-const iface = (ipv4: string, kind: 'thunderbolt' | 'wifi') => ({
-  device: 'en3',
-  kind,
-  ipv4,
-  prefixLen: kind === 'thunderbolt' ? 30 : 24,
-});
-
-const TB: ReplicaTarget = {
-  nodeId: 'peer-workhorse',
-  hostname: 'workhorse',
-  link: {
-    kind: 'thunderbolt',
-    local: iface('192.168.0.1', 'thunderbolt'),
-    peer: iface('192.168.0.2', 'thunderbolt'),
-  },
-};
-const LAN: ReplicaTarget = {
-  nodeId: 'peer-laptop',
-  hostname: 'laptop',
-  link: {
-    kind: 'network',
-    local: iface('192.168.10.2', 'wifi'),
-    peer: iface('192.168.10.3', 'wifi'),
-  },
-};
-
-function replicasWith(
-  targets: ReplicaTarget[],
-  jobs: Record<string, ReplicaJob> = {}
-): ModelReplicas {
-  return {
-    selfNodeId: null,
-    targets: { meshConnected: true, targets },
-    targetsError: null,
-    checking: false,
-    refreshTargets: vi.fn(),
-    jobs,
-    start: vi.fn(),
-    cancel: vi.fn(),
-    dismiss: vi.fn(),
-  };
-}
-
-const DONE: Record<string, MlxDownloadProgress> = {
-  [MODEL]: { state: 'done', totalBytes: 17 * GB, downloadedBytes: 17 * GB },
-};
-const COMPLETE: MlxLocalModel[] = [
-  { id: MODEL, sizeBytes: 17 * GB, complete: true, missingFiles: 0 },
-];
-
 afterEach(() => cleanup());
 
-describe('the inline offer after a download', () => {
-  it('a finished download with a Thunderbolt peer offers the copy right there', async () => {
-    const replicas = replicasWith([TB, LAN]);
-    render(<ReplicaDownloadOffers downloads={DONE} models={COMPLETE} replicas={replicas} />);
-    const offer = screen.getByTestId(`mlx-replica-offer-${MODEL}`);
-    expect(offer).toHaveTextContent(
-      `${MODEL} is on this device now. workhorse is linked by Thunderbolt`
-    );
-    // Only the Thunderbolt peer is offered inline; the LAN peer stays on the model row.
-    expect(screen.getAllByRole('button', { name: /^Copy to/ })).toHaveLength(1);
-    await userEvent.click(screen.getByRole('button', { name: 'Copy to workhorse · Thunderbolt' }));
-    expect(replicas.start).toHaveBeenCalledWith(MODEL, TB);
-    assertStudioClean(document.body);
-    expect(
-      await missingUtilities(allClasses(document.body).filter((c) => !c.startsWith('lucide')))
-    ).toEqual([]);
-  });
-
-  it('no Thunderbolt peer, an unfinished download or an incomplete model: no offer', () => {
-    const { container, rerender } = render(
-      <ReplicaDownloadOffers downloads={DONE} models={COMPLETE} replicas={replicasWith([LAN])} />
-    );
-    expect(container).toBeEmptyDOMElement();
-    rerender(
-      <ReplicaDownloadOffers
-        downloads={{ [MODEL]: { state: 'downloading', totalBytes: 10, downloadedBytes: 5 } }}
-        models={COMPLETE}
-        replicas={replicasWith([TB])}
-      />
-    );
-    expect(container).toBeEmptyDOMElement();
-    rerender(
-      <ReplicaDownloadOffers
-        downloads={DONE}
-        models={[{ ...COMPLETE[0], complete: false, missingFiles: 1 }]}
-        replicas={replicasWith([TB])}
-      />
-    );
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it('dismissing the offer hides it', async () => {
-    render(
-      <ReplicaDownloadOffers downloads={DONE} models={COMPLETE} replicas={replicasWith([TB])} />
-    );
-    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-    expect(screen.queryByTestId(`mlx-replica-offer-${MODEL}`)).not.toBeInTheDocument();
-  });
-});
-
+/**
+ * The copy's detail row under a model in the Models table: the receiver's real bytes, the rate, the
+ * files, and what went wrong in goose's words. The cancel it offers is confirmed by the table.
+ */
 describe('a running copy', () => {
   const running: ReplicaJob = {
     modelId: MODEL,
     targetNodeId: 'peer-workhorse',
-    targetHostname: 'workhorse',
+    targetHostname: 'Work’s Mac Studio',
     linkKind: 'thunderbolt',
     error: null,
     progress: {
@@ -144,25 +39,27 @@ describe('a running copy', () => {
     },
   };
 
-  it('says it is verifying, counts resumed files, and cancels only after naming the device', async () => {
-    const replicas = replicasWith([TB], { [MODEL]: running });
-    render(<ReplicaModelControls modelId={MODEL} replicas={replicas} />);
+  it('says it is verifying, counts resumed files, the measured rate, and hands the cancel up', async () => {
+    const onCancel = vi.fn();
+    render(
+      <ReplicaJobRow
+        job={running}
+        receiverIsThisDevice={false}
+        onCancel={onCancel}
+        onDismiss={vi.fn()}
+      />
+    );
     const row = screen.getByTestId(`mlx-replica-${MODEL}`);
+    expect(row).toHaveTextContent('Copying to Work’s Mac Studio over Thunderbolt');
     expect(row).toHaveTextContent('checking model-00004-of-00004.safetensors');
     expect(row).toHaveTextContent('continued from a partial copy: 1 file');
     expect(row).toHaveTextContent('3.00 GB/s');
+    expect(row).toHaveTextContent('3 of 4 files');
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(replicas.cancel).not.toHaveBeenCalled();
-    expect(
-      screen.getByText(
-        `Stop copying ${MODEL} to workhorse? The partial copy on workhorse is deleted.`
-      )
-    ).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel copy' }));
-    expect(replicas.cancel).toHaveBeenCalledWith(MODEL);
+    expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it('a verification failure is shown verbatim', () => {
+  it('a verification failure is shown verbatim, with Dismiss instead of Cancel', () => {
     const failed: ReplicaJob = {
       ...running,
       progress: {
@@ -173,17 +70,24 @@ describe('a running copy', () => {
       },
     };
     render(
-      <ReplicaModelControls modelId={MODEL} replicas={replicasWith([TB], { [MODEL]: failed })} />
+      <ReplicaJobRow
+        job={failed}
+        receiverIsThisDevice={false}
+        onCancel={vi.fn()}
+        onDismiss={vi.fn()}
+      />
     );
     const row = screen.getByTestId(`mlx-replica-${MODEL}`);
-    expect(row).toHaveTextContent('Copy to workhorse failed');
+    expect(row).toHaveTextContent('Copy to Work’s Mac Studio failed');
     expect(row).toHaveTextContent('failed verification');
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
   });
 
   it('a pull macOS refused the local network is named on the Mac that must allow it', async () => {
     const refused: ReplicaJob = {
       ...running,
+      targetHostname: 'workhorse',
       progress: {
         ...running.progress!,
         state: 'failed',
@@ -194,7 +98,12 @@ describe('a running copy', () => {
       },
     };
     const { rerender } = render(
-      <ReplicaModelControls modelId={MODEL} replicas={replicasWith([TB], { [MODEL]: refused })} />
+      <ReplicaJobRow
+        job={refused}
+        receiverIsThisDevice={false}
+        onCancel={vi.fn()}
+        onDismiss={vi.fn()}
+      />
     );
     // The receiver is workhorse: the fix is there, so nothing here opens THIS Mac's settings.
     expect(screen.getByTestId('local-network-blocked')).toHaveTextContent(
@@ -204,10 +113,7 @@ describe('a running copy', () => {
     expect(screen.getByTestId(`mlx-replica-${MODEL}`)).toHaveTextContent('No route to host');
 
     rerender(
-      <ReplicaModelControls
-        modelId={MODEL}
-        replicas={{ ...replicasWith([TB], { [MODEL]: refused }), selfNodeId: 'peer-workhorse' }}
-      />
+      <ReplicaJobRow job={refused} receiverIsThisDevice onCancel={vi.fn()} onDismiss={vi.fn()} />
     );
     await userEvent.click(screen.getByRole('button', { name: 'Open Privacy & Security' }));
     expect(window.electron.openLocalNetworkSettings).toHaveBeenCalled();

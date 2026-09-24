@@ -2486,6 +2486,13 @@ pub struct MlxEngineStatusDto {
     pub gpu_ceiling_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gpu_ceiling_error: Option<String>,
+    /// This Mac's chip (`hw.model`, the brand, the GPU cores), probed once per goose process —
+    /// what the owner reads beside the Mac's name. Absent exactly when `chipError` says why, and
+    /// from a goose before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chip: Option<MlxChipDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chip_error: Option<String>,
     /// True when the persisted settings would spawn the running engine differently
     /// (model, port, sampling): the engine keeps running with its old arguments until
     /// the user remounts.
@@ -3690,7 +3697,7 @@ pub struct MlxDistributedStatusDto {
     /// own distributed engine are refused meanwhile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hosting: Option<MlxDistributedHostedRankDto>,
-    /// This Mac's switch "Allow this Mac to serve as a distributed node" (config key
+    /// This Mac's switch "Let my other Macs use this Mac › Run part of a split model" (config key
     /// `LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`, off by default), as the control route reads it.
     #[serde(default)]
     pub allow_distributed_node: bool,
@@ -4209,7 +4216,7 @@ pub struct MlxEngineDistributedProvisionResponse {
 
 /// Why a remote-single start did not happen — one named code the caller acts on, and the
 /// message to show verbatim. Codes: `linkNotConnected` · `unknownPeer` · `chatServingDisabled`
-/// (the peer's "Allow this Mac to serve chat to linked devices" is off) ·
+/// (the peer's "Let my other Macs use this Mac › Answer chat" is off) ·
 /// `remoteManagementDisabled` (the peer does not let linked devices mount models) ·
 /// `peerTooOld` (its goose has no chat proxy / reports no admission cap) · `peerMountFailed`
 /// (the peer's own mount refusal, e.g. its memory gate) · `distributedOwnsThisMac` ·
@@ -4595,6 +4602,14 @@ pub struct LeanzeroLinkStateResponse {
     /// it differs from `remote_execution_allowed`, the change applies at the next connect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_execution_allowed_live: Option<bool>,
+    /// The chat-serving switch (config key `LEANZERO_LINK_ALLOW_CHAT_SERVING`): this Mac's single
+    /// engine answers a linked Mac's chat. Read on every request, so NOW is also what is enforced.
+    #[serde(default)]
+    pub chat_serving_allowed: bool,
+    /// The distributed-node switch (config key `LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE`): a linked
+    /// Mac runs a rank of its split model here. Read on every request, like chat serving.
+    #[serde(default)]
+    pub distributed_node_allowed: bool,
     /// Discovery's verdict on the mesh binaries at manager build — shown before any click.
     pub mesh_binaries: LeanzeroLinkMeshBinariesDto,
     /// Whether this goosed injected a remote executor at boot. `false` means every

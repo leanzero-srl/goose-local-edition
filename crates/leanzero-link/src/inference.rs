@@ -100,7 +100,7 @@ impl EnginePath {
 /// shows it verbatim).
 pub fn chat_serving_disabled(hostname: &str) -> String {
     format!(
-        "chatServingDisabled: \"Allow this Mac to serve chat to linked devices\" is off on {hostname}"
+        "chatServingDisabled: \"Let my other Macs use this Mac › Answer chat\" is off on {hostname}"
     )
 }
 
@@ -391,7 +391,7 @@ mod tests {
     fn the_refusal_names_the_switch_and_the_node() {
         let text = chat_serving_disabled("WorksMacStudio.lan");
         assert!(text.starts_with("chatServingDisabled: "), "{text}");
-        assert!(text.contains("Allow this Mac to serve chat to linked devices"));
+        assert!(text.contains("Let my other Macs use this Mac › Answer chat"));
         assert!(text.ends_with("off on WorksMacStudio.lan"));
     }
 }

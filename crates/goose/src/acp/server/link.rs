@@ -54,7 +54,7 @@ use leanzero_link::manager::{
 };
 use leanzero_link::mesh::{MeshConfig, MeshStatus};
 use leanzero_link::state::SwarmStateSource;
-use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus, SessionSummary};
+use leanzero_link::wire::{LinkEvent, NodeAllows, NodeState, NodeStatus, SessionSummary};
 use leanzero_link::worker_client::DEFAULT_WORKER_BASE_URL;
 use leanzero_link::{discovery, worker_client};
 
@@ -175,14 +175,23 @@ pub struct GoosedSwarmStateSource {
     agent_manager: Arc<AgentManager>,
     session_manager: Arc<SessionManager>,
     node_id: String,
+    /// The remote-execution switch the control service built beside this source ENFORCES —
+    /// what this node reports as `allows.manage_models`, not the config value a toggle may have
+    /// moved since (that applies at the next connect).
+    allow_remote_execution: bool,
 }
 
 impl GoosedSwarmStateSource {
-    pub fn new(agent_manager: Arc<AgentManager>, session_manager: Arc<SessionManager>) -> Self {
+    pub fn new(
+        agent_manager: Arc<AgentManager>,
+        session_manager: Arc<SessionManager>,
+        allow_remote_execution: bool,
+    ) -> Self {
         Self {
             agent_manager,
             session_manager,
             node_id: stable_node_id(),
+            allow_remote_execution,
         }
     }
 }
@@ -192,7 +201,12 @@ impl SwarmStateSource for GoosedSwarmStateSource {
     async fn local_node(&self) -> NodeState {
         let snapshot =
             snapshot_local(&self.agent_manager, &self.session_manager, &self.node_id).await;
-        derive_node(&self.node_id, &snapshot, Utc::now())
+        derive_node(
+            &self.node_id,
+            &snapshot,
+            node_allows(self.allow_remote_execution),
+            Utc::now(),
+        )
     }
 
     /// The store's error rides through verbatim (`session index unreadable: <err>`): the
@@ -227,6 +241,7 @@ impl GoosedSwarmStateSource {
         let agent_manager = self.agent_manager.clone();
         let session_manager = self.session_manager.clone();
         let node_id = self.node_id.clone();
+        let allow_remote_execution = self.allow_remote_execution;
 
         tokio::spawn(async move {
             let mut last_node_key: Option<(NodeStatus, u32)> = None;
@@ -244,7 +259,12 @@ impl GoosedSwarmStateSource {
                     continue;
                 };
 
-                let node = derive_node(&node_id, &snapshot, Utc::now());
+                let node = derive_node(
+                    &node_id,
+                    &snapshot,
+                    node_allows(allow_remote_execution),
+                    Utc::now(),
+                );
                 let node_key = (node.status.clone(), node.sessions_active);
                 if last_node_key.as_ref() != Some(&node_key) {
                     if tx.send(LinkEvent::NodeStateChanged(node)).await.is_err() {
@@ -373,7 +393,12 @@ async fn busy_session_ids(agent_manager: &Arc<AgentManager>) -> HashSet<String> 
 /// session named is the freshest live one (`NodeStatus::from_sessions`); a token the
 /// index cannot see — the store is down, or lists no such session — still makes the node
 /// Busy, and `sessions_active` counts tokens, not index rows.
-fn derive_node(node_id: &str, snapshot: &LocalSnapshot, now: DateTime<Utc>) -> NodeState {
+fn derive_node(
+    node_id: &str,
+    snapshot: &LocalSnapshot,
+    allows: NodeAllows,
+    now: DateTime<Utc>,
+) -> NodeState {
     let status = match &snapshot.sessions {
         Ok(sessions) => match NodeStatus::from_sessions(sessions) {
             NodeStatus::Idle => busy_status(&snapshot.busy),
@@ -391,7 +416,69 @@ fn derive_node(node_id: &str, snapshot: &LocalSnapshot, now: DateTime<Utc>) -> N
         // The POLLER's field: a peer records why its last poll of us failed. Our own
         // report never carries one.
         last_poll_error: None,
+        computer_name: computer_name(),
+        allows: Some(allows),
     }
+}
+
+/// The owner's three switches as THIS node enforces them now: model management as the running
+/// control service was built with it, chat serving and split ranks as their routes read them on
+/// every request.
+fn node_allows(allow_remote_execution: bool) -> NodeAllows {
+    NodeAllows {
+        manage_models: allow_remote_execution,
+        answer_chat: super::mlx_remote_single::chat_serving_allowed(),
+        run_split: distributed_node_allowed(),
+    }
+}
+
+#[cfg(unix)]
+fn distributed_node_allowed() -> bool {
+    super::mlx_distributed_link::distributed_node_allowed()
+}
+
+/// No distributed node exists off unix, so no peer can run a rank here.
+#[cfg(not(unix))]
+fn distributed_node_allowed() -> bool {
+    false
+}
+
+static COMPUTER_NAME: OnceLock<Option<String>> = OnceLock::new();
+
+/// `scutil --get ComputerName` — the name the owner gave this Mac — read once per process. `None`
+/// (logged once) where there is none to read: the node then reports its hostname only.
+pub(super) fn computer_name() -> Option<String> {
+    COMPUTER_NAME.get_or_init(read_computer_name).clone()
+}
+
+#[cfg(target_os = "macos")]
+fn read_computer_name() -> Option<String> {
+    match std::process::Command::new("/usr/sbin/scutil")
+        .args(["--get", "ComputerName"])
+        .output()
+    {
+        Ok(out) => {
+            let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if name.is_empty() {
+                warn!(
+                    stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                    "leanzeroLink: scutil printed no ComputerName; this node reports its hostname only"
+                );
+                None
+            } else {
+                Some(name)
+            }
+        }
+        Err(error) => {
+            warn!(%error, "leanzeroLink: scutil could not run; this node reports its hostname only");
+            None
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_computer_name() -> Option<String> {
+    None
 }
 
 /// Busy on the lexically first token-holding id (deterministic without timestamps), Idle
@@ -1011,6 +1098,8 @@ fn link_state_to_dto(state: LinkState, view: &HolderView) -> LeanzeroLinkStateRe
         last_error: view.connect_refusal.clone().or(state.last_error),
         remote_execution_allowed: remote_execution_allowed(),
         remote_execution_allowed_live,
+        chat_serving_allowed: super::mlx_remote_single::chat_serving_allowed(),
+        distributed_node_allowed: distributed_node_allowed(),
         mesh_binaries: view.mesh_binaries.to_dto(),
         // The two injection seams, as booted: `goosed agent` sets both; `goose serve` (the
         // shipped desktop) sets neither today, so its `/execute` and `/mlx/*` answer 501.
@@ -1125,10 +1214,11 @@ pub(super) fn mlx_proxy_err(error: LinkError) -> agent_client_protocol::Error {
 // ---------------------------------------------------------------------------
 
 impl GooseAcpAgent {
-    fn link_source(&self) -> Arc<GoosedSwarmStateSource> {
+    fn link_source(&self, allow_remote_execution: bool) -> Arc<GoosedSwarmStateSource> {
         Arc::new(GoosedSwarmStateSource::new(
             self.agent_manager.clone(),
             self.session_manager.clone(),
+            allow_remote_execution,
         ))
     }
 
@@ -1138,7 +1228,7 @@ impl GooseAcpAgent {
         binaries: &MeshBinaries,
     ) -> Result<Arc<LinkManager>, agent_client_protocol::Error> {
         let config = build_link_config(key, binaries)?;
-        let source = self.link_source();
+        let source = self.link_source(key.allow_remote_execution);
         // A remote prompt (`link_serve.rs`) must run on the managers THIS source reads,
         // or its cancel token never reaches the busy set the idle guard consults.
         link_serve::bind_run_managers(self.agent_manager.clone(), self.session_manager.clone());
@@ -1427,8 +1517,12 @@ impl GooseAcpAgent {
                 ))
             });
         }
-        // Not connected: there are no peers to know about — self only is the truth here.
-        let self_node = self.link_source().local_node().await;
+        // Not connected: there are no peers to know about — self only is the truth here. No
+        // control service runs, so the switch this node would enforce is the one configured.
+        let self_node = self
+            .link_source(remote_execution_allowed())
+            .local_node()
+            .await;
         Ok(LeanzeroLinkNodesResponse {
             self_node: serde_json::to_value(self_node).internal_err()?,
             peers: Vec::new(),
@@ -1572,11 +1666,41 @@ mod tests {
         }
     }
 
+    const ALL_OFF: NodeAllows = NodeAllows {
+        manage_models: false,
+        answer_chat: false,
+        run_split: false,
+    };
+
+    /// The node's own report carries the switches it enforces, verbatim — a peer shows "off
+    /// there" from THIS, never from a failed call it had to make first.
+    #[test]
+    fn derive_node_reports_the_switches_it_enforces() {
+        let allows = NodeAllows {
+            manage_models: true,
+            answer_chat: false,
+            run_split: true,
+        };
+        let node = derive_node("node-a", &snapshot_of(Vec::new()), allows, Utc::now());
+        assert_eq!(node.allows, Some(allows));
+        assert_eq!(node.computer_name, computer_name());
+        let wire = serde_json::to_value(&node).unwrap();
+        assert_eq!(
+            wire["allows"],
+            serde_json::json!({"manage_models": true, "answer_chat": false, "run_split": true})
+        );
+    }
+
     #[test]
     fn derive_node_reports_busy_idle_and_active_count() {
         let now = Utc::now();
 
-        let idle = derive_node("node-a", &snapshot_of(vec![summary("s1", false, 100)]), now);
+        let idle = derive_node(
+            "node-a",
+            &snapshot_of(vec![summary("s1", false, 100)]),
+            ALL_OFF,
+            now,
+        );
         assert_eq!(idle.status, NodeStatus::Idle);
         assert_eq!(idle.sessions_active, 0);
         assert!(idle.mesh_ip.is_none());
@@ -1585,6 +1709,7 @@ mod tests {
         let busy = derive_node(
             "node-a",
             &snapshot_of(vec![summary("old", true, 100), summary("new", true, 200)]),
+            ALL_OFF,
             now,
         );
         assert_eq!(
@@ -1607,7 +1732,7 @@ mod tests {
             sessions: Err("session index unreadable: database is locked".to_string()),
             busy: HashSet::from(["s-running".to_string()]),
         };
-        let node = derive_node("node-a", &unreadable, now);
+        let node = derive_node("node-a", &unreadable, ALL_OFF, now);
         assert_eq!(
             node.status,
             NodeStatus::Busy {
@@ -1620,7 +1745,10 @@ mod tests {
             sessions: Err("session index unreadable: database is locked".to_string()),
             busy: HashSet::new(),
         };
-        assert_eq!(derive_node("node-a", &quiet, now).status, NodeStatus::Idle);
+        assert_eq!(
+            derive_node("node-a", &quiet, ALL_OFF, now).status,
+            NodeStatus::Idle
+        );
     }
 
     /// A token the index does not list (a session the store has not caught up on) still
@@ -1631,7 +1759,7 @@ mod tests {
             sessions: Ok(vec![summary("s1", false, 100)]),
             busy: HashSet::from(["s-unlisted".to_string()]),
         };
-        let node = derive_node("node-a", &snapshot, Utc::now());
+        let node = derive_node("node-a", &snapshot, ALL_OFF, Utc::now());
         assert_eq!(
             node.status,
             NodeStatus::Busy {
@@ -1667,6 +1795,8 @@ mod tests {
             last_error: Some("boom".to_string()),
             remote_execution_allowed: true,
             remote_execution_allowed_live: Some(false),
+            chat_serving_allowed: true,
+            distributed_node_allowed: false,
             mesh_binaries: MeshBinaries {
                 tailscaled: Ok(PathBuf::from("/app/bin/tailscaled")),
                 tailscale: Err("could not find 'tailscale': …".to_string()),
@@ -1696,6 +1826,8 @@ mod tests {
         assert_eq!(value["lastError"], "boom");
         assert_eq!(value["remoteExecutionAllowed"], true);
         assert_eq!(value["remoteExecutionAllowedLive"], false);
+        assert_eq!(value["chatServingAllowed"], true);
+        assert_eq!(value["distributedNodeAllowed"], false);
         assert_eq!(value["remoteExecutionWired"], false);
         assert_eq!(value["mlxControlWired"], true);
         assert_eq!(value["meshBinaries"]["tailscaled"]["status"], "found");
@@ -2177,7 +2309,7 @@ mod tests {
             GoosePlatform::GooseDesktop,
         );
         let agent_manager = Arc::new(AgentManager::new(agent_config, Some(100)).await.unwrap());
-        let source = GoosedSwarmStateSource::new(agent_manager, session_manager);
+        let source = GoosedSwarmStateSource::new(agent_manager, session_manager, false);
         (temp, source)
     }
 
@@ -2292,7 +2424,7 @@ mod tests {
             GoosePlatform::GooseDesktop,
         );
         let agent_manager = Arc::new(AgentManager::new(agent_config, Some(100)).await.unwrap());
-        let source = GoosedSwarmStateSource::new(agent_manager, session_manager);
+        let source = GoosedSwarmStateSource::new(agent_manager, session_manager, false);
         (temp, source)
     }
 
@@ -2458,7 +2590,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let source = agent.link_source();
+        let source = agent.link_source(false);
 
         agent
             .start_active_run(&session.id, "run_1".to_string(), CancellationToken::new())
