@@ -65,6 +65,8 @@ import { View, ViewOptions } from './utils/navigationUtils';
 
 import { useNavigation } from './hooks/useNavigation';
 import { useMlxTrayActions } from './hooks/useMlxTrayActions';
+import { useLinkTrayReporter } from './hooks/useLinkTrayReporter';
+import { useFeatures } from './contexts/FeaturesContext';
 import { errorMessage } from './utils/conversionUtils';
 import { getInitialWorkingDir } from './utils/workingDir';
 import { usePageViewTracking } from './hooks/useAnalytics';
@@ -309,7 +311,9 @@ const AgentWorkRoute = () => {
 };
 
 const LeanZeroSwarmRoute = () => {
-  return <LeanZeroSwarmView />;
+  // `?tab=link` — the tray's "Open LeanZero Link" lands on the tab that can act on it.
+  const [searchParams] = useSearchParams();
+  return <LeanZeroSwarmView requestedTab={searchParams.get('tab')} />;
 };
 
 const SkillsRoute = () => {
@@ -417,6 +421,8 @@ export function AppInner() {
   const setView = useNavigation();
   const intl = useIntl();
   useMlxTrayActions();
+  const { leanzeroLink } = useFeatures();
+  useLinkTrayReporter(leanzeroLink);
 
   const [chat, setChat] = useState<ChatType>({
     sessionId: '',
@@ -620,6 +626,8 @@ export function AppInner() {
 
       if (section && newView === 'settings') {
         navigate(`/settings?section=${section}`);
+      } else if (section && (newView as string) === 'leanzero-swarm') {
+        navigate(`/leanzero-swarm?tab=${section}`);
       } else {
         navigate(`/${newView}`);
       }
