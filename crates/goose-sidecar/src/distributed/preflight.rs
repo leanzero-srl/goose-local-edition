@@ -436,7 +436,10 @@ fn read_answer(
     answer.checks.push(Check::pass(
         "reachable",
         node.host()
-            .map(|h| format!("ssh {h} answered"))
+            .map(|h| match link_peer(Some(h)) {
+                Some(peer) => format!("LeanZero Link: {peer} answered through its own goose"),
+                None => format!("ssh {h} answered"),
+            })
             .unwrap_or_else(|| "this Mac".to_string()),
     ));
 
