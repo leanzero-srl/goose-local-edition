@@ -156,6 +156,20 @@ fn expand_tilde(path: &Path) -> Result<PathBuf, IdentityError> {
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), IdentityError> {
+    write_private_atomic(path, bytes).map_err(|(op, source)| IdentityError::Io {
+        op,
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Write `bytes` to `path` atomically (a `0600` temp file in the same directory, synced,
+/// then renamed into place), so a crash mid-write never leaves a half-written file. The
+/// error names the step that failed; the caller names the file.
+pub(crate) fn write_private_atomic(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), (&'static str, io::Error)> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let base = path
         .file_name()
@@ -178,11 +192,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), IdentityError> {
     })();
     if let Err(source) = write_result {
         let _ = std::fs::remove_file(&tmp);
-        return Err(IdentityError::Io {
-            op: "write a temp file for",
-            path: path.to_path_buf(),
-            source,
-        });
+        return Err(("write a temp file for", source));
     }
 
     // OpenOptions::mode only applies on creation; force 0600 in case the temp existed.
@@ -192,21 +202,13 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), IdentityError> {
         if let Err(source) = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
         {
             let _ = std::fs::remove_file(&tmp);
-            return Err(IdentityError::Io {
-                op: "set 0600 on the temp file for",
-                path: path.to_path_buf(),
-                source,
-            });
+            return Err(("set 0600 on the temp file for", source));
         }
     }
 
     std::fs::rename(&tmp, path).map_err(|source| {
         let _ = std::fs::remove_file(&tmp);
-        IdentityError::Io {
-            op: "atomically rename into place",
-            path: path.to_path_buf(),
-            source,
-        }
+        ("atomically rename into place", source)
     })
 }
 

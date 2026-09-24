@@ -1510,6 +1510,9 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
         data_dir: Paths::data_dir(),
         builtins,
     });
+    // The mesh the user left connected comes back with this goosed — at app launch and after
+    // every goosed restart — with no click; Disconnect / Log out keep it off.
+    goose::acp::server::arm_link_reconnect_at_boot();
     let env_secret = std::env::var(GOOSE_SERVER_SECRET_KEY_ENV)
         .ok()
         .map(|secret| secret.trim().to_string())
@@ -2714,6 +2717,11 @@ mod tests {
         assert!(
             serve.contains("goose::acp::server::wire_link_for_serve("),
             "handle_serve_command no longer wires the LeanZero Link seams"
+        );
+        assert!(
+            serve.contains("goose::acp::server::arm_link_reconnect_at_boot()"),
+            "handle_serve_command no longer arms the Link launch reconnect — every relaunch \
+             would come back 'not connected' again"
         );
     }
 
