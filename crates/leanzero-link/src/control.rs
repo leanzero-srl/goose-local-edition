@@ -691,7 +691,7 @@ fn distributed_node_error_response(error: DistributedNodeError) -> Response {
 /// shows it verbatim).
 pub fn distributed_node_disabled(hostname: &str) -> String {
     format!(
-        "servingDisabled: \"Allow this Mac to serve as a distributed node\" is off on {hostname}"
+        "servingDisabled: \"Let my other Macs use this Mac › Run part of a split model\" is off on {hostname}"
     )
 }
 

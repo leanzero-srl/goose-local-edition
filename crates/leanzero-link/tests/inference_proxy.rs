@@ -182,6 +182,8 @@ impl SwarmStateSource for Source {
             sessions_active: 0,
             updated_at: chrono::Utc::now(),
             last_poll_error: None,
+            computer_name: None,
+            allows: None,
         }
     }
     async fn local_sessions(&self) -> Result<Vec<leanzero_link::wire::SessionSummary>, String> {
@@ -416,7 +418,7 @@ async fn the_owners_switch_off_is_a_named_403_carried_verbatim_by_the_relay() {
     assert_eq!(
         text,
         format!(
-            "chatServingDisabled: \"Allow this Mac to serve chat to linked devices\" is off on {HOSTNAME}"
+            "chatServingDisabled: \"Let my other Macs use this Mac › Answer chat\" is off on {HOSTNAME}"
         )
     );
     assert!(

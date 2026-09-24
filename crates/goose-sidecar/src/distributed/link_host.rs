@@ -3,7 +3,7 @@
 //! goose's own node operations on itself, builds its own managed envs, and spawns, watches and
 //! stops its rank as its OWN child — per pid, never a process group — and verifies it gone.
 //!
-//! Gates, in order: the host's switch ("Allow this Mac to serve as a distributed node", off by
+//! Gates, in order: the host's switch ("Let my other Macs use this Mac › Run part of a split model", off by
 //! default) is the control route's 403 before anything here runs; then this module refuses by
 //! name what would break "one engine owns a Mac": a second rank (`alreadyHosting`), this Mac's
 //! single engine mounted (`singleEngineMounted`), this Mac's own distributed engine running

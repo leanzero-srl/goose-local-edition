@@ -2748,6 +2748,18 @@ export const zMlxEngineStatusRequest_unstable = z.object({
 });
 
 /**
+ * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
+ */
+export const zMlxChipDto = z.object({
+    hwModel: z.string(),
+    brand: z.string(),
+    gpuCores: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+/**
  * The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
  * RAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is "warn" when what is left
  * is inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes.
@@ -2907,6 +2919,14 @@ export const zMlxEngineStatusDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    chip: z.union([
+        zMlxChipDto,
+        z.null()
+    ]).optional(),
+    chipError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     restartRequired: z.boolean(),
     lastError: z.union([
         z.string(),
@@ -2963,18 +2983,6 @@ export const zMlxPlacementKeyDto = z.object({
     nodes: z.array(z.string()),
     link: z.union([
         z.string(),
-        z.null()
-    ]).optional()
-});
-
-/**
- * A Mac's chip: `hw.model`, the brand string, IOKit's GPU core count.
- */
-export const zMlxChipDto = z.object({
-    hwModel: z.string(),
-    brand: z.string(),
-    gpuCores: z.union([
-        z.number().int().gte(0),
         z.null()
     ]).optional()
 });
@@ -4331,7 +4339,7 @@ export const zMlxEngineRemoteSingleStartRequest_unstable = z.object({
 /**
  * Why a remote-single start did not happen — one named code the caller acts on, and the
  * message to show verbatim. Codes: `linkNotConnected` · `unknownPeer` · `chatServingDisabled`
- * (the peer's "Allow this Mac to serve chat to linked devices" is off) ·
+ * (the peer's "Let my other Macs use this Mac › Answer chat" is off) ·
  * `remoteManagementDisabled` (the peer does not let linked devices mount models) ·
  * `peerTooOld` (its goose has no chat proxy / reports no admission cap) · `peerMountFailed`
  * (the peer's own mount refusal, e.g. its memory gate) · `distributedOwnsThisMac` ·
@@ -5296,6 +5304,8 @@ export const zLeanzeroLinkStateResponse_unstable = z.object({
         z.boolean(),
         z.null()
     ]).optional(),
+    chatServingAllowed: z.boolean().optional().default(false),
+    distributedNodeAllowed: z.boolean().optional().default(false),
     meshBinaries: zLeanzeroLinkMeshBinariesDto,
     remoteExecutionWired: z.boolean().optional().default(false),
     mlxControlWired: z.boolean().optional().default(false),

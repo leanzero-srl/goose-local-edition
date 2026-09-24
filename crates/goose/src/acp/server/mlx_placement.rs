@@ -211,7 +211,7 @@ mod imp {
         }
     }
 
-    /// A Link peer whose "Allow this Mac to serve as a distributed node" is off answers no
+    /// A Link peer whose "Let my other Macs use this Mac › Run part of a split model" is off answers no
     /// discovery probe — but its goose still answers `mlxEngine/status` over the mesh, which
     /// carries its memory and GPU ceiling. The split stays planned (the model may need both Macs
     /// whatever the switch says) and names the switch as the step before it can start.
@@ -255,8 +255,8 @@ mod imp {
             has_model: Err("not checked yet".to_string()),
             remote_single: Ok(()),
             split_refusal: Some(format!(
-                "allow this Mac to serve as a distributed node on {name} (LeanZero Link → \
-                 \"Allow this Mac to serve as a distributed node\" is off there)"
+                "turn on \"Let my other Macs use this Mac › Run part of a split model\" on {name} \
+                 (Providers › My Macs there)"
             )),
         };
         Measured {

@@ -354,6 +354,8 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         memory_error: status.memory_error,
         gpu_ceiling_bytes: None,
         gpu_ceiling_error: None,
+        chip: None,
+        chip_error: None,
         restart_required: status.restart_required,
         last_error: status.last_error,
         mount_fit: None,
@@ -430,6 +432,10 @@ async fn core_status(
         Ok(bytes) => status.gpu_ceiling_bytes = Some(bytes),
         Err(e) => status.gpu_ceiling_error = Some(format!("{e:#}")),
     }
+    match local_chip().await {
+        Ok(chip) => status.chip = Some(chip),
+        Err(e) => status.chip_error = Some(e),
+    }
     if let Some(model_id) = &req.fit_model_id {
         match manager.mount_fit(model_id).await {
             Ok(fit) => status.mount_fit = Some(fit_to_dto(model_id, &fit)),
@@ -438,6 +444,27 @@ async fn core_status(
     }
     status.hosting = super::mlx_distributed::hosting_dto();
     Ok(MlxEngineStatusResponse { status })
+}
+
+static LOCAL_CHIP: tokio::sync::OnceCell<Result<MlxChipDto, String>> =
+    tokio::sync::OnceCell::const_new();
+
+/// This Mac's chip, probed once per process: a chip does not change under a running goose, and
+/// the status is read every two seconds.
+async fn local_chip() -> Result<MlxChipDto, String> {
+    LOCAL_CHIP
+        .get_or_init(|| async {
+            goose_sidecar::placement::chip::local_chip()
+                .await
+                .map(|c| MlxChipDto {
+                    hw_model: c.hw_model,
+                    brand: c.brand,
+                    gpu_cores: c.gpu_cores,
+                })
+                .map_err(|e| format!("{e:#}"))
+        })
+        .await
+        .clone()
 }
 
 /// A memory-gate refusal is the response's `refusal` (with the placement that WOULD work), not an
