@@ -21,6 +21,13 @@ fork branch lz/pipeline-qwen4: 8-layer + placement parity bit-identical, 683–7
 UPDATE 2026-09-24 04:xx — 3.0.20 PUBLISHED + installed (Detect, chat routing incl. other windows, Mach-O UUID + Local Network).
 Waiting on the OWNER: Allow "Goose Swarm" in the Local Network alert (screen was locked) — then re-run Preflight → Start → chat
 from the installed app opened normally (ppid 1), which is the last unverified link. Flash word-for-word reference still running.
+UPDATE 2026-09-24 ~10:00 — Flash (qwen4_exp) split STARTS FROM THE UI (dce1ccec2, fork pin ea6f8dee1): ready ~20 s at
+62,976 ctx, 21.7 tok/s streamed, tools parsed, KV slots queue extra requests, stop verified both Macs. Local Network: the
+alert came only for bundle id net.leanzero.goose-swarm (kept, 8b885e6f6; 3.0.20-and-older installs update by hand once).
+3.0.21 installed on BOTH Macs (workhorse had 3.0.11), NOT published (built with a dirty tree). omlx removed from both
+Macs, mtplx from the MacBook (still on the workhorse — owner scoped it to this Mac). 43 upstream GitHub workflows
+disabled (gh -R leanzero-srl/goose-local-edition); CI being made green. In flight: idle-rank CPU spin fix, Link as the
+discovery/control plane (owner must sign both Macs into Link for the live test). NEXT: 3.0.22 from a CLEAN worktree.
 OPEN (each has an agent or a slot): (a) Flash full-model reference by layer streaming + batch-vs-single mismatch (52/260) —
 split agent; (b) live trigger of hang rule + watchdog — backend agent; (c) Engine-tab/tile/tray distributed UI — panel-surgeon;
 (d) qwen4_exp OpenAI server entry in the fork so goose can START a Flash split — QUEUED behind: (a)'s agent; (e) remount the
