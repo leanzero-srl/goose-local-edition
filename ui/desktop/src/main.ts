@@ -121,6 +121,7 @@ import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
 import { fleetChatHandler, fleetProbeHandler } from './utils/fleetIpc';
 import { MLX_LIVE_STATUS_TIMEOUT_MS, fetchMlxLiveStatus } from './utils/mlxLiveStatus';
+import { withRendererOrigin } from './utils/rendererOrigin';
 import {
   MlxEngineMonitor,
   isMlxEngineReport,
@@ -5711,8 +5712,10 @@ async function appMain() {
   registerGlobalShortcuts();
 
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    details.requestHeaders['Origin'] = 'http://localhost:5173';
-    callback({ cancel: false, requestHeaders: details.requestHeaders });
+    callback({
+      cancel: false,
+      requestHeaders: withRendererOrigin(details.requestHeaders, details.webContentsId),
+    });
   });
 
   if (settings.showMenuBarIcon) {
