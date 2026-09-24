@@ -369,7 +369,10 @@ mod tests {
         })
         .await
         .unwrap();
-        println!("exit {code:?} after {:.1}s", started.elapsed().as_secs_f64());
+        println!(
+            "exit {code:?} after {:.1}s",
+            started.elapsed().as_secs_f64()
+        );
         assert_eq!(code, Some(0));
         assert_eq!(last.unwrap().step, "done");
     }
