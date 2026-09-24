@@ -99,6 +99,9 @@ fn acp_secret_mutations_and_inventory_refresh_invalidate_global_secret_cache() {
             Arc::new(EnforceSessionId::default()),
         )
         .await;
+        // The provider save proves the key before keeping it (`key_connection::check`), so xAI's
+        // host is the fixture, whose /v1/models answers the listing the check reads.
+        let xai_host = format!("{}/v1", openai.uri());
         let config = TestConnectionConfig {
             data_root: config_dir.clone(),
             provider_factory: Some(mock_provider_factory()),
@@ -157,7 +160,7 @@ fn acp_secret_mutations_and_inventory_refresh_invalidate_global_secret_cache() {
                     },
                     {
                         "key": "XAI_HOST",
-                        "value": "https://api.x.ai/v1",
+                        "value": xai_host,
                     },
                 ],
             }),
@@ -169,6 +172,9 @@ fn acp_secret_mutations_and_inventory_refresh_invalidate_global_secret_cache() {
             Some(&serde_json::json!({
                 "providerId": "xai",
                 "isConfigured": true,
+                "connectionChecked": true,
+                "connectionError": "No default model chosen yet — pick one to prove the key",
+                "testModel": null,
             })),
             "provider config save should return the updated configured status"
         );
@@ -231,6 +237,9 @@ fn acp_secret_mutations_and_inventory_refresh_invalidate_global_secret_cache() {
             Some(&serde_json::json!({
                 "providerId": "xai",
                 "isConfigured": false,
+                "connectionChecked": false,
+                "connectionError": null,
+                "testModel": null,
             })),
             "provider config delete should return the updated configured status"
         );

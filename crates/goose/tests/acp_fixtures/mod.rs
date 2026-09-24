@@ -194,6 +194,13 @@ fn write_global_test_config(config_path: &Path, openai_base_url: &str) {
         serde_yaml::Value::String("OPENAI_HOST".to_string()),
         serde_yaml::Value::String(openai_base_url.to_string()),
     );
+    // The end-of-turn assessment is a detached model call after every EndTurn; the scripted
+    // fixture answers only the calls a test scripts (the same reason session naming is off), so
+    // a test that wants the assessment opts in by writing the key itself.
+    let proposals_key = serde_yaml::Value::String("GOOSE_MEMORY_PROPOSALS".to_string());
+    if !config.contains_key(&proposals_key) {
+        config.insert(proposals_key, serde_yaml::Value::Bool(false));
+    }
 
     let global_config_dir = Paths::config_dir();
     fs::create_dir_all(&global_config_dir).unwrap();
