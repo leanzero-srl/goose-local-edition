@@ -333,11 +333,7 @@ impl std::fmt::Display for LinkCallError {
         match self {
             LinkCallError::NotConnected(m) => write!(f, "LeanZero Link is not connected: {m}"),
             LinkCallError::Unreachable(m) => write!(f, "unreachable over LeanZero Link: {m}"),
-            LinkCallError::Disabled(m) => write!(
-                f,
-                "servingDisabled: \"Allow this Mac to serve as a distributed node\" is off there \
-                 ({m})"
-            ),
+            LinkCallError::Disabled(m) => f.write_str(m),
             LinkCallError::NotServed(m) => write!(f, "not served there: {m}"),
             LinkCallError::Refused(r) => write!(f, "{}: {}", r.code, r.message),
             LinkCallError::BadRequest(m) => write!(f, "bad request: {m}"),
@@ -708,14 +704,17 @@ fn note(live: &StdMutex<RankLive>, line: String) {
 /// joined the group, then its poll interval), mirror what the rank said, and end the local session
 /// when the rank ends. A poll that fails is a CONTROL loss — recorded, never read as the rank's
 /// death; only past the peer's lease (when the peer has stopped the rank itself) does the session
-/// end here, with ssh's 255.
+/// end here, with ssh's 255. Every silence is measured from the last poll the peer ANSWERED — the
+/// same clock the peer's lease runs on — never from the first failure, which a transport's own
+/// connect timeout delays (measured 2026-09-24: a 7 s pause of the peer's daemon read as 2.0 s).
 async fn relay(
     state: Arc<LinkRankState>,
     live: Arc<StdMutex<RankLive>>,
     session_pid: Option<u32>,
     node: String,
 ) {
-    let mut lost_since: Option<(Instant, String)> = None;
+    let mut last_answer = Instant::now();
+    let mut lost: Option<String> = None;
     loop {
         let tick = if live.lock().unwrap().group_joined {
             POLL_INTERVAL
@@ -748,9 +747,10 @@ async fn relay(
         .await;
         match poll {
             Ok(snapshot) => {
-                if let Some((since, _)) = lost_since.take() {
-                    state.event(ControlEvent::Restored(since.elapsed()));
+                if lost.take().is_some() {
+                    state.event(ControlEvent::Restored(last_answer.elapsed()));
                 }
+                last_answer = Instant::now();
                 mirror(&live, &snapshot);
                 if let Some(exit) = snapshot.exit {
                     note(
@@ -767,20 +767,21 @@ async fn relay(
                 }
             }
             Err(error) => {
-                if lost_since.is_none() {
-                    state.event(ControlEvent::Lost(error.to_string()));
-                }
-                let (since, first) = lost_since
-                    .get_or_insert_with(|| (Instant::now(), error.to_string()))
+                let first = lost
+                    .get_or_insert_with(|| {
+                        state.event(ControlEvent::Lost(error.to_string()));
+                        error.to_string()
+                    })
                     .clone();
-                if since.elapsed() > LINK_LEASE + tick {
+                let silent = last_answer.elapsed();
+                if silent > LINK_LEASE + tick {
                     note(
                         &live,
                         format!(
                             "[LeanZero Link] no answer from {node} for {:.1} s (first error: \
-                             {first}); its lease ({} s without a poll) has stopped the rank there",
-                            since.elapsed().as_secs_f64(),
-                            LINK_LEASE.as_secs()
+                             {first}); {}",
+                            silent.as_secs_f64(),
+                            unverified_end()
                         ),
                     );
                     state.finish(SESSION_UNKNOWN_EXIT).await;
@@ -789,6 +790,20 @@ async fn relay(
             }
         }
     }
+}
+
+/// What a requester that lost the peer can honestly say about the rank there: the peer's own goose
+/// stops it (lease or exit path), unless that goose was killed outright — then it reclaims the
+/// rank when it runs again, a Stop from here sweeps it by the rank marker, and a Start's preflight
+/// names it.
+fn unverified_end() -> String {
+    format!(
+        "the rank's end is NOT verified from here — the peer's goose stops it itself once {} s \
+         pass without a poll (its lease) or as it exits; a goose killed outright leaves it running \
+         until that goose runs again and reclaims it, or a Stop from here sweeps it (a Start's \
+         preflight names it)",
+        LINK_LEASE.as_secs()
+    )
 }
 
 /// The stop sequence's step for a Link rank: the PEER stops its rank per pid and reports the
@@ -847,10 +862,9 @@ pub async fn stop_link_rank(rank: &RankProcess, follow_rank0: bool) -> (String, 
                 ),
                 None => (
                     format!(
-                        "{label}: cannot reach {} over LeanZero Link to stop it ({error}); its \
-                         lease stops the rank within {} s of the last poll — NOT verified",
+                        "{label}: cannot reach {} over LeanZero Link to stop it ({error}); {}",
                         state.peer,
-                        LINK_LEASE.as_secs()
+                        unverified_end()
                     ),
                     false,
                 ),

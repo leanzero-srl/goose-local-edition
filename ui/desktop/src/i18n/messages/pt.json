@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "ativo"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "porta inativa"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, one {mais # dispositivo, porta inativa} other {mais # dispositivos, portas inativas}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "Ative “Permitir que este Mac sirva como nó distribuído” em {name} (Provedores › LeanZero MLX › Motor › Distribuído)."

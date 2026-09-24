@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "aktif"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "port mati"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, other {# perangkat lain, port mati}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "Aktifkan “Izinkan Mac ini melayani sebagai node terdistribusi” di {name} (Penyedia › LeanZero MLX › Engine › Terdistribusi)."

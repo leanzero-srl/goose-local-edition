@@ -298,7 +298,9 @@ fn resolve_config(
 
 /// The single engine's mount path calls this: while the distributed engine owns the Mac, a mount
 /// is refused with a named reason (never a silent stop of either engine).
-pub(super) fn refuse_single_mount_while_distributed() -> Result<(), agent_client_protocol::Error> {
+pub(super) async fn refuse_single_mount_while_distributed(
+) -> Result<(), agent_client_protocol::Error> {
+    link::reclaim_orphaned_hosting().await;
     if let Some(refusal) = link::hosting_refusal() {
         return Err(agent_client_protocol::Error::invalid_params().data(refusal));
     }
@@ -587,6 +589,7 @@ impl GooseAcpAgent {
         req: MlxEngineDistributedStartRequest,
     ) -> Result<MlxEngineDistributedStartResponse, agent_client_protocol::Error> {
         link::ensure_link_transport();
+        link::reclaim_orphaned_hosting().await;
         if let Some(refusal) = link::hosting_refusal() {
             return Ok(MlxEngineDistributedStartResponse {
                 started: false,
@@ -914,8 +917,8 @@ mod tests {
         assert!(err.contains("mpi"), "{err}");
     }
 
-    #[test]
-    fn a_stopped_engine_reports_single_mode_and_the_persisted_config() {
+    #[tokio::test]
+    async fn a_stopped_engine_reports_single_mode_and_the_persisted_config() {
         let status = status_to_dto(
             distributed::DistributedManager::default().status(),
             Some(config_from_dto(dto()).unwrap()),
@@ -924,6 +927,6 @@ mod tests {
         assert_eq!(status.state, "stopped");
         assert!(status.admission_open);
         assert_eq!(status.config.unwrap().model_id, "org/model");
-        refuse_single_mount_while_distributed().unwrap();
+        refuse_single_mount_while_distributed().await.unwrap();
     }
 }

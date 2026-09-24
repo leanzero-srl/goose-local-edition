@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "активно"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "порт не активен"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, one {ещё # устройство, порт не активен} few {ещё # устройства, порты не активны} many {ещё # устройств, порты не активны} other {ещё # устройства, порты не активны}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "Включите «Разрешить этому Mac работать распределённым узлом» на {name} (Провайдеры › LeanZero MLX › Движок › Распределённый)."

@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "सक्रिय"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "पोर्ट बंद"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, one {# और डिवाइस, पोर्ट बंद} other {# और डिवाइस, पोर्ट बंद}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "{name} पर “इस Mac को वितरित नोड के रूप में सेवा देने दें” चालू करें (Providers › LeanZero MLX › Engine › Distributed)।"

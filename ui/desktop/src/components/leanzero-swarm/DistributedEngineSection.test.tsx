@@ -81,7 +81,11 @@ const WORKHORSE_ON_LINK: MlxDistributedLinkPeer = {
       speed: '80 Gb/s',
     },
   ],
-  rdma: [{ device: 'rdma_en3', active: true, ipv4GidIndex: 1 }],
+  rdma: [
+    { device: 'rdma_en3', active: true, ipv4GidIndex: 1 },
+    { device: 'rdma_en2', active: false },
+    { device: 'rdma_en4', active: false },
+  ],
   models: [
     {
       dir: '/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx',
@@ -100,8 +104,7 @@ const LINK_CONNECTED = {
       hostname: 'mini',
       host: 'link:mini-01c2',
       state: 'servingDisabled',
-      detail:
-        'servingDisabled: "Allow this Mac to serve as a distributed node" is off there (servingDisabled: "Allow this Mac to serve as a distributed node" is off on this node)',
+      detail: 'servingDisabled: "Allow this Mac to serve as a distributed node" is off on mini.lan',
       thunderbolt: [],
       rdma: [],
       models: [],
@@ -972,7 +975,7 @@ describe('DistributedEngineSection — LeanZero Link finds the other Mac and run
       'en3 192.168.0.2/30 · Thunderbolt 2 · 80 Gb/s'
     );
     expect(within(ready).getByTestId('mlx-dist-link-peer-rdma')).toHaveTextContent(
-      'rdma_en3 · active · IPv4 GID 1'
+      'rdma_en3 · active · IPv4 GID 1, 2 more devices, ports down'
     );
     expect(ready).toHaveTextContent('Qwen3.8-27B-Atlassian-Q8-mlx · qwen3_5 · 30.5 GiB');
 

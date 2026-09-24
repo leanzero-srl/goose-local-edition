@@ -225,6 +225,9 @@ pub(super) fn ensure_link_transport() {
                 warn!(error = %e, path = %hosting_path().display(), "the distributed hosting record could not be written; other windows will not see this Mac's rank");
             }
         }));
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(reclaim_orphaned_hosting());
+        }
     });
 }
 
@@ -261,6 +264,8 @@ const HOSTING_FILE: &str = "mlx-distributed-hosting.json";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct HostingRecord {
     pid: u32,
+    /// The hosted rank's own pid: it outlives a goosed that was killed outright.
+    rank_pid: Option<u32>,
     rank: usize,
     requester: String,
     model_id: String,
@@ -277,6 +282,7 @@ fn publish_hosting(status: &HostedRankStatus) -> anyhow::Result<()> {
     }
     let record = HostingRecord {
         pid: std::process::id(),
+        rank_pid: status.pid,
         rank: status.rank,
         requester: status.requester.name.clone(),
         model_id: status.model_id.clone(),
@@ -299,6 +305,53 @@ fn withdraw_hosting() -> anyhow::Result<()> {
     }
 }
 
+/// A hosting record whose goosed is gone while its rank may not be: that goosed was killed
+/// outright (a clean exit stops the rank first), so nothing supervises the rank and its lease
+/// watcher died with it. The rank is reclaimed here per pid; the record goes once nothing of it
+/// runs, and stays — so [`hosting_refusal`] names it — while it still does.
+pub(super) async fn reclaim_orphaned_hosting() {
+    reclaim_orphaned_at(&hosting_path()).await;
+}
+
+async fn reclaim_orphaned_at(path: &std::path::Path) {
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let Ok(record) = serde_json::from_slice::<HostingRecord>(&bytes) else {
+        return;
+    };
+    if record.pid == std::process::id() || pid_alive(record.pid) {
+        return;
+    }
+    let reclaimed = match record.rank_pid {
+        Some(pid) => link_host::reclaim_orphan(pid).await,
+        None => Ok(None),
+    };
+    let gone = match reclaimed {
+        Ok(None) => true,
+        Ok(Some((line, gone))) => {
+            warn!(
+                goosed = record.pid,
+                requester = %record.requester,
+                gone,
+                "distributed node: rank {} was left running by a goosed that is gone; {line}",
+                record.rank
+            );
+            gone
+        }
+        Err(e) => {
+            warn!(error = %e, "distributed node: an orphaned hosted rank could not be read");
+            false
+        }
+    };
+    let unchanged = std::fs::read(path).is_ok_and(|now| now == bytes);
+    if gone && unchanged {
+        if let Err(e) = std::fs::remove_file(path) {
+            warn!(error = %e, "distributed node: the stale hosting record could not be removed");
+        }
+    }
+}
+
 /// Why this Mac's single engine may not mount because A rank is served here — by this goosed or
 /// by another window's (its record, with its goosed alive). An unreadable record refuses too:
 /// the mount cannot prove the Mac is free.
@@ -310,14 +363,18 @@ pub(super) fn hosting_refusal() -> Option<String> {
             status.rank, status.requester.name, status.model_id, status.requester.name
         ));
     }
-    let bytes = match std::fs::read(hosting_path()) {
+    record_refusal(&hosting_path())
+}
+
+fn record_refusal(path: &std::path::Path) -> Option<String> {
+    let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
         Err(e) => {
             return Some(format!(
                 "hostingRank: the hosting record {} is unreadable ({e}); refusing rather than \
                  guessing this Mac is free",
-                hosting_path().display()
+                path.display()
             ))
         }
     };
@@ -328,11 +385,21 @@ pub(super) fn hosting_refusal() -> Option<String> {
              distributed engine ('{}'); one engine owns a Mac at a time",
             record.pid, record.rank, record.requester, record.model_id
         )),
+        Ok(record) if record.rank_pid.is_some_and(pid_alive) => Some(format!(
+            "hostingRank: rank {} of {}'s distributed engine (pid {}) still runs on this Mac \
+             though the goosed that served it (pid {}) is gone, and it could not be reclaimed \
+             (see the log); stop that pid, or Stop the run from {}",
+            record.rank,
+            record.requester,
+            record.rank_pid.unwrap_or_default(),
+            record.pid,
+            record.requester
+        )),
         Ok(_) => None,
         Err(e) => Some(format!(
             "hostingRank: the hosting record {} does not parse ({e}); refusing rather than \
              guessing this Mac is free",
-            hosting_path().display()
+            path.display()
         )),
     }
 }
@@ -563,5 +630,74 @@ mod tests {
             dto.rdma
         );
         assert!(!dto.models.is_empty());
+    }
+
+    /// A process standing in for a rank: `perl` sleeps, and `marker` (when given) rides its
+    /// command line the way the goose rank marker rides a real rank's.
+    fn sleeper(marker: Option<&str>) -> tokio::process::Child {
+        let mut cmd = tokio::process::Command::new("/usr/bin/perl");
+        cmd.args(["-e", "sleep 600"]);
+        cmd.args(marker);
+        cmd.kill_on_drop(true).spawn().expect("perl spawns")
+    }
+
+    async fn dead_pid() -> u32 {
+        let mut child = tokio::process::Command::new("/usr/bin/true")
+            .spawn()
+            .unwrap();
+        let pid = child.id().unwrap();
+        child.wait().await.unwrap();
+        pid
+    }
+
+    fn write_record(path: &std::path::Path, goosed: u32, rank_pid: u32) {
+        let record = HostingRecord {
+            pid: goosed,
+            rank_pid: Some(rank_pid),
+            rank: 1,
+            requester: "Mihai Macbook".into(),
+            model_id: "org/model".into(),
+        };
+        std::fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_rank_left_by_a_killed_goosed_is_reclaimed_before_this_mac_mounts() {
+        use goose_sidecar::distributed::launch::RANK_MARKER;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(HOSTING_FILE);
+        let gone_goosed = dead_pid().await;
+
+        // The orphan: its goosed is gone, the rank still runs and carries the marker.
+        let mut orphan = sleeper(Some(RANK_MARKER));
+        let orphan_pid = orphan.id().unwrap();
+        write_record(&path, gone_goosed, orphan_pid);
+        let refusal = record_refusal(&path).expect("an unreclaimed orphan refuses the mount");
+        assert!(refusal.contains(&format!("pid {orphan_pid}")), "{refusal}");
+        reclaim_orphaned_at(&path).await;
+        let status = orphan.try_wait().unwrap().expect("reclaimed per pid");
+        assert!(!status.success(), "{status}");
+        assert!(!path.exists(), "the record goes once nothing of it runs");
+        assert_eq!(record_refusal(&path), None);
+
+        // Negative control: the pid was reused by a process that is not a goose rank.
+        let mut stranger = sleeper(None);
+        let stranger_pid = stranger.id().unwrap();
+        write_record(&path, gone_goosed, stranger_pid);
+        reclaim_orphaned_at(&path).await;
+        assert!(stranger.try_wait().unwrap().is_none(), "never signalled");
+        assert!(!path.exists());
+
+        // Negative control: the writer is alive — another window serves the rank; nothing is
+        // touched and the mount is refused by name.
+        let mut rank = sleeper(Some(RANK_MARKER));
+        write_record(&path, stranger_pid, rank.id().unwrap());
+        reclaim_orphaned_at(&path).await;
+        assert!(
+            rank.try_wait().unwrap().is_none(),
+            "a supervised rank is left alone"
+        );
+        let refusal = record_refusal(&path).unwrap();
+        assert!(refusal.contains("another goose window"), "{refusal}");
     }
 }

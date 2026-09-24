@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "활성"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "포트 꺼짐"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, other {장치 #개 더, 포트 꺼짐}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "{name}에서 “이 Mac을 분산 노드로 사용하도록 허용”을 켜세요 (공급자 › LeanZero MLX › 엔진 › 분산)."

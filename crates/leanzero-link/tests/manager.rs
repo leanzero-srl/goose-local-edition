@@ -1939,7 +1939,11 @@ async fn distributed_proxy_carries_every_class_of_a_peers_answer() {
     let off = proxy_until_known(&manager, &target, "rankPoll", json!({"rankId": "r1"})).await;
     match off {
         Err(LinkError::DistributedNode(DistributedNodeError::Disabled(text))) => {
-            assert!(text.starts_with("servingDisabled"), "{text}")
+            assert_eq!(
+                text,
+                "servingDisabled: \"Allow this Mac to serve as a distributed node\" is off on \
+                 node-b-host"
+            )
         }
         other => panic!("expected the switch's 403, got {other:?}"),
     }

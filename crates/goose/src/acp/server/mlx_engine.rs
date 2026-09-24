@@ -330,7 +330,7 @@ async fn core_status() -> Result<MlxEngineStatusResponse, agent_client_protocol:
 async fn core_mount(
     req: MlxEngineMountRequest,
 ) -> Result<EmptyResponse, agent_client_protocol::Error> {
-    super::mlx_distributed::refuse_single_mount_while_distributed()?;
+    super::mlx_distributed::refuse_single_mount_while_distributed().await?;
     let manager = synced_manager()?;
     manager.mount(&req.model_id).await.invalid_params_err()?;
     Ok(EmptyResponse {})

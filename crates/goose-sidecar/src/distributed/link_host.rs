@@ -24,7 +24,7 @@ use serde_json::Value;
 
 use super::config::{Backend, Runner};
 use super::exec::{NodeExec, SystemExec};
-use super::launch::{self, RankProcess};
+use super::launch::{self, RankProcess, RANK_MARKER};
 use super::link_control::{
     link_peer, ExecAnswer, ExecRequest, LinkOp, LinkRefusal, ProvisionPollAnswer,
     ProvisionPollRequest, ProvisionStartAnswer, ProvisionStartRequest, RankExit, RankPollRequest,
@@ -107,8 +107,19 @@ impl Hosted {
             return;
         }
         if let Ok(Some(status)) = self.process.child.try_wait() {
-            self.exit = Some(exit_of(status, "exited on its own".to_string()));
+            self.exit = Some(exit_of(status, unasked_end(status)));
         }
+    }
+}
+
+/// How a rank that nobody here stopped ended, in words: a code of its own, or a signal from
+/// outside goose (goose stops ranks only through `stop_hosted`, which records its own reason).
+fn unasked_end(status: std::process::ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    match (status.code(), status.signal()) {
+        (Some(code), _) => format!("exited on its own with code {code}"),
+        (None, Some(signal)) => format!("killed by signal {signal} from outside goose"),
+        (None, None) => "ended without a code or a signal".to_string(),
     }
 }
 
@@ -526,6 +537,13 @@ async fn stop_hosted(hosted: &mut Hosted, follow_rank0: bool, why: String) -> St
                 status,
                 "left on rank 0's shutdown broadcast".into(),
             ));
+        } else {
+            report.steps.push(format!(
+                "rank {} pid {}: still running after rank 0's shutdown broadcast and the grace \
+                 window",
+                hosted.status.rank,
+                pid.unwrap_or_default()
+            ));
         }
     }
     if hosted.exit.is_none() {
@@ -605,6 +623,20 @@ fn ensure_lease_watch() {
             }
         });
     });
+}
+
+/// A rank a previous goosed on this Mac hosted and never stopped: that goosed was killed outright,
+/// so neither its exit path nor its lease watcher ran. Stopped here, per pid, only while the pid's
+/// command line still carries the goose rank marker (a reused pid is somebody else's process).
+/// `Ok(None)` = nothing of ours runs at `pid`; otherwise the step line and whether it is gone.
+pub async fn reclaim_orphan(pid: u32) -> Result<Option<(String, bool)>, HostError> {
+    let out = run_here(&format!("/bin/ps -o command= -p {pid}")).await?;
+    if !out.stdout.contains(RANK_MARKER) {
+        return Ok(None);
+    }
+    Ok(Some(
+        supervisor::reclaim_rank_pid(&SystemExec, None, "this Mac", pid).await,
+    ))
 }
 
 /// goosed's exit path: a rank this Mac hosts must not outlive it.
@@ -930,8 +962,10 @@ mod tests {
             matches!(events.first(), Some(ControlEvent::Lost(e)) if e.contains("SOCKS reply 1")),
             "{events:?}"
         );
+        // Silence is measured from the last answered poll (the peer's lease clock), so it spans
+        // the whole outage — not just the time since the first failed poll.
         assert!(
-            matches!(events.last(), Some(ControlEvent::Restored(_))),
+            matches!(events.last(), Some(ControlEvent::Restored(silent)) if *silent >= POLL_INTERVAL * 3 / 2),
             "{events:?}"
         );
         assert!(

@@ -12,7 +12,8 @@ fn unsupported<T>() -> Result<T, agent_client_protocol::Error> {
 }
 
 /// No goosed on this platform can supervise a distributed engine, so none can own the machine.
-pub(super) fn refuse_single_mount_while_distributed() -> Result<(), agent_client_protocol::Error> {
+pub(super) async fn refuse_single_mount_while_distributed(
+) -> Result<(), agent_client_protocol::Error> {
     Ok(())
 }
 

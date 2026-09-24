@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "active"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "port down"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count,plural,one{# more device, port down} other{# more devices, ports down}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "Turn on “Allow this Mac to serve as a distributed node” on {name} (Providers › LeanZero MLX › Engine › Distributed)."

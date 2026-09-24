@@ -3392,8 +3392,8 @@
   "mlxDistributedSetup.link.rdmaActive": {
     "defaultMessage": "作用中"
   },
-  "mlxDistributedSetup.link.rdmaDown": {
-    "defaultMessage": "連接埠關閉"
+  "mlxDistributedSetup.link.rdmaDownCount": {
+    "defaultMessage": "{count, plural, other {另有 # 個裝置連接埠關閉}}"
   },
   "mlxDistributedSetup.link.servingOff": {
     "defaultMessage": "在 {name} 上開啟「允許這台 Mac 作為分散式節點」（供應商 › LeanZero MLX › 引擎 › 分散式）。"

@@ -661,16 +661,20 @@ fn distributed_node_error_response(error: DistributedNodeError) -> Response {
     }
 }
 
-/// The text of the `403` a node answers while its owner's switch is off.
-pub const DISTRIBUTED_NODE_DISABLED: &str =
-    "servingDisabled: \"Allow this Mac to serve as a distributed node\" is off on this node";
+/// The `403` a node answers while its owner's switch is off, naming the node (the requester
+/// shows it verbatim).
+pub fn distributed_node_disabled(hostname: &str) -> String {
+    format!(
+        "servingDisabled: \"Allow this Mac to serve as a distributed node\" is off on {hostname}"
+    )
+}
 
 /// `POST /v1/swarm/distributed/<op>`: this node as a node of a same-account peer's distributed
 /// MLX engine — goose's typed node operations, its managed envs, and ONE rank this node spawns,
 /// polls under a lease and stops per pid.
 ///
 /// Gate order (each loud, none a fallback): no [`DistributedNode`] injected → `501`; the node
-/// owner's switch off (read per request) → `403` [`DISTRIBUTED_NODE_DISABLED`]; an unparseable
+/// owner's switch off (read per request) → `403` [`distributed_node_disabled`]; an unparseable
 /// body → `400`; otherwise the op runs and answers `200` with its JSON, or its
 /// [`DistributedNodeError`] class (`404` unknown op, `409 {code, message}` a named refusal,
 /// `500`). Auth (bearer / `?token=`, constant time, `Origin` refused) is the router
@@ -689,8 +693,9 @@ async fn distributed_proxy(
             .into_response();
     };
     if !node.serving_allowed() {
+        let hostname = ctx.source.local_node().await.hostname;
         return distributed_node_error_response(DistributedNodeError::Disabled(
-            DISTRIBUTED_NODE_DISABLED.to_string(),
+            distributed_node_disabled(&hostname),
         ));
     }
     let Json(request) = match body {

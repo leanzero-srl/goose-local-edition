@@ -743,20 +743,32 @@ async fn reclaim_marked_ranks(
     let mut steps = Vec::new();
     let mut verified = true;
     for pid in marked {
-        let sent = signal_pid(exec, host, pid, Signal::Term).await;
-        let mut gone = wait_gone(exec, host, pid).await;
-        let mut line = format!("{node}: goose rank pid {pid} → SIGTERM ({sent})");
-        if matches!(gone, Ok(None)) {
-            let sent = signal_pid(exec, host, pid, Signal::Kill).await;
-            gone = wait_gone(exec, host, pid).await;
-            line.push_str(&format!(" → SIGKILL ({sent})"));
-        }
-        let ok = matches!(gone, Ok(Some(_)));
+        let (line, ok) = reclaim_rank_pid(exec, host, node, pid).await;
         verified &= ok;
-        line.push_str(if ok { " → gone" } else { " → STILL ALIVE" });
         steps.push(line);
     }
     (steps, verified)
+}
+
+/// One goose rank nobody supervises: SIGTERM, grace, SIGKILL — to this pid only — and whether it
+/// was observed gone.
+pub(crate) async fn reclaim_rank_pid(
+    exec: &dyn NodeExec,
+    host: Option<&str>,
+    node: &str,
+    pid: u32,
+) -> (String, bool) {
+    let sent = signal_pid(exec, host, pid, Signal::Term).await;
+    let mut gone = wait_gone(exec, host, pid).await;
+    let mut line = format!("{node}: goose rank pid {pid} → SIGTERM ({sent})");
+    if matches!(gone, Ok(None)) {
+        let sent = signal_pid(exec, host, pid, Signal::Kill).await;
+        gone = wait_gone(exec, host, pid).await;
+        line.push_str(&format!(" → SIGKILL ({sent})"));
+    }
+    let ok = matches!(gone, Ok(Some(_)));
+    line.push_str(if ok { " → gone" } else { " → STILL ALIVE" });
+    (line, ok)
 }
 
 struct RunContext {
