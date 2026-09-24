@@ -351,6 +351,30 @@ def memory(base: str, model: str, nonce: str, contexts: list[int], poll_s: float
     return out
 
 
+def decode(base: str, model: str, nonce: str, context: int, reps: int, poll_s: float) -> dict:
+    """Decode speed with a long context already in the prefix cache: one cold request pays the
+    prefill, then `reps` requests share that prefix and differ only in the final question, so their
+    tok/s is decode at ~`context` tokens (MTP on, production-shaped), not prefill."""
+    doc = document(words_for(context), seed=context + 1)
+    head = f"Session {nonce}-d{context}.\nBelow is an operations log.\n\n{doc}\n\n"
+    asks = [
+        "Write about 300 words of plain prose describing what the log says about the scheduler.",
+        "Write about 300 words of plain prose describing what the log says about the cache.",
+        "Write about 300 words of plain prose describing what the log says about the network.",
+    ]
+    out = {"context": context, "runs": []}
+    for i in range(reps + 1):
+        r = stream_measured(base, model, head + asks[i % len(asks)], max_tokens=300, poll_s=poll_s)
+        r["cold"] = i == 0
+        out["runs"].append(r)
+        print(
+            f"[decode {context} #{i}{' cold' if i == 0 else ''}] prompt={r['prompt_tokens']} ttft={r['ttft_s']:.1f}s "
+            f"out={r['completion_tokens']} decode={r['decode_tps'] or 0:.1f}t/s",
+            flush=True,
+        )
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", required=True)
@@ -359,6 +383,12 @@ def main():
     ap.add_argument("--contexts", default="8192,32768,131072")
     ap.add_argument("--poll-seconds", type=float, default=0.5)
     ap.add_argument("--out-dir", default=None)
+    ap.add_argument(
+        "--nonce",
+        default=None,
+        help="reuse another run's nonce so the prompts are byte-identical to it (each configuration "
+        "runs on its own fresh engine with RAPID_MLX_PREFIX_CACHE_AUTOLOAD=0, so no cache is shared)",
+    )
     args = ap.parse_args()
     base = args.base_url.rstrip("/")
     if base.endswith(":8090"):
@@ -368,7 +398,7 @@ def main():
     st = status(base)
     if st.get("num_running") or st.get("num_waiting"):
         sys.exit(f"refusing: engine is busy ({st.get('num_running')} running, {st.get('num_waiting')} waiting)")
-    nonce = f"kvq-{args.label}-{datetime.now().strftime('%Y%m%dT%H%M%S')}"
+    nonce = args.nonce or f"kvq-{args.label}-{datetime.now().strftime('%Y%m%dT%H%M%S')}"
     fixture = json.load(open(os.path.join(HERE, "fixtures", "goose-agent-request.json")))
     out_dir = args.out_dir or os.path.join(HERE, "results", f"{datetime.now().strftime('%Y-%m-%d')}-kv-quant")
     path = os.path.join(out_dir, f"{args.label}.json")
@@ -386,9 +416,15 @@ def main():
     phases = args.phases.split(",")
     if "quality" in phases:
         record["quality_engine"] = engine
+        record["quality_nonce"] = nonce
         record["quality"] = quality(base, model, nonce, fixture)
+    if "decode" in phases:
+        record["decode_engine"] = engine
+        record["decode_nonce"] = nonce
+        record["decode"] = decode(base, model, nonce, 32768, 3, args.poll_seconds)
     if "memory" in phases:
         record["memory_engine"] = engine
+        record["memory_nonce"] = nonce
         record["memory"] = memory(base, model, nonce, [int(c) for c in args.contexts.split(",")], args.poll_seconds)
     record["finished"] = datetime.now().isoformat()
     record["status_end"] = status(base)
