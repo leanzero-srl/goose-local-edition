@@ -2786,6 +2786,10 @@ export const zMlxEngineStatusDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    maxConcurrentRequests: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
     gateMessage: z.union([
         z.string(),
         z.null()
@@ -3977,6 +3981,118 @@ export const zMlxEngineDistributedStopResponse_unstable = z.object({
 });
 
 /**
+ * Mount `modelId` on Link peer `peer` (the existing `mlxEngine/mount` over the mesh — the
+ * peer's memory gate decides) and route this Mac's MLX chat to it through the peer's chat
+ * proxy. Returns once the mount is accepted (`state: mounting`) or the engine already serves
+ * it (`state: ready`); poll `remoteSingleStatus` for `ready`. Idempotent for the same
+ * peer + model. While a route is up, the swarm router's MLX node is the peer's engine
+ * (`remote-<peerHostname>`) and this Mac's own sidecar node is not a candidate.
+ */
+export const zMlxEngineRemoteSingleStartRequest_unstable = z.object({
+    peer: z.string(),
+    modelId: z.string()
+});
+
+/**
+ * Why a remote-single start did not happen — one named code the caller acts on, and the
+ * message to show verbatim. Codes: `linkNotConnected` · `unknownPeer` · `chatServingDisabled`
+ * (the peer's "Allow this Mac to serve chat to linked devices" is off) ·
+ * `remoteManagementDisabled` (the peer does not let linked devices mount models) ·
+ * `peerTooOld` (its goose has no chat proxy / reports no admission cap) · `peerMountFailed`
+ * (the peer's own mount refusal, e.g. its memory gate) · `distributedOwnsThisMac` ·
+ * `remoteSingleActive` (a route to a different peer or model is up — stop it first).
+ */
+export const zMlxRemoteSingleRefusalDto = z.object({
+    code: z.string(),
+    message: z.string()
+});
+
+/**
+ * The remote-single route of THIS goosed. `state`: `off` (no route) · `mounting` (the peer is
+ * loading the model) · `ready` (the peer's engine serves `servedModelId` through the proxy —
+ * chat goes there) · `failed` (the peer's engine failed or went away; `lastError` says why).
+ */
+export const zMlxRemoteSingleStatusDto = z.object({
+    state: z.string(),
+    peer: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    peerHostname: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    modelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    servedModelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    capacity: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    activeRequests: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    activeRequestsError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    generationTps: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
+    contextWindow: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    lastError: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zMlxEngineRemoteSingleStartResponse_unstable = z.object({
+    started: z.boolean(),
+    refusal: z.union([
+        zMlxRemoteSingleRefusalDto,
+        z.null()
+    ]).optional(),
+    status: zMlxRemoteSingleStatusDto
+});
+
+/**
+ * Drop the route (chat returns to this Mac's own engine) and, unless `keepMounted`, unmount
+ * the model on the peer. `unmounted` reports the peer's answer; `unmountError` its failure
+ * verbatim (the route is dropped either way).
+ */
+export const zMlxEngineRemoteSingleStopRequest_unstable = z.object({
+    keepMounted: z.boolean().optional().default(false)
+});
+
+export const zMlxEngineRemoteSingleStopResponse_unstable = z.object({
+    unmounted: z.boolean(),
+    unmountError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    status: zMlxRemoteSingleStatusDto
+});
+
+/**
+ * The route's state, re-probed through the proxy on every call.
+ */
+export const zMlxEngineRemoteSingleStatusRequest_unstable = z.record(z.unknown());
+
+export const zMlxEngineRemoteSingleStatusResponse_unstable = z.object({
+    status: zMlxRemoteSingleStatusDto
+});
+
+/**
  * "Make room" on one configured node: compact its memory now (refused while the distributed
  * engine runs, or beside any MLX engine on that node). Returns after the settle.
  */
@@ -4945,6 +5061,9 @@ export const zExtRequest = z.object({
             zMlxEngineDistributedPreflightRequest_unstable,
             zMlxEngineDistributedStartRequest_unstable,
             zMlxEngineDistributedStopRequest_unstable,
+            zMlxEngineRemoteSingleStartRequest_unstable,
+            zMlxEngineRemoteSingleStopRequest_unstable,
+            zMlxEngineRemoteSingleStatusRequest_unstable,
             zMlxEngineDistributedMakeRoomRequest_unstable,
             zMlxEngineDistributedPeerCandidatesRequest_unstable,
             zMlxEngineDistributedDiscoverRequest_unstable,
@@ -5068,6 +5187,9 @@ export const zExtResponse = z.union([
                 zMlxEngineDistributedPreflightResponse_unstable,
                 zMlxEngineDistributedStartResponse_unstable,
                 zMlxEngineDistributedStopResponse_unstable,
+                zMlxEngineRemoteSingleStartResponse_unstable,
+                zMlxEngineRemoteSingleStopResponse_unstable,
+                zMlxEngineRemoteSingleStatusResponse_unstable,
                 zMlxEngineDistributedMakeRoomResponse_unstable,
                 zMlxEngineDistributedPeerCandidatesResponse_unstable,
                 zMlxEngineDistributedDiscoverResponse_unstable,

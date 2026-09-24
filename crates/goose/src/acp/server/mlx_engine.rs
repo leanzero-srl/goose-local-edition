@@ -31,6 +31,12 @@ pub(super) fn align_omlx_host_env() {
     if user_owned {
         return;
     }
+    // Remote single: chat was routed to a Link peer's engine (by this window or another) — the
+    // omlx provider targets the relay to it; the moment the route is stopped, what follows applies.
+    if let Some(route) = crate::providers::mlx_remote::read().live() {
+        std::env::set_var("OMLX_HOST", route.base_url);
+        return;
+    }
     // The explicit switch: while the distributed engine owns this Mac, the omlx provider targets
     // ITS port; the moment it stops, the single engine's port below is restored.
     if let Some(base) = crate::providers::mlx_distributed_owner::own_active_base_url() {
@@ -300,7 +306,7 @@ fn settings_to_dto(settings: EngineSettings) -> MlxEngineSettingsDto {
     }
 }
 
-fn settings_from_dto(dto: MlxEngineSettingsDto) -> EngineSettings {
+pub(super) fn settings_from_dto(dto: MlxEngineSettingsDto) -> EngineSettings {
     EngineSettings {
         model_id: dto.model_id,
         models_dir: dto.models_dir,
@@ -334,6 +340,7 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         served_model_id: status.served_model_id,
         active_requests: status.active_requests,
         active_requests_error: status.active_requests_error,
+        max_concurrent_requests: Some(goose_sidecar::engine::MAX_CONCURRENT_REQUESTS),
         stray_listener_port: status.stray_listener_port,
         probe_error: status.probe_error,
         gate_message: status.gate_message,

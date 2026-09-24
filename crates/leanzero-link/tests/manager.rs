@@ -2105,7 +2105,10 @@ async fn the_chat_relay_reaches_a_peer_through_the_connected_managers_registry()
         );
         tokio::time::sleep(Duration::from_millis(25)).await;
     };
-    assert_eq!(body, r#"{"data":[{"id":"m"}]}"#, "B's engine answered A's relay");
+    assert_eq!(
+        body, r#"{"data":[{"id":"m"}]}"#,
+        "B's engine answered A's relay"
+    );
 
     let stranger = InferenceRelay::start(
         "node-nobody".to_string(),

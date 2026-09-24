@@ -114,6 +114,7 @@ mod mlx_distributed_discover;
 #[cfg(unix)]
 mod mlx_distributed_link;
 mod mlx_engine;
+mod mlx_remote_single;
 mod mlx_replica;
 pub use mlx_engine::GoosedMlxControl;
 mod new_session;

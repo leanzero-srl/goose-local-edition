@@ -187,6 +187,12 @@ import type {
   MlxEngineModelsListRequest_unstable,
   MlxEngineModelsListResponse_unstable,
   MlxEngineMountRequest_unstable,
+  MlxEngineRemoteSingleStartRequest_unstable,
+  MlxEngineRemoteSingleStartResponse_unstable,
+  MlxEngineRemoteSingleStatusRequest_unstable,
+  MlxEngineRemoteSingleStatusResponse_unstable,
+  MlxEngineRemoteSingleStopRequest_unstable,
+  MlxEngineRemoteSingleStopResponse_unstable,
   MlxEngineReplicaCancelRequest_unstable,
   MlxEngineReplicaProgressRequest_unstable,
   MlxEngineReplicaProgressResponse_unstable,
@@ -348,6 +354,9 @@ import {
   zMlxEngineLinkFactsResponse_unstable,
   zMlxEngineModelCardResponse_unstable,
   zMlxEngineModelsListResponse_unstable,
+  zMlxEngineRemoteSingleStartResponse_unstable,
+  zMlxEngineRemoteSingleStatusResponse_unstable,
+  zMlxEngineRemoteSingleStopResponse_unstable,
   zMlxEngineReplicaProgressResponse_unstable,
   zMlxEngineReplicaTargetsResponse_unstable,
   zMlxEngineReplicateResponse_unstable,
@@ -1762,6 +1771,42 @@ export class GooseExtClient {
     return zMlxEngineDistributedStopResponse_unstable.parse(
       raw,
     ) as MlxEngineDistributedStopResponse_unstable;
+  }
+
+  async mlxEngineRemoteSingleStart_unstable(
+    params: MlxEngineRemoteSingleStartRequest_unstable,
+  ): Promise<MlxEngineRemoteSingleStartResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/remoteSingleStart",
+      params,
+    );
+    return zMlxEngineRemoteSingleStartResponse_unstable.parse(
+      raw,
+    ) as MlxEngineRemoteSingleStartResponse_unstable;
+  }
+
+  async mlxEngineRemoteSingleStop_unstable(
+    params: MlxEngineRemoteSingleStopRequest_unstable,
+  ): Promise<MlxEngineRemoteSingleStopResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/remoteSingleStop",
+      params,
+    );
+    return zMlxEngineRemoteSingleStopResponse_unstable.parse(
+      raw,
+    ) as MlxEngineRemoteSingleStopResponse_unstable;
+  }
+
+  async mlxEngineRemoteSingleStatus_unstable(
+    params: MlxEngineRemoteSingleStatusRequest_unstable,
+  ): Promise<MlxEngineRemoteSingleStatusResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/remoteSingleStatus",
+      params,
+    );
+    return zMlxEngineRemoteSingleStatusResponse_unstable.parse(
+      raw,
+    ) as MlxEngineRemoteSingleStatusResponse_unstable;
   }
 
   async mlxEngineDistributedMakeRoom_unstable(

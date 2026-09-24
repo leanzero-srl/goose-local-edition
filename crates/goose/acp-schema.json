@@ -6764,6 +6764,14 @@
             "null"
           ]
         },
+        "maxConcurrentRequests": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The admission cap this goose starts its engine with (`--max-concurrent-requests`) — what\na Link peer routing chat here sizes its node to. Absent from goose builds before it.",
+          "minimum": 0
+        },
         "gateMessage": {
           "type": [
             "string",
@@ -9379,6 +9387,204 @@
         "verified"
       ],
       "description": "The verified stop: each step (what was signalled, per pid, and what was observed)."
+    },
+    "MlxEngineRemoteSingleStartRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "peer": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "peer",
+        "modelId"
+      ],
+      "description": "Mount `modelId` on Link peer `peer` (the existing `mlxEngine/mount` over the mesh — the\npeer's memory gate decides) and route this Mac's MLX chat to it through the peer's chat\nproxy. Returns once the mount is accepted (`state: mounting`) or the engine already serves\nit (`state: ready`); poll `remoteSingleStatus` for `ready`. Idempotent for the same\npeer + model. While a route is up, the swarm router's MLX node is the peer's engine\n(`remote-<peerHostname>`) and this Mac's own sidecar node is not a candidate.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/remoteSingleStart"
+    },
+    "MlxEngineRemoteSingleStartResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "started": {
+          "type": "boolean"
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxRemoteSingleRefusalDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/MlxRemoteSingleStatusDto"
+        }
+      },
+      "required": [
+        "started",
+        "status"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/remoteSingleStart"
+    },
+    "MlxRemoteSingleRefusalDto": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "description": "Why a remote-single start did not happen — one named code the caller acts on, and the\nmessage to show verbatim. Codes: `linkNotConnected` · `unknownPeer` · `chatServingDisabled`\n(the peer's \"Allow this Mac to serve chat to linked devices\" is off) ·\n`remoteManagementDisabled` (the peer does not let linked devices mount models) ·\n`peerTooOld` (its goose has no chat proxy / reports no admission cap) · `peerMountFailed`\n(the peer's own mount refusal, e.g. its memory gate) · `distributedOwnsThisMac` ·\n`remoteSingleActive` (a route to a different peer or model is up — stop it first)."
+    },
+    "MlxRemoteSingleStatusDto": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        },
+        "peer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The peer as the caller named it (a Link `nodeId`)."
+        },
+        "peerHostname": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The peer's hostname as the mesh reports it — what \"Serving from <peer>\" shows."
+        },
+        "modelId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The HF directory id mounted on the peer."
+        },
+        "servedModelId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "`served_model_id` over the PEER's saved settings — the id chat requests carry."
+        },
+        "capacity": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The peer's admission cap (its `maxConcurrentRequests`) — the router node's capacity.",
+          "minimum": 0
+        },
+        "activeRequests": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The peer engine's live in-flight count (`/v1/status` through the proxy). Absent when it\ndid not answer — never a fabricated 0; `activeRequestsError` says why.",
+          "minimum": 0
+        },
+        "activeRequestsError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generationTps": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "The peer engine's own decode rate over its last generation (`generation_tps`)."
+        },
+        "contextWindow": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "lastError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "description": "The remote-single route of THIS goosed. `state`: `off` (no route) · `mounting` (the peer is\nloading the model) · `ready` (the peer's engine serves `servedModelId` through the proxy —\nchat goes there) · `failed` (the peer's engine failed or went away; `lastError` says why)."
+    },
+    "MlxEngineRemoteSingleStopRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "keepMounted": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "description": "Drop the route (chat returns to this Mac's own engine) and, unless `keepMounted`, unmount\nthe model on the peer. `unmounted` reports the peer's answer; `unmountError` its failure\nverbatim (the route is dropped either way).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/remoteSingleStop"
+    },
+    "MlxEngineRemoteSingleStopResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "unmounted": {
+          "type": "boolean"
+        },
+        "unmountError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/MlxRemoteSingleStatusDto"
+        }
+      },
+      "required": [
+        "unmounted",
+        "status"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/remoteSingleStop"
+    },
+    "MlxEngineRemoteSingleStatusRequest_unstable": {
+      "type": "object",
+      "description": "The route's state, re-probed through the proxy on every call.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/remoteSingleStatus"
+    },
+    "MlxEngineRemoteSingleStatusResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/MlxRemoteSingleStatusDto"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/remoteSingleStatus"
     },
     "MlxEngineDistributedMakeRoomRequest_unstable": {
       "type": "object",
@@ -12523,6 +12729,33 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEngineRemoteSingleStartRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/remoteSingleStart",
+                  "title": "MlxEngineRemoteSingleStartRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineRemoteSingleStopRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/remoteSingleStop",
+                  "title": "MlxEngineRemoteSingleStopRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineRemoteSingleStatusRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/remoteSingleStatus",
+                  "title": "MlxEngineRemoteSingleStatusRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/MlxEngineDistributedMakeRoomRequest_unstable"
                     }
                   ],
@@ -13451,6 +13684,30 @@
                         }
                       ],
                       "title": "MlxEngineDistributedStopResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineRemoteSingleStartResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineRemoteSingleStartResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineRemoteSingleStopResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineRemoteSingleStopResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineRemoteSingleStatusResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineRemoteSingleStatusResponse_unstable"
                     },
                     {
                       "allOf": [

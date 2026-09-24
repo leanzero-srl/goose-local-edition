@@ -661,6 +661,21 @@
       "responseType": "MlxEngineDistributedStopResponse_unstable"
     },
     {
+      "method": "_goose/unstable/mlxEngine/remoteSingleStart",
+      "requestType": "MlxEngineRemoteSingleStartRequest_unstable",
+      "responseType": "MlxEngineRemoteSingleStartResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/remoteSingleStop",
+      "requestType": "MlxEngineRemoteSingleStopRequest_unstable",
+      "responseType": "MlxEngineRemoteSingleStopResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/remoteSingleStatus",
+      "requestType": "MlxEngineRemoteSingleStatusRequest_unstable",
+      "responseType": "MlxEngineRemoteSingleStatusResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/mlxEngine/distributedMakeRoom",
       "requestType": "MlxEngineDistributedMakeRoomRequest_unstable",
       "responseType": "MlxEngineDistributedMakeRoomResponse_unstable"

@@ -1084,6 +1084,30 @@ impl GooseAcpAgent {
         self.on_mlx_engine_distributed_stop(req).await
     }
 
+    #[custom_method(MlxEngineRemoteSingleStartRequest)]
+    async fn dispatch_mlx_engine_remote_single_start(
+        &self,
+        req: MlxEngineRemoteSingleStartRequest,
+    ) -> Result<MlxEngineRemoteSingleStartResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_remote_single_start(req).await
+    }
+
+    #[custom_method(MlxEngineRemoteSingleStopRequest)]
+    async fn dispatch_mlx_engine_remote_single_stop(
+        &self,
+        req: MlxEngineRemoteSingleStopRequest,
+    ) -> Result<MlxEngineRemoteSingleStopResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_remote_single_stop(req).await
+    }
+
+    #[custom_method(MlxEngineRemoteSingleStatusRequest)]
+    async fn dispatch_mlx_engine_remote_single_status(
+        &self,
+        req: MlxEngineRemoteSingleStatusRequest,
+    ) -> Result<MlxEngineRemoteSingleStatusResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_remote_single_status(req).await
+    }
+
     #[custom_method(MlxEngineDistributedMakeRoomRequest)]
     async fn dispatch_mlx_engine_distributed_make_room(
         &self,
