@@ -1499,7 +1499,7 @@ mod tests {
         let skills = vec![
             skill(
                 "demotenant",
-                "Demo Tenant Atlassian operations across tenant.example.com (PRODUCTION) and sandbox.example.com. Use whenever the task involves an Demo Tenant ticket (DEMO- on production; DEMO- on the sandbox), the Example Forge automations app, or any REST automation against them.",
+                "Demo Tenant Atlassian operations across tenant.example.com (PRODUCTION) and tenant-sandbox.example.com. Use whenever the task involves an Demo Tenant ticket (DEMO- on production; DEMO- on the sandbox), the Example Forge automations app, or any REST automation against them.",
             ),
             skill(
                 "demobank",

@@ -364,6 +364,8 @@ mod tests {
     }
 
     #[test]
+    // The keys are this test's own: `config::base`'s tests set process env vars such as
+    // TEST_KEY, and an env var overrides the file, so a shared name reads another test's value.
     fn rejected_or_cancelled_save_restores_keys_and_endpoint() {
         let directory = tempfile::tempdir().unwrap();
         let config = Config::new_with_file_secrets(
@@ -371,37 +373,58 @@ mod tests {
             directory.path().join("secrets.json"),
         )
         .unwrap();
-        config.set_param("TEST_ENDPOINT", "original").unwrap();
-        config.set_secret("TEST_KEY", &"original-key").unwrap();
+        config
+            .set_param("KEY_CONNECTION_TEST_ENDPOINT", "original")
+            .unwrap();
+        config
+            .set_secret("KEY_CONNECTION_TEST_KEY", &"original-key")
+            .unwrap();
         {
             let _pending = PendingConfig::capture(
                 &config,
                 &[
-                    ("TEST_ENDPOINT", false),
-                    ("TEST_KEY", true),
-                    ("TEST_NEW_KEY", true),
+                    ("KEY_CONNECTION_TEST_ENDPOINT", false),
+                    ("KEY_CONNECTION_TEST_KEY", true),
+                    ("KEY_CONNECTION_TEST_NEW_KEY", true),
                 ],
             )
             .unwrap();
-            config.set_param("TEST_ENDPOINT", "candidate").unwrap();
-            config.set_secret("TEST_KEY", &"rejected-key").unwrap();
-            config.set_secret("TEST_NEW_KEY", &"new-key").unwrap();
+            config
+                .set_param("KEY_CONNECTION_TEST_ENDPOINT", "candidate")
+                .unwrap();
+            config
+                .set_secret("KEY_CONNECTION_TEST_KEY", &"rejected-key")
+                .unwrap();
+            config
+                .set_secret("KEY_CONNECTION_TEST_NEW_KEY", &"new-key")
+                .unwrap();
         }
         assert_eq!(
-            config.get_param::<String>("TEST_ENDPOINT").unwrap(),
+            config
+                .get_param::<String>("KEY_CONNECTION_TEST_ENDPOINT")
+                .unwrap(),
             "original"
         );
         assert_eq!(
-            config.get_secret::<String>("TEST_KEY").unwrap(),
+            config
+                .get_secret::<String>("KEY_CONNECTION_TEST_KEY")
+                .unwrap(),
             "original-key"
         );
-        assert!(config.get_secret::<String>("TEST_NEW_KEY").is_err());
-        let mut pending = PendingConfig::capture(&config, &[("TEST_KEY", true)]).unwrap();
-        config.set_secret("TEST_KEY", &"validated-key").unwrap();
+        assert!(config
+            .get_secret::<String>("KEY_CONNECTION_TEST_NEW_KEY")
+            .is_err());
+        let mut pending =
+            PendingConfig::capture(&config, &[("KEY_CONNECTION_TEST_KEY", true)]).unwrap();
+        config
+            .set_secret("KEY_CONNECTION_TEST_KEY", &"validated-key")
+            .unwrap();
         pending.commit();
         drop(pending);
         assert_eq!(
-            config.get_secret::<String>("TEST_KEY").unwrap(),
+            config
+                .get_secret::<String>("KEY_CONNECTION_TEST_KEY")
+                .unwrap(),
             "validated-key"
         );
     }
