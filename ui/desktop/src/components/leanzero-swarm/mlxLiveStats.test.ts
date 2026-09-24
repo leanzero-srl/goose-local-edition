@@ -14,11 +14,14 @@ import {
   mountFill,
   parseMlxLiveStatus,
   pushSample,
+  readingNowTps,
   sparklinePoints,
   type MlxLiveStats,
 } from './mlxLiveStats';
 import {
   CACHED_GENERATING_STATUS,
+  DIST_READING_STATUS,
+  DIST_WRITING_STATUS,
   GENERATING_STATUS,
   IDLE_STATUS,
   PREFILL_STATUS,
@@ -300,6 +303,37 @@ describe('the prefill (reading) rate — computed prompt tokens over time to fir
     const newer = { ...CACHED_GENERATING_STATUS.requests[0] }; // first token 18 s ago
     const body = { ...IDLE_STATUS, status: 'generating', requests: [older, newer] };
     expect(measuredPrefillTps(statsOf(body))).toBeCloseTo(200, 5);
+  });
+});
+
+describe("the distributed engine's reported prefill — read live, through the same functions", () => {
+  it('parses how far into the prompt it is and its prefill rate; the single engine carries neither', () => {
+    expect(statsOf(DIST_READING_STATUS).requests[0]).toMatchObject({
+      phase: 'prefill',
+      promptTokens: 7012,
+      prefilledTokens: 2048,
+      promptTps: 152.4,
+    });
+    expect(statsOf(PREFILL_STATUS).requests[0]).toMatchObject({
+      prefilledTokens: null,
+      promptTps: null,
+    });
+  });
+
+  it('mid-prefill the reported rate IS the reading rate; the single engine still has none', () => {
+    const reading = statsOf(DIST_READING_STATUS);
+    expect(mlxActivity(reading)).toBe('prefill');
+    expect(readingNowTps(reading)).toBe(152.4);
+    expect(measuredPrefillTps(reading)).toBe(152.4);
+    expect(readingNowTps(statsOf(PREFILL_STATUS))).toBe(0);
+  });
+
+  it("after the first token, the engine's own prefill rate beats (prompt − cached) / ttft", () => {
+    const writing = statsOf(DIST_WRITING_STATUS);
+    expect(mlxActivity(writing)).toBe('generating');
+    expect(readingNowTps(writing)).toBe(0);
+    expect(measuredPrefillTps(writing)).toBe(5503.35);
+    expect(liveDecodeTps(writing)).toBe(171.1);
   });
 });
 

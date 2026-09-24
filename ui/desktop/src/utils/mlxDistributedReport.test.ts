@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { isMlxDistributedReport, toMlxDistributedReport } from './mlxDistributedReport';
+import {
+  distributedLiveBase,
+  isMlxDistributedReport,
+  toMlxDistributedReport,
+} from './mlxDistributedReport';
 import {
   FLASH_READY,
+  FLASH_SERVING,
   HOSTING_RANK_1,
   STOPPED_WITH_CONFIG,
 } from '../components/leanzero-swarm/mlxDistributed.fixtures';
@@ -38,6 +43,18 @@ describe('toMlxDistributedReport — what main is told after every status read',
       inflight: null,
     });
     expect(isMlxDistributedReport(report)).toBe(true);
+  });
+
+  it("rank 0's base rides along; main reads it only while the run owns the Mac and is up", () => {
+    const ready = toMlxDistributedReport(FLASH_READY);
+    expect(ready.baseUrl).toBe(FLASH_READY.baseUrl);
+    expect(distributedLiveBase(ready)).toBe(FLASH_READY.baseUrl);
+    expect(distributedLiveBase(toMlxDistributedReport(FLASH_SERVING))).toBe(FLASH_READY.baseUrl);
+    expect(distributedLiveBase({ ...ready, state: 'starting' })).toBeNull();
+    expect(distributedLiveBase(toMlxDistributedReport(STOPPED_WITH_CONFIG))).toBeNull();
+    expect(distributedLiveBase(toMlxDistributedReport(HOSTING_RANK_1))).toBeNull();
+    expect(distributedLiveBase(null)).toBeNull();
+    expect(isMlxDistributedReport({ ...ready, baseUrl: 8091 })).toBe(false);
   });
 
   it('IPC is a trust boundary: a malformed payload is not a report', () => {

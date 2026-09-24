@@ -49,6 +49,11 @@ export function isMlxEngineReport(value: unknown): value is MlxEngineReport {
 }
 
 export interface MlxEngineSnapshot {
+  /**
+   * Which engine this read is of: the single engine, or the distributed run's rank 0 while that run
+   * owns this Mac and is up (its `/v1/status` answers in the single engine's shape).
+   */
+  engine: 'single' | 'distributed';
   mode: MlxEngineMode;
   /** The id the engine serves (its own `/v1/status` model, else goose's served id, else the HF id). */
   modelId: string | null;
@@ -67,6 +72,8 @@ export interface MlxEngineMonitorDeps {
   readServing(): Promise<MlxServingRead>;
   /** `http://127.0.0.1:<mlx_engine.port>` from goose's config, or null when it names none. */
   configBaseUrl(): string | null;
+  /** Rank 0's base while the distributed run owns this Mac and is up (`distributedLiveBase`). */
+  distributedBaseUrl(): string | null;
   swarmRuns(): string[];
   onSnapshot(snapshot: MlxEngineSnapshot): void;
   schedule(fn: () => void, ms: number): () => void;
@@ -74,6 +81,7 @@ export interface MlxEngineMonitorDeps {
 }
 
 export const INITIAL_SNAPSHOT: MlxEngineSnapshot = {
+  engine: 'single',
   mode: 'unknown',
   modelId: null,
   baseUrl: null,
@@ -160,7 +168,70 @@ export class MlxEngineMonitor {
   }
 
   private async read(): Promise<MlxEngineSnapshot> {
+    const distributedBase = this.deps.distributedBaseUrl();
+    if (distributedBase) return this.readDistributed(distributedBase);
+    return { ...(await this.readSingle()), engine: 'single' };
+  }
+
+  /**
+   * The distributed run's rank 0, through the single engine's parser and rates. Its lifecycle is
+   * the renderer's report (the tray's distributed branch); this read carries only what it is doing.
+   */
+  private async readDistributed(baseUrl: string): Promise<MlxEngineSnapshot> {
+    const held = this.snapshot.engine === 'distributed' ? this.snapshot : null;
+    const last = held?.last ?? NO_RATES;
+    const result = await this.deps.readStatus(baseUrl);
+    if (!result.ok) {
+      return {
+        ...INITIAL_SNAPSHOT,
+        engine: 'distributed',
+        mode: result.error === 'timeout' && held ? held.mode : 'unknown',
+        baseUrl,
+        stats: result.error === 'timeout' ? (held?.stats ?? null) : null,
+        statusDetail: `${result.error}: ${result.detail}`,
+        last,
+      };
+    }
+    const parsed = parseMlxLiveStatus(result.body);
+    if (!parsed.ok) {
+      return {
+        ...INITIAL_SNAPSHOT,
+        engine: 'distributed',
+        baseUrl,
+        statusDetail: parsed.detail,
+        last,
+      };
+    }
+    const stats = parsed.stats;
+    return {
+      engine: 'distributed',
+      mode: 'running',
+      modelId: null,
+      baseUrl,
+      stats,
+      statusDetail: null,
+      last: advanceLastRates(last, stats),
+      serving: await this.attribute(stats),
+      failedError: null,
+    };
+  }
+
+  private async attribute(stats: MlxLiveStats): Promise<MlxServing> {
+    if (stats.requests.length === 0) {
+      return attributeServing([], 0, this.deps.swarmRuns(), null);
+    }
+    const read = await this.deps.readServing();
+    return attributeServing(
+      read.ok ? read.rows : [],
+      stats.requests.length,
+      this.deps.swarmRuns(),
+      read.ok ? null : read.detail
+    );
+  }
+
+  private async readSingle(): Promise<MlxEngineSnapshot> {
     const report = this.report;
+    const last = this.snapshot.engine === 'single' ? this.snapshot.last : NO_RATES;
     const baseUrl = report?.baseUrl ?? this.deps.configBaseUrl();
     const reportedModel = report?.servedModelId ?? report?.modelId ?? null;
     const failedError = report?.state === 'failed' ? (report.lastError ?? null) : null;
@@ -170,7 +241,7 @@ export class MlxEngineMonitor {
         mode: report?.state === 'failed' ? 'failed' : 'unknown',
         modelId: reportedModel,
         statusDetail: 'goose names no port for the MLX engine yet',
-        last: this.snapshot.last,
+        last,
         failedError,
       };
     }
@@ -185,17 +256,18 @@ export class MlxEngineMonitor {
           modelId: mode === 'off' ? null : reportedModel,
           baseUrl,
           statusDetail: `${result.error}: ${result.detail}`,
-          last: mode === 'off' ? NO_RATES : this.snapshot.last,
+          last: mode === 'off' ? NO_RATES : last,
           failedError,
         };
       }
       // A timeout is a slow engine, not a gone one: hold what was known and say why it is stale.
       // A non-2xx or a non-JSON body is something on the port that is not answering as Rapid-MLX.
-      const held = this.snapshot.mode === 'running' || this.snapshot.mode === 'mounting';
+      const prev = this.snapshot.engine === 'single' ? this.snapshot : INITIAL_SNAPSHOT;
+      const held = prev.mode === 'running' || prev.mode === 'mounting';
       return {
-        ...this.snapshot,
+        ...prev,
         baseUrl,
-        mode: result.error === 'timeout' && held ? this.snapshot.mode : 'unknown',
+        mode: result.error === 'timeout' && held ? prev.mode : 'unknown',
         statusDetail: `${result.error}: ${result.detail}`,
       };
     }
@@ -207,31 +279,21 @@ export class MlxEngineMonitor {
         modelId: reportedModel,
         baseUrl,
         statusDetail: parsed.detail,
-        last: this.snapshot.last,
+        last,
       };
     }
     const stats = parsed.stats;
     const bodyModel = (result.body as { model?: unknown }).model;
     const engineModel = typeof bodyModel === 'string' && bodyModel ? bodyModel : null;
-    let serving: MlxServing;
-    if (stats.requests.length === 0) {
-      serving = attributeServing([], 0, this.deps.swarmRuns(), null);
-    } else {
-      const read = await this.deps.readServing();
-      serving = attributeServing(
-        read.ok ? read.rows : [],
-        stats.requests.length,
-        this.deps.swarmRuns(),
-        read.ok ? null : read.detail
-      );
-    }
+    const serving = await this.attribute(stats);
     return {
+      engine: 'single',
       mode: 'running',
       modelId: engineModel ?? reportedModel,
       baseUrl,
       stats,
       statusDetail: null,
-      last: advanceLastRates(this.snapshot.last, stats),
+      last: advanceLastRates(last, stats),
       serving,
       failedError: null,
     };

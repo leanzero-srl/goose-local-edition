@@ -74,6 +74,26 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   ps stat `T` = frozen at once. Watchdog per poll: kernel pressure WARN or available < 5% RAM → admission 503; CRITICAL →
   verified stop, never restarted. Restart breaker = the single Sidecar's (3 per 600 s, backoff 1 s → 30 s).
 - Live tests + measured numbers: mlx-jaccl-cluster skill, section "goose's DISTRIBUTED engine".
+- SERVED ID (2026-09-24, 3.0.26 defect): `engine::served_model_id(settings, model_id)` applies
+  `mlx_engine.served_model_name` ONLY when `model_id == mlx_engine.model_id` (the alias names ONE model;
+  AddNodeDialog / `goose swarm` write the pair). Before: the alias applied to ANY model, so a Flash split
+  answered `/v1/models` as `mihai-qwen3.8-27b-atlassian-q8-mlx` and the 27B's swarm node routed to Flash.
+  Now Flash serves `rapid-mlx/Qwen3.8-Flash-Next-4bit` (tile AND placement-card start, measured) while a
+  27B split keeps the alias. The router's thinking-profile tie (`profile_template_kwargs`) follows: a
+  non-alias served id IS its HF dir. Every distributed start (tile, placement card, section) goes through
+  ONE backend entry, `on_mlx_engine_distributed_start` — the served id is never computed in the UI.
+- LIVE READ OF A SPLIT (2026-09-24): the desktop reads rank 0's `<baseUrl>/v1/status` with the SINGLE
+  engine's parser (`parseMlxLiveStatus`, now + `prefilledTokens`/`promptTps`) — the tile via
+  MlxEngineView.refreshLive (source switches reset the rates), the tray via main's MlxEngineMonitor
+  (`distributedBaseUrl` from the renderer's report, snapshot `engine: 'distributed'`); `runPhase(state,
+  admission, activity)` → reading blue / writing green / queued orange; held/failed/loading win.
+  MEASURED two-Mac Flash (M4 Max rank 0 + M3 Ultra over Link/JACCL), 7,226-token prompt: prefill rows
+  2,048 → 4,096 → 6,144 of 7,226 at 302 → 458 tok/s, first token at ~15 s, 531 tok/s final prompt rate,
+  writing 20.6 → 19.6 tok/s; 27B tensor split: 4,694 tokens at 412 → 431 tok/s, writing 16.1 → 12.8.
+  `prefilled_tokens` stays 0 until the runner's first 2,048-token chunk (~5 s) — the row reads 0%.
+- TRAP: a second 27B beside the owner's (the engine live test) fits the gate (need 30.6, budget 45.1)
+  but macOS pages it out mid-load (resident 26.1 → 10.5 GiB) and the >0.9 resident assertion fails —
+  environmental; run that test with the owner's engine unmounted.
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud

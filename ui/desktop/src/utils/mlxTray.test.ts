@@ -25,6 +25,8 @@ import {
   type MlxLiveStats,
 } from '../components/leanzero-swarm/mlxLiveStats';
 import {
+  DIST_READING_STATUS,
+  DIST_WRITING_STATUS,
   GENERATING_STATUS,
   IDLE_STATUS,
   PREFILL_STATUS,
@@ -258,6 +260,36 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
     ]);
     // Mount is refused by goose while the run owns the Mac, so the tray does not offer it.
     expect(actions(model.items).map(([a]) => a)).toEqual(['open-providers', 'stop-distributed']);
+  });
+
+  it("while up, main's read of rank 0 speaks through the single engine's words and colours", () => {
+    const serving = toMlxDistributedReport({ ...FLASH_SERVING, inflight: 1 });
+    const rank0 = (body: unknown) =>
+      running(body, {
+        engine: 'distributed',
+        modelId: null,
+        baseUrl: 'http://127.0.0.1:8091',
+      });
+    const reading = buildMlxTrayModel(rank0(DIST_READING_STATUS), fresh(serving));
+    expect(reading.title).toBe('Dist · Reading 7.0k');
+    expect(reading.phase).toBe('reading');
+    expect(labels(reading.items)).toContain('Reading a 7.0k-token prompt, 2.0k read for 14s');
+    expect(labels(reading.items)).toContain('Reading at 152 tok/s');
+    expect(labels(reading.items)).not.toContain('In flight: 1');
+    expect(reading.items[0]).toMatchObject({ phase: 'reading' });
+
+    const writing = buildMlxTrayModel(rank0(DIST_WRITING_STATUS), fresh(serving));
+    expect(writing.title).toBe('Dist · 171 tok/s');
+    expect(writing.phase).toBe('writing');
+    expect(labels(writing.items)).toContain('Writing 171 tok/s');
+
+    // A read of the single engine never speaks for the run: the counters do.
+    const single = buildMlxTrayModel(running(DIST_WRITING_STATUS), fresh(serving));
+    expect(single.title).toBe('Dist · 1 in flight');
+    expect(single.phase).toBe('writing');
+    // And a rank 0 read never speaks for the single engine once the run is gone.
+    const gone = buildMlxTrayModel(rank0(DIST_WRITING_STATUS), OPTS);
+    expect(gone.title).toBe('');
   });
 
   it('a node under pressure or unread says so on its line', () => {

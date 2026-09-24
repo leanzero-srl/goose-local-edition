@@ -6,6 +6,7 @@ import {
   liveDecodeTps,
   measuredPrefillTps,
   mlxActivity,
+  readingNowTps,
   type MlxLiveStats,
 } from '../components/leanzero-swarm/mlxLiveStats';
 import {
@@ -22,7 +23,7 @@ import {
   runPhase,
 } from '../components/leanzero-swarm/mlxPhase';
 import type { EnginePhase } from '../components/lz/tokens';
-import type { MlxEngineSnapshot } from './mlxEngineMonitor';
+import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
 import type {
   MlxDistributedReport,
   MlxDistributedReportHosting,
@@ -264,13 +265,17 @@ function runningItems(snapshot: MlxEngineSnapshot): MlxTrayItem[] {
   const reading = readingRequest(stats);
   if (reading?.promptTokens != null) {
     const cached = reading.cachedTokens ? `, ${compactTokens(reading.cachedTokens)} cached` : '';
+    const read =
+      reading.prefilledTokens != null ? `, ${compactTokens(reading.prefilledTokens)} read` : '';
     const elapsed = reading.elapsedS != null ? ` for ${formatElapsed(reading.elapsedS)}` : '';
     items.push({
       type: 'info',
-      label: `Reading a ${compactTokens(reading.promptTokens)}-token prompt${cached}${elapsed}`,
+      label: `Reading a ${compactTokens(reading.promptTokens)}-token prompt${cached}${read}${elapsed}`,
     });
   }
-  if (prefill > 0) {
+  if (readingNowTps(stats) > 0) {
+    items.push({ type: 'info', label: `Reading at ${formatRate(prefill)} tok/s` });
+  } else if (prefill > 0) {
     items.push({ type: 'info', label: `Read the last prompt at ${formatRate(prefill)} tok/s` });
   }
   if (activity !== 'generating' && decode === 0 && prefill === 0) {
@@ -358,25 +363,47 @@ function distributedStale(d: MlxTrayOptions['distributed']): boolean {
   return d != null && d.ageMs > MLX_DISTRIBUTED_STALE_MS;
 }
 
+/**
+ * main's live read of the distributed run's rank 0 — the same snapshot and derivations as the single
+ * engine — or null when main has none for an up run (the renderer's counters speak then).
+ */
+function distributedLive(
+  snapshot: MlxEngineSnapshot,
+  d: NonNullable<MlxTrayOptions['distributed']>
+): MlxEngineSnapshot | null {
+  const up = d.report.state === 'ready' || d.report.state === 'serving';
+  return up && snapshot.engine === 'distributed' && snapshot.mode === 'running' && snapshot.stats
+    ? snapshot
+    : null;
+}
+
 /** The title while the distributed engine owns this Mac. */
-export function distributedTrayTitle(d: NonNullable<MlxTrayOptions['distributed']>): string {
+export function distributedTrayTitle(
+  d: NonNullable<MlxTrayOptions['distributed']>,
+  live: MlxEngineSnapshot | null = null
+): string {
   const { report } = d;
   if (distributedStale(d)) return 'Dist · stale';
   if (!report.admissionOpen) return 'Dist · held';
+  if (live) return `Dist · ${mlxTrayTitle(live)}`;
   if (report.state === 'serving') {
     return report.inflight != null ? `Dist · ${report.inflight} in flight` : 'Dist · serving';
   }
   return `Dist · ${report.state}`;
 }
 
-function distributedItems(d: NonNullable<MlxTrayOptions['distributed']>): MlxTrayItem[] {
+function distributedItems(
+  d: NonNullable<MlxTrayOptions['distributed']>,
+  live: MlxEngineSnapshot | null
+): MlxTrayItem[] {
   const { report } = d;
   const stale = distributedStale(d);
+  const activity = live?.stats ? mlxActivity(live.stats) : null;
   const items: MlxTrayItem[] = [
     {
       type: 'info',
       label: `LeanZero MLX: distributed, ${report.state}`,
-      ...(stale ? {} : { phase: runPhase(report.state, report.admissionOpen) }),
+      ...(stale ? {} : { phase: runPhase(report.state, report.admissionOpen, activity) }),
     },
     { type: 'info', label: distributedModeLine(report) },
   ];
@@ -388,7 +415,9 @@ function distributedItems(d: NonNullable<MlxTrayOptions['distributed']>): MlxTra
       ...(stale ? {} : { phase: nodePhase(node.startWord) }),
     });
   }
-  if (report.state === 'serving' || report.state === 'ready') {
+  if (live && !stale) {
+    items.push(...runningItems(live));
+  } else if (report.state === 'serving' || report.state === 'ready') {
     items.push({
       type: 'info',
       label: report.inflight != null ? `In flight: ${report.inflight}` : 'In flight: not measured',
@@ -484,14 +513,20 @@ export function buildMlxTrayModel(
   }
   if (distributed?.report.mode === 'distributed') {
     // The distributed engine owns this Mac: the single engine cannot mount (goose refuses it), so
-    // the menu speaks for the distributed run and offers its Stop instead of Mount.
+    // the menu speaks for the distributed run and offers its Stop instead of Mount. While the run is
+    // up, main's read of its rank 0 says what it is doing, through the single engine's derivations.
+    const live = distributedLive(snapshot, distributed);
     return {
-      title: distributedTrayTitle(distributed),
+      title: distributedTrayTitle(distributed, live),
       phase: distributedStale(distributed)
         ? null
-        : runPhase(distributed.report.state, distributed.report.admissionOpen),
+        : runPhase(
+            distributed.report.state,
+            distributed.report.admissionOpen,
+            live?.stats ? mlxActivity(live.stats) : null
+          ),
       items: [
-        ...distributedItems(distributed),
+        ...distributedItems(distributed, live),
         { type: 'separator' },
         {
           type: 'action',
@@ -508,6 +543,8 @@ export function buildMlxTrayModel(
       ],
     };
   }
+  // A read of the distributed rank 0 never speaks for the single engine (a run that just stopped).
+  const singleSnap = snapshot.engine === 'single' ? snapshot : INITIAL_SNAPSHOT;
   const remote = options.remote ?? null;
   const items: MlxTrayItem[] = [];
   if (remote) {
@@ -515,19 +552,19 @@ export function buildMlxTrayModel(
     items.push({ type: 'info', label: clip(remoteTrayLine(remote)), phase: remotePhase(remote) });
     if (remote.lastError) items.push({ type: 'info', label: clip(`Error: ${remote.lastError}`) });
   }
-  const singlePhase = snapshotPhase(snapshot);
+  const singlePhase = snapshotPhase(singleSnap);
   items.push({
     type: 'info',
-    label: headline(snapshot),
+    label: headline(singleSnap),
     ...(singlePhase ? { phase: singlePhase } : {}),
   });
   if (distributed) items.push({ type: 'info', label: 'Single · this Mac' });
-  if (snapshot.modelId && snapshot.mode !== 'off') {
-    items.push({ type: 'info', label: clip(`Model: ${snapshot.modelId}`) });
+  if (singleSnap.modelId && singleSnap.mode !== 'off') {
+    items.push({ type: 'info', label: clip(`Model: ${singleSnap.modelId}`) });
   }
-  if (snapshot.mode === 'running') items.push(...runningItems(snapshot));
-  if (snapshot.mode === 'failed' && snapshot.failedError) {
-    items.push({ type: 'info', label: clip(`Error: ${snapshot.failedError}`) });
+  if (singleSnap.mode === 'running') items.push(...runningItems(singleSnap));
+  if (singleSnap.mode === 'failed' && singleSnap.failedError) {
+    items.push({ type: 'info', label: clip(`Error: ${singleSnap.failedError}`) });
   }
   const distributedFailed = distributed?.report.state === 'failed';
   if (distributed && distributedFailed) {
@@ -545,7 +582,7 @@ export function buildMlxTrayModel(
     action: 'open-providers',
     enabled: options.canAct,
   });
-  if (snapshot.mode === 'running' || snapshot.mode === 'mounting') {
+  if (singleSnap.mode === 'running' || singleSnap.mode === 'mounting') {
     items.push({
       type: 'action',
       label: 'Unmount the MLX engine',
@@ -562,7 +599,7 @@ export function buildMlxTrayModel(
       enabled: options.canAct && options.mountModelId != null,
     });
   }
-  const single = mlxTrayTitle(snapshot);
+  const single = mlxTrayTitle(singleSnap);
   if (remote) return { title: remoteTrayTitle(remote), phase: remotePhase(remote), items };
   if (single) return { title: single, phase: singlePhase, items };
   return distributedFailed

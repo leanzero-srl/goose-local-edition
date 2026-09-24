@@ -135,7 +135,11 @@ import {
   type MlxTrayAction,
   type MlxTrayItem,
 } from './utils/mlxTray';
-import { isMlxDistributedReport, type MlxDistributedReport } from './utils/mlxDistributedReport';
+import {
+  distributedLiveBase,
+  isMlxDistributedReport,
+  type MlxDistributedReport,
+} from './utils/mlxDistributedReport';
 import { PHASE_HEX, type EnginePhase } from './components/lz/tokens';
 import { phaseDotBitmap } from './utils/phaseDot';
 import { isMlxRemoteReport, type MlxRemoteReport } from './utils/mlxRemoteReport';
@@ -2109,6 +2113,11 @@ const mlxMonitor = new MlxEngineMonitor({
     return { ok: true, rows };
   },
   configBaseUrl: () => mlxEngineConfig().baseUrl,
+  // A stale report claims nothing: the run may have stopped since the renderer last read it.
+  distributedBaseUrl: () =>
+    mlxDistributed && Date.now() - mlxDistributed.atMs <= MLX_DISTRIBUTED_STALE_MS
+      ? distributedLiveBase(mlxDistributed.report)
+      : null,
   swarmRuns: mlxSwarmRuns,
   onSnapshot: (snapshot) => renderMlxTray(snapshot),
   schedule: (fn, ms) => {
@@ -2280,6 +2289,8 @@ ipcMain.on('mlx-distributed-report', (_event, report: unknown) => {
   if (!isMlxDistributedReport(report)) return;
   mlxDistributed = { report, atMs: Date.now() };
   renderMlxTray(mlxMonitor.current());
+  // An up run is read by main's one loop (its rank 0's /v1/status): wake it on each report.
+  if (distributedLiveBase(report)) mlxMonitor.wake();
   // While the run owns the Mac a fresh read arrives every poll; if none does, redraw once the
   // held read turns stale so the tray stops presenting it as live.
   if (mlxDistributedStaleTimer) clearTimeout(mlxDistributedStaleTimer);

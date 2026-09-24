@@ -9,6 +9,7 @@ import {
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
 import type { MlxServingRead } from './mlxServing';
 import {
+  DIST_READING_STATUS,
   GENERATING_STATUS,
   IDLE_STATUS,
 } from '../components/leanzero-swarm/mlxLiveStatus.fixtures';
@@ -19,15 +20,17 @@ function harness(opts: {
   status: () => MlxLiveStatusResult;
   serving?: () => MlxServingRead;
   configBaseUrl?: string | null;
+  distributedBaseUrl?: () => string | null;
 }) {
   const snapshots: MlxEngineSnapshot[] = [];
   const scheduled: Array<() => void> = [];
   const readServing = vi.fn(async () => opts.serving?.() ?? { ok: true as const, rows: [] });
-  const readStatus = vi.fn(async () => opts.status());
+  const readStatus = vi.fn(async (_baseUrl: string) => opts.status());
   const deps: MlxEngineMonitorDeps = {
     readStatus,
     readServing,
     configBaseUrl: () => (opts.configBaseUrl === undefined ? BASE : opts.configBaseUrl),
+    distributedBaseUrl: () => opts.distributedBaseUrl?.() ?? null,
     swarmRuns: () => ['bench-r9'],
     onSnapshot: (s) => snapshots.push(s),
     schedule: (fn) => {
@@ -203,6 +206,53 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
     expect(h.scheduled).toHaveLength(1);
     h.monitor.stop();
     expect(h.scheduled).toHaveLength(0);
+  });
+});
+
+describe('MlxEngineMonitor — the distributed run is read on its own base while it owns the Mac', () => {
+  it("reads rank 0's /v1/status, tags the read distributed, and drops the single engine's rates", async () => {
+    let dist: string | null = null;
+    const bodies: Record<string, unknown> = {
+      [BASE]: GENERATING_STATUS,
+      'http://127.0.0.1:8091': DIST_READING_STATUS,
+    };
+    const h = harness({
+      status: () => answered(null),
+      distributedBaseUrl: () => dist,
+    });
+    h.readStatus.mockImplementation(async (url: string) => answered(bodies[url]));
+    await h.monitor.tick();
+    expect(h.monitor.current().engine).toBe('single');
+    expect(h.monitor.current().last.decodeTps).toBe(19.9);
+
+    dist = 'http://127.0.0.1:8091';
+    await h.monitor.tick();
+    const s = h.monitor.current();
+    expect(h.readStatus).toHaveBeenLastCalledWith('http://127.0.0.1:8091');
+    expect(s.engine).toBe('distributed');
+    expect(s.mode).toBe('running');
+    expect(s.modelId).toBeNull();
+    expect(s.stats?.requests[0]).toMatchObject({ prefilledTokens: 2048, promptTps: 152.4 });
+    // The single engine's last writing rate is not the split's.
+    expect(s.last.decodeTps).toBeNull();
+    expect(s.last.prefillTps).toBe(152.4);
+    expect(h.scheduled.length).toBeGreaterThan(0);
+
+    dist = null;
+    await h.monitor.tick();
+    expect(h.monitor.current().engine).toBe('single');
+    expect(h.monitor.current().last.prefillTps).not.toBe(152.4);
+  });
+
+  it('an unanswering rank 0 is UNKNOWN with the reason, and never falls back to the single port', async () => {
+    const h = harness({ status: () => refused, distributedBaseUrl: () => 'http://127.0.0.1:8091' });
+    await h.monitor.tick();
+    const s = h.monitor.current();
+    expect(s.engine).toBe('distributed');
+    expect(s.mode).toBe('unknown');
+    expect(s.statusDetail).toBe('unreachable: connect ECONNREFUSED 127.0.0.1:8090');
+    expect(h.readStatus).toHaveBeenCalledTimes(1);
+    expect(h.readStatus).toHaveBeenCalledWith('http://127.0.0.1:8091');
   });
 });
 
