@@ -1,5 +1,16 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## 2026-09-24 (night) — DISTRIBUTED SETS ITSELF UP: Set up = one peer field + Detect (ff38b70f9, d61595bb6, 66a28a80f)
+Detect (`distributedDiscover`) probes this Mac + the peer with one read-only /bin/sh script each (~1.2–1.6 s for the pair) and
+fills every field with evidence (names, TB link via netpath, RDMA/GID, backend+reason, models on every node, ports, Python);
+anything not found is a named gap, field empty. Python is goose-provisioned: $HOME/.goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12
+per node (uv, idempotent; workhorse from cold 7.1 s, re-run 1.5 s). Preflight: a foreign SINGLE server (owner's :8090) is now a
+WARN, not a refusal. E2E on the packaged app beside the installed one (GOOSE_USER_DATA_DIR + GOOSE_PATH_ROOT isolation, :8090
+untouched): Detect → Save+provision → Preflight ok → Start → Ready 10 s → "Paris"/"Tokyo" via `goose run --provider omlx`
+(69–73 s: goose's agent prompt prefilled on the split; a bare request 3.4 s) → Stop verified ~1 s, 0 ranks left on either Mac.
+Screenshots ~/goose-builds/distributed-setup-e2e/. OPEN: Link peers as Detect candidates (ssh aliases only today); the replica
+copy button (needs Link sign-in — the preflight names it instead); >2 nodes untested live.
+
 ## 2026-09-24 — DISTRIBUTED: 27B split proven + goose's isolated distributed mode (3d2136ce2); Flash split exact; UI in flight
 Thread: owner asked for guardrails + memory decongestion on nodes (exo kernel-panicked the 96 GB workhorse) and for the UI to
 SHOW distributed mode. Landed: honest available memory (2bd81c9c4, 8120ad5d2), 3.0.17 (tray/tile/TB copy/Link SOCKS egress,
