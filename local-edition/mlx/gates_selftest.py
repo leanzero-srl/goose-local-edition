@@ -13,13 +13,16 @@ def check(name, actual, expected_severity):
         FAILURES.append("%s: expected %s got %s (%s)" % (name, expected_severity, actual["severity"], actual["message"]))
 
 
-# G1 memory-mount — 96 GiB machine numbers, mirroring the real workhorse
+# G1 memory-mount — the app's one fit rule (fit.rs), 96 GiB workhorse + its 77.8 GiB Metal ceiling
 TOTAL = 96 * GIB
-check("G1 BLOCK: 30G model into 20G available", resolve_memory_gate(30 * GIB, 20 * GIB, TOTAL), "BLOCK")
-check("G1 BLOCK: fits raw but not above floor", resolve_memory_gate(12 * GIB, 20 * GIB, TOTAL), "BLOCK")
-check("G1 WARN: fits with thin band", resolve_memory_gate(8 * GIB, 20 * GIB, TOTAL), "WARN")
-check("G1 ALLOW: 6G model into 40G available", resolve_memory_gate(6 * GIB, 40 * GIB, TOTAL), "ALLOW")
-check("G1 floor respects 10pct on big boxes", resolve_memory_gate(1 * GIB, 12 * GIB, 512 * GIB), "BLOCK")
+CEIL = int(77.76 * GIB)
+check("G1 BLOCK: 30G model into 20G available", resolve_memory_gate(30 * GIB, 20 * GIB, TOTAL, CEIL), "BLOCK")
+check("G1 BLOCK: fits raw but not past the 9.3% margin", resolve_memory_gate(12 * GIB, 20 * GIB, TOTAL, CEIL), "BLOCK")
+check("G1 WARN: fits inside the 2% band", resolve_memory_gate(10 * GIB, 20 * GIB, TOTAL, CEIL), "WARN")
+check("G1 ALLOW: 6G model into 40G available", resolve_memory_gate(6 * GIB, 40 * GIB, TOTAL, CEIL), "ALLOW")
+check("G1 the GPU ceiling binds on an idle Mac", resolve_memory_gate(80 * GIB, 95 * GIB, TOTAL, CEIL), "BLOCK")
+# The recorded case: Flash 97.5 GiB on the M4 Max with 93.0 available, ceiling 107.5 -> short 16.4
+check("G1 Flash on the M4 Max is refused", resolve_memory_gate(int(97.5 * GIB), 93 * GIB, 128 * GIB, int(107.5 * GIB)), "BLOCK")
 
 # G2 port-safety
 check("G2 BLOCK: fleet port 1234", resolve_port_gate(1234, False), "BLOCK")

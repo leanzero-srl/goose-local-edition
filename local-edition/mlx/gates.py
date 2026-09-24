@@ -40,19 +40,34 @@ def _f(severity, gate, message):
 
 # ---- pure resolvers (self-tested in gates_selftest.py) ----
 
-def resolve_memory_gate(model_bytes, available_bytes, total_bytes):
-    floor = max(8 * GIB, total_bytes // 10)
-    leftover = available_bytes - model_bytes - floor
-    if leftover < 0:
+# The app's one fit rule (crates/goose-sidecar/src/fit.rs `judge`), mirrored so G1 and the mount
+# gate never disagree: budget = min(available - RAM x AVAILABLE_MARGIN_RATIO, GPU ceiling), a need
+# that fits within the tight band (RAM x DERIVED_CONTEXT_MARGIN_RATIO) warns. The ratios are the
+# sidecar's measured constants; change them there and here together.
+AVAILABLE_MARGIN_RATIO = 0.093
+DERIVED_CONTEXT_MARGIN_RATIO = 0.02
+
+
+def resolve_memory_gate(model_bytes, available_bytes, total_bytes, ceiling_bytes=None):
+    margin = int(total_bytes * AVAILABLE_MARGIN_RATIO)
+    budget = max(0, available_bytes - margin)
+    if ceiling_bytes is not None:
+        budget = min(budget, ceiling_bytes)
+    ceiling_note = ("GPU ceiling %.1f GiB" % (ceiling_bytes / GIB)) if ceiling_bytes is not None \
+        else "GPU ceiling not measured"
+    rule = "budget %.1f GiB = min(available %.1f GiB - the %.1f%% margin %.1f GiB, %s)" % (
+        budget / GIB, available_bytes / GIB, AVAILABLE_MARGIN_RATIO * 100, margin / GIB, ceiling_note)
+    if model_bytes > budget:
         return _f("BLOCK", "G1-memory-mount",
-                  "model %.1f GiB + floor %.1f GiB exceeds available %.1f GiB (short %.1f GiB)"
-                  % (model_bytes / GIB, floor / GIB, available_bytes / GIB, -leftover / GIB))
-    if leftover < 4 * GIB:
+                  "needs %.1f GiB but the %s (short %.1f GiB)"
+                  % (model_bytes / GIB, rule, (model_bytes - budget) / GIB))
+    if budget - model_bytes < total_bytes * DERIVED_CONTEXT_MARGIN_RATIO:
         return _f("WARN", "G1-memory-mount",
-                  "fits, but only %.1f GiB above the floor — expect pressure under load" % (leftover / GIB))
+                  "fits, but only %.1f GiB under the %s — expect pressure under load"
+                  % ((budget - model_bytes) / GIB, rule))
     return _f("ALLOW", "G1-memory-mount",
-              "model %.1f GiB fits with %.1f GiB above the %.1f GiB floor"
-              % (model_bytes / GIB, leftover / GIB, floor / GIB))
+              "needs %.1f GiB with %.1f GiB to spare under the %s"
+              % (model_bytes / GIB, (budget - model_bytes) / GIB, rule))
 
 
 def resolve_port_gate(port, something_listening):
