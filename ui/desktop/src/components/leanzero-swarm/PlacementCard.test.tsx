@@ -7,6 +7,7 @@ import { PlacementBadge, PlacementCard } from './PlacementCard';
 import { NODES, PLAN_27B, PLAN_FLASH } from './placement.fixtures';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import type { PlacementPlan } from '../../acp/mlx-placement';
+import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 
 const mockPlan = vi.fn();
 const mockMeasure = vi.fn();
@@ -208,5 +209,50 @@ describe('PlacementBadge', () => {
     );
     expect(screen.getByText('Fits this Mac')).toBeInTheDocument();
     expect(screen.getByText('Needs both Macs')).toBeInTheDocument();
+  });
+});
+
+describe('PlacementCard follows the engine it recommends, in the engine-phase palette', () => {
+  it('the split while it starts is amber, then green once it serves; the single mount amber while mounting', async () => {
+    const starting = {
+      mode: 'distributed',
+      state: 'starting',
+      modelId: MODEL,
+      admissionOpen: true,
+      nodes: [],
+      events: [],
+      restarts: 0,
+    } as MlxDistributedStatus;
+    const { rerender } = render(
+      <IntlTestWrapper>
+        <PlacementCard
+          modelId={MODEL}
+          single={null}
+          distributed={starting}
+          onMountHere={vi.fn()}
+          mountBusy={false}
+        />
+      </IntlTestWrapper>
+    );
+    const now = await screen.findByTestId('placement-best-now');
+    const live = within(now).getByTestId('placement-live');
+    expect(live).toHaveAttribute('data-phase', 'loading');
+    expect(live).toHaveTextContent('Starting');
+    rerender(
+      <IntlTestWrapper>
+        <PlacementCard
+          modelId={MODEL}
+          single={null}
+          distributed={{ ...starting, state: 'serving', inflight: 1 }}
+          onMountHere={vi.fn()}
+          mountBusy={false}
+        />
+      </IntlTestWrapper>
+    );
+    expect(
+      within(screen.getByTestId('placement-best-now')).getByTestId('placement-live')
+    ).toHaveAttribute('data-phase', 'writing');
+    // The best (Work’s Mac Studio alone) is not the engine running: no live chip on it.
+    expect(within(screen.getByTestId('placement-best')).queryByTestId('placement-live')).toBeNull();
   });
 });

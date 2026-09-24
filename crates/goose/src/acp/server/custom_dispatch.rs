@@ -944,7 +944,7 @@ impl GooseAcpAgent {
     async fn dispatch_mlx_engine_mount(
         &self,
         req: MlxEngineMountRequest,
-    ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    ) -> Result<MlxEngineMountResponse, agent_client_protocol::Error> {
         self.on_mlx_engine_mount(req).await
     }
 

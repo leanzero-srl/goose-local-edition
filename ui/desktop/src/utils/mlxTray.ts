@@ -8,7 +8,20 @@ import {
   mlxActivity,
   type MlxLiveStats,
 } from '../components/leanzero-swarm/mlxLiveStats';
-import { backendName, gb1, layerSpanShort } from '../components/leanzero-swarm/mlxDistributed';
+import {
+  backendName,
+  gb1,
+  gib,
+  layerSpanShort,
+  type LoadProgress,
+} from '../components/leanzero-swarm/mlxDistributed';
+import {
+  activityPhase,
+  hostingPhase,
+  nodePhase,
+  runPhase,
+} from '../components/leanzero-swarm/mlxPhase';
+import type { EnginePhase } from '../components/lz/tokens';
 import type { MlxEngineSnapshot } from './mlxEngineMonitor';
 import type {
   MlxDistributedReport,
@@ -23,19 +36,72 @@ import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
  * the short title beside the tray icon (macOS `Tray.setTitle`) and the menu's engine section. main.ts
  * turns the descriptors into Electron menu items; nothing here touches Electron, so every state is
  * tested as data. Every figure is one the monitor measured — the same derivations as the state tile.
+ * Colour is the engine-phase palette the tile uses (mlxPhase.ts): the title leads with the phase's
+ * glyph and each state line carries `phase`, which main draws as a solid dot in PHASE_HEX.
  */
 
 export type MlxTrayAction = 'open-providers' | 'mount' | 'unmount' | 'stop-distributed';
 
 export type MlxTrayItem =
-  | { type: 'info'; label: string }
+  | { type: 'info'; label: string; phase?: EnginePhase }
   | { type: 'action'; label: string; action: MlxTrayAction; enabled: boolean }
   | { type: 'separator' };
 
 export interface MlxTrayModel {
   /** The text beside the icon; empty when there is no engine to speak of. */
   title: string;
+  /** The phase the title speaks for; null = no live claim (nothing to show, or a stale read). */
+  phase: EnginePhase | null;
   items: MlxTrayItem[];
+}
+
+/**
+ * The title's colour mark. A menu-bar title is plain text (Electron `Tray.setTitle`), so the phase
+ * travels as the one coloured glyph the system font draws in colour — the nearest of each hue to
+ * PHASE_HEX; the menu's own dots are drawn in the exact hex by main.
+ */
+export const PHASE_GLYPH: Record<EnginePhase, string> = {
+  unloaded: '⚫',
+  idle: '⚪',
+  loading: '🟡',
+  reading: '🔵',
+  writing: '🟢',
+  held: '🟠',
+  failed: '🔴',
+};
+
+/** The title as main sets it: the phase glyph, then the words. */
+export function trayTitleText(model: MlxTrayModel): string {
+  if (!model.title) return '';
+  return model.phase ? `${PHASE_GLYPH[model.phase]} ${model.title}` : model.title;
+}
+
+/** The single engine's phase from main's snapshot (`unknown` claims nothing). */
+export function snapshotPhase(snapshot: MlxEngineSnapshot): EnginePhase | null {
+  switch (snapshot.mode) {
+    case 'off':
+      return 'unloaded';
+    case 'unknown':
+      return null;
+    case 'mounting':
+      return 'loading';
+    case 'failed':
+      return 'failed';
+    case 'running':
+      return snapshot.stats ? activityPhase(mlxActivity(snapshot.stats)) : 'idle';
+  }
+}
+
+function remotePhase(report: MlxRemoteReport): EnginePhase {
+  if (report.state === 'failed') return 'failed';
+  if (report.state === 'ready') {
+    return report.generationTps != null && report.generationTps > 0 ? 'writing' : 'idle';
+  }
+  return 'loading';
+}
+
+function loadText(load: LoadProgress): string {
+  return `loaded ${gb1(gib(load.done))} of ${gb1(gib(load.total))} GB`;
 }
 
 export interface MlxTrayOptions {
@@ -265,11 +331,17 @@ function ageText(ms: number): string {
   return formatElapsed(Math.round(ms / 1000));
 }
 
+const START_WORDS: Record<string, string> = { makingRoom: 'making room', warming: 'warming up' };
+
 export function distributedNodeLine(node: MlxDistributedReportNode, runState: string): string {
-  const head = node.state === runState ? node.name : `${node.name} (${node.state})`;
+  const said = START_WORDS[node.startWord] ?? node.state;
+  const head = node.startWord === runState ? node.name : `${node.name} (${said})`;
   if (node.memoryError) return clip(`${head}: memory unread — ${node.memoryError}`);
   const parts = [
     layerSpanShort(node.layers),
+    node.load && node.state === 'loading' && node.startWord !== 'makingRoom'
+      ? loadText(node.load)
+      : null,
     node.peakGb != null
       ? node.budgetGb != null
         ? `peak ${gb1(node.peakGb)} of ${gb1(node.budgetGb)} GiB budget`
@@ -299,13 +371,22 @@ export function distributedTrayTitle(d: NonNullable<MlxTrayOptions['distributed'
 
 function distributedItems(d: NonNullable<MlxTrayOptions['distributed']>): MlxTrayItem[] {
   const { report } = d;
+  const stale = distributedStale(d);
   const items: MlxTrayItem[] = [
-    { type: 'info', label: `LeanZero MLX: distributed, ${report.state}` },
+    {
+      type: 'info',
+      label: `LeanZero MLX: distributed, ${report.state}`,
+      ...(stale ? {} : { phase: runPhase(report.state, report.admissionOpen) }),
+    },
     { type: 'info', label: distributedModeLine(report) },
   ];
   if (report.modelId) items.push({ type: 'info', label: clip(`Model: ${report.modelId}`) });
   for (const node of report.nodes) {
-    items.push({ type: 'info', label: distributedNodeLine(node, report.state) });
+    items.push({
+      type: 'info',
+      label: distributedNodeLine(node, report.state),
+      ...(stale ? {} : { phase: nodePhase(node.startWord) }),
+    });
   }
   if (report.state === 'serving' || report.state === 'ready') {
     items.push({
@@ -359,12 +440,24 @@ export function buildMlxTrayModel(
     // This Mac serves a rank of ANOTHER Mac's engine over LeanZero Link: the single engine is
     // refused meanwhile (goose's `hostingRank`), so no Mount is offered; the run is stopped from
     // the Mac that started it.
+    const stale = distributedStale(distributed);
+    const phase = stale ? null : hostingPhase(hosting.state);
     return {
-      title: distributedStale(distributed)
-        ? 'Rank · stale'
-        : `Rank ${hosting.rank} · ${hosting.state}`,
+      title: stale ? 'Rank · stale' : `Rank ${hosting.rank} · ${hosting.state}`,
+      phase,
       items: [
-        { type: 'info', label: `LeanZero MLX: serving a rank, ${hosting.state}` },
+        {
+          type: 'info',
+          label:
+            hosting.state === 'loading'
+              ? clip(
+                  `LeanZero MLX: loading rank ${hosting.rank} for ${hosting.requester}${
+                    hosting.load ? `, ${loadText(hosting.load)}` : ''
+                  }`
+                )
+              : `LeanZero MLX: serving a rank, ${hosting.state}`,
+          ...(phase ? { phase } : {}),
+        },
         { type: 'info', label: hostingLine(hosting) },
         { type: 'info', label: clip(`Model: ${hosting.modelId}`) },
         {
@@ -394,6 +487,9 @@ export function buildMlxTrayModel(
     // the menu speaks for the distributed run and offers its Stop instead of Mount.
     return {
       title: distributedTrayTitle(distributed),
+      phase: distributedStale(distributed)
+        ? null
+        : runPhase(distributed.report.state, distributed.report.admissionOpen),
       items: [
         ...distributedItems(distributed),
         { type: 'separator' },
@@ -416,10 +512,15 @@ export function buildMlxTrayModel(
   const items: MlxTrayItem[] = [];
   if (remote) {
     // Chat goes to a peer's engine: that is the line that matters; this Mac's own engine follows.
-    items.push({ type: 'info', label: clip(remoteTrayLine(remote)) });
+    items.push({ type: 'info', label: clip(remoteTrayLine(remote)), phase: remotePhase(remote) });
     if (remote.lastError) items.push({ type: 'info', label: clip(`Error: ${remote.lastError}`) });
   }
-  items.push({ type: 'info', label: headline(snapshot) });
+  const singlePhase = snapshotPhase(snapshot);
+  items.push({
+    type: 'info',
+    label: headline(snapshot),
+    ...(singlePhase ? { phase: singlePhase } : {}),
+  });
   if (distributed) items.push({ type: 'info', label: 'Single · this Mac' });
   if (snapshot.modelId && snapshot.mode !== 'off') {
     items.push({ type: 'info', label: clip(`Model: ${snapshot.modelId}`) });
@@ -462,6 +563,9 @@ export function buildMlxTrayModel(
     });
   }
   const single = mlxTrayTitle(snapshot);
-  if (remote) return { title: remoteTrayTitle(remote), items };
-  return { title: single || (distributedFailed ? 'Dist failed' : ''), items };
+  if (remote) return { title: remoteTrayTitle(remote), phase: remotePhase(remote), items };
+  if (single) return { title: single, phase: singlePhase, items };
+  return distributedFailed
+    ? { title: 'Dist failed', phase: 'failed', items }
+    : { title: '', phase: null, items };
 }

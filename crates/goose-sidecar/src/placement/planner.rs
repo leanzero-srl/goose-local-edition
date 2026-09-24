@@ -1,6 +1,7 @@
 //! The rule (design §2), deterministic: enumerate every placement the model's architecture allows
 //! AND goose can run, drop what does not fit (weights + KV for the context ≤ each Mac's budget —
-//! `plan::budget_bytes`, the ONE budget rule both split runners use), predict each survivor
+//! `crate::fit`, the ONE fit rule the single engine's mount, both split runners and the preflight
+//! share), predict each survivor
 //! (measured if goose has measured it, else the calibrated formula, labelled), pick by the goal,
 //! and say why every other placement lost. The planner is pure: the ACP layer measures the Macs,
 //! reads the store and runs the fork's planner, then hands the facts in.
@@ -12,10 +13,10 @@ use super::chip::ChipIdentity;
 use super::model::ModelFacts;
 use super::predict::{self, Calibration, Estimate, PlacedNode};
 use super::store::{PlacementKey, PlacementKind, SpeedRecord};
-use crate::distributed::plan::{budget_bytes, TensorModelFacts};
+use crate::distributed::plan::TensorModelFacts;
 use crate::distributed::Runner;
+use crate::fit::{self, Need, NodeMemoryFacts, Verdict};
 use crate::kv_cache::KvCacheMode;
-use crate::memory::{MemoryGate, Verdict};
 
 /// The serving stack behind each placement kind.
 pub const BACKEND_SINGLE: &str = "rapid-mlx";
@@ -73,6 +74,9 @@ pub struct NodeInput {
     /// A peer: whether goose can start its single engine and chat with it (remote single over
     /// LeanZero Link), or why not. Unused for this Mac.
     pub remote_single: Result<(), String>,
+    /// Why this Mac cannot serve a rank of a split right now, in the step that fixes it ("allow
+    /// this Mac to serve as a distributed node on <name>"); `None` = nothing known against it.
+    pub split_refusal: Option<String>,
 }
 
 impl NodeInput {
@@ -81,15 +85,18 @@ impl NodeInput {
     }
 }
 
-/// The saved distributed setup the split placements would start with.
+/// The Macs a split would run on: this Mac's saved distributed setup, or — when this Mac has none
+/// — the Macs it reaches over LeanZero Link (a split is still what the model needs, and the badge
+/// says so from either Mac; Set up is the step before it can start).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClusterInput {
-    /// "jaccl" | "ring".
-    pub link: String,
+    /// "jaccl" | "ring"; `None` = no setup names the link yet.
+    pub link: Option<String>,
     /// Pipeline slots (full-context sequences the split is planned for).
     pub slots: u32,
     /// The model the saved setup names; a split of another model starts after Set up picks it.
-    pub config_model_id: String,
+    /// `None` = no split is set up on this Mac.
+    pub config_model_id: Option<String>,
 }
 
 /// What the fork's planner (`pipeline_qwen4 plan --json`) said for this model on these Macs.
@@ -121,7 +128,6 @@ pub struct PlanInput<'a> {
     pub context: Option<u64>,
     pub records: &'a [SpeedRecord],
     pub calibration: &'a Calibration,
-    pub gate: &'a MemoryGate,
     /// The placement serving THIS model right now (by candidate id) and its context window: it
     /// fits by construction — its memory is already in use, so this Mac's available figure cannot
     /// judge it.
@@ -280,8 +286,15 @@ impl Candidate {
 )]
 pub enum Badge {
     FitsThisMac,
-    FitsPeer { name: String },
-    NeedsBothMacs,
+    FitsPeer {
+        name: String,
+    },
+    /// Only a split fits. `needs` = the step before it can start ("allow this Mac to serve as a
+    /// distributed node on <name>", "set up the split with this model"); absent = startable now.
+    NeedsBothMacs {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        needs: Option<String>,
+    },
     TooBig { short_bytes: u64 },
     Unknown { reason: String },
 }
@@ -309,8 +322,7 @@ fn gib(bytes: u64) -> String {
 
 struct Budget {
     budget: u64,
-    available: u64,
-    total: u64,
+    facts: NodeMemoryFacts,
 }
 
 fn node_budget(node: &NodeInput) -> Result<Budget, String> {
@@ -322,11 +334,42 @@ fn node_budget(node: &NodeInput) -> Result<Budget, String> {
         .ceiling_bytes
         .as_ref()
         .map_err(|e| format!("{}: GPU ceiling unknown — {e}", node.name))?;
+    let facts = NodeMemoryFacts {
+        available_bytes: memory.available_bytes,
+        total_bytes: memory.total_bytes,
+        ceiling_bytes: *ceiling,
+    };
     Ok(Budget {
-        budget: budget_bytes(memory.available_bytes, memory.total_bytes, *ceiling),
-        available: memory.available_bytes,
-        total: memory.total_bytes,
+        budget: facts.budget_bytes(),
+        facts,
     })
+}
+
+/// The smallest context a placement must hold to be useful: the chat benchmark's shape.
+pub fn min_useful_context() -> u64 {
+    Workload::Chat.context_needed()
+}
+
+/// KV bytes per token at the model's KV cache setting, or why it cannot be sized.
+pub fn kv_bytes_per_token(model: &ModelFacts, kv_mode: Option<KvCacheMode>) -> Result<u64, String> {
+    model.kv.as_ref().map_err(Clone::clone).and_then(|kv| {
+        kv.bytes_per_token(kv_mode)
+            .ok_or_else(|| "the KV cache setting cannot be applied to this model".to_string())
+    })
+}
+
+/// What the single engine needs to serve the smallest useful context: the need the mount gate
+/// judges and the planner's single-engine fit — one need, so both answer alike.
+pub fn single_engine_need(
+    weights_bytes: u64,
+    model: Result<&ModelFacts, String>,
+    kv_mode: Option<KvCacheMode>,
+) -> Need {
+    Need::single_engine(
+        weights_bytes,
+        model.and_then(|m| kv_bytes_per_token(m, kv_mode)),
+        min_useful_context(),
+    )
 }
 
 fn unknown_fit(reason: String) -> Fit {
@@ -351,49 +394,55 @@ fn status_for(max_fit: u64, wanted: u64, min_useful: u64) -> (FitStatus, Option<
     }
 }
 
+/// A single engine on one Mac: the one fit rule (`crate::fit::judge`) on the need at the smallest
+/// useful context decides whether it fits at all — the SAME verdict the mount gate reaches on
+/// that Mac — and the budget left above the weights sizes the context it can run at.
 fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
     let b = match node_budget(node) {
         Ok(b) => b,
         Err(reason) => return unknown_fit(reason),
     };
     let weights = input.bytes_on_disk;
-    let kv = input
-        .model
-        .kv
-        .as_ref()
-        .map_err(Clone::clone)
-        .and_then(|kv| {
-            kv.bytes_per_token(input.kv_mode)
-                .ok_or_else(|| "the KV cache setting cannot be applied to this model".to_string())
-        });
+    let verdict = fit::judge(
+        single_engine_need(weights, Ok(input.model), input.kv_mode),
+        b.facts,
+    );
+    let node_fit = |need_bytes| {
+        vec![NodeFit {
+            name: node.name.clone(),
+            need_bytes,
+            budget_bytes: b.budget,
+        }]
+    };
+    if verdict.verdict == Verdict::Block {
+        return Fit {
+            status: FitStatus::Short,
+            context: None,
+            short_bytes: verdict.short_bytes(),
+            short_node: Some(node.name.clone()),
+            nodes: node_fit(verdict.need.total_bytes()),
+            detail: format!("{}: {}", node.name, verdict.message),
+        };
+    }
     let model_max = input.model.max_context;
-    let mut fit = match kv {
+    match kv_bytes_per_token(input.model, input.kv_mode) {
         Ok(per_token) if per_token > 0 => {
             let room = b.budget.saturating_sub(weights);
             let max_fit = (room / per_token).min(model_max.unwrap_or(u64::MAX));
             let wanted = input.context.or(model_max).unwrap_or(max_fit);
             let (status, context) = status_for(max_fit, wanted, min_useful);
-            let need_at = |ctx: u64| weights + per_token * ctx;
-            let need = need_at(context.unwrap_or(min_useful));
             Fit {
                 status,
                 context,
-                short_bytes: (status == FitStatus::Short).then(|| need.saturating_sub(b.budget)),
-                short_node: (status == FitStatus::Short).then(|| node.name.clone()),
-                nodes: vec![NodeFit {
-                    name: node.name.clone(),
-                    need_bytes: need,
-                    budget_bytes: b.budget,
-                }],
+                short_bytes: None,
+                short_node: None,
+                nodes: node_fit(weights + per_token * context.unwrap_or(min_useful)),
                 detail: format!(
-                    "{}: {} of weights + {} of KV per 1k tokens against a budget of {} \
-                     (min(available {} − the {:.0}% reserve, GPU ceiling))",
+                    "{}: {} of weights + {} of KV per 1k tokens; {}",
                     node.name,
                     gib(weights),
                     gib(per_token * 1024),
-                    gib(b.budget),
-                    gib(b.available),
-                    crate::distributed::AVAILABLE_MARGIN_RATIO * 100.0
+                    verdict.message
                 ),
             }
         }
@@ -402,47 +451,19 @@ fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
                 Err(e) => e,
                 Ok(_) => "the model has no growing KV cache".to_string(),
             };
-            let fits = weights <= b.budget;
             Fit {
-                status: if fits {
-                    FitStatus::Fits
-                } else {
-                    FitStatus::Short
-                },
+                status: FitStatus::Fits,
                 context: None,
-                short_bytes: (!fits).then(|| weights - b.budget),
-                short_node: (!fits).then(|| node.name.clone()),
-                nodes: vec![NodeFit {
-                    name: node.name.clone(),
-                    need_bytes: weights,
-                    budget_bytes: b.budget,
-                }],
+                short_bytes: None,
+                short_node: None,
+                nodes: node_fit(weights),
                 detail: format!(
-                    "{}: {} of weights against a budget of {}; context not sized: {reason}",
-                    node.name,
-                    gib(weights),
-                    gib(b.budget)
+                    "{}: context not sized ({reason}); {}",
+                    node.name, verdict.message
                 ),
             }
         }
-    };
-    // The single engine's own mount gate guards this Mac: a placement it would refuse never fits,
-    // and its message is carried verbatim.
-    if node.is_local() {
-        let gate = input.gate.evaluate(weights, b.available, b.total);
-        if gate.verdict == Verdict::Block {
-            let floor = input.gate.floor_bytes(b.total);
-            let gate_short = (weights + floor).saturating_sub(b.available);
-            fit.status = FitStatus::Short;
-            fit.context = None;
-            fit.short_bytes = Some(fit.short_bytes.unwrap_or(0).max(gate_short));
-            fit.short_node = Some(node.name.clone());
-            fit.detail = format!("the mount gate refuses: {}", gate.message);
-        } else if gate.verdict == Verdict::Warn {
-            fit.detail = format!("{} — mount gate: {}", fit.detail, gate.message);
-        }
     }
-    fit
 }
 
 fn tensor_fit(input: &PlanInput, facts: &TensorModelFacts, min_useful: u64) -> Fit {
@@ -860,7 +881,7 @@ pub fn plan(input: &PlanInput) -> Plan {
     let all: Vec<&NodeInput> = input.nodes.iter().collect();
     match input.cluster {
         None => notes.push(
-            "no second Mac is set up — set up the distributed engine to plan across Macs"
+            "no second Mac is set up or connected over LeanZero Link — connect one to plan across Macs"
                 .to_string(),
         ),
         Some(_) if input.nodes.len() < 2 => {
@@ -872,7 +893,7 @@ pub fn plan(input: &PlanInput) -> Plan {
                 let key = PlacementKey {
                     kind,
                     nodes: input.nodes.iter().map(|n| n.id.clone()).collect(),
-                    link: Some(cluster.link.clone()),
+                    link: cluster.link.clone(),
                 };
                 let (id, node_names, chips, backend) = candidate_base(key.clone(), &all);
                 let wired = matches!(
@@ -892,11 +913,13 @@ pub fn plan(input: &PlanInput) -> Plan {
                             }
                         ),
                     })
-                } else if kind == PlacementKind::Tensor && cluster.link != "jaccl" {
-                    Some(format!(
-                        "not offered: tensor parallel needs JACCL (two all-sums per layer per token); these Macs are linked over {}",
-                        cluster.link
-                    ))
+                } else if kind == PlacementKind::Tensor && cluster.link.as_deref() != Some("jaccl") {
+                    Some(match &cluster.link {
+                        Some(link) => format!(
+                            "not offered: tensor parallel needs JACCL (two all-sums per layer per token); these Macs are linked over {link}"
+                        ),
+                        None => "not offered: tensor parallel needs JACCL, and no distributed setup on this Mac names the link yet".to_string(),
+                    })
                 } else if kind == PlacementKind::Tensor {
                     match input.tensor {
                         Some(Ok(facts)) => facts
@@ -944,10 +967,17 @@ pub fn plan(input: &PlanInput) -> Plan {
                 let shares = shares
                     .unwrap_or_else(|| vec![1.0 / input.nodes.len() as f64; input.nodes.len()]);
                 let speed = speed_for(input, &key, &all, &shares);
+                let refusals: Vec<&str> = all
+                    .iter()
+                    .filter_map(|n| n.split_refusal.as_deref())
+                    .collect();
                 let action = match missing_model(&all) {
+                    _ if !refusals.is_empty() => Action::Unavailable {
+                        reason: refusals.join("; "),
+                    },
                     Some(reason) => Action::Unavailable { reason },
                     None => Action::StartSplit {
-                        setup_matches: cluster.config_model_id == input.model_id,
+                        setup_matches: cluster.config_model_id.as_deref() == Some(input.model_id),
                     },
                 };
                 candidates.push(Candidate {
@@ -1129,6 +1159,37 @@ fn pick(candidates: &mut Vec<Candidate>, goal: Goal) -> (Option<String>, Option<
     (best_id, available_id)
 }
 
+/// The split a model that fits no single Mac should run as: the fitting split goose can start,
+/// else the first fitting split (its action says what must happen first). The badge and the
+/// single engine's mount refusal both name THIS one.
+pub fn split_that_fits(candidates: &[Candidate]) -> Option<&Candidate> {
+    let fitting = || {
+        candidates
+            .iter()
+            .filter(|c| c.supported && c.fit.status.fits() && c.key.kind != PlacementKind::Single)
+    };
+    fitting()
+        .find(|c| c.runnable())
+        .or_else(|| fitting().next())
+}
+
+/// Where a model this Mac's single engine cannot hold should run instead — what the mount
+/// refusal offers: the best placement goose can start that is not this Mac alone, else the fitting
+/// split (its action names the step first), else any other placement that fits.
+pub fn alternative_to_this_mac(candidates: &[Candidate]) -> Option<&Candidate> {
+    let elsewhere = |c: &&Candidate| {
+        c.supported
+            && c.fit.status.fits()
+            && !(c.key.kind == PlacementKind::Single && c.key.nodes[0] == "local")
+    };
+    candidates
+        .iter()
+        .filter(elsewhere)
+        .find(|c| c.runnable())
+        .or_else(|| split_that_fits(candidates))
+        .or_else(|| candidates.iter().find(elsewhere))
+}
+
 fn badge(candidates: &[Candidate]) -> Badge {
     let fits = |c: &&Candidate| c.supported && c.fit.status.fits();
     if candidates
@@ -1147,12 +1208,18 @@ fn badge(candidates: &[Candidate]) -> Badge {
             name: peer.node_names[0].clone(),
         };
     }
-    if candidates
-        .iter()
-        .filter(fits)
-        .any(|c| c.key.kind != PlacementKind::Single)
-    {
-        return Badge::NeedsBothMacs;
+    if let Some(split) = split_that_fits(candidates) {
+        return Badge::NeedsBothMacs {
+            needs: match &split.action {
+                Action::Unavailable { reason } => Some(reason.clone()),
+                Action::StartSplit {
+                    setup_matches: false,
+                } => Some(
+                    "set up the distributed engine with this model (Set up → the model)".to_string(),
+                ),
+                _ => None,
+            },
+        };
     }
     let supported: Vec<&Candidate> = candidates.iter().filter(|c| c.supported).collect();
     if let Some(unknown) = supported
@@ -1209,6 +1276,7 @@ mod tests {
                 }),
                 has_model: Ok(true),
                 remote_single: Ok(()),
+                split_refusal: None,
             },
             NodeInput {
                 id: "link:worksmacstudio".into(),
@@ -1221,6 +1289,7 @@ mod tests {
                 }),
                 has_model: Ok(true),
                 remote_single: Ok(()),
+                split_refusal: None,
             },
         ]
     }
@@ -1302,9 +1371,9 @@ mod tests {
 
     fn cluster(model: &str) -> ClusterInput {
         ClusterInput {
-            link: "jaccl".into(),
+            link: Some("jaccl".into()),
             slots: 2,
-            config_model_id: model.into(),
+            config_model_id: Some(model.into()),
         }
     }
 
@@ -1317,7 +1386,6 @@ mod tests {
         records: Vec<SpeedRecord>,
         bytes_on_disk: u64,
         cal: Calibration,
-        gate: MemoryGate,
         running: Option<(String, Option<u64>)>,
     }
 
@@ -1336,7 +1404,6 @@ mod tests {
                 context: None,
                 records: &self.records,
                 calibration: &self.cal,
-                gate: &self.gate,
                 running: self.running.clone(),
             })
         }
@@ -1352,7 +1419,6 @@ mod tests {
             records: Vec::new(),
             bytes_on_disk: 32_800_000_000,
             cal: Calibration::fit(&BTreeMap::new()),
-            gate: MemoryGate::default(),
             running: None,
         }
     }
@@ -1493,7 +1559,6 @@ mod tests {
             records: Vec::new(),
             bytes_on_disk: 104_700_000_000,
             cal: Calibration::fit(&BTreeMap::new()),
-            gate: MemoryGate::default(),
             running: None,
         };
         let plan = f.plan(Goal::Chat);
@@ -1503,11 +1568,11 @@ mod tests {
             "{plan:#?}"
         );
         assert_eq!(plan.best_available, plan.best);
-        assert_eq!(plan.badge, Badge::NeedsBothMacs);
+        assert_eq!(plan.badge, Badge::NeedsBothMacs { needs: None });
         let here = by_id(&plan, "single:local");
         assert_eq!(here.outcome, Outcome::DoesNotFit);
         assert!(
-            here.fit.detail.starts_with("the mount gate refuses"),
+            here.fit.detail.contains("needs") && here.fit.detail.contains("budget"),
             "{}",
             here.fit.detail
         );
@@ -1558,7 +1623,6 @@ mod tests {
             records: Vec::new(),
             bytes_on_disk: gib(420.0),
             cal: Calibration::fit(&BTreeMap::new()),
-            gate: MemoryGate::default(),
             running: None,
         };
         let plan = f.plan(Goal::Chat);
@@ -1644,5 +1708,132 @@ mod tests {
         let ctx = here.fit.context.unwrap();
         assert!(ctx > 100_000 && ctx < 262_144, "{ctx}");
         assert_eq!(plan.best.as_deref(), Some("single:local"));
+    }
+
+    /// The owner's 3.0.25 refusal (2026-09-24): Flash-Next-4bit, 97.5 GiB on disk, Mount on the
+    /// M4 Max with 93.0 GiB available after Make room. The planner's single fit and the mount gate
+    /// are ONE verdict (the same `fit::judge` on the same need), and the refusal names the split
+    /// that would work.
+    #[test]
+    fn the_recorded_flash_refusal_is_the_mount_gates_verdict_and_names_the_split() {
+        let f = Fixture {
+            model: flash(),
+            nodes: macs(93.0, 67.0),
+            cluster: Some(cluster("m")),
+            tensor: None,
+            pipeline: None,
+            records: Vec::new(),
+            bytes_on_disk: gib(97.5),
+            cal: Calibration::fit(&BTreeMap::new()),
+            running: None,
+        };
+        let plan = f.plan(Goal::Chat);
+        let here = by_id(&plan, "single:local");
+        assert_eq!(here.fit.status, FitStatus::Short);
+        let gate = fit::judge(
+            single_engine_need(gib(97.5), Ok(&flash()), None),
+            NodeMemoryFacts {
+                available_bytes: gib(93.0),
+                total_bytes: gib(128.0),
+                ceiling_bytes: M4_CEILING,
+            },
+        );
+        assert_eq!(gate.verdict, Verdict::Block);
+        assert_eq!(here.fit.detail, format!("Mihai Macbook: {}", gate.message));
+        assert_eq!(here.fit.short_bytes, gate.short_bytes());
+        assert!(gate.message.contains("budget 81.1 GiB"), "{}", gate.message);
+        let split = split_that_fits(&plan.candidates).expect("a split fits");
+        assert_eq!(split.id, "pipeline:jaccl:local+link:worksmacstudio");
+        assert_eq!(
+            alternative_to_this_mac(&plan.candidates).map(|c| c.id.as_str()),
+            Some(split.id.as_str()),
+            "the Studio alone is short too (its GPU ceiling is 77.8 GiB), so the split is offered"
+        );
+        assert!(matches!(
+            split.action,
+            Action::StartSplit {
+                setup_matches: true
+            }
+        ));
+        assert_eq!(plan.badge, Badge::NeedsBothMacs { needs: None });
+    }
+
+    /// The workhorse's view of the same model: this Mac (the M3 Ultra) has no distributed setup —
+    /// the MacBook coordinates — and its 3.0.25 app badged Flash "Too big" because the planner
+    /// enumerated peers from the saved setup only. With the Link peer measured, the badge is the
+    /// MacBook's answer from the other side, and it names the step still missing.
+    #[test]
+    fn the_badge_is_the_same_truth_from_either_mac() {
+        let macbook_view = Fixture {
+            model: flash(),
+            nodes: macs(93.0, 72.0),
+            cluster: Some(cluster("m")),
+            tensor: None,
+            pipeline: None,
+            records: Vec::new(),
+            bytes_on_disk: gib(97.5),
+            cal: Calibration::fit(&BTreeMap::new()),
+            running: None,
+        };
+        assert_eq!(
+            macbook_view.plan(Goal::Chat).badge,
+            Badge::NeedsBothMacs { needs: None }
+        );
+
+        let [macbook, studio]: [NodeInput; 2] = macs(93.0, 72.0).try_into().unwrap();
+        let studio_here = NodeInput {
+            id: "local".into(),
+            ..studio
+        };
+        let macbook_peer = NodeInput {
+            id: "link:mihaimacbook".into(),
+            split_refusal: Some(
+                "allow this Mac to serve as a distributed node on Mihai Macbook (its LeanZero \
+                 Link setting is off)"
+                    .into(),
+            ),
+            ..macbook
+        };
+        let link_peers = ClusterInput {
+            link: None,
+            slots: 2,
+            config_model_id: None,
+        };
+        let workhorse_view = Fixture {
+            nodes: vec![studio_here, macbook_peer],
+            cluster: Some(link_peers),
+            ..macbook_view
+        };
+        let plan = workhorse_view.plan(Goal::Chat);
+        assert_eq!(by_id(&plan, "single:local").fit.status, FitStatus::Short);
+        let Badge::NeedsBothMacs { needs: Some(needs) } = &plan.badge else {
+            panic!("{:?}", plan.badge)
+        };
+        assert!(needs.contains("on Mihai Macbook"), "{needs}");
+
+        let mut allowed = Fixture {
+            nodes: workhorse_view.nodes.clone(),
+            cluster: workhorse_view.cluster.clone(),
+            model: flash(),
+            tensor: None,
+            pipeline: None,
+            records: Vec::new(),
+            bytes_on_disk: gib(97.5),
+            cal: Calibration::fit(&BTreeMap::new()),
+            running: None,
+        };
+        allowed.nodes[1].split_refusal = None;
+        let Badge::NeedsBothMacs { needs: Some(needs) } = allowed.plan(Goal::Chat).badge else {
+            panic!("the split still needs a setup on this Mac")
+        };
+        assert!(needs.contains("set up the distributed engine"), "{needs}");
+
+        // Negative control — 3.0.25's input on the workhorse: no saved setup, so no peer at all.
+        allowed.nodes.truncate(1);
+        allowed.cluster = None;
+        assert!(matches!(
+            allowed.plan(Goal::Chat).badge,
+            Badge::TooBig { .. }
+        ));
     }
 }

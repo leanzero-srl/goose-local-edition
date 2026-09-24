@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "Ce Mac sert un rang"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "Chargement du rang {rank} pour {requester}"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — PID du rang {pid}. Le moteur unique et le moteur distribué propre à ce Mac sont refusés jusqu’à ce que {requester} arrête l’exécution."
   },
@@ -3013,6 +3016,15 @@
   },
   "mlxDistributed.livenessNone": {
     "defaultMessage": "Aucune progression mesurée pour l’instant"
+  },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "Poids chargés"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "{done} sur {total} Go chargés"
+  },
+  "mlxDistributed.load.layers": {
+    "defaultMessage": "{done} couches sur {total} chargées"
   },
   "mlxDistributed.locked": {
     "defaultMessage": "La configuration est verrouillée tant que le moteur distribué occupe ce Mac. Arrêtez-le pour changer les nœuds ou le modèle."
@@ -3518,8 +3530,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Le moteur distribué occupe ce Mac : le moteur unique ne peut pas être monté tant qu’il n’est pas arrêté dans la section Moteur distribué ci-dessous."
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "Montage bloqué"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "Échec du montage"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "Refusé, et goose n’a donné aucune raison"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Sert sur plusieurs Mac"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "Échec du démarrage"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "Démarrage refusé"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "Ce modèle ne tourne pas sur ce Mac seul — démontez-le, puis démarrez-le depuis la tuile."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode} : {bytes} Kio par jeton au lieu de {bf16} Kio — la même mémoire contient {ratio}× plus de contexte."
@@ -3791,6 +3821,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slots {used} sur {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "Chaque Mac, pendant qu’il charge sa part"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "{count} en attente"
   },
@@ -3833,6 +3866,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "pour le moteur distribué de {requester} via LeanZero Link"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "Chargement du rang {rank} pour {requester}"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "PID du rang {pid}"
   },
@@ -3845,8 +3881,20 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Statistiques en direct indisponibles"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "Poids chargés sur {node}"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{done} sur {total} Go"
+  },
+  "mlxStateTile.load.layers": {
+    "defaultMessage": "{done} couches sur {total}"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "Chargement des poids"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "Libération de mémoire"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Il faut {gb} Go de mémoire libre en plus"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "Débit d’écriture sur les {count} dernières lectures"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "Démarrage du moteur"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "Vérification"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "Exécution swarm en cours : {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "ce Mac"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, one {# requête ne venant ni des chats de cette app ni de /v1} other {# requêtes ne venant ni des chats de cette app ni de /v1}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, one {requête en attente} other {requêtes en attente}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "Préchauffage"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "Go de poids"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s en écriture"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · GPU {cores} cœurs"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "Échec"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "Montage"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "En marche"
+  },
   "placementCard.measure": {
     "defaultMessage": "Mesurer la vitesse"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Aussi rapide à l’erreur près (~{mine} contre ~{best} tok/s), mais demande plus de Mac"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "Monter"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "Trop grand pour ce Mac, et rien de ce que goose peut démarrer ne le contient : {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "Trop grand pour ce Mac — il tient sur {name}, et le chat y passe par Link."
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "Réessayer"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "Ne tient sur aucun de vos Mac : il manque {gb}, même réparti sur tous."
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "Trop grand pour ce Mac seul — il tourne réparti sur {names}."
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{Démarrer sur les deux Mac} other{Démarrer sur # Mac}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "Démarrer sur {name}"
   },
   "placementCard.title": {
     "defaultMessage": "Où le faire tourner"

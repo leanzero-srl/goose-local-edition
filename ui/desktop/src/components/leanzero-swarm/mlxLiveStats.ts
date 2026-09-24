@@ -282,6 +282,32 @@ export function mountFill(
 }
 
 /**
+ * A single-engine mount in flight as the SIDECAR measured it (`status.load`): where the start is —
+ * `makingRoom` (macOS reclaiming memory before the gate judges again), `starting` (the process
+ * runs, no load yet), `loading`, `warming` (weights in, compiling kernels) — and the engine
+ * process's resident bytes against the model's bytes on disk, which a finished load holds (measured
+ * 0.985–0.994×). THE BINDING POINT for the backend's `EngineLoad`; `null` = an older backend
+ * without it (the tile then uses the memory watch above).
+ */
+export interface SingleLoad {
+  phase: string;
+  residentBytes: number | null;
+  weightsBytes: number;
+}
+
+export function singleLoad(status: object | null): SingleLoad | null {
+  const load = (status as { load?: unknown } | null)?.load;
+  if (load == null || typeof load !== 'object') return null;
+  const l = load as Record<string, unknown>;
+  if (typeof l.phase !== 'string' || typeof l.weightsBytes !== 'number') return null;
+  return {
+    phase: l.phase,
+    residentBytes: typeof l.residentBytes === 'number' ? l.residentBytes : null,
+    weightsBytes: l.weightsBytes,
+  };
+}
+
+/**
  * What a mount of `modelBytes` would cost against free memory, with the SAME verdict the sidecar's
  * mount gate gives (crates/goose-sidecar/src/memory.rs `MemoryGate::default`: a reserve of
  * max(8 GiB, 10% of total) kept free; block when the model plus reserve exceeds free memory, warn

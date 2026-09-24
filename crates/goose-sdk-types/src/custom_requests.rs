@@ -2480,12 +2480,85 @@ pub struct MlxEngineStatusDto {
     /// The OS memory probe failed; the memory figures are 0 and must not be read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_error: Option<String>,
+    /// Metal's recommended working-set ceiling on this Mac — the fit rule's other bound. Absent
+    /// exactly when `gpuCeilingError` says why (and from a goose before it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_ceiling_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_ceiling_error: Option<String>,
     /// True when the persisted settings would spawn the running engine differently
     /// (model, port, sampling): the engine keeps running with its old arguments until
     /// the user remounts.
     pub restart_required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// The one fit rule's verdict for the request's `fitModelId` on this Mac right now — what a
+    /// Mount would be judged on. Absent when no `fitModelId` was asked, or exactly when
+    /// `mountFitError` says why it could not be judged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount_fit: Option<MlxMountFitDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mount_fit_error: Option<String>,
+    /// While `state` is "mounting": how far the mount has come, measured. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load: Option<MlxEngineLoadDto>,
+    /// Set while THIS Mac serves a rank of another Mac's distributed engine over LeanZero Link
+    /// (the same record as `distributedStatus.hosting`): the single engine is refused meanwhile,
+    /// and this is what the Mac is doing instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hosting: Option<MlxDistributedHostedRankDto>,
+}
+
+/// The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
+/// RAM × marginRatio, GPU ceiling)`; the need fits when ≤ budget, and is "warn" when what is left
+/// is inside the live-memory drift. Bytes throughout; the desktop draws these, never recomputes.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMountFitDto {
+    pub model_id: String,
+    /// "allow" | "warn" | "block".
+    pub verdict: String,
+    /// `weightsBytes + kvBytes`.
+    pub need_bytes: u64,
+    /// The model directory's bytes on disk.
+    pub weights_bytes: u64,
+    /// KV for `contextTokens` (the smallest useful context); 0 when `kvError` says it could not be
+    /// sized (then only the weights are charged).
+    pub kv_bytes: u64,
+    pub context_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_error: Option<String>,
+    pub budget_bytes: u64,
+    /// Available now (plus a mounted model's footprint, which a mount gets back).
+    pub available_bytes: u64,
+    pub total_bytes: u64,
+    /// Metal's recommended working-set ceiling on this Mac.
+    pub ceiling_bytes: u64,
+    /// `totalBytes × marginRatio`.
+    pub margin_bytes: u64,
+    pub margin_ratio: f64,
+    /// Block only: `needBytes − budgetBytes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub short_bytes: Option<u64>,
+    /// Allow/warn only: `budgetBytes − needBytes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spare_bytes: Option<u64>,
+    /// The rule's arithmetic in words (a refusal's text, verbatim — the same as `gateMessage`).
+    pub message: String,
+}
+
+/// A mount in flight. `phase`: "makingRoom" (macOS reclaims memory before the gate judges again)
+/// | "starting" (the process runs; the engine has not said it is loading) | "loading" | "warming"
+/// (weights in, compiling kernels). `residentBytes ÷ weightsBytes` is the load's progress
+/// (measured: a finished load holds 0.985–0.994× the bytes on disk); `residentBytes` is absent
+/// until the engine process exists — then the desktop shows the phase without a bar.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineLoadDto {
+    pub phase: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resident_bytes: Option<u64>,
+    pub weights_bytes: u64,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
@@ -2559,6 +2632,10 @@ pub struct MlxEngineStatusRequest {
     /// `not connected to the mesh` error — never a local fallback.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
+    /// A model in the models folder: the status carries `mountFit`, the fit rule's verdict for it
+    /// on that node right now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_model_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -2567,10 +2644,15 @@ pub struct MlxEngineStatusResponse {
     pub status: MlxEngineStatusDto,
 }
 
-/// Mount a local model into the MLX engine. Returns once mounting has started;
-/// poll status for running/failed.
+/// Mount a local model into the MLX engine. Returns once mounting has started; poll status for
+/// running/failed. A memory-gate refusal is NOT an error: it is `refusal` (and status's
+/// `gateVerdict: "block"` / `gateMessage` carry the same verdict) — one failure, one carrier of
+/// its text. Every other failure (unknown or incomplete model, a foreign listener) is an error.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
-#[request(method = "_goose/unstable/mlxEngine/mount", response = EmptyResponse)]
+#[request(
+    method = "_goose/unstable/mlxEngine/mount",
+    response = MlxEngineMountResponse
+)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxEngineMountRequest {
     pub model_id: String,
@@ -2578,6 +2660,31 @@ pub struct MlxEngineMountRequest {
     /// forwards over the mesh.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMountResponse {
+    /// Set when the mount gate refused; absent = mounting started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<MlxMountRefusalDto>,
+}
+
+/// The mount gate's refusal: the fit rule's verdict and, when the model fits somewhere else, the
+/// placement that would work (the planner's own candidate — `action` says how to start it:
+/// `startSplit` → "Start across both Macs", `remoteSingle`, or `unavailable` with the step first).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMountRefusalDto {
+    pub fit: MlxMountFitDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alternative: Option<MlxPlacementCandidateDto>,
+    /// The model's badge from the same plan ("needsBothMacs", "tooBig" …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub badge: Option<MlxPlacementBadgeDto>,
+    /// Why no alternative could be planned (the planner failed, or nothing fits anywhere).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alternative_error: Option<String>,
 }
 
 /// Stop the MLX engine and unmount its model.
@@ -3465,6 +3572,14 @@ pub struct MlxDistributedNodeStatusDto {
     pub kv_reserved_gb: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kv_budget_gb: Option<f64>,
+    /// While `state` is "loading": "loading" | "warming" | "ready" — the rank's own reports.
+    /// `activeMemoryGb ÷ plannedWeightsGb` is the load (MLX's active bytes on the rank against
+    /// the weights preflight planned on it). Layers loaded is not measurable (the fork loads a
+    /// stage's layers in one `mx.eval`), so no such figure exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_weights_gb: Option<f64>,
     pub link: MlxDistributedLinkDto,
 }
 
@@ -3577,6 +3692,10 @@ pub struct MlxDistributedStatusDto {
     /// The latest memory compaction per node (automatic or Make room), newest last.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compactions: Vec<MlxDistributedCompactionDto>,
+    /// The Macs macOS is reclaiming memory on right now (the start's "making room" step, before
+    /// preflight judges them again); empty otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub making_room: Vec<String>,
 }
 
 /// Another goosed's distributed run, from the record it published under the goose state dir.
@@ -3876,8 +3995,19 @@ pub struct MlxDistributedHostedRankDto {
     pub runner: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
-    /// "loading" | "serving".
+    /// "loading" (weights arriving, or warming up) | "serving" (the rank reported ready).
     pub state: String,
+    /// "loading" | "warming" | "ready". Absent from a goose before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    /// MLX's active bytes on this rank; with `plannedWeightBytes` it is the load's progress.
+    /// Absent before the rank's first report.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loaded_bytes: Option<u64>,
+    /// The weights the requester's preflight planned on this rank; absent from a requester
+    /// whose goose predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_weight_bytes: Option<u64>,
     pub started_ms: u64,
     pub last_poll_ms: u64,
 }
@@ -4884,9 +5014,19 @@ pub struct MlxPlacementCandidateDto {
 )]
 pub enum MlxPlacementBadgeDto {
     FitsThisMac,
-    FitsPeer { name: String },
-    NeedsBothMacs,
-    TooBig { short_bytes: u64 },
+    FitsPeer {
+        name: String,
+    },
+    /// Only a split fits. `needs` = the step before it can start ("allow this Mac to serve as a
+    /// distributed node on <name> …", "set up the distributed engine with this model …");
+    /// absent = [Use this] starts it now.
+    NeedsBothMacs {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        needs: Option<String>,
+    },
+    TooBig {
+        short_bytes: u64,
+    },
     Unknown { reason: String },
 }
 

@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "This Mac serves a rank"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "Loading rank {rank} for {requester}"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — rank pid {pid}. The single engine and this Mac’s own distributed engine are refused until {requester} stops the run."
   },
@@ -3013,6 +3016,15 @@
   },
   "mlxDistributed.livenessNone": {
     "defaultMessage": "No progress measured yet"
+  },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "Weights loaded"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "Loaded {done} of {total} GB"
+  },
+  "mlxDistributed.load.layers": {
+    "defaultMessage": "Loaded {done} of {total} layers"
   },
   "mlxDistributed.locked": {
     "defaultMessage": "The configuration is locked while the distributed engine owns this Mac. Stop it to change nodes or the model."
@@ -3518,8 +3530,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "The distributed engine owns this Mac: the single engine cannot mount until it is stopped in the Distributed engine section below."
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "Mount blocked"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "Mount failed"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "Refused, and goose named no reason"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Serving across Macs"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "Start failed"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "Start refused"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "This model does not run on this Mac alone — unmount, then start it from the tile."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token instead of {bf16} KiB — the same memory holds {ratio}× the context."
@@ -3791,6 +3821,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slots {used} of {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "Each Mac, as it loads its part"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "{count} waiting"
   },
@@ -3833,6 +3866,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "for {requester}''s distributed engine over LeanZero Link"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "Loading rank {rank} for {requester}"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "rank pid {pid}"
   },
@@ -3845,8 +3881,20 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Live stats unavailable"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "Weights loaded on {node}"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{done} of {total} GB"
+  },
+  "mlxStateTile.load.layers": {
+    "defaultMessage": "{done} of {total} layers"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "Loading weights"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "Making room"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Needs {gb} GB more free memory"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "Writing rate over the last {count} reads"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "Starting the engine"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "Checking"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "Swarm run live: {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "this Mac"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count,plural,one{# request not from this app's chats or /v1} other{# requests not from this app's chats or /v1}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count,plural,one{request waiting} other{requests waiting}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "Warming up"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "GB of weights"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s writing"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · {cores}-core GPU"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "Failed"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "Mounting"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "Running"
+  },
   "placementCard.measure": {
     "defaultMessage": "Measure speed"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "As fast within the error (~{mine} vs ~{best} tok/s), but needs more Macs"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "Mount"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "Too big for this Mac, and nothing goose can start fits it: {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "Too big for this Mac — it fits {name}, and chat goes there over Link."
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "Retry"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "Fits no Mac you have: short {gb} even split across all of them."
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "Too big for this Mac alone — it runs split across {names}."
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{Start across both Macs} other{Start across # Macs}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "Start on {name}"
   },
   "placementCard.title": {
     "defaultMessage": "Where to run it"

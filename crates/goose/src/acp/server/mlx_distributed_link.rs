@@ -249,6 +249,9 @@ fn hosted_dto(status: HostedRankStatus) -> MlxDistributedHostedRankDto {
         runner: status.runner.as_str().to_string(),
         pid: status.pid,
         state: status.state,
+        phase: Some(status.phase),
+        loaded_bytes: status.loaded_bytes,
+        planned_weight_bytes: status.planned_weight_bytes,
         started_ms: status.started_ms,
         last_poll_ms: status.last_poll_ms,
     }

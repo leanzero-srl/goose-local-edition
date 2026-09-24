@@ -1,93 +1,6 @@
-//! Memory gate for sidecar model mounts. Exact parity with the acting-path gate in
-//! `local-edition/mlx/gates.py` (G1): same floor formula, same verdict bands — the Python
-//! gate guards manual/bench mounts, this one guards every mount goose itself performs.
+//! What this Mac's memory and disk hold right now. The fit rule that judges a mount against
+//! these figures is `crate::fit` — the one rule every mount, plan and preflight shares.
 use std::path::Path;
-
-pub const GIB: u64 = 1024 * 1024 * 1024;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Verdict {
-    Allow,
-    Warn,
-    Block,
-}
-
-#[derive(Debug, Clone)]
-pub struct GateResult {
-    pub verdict: Verdict,
-    pub message: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct MemoryGate {
-    pub floor_min_bytes: u64,
-    pub floor_fraction: f64,
-    pub warn_band_bytes: u64,
-}
-
-impl Default for MemoryGate {
-    fn default() -> Self {
-        Self {
-            floor_min_bytes: 8 * GIB,
-            floor_fraction: 0.10,
-            warn_band_bytes: 4 * GIB,
-        }
-    }
-}
-
-impl MemoryGate {
-    pub fn floor_bytes(&self, total_bytes: u64) -> u64 {
-        self.floor_min_bytes
-            .max((total_bytes as f64 * self.floor_fraction) as u64)
-    }
-
-    /// Could ANY amount of reclaimed memory let the model through? Not when the model plus the
-    /// floor exceeds the Mac's whole RAM.
-    pub fn could_ever_fit(&self, model_bytes: u64, total_bytes: u64) -> bool {
-        model_bytes.saturating_add(self.floor_bytes(total_bytes)) <= total_bytes
-    }
-
-    pub fn evaluate(&self, model_bytes: u64, available_bytes: u64, total_bytes: u64) -> GateResult {
-        let floor = self.floor_bytes(total_bytes);
-        let needed = model_bytes.saturating_add(floor);
-        if needed > available_bytes {
-            let short = needed - available_bytes;
-            return GateResult {
-                verdict: Verdict::Block,
-                message: format!(
-                    "model {:.1} GiB + floor {:.1} GiB exceeds available {:.1} GiB (short {:.1} GiB)",
-                    gib(model_bytes),
-                    gib(floor),
-                    gib(available_bytes),
-                    gib(short)
-                ),
-            };
-        }
-        let leftover = available_bytes - needed;
-        if leftover < self.warn_band_bytes {
-            return GateResult {
-                verdict: Verdict::Warn,
-                message: format!(
-                    "fits, but only {:.1} GiB above the floor — expect pressure under load",
-                    gib(leftover)
-                ),
-            };
-        }
-        GateResult {
-            verdict: Verdict::Allow,
-            message: format!(
-                "model {:.1} GiB fits with {:.1} GiB above the {:.1} GiB floor",
-                gib(model_bytes),
-                gib(leftover),
-                gib(floor)
-            ),
-        }
-    }
-}
-
-fn gib(bytes: u64) -> f64 {
-    bytes as f64 / GIB as f64
-}
 
 /// Physical memory right now, as the mount gate and the status report read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,53 +201,7 @@ pub fn dir_size_bytes(path: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const TOTAL: u64 = 96 * GIB;
-
-    #[test]
-    fn blocks_when_model_exceeds_available() {
-        let g = MemoryGate::default();
-        assert_eq!(
-            g.evaluate(30 * GIB, 20 * GIB, TOTAL).verdict,
-            Verdict::Block
-        );
-    }
-
-    #[test]
-    fn blocks_when_fit_would_eat_the_floor() {
-        let g = MemoryGate::default();
-        assert_eq!(
-            g.evaluate(12 * GIB, 20 * GIB, TOTAL).verdict,
-            Verdict::Block
-        );
-    }
-
-    #[test]
-    fn warns_in_the_thin_band() {
-        let g = MemoryGate::default();
-        assert_eq!(g.evaluate(8 * GIB, 20 * GIB, TOTAL).verdict, Verdict::Warn);
-    }
-
-    #[test]
-    fn allows_with_headroom() {
-        let g = MemoryGate::default();
-        assert_eq!(g.evaluate(6 * GIB, 40 * GIB, TOTAL).verdict, Verdict::Allow);
-    }
-
-    #[test]
-    fn no_reclaim_fits_a_model_bigger_than_the_ram_less_the_floor() {
-        let g = MemoryGate::default();
-        // 96 GiB: floor max(8, 9.6) = 9.6 GiB → at most 86.4 GiB can ever pass.
-        assert!(g.could_ever_fit(86 * GIB, TOTAL));
-        assert!(!g.could_ever_fit(87 * GIB, TOTAL));
-        assert!(!g.could_ever_fit(4096 * GIB, TOTAL));
-    }
-
-    #[test]
-    fn floor_scales_with_total_on_big_machines() {
-        let g = MemoryGate::default();
-        assert_eq!(g.evaluate(GIB, 12 * GIB, 512 * GIB).verdict, Verdict::Block);
-    }
+    use crate::fit::{judge, Need, NodeMemoryFacts, Verdict, GIB};
 
     #[test]
     fn measure_returns_plausible_numbers() {
@@ -348,6 +215,7 @@ mod tests {
 
     const PAGE_16K: u64 = 16 * 1024;
     const M4_MAX_TOTAL: u64 = 128 * GIB;
+    const M4_MAX_CEILING: u64 = 115_448_725_504;
     /// Qwen3.8-27B-Atlassian-Q8-mlx on disk: 31,989,932 KiB (`du -sk`, 2026-09-23).
     const QWEN_27B_Q8: u64 = 31_989_932 * 1024;
 
@@ -358,10 +226,19 @@ mod tests {
     /// is taken as 0, which only understates what is available.
     #[test]
     fn the_recorded_file_cache_case_flips_the_gate_from_block_to_allow() {
-        let g = MemoryGate::default();
+        let fit = |available_bytes| {
+            judge(
+                Need::single_engine(QWEN_27B_Q8, Ok(0), 0),
+                NodeMemoryFacts {
+                    available_bytes,
+                    total_bytes: M4_MAX_TOTAL,
+                    ceiling_bytes: M4_MAX_CEILING,
+                },
+            )
+        };
         for sysinfo_read in [0, (19.2 * GIB as f64) as u64] {
             assert_eq!(
-                g.evaluate(QWEN_27B_Q8, sysinfo_read, M4_MAX_TOTAL).verdict,
+                fit(sysinfo_read).verdict,
                 Verdict::Block,
                 "the old sysinfo reading {sysinfo_read} refused a mount that fits"
             );
@@ -378,7 +255,7 @@ mod tests {
         );
         assert_eq!(reading.available_bytes, (2_272_001 + 1_610_894) * PAGE_16K);
         assert_eq!(reading.reclaimable_cache_bytes, Some(1_610_894 * PAGE_16K));
-        let gate = g.evaluate(QWEN_27B_Q8, reading.available_bytes, M4_MAX_TOTAL);
+        let gate = fit(reading.available_bytes);
         assert_eq!(gate.verdict, Verdict::Allow, "{}", gate.message);
     }
 

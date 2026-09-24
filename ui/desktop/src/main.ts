@@ -35,6 +35,8 @@ import {
   ipcMain,
   Menu,
   MenuItem,
+  nativeImage,
+  type NativeImage,
   nativeTheme,
   net,
   Notification,
@@ -129,10 +131,13 @@ import { fetchMlxServing, serveHttpBase, type MlxServingRow } from './utils/mlxS
 import {
   MLX_DISTRIBUTED_STALE_MS,
   buildMlxTrayModel,
+  trayTitleText,
   type MlxTrayAction,
   type MlxTrayItem,
 } from './utils/mlxTray';
 import { isMlxDistributedReport, type MlxDistributedReport } from './utils/mlxDistributedReport';
+import { PHASE_HEX, type EnginePhase } from './components/lz/tokens';
+import { phaseDotBitmap } from './utils/phaseDot';
 import { isMlxRemoteReport, type MlxRemoteReport } from './utils/mlxRemoteReport';
 import {
   isLinkTrayReport,
@@ -2126,12 +2131,36 @@ const runMlxTrayAction = (action: MlxTrayAction) => {
   win.webContents.send('mlx-tray-action', action);
 };
 
+// The engine-phase dot beside a tray state line, in the palette's exact hex (12pt @2x).
+const phaseDots = new Map<EnginePhase, NativeImage>();
+const phaseDot = (phase: EnginePhase): NativeImage => {
+  let image = phaseDots.get(phase);
+  if (!image) {
+    image = nativeImage.createFromBitmap(phaseDotBitmap(PHASE_HEX[phase], 24), {
+      width: 24,
+      height: 24,
+      scaleFactor: 2,
+    });
+    phaseDots.set(phase, image);
+  }
+  return image;
+};
+
 const mlxTrayMenuItem = (item: MlxTrayItem): MenuItemConstructorOptions => {
   switch (item.type) {
     case 'separator':
       return { type: 'separator' };
     case 'info':
-      return { label: item.label, enabled: false };
+      // A state line with its phase dot is ENABLED (it opens the engine's page): macOS draws a
+      // disabled item's image dimmed, and the palette is solid colour, never a faded one.
+      return item.phase
+        ? {
+            label: item.label,
+            icon: phaseDot(item.phase),
+            enabled: mlxActionWindow() != null,
+            click: () => runMlxTrayAction('open-providers'),
+          }
+        : { label: item.label, enabled: false };
     case 'action':
       return {
         label: item.label,
@@ -2207,7 +2236,7 @@ const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
     remote: mlxRemote,
   });
   if (process.platform === 'darwin') {
-    tray.setTitle(silent ? '' : model.title, { fontType: 'monospacedDigit' });
+    tray.setTitle(silent ? '' : trayTitleText(model), { fontType: 'monospacedDigit' });
   }
   const items = silent ? [] : model.items;
   const key = JSON.stringify({ items, linkTray, canAct: mlxActionWindow() != null });

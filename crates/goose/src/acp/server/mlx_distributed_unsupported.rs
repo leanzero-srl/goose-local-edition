@@ -17,6 +17,11 @@ pub(super) async fn refuse_single_mount_while_distributed(
     Ok(())
 }
 
+/// No rank can be hosted on this platform.
+pub(super) fn hosting_dto() -> Option<MlxDistributedHostedRankDto> {
+    None
+}
+
 pub(super) async fn shutdown_distributed_engine() -> String {
     format!("nothing supervised ({UNSUPPORTED})")
 }

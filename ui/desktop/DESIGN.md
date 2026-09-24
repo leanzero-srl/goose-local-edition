@@ -58,6 +58,27 @@ both as text and as a fill under dark ink.)
 | err     | `text-lz-err` `bg-lz-err`         | `bg-lz-err-solid text-white`     | `#dc2626` / `#dc2626` | `#ef4444`   |
 | stopped | `text-lz-stopped` `bg-lz-stopped` | `bg-lz-stopped-solid text-white` | `#475569` / `#475569` | `#94a3b8`   |
 
+**Engine-phase palette** — what an MLX engine (single, distributed, or a rank this Mac hosts) is
+DOING, one solid fill + its ink per phase (`PHASE_FILL` / `PHASE_DOT` / `PHASE_HEX` in
+`lz/tokens.ts`; the state → phase map is `leanzero-swarm/mlxPhase.ts`). Every MLX surface uses it
+and nothing else for engine state: the state tile, the distributed node cards and start strip, the
+peer's hosting block, the placement card's live chip, the other tabs' state badge and the menu-bar
+tray (title glyph + exact-hex menu dots). Same fills in both themes; `studioTokens.test.ts` pins
+contrast, distinctness and the tray hex.
+
+| phase    | meaning                                   | fill      | ink       |
+| -------- | ----------------------------------------- | --------- | --------- |
+| unloaded | no model in memory — OUTLINED (2px line)  | `#27272a` | `#ffffff` |
+| idle     | loaded, nothing running                   | `#71717a` | `#ffffff` |
+| loading  | loading / making room / starting a split  | `#f59e0b` | `#1c1917` |
+| reading  | prefill — the prompt tok/s                | `#2563eb` | `#ffffff` |
+| writing  | decode — the tok/s                        | `#15803d` | `#ffffff` |
+| held     | queued, or admission held by the watchdog | `#c2410c` | `#ffffff` |
+| failed   | failed, with the reason                   | `#dc2626` | `#ffffff` |
+
+A load draws a bar only from a figure the backend measured; otherwise the indeterminate track
+(`animate-lz-indeterminate`, a travelling solid segment — position, never a fade).
+
 **Node ramp** — `bg-lz-node-1…6` with `text-lz-node-N-ink` (the ink was measured per hue: white on
 blue/violet/pink, near-black on cyan/orange/green in light; near-black on all six in dark). Node
 hue is NODE IDENTITY ONLY — never chrome, never a zone, never a status.

@@ -1,3 +1,4 @@
+import type { MlxPlacementBadgeDto, MlxPlacementCandidateDto } from '@aaif/goose-sdk';
 import { getAcpClient } from './acpConnection';
 
 /**
@@ -56,6 +57,11 @@ export interface MlxEngineStatus {
   /** The OS memory probe failed; the memory figures are 0 and must not be read as a measurement. */
   memoryError?: string;
   lastError?: string;
+  /**
+   * While mounting: the sidecar's measure of the start — `phase` makingRoom | starting | loading |
+   * warming, the engine process's resident bytes against the model's bytes on disk.
+   */
+  load?: { phase: string; residentBytes?: number | null; weightsBytes: number } | null;
 }
 
 /**
@@ -378,9 +384,43 @@ function reportToMain(status: MlxEngineStatus): void {
   });
 }
 
-/** Returns immediately; state flips to "mounting" — poll status for running/failed. */
+/**
+ * The mount gate's refusal as goose answers it (`MlxMountRefusalDto`): the fit rule's verdict and,
+ * when the model fits somewhere else, the placement that would work (a placement candidate whose
+ * `action` says how to start it) and the model's badge from the same plan.
+ */
+export interface MlxMountRefusal {
+  fit: { modelId: string; verdict: string; message: string; shortBytes?: number | null };
+  alternative?: MlxPlacementCandidateDto | null;
+  badge?: MlxPlacementBadgeDto | null;
+  alternativeError?: string | null;
+}
+
+/**
+ * A refused mount. goose answers a gate refusal as a RESULT (`{ refusal }`), not an error; every
+ * caller of `mlxEngineMount` awaited a void and would read that answer as "mounting started", so
+ * the refusal is thrown here — with the fit rule's own words as the message — and every existing
+ * catch arm shows it. The Providers view reads `refusal` for the placement that would work.
+ */
+export class MlxMountRefusedError extends Error {
+  readonly refusal: MlxMountRefusal;
+  constructor(refusal: MlxMountRefusal) {
+    super(refusal.fit.message);
+    this.name = 'MlxMountRefusedError';
+    this.refusal = refusal;
+  }
+}
+
+/**
+ * Returns once mounting started; state flips to "mounting" — poll status for running/failed. A gate
+ * refusal throws `MlxMountRefusedError`.
+ */
 export async function mlxEngineMount(modelId: string, nodeId?: string): Promise<void> {
-  await call('_goose/unstable/mlxEngine/mount', withNode({ modelId }, nodeId));
+  const response = await call<{ refusal?: MlxMountRefusal | null } | null | undefined>(
+    '_goose/unstable/mlxEngine/mount',
+    withNode({ modelId }, nodeId)
+  );
+  if (response?.refusal) throw new MlxMountRefusedError(response.refusal);
 }
 
 export async function mlxEngineUnmount(nodeId?: string): Promise<void> {

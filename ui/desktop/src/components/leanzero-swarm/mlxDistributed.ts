@@ -127,6 +127,46 @@ export function layerSpanShort(span: LayerSpan | null): string | null {
     : `shard ${span.index}/${span.count}`;
 }
 
+/** A load the backend measured: `done` of `total` bytes of weights. */
+export interface LoadProgress {
+  unit: 'bytes';
+  done: number;
+  total: number;
+}
+
+/**
+ * THE BINDING POINT for a rank's load progress while it starts, from goose's own fields: a
+ * distributed node (`MlxDistributedNodeStatusDto`: MLX's `activeMemoryGb` on the rank against the
+ * `plannedWeightsGb` preflight planned on it) or the rank this Mac hosts for another
+ * (`MlxDistributedHostedRankDto`: `loadedBytes` against `plannedWeightBytes`). Layers loaded is
+ * not measurable (the fork loads a stage in one `mx.eval`), so there is no layer figure. `null` =
+ * no figure reported: the surface draws the indeterminate track, never a number it did not measure.
+ */
+export function nodeLoadProgress(fields: object): LoadProgress | null {
+  const f = fields as Record<string, unknown>;
+  const pair = (done: unknown, total: unknown, scale: number): LoadProgress | null =>
+    typeof done === 'number' && typeof total === 'number' && total > 0 && done >= 0
+      ? { unit: 'bytes', done: Math.min(done, total) * scale, total: total * scale }
+      : null;
+  return (
+    pair(f.loadedBytes, f.plannedWeightBytes, 1) ??
+    pair(f.activeMemoryGb, f.plannedWeightsGb, GIB)
+  );
+}
+
+/**
+ * What a starting rank is doing, in the backend's words: "makingRoom" (macOS reclaiming memory on
+ * it before preflight judges it again — `status.makingRoom`), else the rank's own `loadPhase`
+ * (loading | warming | ready), else its state.
+ */
+export function nodeStartWord(status: object, node: { name: string; state: string }): string {
+  const makingRoom = (status as { makingRoom?: unknown }).makingRoom;
+  if (Array.isArray(makingRoom) && makingRoom.includes(node.name)) return 'makingRoom';
+  const loadPhase = (node as { loadPhase?: unknown }).loadPhase;
+  if (node.state === 'loading' && loadPhase === 'warming') return 'warming';
+  return node.state;
+}
+
 /** The rank's plan from the last preflight — the only place a memory BUDGET is reported. */
 export function planForRank(
   status: Pick<MlxDistributedStatusDto, 'lastPreflight'> | null,
@@ -144,39 +184,8 @@ export function gb1(value: number): string {
   return value.toFixed(1);
 }
 
-// The run: slate at rest (ready), blue while in flight (preflight/starting/stopping), green while
-// it serves, red when it failed — the tile's own register.
-export function runStateTone(state: string): Tone {
-  switch (state) {
-    case 'serving':
-      return 'ok';
-    case 'preflight':
-    case 'starting':
-    case 'stopping':
-      return 'accent';
-    case 'failed':
-      return 'err';
-    default:
-      return 'stopped';
-  }
-}
-
 export function runStateInFlight(state: string): boolean {
   return state === 'preflight' || state === 'starting' || state === 'stopping';
-}
-
-export function nodeStateTone(state: string): Tone {
-  switch (state) {
-    case 'serving':
-      return 'ok';
-    case 'preflight':
-    case 'loading':
-      return 'accent';
-    case 'failed':
-      return 'err';
-    default:
-      return 'stopped';
-  }
 }
 
 export function verdictTone(verdict: string): Tone {

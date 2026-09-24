@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "Máy Mac này đang phục vụ một rank"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "Đang tải rank {rank} cho {requester}"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — PID của rank {pid}. Engine đơn và engine phân tán riêng của máy Mac này bị từ chối cho đến khi {requester} dừng lượt chạy."
   },
@@ -3013,6 +3016,15 @@
   },
   "mlxDistributed.livenessNone": {
     "defaultMessage": "Chưa đo được tiến triển nào"
+  },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "Trọng số đã tải"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "Đã tải {done} / {total} GB"
+  },
+  "mlxDistributed.load.layers": {
+    "defaultMessage": "Đã tải {done} / {total} lớp"
   },
   "mlxDistributed.locked": {
     "defaultMessage": "Cấu hình bị khóa khi engine phân tán đang chiếm máy Mac này. Hãy dừng nó để đổi node hoặc mô hình."
@@ -3518,8 +3530,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Engine phân tán đang chiếm máy Mac này: engine đơn không thể gắn cho đến khi nó được dừng trong mục Engine phân tán bên dưới."
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "Nạp bị chặn"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "Nạp thất bại"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "Bị từ chối, goose không nêu lý do"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Phục vụ trên nhiều máy Mac"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "Khởi động thất bại"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "Khởi động bị từ chối"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "Mô hình này không chạy được trên riêng máy Mac này — hãy gỡ nạp, rồi khởi động từ ô."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB mỗi token thay vì {bf16} KiB — cùng bộ nhớ chứa được {ratio}× ngữ cảnh."
@@ -3791,6 +3821,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slot {used} / {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "Từng máy Mac, khi tải phần của mình"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "{count} đang chờ"
   },
@@ -3833,6 +3866,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "cho engine phân tán của {requester} qua LeanZero Link"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "Đang tải rank {rank} cho {requester}"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "PID của rank {pid}"
   },
@@ -3845,8 +3881,20 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Không có số liệu trực tiếp"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "Trọng số đã tải trên {node}"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{done} / {total} GB"
+  },
+  "mlxStateTile.load.layers": {
+    "defaultMessage": "{done} / {total} lớp"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "Đang tải trọng số"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "Đang giải phóng bộ nhớ"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Cần thêm {gb} GB bộ nhớ trống"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "Tốc độ viết trong {count} lần đọc gần nhất"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "Đang khởi động công cụ"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "Đang kiểm tra"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "Lượt chạy swarm đang hoạt động: {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "máy Mac này"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, other {# yêu cầu không đến từ các cuộc trò chuyện của ứng dụng này hay /v1}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {yêu cầu đang chờ}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "Đang làm nóng"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "GB trọng số"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s khi viết"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · GPU {cores} lõi"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "Thất bại"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "Đang nạp"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "Đang chạy"
+  },
   "placementCard.measure": {
     "defaultMessage": "Đo tốc độ"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Nhanh ngang nhau trong sai số (~{mine} so với ~{best} tok/s), nhưng cần nhiều máy Mac hơn"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "Nạp"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "Quá lớn cho máy Mac này, và không cấu hình nào goose khởi động được vừa: {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "Quá lớn cho máy Mac này — vừa trên {name}, và trò chuyện đi đến đó qua Link."
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "Không vừa máy Mac nào của bạn: thiếu {gb} ngay cả khi chia cho tất cả."
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "Quá lớn cho riêng máy Mac này — chạy chia trên {names}."
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{Khởi động trên cả hai máy Mac} other{Khởi động trên # máy Mac}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "Khởi động trên {name}"
   },
   "placementCard.title": {
     "defaultMessage": "Chạy ở đâu"

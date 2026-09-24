@@ -407,6 +407,17 @@
     }
   }
 
+  /* An unmeasured load: a solid segment TRAVELS the track (position, never a fade). */
+  --animate-lz-indeterminate: lz-indeterminate 1400ms ease-in-out infinite;
+  @keyframes lz-indeterminate {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(300%);
+    }
+  }
+
   /* Rhythm: 4px base, 8px rhythm. */
   --spacing-lz-page: 32px;
   --spacing-lz-section: 24px;
@@ -465,6 +476,23 @@
   --color-lz-err-solid: var(--color-status-err-solid, #dc2626);
   --color-lz-stopped-solid: var(--color-status-stopped-solid, #475569);
 
+  /* Engine-phase palette (lz/tokens.ts PHASE_FILL) — one solid fill + its ink per engine phase. */
+  --color-lz-phase-unloaded: var(--color-lz-phase-unloaded, #27272a);
+  --color-lz-phase-unloaded-ink: var(--color-lz-phase-unloaded-ink, #ffffff);
+  --color-lz-phase-unloaded-line: var(--color-lz-phase-unloaded-line, #09090b);
+  --color-lz-phase-idle: var(--color-lz-phase-idle, #71717a);
+  --color-lz-phase-idle-ink: var(--color-lz-phase-idle-ink, #ffffff);
+  --color-lz-phase-loading: var(--color-lz-phase-loading, #f59e0b);
+  --color-lz-phase-loading-ink: var(--color-lz-phase-loading-ink, #1c1917);
+  --color-lz-phase-reading: var(--color-lz-phase-reading, #2563eb);
+  --color-lz-phase-reading-ink: var(--color-lz-phase-reading-ink, #ffffff);
+  --color-lz-phase-writing: var(--color-lz-phase-writing, #15803d);
+  --color-lz-phase-writing-ink: var(--color-lz-phase-writing-ink, #ffffff);
+  --color-lz-phase-held: var(--color-lz-phase-held, #c2410c);
+  --color-lz-phase-held-ink: var(--color-lz-phase-held-ink, #ffffff);
+  --color-lz-phase-failed: var(--color-lz-phase-failed, #dc2626);
+  --color-lz-phase-failed-ink: var(--color-lz-phase-failed-ink, #ffffff);
+
   /* Node identity ramp + its ink — NODE IDENTITY ONLY, never chrome, never status. */
   --color-lz-node-1: var(--color-node-1, #1d4ed8);
   --color-lz-node-2: var(--color-node-2, #0891b2);
@@ -499,6 +527,21 @@
   --color-lz-syntax-string: #15803d;
   --color-lz-syntax-number: #7e22ce;
   --color-lz-syntax-bool: #c2410c;
+  --color-lz-phase-unloaded: #27272a;
+  --color-lz-phase-unloaded-ink: #ffffff;
+  --color-lz-phase-unloaded-line: #09090b;
+  --color-lz-phase-idle: #71717a;
+  --color-lz-phase-idle-ink: #ffffff;
+  --color-lz-phase-loading: #f59e0b;
+  --color-lz-phase-loading-ink: #1c1917;
+  --color-lz-phase-reading: #2563eb;
+  --color-lz-phase-reading-ink: #ffffff;
+  --color-lz-phase-writing: #15803d;
+  --color-lz-phase-writing-ink: #ffffff;
+  --color-lz-phase-held: #c2410c;
+  --color-lz-phase-held-ink: #ffffff;
+  --color-lz-phase-failed: #dc2626;
+  --color-lz-phase-failed-ink: #ffffff;
 }
 
 /* LeanZero Studio surfaces — dark. */
@@ -519,6 +562,21 @@
   --color-lz-syntax-string: #4ade80;
   --color-lz-syntax-number: #a78bfa;
   --color-lz-syntax-bool: #fb923c;
+  --color-lz-phase-unloaded: #27272a;
+  --color-lz-phase-unloaded-ink: #ffffff;
+  --color-lz-phase-unloaded-line: #a1a1aa;
+  --color-lz-phase-idle: #71717a;
+  --color-lz-phase-idle-ink: #ffffff;
+  --color-lz-phase-loading: #f59e0b;
+  --color-lz-phase-loading-ink: #1c1917;
+  --color-lz-phase-reading: #2563eb;
+  --color-lz-phase-reading-ink: #ffffff;
+  --color-lz-phase-writing: #15803d;
+  --color-lz-phase-writing-ink: #ffffff;
+  --color-lz-phase-held: #c2410c;
+  --color-lz-phase-held-ink: #ffffff;
+  --color-lz-phase-failed: #dc2626;
+  --color-lz-phase-failed-ink: #ffffff;
 }
 
 /* Host-button hover fills — HOST-WIDE, not .local-edition: ui/button.tsx renders in every edition

@@ -15,6 +15,7 @@ import {
   FLASH_PREFLIGHT_REFUSED,
   FLASH_READY,
   FLASH_SERVING,
+  HOSTING_RANK_1,
   STOPPED_WITH_CONFIG,
 } from './mlxDistributed.fixtures';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
@@ -233,7 +234,7 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     section({ status: { ...FLASH_READY, admissionOpen: false } });
     const block = screen.getByTestId('mlx-dist-admission');
     expect(block).toHaveAttribute('data-open', 'false');
-    expect(block.className).toContain('bg-lz-warn-solid');
+    expect(block.className).toContain('bg-lz-phase-held');
     expect(block).toHaveTextContent("A node's memory is low");
   });
 
@@ -1165,5 +1166,76 @@ describe('DistributedEngineSection — LeanZero Link finds the other Mac and run
     await userEvent.click(toggle);
     expect(mockUpsertConfig).toHaveBeenCalledWith('LEANZERO_LINK_ALLOW_DISTRIBUTED_NODE', true);
     await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+  });
+});
+
+describe('DistributedEngineSection — the engine-phase palette on the run and every node', () => {
+  it('starting: the run chip amber; each node card its own phase, with the load it reported', async () => {
+    const GIB = 1024 * 1024 * 1024;
+    const { container } = section({
+      status: {
+        ...FLASH_READY,
+        state: 'starting',
+        nodes: [
+          {
+            ...FLASH_READY.nodes[0],
+            state: 'loading',
+            loadedBytes: 30 * GIB,
+            loadTotalBytes: 48 * GIB,
+          },
+          { ...FLASH_READY.nodes[1], state: 'ready' },
+        ],
+      } as MlxDistributedStatus,
+    });
+    const mode = screen.getByTestId('mlx-dist-mode');
+    expect(within(mode).getByText('Starting').closest('[data-phase]')).toHaveAttribute(
+      'data-phase',
+      'loading'
+    );
+    const cards = screen.getAllByTestId('mlx-dist-node');
+    expect(cards.map((c) => c.getAttribute('data-phase'))).toEqual(['loading', 'idle']);
+    expect(within(cards[0]).getByText('Loading').closest('[data-phase]')).toHaveAttribute(
+      'data-phase',
+      'loading'
+    );
+    const load = within(cards[0]).getByTestId('mlx-dist-node-load');
+    expect(load).toHaveTextContent('Loaded 30.0 of 48.0 GB');
+    expect(within(load).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '63');
+    expect(within(cards[1]).queryByTestId('mlx-dist-node-load')).toBeNull();
+    await expectDesigned(container);
+  });
+
+  it('serving is green, a held admission orange, a failed run red', () => {
+    // The supervisor flips every rank to `serving` with the run (supervisor.rs, inflight > 0).
+    const serving = {
+      ...FLASH_SERVING,
+      nodes: FLASH_SERVING.nodes.map((n) => ({ ...n, state: 'serving' })),
+    };
+    const { unmount } = section({ status: serving });
+    expect(screen.getAllByTestId('mlx-dist-node').map((c) => c.getAttribute('data-phase'))).toEqual(
+      ['writing', 'writing']
+    );
+    unmount();
+    const held = section({ status: { ...FLASH_SERVING, admissionOpen: false } });
+    expect(screen.getByTestId('mlx-dist-admission').className).toContain('bg-lz-phase-held');
+    expect(
+      within(screen.getByTestId('mlx-dist-mode')).getByText('Serving').closest('[data-phase]')
+    ).toHaveAttribute('data-phase', 'held');
+    held.unmount();
+    section({ status: { ...FLASH_READY, state: 'failed', lastError: 'rank 1 died' } });
+    expect(
+      within(screen.getByTestId('mlx-dist-mode')).getByText('Failed').closest('[data-phase]')
+    ).toHaveAttribute('data-phase', 'failed');
+  });
+
+  it('the peer serving a rank: "Loading rank 1 for MacBook Pro" as a solid amber block', async () => {
+    const { container } = section({
+      status: { ...HOSTING_RANK_1, hosting: { ...HOSTING_RANK_1.hosting!, state: 'loading' } },
+    });
+    const block = screen.getByTestId('mlx-dist-hosting');
+    expect(block).toHaveAttribute('data-phase', 'loading');
+    expect(block.className).toContain('bg-lz-phase-loading');
+    expect(block).toHaveTextContent('Loading rank 1 for MacBook Pro');
+    await expectDesigned(container);
   });
 });

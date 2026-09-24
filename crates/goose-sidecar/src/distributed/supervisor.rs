@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 use super::compaction::{self, CompactionRefusal, NodeCompaction};
 use super::config::{Backend, DistributedConfig, Runner};
 use super::exec::{NodeExec, SystemExec};
-use super::launch::{self, RankProcess, RANK_MARKER};
+use super::launch::{self, RankMemory, RankPhase, RankProcess, RANK_MARKER};
 use super::link_control::{self, ControlEvent, LinkRoutedExec};
 use super::local_network;
 use super::node_op::{NodeOp, Signal};
@@ -223,6 +223,12 @@ pub struct NodeStatus {
     /// first poll, or when the poll failed (`DistributedStatus::server_status_error`).
     pub kv_reserved_bytes: Option<u64>,
     pub kv_budget_bytes: Option<u64>,
+    /// While the node is `Loading`: where its rank's start is (`RankLive::phase` — "loading" |
+    /// "warming" | "ready"); `active_bytes` ÷ `planned_weight_bytes` is the load itself (the rank's
+    /// MLX active bytes against the weights preflight planned on it). `None` once the engine is
+    /// up, and before the rank reported anything.
+    pub load_phase: Option<RankPhase>,
+    pub planned_weight_bytes: Option<u64>,
     pub backend: Backend,
     pub tb_ip: String,
     pub tb_interface: String,
@@ -272,6 +278,8 @@ pub struct DistributedStatus {
     pub config: Option<DistributedConfig>,
     /// The latest compaction per node (automatic or "Make room"), newest last.
     pub compactions: Vec<NodeCompaction>,
+    /// The Macs macOS is reclaiming memory on right now, before the start judges them again.
+    pub making_room: Vec<String>,
 }
 
 impl DistributedStatus {
@@ -299,6 +307,7 @@ impl DistributedStatus {
             last_error: None,
             config: None,
             compactions: Vec::new(),
+            making_room: Vec::new(),
         }
     }
 
@@ -837,7 +846,12 @@ impl RunContext {
     }
 
     fn set_node_states(&self, state: NodeState) {
-        self.update(|s| s.status.nodes.iter_mut().for_each(|n| n.state = state));
+        self.update(|s| {
+            s.status.nodes.iter_mut().for_each(|n| {
+                n.state = state;
+                n.load_phase = None;
+            })
+        });
     }
 }
 
@@ -967,10 +981,21 @@ async fn wait_ready(
                 return ReadyOutcome::Failed(kind, Some(rank.node.clone()), message);
             }
         }
-        let pids: Vec<Option<u32>> = ranks.iter().map(RankProcess::pid).collect();
+        let seen: Vec<(Option<u32>, RankPhase, Option<RankMemory>)> = ranks
+            .iter()
+            .map(|rank| {
+                let live = rank.live.lock().unwrap();
+                (live.pid, live.phase(), live.memory)
+            })
+            .collect();
         ctx.update(|s| {
-            for (node, pid) in s.status.nodes.iter_mut().zip(&pids) {
+            for (node, (pid, phase, memory)) in s.status.nodes.iter_mut().zip(&seen) {
                 node.pid = *pid;
+                node.load_phase = Some(*phase);
+                if let Some(memory) = memory {
+                    node.active_bytes = Some(memory.active);
+                    node.peak_bytes = Some(memory.peak.max(node.peak_bytes.unwrap_or(0)));
+                }
             }
         });
         if ping.is_none() && crate::port_has_listener(ctx.config.port) {
@@ -1489,33 +1514,37 @@ fn launch_specs(
     context: u64,
 ) -> Result<Vec<launch::RankSpec>> {
     let report_seconds = POLL_INTERVAL.as_secs_f64();
-    match ctx.runner {
+    let mut specs = match ctx.runner {
         Runner::MlxLmTensor => {
             let bytes = preflight
                 .launch_bytes()
                 .ok_or_else(|| anyhow!("the preflight produced no per-rank plan"))?;
-            Ok(launch::rank_specs(
+            launch::rank_specs(
                 &ctx.config,
                 &ctx.served_id,
                 &bytes,
                 context,
                 report_seconds,
-            ))
+            )
         }
         Runner::PipelineQwen4 => {
             let starts = preflight
                 .pipeline_starts
                 .as_deref()
                 .ok_or_else(|| anyhow!("the preflight approved no pipeline split"))?;
-            Ok(launch::pipeline_rank_specs(
+            launch::pipeline_rank_specs(
                 &ctx.config,
                 &ctx.served_id,
                 context,
                 &super::plan::split_arg(starts),
                 report_seconds,
-            ))
+            )
         }
+    };
+    for (spec, node) in specs.iter_mut().zip(&preflight.nodes) {
+        spec.planned_weight_bytes = node.plan.as_ref().map(|p| p.weights_bytes);
     }
+    Ok(specs)
 }
 
 async fn supervise(
@@ -1549,7 +1578,10 @@ async fn supervise(
             for (node, plan) in s.status.nodes.iter_mut().zip(&preflight.nodes) {
                 node.state = NodeState::Loading;
                 node.pid = None;
+                node.load_phase = None;
+                node.active_bytes = None;
                 node.planned_bytes = plan.plan.as_ref().map(|p| p.with_overhead_bytes);
+                node.planned_weight_bytes = plan.plan.as_ref().map(|p| p.weights_bytes);
             }
         });
         let mut ranks = Vec::new();
@@ -1809,10 +1841,12 @@ async fn preflight_making_room(
     if short.is_empty() {
         return Ok(first);
     }
+    shared.lock().unwrap().status.making_room = short.iter().map(|n| n.name.clone()).collect();
     let records = futures::future::join_all(short.iter().map(|node| {
         compaction::compact_recorded(exec.as_ref(), node.host(), &node.name, "automatic")
     }))
     .await;
+    shared.lock().unwrap().status.making_room.clear();
     let ran = records.iter().any(|r| r.report.is_some());
     {
         let mut shared = shared.lock().unwrap();
@@ -2025,6 +2059,8 @@ impl DistributedManager {
                     cache_limit_bytes: None,
                     kv_reserved_bytes: None,
                     kv_budget_bytes: None,
+                    load_phase: None,
+                    planned_weight_bytes: plan.map(|p| p.weights_bytes),
                     backend: config.backend,
                     tb_ip: node.tb_ip.clone(),
                     tb_interface: node.tb_interface.clone(),
@@ -2686,6 +2722,8 @@ mod tests {
             cache_limit_bytes: None,
             kv_reserved_bytes: None,
             kv_budget_bytes: None,
+            load_phase: None,
+            planned_weight_bytes: None,
             backend: Backend::Jaccl,
             tb_ip: String::new(),
             tb_interface: String::new(),

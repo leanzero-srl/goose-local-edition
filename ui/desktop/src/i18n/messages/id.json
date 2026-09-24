@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "Mac ini melayani satu rank"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "Memuat rank {rank} untuk {requester}"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — PID rank {pid}. Engine tunggal dan engine terdistribusi milik Mac ini ditolak sampai {requester} menghentikan eksekusinya."
   },
@@ -3013,6 +3016,15 @@
   },
   "mlxDistributed.livenessNone": {
     "defaultMessage": "Belum ada kemajuan yang terukur"
+  },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "Bobot dimuat"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "Dimuat {done} dari {total} GB"
+  },
+  "mlxDistributed.load.layers": {
+    "defaultMessage": "Dimuat {done} dari {total} lapisan"
   },
   "mlxDistributed.locked": {
     "defaultMessage": "Konfigurasi dikunci selama mesin terdistribusi menguasai Mac ini. Hentikan untuk mengubah node atau model."
@@ -3518,8 +3530,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Mesin terdistribusi menguasai Mac ini: mesin tunggal tidak bisa dipasang sampai mesin itu dihentikan di bagian Mesin terdistribusi di bawah."
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "Pemasangan diblokir"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "Pemasangan gagal"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "Ditolak, dan goose tidak menyebut alasan"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Melayani lintas Mac"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "Gagal memulai"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "Mulai ditolak"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "Model ini tidak berjalan di Mac ini saja — lepas dulu, lalu mulai dari kartu."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token, bukan {bf16} KiB — memori yang sama memuat {ratio}× konteks."
@@ -3791,6 +3821,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slot {used} dari {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "Setiap Mac, saat memuat bagiannya"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "{count} menunggu"
   },
@@ -3833,6 +3866,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "untuk engine terdistribusi {requester} melalui LeanZero Link"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "Memuat rank {rank} untuk {requester}"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "PID rank {pid}"
   },
@@ -3845,8 +3881,20 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "Statistik langsung tidak tersedia"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "Bobot dimuat di {node}"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{done} dari {total} GB"
+  },
+  "mlxStateTile.load.layers": {
+    "defaultMessage": "{done} dari {total} lapisan"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "Memuat bobot"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "Mengosongkan memori"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Butuh {gb} GB memori bebas lagi"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "Laju penulisan selama {count} pembacaan terakhir"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "Memulai mesin"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "Memeriksa"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "Proses swarm aktif: {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "Mac ini"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, other {# permintaan bukan dari obrolan aplikasi ini atau /v1}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, other {permintaan menunggu}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "Pemanasan"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "GB bobot"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s menulis"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · GPU {cores} inti"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "Memasang"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "Berjalan"
+  },
   "placementCard.measure": {
     "defaultMessage": "Ukur kecepatan"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Sama cepat dalam batas galat (~{mine} vs ~{best} tok/dtk), tetapi perlu lebih banyak Mac"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "Pasang"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "Terlalu besar untuk Mac ini, dan tidak ada yang bisa dimulai goose yang muat: {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "Terlalu besar untuk Mac ini — muat di {name}, dan obrolan ke sana lewat Link."
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "Coba lagi"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "Tidak muat di Mac mana pun milik Anda: kurang {gb} meski dibagi ke semuanya."
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "Terlalu besar untuk Mac ini saja — berjalan terbagi di {names}."
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{Mulai di kedua Mac} other{Mulai di # Mac}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "Mulai di {name}"
   },
   "placementCard.title": {
     "defaultMessage": "Di mana menjalankannya"

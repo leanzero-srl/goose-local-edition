@@ -2972,6 +2972,9 @@
   "mlxDistributed.hosting.label": {
     "defaultMessage": "यह Mac एक रैंक चला रहा है"
   },
+  "mlxDistributed.hosting.loading": {
+    "defaultMessage": "{requester} के लिए रैंक {rank} लोड हो रहा है"
+  },
   "mlxDistributed.hosting.text": {
     "defaultMessage": "{line} — रैंक PID {pid}। जब तक {requester} रन नहीं रोकता, सिंगल इंजन और इस Mac का अपना वितरित इंजन अस्वीकार हैं।"
   },
@@ -3013,6 +3016,15 @@
   },
   "mlxDistributed.livenessNone": {
     "defaultMessage": "अभी कोई प्रगति नहीं मापी गई"
+  },
+  "mlxDistributed.load.bar": {
+    "defaultMessage": "वेट्स लोड हुए"
+  },
+  "mlxDistributed.load.bytes": {
+    "defaultMessage": "{total} GB में से {done} लोड हुए"
+  },
+  "mlxDistributed.load.layers": {
+    "defaultMessage": "{total} लेयर में से {done} लोड हुईं"
   },
   "mlxDistributed.locked": {
     "defaultMessage": "जब तक वितरित इंजन इस Mac पर है, कॉन्फ़िगरेशन लॉक रहता है। नोड या मॉडल बदलने के लिए इसे रोकें।"
@@ -3518,8 +3530,26 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "वितरित इंजन इस Mac पर है: जब तक इसे नीचे वितरित इंजन अनुभाग में रोका नहीं जाता, एकल इंजन माउंट नहीं हो सकता।"
   },
+  "mlxEngineView.mountBlocked": {
+    "defaultMessage": "माउंट रोका गया"
+  },
+  "mlxEngineView.mountFailed": {
+    "defaultMessage": "माउंट विफल"
+  },
+  "mlxEngineView.refusedUnnamed": {
+    "defaultMessage": "अस्वीकृत, और goose ने कोई कारण नहीं बताया"
+  },
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "कई Mac पर परोसा जा रहा है"
+  },
+  "mlxEngineView.startFailed": {
+    "defaultMessage": "शुरू करना विफल"
+  },
+  "mlxEngineView.startRefused": {
+    "defaultMessage": "शुरू करना अस्वीकृत"
+  },
+  "mlxEngineView.switchNeedsUnmount": {
+    "defaultMessage": "यह मॉडल अकेले इस Mac पर नहीं चलता — अनमाउंट करें, फिर टाइल से शुरू करें।"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: हर टोकन पर {bf16} KiB की जगह {bytes} KiB — उसी मेमोरी में {ratio}× संदर्भ आता है।"
@@ -3791,6 +3821,9 @@
   "mlxStateTile.dist.slots": {
     "defaultMessage": "स्लॉट {used} / {slots}"
   },
+  "mlxStateTile.dist.starting": {
+    "defaultMessage": "हर Mac, जब वह अपना हिस्सा लोड करता है"
+  },
   "mlxStateTile.dist.waiting": {
     "defaultMessage": "{count} प्रतीक्षारत"
   },
@@ -3833,6 +3866,9 @@
   "mlxStateTile.hosting.for": {
     "defaultMessage": "LeanZero Link पर {requester} के वितरित इंजन के लिए"
   },
+  "mlxStateTile.hosting.loading": {
+    "defaultMessage": "{requester} के लिए रैंक {rank} लोड हो रहा है"
+  },
   "mlxStateTile.hosting.pid": {
     "defaultMessage": "रैंक PID {pid}"
   },
@@ -3845,8 +3881,20 @@
   "mlxStateTile.liveUnavailable": {
     "defaultMessage": "लाइव आँकड़े उपलब्ध नहीं"
   },
+  "mlxStateTile.load.bar": {
+    "defaultMessage": "{node} पर वेट्स लोड हुए"
+  },
+  "mlxStateTile.load.bytes": {
+    "defaultMessage": "{total} GB में से {done}"
+  },
+  "mlxStateTile.load.layers": {
+    "defaultMessage": "{total} लेयर में से {done}"
+  },
   "mlxStateTile.loadingWeights": {
     "defaultMessage": "वेट्स लोड हो रहे हैं"
+  },
+  "mlxStateTile.makingRoom": {
+    "defaultMessage": "मेमोरी खाली की जा रही है"
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "{gb} GB और खाली मेमोरी चाहिए"
@@ -3911,6 +3959,9 @@
   "mlxStateTile.sparkAria": {
     "defaultMessage": "पिछली {count} रीडिंग में लिखने की दर"
   },
+  "mlxStateTile.startingEngine": {
+    "defaultMessage": "इंजन शुरू हो रहा है"
+  },
   "mlxStateTile.state.checking": {
     "defaultMessage": "जाँच हो रही है"
   },
@@ -3935,11 +3986,20 @@
   "mlxStateTile.swarmLive": {
     "defaultMessage": "स्वॉर्म रन चालू: {runs}"
   },
+  "mlxStateTile.thisMacNode": {
+    "defaultMessage": "यह Mac"
+  },
   "mlxStateTile.unattributed": {
     "defaultMessage": "{count, plural, one {# अनुरोध इस ऐप की चैट या /v1 से नहीं} other {# अनुरोध इस ऐप की चैट या /v1 से नहीं}}"
   },
   "mlxStateTile.waiting": {
     "defaultMessage": "{count, plural, one {अनुरोध प्रतीक्षा में} other {अनुरोध प्रतीक्षा में}}"
+  },
+  "mlxStateTile.warming": {
+    "defaultMessage": "वार्म अप हो रहा है"
+  },
+  "mlxStateTile.weightsGb": {
+    "defaultMessage": "GB वेट्स"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s लिखते हुए"
@@ -4586,6 +4646,15 @@
   "placementCard.gpuCores": {
     "defaultMessage": "{brand} · {cores}-कोर GPU"
   },
+  "placementCard.live.failed": {
+    "defaultMessage": "विफल"
+  },
+  "placementCard.live.mounting": {
+    "defaultMessage": "माउंट हो रहा है"
+  },
+  "placementCard.live.running": {
+    "defaultMessage": "चल रहा है"
+  },
   "placementCard.measure": {
     "defaultMessage": "गति मापें"
   },
@@ -4678,6 +4747,30 @@
   },
   "placementCard.tied": {
     "defaultMessage": "त्रुटि की सीमा में उतना ही तेज़ (~{mine} बनाम ~{best} tok/s), पर ज़्यादा Mac चाहिए"
+  },
+  "placementCard.tile.mount": {
+    "defaultMessage": "माउंट करें"
+  },
+  "placementCard.tile.nothing": {
+    "defaultMessage": "इस Mac के लिए बहुत बड़ा, और goose जो कुछ शुरू कर सकता है उसमें यह नहीं समाता: {reason}"
+  },
+  "placementCard.tile.peerWhy": {
+    "defaultMessage": "इस Mac के लिए बहुत बड़ा — यह {name} पर समाता है, और चैट Link से वहाँ जाती है।"
+  },
+  "placementCard.tile.retry": {
+    "defaultMessage": "फिर से कोशिश करें"
+  },
+  "placementCard.tile.short": {
+    "defaultMessage": "आपके किसी Mac पर नहीं समाता: सब पर बाँटने पर भी {gb} कम।"
+  },
+  "placementCard.tile.splitWhy": {
+    "defaultMessage": "अकेले इस Mac के लिए बहुत बड़ा — यह {names} पर बँटकर चलता है।"
+  },
+  "placementCard.tile.startAcross": {
+    "defaultMessage": "{count,plural,=2{दोनों Mac पर शुरू करें} other{# Mac पर शुरू करें}}"
+  },
+  "placementCard.tile.startOn": {
+    "defaultMessage": "{name} पर शुरू करें"
   },
   "placementCard.title": {
     "defaultMessage": "इसे कहाँ चलाएँ"

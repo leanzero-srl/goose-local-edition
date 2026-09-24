@@ -20,17 +20,19 @@ import {
   Disclosure,
   EmptyState,
   KeyValue,
+  PHASE_DOT,
+  PHASE_FILL,
   Panel,
   RADIUS,
   StatusDot,
   SURFACE,
   TNUM,
   TONE_DOT,
-  TONE_FILL,
   TONE_TEXT,
   TYPE,
   WEIGHT,
   cx,
+  type EnginePhase,
   type KeyValueItem,
   type Tone,
 } from '../lz';
@@ -79,12 +81,12 @@ import {
   layerSpan,
   configuredModeSummary,
   missingFields,
-  nodeStateTone,
+  nodeLoadProgress,
+  nodeStartWord,
   ownsTheMac,
   planForRank,
   pressureTone,
   runStateInFlight,
-  runStateTone,
   sameConfig,
   verdictTone,
   withFreeMemory,
@@ -94,6 +96,7 @@ import {
   type NodeTextField,
 } from './mlxDistributed';
 import { distributedStateWord, formatMlxMode } from './mlxModeLabel';
+import { nodePhase, runPhase } from './mlxPhase';
 import { DistributedSetup } from './DistributedSetup';
 import { DistributedNodeServing } from './DistributedNodeServing';
 import { formatElapsed } from './mlxLiveStats';
@@ -219,6 +222,10 @@ const i18n = defineMessages({
     defaultMessage: 'GiB peak · no budget reported',
   },
   noPeak: { id: 'mlxDistributed.noPeak', defaultMessage: 'No peak reported yet' },
+  loadBytes: { id: 'mlxDistributed.load.bytes', defaultMessage: 'Loaded {done} of {total} GB' },
+  loadBar: { id: 'mlxDistributed.load.bar', defaultMessage: 'Weights loaded' },
+  makingRoom: { id: 'mlxDistributed.node.makingRoom', defaultMessage: 'Making room' },
+  warming: { id: 'mlxDistributed.node.warming', defaultMessage: 'Warming up' },
   peakBar: { id: 'mlxDistributed.peakBar', defaultMessage: 'Peak memory against the budget' },
   active: { id: 'mlxDistributed.active', defaultMessage: 'active {gb} GiB' },
   planned: { id: 'mlxDistributed.planned', defaultMessage: 'planned {gb} GiB with overhead' },
@@ -586,7 +593,18 @@ function durationText(ms: number): string {
 }
 
 /** A solid fill on a surface-2 track — the page's usage-bar register. `over` turns it red. */
-function Track({ fraction, tone, label }: { fraction: number; tone: Tone; label: string }) {
+function Track({
+  fraction,
+  tone,
+  phase,
+  label,
+}: {
+  fraction: number;
+  tone?: Tone;
+  /** An engine phase's fill instead of a tone (a rank's load progress). */
+  phase?: EnginePhase;
+  label: string;
+}) {
   const pct = Math.round(Math.min(1, Math.max(0, fraction)) * 100);
   return (
     <div
@@ -597,7 +615,10 @@ function Track({ fraction, tone, label }: { fraction: number; tone: Tone; label:
       aria-valuenow={pct}
       className={cx('h-2 w-full overflow-hidden', RADIUS.pill, SURFACE.inset)}
     >
-      <div className={cx('h-full', TONE_DOT[tone])} style={{ width: `${pct}%` }} />
+      <div
+        className={cx('h-full', phase ? PHASE_DOT[phase] : TONE_DOT[tone ?? 'accent'])}
+        style={{ width: `${pct}%` }}
+      />
     </div>
   );
 }
@@ -940,9 +961,20 @@ function PreflightReportView({
 // The running engine: admission, liveness, the per-node strip
 // ---------------------------------------------------------------------------
 
-function NodeCard({ node, budgetGb }: { node: MlxDistributedNodeStatus; budgetGb: number | null }) {
+function NodeCard({
+  node,
+  budgetGb,
+  startWord,
+}: {
+  node: MlxDistributedNodeStatus;
+  budgetGb: number | null;
+  /** `nodeStartWord`: makingRoom / warming while it starts, else the node's state. */
+  startWord: string;
+}) {
   const intl = useIntl();
-  const tone = nodeStateTone(node.state);
+  const phase = nodePhase(startWord);
+  const load =
+    node.state === 'loading' && startWord !== 'makingRoom' ? nodeLoadProgress(node) : null;
   const peak = node.peakMemoryGb ?? null;
   const fraction = peak != null && budgetGb != null && budgetGb > 0 ? peak / budgetGb : null;
   const pTone = pressureTone(node.pressure);
@@ -971,16 +1003,23 @@ function NodeCard({ node, budgetGb }: { node: MlxDistributedNodeStatus; budgetGb
       data-testid="mlx-dist-node"
       data-node={node.name}
       data-state={node.state}
+      data-phase={phase}
       className={cx('flex min-w-0 flex-col gap-3 p-4', SURFACE.card)}
     >
       <div className="flex flex-wrap items-center gap-2">
         <StatusDot
-          tone={tone}
+          phase={phase}
           live={runStateInFlight(node.state) || node.state === 'loading'}
           label={node.state}
         />
         <span className={TYPE.h2}>{node.name}</span>
-        <Chip tone={tone}>{distributedStateWord(intl, node.state)}</Chip>
+        <Chip phase={phase}>
+          {startWord === 'makingRoom'
+            ? intl.formatMessage(i18n.makingRoom)
+            : startWord === 'warming'
+              ? intl.formatMessage(i18n.warming)
+              : distributedStateWord(intl, node.state)}
+        </Chip>
         <Chip>
           {intl.formatMessage(node.role === 'coordinator' ? i18n.coordinator : i18n.worker)} ·{' '}
           {intl.formatMessage(i18n.rank, { rank: node.rank })}
@@ -992,6 +1031,21 @@ function NodeCard({ node, budgetGb }: { node: MlxDistributedNodeStatus; budgetGb
       <span data-testid="mlx-dist-node-layers" className={cx(TYPE.body, WEIGHT.semibold)}>
         {spanText(intl, layerSpan(node))}
       </span>
+      {load && (
+        <div data-testid="mlx-dist-node-load" className="flex flex-col gap-1">
+          <span className={cx(TYPE.body, TNUM)}>
+            {intl.formatMessage(i18n.loadBytes, {
+              done: gb1(gib(load.done)),
+              total: gb1(gib(load.total)),
+            })}
+          </span>
+          <Track
+            fraction={load.done / load.total}
+            phase="loading"
+            label={intl.formatMessage(i18n.loadBar)}
+          />
+        </div>
+      )}
       {node.memoryError && (
         <p className={cx('break-words', TYPE.body, WEIGHT.semibold, TONE_TEXT.err)}>
           {intl.formatMessage(i18n.memoryUnread, { error: node.memoryError })}
@@ -1126,7 +1180,7 @@ function RunFacts({ status }: { status: MlxDistributedStatus }) {
         className={cx(
           'flex flex-col gap-1 p-4',
           RADIUS.card,
-          status.admissionOpen ? SURFACE.card : TONE_FILL.warn
+          status.admissionOpen ? SURFACE.card : PHASE_FILL.held
         )}
       >
         <span className={cx('text-lz-h2', WEIGHT.semibold)}>
@@ -1873,7 +1927,9 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
     ? formatMlxMode(intl, configured, null)
     : intl.formatMessage(i18n.notConfigured);
   const state = status?.state ?? null;
-  const stateTone = state ? runStateTone(state) : 'stopped';
+  const statePhase: EnginePhase = state
+    ? runPhase(state, status?.admissionOpen ?? true)
+    : 'unloaded';
   const nodeNames = (status?.nodes.length ? status.nodes : (config?.nodes ?? []))
     .map((n) => n.name)
     .join(', ');
@@ -1972,7 +2028,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
           className="flex flex-wrap items-center gap-3"
         >
           <StatusDot
-            tone={stateTone}
+            phase={statePhase}
             live={runStateInFlight(status.state)}
             label={distributedStateWord(intl, status.state)}
             size={10}
@@ -1982,7 +2038,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
           </span>
           {configured && (
             <Chip
-              tone={stateTone}
+              phase={statePhase}
               icon={
                 runStateInFlight(status.state) ? <Loader2 className="animate-spin" /> : undefined
               }
@@ -2063,6 +2119,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
                     key={`${n.rank}|${n.name}`}
                     node={n}
                     budgetGb={plan ? gib(plan.budgetBytes) : null}
+                    startWord={nodeStartWord(status, n)}
                   />
                 );
               })}

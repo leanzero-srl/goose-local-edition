@@ -24,7 +24,7 @@ use serde_json::Value;
 
 use super::config::{Backend, Runner};
 use super::exec::{NodeExec, SystemExec};
-use super::launch::{self, RankProcess, RANK_MARKER};
+use super::launch::{self, RankPhase, RankProcess, RANK_MARKER};
 use super::link_control::{
     link_peer, ExecAnswer, ExecRequest, LinkOp, LinkRefusal, ProvisionPollAnswer,
     ProvisionPollRequest, ProvisionStartAnswer, ProvisionStartRequest, RankExit, RankPollRequest,
@@ -82,8 +82,16 @@ pub struct HostedRankStatus {
     pub backend: Backend,
     pub runner: Runner,
     pub pid: Option<u32>,
-    /// "loading" (spawned, not yet in the group) | "serving" (joined the group).
+    /// "loading" (weights arriving or warming up) | "serving" (the rank reported ready).
     pub state: String,
+    /// "loading" | "warming" | "ready" — the rank's own reports (`RankLive::phase`); a tensor
+    /// rank's caps line is its last word before it serves, so it reads "ready" there.
+    pub phase: String,
+    /// MLX's active bytes on the rank (its own `RANK_MEM`); `None` before its first report.
+    pub loaded_bytes: Option<u64>,
+    /// The weights the requester's preflight planned on this rank; `None` from a requester
+    /// before it sent them.
+    pub planned_weight_bytes: Option<u64>,
     pub started_ms: u64,
     /// When the requester last polled (the lease's clock).
     pub last_poll_ms: u64,
@@ -177,12 +185,20 @@ fn publish(hosted: &Option<Hosted>) {
     let next = hosted.as_ref().filter(|h| h.live()).map(|h| {
         let mut status = h.status.clone();
         status.pid = h.process.pid();
-        status.state = if h.process.live.lock().unwrap().group_joined {
+        let live = h.process.live.lock().unwrap();
+        let phase = match (status.runner, live.phase()) {
+            (Runner::MlxLmTensor, RankPhase::Warming) => RankPhase::Ready,
+            (_, phase) => phase,
+        };
+        status.state = if phase == RankPhase::Ready {
             "serving"
         } else {
             "loading"
         }
         .to_string();
+        status.phase = phase.as_str().to_string();
+        status.loaded_bytes = live.memory.map(|m| m.active);
+        drop(live);
         status
     });
     let changed = {
@@ -453,6 +469,9 @@ async fn rank_start(request: RankStartRequest, home: &str) -> Result<RankStartAn
         runner: request.runner,
         pid: Some(pid),
         state: "loading".to_string(),
+        phase: RankPhase::Loading.as_str().to_string(),
+        loaded_bytes: None,
+        planned_weight_bytes: spec.planned_weight_bytes,
         started_ms,
         last_poll_ms: started_ms,
     };
@@ -509,6 +528,7 @@ async fn rank_poll(request: RankPollRequest) -> Result<RankSnapshot, HostError> 
             group_joined: live.group_joined,
             caps: live.caps.clone(),
             memory: live.memory,
+            ready: live.ready,
             exit: hosted.exit.clone(),
         }
     };
