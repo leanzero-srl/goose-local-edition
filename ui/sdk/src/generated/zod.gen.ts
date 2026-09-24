@@ -3594,6 +3594,38 @@ export const zMlxDistributedProvisionDto = z.object({
     nodes: z.array(zMlxDistributedProvisionNodeDto)
 });
 
+/**
+ * Another goosed's distributed run, from the record it published under the goose state dir.
+ */
+export const zMlxDistributedOwnerDto = z.object({
+    state: z.string(),
+    pid: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    baseUrl: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    servedModelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    modelId: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    backend: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    nodeNames: z.array(z.string()).optional().default([]),
+    detail: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
 export const zMlxDistributedStatusDto = z.object({
     mode: z.string(),
     state: z.string(),
@@ -3647,6 +3679,10 @@ export const zMlxDistributedStatusDto = z.object({
     ]).optional(),
     provision: z.union([
         zMlxDistributedProvisionDto,
+        z.null()
+    ]).optional(),
+    owner: z.union([
+        zMlxDistributedOwnerDto,
         z.null()
     ]).optional()
 });

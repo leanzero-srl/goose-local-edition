@@ -3150,6 +3150,12 @@ export type MlxDistributedStatusDto = {
      * The last (or running) provisioning of the nodes' goose-managed Python.
      */
     provision?: MlxDistributedProvisionDto | null;
+    /**
+     * Set when ANOTHER goosed on this Mac (another desktop window) published a distributed run
+     * and this one supervises none: that run is read-only here — start and stop are refused with
+     * `ownedByAnotherWindow`, and `mode`/`state` above stay this goosed's own.
+     */
+    owner?: MlxDistributedOwnerDto | null;
 };
 
 /**
@@ -3459,6 +3465,28 @@ export type MlxDistributedProvisionNodeDto = {
     lines: Array<string>;
     startedMs: number;
     finishedMs?: number | null;
+};
+
+/**
+ * Another goosed's distributed run, from the record it published under the goose state dir.
+ */
+export type MlxDistributedOwnerDto = {
+    /**
+     * "answering" (its /v1/models lists `servedModelId`) | "notAnswering" (its goosed is alive,
+     * the engine does not answer — loading, or the run failed) | "stale" (the goosed that wrote
+     * the record is gone; the record is ignored) | "unreadable" (`detail` says why).
+     */
+    state: string;
+    pid?: number | null;
+    baseUrl?: string | null;
+    servedModelId?: string | null;
+    modelId?: string | null;
+    backend?: string | null;
+    nodeNames?: Array<string>;
+    /**
+     * Why the engine is not answering, or why the record could not be read.
+     */
+    detail?: string | null;
 };
 
 /**
