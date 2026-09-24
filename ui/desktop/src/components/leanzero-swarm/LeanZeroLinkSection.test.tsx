@@ -300,15 +300,15 @@ describe('LeanZeroLinkSection — connect lifecycle', () => {
     render();
     await screen.findByTestId('link-connect-card');
 
-    mockConnect.mockRejectedValue(rpcError('mesh joined but reported no IP — cannot compose a Connected state'));
+    mockConnect.mockRejectedValue(
+      rpcError('mesh joined but reported no IP — cannot compose a Connected state')
+    );
     // The status poll after failure reconciles back to loggedIn.
     currentState = LOGGED_IN;
 
     await userEvent.click(screen.getByTestId('link-connect'));
 
-    expect(
-      await screen.findByText(/mesh joined but reported no IP/i)
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/mesh joined but reported no IP/i)).toBeInTheDocument();
     expect(screen.getByTestId('link-connect-card')).toBeInTheDocument();
     expect(screen.getByTestId('link-connect')).toHaveTextContent('Retry connect');
   });
@@ -396,7 +396,9 @@ describe('LeanZeroLinkSection — the persisted intent and the launch reconnect'
     };
     render();
     const banner = await screen.findByTestId('link-reconnect-failed');
-    expect(banner).toHaveTextContent(/did not come back: mesh join failed: control plane unreachable/);
+    expect(banner).toHaveTextContent(
+      /did not come back: mesh join failed: control plane unreachable/
+    );
     expect(screen.getByTestId('link-mesh-state')).toHaveTextContent('reconnect failed');
     // The same text is not shown twice as a second "Connect failed" banner.
     expect(screen.queryByText('Connect failed')).not.toBeInTheDocument();
@@ -425,7 +427,9 @@ describe('LeanZeroLinkSection — the persisted intent and the launch reconnect'
       reconnect: { state: 'reconnecting', startedAt: 'x' },
     };
     render();
-    expect(await screen.findByText(/bringing this mac back onto your private mesh/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/bringing this mac back onto your private mesh/i)
+    ).toBeInTheDocument();
   });
 
   it('Disconnect keeps the account signed in and the card says the Mac stays off', async () => {
@@ -451,7 +455,7 @@ describe('LeanZeroLinkSection — the persisted intent and the launch reconnect'
     expect(screen.getByText(/stays off the mesh — across restarts too/)).toBeInTheDocument();
   });
 
-  it('a reconnect left to another window\'s backend says so; a fresh sign-in gets the plain card', async () => {
+  it("a reconnect left to another window's backend says so; a fresh sign-in gets the plain card", async () => {
     currentState = {
       ...LOGGED_IN,
       intent: CONNECTED_INTENT,
@@ -466,7 +470,10 @@ describe('LeanZeroLinkSection — the persisted intent and the launch reconnect'
     currentState = {
       ...LOGGED_IN,
       intent: { intent: 'disconnected', cause: 'noRecord', updatedAt: 'x' },
-      reconnect: { state: 'skipped', reason: 'this Mac has never been connected under this sign-in' },
+      reconnect: {
+        state: 'skipped',
+        reason: 'this Mac has never been connected under this sign-in',
+      },
     };
     render();
     expect(await screen.findByTestId('link-mesh-state')).toHaveTextContent('not connected');
@@ -515,7 +522,8 @@ describe('LeanZeroLinkSection — health + error surfacing', () => {
     render();
     await screen.findByTestId('link-login-card');
 
-    const verbatim = 'rate limited on request-code; retry after 42s (worker said: too many requests)';
+    const verbatim =
+      'rate limited on request-code; retry after 42s (worker said: too many requests)';
     mockRequestCode.mockRejectedValue(rpcError(verbatim));
 
     await userEvent.type(screen.getByTestId('link-email-input'), 'user@example.com');

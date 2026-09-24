@@ -2219,9 +2219,7 @@ describe('MlxEngineView device picker (remote model management)', () => {
     });
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => expect(mockLinkStatus).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(mockStatus.mock.calls.map((call) => call[0])).toContain(undefined)
-    );
+    await waitFor(() => expect(mockStatus.mock.calls.map((call) => call[0])).toContain(undefined));
     expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
     unmount();
   });
@@ -2230,9 +2228,7 @@ describe('MlxEngineView device picker (remote model management)', () => {
     withMesh([]);
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(mockStatus.mock.calls.map((call) => call[0])).toContain(undefined)
-    );
+    await waitFor(() => expect(mockStatus.mock.calls.map((call) => call[0])).toContain(undefined));
     expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
     unmount();
   });

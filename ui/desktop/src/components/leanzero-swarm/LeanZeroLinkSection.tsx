@@ -1,22 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ArrowLeft,
-  Check,
-  Link2,
-  Link2Off,
-  Loader2,
-  LogOut,
-  Mail,
-  RefreshCw,
-  Users,
-} from 'lucide-react';
+import { ArrowLeft, Check, Link2, Loader2, Mail, RefreshCw } from 'lucide-react';
 import { ConfirmationModal } from '../ui/ConfirmationModal';
 import { defineMessages, useIntl } from '../../i18n';
 import {
   Button,
-  Chip,
-  DataTable,
-  EmptyState,
   KeyValue,
   Panel,
   StatusDot,
@@ -31,16 +18,14 @@ import {
   TYPE,
   WEIGHT,
   cx,
-  type DataTableColumn,
   type Tone,
 } from '../lz';
-import { FIELD_LABEL, INPUT, ToneBanner, nodeHue } from './studio';
+import { FIELD_LABEL, INPUT, ToneBanner } from './studio';
 import {
   leanzeroLinkConnect,
   leanzeroLinkDisconnect,
   leanzeroLinkHealth,
   leanzeroLinkLogout,
-  leanzeroLinkNodes,
   leanzeroLinkRequestCode,
   leanzeroLinkStatus,
   leanzeroLinkVerify,
@@ -49,11 +34,10 @@ import {
   type AuthState,
   type LinkHealth,
   type LinkState,
-  type NodeState,
-  type NodeStatus,
-  type NodesResponse,
   type ReconnectState,
 } from '../../acp/leanzero-link';
+import { MyMacs } from './MyMacs';
+import { WithMacs, useMacs } from './useMacs';
 
 const i18n = defineMessages({
   tagline: {
@@ -93,62 +77,10 @@ function formatCountdown(totalSeconds: number): string {
   return `${m}:${rem.toString().padStart(2, '0')}`;
 }
 
-/** Honest relative age of a snake_case `updated_at` / `lastSeen` ISO timestamp. */
-function formatLastSeen(iso: string | undefined, now: number): string {
-  if (!iso) return 'unknown';
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  const secs = Math.max(0, Math.round((now - t) / 1000));
-  if (secs < 5) return 'just now';
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-interface StatusVisual {
-  tone: Extract<Tone, 'ok' | 'warn' | 'stopped'>;
-  label: string;
-  sessionId?: string;
-}
-
-function nodeStatusVisual(status: NodeStatus): StatusVisual {
-  switch (status.type) {
-    case 'Idle':
-      return { tone: 'ok', label: 'idle' };
-    case 'Busy':
-      return { tone: 'warn', label: 'busy', sessionId: status.session_id };
-    case 'Offline':
-    default:
-      return { tone: 'stopped', label: 'offline' };
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Shared chrome (LeanZero Studio: Panels, status triad, one accent, custom controls).
 // Declared at module scope — never inside a render body.
 // ---------------------------------------------------------------------------
-
-function StatusChip({ status }: { status: NodeStatus }) {
-  const v = nodeStatusVisual(status);
-  return (
-    <Chip tone={v.tone} title={v.sessionId ? `busy on session ${v.sessionId}` : v.label}>
-      {v.label}
-      {v.sessionId ? ` · ${v.sessionId.slice(0, 8)}` : ''}
-    </Chip>
-  );
-}
-
-function MeshIp({ ip }: { ip: string | undefined }) {
-  return ip ? (
-    <span className="font-mono text-lz-mono text-lz-ink">{ip}</span>
-  ) : (
-    <span className="text-lz-ink-4">no mesh IP</span>
-  );
-}
 
 // Custom checkbox (no native input, per the design bans). Solid accent fill when checked.
 function WipeCheckbox({
@@ -172,7 +104,9 @@ function WipeCheckbox({
       <span
         className={cx(
           'flex size-4 shrink-0 items-center justify-center rounded-[4px] border [&_svg]:size-3',
-          checked ? 'border-lz-accent bg-lz-accent text-lz-accent-ink' : 'border-lz-border-strong bg-lz-surface',
+          checked
+            ? 'border-lz-accent bg-lz-accent text-lz-accent-ink'
+            : 'border-lz-border-strong bg-lz-surface',
           MOTION
         )}
       >
@@ -516,196 +450,13 @@ function ConnectingCard({ email, reconnecting }: { email: string; reconnecting: 
 }
 
 // ---------------------------------------------------------------------------
-// Connected dashboard.
-// ---------------------------------------------------------------------------
-
-/** A peer row in the Linked devices table, with its identity hue by list position. */
-interface PeerRow {
-  node: NodeState;
-  hue: ReturnType<typeof nodeHue>;
-}
-
-const PEER_COLUMNS = (now: number): DataTableColumn<PeerRow>[] => [
-  {
-    key: 'device',
-    header: 'Device',
-    cell: ({ node, hue }) => (
-      <span className="flex items-center gap-2">
-        <StatusDot node={hue} label={`node ${node.hostname}`} />
-        <span className={cx('truncate', WEIGHT.semibold)}>{node.hostname}</span>
-      </span>
-    ),
-  },
-  { key: 'status', header: 'Status', cell: ({ node }) => <StatusChip status={node.status} /> },
-  { key: 'ip', header: 'Mesh IP', cell: ({ node }) => <MeshIp ip={node.mesh_ip} /> },
-  {
-    key: 'sessions',
-    header: 'Sessions',
-    numeric: true,
-    cell: ({ node }) => node.sessions_active,
-  },
-  {
-    key: 'seen',
-    header: 'Last seen',
-    align: 'right',
-    cell: ({ node }) => (
-      <span className={cx(TYPE.meta, TNUM)}>{formatLastSeen(node.updated_at, now)}</span>
-    ),
-  },
-];
-
-function ConnectedView({
-  email,
-  linkState,
-  nodes,
-  now,
-  stale,
-  disconnecting,
-  onDisconnect,
-  onLogout,
-}: {
-  email: string;
-  linkState: LinkState;
-  nodes: NodesResponse | null;
-  now: number;
-  stale: boolean;
-  disconnecting: boolean;
-  onDisconnect: () => void;
-  onLogout: () => void;
-}) {
-  const mesh = linkState.mesh;
-  const peers = nodes?.peers ?? [];
-  const peerRows: PeerRow[] = peers.map((node, i) => ({ node, hue: nodeHue(i + 1) }));
-  const columns = useMemo(() => PEER_COLUMNS(now), [now]);
-  const self = nodes?.self;
-
-  return (
-    <div className="flex flex-col gap-4 pb-8" data-testid="link-connected">
-      {stale && (
-        <ToneBanner
-          tone="warn"
-          label="Reconnecting"
-          text="Reconnecting… (lost contact with the local node)"
-          live
-          testId="link-reconnecting"
-        />
-      )}
-      <Panel
-        title="Account"
-        headerRight={
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              data-testid="link-disconnect"
-              disabled={disconnecting}
-              onClick={onDisconnect}
-              icon={disconnecting ? <Loader2 className="animate-spin" /> : <Link2Off />}
-            >
-              Disconnect
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              data-testid="link-logout"
-              onClick={onLogout}
-              icon={<LogOut />}
-            >
-              Log out / Switch account
-            </Button>
-          </div>
-        }
-      >
-        <KeyValue
-          aria-label="Account"
-          items={[
-            { key: 'account', label: 'Account', value: email },
-            {
-              key: 'mesh',
-              label: 'Mesh',
-              value: (
-                <span className="inline-flex items-center gap-1.5" data-testid="link-mesh-line">
-                  <StatusDot
-                    tone={mesh?.online ? 'ok' : 'stopped'}
-                    label={mesh?.online ? 'mesh online' : 'mesh offline'}
-                  />
-                  mesh {mesh?.backendState ?? 'unknown'}
-                  {mesh?.online ? ' · online' : ' · offline'}
-                  {' · '}
-                  {linkState.nodeCount} node{linkState.nodeCount === 1 ? '' : 's'}
-                </span>
-              ),
-            },
-          ]}
-        />
-      </Panel>
-
-      {linkState.lastError && <ToneBanner tone="err" label="Mesh" text={linkState.lastError} />}
-
-      <Panel title="This device">
-        {self ? (
-          <div data-testid="link-self">
-            <KeyValue
-              aria-label="This device"
-              items={[
-                {
-                  key: 'device',
-                  label: 'Device',
-                  value: (
-                    <span className="inline-flex items-center gap-2">
-                      <StatusDot node={nodeHue(0)} label={`node ${self.hostname}`} />
-                      {self.hostname}
-                    </span>
-                  ),
-                },
-                { key: 'state', label: 'State', value: <StatusChip status={self.status} /> },
-                { key: 'ip', label: 'Mesh IP', value: <MeshIp ip={self.mesh_ip} /> },
-                { key: 'sessions', label: 'Sessions active', value: self.sessions_active },
-              ]}
-            />
-          </div>
-        ) : (
-          <div className={cx('flex items-center gap-2', TYPE.bodyMuted)}>
-            <Loader2 className="size-4 animate-spin text-lz-accent" />
-            Reading this device&apos;s state…
-          </div>
-        )}
-      </Panel>
-
-      <Panel title="Linked devices" count={peers.length} padded={false}>
-        <div data-testid="link-peers">
-          <DataTable
-            aria-label="Linked devices"
-            columns={columns}
-            rows={peerRows}
-            rowKey={(r) => r.node.node_id}
-            empty={
-              <div data-testid="link-peers-empty">
-                <EmptyState
-                  icon={<Users />}
-                  title="No other devices linked yet"
-                  body="Sign in on another Mac to see it here."
-                />
-              </div>
-            }
-          />
-        </div>
-      </Panel>
-
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // The tab.
 // ---------------------------------------------------------------------------
 
-const LeanZeroLinkSection: React.FC = () => {
+const LeanZeroLinkSectionBody: React.FC = () => {
+  const macs = useMacs();
   const [linkState, setLinkState] = useState<LinkState | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
-  const [nodes, setNodes] = useState<NodesResponse | null>(null);
   const [health, setHealth] = useState<LinkHealth | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
@@ -715,12 +466,10 @@ const LeanZeroLinkSection: React.FC = () => {
   const [audienceSyncFailed, setAudienceSyncFailed] = useState(false);
 
   const [disconnecting, setDisconnecting] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [wipe, setWipe] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-
-  // A 1s clock for the connected view's relative last-seen labels.
-  const [now, setNow] = useState(() => Date.now());
 
   // Staleness gate: count CONSECUTIVE failed status() polls. A single blip must not yank
   // the user out of the connected view, so we DEBOUNCE — only after N in a row do we
@@ -737,16 +486,6 @@ const LeanZeroLinkSection: React.FC = () => {
       setLinkState(next);
       setStatusError(null);
       setStaleFailures(0);
-      if (next.auth.state === 'connected') {
-        try {
-          const n = await leanzeroLinkNodes();
-          if (!disposedRef.current) setNodes(n);
-        } catch {
-          // A failed nodes poll does not invalidate "connected" — keep the last roster.
-        }
-      } else if (!disposedRef.current) {
-        setNodes(null);
-      }
     } catch (e) {
       if (disposedRef.current) return;
       // Keep the last known state; surface the read failure as a truth line and count it
@@ -799,13 +538,6 @@ const LeanZeroLinkSection: React.FC = () => {
       cancelled = true;
     };
   }, []);
-
-  const connected = linkState?.auth.state === 'connected';
-  useEffect(() => {
-    if (!connected) return undefined;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [connected]);
 
   const requestCode = useCallback(
     async (email: string): Promise<boolean> => {
@@ -887,7 +619,6 @@ const LeanZeroLinkSection: React.FC = () => {
       const next = await leanzeroLinkDisconnect();
       if (disposedRef.current) return;
       setLinkState(next);
-      setNodes(null);
       setConnectError(null);
     } catch (e) {
       if (!disposedRef.current) setStatusError(linkErrorText(e));
@@ -896,13 +627,31 @@ const LeanZeroLinkSection: React.FC = () => {
     }
   }, []);
 
+  /**
+   * "Load and download models" is built into the running mesh service: a change to it applies when
+   * this Mac reconnects. Disconnect + Connect is that reconnect — the Mac comes straight back.
+   */
+  const reconnectMesh = useCallback(async (): Promise<void> => {
+    setReconnecting(true);
+    try {
+      await leanzeroLinkDisconnect();
+      const next = await leanzeroLinkConnect();
+      if (!disposedRef.current) setLinkState(next);
+    } catch (e) {
+      if (!disposedRef.current) setConnectError(linkBannerText(e));
+    } finally {
+      if (!disposedRef.current) setReconnecting(false);
+      void refresh();
+      void macs.refreshLink();
+    }
+  }, [refresh, macs]);
+
   const doLogout = useCallback(async () => {
     setLoggingOut(true);
     try {
       const next = await leanzeroLinkLogout(wipe);
       if (disposedRef.current) return;
       setLinkState(next);
-      setNodes(null);
       setAudienceSyncFailed(false);
       setConnectError(null);
       setAuthError(null);
@@ -934,7 +683,12 @@ const LeanZeroLinkSection: React.FC = () => {
   return (
     <div className="flex flex-col gap-4 pb-8">
       {deployBanner && (
-        <ToneBanner tone="warn" label="Deployment" text={deployBanner} testId="link-deploy-banner" />
+        <ToneBanner
+          tone="warn"
+          label="Deployment"
+          text={deployBanner}
+          testId="link-deploy-banner"
+        />
       )}
       {statusError && auth == null && (
         <ToneBanner tone="err" label="Link status" text={statusError} />
@@ -963,7 +717,9 @@ const LeanZeroLinkSection: React.FC = () => {
         </div>
       ) : null}
 
-      {(auth?.state === 'loggedOut' || auth?.state === 'codeSent' || (auth == null && statusError)) && (
+      {(auth?.state === 'loggedOut' ||
+        auth?.state === 'codeSent' ||
+        (auth == null && statusError)) && (
         <LoginCard
           auth={
             auth?.state === 'codeSent'
@@ -982,7 +738,9 @@ const LeanZeroLinkSection: React.FC = () => {
           email={auth.email}
           connecting={connecting}
           // A failed launch reconnect is shown as itself; its text also sits in lastError.
-          error={connectError ?? (reconnect?.state === 'failed' ? null : linkState?.lastError) ?? null}
+          error={
+            connectError ?? (reconnect?.state === 'failed' ? null : linkState?.lastError) ?? null
+          }
           reconnect={reconnect}
           stayingOff={linkState?.intent?.cause === 'userDisconnect'}
           connectedIntent={linkState?.intent?.intent === 'connected'}
@@ -996,15 +754,19 @@ const LeanZeroLinkSection: React.FC = () => {
       )}
 
       {auth?.state === 'connected' && linkState && (
-        <ConnectedView
+        <MyMacs
           email={auth.email}
           linkState={linkState}
-          nodes={nodes}
-          now={now}
           stale={staleFailures >= STALE_POLL_THRESHOLD}
           disconnecting={disconnecting}
+          reconnecting={reconnecting}
           onDisconnect={() => void disconnect()}
           onLogout={() => setLogoutOpen(true)}
+          onReconnect={() => void reconnectMesh()}
+          onLinkChanged={async () => {
+            await refresh();
+            await macs.refreshLink();
+          }}
         />
       )}
 
@@ -1031,5 +793,11 @@ const LeanZeroLinkSection: React.FC = () => {
     </div>
   );
 };
+
+const LeanZeroLinkSection: React.FC = () => (
+  <WithMacs>
+    <LeanZeroLinkSectionBody />
+  </WithMacs>
+);
 
 export default LeanZeroLinkSection;

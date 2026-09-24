@@ -601,7 +601,7 @@ function actionsFromStore(store: AcpChatSessionStoreInternal): AcpChatSessionAct
     waitForPromptCancellation: store.waitForPromptCancellation,
     finishPromptAttemptIfCurrent: store.finishPromptAttemptIfCurrent,
     clearActivePromptAttempt: store.clearActivePromptAttempt,
-  clearSubmitError: store.clearSubmitError,
+    clearSubmitError: store.clearSubmitError,
     isCurrentPromptAttempt: store.isCurrentPromptAttempt,
   };
 }

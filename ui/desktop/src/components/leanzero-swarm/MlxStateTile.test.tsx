@@ -75,7 +75,6 @@ async function expectDesigned(container: HTMLElement) {
   expect(await missingUtilities(utilities)).toEqual([]);
 }
 
-
 /** The sidecar's fit verdict in the tile's units (a 12.8 GB reserve, as before the one rule). */
 const cost = (needGb: number, freeGb: number, verdict: string) =>
   mountCostOf({

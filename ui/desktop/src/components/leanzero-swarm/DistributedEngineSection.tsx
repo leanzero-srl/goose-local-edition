@@ -97,8 +97,7 @@ import {
 } from './mlxDistributed';
 import { distributedStateWord, formatMlxMode } from './mlxModeLabel';
 import { nodePhase, runPhase } from './mlxPhase';
-import { DistributedSetup } from './DistributedSetup';
-import { DistributedNodeServing } from './DistributedNodeServing';
+import { DistributedSetup, linkNode } from './DistributedSetup';
 import { formatElapsed } from './mlxLiveStats';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
@@ -132,15 +131,6 @@ const i18n = defineMessages({
     id: 'mlxDistributed.unavailableBody',
     defaultMessage:
       'This goose backend does not offer the distributed engine: the mlxDistributed capability is missing, so it predates the build that added it. Update goose to split one model across several Macs.',
-  },
-  peerTitle: {
-    id: 'mlxDistributed.peerTitle',
-    defaultMessage: 'The distributed engine is supervised from this Mac',
-  },
-  peerBody: {
-    id: 'mlxDistributed.peerBody',
-    defaultMessage:
-      'You are managing {host}. Switch “Manage on” back to This device to configure, preflight, start or stop it.',
   },
   reading: { id: 'mlxDistributed.reading', defaultMessage: 'Reading the distributed engine…' },
   unreadable: { id: 'mlxDistributed.unreadable', defaultMessage: 'Status unreadable' },
@@ -255,6 +245,10 @@ const i18n = defineMessages({
       'No preflight has run yet. A dry run checks every node (reachability, memory, the model, Python, the Thunderbolt link, ports) and plans the layers per node without launching anything.',
   },
   passed: { id: 'mlxDistributed.passed', defaultMessage: 'Passed' },
+  checksPassed: {
+    id: 'mlxDistributed.checksPassed',
+    defaultMessage: '{count, plural, one {# check passed} other {# checks passed}}',
+  },
   failed: { id: 'mlxDistributed.failed', defaultMessage: 'Failed' },
   ranAt: { id: 'mlxDistributed.ranAt', defaultMessage: 'ran {time}' },
   contextLine: {
@@ -849,12 +843,38 @@ function PreflightNodeCard({
       <PlanBlock node={node} />
       <BudgetLine node={node} compaction={room?.compaction(node.name) ?? null} ranAtMs={ranAtMs} />
       {room && <RoomBlock node={node} room={room} />}
-      {node.checks.length > 0 && (
+      <CheckList checks={node.checks} />
+    </div>
+  );
+}
+
+/** A check list: every failing or warning check in full, the passing ones folded under a count. */
+function CheckList({ checks }: { checks: readonly MlxDistributedCheck[] }) {
+  const intl = useIntl();
+  const loud = checks.filter((c) => c.verdict !== 'pass');
+  const passed = checks.filter((c) => c.verdict === 'pass');
+  if (checks.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      {loud.length > 0 && (
         <ul className="flex flex-col gap-1.5">
-          {node.checks.map((c) => (
+          {loud.map((c) => (
             <CheckRow key={`${c.id}|${c.message}`} check={c} />
           ))}
         </ul>
+      )}
+      {passed.length > 0 && (
+        <Disclosure
+          variant="plain"
+          title={intl.formatMessage(i18n.checksPassed, { count: passed.length })}
+          testId="mlx-dist-checks-passed"
+        >
+          <ul className="flex flex-col gap-1.5">
+            {passed.map((c) => (
+              <CheckRow key={`${c.id}|${c.message}`} check={c} />
+            ))}
+          </ul>
+        </Disclosure>
       )}
     </div>
   );
@@ -863,9 +883,12 @@ function PreflightNodeCard({
 function PreflightReportView({
   report,
   room,
+  nodes = true,
 }: {
   report: MlxDistributedPreflight;
   room?: RoomControls;
+  /** false while the run lives: each Mac is its node card then, never twice. */
+  nodes?: boolean;
 }) {
   const intl = useIntl();
   const failing = [
@@ -921,24 +944,22 @@ function PreflightReportView({
           </ul>
         </div>
       )}
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        {report.nodes.map((n) => (
-          <PreflightNodeCard
-            key={`${n.rank}|${n.name}`}
-            node={n}
-            ranAtMs={report.ranAtMs}
-            room={room}
-          />
-        ))}
-      </div>
+      {nodes && (
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+          {report.nodes.map((n) => (
+            <PreflightNodeCard
+              key={`${n.rank}|${n.name}`}
+              node={n}
+              ranAtMs={report.ranAtMs}
+              room={room}
+            />
+          ))}
+        </div>
+      )}
       {report.checks.length > 0 && (
         <div className="flex flex-col gap-2">
           <span className={TYPE.meta}>{intl.formatMessage(i18n.clusterChecks)}</span>
-          <ul className="flex flex-col gap-1.5">
-            {report.checks.map((c) => (
-              <CheckRow key={`${c.id}|${c.message}`} check={c} />
-            ))}
-          </ul>
+          <CheckList checks={report.checks} />
         </div>
       )}
       {report.repairs.length > 0 && (
@@ -1280,7 +1301,11 @@ function EventsPanel({ events }: { events: readonly MlxDistributedEvent[] }) {
   // Newest first; the keys are computed on the backend's order so they stay stable as it grows.
   const rows = events.map((e, i) => ({ e, key: keys[i] })).reverse();
   return (
-    <Panel title={intl.formatMessage(i18n.eventsTitle)} count={events.length}>
+    <Disclosure
+      title={intl.formatMessage(i18n.eventsTitle)}
+      meta={<span className={cx(TYPE.meta, TNUM)}>{events.length}</span>}
+      testId="mlx-dist-events-disclosure"
+    >
       {rows.length === 0 ? (
         <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.eventsNone)}</p>
       ) : (
@@ -1302,7 +1327,7 @@ function EventsPanel({ events }: { events: readonly MlxDistributedEvent[] }) {
           ))}
         </ul>
       )}
-    </Panel>
+    </Disclosure>
   );
 }
 
@@ -1722,8 +1747,11 @@ function ConfigSummary({ config }: { config: MlxDistributedConfig }) {
 export interface DistributedEngineSectionProps {
   /** goose offers the distributed engine (the `mlxDistributed` capability). */
   capability: boolean;
-  /** A linked device is selected in "Manage on"; the distributed engine lives on THIS Mac only. */
-  peerHostname: string | null;
+  /**
+   * Folded under Run it's split row: the row carries the state, Run and Stop, so the section is
+   * its details only — no title, no second Start.
+   */
+  embedded?: boolean;
   status: MlxDistributedStatus | null;
   statusError: string | null;
   onRefresh: () => Promise<void>;
@@ -1742,8 +1770,15 @@ interface ActionError {
   text: string;
 }
 
-function Section({ children }: { children: ReactNode }) {
+function Section({ children, embedded }: { children: ReactNode; embedded?: boolean }) {
   const intl = useIntl();
+  if (embedded) {
+    return (
+      <div data-testid="mlx-distributed" className="flex flex-col gap-4">
+        {children}
+      </div>
+    );
+  }
   return (
     <Panel title={intl.formatMessage(i18n.title)}>
       <div data-testid="mlx-distributed" className="flex flex-col gap-4">
@@ -1755,7 +1790,15 @@ function Section({ children }: { children: ReactNode }) {
 
 export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const intl = useIntl();
-  const { capability, peerHostname, status, statusError, onRefresh, models, singleStatus } = props;
+  const {
+    capability,
+    embedded = false,
+    status,
+    statusError,
+    onRefresh,
+    models,
+    singleStatus,
+  } = props;
 
   const [draft, setDraft] = useState<MlxDistributedConfig | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
@@ -1778,22 +1821,11 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
 
   if (!capability) {
     return (
-      <Section>
+      <Section embedded={embedded}>
         <EmptyState
           icon={<Network />}
           title={intl.formatMessage(i18n.unavailableTitle)}
           body={intl.formatMessage(i18n.unavailableBody)}
-        />
-      </Section>
-    );
-  }
-  if (peerHostname != null) {
-    return (
-      <Section>
-        <EmptyState
-          icon={<Network />}
-          title={intl.formatMessage(i18n.peerTitle)}
-          body={intl.formatMessage(i18n.peerBody, { host: peerHostname })}
         />
       </Section>
     );
@@ -1968,9 +2000,14 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
       ]
     : [];
 
+  // The run is live from its start to its stop: only then do its admission, pids and peaks mean
+  // anything — a stopped run has none, and its Macs are described once, by the preflight.
+  const liveRun =
+    status != null && status.state !== 'stopped' && (owning || status.state === 'failed');
+
   return (
-    <Section>
-      <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.intro)}</p>
+    <Section embedded={embedded}>
+      {!embedded && <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.intro)}</p>}
       {statusError && (
         <ToneBanner
           tone="err"
@@ -2021,7 +2058,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
         </div>
       )}
 
-      {status && (
+      {status && !embedded && (
         <div
           data-testid="mlx-dist-mode"
           data-mode={status.mode}
@@ -2053,7 +2090,6 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
       )}
       {lastAlarmKind === LOCAL_NETWORK_EVENT && <LocalNetworkNotice />}
       {otherWindow && <OtherWindowRun owner={otherWindow} />}
-      {status && !owning && <DistributedNodeServing status={status} onChanged={onRefresh} />}
 
       {status && (
         <div className="flex flex-col gap-2">
@@ -2066,7 +2102,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
             >
               {intl.formatMessage(i18n.preflight)}
             </Button>
-            {owning || status.state === 'failed' ? (
+            {!embedded && (owning || status.state === 'failed') ? (
               <Button
                 variant="destructive"
                 icon={busy === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
@@ -2076,7 +2112,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
                 {intl.formatMessage(i18n.stop)}
               </Button>
             ) : null}
-            {!owning && (
+            {!embedded && !owning && (
               <Button
                 variant="primary"
                 icon={
@@ -2102,11 +2138,11 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
               <span className={TYPE.meta}>{intl.formatMessage(i18n.repairLink)}</span>
             </span>
           </div>
-          <p className={TYPE.meta}>{intl.formatMessage(i18n.startHint)}</p>
+          {!embedded && <p className={TYPE.meta}>{intl.formatMessage(i18n.startHint)}</p>}
         </div>
       )}
 
-      {status && status.nodes.length > 0 && (
+      {status && liveRun && status.nodes.length > 0 && (
         <>
           <RunFacts status={status} />
           <div className="flex flex-col gap-2">
@@ -2136,7 +2172,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
         <div className="flex flex-col gap-2">
           <span className={TYPE.zone}>{intl.formatMessage(i18n.preflightTitle)}</span>
           {preflight ? (
-            <PreflightReportView report={preflight} room={room} />
+            <PreflightReportView report={preflight} room={room} nodes={!liveRun} />
           ) : (
             <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.preflightNone)}</p>
           )}
@@ -2163,7 +2199,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
           </div>
           {setupOpen ? (
             <DistributedSetup
-              initialPeer={base?.nodes.find((n) => n.ssh)?.ssh ?? ''}
+              initialPeer={base?.nodes.map((n) => n.ssh).find((h) => linkNode(h) != null) ?? ''}
               preferredModel={base?.modelId || null}
               renderAdvanced={(d, onChange) => (
                 <ConfigEditor config={d} models={models} locked={false} onChange={onChange} />

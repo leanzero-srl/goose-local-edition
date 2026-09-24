@@ -265,14 +265,22 @@ export function CloudPane({
           Checking for a stored {def.label} key…
         </p>
       ) : phase === 'no-key' || editKey ? (
-        allowKeySetup ? keyEntry : <p className={TYPE.bodyMuted}>Update this connection in Cloud Providers, then reopen Add node.</p>
+        allowKeySetup ? (
+          keyEntry
+        ) : (
+          <p className={TYPE.bodyMuted}>
+            Update this connection in Cloud Providers, then reopen Add node.
+          </p>
+        )
       ) : (
         <Panel
           title={`${def.label} key`}
           headerRight={
-            allowKeySetup ? <Button size="sm" variant="ghost" onClick={() => setEditKey(true)}>
-              Replace key
-            </Button> : null
+            allowKeySetup ? (
+              <Button size="sm" variant="ghost" onClick={() => setEditKey(true)}>
+                Replace key
+              </Button>
+            ) : null
           }
           padded={false}
         >
@@ -323,7 +331,8 @@ export function CloudPane({
           padded={false}
         >
           <p className={cx('border-b px-4 py-2', TYPE.meta, SURFACE.hairline)}>
-            Models reported by this provider, the default chosen in Cloud Providers first. Model access depends on your account.
+            Models reported by this provider, the default chosen in Cloud Providers first. Model
+            access depends on your account.
           </p>
           <div className="max-h-52 overflow-y-auto">
             <DataTable

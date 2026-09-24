@@ -40,10 +40,15 @@ const i18n = defineMessages({
   intro: {
     id: 'mlxDistributedSetup.intro',
     defaultMessage:
-      'Name the other Mac once. goose probes this Mac and it over ssh and fills in the link, RDMA, backend, models, ports and Python.',
+      'Pick your other Mac. goose asks both Macs over LeanZero Link and fills in the link, RDMA, backend, models, ports and Python.',
   },
   peer: { id: 'mlxDistributedSetup.peer', defaultMessage: 'Other Mac (ssh alias or host)' },
-  peerPlaceholder: { id: 'mlxDistributedSetup.peerPlaceholder', defaultMessage: 'workhorse' },
+  peerPlaceholder: { id: 'mlxDistributedSetup.peerPlaceholder', defaultMessage: 'ssh alias' },
+  overSsh: { id: 'mlxDistributedSetup.overSsh', defaultMessage: 'Advanced: a Mac over ssh' },
+  overSshMeta: {
+    id: 'mlxDistributedSetup.overSshMeta',
+    defaultMessage: 'for a Mac that is not on LeanZero Link',
+  },
   detect: { id: 'mlxDistributedSetup.detect', defaultMessage: 'Detect' },
   detecting: {
     id: 'mlxDistributedSetup.detecting',
@@ -331,7 +336,10 @@ export function DistributedSetup({
   onSaved,
 }: DistributedSetupProps) {
   const intl = useIntl();
+  // The Mac being detected: a Link host (`link:<node>`) picked from the list, or an ssh alias typed
+  // under Advanced — never pre-filled with a guess.
   const [peer, setPeer] = useState(initialPeer);
+  const [sshPeer, setSshPeer] = useState('');
   const [candidates, setCandidates] = useState<MlxDistributedPeerCandidate[] | null>(null);
   const [link, setLink] = useState<MlxDistributedLinkDiscovery | null>(null);
   const [candidatesError, setCandidatesError] = useState<string | null>(null);
@@ -415,76 +423,92 @@ export function DistributedSetup({
           }}
         />
       )}
-      <form
-        className="flex flex-wrap items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void detect(preferredModel);
-        }}
+      <Disclosure
+        variant="plain"
+        testId="mlx-dist-setup-ssh"
+        title={intl.formatMessage(i18n.overSsh)}
+        meta={<span className={TYPE.meta}>{intl.formatMessage(i18n.overSshMeta)}</span>}
+        defaultOpen={link == null || link.state !== 'connected' || (link.peers ?? []).length === 0}
       >
-        <label className="flex min-w-[220px] flex-1 flex-col gap-1">
-          <span className={TYPE.meta}>{intl.formatMessage(i18n.peer)}</span>
-          <input
-            data-testid="mlx-dist-setup-peer"
-            value={peer}
-            onChange={(e) => setPeer(e.target.value)}
-            placeholder={intl.formatMessage(i18n.peerPlaceholder)}
-            className={cx(INPUT, 'w-full font-mono text-lz-mono')}
-            aria-label={intl.formatMessage(i18n.peer)}
-            autoComplete="off"
-            spellCheck={false}
-            disabled={busy != null}
-          />
-        </label>
-        <Button
-          type="submit"
-          variant="primary"
-          icon={busy === 'detect' ? <Loader2 className="animate-spin" /> : <Radar />}
-          disabled={busy != null || peer.trim() === ''}
-        >
-          {intl.formatMessage(i18n.detect)}
-        </Button>
+        <div className="flex flex-col gap-3">
+          <form
+            className="flex flex-wrap items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setPeer(sshPeer.trim());
+              void detect(preferredModel, sshPeer.trim());
+            }}
+          >
+            <label className="flex min-w-[220px] flex-1 flex-col gap-1">
+              <span className={TYPE.meta}>{intl.formatMessage(i18n.peer)}</span>
+              <input
+                data-testid="mlx-dist-setup-peer"
+                value={sshPeer}
+                onChange={(e) => setSshPeer(e.target.value)}
+                placeholder={intl.formatMessage(i18n.peerPlaceholder)}
+                className={cx(INPUT, 'w-full font-mono text-lz-mono')}
+                aria-label={intl.formatMessage(i18n.peer)}
+                autoComplete="off"
+                spellCheck={false}
+                disabled={busy != null}
+              />
+            </label>
+            <Button
+              type="submit"
+              variant="secondary"
+              icon={busy === 'detect' ? <Loader2 className="animate-spin" /> : <Radar />}
+              disabled={busy != null || sshPeer.trim() === ''}
+            >
+              {intl.formatMessage(i18n.detect)}
+            </Button>
+          </form>
+          {candidates != null && (
+            <div
+              data-testid="mlx-dist-setup-candidates"
+              className="flex flex-wrap items-center gap-2"
+            >
+              <span className={cx(TYPE.meta, WEIGHT.semibold)}>
+                {intl.formatMessage(i18n.headless)}
+              </span>
+              <span className={TYPE.meta}>
+                {intl.formatMessage(answering.length ? i18n.answering : i18n.noneAnswering)}
+              </span>
+              {answering.map((c) => (
+                <button
+                  key={c.alias}
+                  type="button"
+                  data-testid="mlx-dist-setup-candidate"
+                  onClick={() => setSshPeer(c.alias)}
+                  disabled={busy != null}
+                  className={cx(
+                    'inline-flex h-6 items-center gap-1 px-2 text-lz-meta',
+                    WEIGHT.semibold,
+                    sshPeer === c.alias
+                      ? 'bg-lz-accent text-lz-accent-ink'
+                      : 'border border-lz-border-strong bg-lz-surface text-lz-ink hover:bg-lz-surface-2',
+                    'rounded-lz-control'
+                  )}
+                >
+                  <span className="font-mono">{c.alias}</span>
+                  <span>· {c.detail}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {candidatesError && (
+            <ToneBanner
+              tone="warn"
+              label={intl.formatMessage(i18n.candidatesError)}
+              text={candidatesError}
+            />
+          )}
+        </div>
+      </Disclosure>
+      <div>
         <Button type="button" variant="secondary" onClick={onCancel} disabled={busy != null}>
           {intl.formatMessage(i18n.cancel)}
         </Button>
-      </form>
-      {candidates != null && (
-        <div data-testid="mlx-dist-setup-candidates" className="flex flex-wrap items-center gap-2">
-          <span className={cx(TYPE.meta, WEIGHT.semibold)}>
-            {intl.formatMessage(i18n.headless)}
-          </span>
-          <span className={TYPE.meta}>
-            {intl.formatMessage(answering.length ? i18n.answering : i18n.noneAnswering)}
-          </span>
-          {answering.map((c) => (
-            <button
-              key={c.alias}
-              type="button"
-              data-testid="mlx-dist-setup-candidate"
-              onClick={() => setPeer(c.alias)}
-              disabled={busy != null}
-              className={cx(
-                'inline-flex h-6 items-center gap-1 px-2 text-lz-meta',
-                WEIGHT.semibold,
-                peer === c.alias
-                  ? 'bg-lz-accent text-lz-accent-ink'
-                  : 'border border-lz-border-strong bg-lz-surface text-lz-ink hover:bg-lz-surface-2',
-                'rounded-lz-control'
-              )}
-            >
-              <span className="font-mono">{c.alias}</span>
-              <span>· {c.detail}</span>
-            </button>
-          ))}
-        </div>
-      )}
-      {candidatesError && (
-        <ToneBanner
-          tone="warn"
-          label={intl.formatMessage(i18n.candidatesError)}
-          text={candidatesError}
-        />
-      )}
+      </div>
       {busy === 'detect' && (
         <ToneBanner
           tone="accent"
