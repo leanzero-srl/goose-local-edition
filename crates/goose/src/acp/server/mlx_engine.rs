@@ -446,25 +446,24 @@ async fn core_status(
     Ok(MlxEngineStatusResponse { status })
 }
 
-static LOCAL_CHIP: tokio::sync::OnceCell<Result<MlxChipDto, String>> =
-    tokio::sync::OnceCell::const_new();
+static LOCAL_CHIP: std::sync::OnceLock<MlxChipDto> = std::sync::OnceLock::new();
 
-/// This Mac's chip, probed once per process: a chip does not change under a running goose, and
-/// the status is read every two seconds.
+/// This Mac's chip: a chip does not change under a running goose and the status is read every two
+/// seconds, so a SUCCESSFUL probe is kept for the process. A failed probe is not kept — the next
+/// status read probes again rather than reporting one transient failure forever.
 async fn local_chip() -> Result<MlxChipDto, String> {
-    LOCAL_CHIP
-        .get_or_init(|| async {
-            goose_sidecar::placement::chip::local_chip()
-                .await
-                .map(|c| MlxChipDto {
-                    hw_model: c.hw_model,
-                    brand: c.brand,
-                    gpu_cores: c.gpu_cores,
-                })
-                .map_err(|e| format!("{e:#}"))
-        })
+    if let Some(chip) = LOCAL_CHIP.get() {
+        return Ok(chip.clone());
+    }
+    let chip = goose_sidecar::placement::chip::local_chip()
         .await
-        .clone()
+        .map(|c| MlxChipDto {
+            hw_model: c.hw_model,
+            brand: c.brand,
+            gpu_cores: c.gpu_cores,
+        })
+        .map_err(|e| format!("{e:#}"))?;
+    Ok(LOCAL_CHIP.get_or_init(|| chip).clone())
 }
 
 /// A memory-gate refusal is the response's `refusal` (with the placement that WOULD work), not an
