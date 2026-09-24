@@ -771,6 +771,25 @@ fn resolve_worker_base_url() -> String {
     }
 }
 
+/// The env override of the mesh-wide control port. Every node of one mesh must serve the SAME
+/// port (peers dial `<mesh ip>:<this port>`), so it exists for a whole test mesh run beside the
+/// installed app's Link on the same Macs — never for one node alone.
+const CONTROL_PORT_ENV: &str = "LEANZERO_LINK_CONTROL_PORT";
+
+/// The control port from [`CONTROL_PORT_ENV`], else [`DEFAULT_CONTROL_PORT`]. A value that is
+/// not a port is a named error, never the default.
+fn resolve_control_port() -> Result<u16, String> {
+    match std::env::var(CONTROL_PORT_ENV) {
+        Ok(value) if !value.trim().is_empty() => value
+            .trim()
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .ok_or_else(|| format!("{CONTROL_PORT_ENV}='{value}' is not a TCP port")),
+        _ => Ok(DEFAULT_CONTROL_PORT),
+    }
+}
+
 fn build_link_config(
     key: &LinkBuildKey,
     binaries: &MeshBinaries,
@@ -798,6 +817,12 @@ fn build_link_config(
     let mut control = ControlConfig::new(String::new(), None);
     // The crate's default is observe-only; only the user's own setting opts a node in.
     control.allow_remote_execution = key.allow_remote_execution;
+    control.port = resolve_control_port()
+        .map_err(|message| agent_client_protocol::Error::invalid_params().data(message))?;
+    if control.port != DEFAULT_CONTROL_PORT {
+        info!(port = control.port, resolved_from = %format!("env {CONTROL_PORT_ENV}"),
+              "leanzeroLink: control port resolved");
+    }
 
     Ok(LinkManagerConfig {
         worker_base_url,
@@ -812,7 +837,10 @@ fn build_link_config(
 /// Every failure — transport, a non-2xx, a body that is not the contract — is an `Err`
 /// carrying the reason; this function never answers a failure with a roster.
 async fn fetch_local_swarm_nodes(token: &str) -> Result<LeanzeroLinkNodesResponse, String> {
-    let url = format!("http://127.0.0.1:{DEFAULT_CONTROL_PORT}/v1/swarm/nodes");
+    let url = format!(
+        "http://127.0.0.1:{}/v1/swarm/nodes",
+        resolve_control_port()?
+    );
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
