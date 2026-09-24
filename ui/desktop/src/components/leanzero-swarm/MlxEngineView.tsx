@@ -123,6 +123,8 @@ import { DistributedEngineSection } from './DistributedEngineSection';
 import { modeSummary, ownsTheMac } from './mlxDistributed';
 import { formatMlxMode } from './mlxModeLabel';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
+import { PlacementBadge, PlacementCard, usePlacementBadges } from './PlacementCard';
+import type { PlacementBadge as PlacementBadgeDto } from '../../acp/mlx-placement';
 import {
   leanzeroLinkNodes,
   leanzeroLinkStatus,
@@ -530,6 +532,7 @@ function NumericField({
 
 interface ModelOption extends StudioSelectOption {
   model: MlxLocalModel;
+  badge?: PlacementBadgeDto;
 }
 
 function ModelOptionLabel({ option }: { option: ModelOption }) {
@@ -538,6 +541,7 @@ function ModelOptionLabel({ option }: { option: ModelOption }) {
       <span className="truncate font-mono text-lz-mono">{option.model.id}</span>
       <span className={cx('shrink-0', TYPE.meta, TNUM)}>{formatGb(option.model.sizeBytes)}</span>
       {!option.model.complete && <Chip tone="warn">partial download</Chip>}
+      {option.badge && <PlacementBadge badge={option.badge} />}
     </span>
   );
 }
@@ -551,16 +555,20 @@ function ModelPicker({
   value,
   onChange,
   disabled,
+  badges,
 }: {
   models: MlxLocalModel[];
   value: string | null;
   onChange: (id: string | null) => void;
   disabled: boolean;
+  /** Where each model fits (the placement planner), by model id. */
+  badges?: Map<string, PlacementBadgeDto>;
 }) {
   const options: ModelOption[] = models.map((model) => ({
     value: model.id,
     label: model.id,
     model,
+    badge: badges?.get(model.id),
     disabled: !model.complete,
   }));
   const selected = options.find((o) => o.value === value) ?? null;
@@ -711,6 +719,7 @@ function EngineSection(props: EngineSectionProps) {
     modeLabel,
   } = props;
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const badges = usePlacementBadges(models.map((m) => m.id).join('\n'));
   // goose refuses a single mount while the distributed engine owns the Mac, so none is offered.
   const distributedOwns = ownsTheMac(distributed);
 
@@ -970,6 +979,7 @@ function EngineSection(props: EngineSectionProps) {
                 value={mountModelId}
                 onChange={setMountModelId}
                 disabled={engineBusy || state === 'mounting' || distributedOwns}
+                badges={badges}
               />
             </div>
             {rowAction}
@@ -990,6 +1000,16 @@ function EngineSection(props: EngineSectionProps) {
           </p>
         </div>
       </section>
+
+      {mountModelId && (
+        <PlacementCard
+          modelId={mountModelId}
+          single={status}
+          distributed={distributed}
+          onMountHere={onMount}
+          mountBusy={engineBusy || state === 'mounting' || distributedOwns}
+        />
+      )}
 
       {/* The running engine's facts are the point of the page once it runs; before that they are
           all "—", so they fold away under a disclosure instead of leading the page. */}

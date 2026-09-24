@@ -4538,6 +4538,162 @@
   "permissionSetting.permissionRulesDescription": {
     "defaultMessage": "Hidden instructions that will be passed to the provider to help direct and add context to your responses."
   },
+  "placementCard.actionFailed": {
+    "defaultMessage": "The action failed"
+  },
+  "placementCard.badgeBoth": {
+    "defaultMessage": "Needs both Macs"
+  },
+  "placementCard.badgePeer": {
+    "defaultMessage": "Fits {name}"
+  },
+  "placementCard.badgeThisMac": {
+    "defaultMessage": "Fits this Mac"
+  },
+  "placementCard.badgeTooBig": {
+    "defaultMessage": "Too big, short {gb}"
+  },
+  "placementCard.badgeUnknown": {
+    "defaultMessage": "Fit unknown"
+  },
+  "placementCard.best": {
+    "defaultMessage": "Best"
+  },
+  "placementCard.bestNow": {
+    "defaultMessage": "Best you can start now"
+  },
+  "placementCard.context": {
+    "defaultMessage": "{tokens} context"
+  },
+  "placementCard.estimated": {
+    "defaultMessage": "estimated"
+  },
+  "placementCard.fitUnknown": {
+    "defaultMessage": "Fit unknown"
+  },
+  "placementCard.goalChat": {
+    "defaultMessage": "Chat"
+  },
+  "placementCard.goalLabel": {
+    "defaultMessage": "What matters most"
+  },
+  "placementCard.goalLong": {
+    "defaultMessage": "Long documents"
+  },
+  "placementCard.goalMany": {
+    "defaultMessage": "Many requests"
+  },
+  "placementCard.gpuCores": {
+    "defaultMessage": "{brand} · {cores}-core GPU"
+  },
+  "placementCard.measure": {
+    "defaultMessage": "Measure speed"
+  },
+  "placementCard.measureFirst": {
+    "defaultMessage": "Running and not measured yet — Measure speed replaces the estimate with this Mac’s own number."
+  },
+  "placementCard.measureLater": {
+    "defaultMessage": "Measure speed becomes available once it runs."
+  },
+  "placementCard.measured": {
+    "defaultMessage": "{runs,plural,one{measured} other{measured · # runs}}"
+  },
+  "placementCard.measuredResult": {
+    "defaultMessage": "Measured: {decode} tok/s writing, {prefill} tok/s reading"
+  },
+  "placementCard.measuring": {
+    "defaultMessage": "Measuring: a ~2k-token prompt, then 256 tokens…"
+  },
+  "placementCard.noFigure": {
+    "defaultMessage": "no speed figure"
+  },
+  "placementCard.noFigureReason": {
+    "defaultMessage": "No speed figure"
+  },
+  "placementCard.nodeGap": {
+    "defaultMessage": "{name}: {reason}"
+  },
+  "placementCard.nodeLine": {
+    "defaultMessage": "{name}: {chip} · {bandwidth} GB/s · GPU ceiling {ceiling}"
+  },
+  "placementCard.notSupported": {
+    "defaultMessage": "Not supported yet"
+  },
+  "placementCard.nothingFits": {
+    "defaultMessage": "Nothing fits right now"
+  },
+  "placementCard.others": {
+    "defaultMessage": "{count,plural,one{# other way} other{# other ways}}"
+  },
+  "placementCard.pipeline": {
+    "defaultMessage": "{count,plural,one{# Mac · pipeline split · {link}} other{# Macs · pipeline split · {link}}}"
+  },
+  "placementCard.planFailed": {
+    "defaultMessage": "Could not plan"
+  },
+  "placementCard.planning": {
+    "defaultMessage": "Measuring your Macs and the model…"
+  },
+  "placementCard.range": {
+    "defaultMessage": "{low}–{high}"
+  },
+  "placementCard.reads": {
+    "defaultMessage": "~{value} tok/s reading"
+  },
+  "placementCard.refresh": {
+    "defaultMessage": "Plan again"
+  },
+  "placementCard.refusedUnnamed": {
+    "defaultMessage": "Refused, and goose named no reason"
+  },
+  "placementCard.setupFirst": {
+    "defaultMessage": "The distributed setup names another model — pick this one in Distributed › Set up, then start it."
+  },
+  "placementCard.short": {
+    "defaultMessage": "Does not fit: short {gb} on {node}"
+  },
+  "placementCard.shortSplit": {
+    "defaultMessage": "Does not fit: short {gb}"
+  },
+  "placementCard.single": {
+    "defaultMessage": "{name} alone"
+  },
+  "placementCard.slower": {
+    "defaultMessage": "Slower for this: ~{mine} vs ~{best} tok/s"
+  },
+  "placementCard.smallerContext": {
+    "defaultMessage": "fits only at {tokens} context"
+  },
+  "placementCard.started": {
+    "defaultMessage": "Starting — this card follows it."
+  },
+  "placementCard.starting": {
+    "defaultMessage": "Starting…"
+  },
+  "placementCard.storeErrors": {
+    "defaultMessage": "Unreadable lines in the measurement store"
+  },
+  "placementCard.tensor": {
+    "defaultMessage": "{count,plural,one{# Mac · tensor split · {link}} other{# Macs · tensor split · {link}}}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "this Mac"
+  },
+  "placementCard.tied": {
+    "defaultMessage": "As fast within the error (~{mine} vs ~{best} tok/s), but needs more Macs"
+  },
+  "placementCard.title": {
+    "defaultMessage": "Where to run it"
+  },
+  "placementCard.total": {
+    "defaultMessage": "~{value} tok/s total at {concurrency} at once"
+  },
+  "placementCard.useThis": {
+    "defaultMessage": "Use this"
+  },
+  "placementCard.writes": {
+    "defaultMessage": "~{value} tok/s writing"
+  },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Error types (e.g., \"rate_limit\", \"auth\" - no details)"
   },
