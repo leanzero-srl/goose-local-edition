@@ -25,12 +25,12 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// {plan,serve,run}`, `plan --json` (with `slots`), the OpenAI server rank 0 serves (272cb0643),
 /// a node below its pressure floor refusing with the numbers instead of crashing (9f861d9e1), and
 /// `serve --slots` with KV admission by every rank's planned budget and the slot figures on
-/// `/v1/status` (ea6f8dee1, 2026-09-24).
+/// `/v1/status` (ea6f8dee1), idle worker ranks parked in a blocking recv instead of spinning a core in the collective (286ed77f7, 2026-09-24).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "ea6f8dee17d46528afdcafec761c519341da6fe4";
+pub const PIPELINE_FORK_COMMIT: &str = "286ed77f7554bb2a74c224695116c5557025bbb7";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@ea6f8dee17d46528afdcafec761c519341da6fe4";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@286ed77f7554bb2a74c224695116c5557025bbb7";
 
 /// Where every goose-managed env lives, relative to the node's `$HOME`.
 pub const ENVS_DIR: &str = ".goose/distributed";
