@@ -2,13 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   Check,
-  ChevronDown,
-  Laptop,
   Link2,
   Loader2,
   LogOut,
   Mail,
-  Play,
   RefreshCw,
   Users,
 } from 'lucide-react';
@@ -26,7 +23,6 @@ import {
   FOCUS,
   MOTION,
   RADIUS,
-  ROW,
   SURFACE,
   TNUM,
   TONE_FILL,
@@ -37,13 +33,12 @@ import {
   type DataTableColumn,
   type Tone,
 } from '../lz';
-import { FIELD_LABEL, INPUT, TEXTAREA, ToneBanner, nodeHue } from './studio';
+import { FIELD_LABEL, INPUT, ToneBanner, nodeHue } from './studio';
 import {
   leanzeroLinkConnect,
   leanzeroLinkHealth,
   leanzeroLinkLogout,
   leanzeroLinkNodes,
-  leanzeroLinkRemoteExecute,
   leanzeroLinkRequestCode,
   leanzeroLinkStatus,
   leanzeroLinkVerify,
@@ -479,275 +474,6 @@ function ConnectingCard({ email }: { email: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Run-a-prompt-on-a-device card (P5 made tangible) + its custom node dropdown.
-// ---------------------------------------------------------------------------
-
-/** One entry in the target dropdown — self (always runnable) or a peer (only when Idle). */
-interface RunTargetOption {
-  nodeId: string;
-  hostname: string;
-  isSelf: boolean;
-  status: NodeStatus;
-  /** Self and Idle peers are selectable; Busy/Offline peers show DISABLED with a reason. */
-  selectable: boolean;
-  /** Why a non-selectable peer can't be targeted right now ("busy" / "offline"). */
-  reason?: string;
-}
-
-function targetLabel(opt: RunTargetOption): string {
-  return opt.isSelf ? `This device · ${opt.hostname}` : opt.hostname;
-}
-
-/**
- * Custom device dropdown — never a native <select>. Busy/Offline peers are rendered
- * DISABLED (honest: shown, not hidden) with their live state as the reason; self and Idle
- * peers are pickable. Studio chrome: the outline control, status chips, the overlay surface.
- */
-function NodeSelect({
-  options,
-  value,
-  onChange,
-  disabled,
-}: {
-  options: RunTargetOption[];
-  value: string | null;
-  onChange: (nodeId: string) => void;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDocMouseDown);
-    return () => document.removeEventListener('mousedown', onDocMouseDown);
-  }, [open]);
-
-  const selected = options.find((o) => o.nodeId === value) ?? null;
-
-  return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        data-testid="link-run-target"
-        disabled={disabled || options.length === 0}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className={cx(
-          'flex h-9 w-full items-center gap-2 bg-lz-surface px-3 text-left text-lz-body text-lz-ink [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-lz-ink-3',
-          SURFACE.outline,
-          RADIUS.control,
-          DISABLED,
-          FOCUS,
-          MOTION
-        )}
-      >
-        <Laptop />
-        <span className={cx('min-w-0 truncate', WEIGHT.medium)}>
-          {selected ? targetLabel(selected) : 'No runnable device'}
-        </span>
-        {selected && <StatusChip status={selected.status} />}
-        <ChevronDown className="ml-auto" />
-      </button>
-      {open && (
-        <div
-          role="listbox"
-          aria-label="Target device"
-          className={cx(
-            'absolute left-0 top-full z-[60] mt-1 w-full overflow-hidden p-1',
-            SURFACE.overlay
-          )}
-        >
-          {options.map((opt) => (
-            <button
-              key={opt.nodeId}
-              type="button"
-              role="option"
-              aria-selected={opt.nodeId === value}
-              aria-disabled={!opt.selectable}
-              disabled={!opt.selectable}
-              data-testid={`link-run-target-option-${opt.nodeId}`}
-              title={opt.selectable ? targetLabel(opt) : `${targetLabel(opt)} — ${opt.reason}`}
-              onClick={() => {
-                if (!opt.selectable) return;
-                onChange(opt.nodeId);
-                setOpen(false);
-              }}
-              className={cx(
-                'flex w-full items-center gap-2 px-2.5 text-left text-lz-body text-lz-ink disabled:cursor-not-allowed disabled:text-lz-ink-3 [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-lz-ink-3',
-                ROW.dense,
-                RADIUS.control,
-                opt.nodeId === value ? SURFACE.inset : SURFACE.hover,
-                MOTION
-              )}
-            >
-              <Laptop />
-              <span className={cx('min-w-0 truncate', WEIGHT.medium)}>{targetLabel(opt)}</span>
-              <StatusChip status={opt.status} />
-              {!opt.selectable && opt.reason && (
-                <span className={cx('ml-auto shrink-0', TYPE.meta)}>can&apos;t run — {opt.reason}</span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function buildRunTargets(nodes: NodesResponse | null): RunTargetOption[] {
-  if (!nodes?.self) return [];
-  const self: RunTargetOption = {
-    nodeId: nodes.self.node_id,
-    hostname: nodes.self.hostname,
-    isSelf: true,
-    status: nodes.self.status,
-    selectable: true,
-  };
-  const peers: RunTargetOption[] = (nodes.peers ?? []).map((p) => {
-    const idle = p.status.type === 'Idle';
-    return {
-      nodeId: p.node_id,
-      hostname: p.hostname,
-      isSelf: false,
-      status: p.status,
-      selectable: idle,
-      reason: idle ? undefined : p.status.type === 'Busy' ? 'busy' : 'offline',
-    };
-  });
-  return [self, ...peers];
-}
-
-/**
- * Below the device list: pick an idle device, type a prompt, Run. Fires
- * `leanzeroLinkRemoteExecute` and confirms with the started session id (the deltas already
- * mirror here via P4 — no stream viewer is built). Errors ("node is busy", "remote
- * execution disabled on this node", …) ride through VERBATIM via `linkBannerText`.
- */
-function RunPromptCard({ nodes }: { nodes: NodesResponse | null }) {
-  const options = useMemo(() => buildRunTargets(nodes), [nodes]);
-  const [targetNodeId, setTargetNodeId] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState('');
-  const [workingDir, setWorkingDir] = useState('');
-  const [inFlight, setInFlight] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ sessionId: string; hostname: string } | null>(null);
-
-  // Keep the selection valid: preserve it while still selectable, else default to self
-  // (always runnable), else the first selectable, else nothing (dropdown/Run disabled).
-  useEffect(() => {
-    const selectable = options.filter((o) => o.selectable);
-    if (selectable.length === 0) {
-      setTargetNodeId(null);
-      return;
-    }
-    setTargetNodeId((prev) => {
-      if (prev && selectable.some((o) => o.nodeId === prev)) return prev;
-      return (selectable.find((o) => o.isSelf) ?? selectable[0]).nodeId;
-    });
-  }, [options]);
-
-  const trimmedPrompt = prompt.trim();
-  const selectedSelectable =
-    targetNodeId != null && options.some((o) => o.nodeId === targetNodeId && o.selectable);
-  const canRun = !inFlight && trimmedPrompt !== '' && selectedSelectable;
-
-  const run = useCallback(async () => {
-    if (inFlight || targetNodeId == null || trimmedPrompt === '' || !selectedSelectable) return;
-    const target = options.find((o) => o.nodeId === targetNodeId);
-    setError(null);
-    setResult(null);
-    setInFlight(true);
-    try {
-      const res = await leanzeroLinkRemoteExecute({
-        targetNodeId,
-        prompt: trimmedPrompt,
-        workingDir,
-      });
-      setResult({ sessionId: res.sessionId, hostname: target?.hostname ?? targetNodeId });
-      setPrompt('');
-    } catch (e) {
-      setError(linkBannerText(e));
-    } finally {
-      setInFlight(false);
-    }
-  }, [inFlight, targetNodeId, trimmedPrompt, selectedSelectable, options, workingDir]);
-
-  return (
-    <Panel title="Run a prompt on a linked device">
-      <div className="flex flex-col gap-3" data-testid="link-run-card">
-        <span className={FIELD_LABEL}>Device</span>
-        <NodeSelect
-          options={options}
-          value={targetNodeId}
-          onChange={setTargetNodeId}
-          disabled={inFlight}
-        />
-
-        <label htmlFor="link-run-prompt" className={FIELD_LABEL}>
-          Prompt
-        </label>
-        <textarea
-          id="link-run-prompt"
-          data-testid="link-run-prompt"
-          rows={3}
-          value={prompt}
-          disabled={inFlight}
-          placeholder="Describe what this device should do…"
-          onChange={(e) => setPrompt(e.target.value)}
-          className={TEXTAREA}
-        />
-
-        <label htmlFor="link-run-workdir" className={FIELD_LABEL}>
-          Working directory (optional)
-        </label>
-        <input
-          id="link-run-workdir"
-          data-testid="link-run-workdir"
-          type="text"
-          value={workingDir}
-          disabled={inFlight}
-          placeholder="defaults to the device's home"
-          onChange={(e) => setWorkingDir(e.target.value)}
-          className={cx(INPUT, 'w-full font-mono')}
-        />
-
-        {error && (
-          <div data-testid="link-run-error">
-            <ToneBanner tone="err" label="Run" text={error} />
-          </div>
-        )}
-
-        {result && (
-          <ToneBanner
-            tone="ok"
-            label="Started"
-            text={`Started session ${result.sessionId} on ${result.hostname} — its activity will mirror here.`}
-            testId="link-run-success"
-          />
-        )}
-
-        <Button
-          variant="primary"
-          type="button"
-          disabled={!canRun}
-          data-testid="link-run-submit"
-          onClick={() => void run()}
-          className="w-full"
-          icon={inFlight ? <Loader2 className="animate-spin" /> : <Play />}
-        >
-          Run
-        </Button>
-      </div>
-    </Panel>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Connected dashboard.
 // ---------------------------------------------------------------------------
 
@@ -909,7 +635,6 @@ function ConnectedView({
         </div>
       </Panel>
 
-      <RunPromptCard nodes={nodes} />
     </div>
   );
 }

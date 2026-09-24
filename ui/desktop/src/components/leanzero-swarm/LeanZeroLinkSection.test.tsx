@@ -16,7 +16,6 @@ const mockConnect = vi.fn();
 const mockLogout = vi.fn();
 const mockNodes = vi.fn();
 const mockHealth = vi.fn();
-const mockRemoteExecute = vi.fn();
 
 vi.mock('../../acp/leanzero-link', async (importActual) => {
   const actual = await importActual<typeof import('../../acp/leanzero-link')>();
@@ -29,7 +28,6 @@ vi.mock('../../acp/leanzero-link', async (importActual) => {
     leanzeroLinkLogout: (...a: unknown[]) => mockLogout(...a),
     leanzeroLinkNodes: (...a: unknown[]) => mockNodes(...a),
     leanzeroLinkHealth: (...a: unknown[]) => mockHealth(...a),
-    leanzeroLinkRemoteExecute: (...a: unknown[]) => mockRemoteExecute(...a),
   };
 });
 
@@ -439,137 +437,6 @@ describe('LeanZeroLinkSection — health + error surfacing', () => {
   });
 });
 
-describe('LeanZeroLinkSection — run-a-prompt-on-a-device card', () => {
-  it('the node dropdown lists Idle targets as pickable and Busy/Offline peers DISABLED with a reason', async () => {
-    currentState = CONNECTED;
-    mockNodes.mockResolvedValue(RUN_NODES);
-    render();
-    await screen.findByTestId('link-run-card');
-
-    await userEvent.click(screen.getByTestId('link-run-target'));
-
-    // Self is always runnable (labeled "This device"), even were it busy.
-    const selfOpt = screen.getByTestId('link-run-target-option-self-aa');
-    expect(selfOpt).not.toBeDisabled();
-    expect(selfOpt).toHaveTextContent(/This device/i);
-
-    // An Idle peer is pickable.
-    const idle = screen.getByTestId('link-run-target-option-peer-idle');
-    expect(idle).not.toBeDisabled();
-
-    // Busy / Offline peers are SHOWN (honest) but disabled, carrying their state as reason.
-    const busy = screen.getByTestId('link-run-target-option-peer-busy');
-    expect(busy).toBeDisabled();
-    expect(busy).toHaveTextContent(/busy/i);
-    const offline = screen.getByTestId('link-run-target-option-peer-offline');
-    expect(offline).toBeDisabled();
-    expect(offline).toHaveTextContent(/offline/i);
-  });
-
-  it('Run calls remoteExecute with the selected target + prompt + workingDir, then confirms with the session id', async () => {
-    currentState = CONNECTED;
-    mockNodes.mockResolvedValue(RUN_NODES);
-    render();
-    await screen.findByTestId('link-run-card');
-
-    // Pick the idle peer as target.
-    await userEvent.click(screen.getByTestId('link-run-target'));
-    await userEvent.click(screen.getByTestId('link-run-target-option-peer-idle'));
-
-    await userEvent.type(screen.getByTestId('link-run-prompt'), 'build the thing');
-    await userEvent.type(screen.getByTestId('link-run-workdir'), '/Users/mihai/proj');
-
-    mockRemoteExecute.mockResolvedValue({ sessionId: 'sess-remote-1' });
-    await userEvent.click(screen.getByTestId('link-run-submit'));
-
-    expect(mockRemoteExecute).toHaveBeenCalledWith({
-      targetNodeId: 'peer-idle',
-      prompt: 'build the thing',
-      workingDir: '/Users/mihai/proj',
-    });
-
-    const success = await screen.findByTestId('link-run-success');
-    expect(success).toHaveTextContent(
-      /Started session sess-remote-1 on mihai-macbook-2 — its activity will mirror here/i
-    );
-  });
-
-  it('defaults the target to "This device" (self) when nothing is picked', async () => {
-    currentState = CONNECTED;
-    mockNodes.mockResolvedValue(RUN_NODES);
-    render();
-    await screen.findByTestId('link-run-card');
-
-    await userEvent.type(screen.getByTestId('link-run-prompt'), 'do it here');
-    mockRemoteExecute.mockResolvedValue({ sessionId: 'sess-self-1' });
-    await userEvent.click(screen.getByTestId('link-run-submit'));
-
-    expect(mockRemoteExecute).toHaveBeenCalledWith({
-      targetNodeId: 'self-aa',
-      prompt: 'do it here',
-      workingDir: '',
-    });
-  });
-
-  it('a backend rejection ("node is busy") renders VERBATIM in a solid banner', async () => {
-    currentState = CONNECTED;
-    mockNodes.mockResolvedValue(RUN_NODES);
-    render();
-    await screen.findByTestId('link-run-card');
-
-    await userEvent.type(screen.getByTestId('link-run-prompt'), 'anything');
-    mockRemoteExecute.mockRejectedValue(rpcError('node is busy'));
-    await userEvent.click(screen.getByTestId('link-run-submit'));
-
-    expect(await screen.findByTestId('link-run-error')).toHaveTextContent('node is busy');
-    // Not left claiming success.
-    expect(screen.queryByTestId('link-run-success')).not.toBeInTheDocument();
-  });
-
-  it('Run is DISABLED until a prompt is typed', async () => {
-    currentState = CONNECTED;
-    mockNodes.mockResolvedValue(RUN_NODES);
-    render();
-    await screen.findByTestId('link-run-card');
-
-    expect(screen.getByTestId('link-run-submit')).toBeDisabled();
-    await userEvent.type(screen.getByTestId('link-run-prompt'), 'now runnable');
-    expect(screen.getByTestId('link-run-submit')).not.toBeDisabled();
-  });
-
-  it('Run is DISABLED while a request is in flight', async () => {
-    currentState = CONNECTED;
-    mockNodes.mockResolvedValue(RUN_NODES);
-    render();
-    await screen.findByTestId('link-run-card');
-
-    await userEvent.type(screen.getByTestId('link-run-prompt'), 'hold');
-    let resolveRun: (v: { sessionId: string }) => void = () => {};
-    mockRemoteExecute.mockReturnValue(
-      new Promise<{ sessionId: string }>((resolve) => {
-        resolveRun = resolve;
-      })
-    );
-    await userEvent.click(screen.getByTestId('link-run-submit'));
-
-    expect(screen.getByTestId('link-run-submit')).toBeDisabled();
-    expect(screen.getByTestId('link-run-target')).toBeDisabled();
-
-    resolveRun({ sessionId: 'sess-late' });
-    await screen.findByTestId('link-run-success');
-  });
-
-  it('with no reachable roster (nodes unavailable) there is no runnable target and Run is disabled', async () => {
-    currentState = CONNECTED;
-    mockNodes.mockRejectedValue(new Error('roster read failed'));
-    render();
-    await screen.findByTestId('link-run-card');
-
-    expect(screen.getByTestId('link-run-target')).toBeDisabled();
-    expect(screen.getByTestId('link-run-submit')).toBeDisabled();
-  });
-});
-
 describe('LeanZeroLinkSection — connected-view staleness gate', () => {
   it('surfaces the Reconnecting strip only after 3 consecutive status failures, then clears on success', async () => {
     vi.useFakeTimers();
@@ -652,7 +519,7 @@ describe('LeanZeroLinkSection — LeanZero Studio register', () => {
     expect(await missingUtilities(classes)).toEqual([]);
   }, 30_000);
 
-  it('the connected dashboard (peers table, this-device panel, run card) is Studio-clean and compiles', async () => {
+  it('the connected dashboard (peers table, this-device panel) is Studio-clean and compiles', async () => {
     currentState = { ...CONNECTED, lastError: 'mesh hiccup' };
     mockNodes.mockResolvedValue(NODES_WITH_PEERS);
     mockHealth.mockResolvedValue({
