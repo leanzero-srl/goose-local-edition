@@ -731,6 +731,9 @@
   "composerReadiness.openProviders": {
     "defaultMessage": "Providers öffnen"
   },
+  "composerReadiness.remote": {
+    "defaultMessage": "Bereitgestellt von {peer} · {state}"
+  },
   "composerReadiness.unmounted": {
     "defaultMessage": "Kein Modell eingebunden — {nodes}"
   },
@@ -3899,6 +3902,9 @@
   "mlxStateTile.serving": {
     "defaultMessage": "Bedient"
   },
+  "mlxStateTile.servingFrom": {
+    "defaultMessage": "Chat: bereitgestellt von {peer} · {state}"
+  },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Wer sie nutzt, ließ sich nicht lesen: {detail}"
   },
@@ -4310,8 +4316,14 @@
   "noNodeNotice.ready": {
     "defaultMessage": "Der Knoten ist bereit — versuche es erneut, um deine Nachricht noch einmal zu senden."
   },
+  "noNodeNotice.remoteDown": {
+    "defaultMessage": "Bereitgestellt von {peer}, aber dessen Engine antwortet nicht über LeanZero Link."
+  },
   "noNodeNotice.retry": {
     "defaultMessage": "Erneut versuchen"
+  },
+  "noNodeNotice.routedRemote": {
+    "defaultMessage": "Bereitgestellt von {peer} — die eigene Engine dieses Mac wird beiseitegestellt, solange der Chat dorthin geht."
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Der Swarm hat jeden aktiven Knoten geprüft, keiner konnte diese Nachricht übernehmen."

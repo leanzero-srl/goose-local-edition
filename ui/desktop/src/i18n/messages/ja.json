@@ -731,6 +731,9 @@
   "composerReadiness.openProviders": {
     "defaultMessage": "Providers を開く"
   },
+  "composerReadiness.remote": {
+    "defaultMessage": "{peer} から提供中 · {state}"
+  },
   "composerReadiness.unmounted": {
     "defaultMessage": "マウントされたモデルがありません — {nodes}"
   },
@@ -3899,6 +3902,9 @@
   "mlxStateTile.serving": {
     "defaultMessage": "処理対象"
   },
+  "mlxStateTile.servingFrom": {
+    "defaultMessage": "チャット: {peer} から提供中 · {state}"
+  },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "利用者を読み取れませんでした: {detail}"
   },
@@ -4310,8 +4316,14 @@
   "noNodeNotice.ready": {
     "defaultMessage": "ノードの準備ができました — 再試行するとメッセージをもう一度送信します。"
   },
+  "noNodeNotice.remoteDown": {
+    "defaultMessage": "{peer} から提供中ですが、そのエンジンが LeanZero Link 経由で応答していません。"
+  },
   "noNodeNotice.retry": {
     "defaultMessage": "再試行"
+  },
+  "noNodeNotice.routedRemote": {
+    "defaultMessage": "{peer} から提供中 — チャットがそちらに向かう間、この Mac 自身のエンジンは使われません。"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "スウォームは有効なノードをすべて確認しましたが、このメッセージを受けられるノードはありませんでした。"

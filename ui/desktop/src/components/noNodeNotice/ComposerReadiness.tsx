@@ -1,10 +1,16 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, ServerOff, Settings2 } from 'lucide-react';
+import { Loader2, Network, ServerOff, Settings2 } from 'lucide-react';
 import { acpReadConfig } from '../../acp/config';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { foreignOwner } from '../../acp/mlx-distributed';
+import {
+  latestMlxRemoteSingleStatus,
+  remoteRouteUp,
+  subscribeMlxRemoteSingleStatus,
+  type MlxRemoteSingleStatus,
+} from '../../acp/mlx-remote-single';
 import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
@@ -60,6 +66,10 @@ const i18n = defineMessages({
     id: 'composerReadiness.distributedMismatch',
     defaultMessage: 'The distributed engine serves {served}; the node wants {wanted}.',
   },
+  remote: {
+    id: 'composerReadiness.remote',
+    defaultMessage: 'Serving from {peer} · {state}',
+  },
   mount: { id: 'composerReadiness.mount', defaultMessage: 'Mount {model}' },
   mounting: { id: 'composerReadiness.mounting', defaultMessage: 'Mounting {model}' },
   openProviders: { id: 'composerReadiness.openProviders', defaultMessage: 'Open Providers' },
@@ -82,13 +92,18 @@ const i18n = defineMessages({
  * While the DISTRIBUTED engine owns this Mac it is the local MLX node (the router probes it, a
  * single mount is refused): serving the node's id is `ready`, anything else is `distributed` —
  * its state and mode, never a Mount offer.
+ *
+ * While chat is routed to a LeanZero Link peer's engine (REMOTE SINGLE) that engine is the MLX node
+ * (the router adds it and sets this Mac's sidecar aside; `omlx` follows the relay): `remote` — where
+ * chat goes and how that engine is doing, shown even when it serves, so it is never a surprise.
  */
 export type ComposerReadiness =
   | { kind: 'unknown' }
   | { kind: 'ready' }
   | { kind: 'no-nodes' }
   | { kind: 'unmounted'; nodes: string[]; target: MountTarget; fact: EngineFact }
-  | { kind: 'distributed'; nodes: string[]; status: MlxDistributedStatus; wanted: string | null };
+  | { kind: 'distributed'; nodes: string[]; status: MlxDistributedStatus; wanted: string | null }
+  | { kind: 'remote'; status: MlxRemoteSingleStatus };
 
 const UNKNOWN: ComposerReadiness = { kind: 'unknown' };
 
@@ -99,8 +114,10 @@ function statusIsKnowable(status: MlxEngineStatus | null): status is MlxEngineSt
 export function swarmReadiness(
   lookup: MountLookup,
   status: MlxEngineStatus | null,
-  distributed: MlxDistributedStatus | null
+  distributed: MlxDistributedStatus | null,
+  remote: MlxRemoteSingleStatus | null = null
 ): ComposerReadiness {
+  if (remote && remoteRouteUp(remote)) return { kind: 'remote', status: remote };
   if (lookup.state !== 'ready') return UNKNOWN;
   const enabled = lookup.devices.filter((d) => d.enabled === true);
   if (enabled.length === 0) return { kind: 'no-nodes' };
@@ -137,8 +154,10 @@ export function mlxProviderReadiness(
   settings: MlxEngineSettings | null,
   status: MlxEngineStatus | null,
   distributed: MlxDistributedStatus | null,
-  engineLabel: string
+  engineLabel: string,
+  remote: MlxRemoteSingleStatus | null = null
 ): ComposerReadiness {
+  if (remote && remoteRouteUp(remote)) return { kind: 'remote', status: remote };
   if (distributed && (ownsTheMac(distributed) || foreignOwner(distributed))) {
     // The omlx provider follows the distributed engine's port while it owns the Mac — this
     // window's run or another's (mlx_engine.rs align_omlx_host_env) — and asks for whatever id
@@ -194,16 +213,18 @@ export function ComposerReadinessStrip({ provider }: { provider: string | null |
         lookup.devices.some((d) => d.enabled === true && d.engine === 'mlx-sidecar' && !d.host)));
   const { status } = useMlxEngineStatusPoll(pollsEngine, 3000);
   const distributed = useLatestMlxDistributedStatus();
+  const remote = useSyncExternalStore(subscribeMlxRemoteSingleStatus, latestMlxRemoteSingleStatus);
   const { requestingNodeId, mountErrors, mount } = useMlxMount(status);
 
   const readiness: ComposerReadiness = isSwarm
-    ? swarmReadiness(lookup, status, distributed)
+    ? swarmReadiness(lookup, status, distributed, remote)
     : isMlx
       ? mlxProviderReadiness(
           lookup.state === 'ready' ? lookup.settings : null,
           status,
           distributed,
-          intl.formatMessage(i18n.mlxEngine)
+          intl.formatMessage(i18n.mlxEngine),
+          remote
         )
       : UNKNOWN;
 
@@ -242,16 +263,34 @@ function ReadinessStripBody({
   const headline =
     readiness.kind === 'no-nodes'
       ? intl.formatMessage(i18n.noNodes)
-      : readiness.kind === 'distributed'
-        ? intl.formatMessage(i18n.distributed, {
-            mode: formatMlxMode(intl, distributedSummary(readiness.status), null),
-            state: distributedStateLabel(intl, readiness.status),
-            nodes: readiness.nodes.join(', '),
+      : readiness.kind === 'remote'
+        ? intl.formatMessage(i18n.remote, {
+            peer: readiness.status.peerHostname ?? readiness.status.peer ?? '',
+            state: readiness.status.state,
           })
-        : intl.formatMessage(i18n.unmounted, { nodes: readiness.nodes.join(', ') });
+        : readiness.kind === 'distributed'
+          ? intl.formatMessage(i18n.distributed, {
+              mode: formatMlxMode(intl, distributedSummary(readiness.status), null),
+              state: distributedStateLabel(intl, readiness.status),
+              nodes: readiness.nodes.join(', '),
+            })
+          : intl.formatMessage(i18n.unmounted, { nodes: readiness.nodes.join(', ') });
 
   let detail: string | null = null;
   let action: ReactNode = null;
+  const remoteServing = readiness.kind === 'remote' && readiness.status.state === 'ready';
+  if (readiness.kind === 'remote') {
+    detail = readiness.status.lastError ?? null;
+    if (readiness.status.state === 'mounting') {
+      action = (
+        <Loader2
+          aria-hidden
+          data-testid="composer-readiness-remote-mounting"
+          className="size-4 animate-spin text-white"
+        />
+      );
+    }
+  }
   if (readiness.kind === 'distributed') {
     const { status: dist, wanted } = readiness;
     const served = distributedServedId(dist);
@@ -316,10 +355,14 @@ function ReadinessStripBody({
       className={cx(
         'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
         RADIUS.control,
-        TONE_FILL.warn
+        remoteServing ? TONE_FILL.ok : TONE_FILL.warn
       )}
     >
-      <ServerOff aria-hidden className="size-4 shrink-0" />
+      {readiness.kind === 'remote' ? (
+        <Network aria-hidden className="size-4 shrink-0" />
+      ) : (
+        <ServerOff aria-hidden className="size-4 shrink-0" />
+      )}
       <div className="flex min-w-0 flex-1 flex-col">
         <span className={cx('text-lz-body', WEIGHT.semibold)}>{headline}</span>
         {detail && (

@@ -1188,6 +1188,30 @@ impl GooseAcpAgent {
         self.on_mlx_engine_replica_pull(req).await
     }
 
+    #[custom_method(MlxEnginePlacementPlanRequest)]
+    async fn dispatch_mlx_engine_placement_plan(
+        &self,
+        req: MlxEnginePlacementPlanRequest,
+    ) -> Result<MlxEnginePlacementPlanResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_placement_plan(req).await
+    }
+
+    #[custom_method(MlxEngineMeasureSpeedRequest)]
+    async fn dispatch_mlx_engine_measure_speed(
+        &self,
+        req: MlxEngineMeasureSpeedRequest,
+    ) -> Result<MlxEngineMeasureSpeedResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_measure_speed(req).await
+    }
+
+    #[custom_method(MlxEngineSpeedHistoryRequest)]
+    async fn dispatch_mlx_engine_speed_history(
+        &self,
+        req: MlxEngineSpeedHistoryRequest,
+    ) -> Result<MlxEngineSpeedHistoryResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_speed_history(req).await
+    }
+
     #[custom_method(MlxEngineReplicaProgressRequest)]
     async fn dispatch_mlx_engine_replica_progress(
         &self,

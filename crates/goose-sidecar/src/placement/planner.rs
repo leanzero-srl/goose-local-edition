@@ -183,7 +183,7 @@ pub struct Speed {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "kind")]
 pub enum Action {
     /// Mount it on this Mac's single engine.
     MountHere,
@@ -196,7 +196,7 @@ pub enum Action {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "code")]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "code")]
 pub enum Outcome {
     Best,
     /// The fastest placement cannot be started yet; this one is the best that can.
@@ -252,7 +252,7 @@ impl Candidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "kind")]
 pub enum Badge {
     FitsThisMac,
     FitsPeer { name: String },

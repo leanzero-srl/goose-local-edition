@@ -186,7 +186,7 @@ fn gib(bytes: u64) -> String {
 const PIPELINE_MODULE: &str = "rapid_mlx.distributed.pipeline_qwen4";
 
 /// Prints the node's Metal working-set ceiling in bytes (mlx 0.32's `mx.device_info()`).
-const GPU_CEILING_PROBE: &str =
+pub const GPU_CEILING_PROBE: &str =
     "import mlx.core as mx; print(mx.device_info()['max_recommended_working_set_size'])";
 
 /// How many of a node's biggest apps a short node names.
@@ -1288,7 +1288,7 @@ fn stage_line(
 /// Run the fork's planner once: `plan --json` over every node's RAM and goose's measured
 /// available memory, at the batch the ranks are launched with. Exit 0 = fits, 2 = does not fit
 /// (JSON either way); anything else is the planner failing, named with its own last words.
-async fn run_fork_planner(
+pub async fn run_fork_planner(
     config: &DistributedConfig,
     exec: &Arc<dyn NodeExec>,
     python: &str,

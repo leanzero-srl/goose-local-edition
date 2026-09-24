@@ -731,6 +731,9 @@
   "composerReadiness.openProviders": {
     "defaultMessage": "Buka Providers"
   },
+  "composerReadiness.remote": {
+    "defaultMessage": "Dihidangkan dari {peer} · {state}"
+  },
   "composerReadiness.unmounted": {
     "defaultMessage": "Tiada model dipasang — {nodes}"
   },
@@ -3899,6 +3902,9 @@
   "mlxStateTile.serving": {
     "defaultMessage": "Melayan"
   },
+  "mlxStateTile.servingFrom": {
+    "defaultMessage": "Sembang: dihidangkan dari {peer} · {state}"
+  },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Siapa yang menggunakannya tidak dapat dibaca: {detail}"
   },
@@ -4310,8 +4316,14 @@
   "noNodeNotice.ready": {
     "defaultMessage": "Nod sudah sedia — cuba lagi untuk menghantar mesej anda sekali lagi."
   },
+  "noNodeNotice.remoteDown": {
+    "defaultMessage": "Dihidangkan dari {peer}, tetapi enjinnya tidak menjawab melalui LeanZero Link."
+  },
   "noNodeNotice.retry": {
     "defaultMessage": "Cuba lagi"
+  },
+  "noNodeNotice.routedRemote": {
+    "defaultMessage": "Dihidangkan dari {peer} — enjin Mac ini sendiri diketepikan selagi sembang dihantar ke sana."
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Swarm menyemak setiap nod aktif dan tiada satu pun boleh menerima mesej ini."

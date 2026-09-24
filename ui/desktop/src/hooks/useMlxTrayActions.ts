@@ -16,6 +16,7 @@ import {
 } from '../acp/mlx-distributed';
 import { MLX_STATUS_POLL_MS } from '../components/leanzero-swarm/mlxLiveStats';
 import { useFeatures } from '../contexts/FeaturesContext';
+import { useMlxRemoteReporter } from './useMlxRemoteReporter';
 import { toastError } from '../toasts';
 import { errorMessage } from '../utils/conversionUtils';
 
@@ -148,6 +149,7 @@ export function useMlxTrayActions(): void {
   const intl = useIntl();
   const { mlxDistributed } = useFeatures();
   useMlxDistributedReporter(mlxDistributed);
+  useMlxRemoteReporter();
   useEffect(() => {
     const onAction = (_event: IpcRendererEvent, ...args: unknown[]) => {
       const action = args[0];

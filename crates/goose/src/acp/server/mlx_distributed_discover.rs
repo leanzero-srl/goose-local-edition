@@ -84,6 +84,14 @@ pub(super) fn discover_script(extra_roots: &[String]) -> String {
         format!("echo; echo @@uv; {}", provision::uv_candidates_script()),
         env_probe("env", &EnvSpec::tensor()),
         env_probe("envpipeline", &EnvSpec::pipeline()),
+        format!("echo; echo @@chip; {}", goose_sidecar::placement::chip::CHIP_PROBE_SCRIPT),
+        format!(
+            "echo; echo @@gpu; found=; for P in \"$HOME\"/{envs}/{} \"$HOME\"/{envs}/{}; do if [ -x \"$P\" ]; then found=1; \"$P\" -c {} 2>&1 | /usr/bin/tail -1; break; fi; done; [ -n \"$found\" ] || echo 'absent: no goose-managed mlx environment on this Mac'",
+            sh_quote(&format!("{}/bin/python", EnvSpec::tensor().name)),
+            sh_quote(&format!("{}/bin/python", EnvSpec::pipeline().name)),
+            sh_quote(goose_sidecar::distributed::preflight::GPU_CEILING_PROBE),
+            envs = provision::ENVS_DIR,
+        ),
         "echo; echo @@models".to_string(),
         "model() { d=\"${1%/}\"; [ -f \"$d/config.json\" ] || return 0; echo \"M $d\"; echo \"T $(/usr/bin/plutil -extract model_type raw -o - \"$d/config.json\" 2>&1)\"; for f in \"$d\"/*; do [ -f \"$f\" ] && /usr/bin/stat -L -f 'F %z %N' \"$f\"; done; for s in \"$d\"/SHA256SUMS \"$d\"/SHA256SUMS.txt; do [ -f \"$s\" ] && echo \"S $(/usr/bin/shasum -a 256 \"$s\")\"; done; return 0; }".to_string(),
         "root() { r=\"${1%/}\"; [ -d \"$r\" ] || return 0; echo \"R $r\"; for a in \"$r\"/*/; do model \"$a\"; for b in \"$a\"*/; do model \"$b\"; done; done; }".to_string(),
@@ -225,6 +233,10 @@ pub(super) struct NodeProbe {
     pub pipeline_env: Option<EnvProbe>,
     pub models: Vec<ModelDir>,
     pub roots: Vec<String>,
+    /// The `@@chip` answer, raw; `None` = the node's goose predates the section.
+    pub chip: Option<String>,
+    /// The `@@gpu` answer (Metal's ceiling via the managed env's mlx), raw; `None` as above.
+    pub gpu: Option<String>,
 }
 
 pub(super) fn parse_node(text: &str) -> Result<NodeProbe, String> {
@@ -271,6 +283,8 @@ pub(super) fn parse_node(text: &str) -> Result<NodeProbe, String> {
         pipeline_env: sections.get("envpipeline").and_then(|t| parse_env(t)),
         models,
         roots,
+        chip: sections.get("chip").cloned(),
+        gpu: sections.get("gpu").cloned(),
     })
 }
 
@@ -1078,12 +1092,24 @@ pub(super) async fn discover(
     let hosts: Vec<Option<String>> = std::iter::once(None)
         .chain(peers.iter().map(|p| Some(p.clone())))
         .collect();
-    let probes = futures::future::join_all(hosts.iter().map(|host| {
+    let probes = probe_nodes(exec, &hosts, extra_roots).await;
+    let mut result = compose(&hosts, &probes, context);
+    result.probe_ms = started.elapsed().as_millis() as u64;
+    result
+}
+
+/// The one probe script answered by each host (`None` = this Mac), in parallel. A LeanZero Link
+/// Mac runs goose's probe itself (its own goosed builds the script); an ssh host runs this one.
+pub(super) async fn probe_nodes(
+    exec: Arc<dyn NodeExec>,
+    hosts: &[Option<String>],
+    extra_roots: &BTreeMap<Option<String>, Vec<String>>,
+) -> Vec<Result<NodeProbe, String>> {
+    futures::future::join_all(hosts.iter().map(|host| {
         let exec = Arc::clone(&exec);
         let roots = extra_roots.get(host).cloned().unwrap_or_default();
         let script = discover_script(&roots);
         async move {
-            // A LeanZero Link Mac runs goose's probe itself (its own goosed builds the script).
             let answer = match link_control::link_peer(host.as_deref()) {
                 Some(peer) => link_control::discover(peer, &roots).await,
                 None => {
@@ -1101,10 +1127,7 @@ pub(super) async fn discover(
             }
         }
     }))
-    .await;
-    let mut result = compose(&hosts, &probes, context);
-    result.probe_ms = started.elapsed().as_millis() as u64;
-    result
+    .await
 }
 
 /// The peer's `hostname -s` when the answer starts with the marker line a real shell printed.

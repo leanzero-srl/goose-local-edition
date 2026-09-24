@@ -124,6 +124,19 @@ describe('parseNoNodeError', () => {
   it('is null for any other text', () => {
     expect(parseNoNodeError('Ran into this error: rate limited.')).toBeNull();
   });
+
+  it('names the peer when chat is routed to a LeanZero Link peer (the router’s own words)', () => {
+    const rows = parseNoNodeError(
+      "swarm chat: no node can serve this turn — mihai-mlx: this Mac's MLX chat is served from worksmacstudio-lan-9c1e2a (remote single, node remote-worksmacstudio-lan-9c1e2a) — stop it to use this Mac's own engine; remote-worksmacstudio-lan-9c1e2a: worksmacstudio-lan-9c1e2a's MLX engine is not serving through Link — v1/models answered 502 Bad Gateway: engineUnreachable: no MLX engine answers at http://127.0.0.1:8090 on WorksMacStudio.lan"
+    );
+    expect(rows?.map((r) => [r.nodeId, r.reason])).toEqual([
+      ['mihai-mlx', { kind: 'mlx-routed-remote', peer: 'worksmacstudio-lan-9c1e2a' }],
+      [
+        'remote-worksmacstudio-lan-9c1e2a',
+        { kind: 'mlx-remote-down', peer: 'worksmacstudio-lan-9c1e2a' },
+      ],
+    ]);
+  });
 });
 
 describe('resolveMountTarget', () => {

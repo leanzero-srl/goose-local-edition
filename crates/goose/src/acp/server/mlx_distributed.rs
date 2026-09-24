@@ -316,7 +316,7 @@ fn stop_to_dto(report: StopReport) -> MlxDistributedStopReportDto {
     }
 }
 
-fn persisted_config() -> Result<Option<DistributedConfig>, agent_client_protocol::Error> {
+pub(super) fn persisted_config() -> Result<Option<DistributedConfig>, agent_client_protocol::Error> {
     match Config::global().get_param::<DistributedConfig>(MLX_DISTRIBUTED_CONFIG_KEY) {
         Ok(config) => Ok(Some(config)),
         Err(ConfigError::NotFound(_)) => Ok(None),
