@@ -39,12 +39,39 @@ vi.mock('../acp/mlx-distributed', async () => ({
   subscribeMlxDistributedStatus: (fn: () => void) => store.subscribe(fn),
 }));
 
+const remoteStop = vi.fn();
+vi.mock('../acp/mlx-remote-single', async (importActual) => ({
+  ...(await importActual<typeof import('../acp/mlx-remote-single')>()),
+  mlxRemoteSingleStop: (...a: unknown[]) => remoteStop(...a),
+}));
+
 import { renderHook, waitFor } from '@testing-library/react';
 import {
   DistributedStopNotVerified,
   runMlxTrayAction,
   useMlxDistributedReporter,
 } from './useMlxTrayActions';
+
+describe('runMlxTrayAction — the tray’s Stop for a route to another Mac', () => {
+  beforeEach(() => remoteStop.mockReset());
+
+  it('withdraws the route and unmounts the model there — the same call Run it’s Stop makes', async () => {
+    remoteStop.mockResolvedValue({ unmounted: true, status: { state: 'off' } });
+    await runMlxTrayAction('stop-remote');
+    expect(remoteStop).toHaveBeenCalledWith(false);
+  });
+
+  it('a peer left mounted is said, not swallowed', async () => {
+    remoteStop.mockResolvedValue({
+      unmounted: false,
+      unmountError: "Work's Mac Studio's engine was left mounted: peer unreachable",
+      status: { state: 'off' },
+    });
+    await expect(runMlxTrayAction('stop-remote')).rejects.toThrow(
+      "Work's Mac Studio's engine was left mounted: peer unreachable"
+    );
+  });
+});
 
 describe('runMlxTrayAction — the tray’s Mount/Unmount through the renderer’s ACP client', () => {
   beforeEach(() => {

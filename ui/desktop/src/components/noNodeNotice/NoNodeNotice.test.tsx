@@ -7,7 +7,7 @@ import { IntlProvider } from 'react-intl';
 import { createUserMessage, type Message } from '../../types/message';
 import { assertStudioClean } from '../lz/assertStudioClean';
 import GooseMessage from '../GooseMessage';
-import NoNodeNotice from './NoNodeNotice';
+import NoNodeNotice, { routedPeerName } from './NoNodeNotice';
 import { resolveMountTarget, shortModelName } from './mlxMount';
 import { parseNoNodeError } from './parseNoNodeError';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
@@ -170,6 +170,23 @@ describe('shortModelName', () => {
     );
     expect(shortModelName('qwen3.6-27b')).toBe('qwen3.6-27b');
     expect(shortModelName('org/model/')).toBe('model');
+  });
+});
+
+describe('routedPeerName — the router’s hostname, read as the Mac’s one name', () => {
+  const ROUTE = {
+    state: 'ready',
+    peer: 'worksmacstudio-lan-9c1e2a',
+    peerHostname: 'WorksMacStudio.lan',
+    peerComputerName: "Work's Mac Studio",
+  };
+  it('the route this window knows names the Mac by its owner’s name', () => {
+    expect(routedPeerName('WorksMacStudio.lan', ROUTE)).toBe("Work's Mac Studio");
+    expect(routedPeerName('worksmacstudio-lan-9c1e2a', ROUTE)).toBe("Work's Mac Studio");
+  });
+  it('another Mac, or no route known, keeps the router’s word', () => {
+    expect(routedPeerName('mini.lan', ROUTE)).toBe('mini.lan');
+    expect(routedPeerName('WorksMacStudio.lan', null)).toBe('WorksMacStudio.lan');
   });
 });
 

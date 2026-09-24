@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Phục vụ trên nhiều máy Mac"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "Đang phục vụ trên {peer}"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Không đọc được cài đặt động cơ."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Dừng"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "Không thể dừng phục vụ từ Mac kia."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB mỗi token thay vì {bf16} KiB — cùng bộ nhớ chứa được {ratio}× ngữ cảnh."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rank {rank} của engine phân tán của {requester} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "Đang phục vụ từ {peer}"
   },
   "mlxMode.single": {
     "defaultMessage": "Đơn · máy Mac này"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Đang đọc số liệu trực tiếp…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "Engine trên {peer} không phục vụ, và goose không nêu lý do."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Đang tải mô hình trên {peer}"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Yêu cầu đang xử lý"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Đang phục vụ"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Trò chuyện: đang phục vụ từ {peer} · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Không đọc được ai đang dùng: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "Chưa cấu hình mô hình để nạp. Hãy chọn một mô hình trong Providers › LeanZero MLX."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "Không thể dừng phục vụ từ Mac kia"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Không gỡ được engine MLX"

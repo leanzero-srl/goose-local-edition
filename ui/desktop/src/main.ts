@@ -142,7 +142,7 @@ import {
 } from './utils/mlxDistributedReport';
 import { PHASE_HEX, type EnginePhase } from './components/lz/tokens';
 import { phaseDotBitmap } from './utils/phaseDot';
-import { isMlxRemoteReport, type MlxRemoteReport } from './utils/mlxRemoteReport';
+import { isMlxRemoteReport, remoteLiveBase, type MlxRemoteReport } from './utils/mlxRemoteReport';
 import {
   isLinkTrayReport,
   pickLinkTrayReport,
@@ -2124,6 +2124,8 @@ const mlxMonitor = new MlxEngineMonitor({
     mlxDistributed && Date.now() - mlxDistributed.atMs <= MLX_DISTRIBUTED_STALE_MS
       ? distributedLiveBase(mlxDistributed.report)
       : null,
+  // A route serving this Mac's chat from a linked Mac: its engine, through goosed's loopback relay.
+  remoteBaseUrl: () => remoteLiveBase(mlxRemote),
   swarmRuns: mlxSwarmRuns,
   onSnapshot: (snapshot) => renderMlxTray(snapshot),
   schedule: (fn, ms) => {
@@ -2322,8 +2324,11 @@ ipcMain.on('macs-report', (event, report: unknown) => {
 });
 ipcMain.on('mlx-remote-report', (_event, report: unknown) => {
   if (!isMlxRemoteReport(report)) return;
+  const wasLive = remoteLiveBase(mlxRemote);
   mlxRemote = report;
   renderMlxTray(mlxMonitor.current());
+  // The loop reads the peer's engine while the route serves, and this Mac's own once it ends.
+  if (remoteLiveBase(report) || wasLive) mlxMonitor.wake();
 });
 ipcMain.on('mlx-distributed-report', (_event, report: unknown) => {
   if (!isMlxDistributedReport(report)) return;

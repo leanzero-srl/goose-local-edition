@@ -1,18 +1,49 @@
 import { describe, expect, it } from 'vitest';
-import { isMlxRemoteReport, remoteTrayLine, toMlxRemoteReport } from './mlxRemoteReport';
+import {
+  isMlxRemoteReport,
+  remoteLiveBase,
+  remoteTrayLine,
+  toMlxRemoteReport,
+} from './mlxRemoteReport';
 import { buildMlxTrayModel } from './mlxTray';
-import { INITIAL_SNAPSHOT } from './mlxEngineMonitor';
+import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
+import { NO_RATES, parseMlxLiveStatus } from '../components/leanzero-swarm/mlxLiveStats';
+import {
+  GENERATING_STATUS,
+  IDLE_STATUS,
+  PREFILL_STATUS,
+} from '../components/leanzero-swarm/mlxLiveStatus.fixtures';
+
+const RELAY = 'http://127.0.0.1:61001/relay/cafe';
 
 const READY = {
   state: 'ready',
   peer: 'worksmacstudio-lan-9c1e2a',
-  peerHostname: 'worksmacstudio-lan-9c1e2a',
+  peerHostname: 'WorksMacStudio.lan',
+  peerComputerName: "Work's Mac Studio",
+  baseUrl: RELAY,
   modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
   servedModelId: 'mihai-qwen3.8-27b',
   capacity: 8,
   activeRequests: 0,
   generationTps: 22.2,
 };
+
+function remoteSnapshot(body: unknown): MlxEngineSnapshot {
+  const read = parseMlxLiveStatus(body);
+  if (!read.ok) throw new Error(read.detail);
+  return {
+    ...INITIAL_SNAPSHOT,
+    engine: 'remote',
+    mode: 'running',
+    baseUrl: RELAY,
+    stats: read.stats,
+    last: NO_RATES,
+  };
+}
+
+const labels = (model: ReturnType<typeof buildMlxTrayModel>) =>
+  model.items.flatMap((i) => (i.type === 'separator' ? [] : [i.label]));
 
 describe('the remote-single report main receives', () => {
   it('no route is null — chat stays on this Mac, nothing is claimed', () => {
@@ -21,49 +52,112 @@ describe('the remote-single report main receives', () => {
     expect(isMlxRemoteReport(null)).toBe(true);
   });
 
-  it('a live route projects its facts and passes the IPC check; a forged one does not', () => {
+  it('a live route projects its facts — the Mac by its owner’s name — and passes the IPC check', () => {
     const report = toMlxRemoteReport(READY);
     expect(report).toEqual({
       state: 'ready',
-      peerHostname: 'worksmacstudio-lan-9c1e2a',
+      peerName: "Work's Mac Studio",
       modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
-      generationTps: 22.2,
+      baseUrl: RELAY,
       activeRequests: 0,
       lastError: null,
     });
     expect(isMlxRemoteReport(report)).toBe(true);
-    expect(isMlxRemoteReport({ ...report, generationTps: 'fast' })).toBe(false);
+    expect(isMlxRemoteReport({ ...report, activeRequests: 'many' })).toBe(false);
+    expect(isMlxRemoteReport({ ...report, baseUrl: 7 })).toBe(false);
     expect(isMlxRemoteReport({ state: 'ready' })).toBe(false);
   });
 
-  it('the tray says where chat goes: "Serving from <peer>", the model, the peer’s own rate', () => {
-    const report = toMlxRemoteReport(READY)!;
-    expect(remoteTrayLine(report)).toBe(
-      'Serving from worksmacstudio-lan-9c1e2a · Qwen3.8-27B-Atlassian-Q8-mlx · 22.2 tok/s last reply'
-    );
-    const model = buildMlxTrayModel(INITIAL_SNAPSHOT, {
-      canAct: true,
-      mountModelId: null,
-      distributed: null,
-      remote: report,
-    });
-    expect(model.title).toBe('Remote · 22.2 tok/s');
-    expect(model.items[0]).toMatchObject({ type: 'info' });
-    expect((model.items[0] as { label: string }).label).toMatch(
-      /^Serving from worksmacstudio-lan-9c1e2a · Qwen3\.8-27B/
-    );
+  it('an older backend without the computer name falls back to the hostname, never the node id', () => {
+    const older = toMlxRemoteReport({ ...READY, peerComputerName: undefined, baseUrl: undefined })!;
+    expect(older.peerName).toBe('WorksMacStudio.lan');
+    expect(older.baseUrl).toBeNull();
+    expect(remoteLiveBase(older)).toBeNull();
+  });
 
-    const mounting = toMlxRemoteReport({ ...READY, state: 'mounting', generationTps: undefined })!;
+  it('main reads the relay only while the route serves', () => {
+    const report = toMlxRemoteReport(READY)!;
+    expect(remoteLiveBase(report)).toBe(RELAY);
+    expect(remoteLiveBase({ ...report, state: 'mounting' })).toBeNull();
+    expect(remoteLiveBase({ ...report, state: 'failed' })).toBeNull();
+    expect(remoteLiveBase(null)).toBeNull();
+  });
+});
+
+describe('the tray while chat is served from a linked Mac', () => {
+  const options = (remote: ReturnType<typeof toMlxRemoteReport>) => ({
+    canAct: true,
+    mountModelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+    distributed: null,
+    remote,
+  });
+
+  it('WRITING on the peer: green, its live rate in the title, the live lines, and a Stop', () => {
+    const report = toMlxRemoteReport(READY)!;
+    const model = buildMlxTrayModel(remoteSnapshot(GENERATING_STATUS), options(report));
+    expect(model.title).toBe('Remote · 19.9 tok/s');
+    expect(model.phase).toBe('writing');
+    expect(model.items[0]).toMatchObject({
+      type: 'info',
+      label: "Serving from Work's Mac Studio · Qwen3.8-27B-Atlassian-Q8-mlx",
+      phase: 'writing',
+    });
+    expect(labels(model)).toContain('Writing 19.9 tok/s');
+    expect(model.items).toContainEqual({
+      type: 'action',
+      label: "Stop serving from Work's Mac Studio",
+      action: 'stop-remote',
+      enabled: true,
+    });
+    // This Mac's own engine is set aside: no Mount offered over a live route.
+    expect(model.items.some((i) => i.type === 'action' && i.action === 'mount')).toBe(false);
+  });
+
+  it('READING a prompt on the peer is blue; IDLE is grey — the last reply’s rate never paints it green', () => {
+    const report = toMlxRemoteReport(READY)!;
+    const reading = buildMlxTrayModel(remoteSnapshot(PREFILL_STATUS), options(report));
+    expect(reading.phase).toBe('reading');
+    expect(reading.title).toMatch(/^Remote · Reading/);
+    const idle = buildMlxTrayModel(remoteSnapshot(IDLE_STATUS), options(report));
+    expect(idle.phase).toBe('idle');
+    expect(idle.title).toBe('Remote · Idle');
+  });
+
+  it('mounting there is amber and says so; failed is red with the peer’s words', () => {
+    const mounting = toMlxRemoteReport({ ...READY, state: 'mounting' })!;
     expect(remoteTrayLine(mounting)).toBe(
-      'Serving from worksmacstudio-lan-9c1e2a · Qwen3.8-27B-Atlassian-Q8-mlx · mounting'
+      "Serving from Work's Mac Studio · Qwen3.8-27B-Atlassian-Q8-mlx · mounting"
     );
-    expect(
-      buildMlxTrayModel(INITIAL_SNAPSHOT, {
-        canAct: true,
-        mountModelId: null,
-        distributed: null,
-        remote: mounting,
-      }).title
-    ).toBe('Remote · mounting');
+    const m = buildMlxTrayModel(INITIAL_SNAPSHOT, options(mounting));
+    expect(m.title).toBe('Remote · mounting');
+    expect(m.phase).toBe('loading');
+
+    const failed = toMlxRemoteReport({
+      ...READY,
+      state: 'failed',
+      lastError: "Work's Mac Studio's goose reports its engine failed (exit 137)",
+    })!;
+    const f = buildMlxTrayModel(INITIAL_SNAPSHOT, options(failed));
+    expect(f.title).toBe('Remote failed');
+    expect(f.phase).toBe('failed');
+    expect(labels(f)).toContain(
+      "Error: Work's Mac Studio's goose reports its engine failed (exit 137)"
+    );
+  });
+
+  it('a relay read that failed says why instead of inventing live lines', () => {
+    const report = toMlxRemoteReport(READY)!;
+    const model = buildMlxTrayModel(
+      {
+        ...INITIAL_SNAPSHOT,
+        engine: 'remote',
+        mode: 'unknown',
+        statusDetail: 'timeout: no answer within 1500 ms',
+      },
+      options(report)
+    );
+    expect(model.title).toBe('Remote');
+    expect(model.phase).toBe('idle');
+    expect(labels(model)).toContain('Live stats unavailable: timeout: no answer within 1500 ms');
   });
 });

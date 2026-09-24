@@ -50,10 +50,12 @@ export function isMlxEngineReport(value: unknown): value is MlxEngineReport {
 
 export interface MlxEngineSnapshot {
   /**
-   * Which engine this read is of: the single engine, or the distributed run's rank 0 while that run
-   * owns this Mac and is up (its `/v1/status` answers in the single engine's shape).
+   * Which engine this read is of: the single engine, the distributed run's rank 0 while that run
+   * owns this Mac and is up, or — while this Mac's chat is routed to a linked Mac — that Mac's
+   * single engine through goosed's loopback relay. All answer `/v1/status` in the single engine's
+   * shape.
    */
-  engine: 'single' | 'distributed';
+  engine: 'single' | 'distributed' | 'remote';
   mode: MlxEngineMode;
   /** The id the engine serves (its own `/v1/status` model, else goose's served id, else the HF id). */
   modelId: string | null;
@@ -74,6 +76,8 @@ export interface MlxEngineMonitorDeps {
   configBaseUrl(): string | null;
   /** Rank 0's base while the distributed run owns this Mac and is up (`distributedLiveBase`). */
   distributedBaseUrl(): string | null;
+  /** The relay to the peer's engine while a remote single serves this Mac's chat (`remoteLiveBase`). */
+  remoteBaseUrl(): string | null;
   swarmRuns(): string[];
   onSnapshot(snapshot: MlxEngineSnapshot): void;
   schedule(fn: () => void, ms: number): () => void;
@@ -169,22 +173,28 @@ export class MlxEngineMonitor {
 
   private async read(): Promise<MlxEngineSnapshot> {
     const distributedBase = this.deps.distributedBaseUrl();
-    if (distributedBase) return this.readDistributed(distributedBase);
+    if (distributedBase) return this.readRouted('distributed', distributedBase);
+    const remoteBase = this.deps.remoteBaseUrl();
+    if (remoteBase) return this.readRouted('remote', remoteBase);
     return { ...(await this.readSingle()), engine: 'single' };
   }
 
   /**
-   * The distributed run's rank 0, through the single engine's parser and rates. Its lifecycle is
-   * the renderer's report (the tray's distributed branch); this read carries only what it is doing.
+   * The distributed run's rank 0, or a linked Mac's engine through the relay, through the single
+   * engine's parser and rates. Its lifecycle is the renderer's report (the tray's distributed and
+   * remote branches); this read carries only what it is doing.
    */
-  private async readDistributed(baseUrl: string): Promise<MlxEngineSnapshot> {
-    const held = this.snapshot.engine === 'distributed' ? this.snapshot : null;
+  private async readRouted(
+    engine: 'distributed' | 'remote',
+    baseUrl: string
+  ): Promise<MlxEngineSnapshot> {
+    const held = this.snapshot.engine === engine ? this.snapshot : null;
     const last = held?.last ?? NO_RATES;
     const result = await this.deps.readStatus(baseUrl);
     if (!result.ok) {
       return {
         ...INITIAL_SNAPSHOT,
-        engine: 'distributed',
+        engine,
         mode: result.error === 'timeout' && held ? held.mode : 'unknown',
         baseUrl,
         stats: result.error === 'timeout' ? (held?.stats ?? null) : null,
@@ -196,7 +206,7 @@ export class MlxEngineMonitor {
     if (!parsed.ok) {
       return {
         ...INITIAL_SNAPSHOT,
-        engine: 'distributed',
+        engine,
         baseUrl,
         statusDetail: parsed.detail,
         last,
@@ -204,7 +214,7 @@ export class MlxEngineMonitor {
     }
     const stats = parsed.stats;
     return {
-      engine: 'distributed',
+      engine,
       mode: 'running',
       modelId: null,
       baseUrl,

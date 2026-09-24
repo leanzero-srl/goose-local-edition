@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Bedient über mehrere Macs"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "Bereitgestellt auf {peer}"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Die Engine-Einstellungen konnten nicht gelesen werden."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Stoppen"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "Die Bereitstellung vom anderen Mac konnte nicht gestoppt werden."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB pro Token statt {bf16} KiB — derselbe Speicher fasst {ratio}× so viel Kontext."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rang {rank} der verteilten Engine von {requester} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "Bereitgestellt von {peer}"
   },
   "mlxMode.single": {
     "defaultMessage": "Einzeln · dieser Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Live-Werte werden gelesen…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "Die Engine auf {peer} stellt nichts bereit, und goose hat keinen Grund genannt."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Das Modell wird auf {peer} geladen"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Laufende Anfragen"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Bedient"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Chat: bereitgestellt von {peer} · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Wer sie nutzt, ließ sich nicht lesen: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "Kein Modell zum Mounten konfiguriert. Wähle eines unter Providers › LeanZero MLX."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "Die Bereitstellung vom anderen Mac konnte nicht gestoppt werden"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Die MLX-Engine konnte nicht ausgehängt werden"

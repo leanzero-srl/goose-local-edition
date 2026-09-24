@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,6 +10,7 @@ import { ComposerReadinessStrip, mlxProviderReadiness, swarmReadiness } from './
 import type { MountLookup } from './mlxMount';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
+import { mlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 
 const mockStatus = vi.fn<() => Promise<MlxEngineStatus>>();
 const mockMount = vi.fn<(modelId: string) => Promise<void>>();
@@ -281,6 +282,29 @@ beforeEach(() => {
   mockMount.mockResolvedValue(undefined);
   mockSettings.mockResolvedValue(SETTINGS);
   mockReadConfig.mockResolvedValue({ devices: [MLX_NODE] });
+});
+
+describe('ComposerReadinessStrip — a route to another Mac', () => {
+  it('names that Mac the one way (its owner’s name), never its mesh hostname', async () => {
+    mockExtMethod.mockResolvedValue({
+      status: {
+        state: 'ready',
+        peer: 'worksmacstudio-lan-9c1e2a',
+        peerHostname: 'WorksMacStudio.lan',
+        peerComputerName: "Work's Mac Studio",
+        modelId: HF,
+      },
+    });
+    await mlxRemoteSingleStatus();
+    wrap('swarm');
+    const strip = await screen.findByTestId('composer-readiness');
+    expect(strip.textContent).toContain("Serving from Work's Mac Studio · ready");
+    expect(strip.textContent).not.toContain('WorksMacStudio.lan');
+    mockExtMethod.mockResolvedValue({ status: { state: 'off' } });
+    await act(async () => {
+      await mlxRemoteSingleStatus();
+    });
+  });
 });
 
 describe('ComposerReadinessStrip (UX audit C1)', () => {

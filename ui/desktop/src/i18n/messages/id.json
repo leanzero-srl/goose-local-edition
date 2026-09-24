@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Melayani lintas Mac"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "Melayani di {peer}"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Tidak dapat membaca pengaturan mesin."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Hentikan"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "Tidak dapat menghentikan layanan dari Mac lain."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token, bukan {bf16} KiB — memori yang sama memuat {ratio}× konteks."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rank {rank} dari engine terdistribusi {requester} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "Dilayani dari {peer}"
   },
   "mlxMode.single": {
     "defaultMessage": "Tunggal · Mac ini"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Membaca statistik langsung…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "Mesin di {peer} tidak melayani, dan goose tidak menyebutkan alasannya."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Memuat model di {peer}"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Permintaan yang berjalan"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Melayani"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Chat: dilayani dari {peer} · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Siapa yang memakainya tidak dapat dibaca: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "Belum ada model yang dikonfigurasi untuk dipasang. Pilih satu di Providers › LeanZero MLX."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "Tidak dapat menghentikan layanan dari Mac lain"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Mesin MLX tidak dapat dilepas"

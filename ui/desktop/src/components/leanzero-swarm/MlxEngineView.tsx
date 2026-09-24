@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import {
   Download,
   Folder,
@@ -79,7 +87,7 @@ import { FilterCombobox } from './FilterCombobox';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
 import { ModelCardModal } from './ModelCardModal';
 import { ModelMatrix, matrixRowCount } from './ModelMatrix';
-import { SELF_KEY, macTarget, peerRefuses, type Mac } from './macs';
+import { SELF_KEY, macTarget, peerRefuses, routePeerName, type Mac } from './macs';
 import { WithMacs, useMacs } from './useMacs';
 import { MlxStateTile } from './MlxStateTile';
 import type { MlxServing } from '../../utils/mlxServing';
@@ -107,7 +115,14 @@ import { defineMessages, useIntl } from '../../i18n';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { DistributedEngineSection } from './DistributedEngineSection';
 import { modeSummary, ownsTheMac } from './mlxDistributed';
-import { formatMlxMode } from './mlxModeLabel';
+import { formatMlxMode, formatRemoteMode } from './mlxModeLabel';
+import {
+  latestMlxRemoteSingleStatus,
+  mlxRemoteSingleStop,
+  remoteRouteUp,
+  subscribeMlxRemoteSingleStatus,
+  type MlxRemoteSingleStatus,
+} from '../../acp/mlx-remote-single';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import { PlacementBadge, PlacementCard, badgesOf, usePlacementPlans } from './PlacementCard';
 import type { PlacementBadge as PlacementBadgeDto } from '../../acp/mlx-placement';
@@ -125,6 +140,12 @@ const i18n = defineMessages({
   servingDistributed: {
     id: 'mlxEngineView.servingDistributed',
     defaultMessage: 'Serving across Macs',
+  },
+  servingRemote: { id: 'mlxEngineView.servingRemote', defaultMessage: 'Serving on {peer}' },
+  stopRemote: { id: 'mlxEngineView.stopRemote', defaultMessage: 'Stop' },
+  stopRemoteFailed: {
+    id: 'mlxEngineView.stopRemoteFailed',
+    defaultMessage: 'Could not stop serving from the other Mac.',
   },
   mountBlocked: { id: 'mlxEngineView.mountBlocked', defaultMessage: 'Mount blocked' },
   mountFailed: { id: 'mlxEngineView.mountFailed', defaultMessage: 'Mount failed' },
@@ -703,6 +724,12 @@ interface EngineSectionProps {
   splitDetails: ReactNode;
   /** Which engine owns this Mac, in words — on the tile. */
   modeLabel: string;
+  /** The route serving this Mac's chat from a linked Mac's engine, while it is up. */
+  remote: MlxRemoteSingleStatus | null;
+  /** Stop that route (and unmount the model there). */
+  onStopRemote: () => void;
+  /** Why the last Stop of that route did not finish — goose's words. */
+  remoteStopError: string | null;
 }
 
 function EngineSection(props: EngineSectionProps) {
@@ -728,6 +755,9 @@ function EngineSection(props: EngineSectionProps) {
     distributedCapability,
     splitDetails,
     modeLabel,
+    remote,
+    onStopRemote,
+    remoteStopError,
   } = props;
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Re-planned whenever the model list or what this Mac serves changes: a mount moves every fit.
@@ -746,8 +776,11 @@ function EngineSection(props: EngineSectionProps) {
   // Starting and stopping belong to Run it; the one thing left here is reclaiming an engine a
   // previous goose left listening on the port.
   const offerReclaim = strayPort != null;
-  // What Run it is about: the split's model while the split owns this Mac, else the picked one.
-  const runModelId = distributedOwns ? (distributed?.modelId ?? null) : mountModelId;
+  // What Run it is about: the split's model while the split owns this Mac, the model a linked Mac
+  // serves this Mac's chat with while that route is up, else the picked one.
+  const runModelId = distributedOwns
+    ? (distributed?.modelId ?? null)
+    : (remote?.modelId ?? mountModelId);
   const failedError =
     state === 'failed' && status?.lastError && status.lastError !== mountError
       ? status.lastError
@@ -878,6 +911,14 @@ function EngineSection(props: EngineSectionProps) {
           testId="mlx-mount-failed"
         />
       )}
+      {remoteStopError && (
+        <ToneBanner
+          tone="err"
+          label={intl.formatMessage(i18n.stopRemoteFailed)}
+          text={remoteStopError}
+          testId="mlx-remote-stop-failed"
+        />
+      )}
       {distributedOwns && (
         <ToneBanner
           tone="accent"
@@ -912,22 +953,41 @@ function EngineSection(props: EngineSectionProps) {
           load={singleLoad(status)}
           cost={cost}
           failedError={failedError}
-          action={null}
+          action={
+            remote ? (
+              <Button
+                variant="secondary"
+                icon={<Square />}
+                onClick={onStopRemote}
+                disabled={engineBusy}
+                data-testid="mlx-remote-stop"
+              >
+                {intl.formatMessage(i18n.stopRemote)}
+              </Button>
+            ) : null
+          }
           modeLabel={modeLabel}
           distributed={distributed}
+          remote={remote}
         />
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           <div className="flex min-w-0 flex-col gap-1">
             <span className={TYPE.meta}>
               {distributedOwns
                 ? intl.formatMessage(i18n.servingDistributed)
-                : running || state === 'mounting'
-                  ? 'Serving'
-                  : 'Served model'}
+                : remote
+                  ? intl.formatMessage(i18n.servingRemote, { peer: routePeerName(remote) })
+                  : running || state === 'mounting'
+                    ? 'Serving'
+                    : 'Served model'}
             </span>
             {distributedOwns && distributed?.modelId ? (
               <span className={cx('break-all font-mono text-lz-h2 text-lz-ink')}>
                 {distributed.modelId}
+              </span>
+            ) : remote?.modelId ? (
+              <span className={cx('break-all font-mono text-lz-h2 text-lz-ink')}>
+                {remote.modelId}
               </span>
             ) : mountedModelId && (running || state === 'mounting') ? (
               <span className={cx('break-all font-mono text-lz-h2 text-lz-ink')}>
@@ -2195,7 +2255,17 @@ function MlxEngineViewBody() {
 
   // The distributed engine is supervised by THIS Mac.
   const distributed = useMlxDistributedStatus(mlxDistributed);
-  const modeLabel = formatMlxMode(intl, modeSummary(distributed.status), null);
+  // A route serving this Mac's chat from a linked Mac's engine (remote single): while it is up, the
+  // Engine tab's tile and mode speak for THAT engine — what actually answers chat.
+  const remoteStatus = useSyncExternalStore(
+    subscribeMlxRemoteSingleStatus,
+    latestMlxRemoteSingleStatus
+  );
+  const remote =
+    remoteRouteUp(remoteStatus) && !ownsTheMac(distributed.status) ? remoteStatus : null;
+  const modeLabel = remote
+    ? formatRemoteMode(intl, routePeerName(remote))
+    : formatMlxMode(intl, modeSummary(distributed.status), null);
 
   const [status, setStatus] = useState<MlxEngineStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -2245,6 +2315,12 @@ function MlxEngineViewBody() {
   useEffect(() => {
     distributedNow.current = distributed.status;
   }, [distributed.status]);
+  // While a route serves chat from a linked Mac, the live read is THAT engine's /v1/status through
+  // goosed's loopback relay — the same parser and rates as this Mac's own engine.
+  const remoteNow = useRef(remote);
+  useEffect(() => {
+    remoteNow.current = remote;
+  }, [remote]);
   // The engine the live figures came from: a switch between engines starts the history afresh.
   const liveSource = useRef<string | null>(null);
 
@@ -2256,7 +2332,15 @@ function MlxEngineViewBody() {
       dist && ownsTheMac(dist) && (dist.state === 'ready' || dist.state === 'serving')
         ? dist
         : null;
-    const source = distUp ? 'distributed' : next.state === 'running' ? 'single' : null;
+    const route = remoteNow.current;
+    const remoteUp = !distUp && route?.state === 'ready' ? route : null;
+    const source = distUp
+      ? 'distributed'
+      : remoteUp
+        ? `remote:${remoteUp.peer ?? ''}`
+        : next.state === 'running'
+          ? 'single'
+          : null;
     if (source !== liveSource.current) {
       liveSource.current = source;
       setTpsHistory([]);
@@ -2267,13 +2351,15 @@ function MlxEngineViewBody() {
       setServing(null);
       return;
     }
-    const baseUrl = distUp ? distUp.baseUrl : next.baseUrl;
+    const baseUrl = distUp ? distUp.baseUrl : remoteUp ? remoteUp.baseUrl : next.baseUrl;
     if (!baseUrl) {
       setLive({
         ok: false,
         detail: distUp
           ? 'the distributed engine reported no base URL'
-          : 'the running engine reported no base URL',
+          : remoteUp
+            ? 'this goose does not hand over the relay to the other Mac’s engine (update goose)'
+            : 'the running engine reported no base URL',
       });
       return;
     }
@@ -2374,6 +2460,11 @@ function MlxEngineViewBody() {
   // once to the persisted model.
   useEffect(() => {
     if (userPickedModel.current) return;
+    if (remote?.modelId) {
+      defaultedPicker.current = true;
+      setMountModelId(remote.modelId);
+      return;
+    }
     if ((status?.state === 'running' || status?.state === 'mounting') && status.modelId) {
       defaultedPicker.current = true;
       setMountModelId(status.modelId);
@@ -2385,7 +2476,7 @@ function MlxEngineViewBody() {
       defaultedPicker.current = true;
       setMountModelId(candidate);
     }
-  }, [status?.state, status?.modelId, settings?.modelId]);
+  }, [status?.state, status?.modelId, settings?.modelId, remote?.modelId]);
 
   // The Mac whose sampling profiles the Sampling tab edits: its settings, models and engine.
   const samplingMacObj = macsCtx.macByKey(samplingMac) ?? macsCtx.self;
@@ -2447,6 +2538,23 @@ function MlxEngineViewBody() {
       }
     })();
   }, [mountModelId, refreshStatus]);
+
+  const [remoteStopError, setRemoteStopError] = useState<string | null>(null);
+  const onStopRemote = useCallback(() => {
+    void (async () => {
+      setEngineBusy(true);
+      setRemoteStopError(null);
+      try {
+        const { unmountError } = await mlxRemoteSingleStop(false);
+        if (unmountError) setRemoteStopError(unmountError);
+      } catch (error) {
+        setRemoteStopError(mlxErrorMessage(error, intl.formatMessage(i18n.stopRemoteFailed)));
+      } finally {
+        setEngineBusy(false);
+        void refreshStatus();
+      }
+    })();
+  }, [intl, refreshStatus]);
 
   const onUnmount = useCallback(() => {
     void (async () => {
@@ -2661,6 +2769,9 @@ function MlxEngineViewBody() {
           distributedCapability={mlxDistributed}
           splitDetails={splitDetails}
           modeLabel={modeLabel}
+          remote={remote}
+          onStopRemote={onStopRemote}
+          remoteStopError={remoteStopError}
         />
       )}
       {tab === 'models' && (

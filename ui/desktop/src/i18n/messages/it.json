@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "In servizio su più Mac"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "In servizio su {peer}"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Impossibile leggere le impostazioni del motore."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Arresta"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "Impossibile interrompere il servizio dall’altro Mac."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token invece di {bf16} KiB — la stessa memoria contiene {ratio}× il contesto."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rank {rank} del motore distribuito di {requester} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "Servito da {peer}"
   },
   "mlxMode.single": {
     "defaultMessage": "Singolo · questo Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Lettura delle statistiche in tempo reale…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "Il motore su {peer} non sta servendo e goose non ha indicato alcun motivo."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Caricamento del modello su {peer}"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Richieste in corso"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Serve"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Chat: servita da {peer} · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Non è stato possibile leggere chi lo usa: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "Nessun modello configurato da montare. Scegline uno in Providers › LeanZero MLX."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "Impossibile interrompere il servizio dall’altro Mac"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Impossibile smontare il motore MLX"

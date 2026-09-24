@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
@@ -117,6 +117,32 @@ vi.mock('../../acp/leanzero-link', async (importActual) => {
     leanzeroLinkNodes: (...a: unknown[]) => mockLinkNodes(...a),
   };
 });
+
+// Where chat goes: by default no route (the real store stays empty); the remote-single tests publish
+// one through this store, exactly as a status read would.
+const remoteStore = vi.hoisted(() => {
+  let latest: unknown = null;
+  const listeners = new Set<() => void>();
+  return {
+    latest: () => latest,
+    subscribe: (fn: () => void) => {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    publish: (status: unknown) => {
+      latest = status;
+      for (const fn of listeners) fn();
+    },
+  };
+});
+const mockRemoteStop = vi.fn();
+vi.mock('../../acp/mlx-remote-single', async (importActual) => ({
+  ...(await importActual<typeof import('../../acp/mlx-remote-single')>()),
+  latestMlxRemoteSingleStatus: () => remoteStore.latest(),
+  subscribeMlxRemoteSingleStatus: (fn: () => void) => remoteStore.subscribe(fn),
+  mlxRemoteSingleStatus: async () => remoteStore.latest() ?? { state: 'off' },
+  mlxRemoteSingleStop: (...a: unknown[]) => mockRemoteStop(...a),
+}));
 
 const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: IntlTestWrapper });
 
@@ -246,6 +272,7 @@ async function runHere(): Promise<HTMLElement> {
 beforeEach(() => {
   sessionStorage.clear();
   vi.clearAllMocks();
+  remoteStore.publish(null);
   mockFeatures.leanzeroLink = false;
   mockFeatures.mlxDistributed = false;
   mockLinkStatus.mockResolvedValue({ auth: { state: 'loggedOut' }, nodeCount: 0 });
@@ -820,6 +847,76 @@ describe('MlxEngineView state tile instrument', () => {
   afterEach(() => {
     delete bridge.mlxLiveStatus;
     delete bridge.mlxEngineActivity;
+  });
+
+  const RELAY = 'http://127.0.0.1:61001/relay/cafe';
+  const ROUTE = {
+    state: 'ready',
+    peer: 'worksmacstudio-lan-9c1e2a',
+    peerHostname: 'WorksMacStudio.lan',
+    peerComputerName: "Work's Mac Studio",
+    baseUrl: RELAY,
+    modelId: QWEN,
+    servedModelId: 'leanzero-mlx',
+    capacity: 8,
+    activeRequests: 1,
+    generationTps: 25.9,
+  };
+
+  it('a REMOTE single serving chat IS the tile: its Mac by name, its live rates, its colour, a Stop', async () => {
+    // Live on 2026-09-24: the Studio answered chat at 25.9 tok/s while this tile read
+    // "Stopped · Single · this Mac · 30.6 GB to mount · Fits".
+    const live = vi.fn(async (baseUrl: string) => ({
+      ok: true,
+      url: `${baseUrl}/v1/status`,
+      body: GENERATING_STATUS,
+    }));
+    bridge.mlxLiveStatus = live;
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    mockRemoteStop.mockResolvedValue({ unmounted: true, status: { state: 'off' } });
+    remoteStore.publish(ROUTE);
+    const user = userEvent.setup();
+    const { unmount } = render(<MlxEngineView />);
+    const tps = await screen.findByTestId('mlx-live-tps');
+    expect(tps).toHaveTextContent('19.9');
+    expect(live).toHaveBeenCalledWith(RELAY);
+    const tile = screen.getByTestId('mlx-state-badge');
+    expect(tile).toHaveAttribute('data-mode', 'remote');
+    expect(tile).toHaveAttribute('data-state', 'running');
+    expect(tile.className).toContain('bg-lz-phase-writing');
+    expect(within(tile).getByTestId('mlx-mode')).toHaveTextContent(
+      "Serving from Work's Mac Studio"
+    );
+    expect(within(tile).queryByText(/Stopped|to mount|Single · this Mac/)).toBeNull();
+    expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent("Serving from Work's Mac Studio");
+    expect(screen.queryByText(/WorksMacStudio\.lan/)).toBeNull();
+
+    await user.click(within(tile).getByTestId('mlx-remote-stop'));
+    expect(mockRemoteStop).toHaveBeenCalledWith(false);
+    unmount();
+  });
+
+  it('a REMOTE single still mounting there is amber and says where; failed is red in its words', async () => {
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    remoteStore.publish({ ...ROUTE, state: 'mounting' });
+    const { unmount } = render(<MlxEngineView />);
+    const tile = await screen.findByTestId('mlx-remote-tile');
+    const badge = screen.getByTestId('mlx-state-badge');
+    expect(badge).toHaveAttribute('data-phase', 'loading');
+    expect(tile).toHaveTextContent("Loading the model on Work's Mac Studio");
+
+    act(() =>
+      remoteStore.publish({
+        ...ROUTE,
+        state: 'failed',
+        lastError: "Work's Mac Studio's goose reports its engine failed (exit 137)",
+      })
+    );
+    await waitFor(() => expect(badge).toHaveAttribute('data-phase', 'failed'));
+    expect(within(badge).getByTestId('mlx-failed-excerpt')).toHaveTextContent(
+      "Work's Mac Studio's goose reports its engine failed (exit 137)"
+    );
+    unmount();
   });
 
   it('RUNNING shows WHO the engine serves, as main read it (goose in-flight list)', async () => {

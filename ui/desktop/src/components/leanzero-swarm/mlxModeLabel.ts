@@ -9,6 +9,7 @@ import type { MlxModeSummary } from './mlxDistributed';
 const i18n = defineMessages({
   single: { id: 'mlxMode.single', defaultMessage: 'Single · this Mac' },
   singlePeer: { id: 'mlxMode.singlePeer', defaultMessage: 'Single engine on {host}' },
+  remote: { id: 'mlxMode.remote', defaultMessage: 'Serving from {peer}' },
   distributed: {
     id: 'mlxMode.distributed',
     defaultMessage: 'Distributed · {count, plural, one {# node} other {# nodes}} · {backend}',
@@ -72,4 +73,9 @@ export function formatMlxMode(
   return summary.backend
     ? intl.formatMessage(i18n.distributed, { count, backend: summary.backend })
     : intl.formatMessage(i18n.distributedNoBackend, { count });
+}
+
+/** The mode while this Mac's chat is served by the single engine on a linked Mac. */
+export function formatRemoteMode(intl: IntlShape, peerName: string): string {
+  return intl.formatMessage(i18n.remote, { peer: peerName });
 }

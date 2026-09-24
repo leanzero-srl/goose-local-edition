@@ -12,6 +12,7 @@ import {
   type MlxRemoteSingleStatus,
 } from '../../acp/mlx-remote-single';
 import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
+import { routePeerName } from '../leanzero-swarm/macs';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
@@ -265,7 +266,7 @@ function ReadinessStripBody({
       ? intl.formatMessage(i18n.noNodes)
       : readiness.kind === 'remote'
         ? intl.formatMessage(i18n.remote, {
-            peer: readiness.status.peerHostname ?? readiness.status.peer ?? '',
+            peer: routePeerName(readiness.status),
             state: readiness.status.state,
           })
         : readiness.kind === 'distributed'

@@ -1,4 +1,5 @@
 import type { MlxRemoteSingleStatusDto } from '@aaif/goose-sdk';
+import { routePeerName } from '../components/leanzero-swarm/macs';
 
 /**
  * What the renderer hands MAIN about REMOTE SINGLE after every status read (main owns no ACP
@@ -8,21 +9,25 @@ import type { MlxRemoteSingleStatusDto } from '@aaif/goose-sdk';
 export interface MlxRemoteReport {
   /** "mounting" | "ready" | "failed". */
   state: string;
-  peerHostname: string;
+  /** The Mac chat is served from, named the one way (`routePeerName`). */
+  peerName: string;
   modelId: string | null;
-  /** The peer engine's own decode rate over its last generation. */
-  generationTps: number | null;
+  /**
+   * goosed's loopback relay to the peer's engine: main reads `<baseUrl>/v1/status` exactly as it
+   * reads a local engine (the tray's live lines). null = the backend did not hand one over.
+   */
+  baseUrl: string | null;
   activeRequests: number | null;
   lastError: string | null;
 }
 
 export function toMlxRemoteReport(status: MlxRemoteSingleStatusDto | null): MlxRemoteReport | null {
-  if (!status || status.state === 'off' || !status.peerHostname) return null;
+  if (!status || status.state === 'off' || !(status.peerHostname || status.peer)) return null;
   return {
     state: status.state,
-    peerHostname: status.peerHostname,
+    peerName: routePeerName(status),
     modelId: status.modelId ?? null,
-    generationTps: status.generationTps ?? null,
+    baseUrl: status.baseUrl ?? null,
     activeRequests: status.activeRequests ?? null,
     lastError: status.lastError ?? null,
   };
@@ -38,27 +43,27 @@ export function isMlxRemoteReport(value: unknown): value is MlxRemoteReport | nu
   const r = value as Record<string, unknown>;
   return (
     isStr(r.state) &&
-    isStr(r.peerHostname) &&
+    isStr(r.peerName) &&
     strOrNull(r.modelId) &&
-    numOrNull(r.generationTps) &&
+    strOrNull(r.baseUrl) &&
     numOrNull(r.activeRequests) &&
     strOrNull(r.lastError)
   );
 }
 
-/** "Serving from <peer>" — the one phrase every surface uses for a remote route. */
-export function servingFromLabel(peerHostname: string): string {
-  return `Serving from ${peerHostname}`;
+/** The base main's loop reads while the route serves; null while it mounts, failed or has none. */
+export function remoteLiveBase(report: MlxRemoteReport | null): string | null {
+  return report?.state === 'ready' ? report.baseUrl : null;
 }
 
-/** The tray's line for a live route: where, which model, and how it is doing. */
+/** "Serving from <peer>" — the one phrase every surface uses for a remote route. */
+export function servingFromLabel(peerName: string): string {
+  return `Serving from ${peerName}`;
+}
+
+/** The tray's line for a route: where, which model, and — until it serves — its state. */
 export function remoteTrayLine(report: MlxRemoteReport): string {
   const model = report.modelId ? ` · ${report.modelId.split('/').pop()}` : '';
-  const state =
-    report.state === 'ready'
-      ? report.generationTps != null && report.generationTps > 0
-        ? ` · ${report.generationTps.toFixed(1)} tok/s last reply`
-        : ' · ready'
-      : ` · ${report.state}`;
-  return `${servingFromLabel(report.peerHostname)}${model}${state}`;
+  const state = report.state === 'ready' ? '' : ` · ${report.state}`;
+  return `${servingFromLabel(report.peerName)}${model}${state}`;
 }

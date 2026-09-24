@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Sirviendo entre varios Mac"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "Sirviendo en {peer}"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "No se pudo leer la configuración del motor."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Detener"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "No se pudo detener el servicio desde el otro Mac."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB por token en lugar de {bf16} KiB — la misma memoria admite {ratio}× más contexto."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rango {rank} del motor distribuido de {requester} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "Servido desde {peer}"
   },
   "mlxMode.single": {
     "defaultMessage": "Único · este Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Leyendo estadísticas en vivo…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "El motor en {peer} no está sirviendo y goose no indicó ningún motivo."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Cargando el modelo en {peer}"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Solicitudes en curso"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Atendiendo a"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Chat: servido desde {peer} · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "No se pudo leer quién lo usa: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "No hay ningún modelo configurado para montar. Elige uno en Providers › LeanZero MLX."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "No se pudo detener el servicio desde el otro Mac"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "No se pudo desmontar el motor MLX"

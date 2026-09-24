@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Serving across Macs"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "Serving on {peer}"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Could not read the engine settings."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Stop"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "Could not stop serving from the other Mac."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token instead of {bf16} KiB — the same memory holds {ratio}× the context."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rank {rank} of {requester}''s distributed engine · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "Serving from {peer}"
   },
   "mlxMode.single": {
     "defaultMessage": "Single · this Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Reading live stats…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "The engine on {peer} is not serving, and goose named no reason."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Loading the model on {peer}"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Requests in flight"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Serving"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Chat: serving from {peer} · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Who is using it could not be read: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "No model is configured to mount. Pick one in Providers › LeanZero MLX."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "Could not stop serving from the other Mac"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Could not unmount the MLX engine"

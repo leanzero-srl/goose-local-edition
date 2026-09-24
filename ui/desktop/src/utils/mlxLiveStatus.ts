@@ -10,7 +10,9 @@ import type { FetchLike } from './fleetProbe';
  * LOCAL ONLY, by construction: the engine binds loopback, and a base URL that is not a loopback host
  * is refused (`bad-base-url`) — a renderer string never turns main into a fetcher of arbitrary hosts,
  * and a linked peer's `127.0.0.1` is never read on THIS machine as if it were the peer's engine (the
- * renderer only asks for a local target).
+ * renderer only asks for a local target). A remote single's engine is read through goosed's own
+ * loopback relay to it (`http://127.0.0.1:<port>/relay/<capability>`): the base's PATH is kept, so
+ * `<base>/v1/status` reaches the peer engine's status through the relay — never a peer address.
  */
 
 export type MlxLiveStatusError =
@@ -29,7 +31,7 @@ export const MLX_LIVE_STATUS_TIMEOUT_MS = 1500;
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
-/** `<origin>/v1/status` for a loopback http base; throws with the offending text otherwise. */
+/** `<base>/v1/status` for a loopback http base; throws with the offending text otherwise. */
 export function mlxLiveStatusUrl(baseUrl: string): string {
   let url: URL;
   try {
@@ -44,7 +46,8 @@ export function mlxLiveStatusUrl(baseUrl: string): string {
     throw new Error(`engine base URL is not a loopback host: ${baseUrl}`);
   }
   const host = url.hostname === 'localhost' ? '127.0.0.1' : url.hostname;
-  return `http://${host}${url.port ? `:${url.port}` : ''}/v1/status`;
+  const path = url.pathname.replace(/\/+$/, '');
+  return `http://${host}${url.port ? `:${url.port}` : ''}${path}/v1/status`;
 }
 
 export async function fetchMlxLiveStatus(

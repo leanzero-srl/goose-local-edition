@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "कई Mac पर परोसा जा रहा है"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "{peer} पर सर्व हो रहा है"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "इंजन सेटिंग पढ़ी नहीं जा सकीं।"
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "रोकें"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "दूसरे Mac से सर्विंग रोकी नहीं जा सकी।"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: हर टोकन पर {bf16} KiB की जगह {bytes} KiB — उसी मेमोरी में {ratio}× संदर्भ आता है।"
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} के वितरित इंजन का रैंक {rank} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "{peer} से सर्व हो रहा है"
   },
   "mlxMode.single": {
     "defaultMessage": "एकल · यह Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "लाइव आँकड़े पढ़े जा रहे हैं…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "{peer} पर इंजन सर्व नहीं कर रहा है, और goose ने कोई कारण नहीं बताया।"
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "{peer} पर मॉडल लोड हो रहा है"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "चल रहे अनुरोध"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "सेवा दे रहा है"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "चैट: {peer} से सर्व हो रहा है · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "कौन उपयोग कर रहा है, यह पढ़ा नहीं जा सका: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "माउंट करने के लिए कोई मॉडल सेट नहीं है। Providers › LeanZero MLX में एक चुनें।"
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "दूसरे Mac से सर्विंग रोकी नहीं जा सकी"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "MLX इंजन अनमाउंट नहीं हो सका"

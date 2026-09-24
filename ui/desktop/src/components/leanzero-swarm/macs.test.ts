@@ -11,6 +11,7 @@ import {
   minutesAt,
   peerRefuses,
   refusedBy,
+  routePeerName,
 } from './macs';
 
 const node = (overrides: Partial<NodeState>): NodeState => ({
@@ -34,6 +35,23 @@ const ROSTER: NodesResponse = {
     node({ node_id: 'old-2', hostname: 'mini', status: { type: 'Offline' } }),
   ],
 };
+
+describe('a route’s peer, named the same one way', () => {
+  it('its computer name, else its hostname, else the node id it was started with', () => {
+    expect(
+      routePeerName({
+        peer: 'worksmacstudio-lan-9c1e2a',
+        peerHostname: 'WorksMacStudio.lan',
+        peerComputerName: 'Work’s Mac Studio',
+      })
+    ).toBe('Work’s Mac Studio');
+    expect(routePeerName({ peer: 'id', peerHostname: 'WorksMacStudio.lan' })).toBe(
+      'WorksMacStudio.lan'
+    );
+    expect(routePeerName({ peer: 'id', peerHostname: 'h', peerComputerName: '  ' })).toBe('h');
+    expect(routePeerName({ peer: 'worksmacstudio-lan-9c1e2a' })).toBe('worksmacstudio-lan-9c1e2a');
+  });
+});
 
 describe('one name per Mac', () => {
   it('is the name its owner gave it, else its hostname — never both', () => {

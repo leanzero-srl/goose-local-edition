@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Servindo em vários Macs"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "Servindo em {peer}"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Não foi possível ler as configurações do motor."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Parar"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "Não foi possível parar o serviço a partir do outro Mac."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB por token em vez de {bf16} KiB — a mesma memória comporta {ratio}× o contexto."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rank {rank} do motor distribuído de {requester} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "Servido a partir de {peer}"
   },
   "mlxMode.single": {
     "defaultMessage": "Único · este Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Lendo estatísticas ao vivo…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "O motor em {peer} não está servindo, e o goose não informou o motivo."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Carregando o modelo em {peer}"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Solicitações em andamento"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Atendendo"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Chat: servido a partir de {peer} · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Não foi possível ler quem o usa: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "Nenhum modelo configurado para montar. Escolha um em Providers › LeanZero MLX."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "Não foi possível parar o serviço a partir do outro Mac"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Não foi possível desmontar o motor MLX"

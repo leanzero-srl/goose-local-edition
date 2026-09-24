@@ -14,6 +14,7 @@ import {
   mlxDistributedStop,
   subscribeMlxDistributedStatus,
 } from '../acp/mlx-distributed';
+import { mlxRemoteSingleStop } from '../acp/mlx-remote-single';
 import { MLX_STATUS_POLL_MS } from '../components/leanzero-swarm/mlxLiveStats';
 import { useFeatures } from '../contexts/FeaturesContext';
 import { useMlxRemoteReporter } from './useMlxRemoteReporter';
@@ -41,11 +42,17 @@ const i18n = defineMessages({
     id: 'mlxTray.distributedStopUnverified',
     defaultMessage: 'The distributed engine stop was not verified: {steps}',
   },
+  remoteStopFailed: {
+    id: 'mlxTray.remoteStopFailed',
+    defaultMessage: 'Could not stop serving from the other Mac',
+  },
 });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export type MlxTrayRendererAction = 'mount' | 'unmount' | 'stop-distributed';
+export type MlxTrayRendererAction = 'mount' | 'unmount' | 'stop-distributed' | 'stop-remote';
+
+const RENDERER_ACTIONS: readonly string[] = ['mount', 'unmount', 'stop-distributed', 'stop-remote'];
 
 /** A stop whose ranks were not all observed gone — the steps say which pid was left. */
 export class DistributedStopNotVerified extends Error {
@@ -63,6 +70,13 @@ export class DistributedStopNotVerified extends Error {
  * verified stop, and its status goes to main the same way.
  */
 export async function runMlxTrayAction(action: MlxTrayRendererAction): Promise<void> {
+  if (action === 'stop-remote') {
+    // The route's Stop in Run it: the route withdrawn and the peer's engine unmounted. A peer that
+    // could not be reached keeps its model, and goose says so.
+    const { unmountError } = await mlxRemoteSingleStop(false);
+    if (unmountError) throw new Error(unmountError);
+    return;
+  }
   if (action === 'stop-distributed') {
     const { stop } = await mlxDistributedStop();
     if (!stop.verified) throw new DistributedStopNotVerified(stop.steps);
@@ -153,8 +167,8 @@ export function useMlxTrayActions(): void {
   useEffect(() => {
     const onAction = (_event: IpcRendererEvent, ...args: unknown[]) => {
       const action = args[0];
-      if (action !== 'mount' && action !== 'unmount' && action !== 'stop-distributed') return;
-      runMlxTrayAction(action).catch((error: unknown) => {
+      if (typeof action !== 'string' || !RENDERER_ACTIONS.includes(action)) return;
+      runMlxTrayAction(action as MlxTrayRendererAction).catch((error: unknown) => {
         if (error instanceof DistributedStopNotVerified) {
           toastError({
             title: intl.formatMessage(i18n.stopFailed),
@@ -168,7 +182,9 @@ export function useMlxTrayActions(): void {
             ? i18n.mountFailed
             : action === 'unmount'
               ? i18n.unmountFailed
-              : i18n.stopFailed;
+              : action === 'stop-remote'
+                ? i18n.remoteStopFailed
+                : i18n.stopFailed;
         toastError({
           title: intl.formatMessage(title),
           msg: noModel ? intl.formatMessage(i18n.noModel) : errorMessage(error, String(error)),

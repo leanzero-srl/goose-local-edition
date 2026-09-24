@@ -81,7 +81,6 @@ async function expectDesigned(container: HTMLElement) {
   expect(await missingUtilities(utilities)).toEqual([]);
 }
 
-
 /** The sidecar's fit verdict in the tile's units (a 12.8 GB reserve, as before the one rule). */
 const cost = (needGb: number, freeGb: number, verdict: string) =>
   mountCostOf({
@@ -515,6 +514,99 @@ describe('MlxStateTile — this Mac serving a rank of another Mac over LeanZero 
     expect(within(t).getByRole('status')).toHaveTextContent('Serving');
     expect(screen.queryByRole('button', { name: 'Mount' })).toBeNull();
     await expectDesigned(container);
+  });
+});
+
+/**
+ * The owner's live walkthrough of 3.0.27 (2026-09-24): chat was served by Work's Mac Studio at
+ * 25.9 tok/s while this tile read "Stopped · Single · this Mac · 30.6 GB to mount · Fits". The tile
+ * follows what serves chat: the route's engine, its state colour, its live rates, its Stop.
+ */
+describe('MlxStateTile — a remote single IS the tile while it serves this Mac’s chat', () => {
+  const ROUTE = {
+    state: 'ready',
+    peer: 'worksmacstudio-lan-9c1e2a',
+    peerHostname: 'WorksMacStudio.lan',
+    peerComputerName: "Work's Mac Studio",
+    baseUrl: 'http://127.0.0.1:61001/relay/cafe',
+    modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+  };
+
+  it('ready and WRITING: green, the peer engine’s live rates and rows, whatever this Mac’s own engine says', async () => {
+    const { container } = tile({
+      state: 'stopped',
+      cost: cost(30.6, 96.6, 'allow'),
+      remote: ROUTE,
+      modeLabel: "Serving from Work's Mac Studio",
+      live: parseMlxLiveStatus(GENERATING_STATUS),
+      last: LAST_AFTER_GENERATING,
+      action: <button type="button">Stop</button>,
+    });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(t).toHaveAttribute('data-mode', 'remote');
+    expect(t).toHaveAttribute('data-state', 'running');
+    expect(t).toHaveAttribute('data-phase', 'writing');
+    expect(t.className).toContain('bg-lz-phase-writing');
+    expect(within(t).getByRole('status')).toHaveTextContent('Running');
+    expect(screen.getByTestId('mlx-mode')).toHaveTextContent("Serving from Work's Mac Studio");
+    expect(screen.getByTestId('mlx-remote-tile')).toHaveTextContent(ROUTE.modelId);
+    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');
+    expect(screen.getAllByTestId('mlx-live-request')).toHaveLength(3);
+    // This Mac's stopped engine does not speak over the route.
+    expect(screen.queryByTestId('mlx-mount-cost')).toBeNull();
+    expect(within(t).getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    await expectDesigned(container);
+  });
+
+  it('ready and READING a prompt there is blue; IDLE is grey', () => {
+    const { unmount } = tile({
+      state: 'stopped',
+      remote: ROUTE,
+      live: parseMlxLiveStatus(PREFILL_STATUS),
+    });
+    expect(screen.getByTestId('mlx-state-badge')).toHaveAttribute('data-phase', 'reading');
+    unmount();
+    tile({ state: 'stopped', remote: ROUTE, live: parseMlxLiveStatus(IDLE_STATUS) });
+    expect(screen.getByTestId('mlx-state-badge')).toHaveAttribute('data-phase', 'idle');
+  });
+
+  it('mounting there is amber with where it loads; failed is red with the peer’s own words', () => {
+    const { unmount } = tile({ state: 'stopped', remote: { ...ROUTE, state: 'mounting' } });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(t).toHaveAttribute('data-phase', 'loading');
+    expect(t).toHaveAttribute('data-state', 'mounting');
+    expect(screen.getByTestId('mlx-remote-tile')).toHaveTextContent(
+      "Loading the model on Work's Mac Studio"
+    );
+    expect(screen.getByTestId('mlx-load-indeterminate')).toBeInTheDocument();
+    unmount();
+
+    tile({
+      state: 'running',
+      remote: { ...ROUTE, state: 'failed', lastError: 'the peer engine exited 137' },
+    });
+    const f = screen.getByTestId('mlx-state-badge');
+    expect(f).toHaveAttribute('data-phase', 'failed');
+    expect(screen.getByTestId('mlx-failed-excerpt')).toHaveTextContent(
+      'the peer engine exited 137'
+    );
+  });
+
+  it('a route that is off claims nothing: this Mac’s own engine is the tile', () => {
+    tile({ state: 'stopped', remote: { state: 'off' }, cost: cost(17, 96.6, 'allow') });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(t).toHaveAttribute('data-mode', 'single');
+    expect(screen.getByTestId('mlx-mount-cost')).toBeInTheDocument();
+  });
+
+  it('an older backend that did not say the computer name falls back to the hostname', () => {
+    tile({
+      state: 'stopped',
+      remote: { ...ROUTE, state: 'failed', peerComputerName: undefined },
+    });
+    expect(screen.getByTestId('mlx-failed-excerpt')).toHaveTextContent(
+      'The engine on WorksMacStudio.lan is not serving, and goose named no reason.'
+    );
   });
 });
 

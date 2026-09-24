@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Birden çok Mac üzerinde sunuluyor"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "{peer} üzerinde sunuluyor"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Motor ayarları okunamadı."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Durdur"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "Diğer Mac üzerinden sunum durdurulamadı."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: token başına {bf16} KiB yerine {bytes} KiB — aynı bellek {ratio}× bağlam tutar."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} dağıtık motorunun rank {rank} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "{peer} üzerinden sunuluyor"
   },
   "mlxMode.single": {
     "defaultMessage": "Tekli · bu Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Canlı istatistikler okunuyor…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "{peer} üzerindeki motor hizmet vermiyor ve goose bir neden belirtmedi."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Model {peer} üzerinde yükleniyor"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Süren istekler"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Hizmet veriyor"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Sohbet: {peer} üzerinden sunuluyor · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Kimin kullandığı okunamadı: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "Bağlanacak model yapılandırılmadı. Providers › LeanZero MLX bölümünden birini seçin."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "Diğer Mac üzerinden sunum durdurulamadı"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "MLX motorunun bağlantısı kaldırılamadı"

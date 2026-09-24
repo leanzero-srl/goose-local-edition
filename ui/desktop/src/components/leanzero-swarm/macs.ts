@@ -50,6 +50,22 @@ export function macName(node: Pick<NodeState, 'computer_name' | 'hostname'>): st
   return name ? name : node.hostname;
 }
 
+/**
+ * The Mac a remote-single route serves chat from, named the one way: `macName` over the two facts
+ * the route kept from the Link roster (its computer name, its hostname), else the node id it was
+ * started with.
+ */
+export function routePeerName(route: {
+  peer?: string | null;
+  peerHostname?: string | null;
+  peerComputerName?: string | null;
+}): string {
+  return macName({
+    computer_name: route.peerComputerName ?? undefined,
+    hostname: route.peerHostname || route.peer || '',
+  });
+}
+
 function toMac(node: NodeState, isSelf: boolean): Mac {
   return {
     key: isSelf ? SELF_KEY : node.node_id,

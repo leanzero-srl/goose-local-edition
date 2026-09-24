@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "跨多台 Mac 提供服务"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "在 {peer} 上提供"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "无法读取引擎设置。"
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "停止"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "无法停止由另一台 Mac 提供的服务。"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}：每个 token {bytes} KiB，而不是 {bf16} KiB — 同样的内存可容纳 {ratio}× 的上下文。"
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester} 分布式引擎的 rank {rank} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "由 {peer} 提供"
   },
   "mlxMode.single": {
     "defaultMessage": "单机 · 这台 Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "正在读取实时统计…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "{peer} 上的引擎未在提供服务，goose 未给出原因。"
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "正在 {peer} 上加载模型"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "处理中的请求"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "正在服务"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "聊天：由 {peer} 提供 · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "无法读取使用方：{detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "尚未配置要挂载的模型。请在 Providers › LeanZero MLX 中选择一个。"
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "无法停止由另一台 Mac 提供的服务"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "无法卸载 MLX 引擎"

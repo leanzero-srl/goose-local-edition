@@ -21,6 +21,7 @@ function harness(opts: {
   serving?: () => MlxServingRead;
   configBaseUrl?: string | null;
   distributedBaseUrl?: () => string | null;
+  remoteBaseUrl?: () => string | null;
 }) {
   const snapshots: MlxEngineSnapshot[] = [];
   const scheduled: Array<() => void> = [];
@@ -31,6 +32,7 @@ function harness(opts: {
     readServing,
     configBaseUrl: () => (opts.configBaseUrl === undefined ? BASE : opts.configBaseUrl),
     distributedBaseUrl: () => opts.distributedBaseUrl?.() ?? null,
+    remoteBaseUrl: () => opts.remoteBaseUrl?.() ?? null,
     swarmRuns: () => ['bench-r9'],
     onSnapshot: (s) => snapshots.push(s),
     schedule: (fn) => {
@@ -253,6 +255,52 @@ describe('MlxEngineMonitor — the distributed run is read on its own base while
     expect(s.statusDetail).toBe('unreachable: connect ECONNREFUSED 127.0.0.1:8090');
     expect(h.readStatus).toHaveBeenCalledTimes(1);
     expect(h.readStatus).toHaveBeenCalledWith('http://127.0.0.1:8091');
+  });
+});
+
+describe('MlxEngineMonitor — a remote single is read through the relay while it serves chat', () => {
+  const RELAY = 'http://127.0.0.1:61001/relay/cafe';
+
+  it("reads the peer engine's /v1/status on the relay, tags it remote, and keeps its own rates", async () => {
+    let relay: string | null = null;
+    const bodies: Record<string, unknown> = { [BASE]: IDLE_STATUS, [RELAY]: GENERATING_STATUS };
+    const h = harness({ status: () => answered(null), remoteBaseUrl: () => relay });
+    h.readStatus.mockImplementation(async (url: string) => answered(bodies[url]));
+    await h.monitor.tick();
+    expect(h.monitor.current().engine).toBe('single');
+
+    relay = RELAY;
+    await h.monitor.tick();
+    const s = h.monitor.current();
+    expect(h.readStatus).toHaveBeenLastCalledWith(RELAY);
+    expect(s.engine).toBe('remote');
+    expect(s.mode).toBe('running');
+    expect(s.last.decodeTps).toBe(19.9);
+    expect(h.scheduled.length).toBeGreaterThan(0);
+
+    relay = null;
+    await h.monitor.tick();
+    expect(h.monitor.current().engine).toBe('single');
+    expect(h.monitor.current().last.decodeTps).toBeNull();
+  });
+
+  it('the distributed run owns the Mac first: a stale remote base is never read over it', async () => {
+    const h = harness({
+      status: () => answered(IDLE_STATUS),
+      distributedBaseUrl: () => 'http://127.0.0.1:8091',
+      remoteBaseUrl: () => RELAY,
+    });
+    await h.monitor.tick();
+    expect(h.readStatus).toHaveBeenCalledWith('http://127.0.0.1:8091');
+    expect(h.monitor.current().engine).toBe('distributed');
+  });
+
+  it('a relay that stops answering is UNKNOWN with the reason, never the local engine', async () => {
+    const h = harness({ status: () => refused, remoteBaseUrl: () => RELAY });
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'unknown' });
+    expect(h.readStatus).toHaveBeenCalledTimes(1);
+    expect(h.readStatus).toHaveBeenCalledWith(RELAY);
   });
 });
 

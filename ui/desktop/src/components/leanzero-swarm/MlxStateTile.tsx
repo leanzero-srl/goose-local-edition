@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import {
   Bot,
   CircleHelp,
@@ -15,11 +15,8 @@ import { defineMessages, useIntl } from '../../i18n';
 import { PHASE_FILL, RADIUS, TNUM, WEIGHT, cx, type EnginePhase } from '../lz';
 import type { MlxEngineState } from '../../acp/mlx-engine';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
-import {
-  latestMlxRemoteSingleStatus,
-  remoteRouteUp,
-  subscribeMlxRemoteSingleStatus,
-} from '../../acp/mlx-remote-single';
+import { remoteRouteUp, type MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
+import { routePeerName } from './macs';
 import {
   gb1,
   gib,
@@ -32,7 +29,7 @@ import {
   runStateInFlight,
   type LoadProgress,
 } from './mlxDistributed';
-import { hostingPhase, nodePhase, runPhase, singlePhase } from './mlxPhase';
+import { hostingPhase, nodePhase, remotePhase, runPhase, singlePhase } from './mlxPhase';
 import { distributedStateWord } from './mlxModeLabel';
 import type { MlxClient, MlxServing } from '../../utils/mlxServing';
 import {
@@ -68,9 +65,13 @@ import {
 
 const i18n = defineMessages({
   running: { id: 'mlxStateTile.state.running', defaultMessage: 'Running' },
-  servingFrom: {
-    id: 'mlxStateTile.servingFrom',
-    defaultMessage: 'Chat: serving from {peer} · {state}',
+  remoteLoading: {
+    id: 'mlxStateTile.remote.loading',
+    defaultMessage: 'Loading the model on {peer}',
+  },
+  remoteFailed: {
+    id: 'mlxStateTile.remote.failed',
+    defaultMessage: 'The engine on {peer} is not serving, and goose named no reason.',
   },
   mounting: { id: 'mlxStateTile.state.mounting', defaultMessage: 'Mounting' },
   failed: { id: 'mlxStateTile.state.failed', defaultMessage: 'Failed' },
@@ -315,6 +316,12 @@ export interface MlxStateTileProps {
    * rank 0's live read (`live`), and each rank's peak memory against its budget.
    */
   distributed: MlxDistributedStatus | null;
+  /**
+   * Where this Mac's chat goes when it is routed to a linked Mac's single engine. While the route
+   * is up the tile IS that engine: its state, its live read through the relay (`live`), and the
+   * route's Stop as `action` — whatever this Mac's own engine is doing meanwhile.
+   */
+  remote?: MlxRemoteSingleStatus | null;
 }
 
 function compact(intl: IntlShape, n: number): string {
@@ -1067,6 +1074,53 @@ function DistributedInstrument({
   );
 }
 
+/** A route to a linked Mac: its model, then the live instrument once it serves, else its state. */
+function RemoteInstrument({
+  remote,
+  live,
+  history,
+  last,
+  serving,
+}: {
+  remote: MlxRemoteSingleStatus;
+  live: MlxLiveRead | null;
+  history: readonly TpsSample[];
+  last: LastRates;
+  serving: MlxServing | null;
+}) {
+  const intl = useIntl();
+  const peer = routePeerName(remote);
+  return (
+    <div data-testid="mlx-remote-tile" className="flex flex-col gap-4">
+      {remote.modelId && (
+        <span className={cx('break-all font-mono text-lz-mono', WEIGHT.semibold)}>
+          {remote.modelId}
+        </span>
+      )}
+      {remote.state === 'ready' && (
+        <RunningInstrument live={live} history={history} last={last} serving={serving} />
+      )}
+      {remote.state === 'mounting' && (
+        <div className="flex flex-col gap-2">
+          <span className={cx(LINE, WEIGHT.semibold)}>
+            {intl.formatMessage(i18n.remoteLoading, { peer })}
+          </span>
+          <IndeterminateBar label={intl.formatMessage(i18n.remoteLoading, { peer })} />
+        </div>
+      )}
+      {remote.state === 'failed' && (
+        <p
+          data-testid="mlx-failed-excerpt"
+          title={remote.lastError ?? undefined}
+          className={cx('line-clamp-5 break-words', LINE, WEIGHT.semibold)}
+        >
+          {remote.lastError ?? intl.formatMessage(i18n.remoteFailed, { peer })}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function MlxStateTile(props: MlxStateTileProps) {
   const intl = useIntl();
   const {
@@ -1089,21 +1143,32 @@ export function MlxStateTile(props: MlxStateTileProps) {
   const starting = state === 'mounting' || (load != null && state !== 'running');
   const dist = ownsTheMac(distributed) ? distributed : null;
   const hosting = !dist ? (distributed?.hosting ?? null) : null;
-  const remoteStatus = useSyncExternalStore(
-    subscribeMlxRemoteSingleStatus,
-    latestMlxRemoteSingleStatus
-  );
-  const remote = remoteRouteUp(remoteStatus) ? remoteStatus : null;
-  const engineUp = dist ? runIsUp(dist) : !hosting && state === 'running';
+  const remote =
+    !dist && !hosting && props.remote && remoteRouteUp(props.remote) ? props.remote : null;
+  const engineUp = dist
+    ? runIsUp(dist)
+    : remote
+      ? remote.state === 'ready'
+      : !hosting && state === 'running';
   const activity = engineUp && live?.ok ? mlxActivity(live.stats) : null;
   const phase: EnginePhase = dist
     ? runPhase(dist.state, dist.admissionOpen, activity)
     : hosting
       ? hostingPhase(hosting.state)
-      : starting
-        ? 'loading'
-        : singlePhase(state, unreachable, activity);
-  const word = starting ? 'mounting' : (state ?? (unreachable ? 'unreachable' : 'checking'));
+      : remote
+        ? remotePhase(remote.state, activity)
+        : starting
+          ? 'loading'
+          : singlePhase(state, unreachable, activity);
+  const word: keyof typeof STATE_WORD = remote
+    ? remote.state === 'ready'
+      ? 'running'
+      : remote.state === 'mounting'
+        ? 'mounting'
+        : 'failed'
+    : starting
+      ? 'mounting'
+      : (state ?? (unreachable ? 'unreachable' : 'checking'));
   const wordText = dist
     ? distributedStateWord(intl, dist.state)
     : hosting
@@ -1114,7 +1179,15 @@ export function MlxStateTile(props: MlxStateTileProps) {
           })
         : distributedStateWord(intl, hosting.state)
       : intl.formatMessage(STATE_WORD[word]);
-  const icon = hosting ? (
+  const icon = remote ? (
+    remote.state === 'mounting' ? (
+      <Loader2 className="animate-spin" />
+    ) : remote.state === 'failed' ? (
+      <X />
+    ) : (
+      <Network />
+    )
+  ) : hosting ? (
     hosting.state === 'loading' ? (
       <Loader2 className="animate-spin" />
     ) : (
@@ -1139,14 +1212,14 @@ export function MlxStateTile(props: MlxStateTileProps) {
     <div
       data-testid="mlx-state-badge"
       data-state={dist ? dist.state : word}
-      data-mode={dist ? 'distributed' : hosting ? 'hosting' : 'single'}
+      data-mode={dist ? 'distributed' : hosting ? 'hosting' : remote ? 'remote' : 'single'}
       data-activity={activity ?? undefined}
       data-phase={phase}
       role="group"
       aria-label={intl.formatMessage(i18n.groupLabel, { state: wordText })}
       className={cx(
         'flex w-full shrink-0 flex-col gap-5 p-4 [&_svg]:shrink-0',
-        state === 'running' || dist ? 'lg:w-[32rem]' : 'lg:w-80',
+        state === 'running' || dist || remote?.state === 'ready' ? 'lg:w-[32rem]' : 'lg:w-80',
         RADIUS.card,
         PHASE_FILL[phase]
       )}
@@ -1168,19 +1241,6 @@ export function MlxStateTile(props: MlxStateTileProps) {
         <span data-testid="mlx-mode" className={cx(LINE, WEIGHT.semibold)}>
           {modeLabel}
         </span>
-        {remote && (
-          <span
-            data-testid="mlx-remote"
-            data-state={remote.state}
-            title={remote.lastError ?? remote.modelId ?? undefined}
-            className={cx(LINE, WEIGHT.semibold)}
-          >
-            {intl.formatMessage(i18n.servingFrom, {
-              peer: remote.peerHostname ?? remote.peer ?? '',
-              state: remote.state,
-            })}
-          </span>
-        )}
       </div>
       {dist && (
         <DistributedInstrument
@@ -1192,12 +1252,23 @@ export function MlxStateTile(props: MlxStateTileProps) {
         />
       )}
       {hosting && <HostingInstrument hosting={hosting} />}
-      {!dist && !hosting && state === 'running' && (
+      {remote && (
+        <RemoteInstrument
+          remote={remote}
+          live={live}
+          history={history}
+          last={last}
+          serving={serving}
+        />
+      )}
+      {!dist && !hosting && !remote && state === 'running' && (
         <RunningInstrument live={live} history={history} last={last} serving={serving} />
       )}
-      {!dist && !hosting && starting && <MountingInstrument mount={mount} load={load} />}
-      {!dist && !hosting && !starting && state === 'stopped' && <StoppedInstrument cost={cost} />}
-      {!dist && !starting && state === 'failed' && (
+      {!dist && !hosting && !remote && starting && <MountingInstrument mount={mount} load={load} />}
+      {!dist && !hosting && !remote && !starting && state === 'stopped' && (
+        <StoppedInstrument cost={cost} />
+      )}
+      {!dist && !remote && !starting && state === 'failed' && (
         <p
           data-testid="mlx-failed-excerpt"
           title={failedError ?? undefined}
@@ -1206,7 +1277,7 @@ export function MlxStateTile(props: MlxStateTileProps) {
           {failedError ?? intl.formatMessage(i18n.failedFallback)}
         </p>
       )}
-      {!dist && state === null && unreachable && (
+      {!dist && !remote && state === null && unreachable && (
         <p className={LINE}>{intl.formatMessage(i18n.statusUnread)}</p>
       )}
       {action && !hosting && <div className="mt-auto flex flex-wrap gap-2">{action}</div>}

@@ -15,6 +15,15 @@ describe('mlxLiveStatusUrl — loopback only', () => {
     expect(mlxLiveStatusUrl('http://localhost:9600')).toBe('http://127.0.0.1:9600/v1/status');
   });
 
+  it("keeps the base's path: a remote single's engine is read through goosed's loopback relay", () => {
+    expect(mlxLiveStatusUrl('http://127.0.0.1:61001/relay/cafe')).toBe(
+      'http://127.0.0.1:61001/relay/cafe/v1/status'
+    );
+    expect(mlxLiveStatusUrl('http://127.0.0.1:61001/relay/cafe/')).toBe(
+      'http://127.0.0.1:61001/relay/cafe/v1/status'
+    );
+  });
+
   it('refuses a non-loopback host, a non-http scheme and non-URLs', () => {
     expect(() => mlxLiveStatusUrl('http://192.168.8.220:8090')).toThrow(/loopback/);
     expect(() => mlxLiveStatusUrl('https://example.com')).toThrow(/not http/);

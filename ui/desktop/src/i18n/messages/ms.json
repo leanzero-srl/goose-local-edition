@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Menyediakan merentas Mac"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "Dihidangkan pada {peer}"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Tidak dapat membaca tetapan enjin."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Hentikan"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "Tidak dapat menghentikan penghidangan dari Mac lain."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB bagi setiap token dan bukan {bf16} KiB — memori yang sama memuatkan {ratio}× konteks."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rank {rank} enjin teragih {requester} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "Dihidangkan dari {peer}"
   },
   "mlxMode.single": {
     "defaultMessage": "Tunggal · Mac ini"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Membaca statistik langsung…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "Enjin pada {peer} tidak menghidangkan, dan goose tidak menyatakan sebabnya."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Memuatkan model pada {peer}"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Permintaan sedang berjalan"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Melayan"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Sembang: dihidangkan dari {peer} · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Siapa yang menggunakannya tidak dapat dibaca: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "Tiada model dikonfigurasikan untuk dilekapkan. Pilih satu dalam Providers › LeanZero MLX."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "Tidak dapat menghentikan penghidangan dari Mac lain"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Enjin MLX tidak dapat dinyahlekap"

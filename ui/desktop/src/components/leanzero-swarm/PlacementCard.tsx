@@ -47,7 +47,7 @@ import {
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { ownsTheMac } from './mlxDistributed';
 import { distributedStateWord } from './mlxModeLabel';
-import { runPhase, singlePhase } from './mlxPhase';
+import { remotePhase, runPhase, singlePhase } from './mlxPhase';
 import { formatGb } from './primitives';
 import { macForPlacementNode, minutesAt, peerRefuses, SELF_KEY, type Mac } from './macs';
 import { WithMacs, copyKey, copyRunning, useMacs } from './useMacs';
@@ -443,9 +443,10 @@ export function wayLive(
     if (!way.peerNodeId || remote?.peer !== way.peerNodeId || remote.modelId !== modelId)
       return null;
     if (remote.state === 'off') return null;
-    const phase: EnginePhase =
-      remote.state === 'ready' ? 'idle' : remote.state === 'failed' ? 'failed' : 'loading';
-    return { phase, state: remote.state === 'ready' ? 'running' : remote.state };
+    return {
+      phase: remotePhase(remote.state, null),
+      state: remote.state === 'ready' ? 'running' : remote.state,
+    };
   }
   if (!distributed || distributed.modelId !== modelId) return null;
   if (!ownsTheMac(distributed) && distributed.state !== 'failed') return null;

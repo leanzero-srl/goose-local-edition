@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, RotateCcw, ServerOff, Settings2 } from 'lucide-react';
 import { useConfig } from '../ConfigContext';
@@ -8,6 +8,12 @@ import { defineMessages, useIntl } from '../../i18n';
 import { Button, Chip, SURFACE, SPACE, StatusDot, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 import type { NoNodeRow, NodeReason } from './parseNoNodeError';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
+import { routePeerName } from '../leanzero-swarm/macs';
+import {
+  latestMlxRemoteSingleStatus,
+  subscribeMlxRemoteSingleStatus,
+  type MlxRemoteSingleStatus,
+} from '../../acp/mlx-remote-single';
 import {
   distributedFact,
   distributedServedId,
@@ -91,7 +97,22 @@ const i18n = defineMessages({
   },
 });
 
-function reasonText(intl: ReturnType<typeof useIntl>, reason: NodeReason): string | null {
+/**
+ * The router names a remote route's peer by its mesh hostname (its reason text is parsed on
+ * whitespace); the person reads the one name — `routePeerName` over the route this window knows,
+ * when it is the same Mac. A route this window no longer knows keeps the router's word.
+ */
+export function routedPeerName(host: string, route: MlxRemoteSingleStatus | null): string {
+  return route && (route.peerHostname === host || route.peer === host)
+    ? routePeerName(route)
+    : host;
+}
+
+function reasonText(
+  intl: ReturnType<typeof useIntl>,
+  reason: NodeReason,
+  route: MlxRemoteSingleStatus | null
+): string | null {
   switch (reason.kind) {
     case 'mlx-down':
       return intl.formatMessage(i18n.mlxDown, { base: reason.base });
@@ -101,9 +122,9 @@ function reasonText(intl: ReturnType<typeof useIntl>, reason: NodeReason): strin
         wanted: reason.wanted,
       });
     case 'mlx-routed-remote':
-      return intl.formatMessage(i18n.routedRemote, { peer: reason.peer });
+      return intl.formatMessage(i18n.routedRemote, { peer: routedPeerName(reason.peer, route) });
     case 'mlx-remote-down':
-      return intl.formatMessage(i18n.remoteDown, { peer: reason.peer });
+      return intl.formatMessage(i18n.remoteDown, { peer: routedPeerName(reason.peer, route) });
     case 'lm-unreachable':
       return intl.formatMessage(i18n.lmUnreachable, { url: reason.url });
     case 'lm-not-listed':
@@ -153,6 +174,7 @@ export default function NoNodeNotice({
   const lookup = useMountLookup(armed, readSwarm, read);
   const { status } = useMlxEngineStatusPoll(armed, 2000);
   const distributed = useLatestMlxDistributedStatus();
+  const route = useSyncExternalStore(subscribeMlxRemoteSingleStatus, latestMlxRemoteSingleStatus);
   const { requestingNodeId, mountErrors, mount: onMount } = useMlxMount(status);
 
   const targetOf = (nodeId: string): MountTarget | null =>
@@ -291,7 +313,7 @@ export default function NoNodeNotice({
 
       <ul className={cx('flex flex-col divide-y divide-lz-border border-y', SURFACE.hairline)}>
         {rows.map((row, i) => {
-          const plain = reasonText(intl, row.reason);
+          const plain = reasonText(intl, row.reason, route);
           const isMlx = row.reason.kind === 'mlx-down';
           const fact = liveFactOf(row);
           const dot = fact === 'up' ? 'ok' : fact === 'mounting' ? 'warn' : 'err';

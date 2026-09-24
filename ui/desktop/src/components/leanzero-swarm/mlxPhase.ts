@@ -49,6 +49,18 @@ export function singlePhase(
 }
 
 /**
+ * A remote single — the single engine on a Link peer, this Mac's chat routed to it: amber while it
+ * mounts there, red when it failed, and once it serves exactly the single engine's colours from the
+ * peer engine's own live read (grey before the first one lands).
+ */
+export function remotePhase(state: string, activity: MlxActivity | null): EnginePhase {
+  if (state === 'mounting') return 'loading';
+  if (state === 'failed') return 'failed';
+  if (state === 'off') return 'unloaded';
+  return activity ? activityPhase(activity) : 'idle';
+}
+
+/**
  * The distributed run. Admission held by the memory watchdog is orange whatever the run state says.
  * While it is up, `activity` — rank 0's own `/v1/status` read through the single engine's
  * `mlxActivity` — decides exactly as it does for the single engine (reading blue, writing green,

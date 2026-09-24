@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "여러 Mac에서 제공 중"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "{peer}에서 제공 중"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "엔진 설정을 읽지 못했습니다."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "중지"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "다른 Mac에서의 제공을 중지할 수 없습니다."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: 토큰당 {bf16} KiB 대신 {bytes} KiB — 같은 메모리에 {ratio}×의 컨텍스트가 들어갑니다."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "{requester}의 분산 엔진 랭크 {rank} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "{peer}에서 제공 중"
   },
   "mlxMode.single": {
     "defaultMessage": "단일 · 이 Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "실시간 통계 읽는 중…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "{peer}의 엔진이 응답하지 않으며 goose가 이유를 밝히지 않았습니다."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "{peer}에서 모델을 불러오는 중"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "처리 중인 요청"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "처리 중"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "채팅: {peer}에서 제공 중 · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "사용 주체를 읽을 수 없음: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "마운트할 모델이 설정되어 있지 않습니다. Providers › LeanZero MLX에서 하나를 고르세요."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "다른 Mac에서의 제공을 중지할 수 없음"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "MLX 엔진을 마운트 해제할 수 없습니다"

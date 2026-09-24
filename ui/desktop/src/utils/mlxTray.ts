@@ -20,6 +20,7 @@ import {
   activityPhase,
   hostingPhase,
   nodePhase,
+  remotePhase,
   runPhase,
 } from '../components/leanzero-swarm/mlxPhase';
 import type { EnginePhase } from '../components/lz/tokens';
@@ -41,7 +42,12 @@ import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
  * glyph and each state line carries `phase`, which main draws as a solid dot in PHASE_HEX.
  */
 
-export type MlxTrayAction = 'open-providers' | 'mount' | 'unmount' | 'stop-distributed';
+export type MlxTrayAction =
+  | 'open-providers'
+  | 'mount'
+  | 'unmount'
+  | 'stop-distributed'
+  | 'stop-remote';
 
 export type MlxTrayItem =
   | { type: 'info'; label: string; phase?: EnginePhase }
@@ -93,14 +99,6 @@ export function snapshotPhase(snapshot: MlxEngineSnapshot): EnginePhase | null {
   }
 }
 
-function remotePhase(report: MlxRemoteReport): EnginePhase {
-  if (report.state === 'failed') return 'failed';
-  if (report.state === 'ready') {
-    return report.generationTps != null && report.generationTps > 0 ? 'writing' : 'idle';
-  }
-  return 'loading';
-}
-
 function loadText(load: LoadProgress): string {
   return `loaded ${gb1(gib(load.done))} of ${gb1(gib(load.total))} GB`;
 }
@@ -122,13 +120,53 @@ export interface MlxTrayOptions {
   remote?: MlxRemoteReport | null;
 }
 
-function remoteTrayTitle(report: MlxRemoteReport): string {
-  if (report.state === 'ready') {
-    return report.generationTps != null && report.generationTps > 0
-      ? `Remote · ${formatRate(report.generationTps)} tok/s`
-      : 'Remote';
-  }
+/**
+ * main's live read of the peer's engine through the relay — the same snapshot and derivations as
+ * the single engine — or null while the route mounts, failed, or has not been read yet.
+ */
+function remoteLive(
+  snapshot: MlxEngineSnapshot,
+  report: MlxRemoteReport
+): MlxEngineSnapshot | null {
+  return report.state === 'ready' &&
+    snapshot.engine === 'remote' &&
+    snapshot.mode === 'running' &&
+    snapshot.stats
+    ? snapshot
+    : null;
+}
+
+function remoteTrayTitle(report: MlxRemoteReport, live: MlxEngineSnapshot | null): string {
+  if (report.state === 'ready') return live ? `Remote · ${mlxTrayTitle(live)}` : 'Remote';
   return report.state === 'failed' ? 'Remote failed' : `Remote · ${report.state}`;
+}
+
+/** Chat is served by a linked Mac's engine: the tray speaks for THAT engine, and offers its Stop. */
+function remoteModel(
+  snapshot: MlxEngineSnapshot,
+  remote: MlxRemoteReport,
+  canAct: boolean
+): MlxTrayModel {
+  const live = remoteLive(snapshot, remote);
+  const phase = remotePhase(remote.state, live?.stats ? mlxActivity(live.stats) : null);
+  const items: MlxTrayItem[] = [{ type: 'info', label: clip(remoteTrayLine(remote)), phase }];
+  if (live) {
+    items.push(...runningItems(live));
+  } else if (remote.state === 'ready' && snapshot.engine === 'remote' && snapshot.statusDetail) {
+    items.push({ type: 'info', label: clip(`Live stats unavailable: ${snapshot.statusDetail}`) });
+  }
+  if (remote.lastError) items.push({ type: 'info', label: clip(`Error: ${remote.lastError}`) });
+  items.push(
+    { type: 'separator' },
+    { type: 'action', label: 'Open Providers', action: 'open-providers', enabled: canAct },
+    {
+      type: 'action',
+      label: clip(`Stop serving from ${remote.peerName}`),
+      action: 'stop-remote',
+      enabled: canAct,
+    }
+  );
+  return { title: remoteTrayTitle(remote, live), phase, items };
 }
 
 /**
@@ -543,15 +581,10 @@ export function buildMlxTrayModel(
       ],
     };
   }
+  if (options.remote) return remoteModel(snapshot, options.remote, options.canAct);
   // A read of the distributed rank 0 never speaks for the single engine (a run that just stopped).
   const singleSnap = snapshot.engine === 'single' ? snapshot : INITIAL_SNAPSHOT;
-  const remote = options.remote ?? null;
   const items: MlxTrayItem[] = [];
-  if (remote) {
-    // Chat goes to a peer's engine: that is the line that matters; this Mac's own engine follows.
-    items.push({ type: 'info', label: clip(remoteTrayLine(remote)), phase: remotePhase(remote) });
-    if (remote.lastError) items.push({ type: 'info', label: clip(`Error: ${remote.lastError}`) });
-  }
   const singlePhase = snapshotPhase(singleSnap);
   items.push({
     type: 'info',
@@ -600,7 +633,6 @@ export function buildMlxTrayModel(
     });
   }
   const single = mlxTrayTitle(singleSnap);
-  if (remote) return { title: remoteTrayTitle(remote), phase: remotePhase(remote), items };
   if (single) return { title: single, phase: singlePhase, items };
   return distributedFailed
     ? { title: 'Dist failed', phase: 'failed', items }

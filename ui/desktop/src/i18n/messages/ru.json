@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Обслуживает на нескольких Mac"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "Обслуживается на {peer}"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Не удалось прочитать настройки движка."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Остановить"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "Не удалось остановить обслуживание с другого Mac."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} КиБ на токен вместо {bf16} КиБ — в той же памяти помещается в {ratio}× больше контекста."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Ранг {rank} распределённого движка {requester} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "Обслуживается с {peer}"
   },
   "mlxMode.single": {
     "defaultMessage": "Одиночный · этот Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Чтение живой статистики…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "Движок на {peer} не обслуживает запросы, и goose не назвал причину."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Модель загружается на {peer}"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Запросы в работе"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Обслуживает"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Чат: обслуживается с {peer} · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Не удалось прочитать, кто его использует: {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "Модель для монтирования не настроена. Выберите её в Providers › LeanZero MLX."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "Не удалось остановить обслуживание с другого Mac"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Не удалось отмонтировать движок MLX"

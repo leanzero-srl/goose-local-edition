@@ -3,6 +3,7 @@ import type { MlxDistributedLinkDiscoveryDto, MlxDistributedLinkPeerDto } from '
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, Chip, TONE_TEXT, TYPE, WEIGHT, cx, type Tone } from '../lz';
 import { ToneBanner } from './studio';
+import { macName } from './macs';
 
 /**
  * Setup's default: the same-account Macs on LeanZero Link, one row each. Picking one names it by
@@ -77,7 +78,7 @@ function PeerRow({
   onPick: (host: string) => void;
 }) {
   const intl = useIntl();
-  const name = peer.name ?? peer.hostname;
+  const name = macName({ computer_name: peer.name ?? undefined, hostname: peer.hostname });
   const ready = peer.state === 'ready';
   const word = STATE_WORD[peer.state];
   return (

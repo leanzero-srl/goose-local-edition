@@ -3626,8 +3626,17 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Sert sur plusieurs Mac"
   },
+  "mlxEngineView.servingRemote": {
+    "defaultMessage": "Servi sur {peer}"
+  },
   "mlxEngineView.settingsFailed": {
     "defaultMessage": "Impossible de lire les réglages du moteur."
+  },
+  "mlxEngineView.stopRemote": {
+    "defaultMessage": "Arrêter"
+  },
+  "mlxEngineView.stopRemoteFailed": {
+    "defaultMessage": "Impossible d’arrêter le service depuis l’autre Mac."
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode} : {bytes} Kio par jeton au lieu de {bf16} Kio — la même mémoire contient {ratio}× plus de contexte."
@@ -3694,6 +3703,9 @@
   },
   "mlxMode.hostingNoBackend": {
     "defaultMessage": "Rang {rank} du moteur distribué de {requester} · {model}"
+  },
+  "mlxMode.remote": {
+    "defaultMessage": "Servi depuis {peer}"
   },
   "mlxMode.single": {
     "defaultMessage": "Unique · ce Mac"
@@ -3968,6 +3980,12 @@
   "mlxStateTile.readingLive": {
     "defaultMessage": "Lecture des statistiques en direct…"
   },
+  "mlxStateTile.remote.failed": {
+    "defaultMessage": "Le moteur sur {peer} ne sert pas, et goose n’a donné aucune raison."
+  },
+  "mlxStateTile.remote.loading": {
+    "defaultMessage": "Chargement du modèle sur {peer}"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Requêtes en cours"
   },
@@ -3997,9 +4015,6 @@
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Sert"
-  },
-  "mlxStateTile.servingFrom": {
-    "defaultMessage": "Chat : servi depuis {peer} · {state}"
   },
   "mlxStateTile.servingUnknown": {
     "defaultMessage": "Impossible de lire qui l’utilise : {detail}"
@@ -4114,6 +4129,9 @@
   },
   "mlxTray.noModel": {
     "defaultMessage": "Aucun modèle n’est configuré pour le montage. Choisissez-en un dans Providers › LeanZero MLX."
+  },
+  "mlxTray.remoteStopFailed": {
+    "defaultMessage": "Impossible d’arrêter le service depuis l’autre Mac"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Impossible de démonter le moteur MLX"
