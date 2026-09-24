@@ -29,7 +29,10 @@ const store = vi.hoisted(() => {
     },
   };
 });
-vi.mock('../acp/mlx-distributed', () => ({
+vi.mock('../acp/mlx-distributed', async () => ({
+  foreignOwner: (
+    await vi.importActual<typeof import('../acp/mlx-distributed')>('../acp/mlx-distributed')
+  ).foreignOwner,
   mlxDistributedStop: (...a: unknown[]) => distributedStop(...a),
   mlxDistributedStatus: (...a: unknown[]) => distributedStatus(...a),
   latestMlxDistributedStatus: () => store.latest(),
@@ -135,6 +138,21 @@ describe('useMlxDistributedReporter — keeps main’s copy of the distributed e
       .mockResolvedValueOnce({ mode: 'distributed' })
       .mockResolvedValue({ mode: 'single' });
     store.publish({ mode: 'distributed' });
+    await waitFor(() => expect(distributedStatus).toHaveBeenCalledTimes(3));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(distributedStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it('another window’s live run keeps the loop going, so its stop reaches this window', async () => {
+    const foreign = {
+      mode: 'single',
+      owner: { state: 'answering', nodeNames: [] },
+    };
+    distributedStatus
+      .mockResolvedValueOnce(foreign)
+      .mockResolvedValueOnce(foreign)
+      .mockResolvedValue({ mode: 'single' });
+    renderHook(() => useMlxDistributedReporter(true));
     await waitFor(() => expect(distributedStatus).toHaveBeenCalledTimes(3));
     await new Promise((r) => setTimeout(r, 20));
     expect(distributedStatus).toHaveBeenCalledTimes(3);

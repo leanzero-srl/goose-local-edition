@@ -7948,6 +7948,17 @@
             }
           ],
           "description": "The last (or running) provisioning of the nodes' goose-managed Python."
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedOwnerDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set when ANOTHER goosed on this Mac (another desktop window) published a distributed run\nand this one supervises none: that run is read-only here — start and stop are refused with\n`ownedByAnotherWindow`, and `mode`/`state` above stay this goosed's own."
         }
       },
       "required": [
@@ -8663,6 +8674,64 @@
         "startedMs"
       ],
       "description": "One node's provisioning. `state`: \"running\" | \"done\" | \"failed\" | \"skipped\" (its Python is the\noperator's own, set under Advanced — goose never touches it). `step`: the last `GOOSE_PROV`\nstep (check | uv | venv | install | done | fail)."
+    },
+    "MlxDistributedOwnerDto": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "description": "\"answering\" (its /v1/models lists `servedModelId`) | \"notAnswering\" (its goosed is alive,\nthe engine does not answer — loading, or the run failed) | \"stale\" (the goosed that wrote\nthe record is gone; the record is ignored) | \"unreadable\" (`detail` says why)."
+        },
+        "pid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "baseUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "servedModelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modelId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backend": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nodeNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why the engine is not answering, or why the record could not be read."
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "description": "Another goosed's distributed run, from the record it published under the goose state dir."
     },
     "MlxEngineDistributedPreflightRequest_unstable": {
       "type": "object",

@@ -3389,6 +3389,12 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "Остановка"
   },
+  "mlxMount.foreignAnswering": {
+    "defaultMessage": "Готов · принадлежит другому окну"
+  },
+  "mlxMount.foreignNotAnswering": {
+    "defaultMessage": "Не отвечает · принадлежит другому окну"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Отмена"
   },

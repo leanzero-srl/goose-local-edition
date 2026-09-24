@@ -3389,6 +3389,12 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "रुक रहा है"
   },
+  "mlxMount.foreignAnswering": {
+    "defaultMessage": "तैयार · दूसरी विंडो के स्वामित्व में"
+  },
+  "mlxMount.foreignNotAnswering": {
+    "defaultMessage": "जवाब नहीं दे रहा · दूसरी विंडो के स्वामित्व में"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "रद्द करें"
   },

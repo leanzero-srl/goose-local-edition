@@ -3389,6 +3389,12 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "Menghentikan"
   },
+  "mlxMount.foreignAnswering": {
+    "defaultMessage": "Siap · dimiliki jendela lain"
+  },
+  "mlxMount.foreignNotAnswering": {
+    "defaultMessage": "Tidak menjawab · dimiliki jendela lain"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Batal"
   },

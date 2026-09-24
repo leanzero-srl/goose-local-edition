@@ -4,8 +4,9 @@ import { Loader2, ServerOff, Settings2 } from 'lucide-react';
 import { acpReadConfig } from '../../acp/config';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
-import { modeSummary, ownsTheMac } from '../leanzero-swarm/mlxDistributed';
-import { distributedStateWord, formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
+import { foreignOwner } from '../../acp/mlx-distributed';
+import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
+import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
@@ -13,6 +14,11 @@ import { defineMessages, useIntl } from '../../i18n';
 import { Button, RADIUS, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
 import {
   distributedFact,
+  distributedProblem,
+  distributedServedId,
+  distributedServes,
+  distributedStateLabel,
+  distributedSummary,
   engineFact,
   resolveMountTarget,
   shortModelName,
@@ -103,7 +109,7 @@ export function swarmReadiness(
     d.host == null &&
     (d.provider == null || d.provider.toLowerCase() === 'lmstudio');
   if (!enabled.every(localMlx)) return UNKNOWN;
-  if (distributed && ownsTheMac(distributed)) {
+  if (distributed && (ownsTheMac(distributed) || foreignOwner(distributed))) {
     if (enabled.some((d) => distributedFact(distributed, d.model_id) === 'up')) {
       return { kind: 'ready' };
     }
@@ -133,10 +139,11 @@ export function mlxProviderReadiness(
   distributed: MlxDistributedStatus | null,
   engineLabel: string
 ): ComposerReadiness {
-  if (distributed && ownsTheMac(distributed)) {
-    // The omlx provider follows the distributed engine's port while it owns the Mac
-    // (mlx_engine.rs align_omlx_host_env) and asks for whatever id that engine lists.
-    return distributed.state === 'ready' || distributed.state === 'serving'
+  if (distributed && (ownsTheMac(distributed) || foreignOwner(distributed))) {
+    // The omlx provider follows the distributed engine's port while it owns the Mac — this
+    // window's run or another's (mlx_engine.rs align_omlx_host_env) — and asks for whatever id
+    // that engine lists.
+    return distributedServes(distributed)
       ? { kind: 'ready' }
       : { kind: 'distributed', nodes: [engineLabel], status: distributed, wanted: null };
   }
@@ -237,8 +244,8 @@ function ReadinessStripBody({
       ? intl.formatMessage(i18n.noNodes)
       : readiness.kind === 'distributed'
         ? intl.formatMessage(i18n.distributed, {
-            mode: formatMlxMode(intl, modeSummary(readiness.status), null),
-            state: distributedStateWord(intl, readiness.status.state),
+            mode: formatMlxMode(intl, distributedSummary(readiness.status), null),
+            state: distributedStateLabel(intl, readiness.status),
             nodes: readiness.nodes.join(', '),
           })
         : intl.formatMessage(i18n.unmounted, { nodes: readiness.nodes.join(', ') });
@@ -247,11 +254,11 @@ function ReadinessStripBody({
   let action: ReactNode = null;
   if (readiness.kind === 'distributed') {
     const { status: dist, wanted } = readiness;
-    const serves = dist.state === 'ready' || dist.state === 'serving';
-    if (serves && wanted != null && dist.servedModelId != null && dist.servedModelId !== wanted) {
-      detail = intl.formatMessage(i18n.distributedMismatch, { served: dist.servedModelId, wanted });
-    } else if (dist.lastError) {
-      detail = dist.lastError;
+    const served = distributedServedId(dist);
+    if (distributedServes(dist) && wanted != null && served != null && served !== wanted) {
+      detail = intl.formatMessage(i18n.distributedMismatch, { served, wanted });
+    } else {
+      detail = distributedProblem(dist);
     }
     if (dist.state === 'preflight' || dist.state === 'starting') {
       action = (

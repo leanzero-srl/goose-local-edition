@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex as StdMutex;
 
 use super::mlx_distributed_discover as discover;
+use crate::providers::mlx_distributed_owner::{self as owner_record, OwnerRecord, PublishedEngine};
 
 const MLX_DISTRIBUTED_CONFIG_KEY: &str = "mlx_distributed";
 
@@ -234,6 +235,7 @@ fn status_to_dto(
         last_error: status.last_error,
         config: status.config.or(persisted).map(config_to_dto),
         provision: None,
+        owner: None,
     }
 }
 
@@ -292,7 +294,73 @@ pub(super) fn refuse_single_mount_while_distributed() -> Result<(), agent_client
             status.model_id.as_deref().unwrap_or("<model not reported>")
         )));
     }
+    if let OwnerRecord::Other(engine) = owner_record::read() {
+        return Err(agent_client_protocol::Error::invalid_params().data(format!(
+            "distributedEngineActive: {}; one engine owns a Mac at a time — stop it from that window \
+             before mounting",
+            owned_elsewhere(&engine)
+        )));
+    }
     Ok(())
+}
+
+const OWNED_BY_ANOTHER_WINDOW: &str = "ownedByAnotherWindow";
+
+fn owned_elsewhere(engine: &PublishedEngine) -> String {
+    format!(
+        "the distributed MLX engine serving '{}' at {} is owned by another window (goosed pid {})",
+        engine.served_model_id, engine.base_url, engine.pid
+    )
+}
+
+/// The record's fact for THIS goosed's readers, with the engine's own answer on /v1/models as the
+/// liveness measure — the way every goosed finds the single engine on its port.
+async fn owner_dto(record: OwnerRecord) -> Option<MlxDistributedOwnerDto> {
+    let with =
+        |engine: PublishedEngine, state: &str, detail: Option<String>| MlxDistributedOwnerDto {
+            state: state.to_string(),
+            pid: Some(engine.pid),
+            base_url: Some(engine.base_url),
+            served_model_id: Some(engine.served_model_id),
+            model_id: Some(engine.model_id),
+            backend: Some(engine.backend),
+            node_names: engine.node_names,
+            detail,
+        };
+    match record {
+        OwnerRecord::Absent | OwnerRecord::Mine(_) => None,
+        OwnerRecord::Stale(engine) => Some(with(engine, "stale", None)),
+        OwnerRecord::Unreadable { path, error } => Some(MlxDistributedOwnerDto {
+            state: "unreadable".to_string(),
+            detail: Some(format!("{}: {error}", path.display())),
+            ..Default::default()
+        }),
+        OwnerRecord::Other(engine) => {
+            let url = format!("{}/v1/models", engine.base_url);
+            let answer = match reqwest::Client::new().get(&url).send().await {
+                Ok(resp) => match resp.text().await {
+                    Ok(body) => goose_sidecar::engine::parse_model_info(&body)
+                        .map(|(served, _, _)| served)
+                        .map_err(|e| format!("GET {url}: {e:#}")),
+                    Err(e) => Err(format!("GET {url} body unreadable ({e})")),
+                },
+                Err(e) => Err(format!("GET {url} failed ({e})")),
+            };
+            Some(match answer {
+                Ok(Some(served)) if served == engine.served_model_id => {
+                    with(engine, "answering", None)
+                }
+                Ok(served) => {
+                    let detail = format!(
+                        "{url} lists {:?}, not the published '{}'",
+                        served, engine.served_model_id
+                    );
+                    with(engine, "notAnswering", Some(detail))
+                }
+                Err(e) => with(engine, "notAnswering", Some(e)),
+            })
+        }
+    }
 }
 
 /// `goose serve`'s exit path: stop a supervised distributed run (verified, per pid) so no 20 GB
@@ -301,9 +369,11 @@ pub(super) async fn shutdown_distributed_engine() -> String {
     let manager = distributed::global_manager();
     let state = manager.status().state;
     if !state.owns_the_mac() {
+        withdraw_owner_record();
         return format!("nothing supervised (state '{}')", state.as_str());
     }
     let report = manager.stop().await;
+    withdraw_owner_record();
     format!(
         "{} ({}): {}",
         if report.verified {
@@ -316,8 +386,26 @@ pub(super) async fn shutdown_distributed_engine() -> String {
     )
 }
 
-fn status_response() -> Result<MlxEngineDistributedStatusResponse, agent_client_protocol::Error> {
+/// A failed withdraw leaves a record other windows would trust while this goosed lives — logged
+/// loudly; it turns `stale` the moment this process exits.
+fn withdraw_owner_record() {
+    if let Err(e) = owner_record::withdraw_if_mine() {
+        warn!(error = %e, path = %owner_record::record_path().display(), "withdrawing the distributed engine's owner record failed");
+    }
+}
+
+async fn status_response(
+) -> Result<MlxEngineDistributedStatusResponse, agent_client_protocol::Error> {
     let status = distributed::global_manager().status();
+    if !status.state.owns_the_mac() {
+        // This goosed's run is over (stopped, failed, never started): its record, if any, goes.
+        withdraw_owner_record();
+    }
+    let owner = if status.state.owns_the_mac() {
+        None
+    } else {
+        owner_dto(owner_record::read()).await
+    };
     let persisted = if status.config.is_none() {
         persisted_config()?
     } else {
@@ -325,6 +413,7 @@ fn status_response() -> Result<MlxEngineDistributedStatusResponse, agent_client_
     };
     let mut status = status_to_dto(status, persisted);
     status.provision = PROVISION.lock().unwrap().clone();
+    status.owner = owner;
     Ok(MlxEngineDistributedStatusResponse { status })
 }
 
@@ -426,7 +515,7 @@ impl GooseAcpAgent {
         _req: MlxEngineDistributedStatusRequest,
     ) -> Result<MlxEngineDistributedStatusResponse, agent_client_protocol::Error> {
         super::mlx_engine::align_omlx_host_env();
-        let response = status_response()?;
+        let response = status_response().await?;
         let entered_serving = {
             let mut last = LAST_DISTRIBUTED_STATE.lock().unwrap();
             let serving = matches!(response.status.state.as_str(), "ready" | "serving");
@@ -465,21 +554,49 @@ impl GooseAcpAgent {
         &self,
         req: MlxEngineDistributedStartRequest,
     ) -> Result<MlxEngineDistributedStartResponse, agent_client_protocol::Error> {
+        if let OwnerRecord::Other(engine) = owner_record::read() {
+            return Ok(MlxEngineDistributedStartResponse {
+                started: false,
+                refusal: Some(MlxDistributedRefusalDto {
+                    code: OWNED_BY_ANOTHER_WINDOW.to_string(),
+                    message: format!(
+                        "{}; start and stop it from that window",
+                        owned_elsewhere(&engine)
+                    ),
+                }),
+                preflight: None,
+            });
+        }
         let given = req.config.is_some();
         let config = resolve_config(req.config)?;
         if given {
             persist_config(&config)?;
         }
+
         // One naming rule for both engines: the swarm node that names this Mac's MLX engine
         // (`mihai-mlx` → `mihai-qwen3.8-…`) must find the SAME id whichever engine owns the Mac.
         let served = served_model_id(
             &super::mlx_engine::load_engine_settings()?,
             &config.model_id,
         );
+        let published = PublishedEngine {
+            pid: std::process::id(),
+            base_url: config.base_url(),
+            served_model_id: served.clone(),
+            model_id: config.model_id.clone(),
+            backend: config.backend.as_str().to_string(),
+            node_names: config.nodes.iter().map(|n| n.name.clone()).collect(),
+        };
         let outcome = distributed::global_manager()
             .start(config, served)
             .await
             .invalid_params_err()?;
+        if matches!(outcome, StartOutcome::Started { .. }) {
+            // Every other goosed on this Mac (another window) finds the run through this record.
+            if let Err(e) = owner_record::publish(&published) {
+                warn!(error = %e, "publishing the distributed engine's owner record failed; other windows will not find it");
+            }
+        }
         super::mlx_engine::align_omlx_host_env();
         Ok(match outcome {
             StartOutcome::Started { preflight } => MlxEngineDistributedStartResponse {
@@ -507,14 +624,25 @@ impl GooseAcpAgent {
         _req: MlxEngineDistributedStopRequest,
     ) -> Result<MlxEngineDistributedStopResponse, agent_client_protocol::Error> {
         let manager = distributed::global_manager();
+        if !manager.owns_the_mac() {
+            // Without a run of its own, stop sweeps the configured nodes for goose ranks by marker
+            // — which would kill another window's live run. Only its owner stops it.
+            if let OwnerRecord::Other(engine) = owner_record::read() {
+                return Err(agent_client_protocol::Error::invalid_params().data(format!(
+                    "{OWNED_BY_ANOTHER_WINDOW}: {}; stop it from that window",
+                    owned_elsewhere(&engine)
+                )));
+            }
+        }
         if manager.status().config.is_none() {
             manager.set_config(persisted_config()?);
         }
         let report = manager.stop().await;
+        withdraw_owner_record();
         super::mlx_engine::align_omlx_host_env();
         Ok(MlxEngineDistributedStopResponse {
             stop: stop_to_dto(report),
-            status: status_response()?.status,
+            status: status_response().await?.status,
         })
     }
 

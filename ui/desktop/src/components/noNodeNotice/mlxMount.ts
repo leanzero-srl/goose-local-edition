@@ -6,12 +6,21 @@ import {
   type MlxEngineStatus,
 } from '../../acp/mlx-engine';
 import {
+  foreignOwner,
   latestMlxDistributedStatus,
   subscribeMlxDistributedStatus,
   type MlxDistributedStatus,
 } from '../../acp/mlx-distributed';
-import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
+import {
+  backendName,
+  modeSummary,
+  ownsTheMac,
+  type MlxModeSummary,
+} from '../leanzero-swarm/mlxDistributed';
 import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
+import type { IntlShape } from 'react-intl';
+import { defineMessages } from '../../i18n';
+import { distributedStateWord } from '../leanzero-swarm/mlxModeLabel';
 import { errorMessage } from '../../utils/conversionUtils';
 
 /**
@@ -66,7 +75,15 @@ export function distributedFact(
   distributed: MlxDistributedStatus | null,
   servedId: string | null
 ): EngineFact | null {
-  if (!distributed || !ownsTheMac(distributed)) return null;
+  if (!distributed) return null;
+  const foreign = foreignOwner(distributed);
+  if (foreign) {
+    // Another window's goosed supervises it: its own /v1/models answer is the whole fact here.
+    return foreign.state === 'answering' && servedId != null && foreign.servedModelId === servedId
+      ? 'up'
+      : 'down';
+  }
+  if (!ownsTheMac(distributed)) return null;
   const { state } = distributed;
   if (state === 'preflight' || state === 'starting') return 'mounting';
   if (
@@ -77,6 +94,61 @@ export function distributedFact(
     return 'up';
   }
   return 'down';
+}
+
+/** The distributed engine that owns this Mac, whichever goosed supervises it, for the mode line. */
+export function distributedSummary(distributed: MlxDistributedStatus): MlxModeSummary {
+  const foreign = foreignOwner(distributed);
+  if (foreign) {
+    return {
+      mode: 'distributed',
+      nodeNames: foreign.nodeNames ?? [],
+      backend: backendName(foreign.backend),
+    };
+  }
+  return modeSummary(distributed);
+}
+
+const i18n = defineMessages({
+  foreignAnswering: {
+    id: 'mlxMount.foreignAnswering',
+    defaultMessage: 'Ready · owned by another window',
+  },
+  foreignNotAnswering: {
+    id: 'mlxMount.foreignNotAnswering',
+    defaultMessage: 'Not answering · owned by another window',
+  },
+});
+
+/** Its state in words: this window's run in the backend's vocabulary, another window's as the
+ *  answer its engine gave (only its owner knows the supervisor's state). */
+export function distributedStateLabel(intl: IntlShape, distributed: MlxDistributedStatus): string {
+  const foreign = foreignOwner(distributed);
+  if (foreign) {
+    return intl.formatMessage(
+      foreign.state === 'answering' ? i18n.foreignAnswering : i18n.foreignNotAnswering
+    );
+  }
+  return distributedStateWord(intl, distributed.state);
+}
+
+/** It answers requests: this window's run is ready/serving, another window's answers /v1/models. */
+export function distributedServes(distributed: MlxDistributedStatus): boolean {
+  const foreign = foreignOwner(distributed);
+  if (foreign) return foreign.state === 'answering';
+  return distributed.state === 'ready' || distributed.state === 'serving';
+}
+
+/** Why it does not answer: this window's last error, or the probe of another window's engine. */
+export function distributedProblem(distributed: MlxDistributedStatus): string | null {
+  const foreign = foreignOwner(distributed);
+  if (foreign) return foreign.detail ?? null;
+  return distributed.lastError ?? null;
+}
+
+/** The id the owning engine serves — this window's run, or the one another window published. */
+export function distributedServedId(distributed: MlxDistributedStatus): string | null {
+  return foreignOwner(distributed)?.servedModelId ?? distributed.servedModelId ?? null;
 }
 
 /** The distributed status the rest of the window last read — no poll of its own. */

@@ -7,10 +7,13 @@ import type { SwarmConfig } from '../settings/swarm/golden';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, Chip, SURFACE, SPACE, StatusDot, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 import type { NoNodeRow, NodeReason } from './parseNoNodeError';
-import { modeSummary } from '../leanzero-swarm/mlxDistributed';
-import { distributedStateWord, formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
+import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import {
   distributedFact,
+  distributedServedId,
+  distributedServes,
+  distributedStateLabel,
+  distributedSummary,
   engineFact,
   resolveMountTarget,
   shortModelName,
@@ -176,15 +179,13 @@ export default function NoNodeNotice({
     const owned = distributedFact(distributed, nodeModelOf(nodeId));
     if (owned && distributed) {
       const label = intl.formatMessage(i18n.distributedState, {
-        mode: formatMlxMode(intl, modeSummary(distributed), null),
-        state: distributedStateWord(intl, distributed.state),
+        mode: formatMlxMode(intl, distributedSummary(distributed), null),
+        state: distributedStateLabel(intl, distributed),
       });
       const wanted = nodeModelOf(nodeId);
+      const served = distributedServedId(distributed);
       const wrongModel =
-        (distributed.state === 'ready' || distributed.state === 'serving') &&
-        distributed.servedModelId != null &&
-        wanted != null &&
-        distributed.servedModelId !== wanted;
+        distributedServes(distributed) && served != null && wanted != null && served !== wanted;
       return (
         <div
           data-testid={`no-node-distributed-${nodeId}`}
@@ -193,16 +194,13 @@ export default function NoNodeNotice({
           <Chip
             tone={owned === 'up' ? 'ok' : 'warn'}
             icon={owned === 'mounting' ? <Loader2 className="animate-spin" /> : undefined}
-            title={distributed.servedModelId ?? undefined}
+            title={served ?? undefined}
           >
             {label}
           </Chip>
           {wrongModel && (
             <p className={cx(TYPE.meta, 'break-words text-right')}>
-              {intl.formatMessage(i18n.distributedWrongModel, {
-                served: distributed.servedModelId,
-                wanted,
-              })}
+              {intl.formatMessage(i18n.distributedWrongModel, { served, wanted })}
             </p>
           )}
         </div>

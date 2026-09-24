@@ -3389,6 +3389,12 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "중지 중"
   },
+  "mlxMount.foreignAnswering": {
+    "defaultMessage": "준비됨 · 다른 창이 소유"
+  },
+  "mlxMount.foreignNotAnswering": {
+    "defaultMessage": "응답 없음 · 다른 창이 소유"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "취소"
   },

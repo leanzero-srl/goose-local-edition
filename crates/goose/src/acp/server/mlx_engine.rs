@@ -34,6 +34,13 @@ pub(super) fn align_omlx_host_env() {
         std::env::set_var("OMLX_HOST", base);
         return;
     }
+    // Another window's goosed supervises the run: its published record points here too.
+    if let crate::providers::mlx_distributed_owner::OwnerRecord::Other(engine) =
+        crate::providers::mlx_distributed_owner::read()
+    {
+        std::env::set_var("OMLX_HOST", engine.base_url);
+        return;
+    }
     // No `mlx_engine` block = the default engine on the default port (honest: nothing was
     // configured). An UNREADABLE block is a different fact: pointing chat at the default port
     // would impersonate a configuration the operator did write and we could not read — the

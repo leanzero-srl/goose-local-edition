@@ -3389,6 +3389,12 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "Durduruluyor"
   },
+  "mlxMount.foreignAnswering": {
+    "defaultMessage": "Hazır · başka bir pencereye ait"
+  },
+  "mlxMount.foreignNotAnswering": {
+    "defaultMessage": "Yanıt vermiyor · başka bir pencereye ait"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "İptal"
   },

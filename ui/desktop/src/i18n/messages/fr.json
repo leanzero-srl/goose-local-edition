@@ -3389,6 +3389,12 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "Arrêt en cours"
   },
+  "mlxMount.foreignAnswering": {
+    "defaultMessage": "Prêt · appartient à une autre fenêtre"
+  },
+  "mlxMount.foreignNotAnswering": {
+    "defaultMessage": "Ne répond pas · appartient à une autre fenêtre"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Annuler"
   },

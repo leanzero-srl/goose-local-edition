@@ -12,6 +12,7 @@ import type {
   MlxDistributedNodeConfigDto,
   MlxDistributedNodePreflightDto,
   MlxDistributedNodeStatusDto,
+  MlxDistributedOwnerDto,
   MlxDistributedPreflightDto,
   MlxDistributedRankPlanDto,
   MlxDistributedStatusDto,
@@ -36,6 +37,7 @@ export type MlxDistributedStatus = MlxDistributedStatusDto;
 export type MlxDistributedConfig = MlxDistributedConfigDto;
 export type MlxDistributedNodeConfig = MlxDistributedNodeConfigDto;
 export type MlxDistributedNodeStatus = MlxDistributedNodeStatusDto;
+export type MlxDistributedOwner = MlxDistributedOwnerDto;
 export type MlxDistributedPreflight = MlxDistributedPreflightDto;
 export type MlxDistributedNodePreflight = MlxDistributedNodePreflightDto;
 export type MlxDistributedRankPlan = MlxDistributedRankPlanDto;
@@ -61,12 +63,27 @@ async function call<T>(method: string, params: Record<string, unknown>): Promise
  * engine on the same fact the view saw (main has no ACP client of its own).
  */
 function reportToMain(status: MlxDistributedStatus): void {
+  // Another window's goosed supervises the run and that window reports it; this one's own
+  // "single" would flip the shared menu-bar tray back and forth.
+  if (foreignOwner(status)) return;
   const report = (
     window as unknown as {
       electron?: { mlxDistributedReport?: (r: unknown) => void };
     }
   ).electron?.mlxDistributedReport;
   report?.(toMlxDistributedReport(status));
+}
+
+/**
+ * The run ANOTHER window's goosed published and supervises (each window runs its own goosed): live
+ * — answering or not — never a stale or unreadable record, which name a fact but own nothing.
+ */
+export function foreignOwner(
+  status: Pick<MlxDistributedStatus, 'mode' | 'owner'> | null
+): MlxDistributedOwner | null {
+  if (!status || status.mode === 'distributed') return null;
+  const owner = status.owner;
+  return owner && (owner.state === 'answering' || owner.state === 'notAnswering') ? owner : null;
 }
 
 /**

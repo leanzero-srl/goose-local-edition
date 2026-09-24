@@ -3376,6 +3376,36 @@ pub struct MlxDistributedStatusDto {
     /// The last (or running) provisioning of the nodes' goose-managed Python.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provision: Option<MlxDistributedProvisionDto>,
+    /// Set when ANOTHER goosed on this Mac (another desktop window) published a distributed run
+    /// and this one supervises none: that run is read-only here — start and stop are refused with
+    /// `ownedByAnotherWindow`, and `mode`/`state` above stay this goosed's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<MlxDistributedOwnerDto>,
+}
+
+/// Another goosed's distributed run, from the record it published under the goose state dir.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedOwnerDto {
+    /// "answering" (its /v1/models lists `servedModelId`) | "notAnswering" (its goosed is alive,
+    /// the engine does not answer — loading, or the run failed) | "stale" (the goosed that wrote
+    /// the record is gone; the record is ignored) | "unreadable" (`detail` says why).
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub served_model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(default)]
+    pub node_names: Vec<String>,
+    /// Why the engine is not answering, or why the record could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// Read the distributed engine's status (this Mac's supervisor).

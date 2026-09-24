@@ -27,6 +27,7 @@ use serde_json::{Map, Value};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::base::{MessageStream, Provider};
+use super::mlx_distributed_owner;
 use crate::config::{Config, ConfigError};
 use crate::conversation::message::Message;
 use goose_providers::errors::ProviderError;
@@ -377,23 +378,28 @@ impl LiveProbe {
     /// the base URL the local manager reports when it is the one running it, else the configured
     /// port; the local manager only enriches the reason when nothing listens.
     async fn probe_mlx(&self, model_id: &str) -> Result<Servable, String> {
-        // The explicit switch: while THIS process's distributed engine owns the Mac, the sidecar
-        // node is served by it (its wrapper answers /v1/models with the served id and /v1/status
-        // with the in-flight count, the same surface this probe reads).
-        if let Some(base) = goose_sidecar::distributed::global_manager().active_base_url() {
-            return self
-                .probe_mlx_at(&base, model_id, "the distributed MLX engine owns this Mac")
-                .await;
-        }
+        let stale = match distributed_target(
+            goose_sidecar::distributed::global_manager().active_base_url(),
+            mlx_distributed_owner::read(),
+        )? {
+            DistributedTarget::At { base, diagnostic } => {
+                return self.probe_mlx_at(&base, model_id, &diagnostic).await;
+            }
+            DistributedTarget::None { stale } => stale,
+        };
         let local = goose_sidecar::engine::global_manager().status().await;
         let base = mlx_base_url(
             &local,
             Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY),
         )?;
-        let diagnostic = match (&local.state, &local.last_error) {
+        let mut diagnostic = match (&local.state, &local.last_error) {
             (state, Some(err)) => format!("this process's manager: {state}, {err}"),
             (state, None) => format!("this process's manager: {state}"),
         };
+        if let Some(stale) = stale {
+            diagnostic.push_str("; ");
+            diagnostic.push_str(&stale);
+        }
         self.probe_mlx_at(&base, model_id, &diagnostic).await
     }
 
@@ -457,6 +463,54 @@ impl LiveProbe {
             live_in_flight,
             context_window,
         })
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum DistributedTarget {
+    /// The distributed engine owns this Mac: the sidecar node is served by it (its wrapper answers
+    /// /v1/models with the served id and /v1/status with the in-flight count — the surface
+    /// `probe_mlx_at` reads).
+    At { base: String, diagnostic: String },
+    /// No distributed engine owns this Mac; `stale` names a record whose goosed is gone.
+    None { stale: Option<String> },
+}
+
+/// THIS process's supervised run first; else the run another window's goosed published (each
+/// desktop window runs its own goosed, and only one of them supervises the ranks). A stale record
+/// is named and ignored; an unreadable one refuses to guess which engine owns the Mac.
+fn distributed_target(
+    own_active_base: Option<String>,
+    record: mlx_distributed_owner::OwnerRecord,
+) -> Result<DistributedTarget, String> {
+    use mlx_distributed_owner::OwnerRecord;
+    if let Some(base) = own_active_base {
+        return Ok(DistributedTarget::At {
+            base,
+            diagnostic: "the distributed MLX engine owns this Mac".to_string(),
+        });
+    }
+    match record {
+        OwnerRecord::Other(engine) => Ok(DistributedTarget::At {
+            diagnostic: format!(
+                "the distributed MLX engine of another window (goosed pid {}) owns this Mac",
+                engine.pid
+            ),
+            base: engine.base_url,
+        }),
+        OwnerRecord::Stale(engine) => {
+            let stale = format!(
+                "a stale distributed-engine record names goosed pid {} ({}), which is gone — ignored",
+                engine.pid, engine.base_url
+            );
+            tracing::warn!(target: "swarm_router", "{stale}");
+            Ok(DistributedTarget::None { stale: Some(stale) })
+        }
+        OwnerRecord::Unreadable { path, error } => Err(format!(
+            "the distributed-engine owner record {} is unreadable ({error}); which MLX engine owns this Mac is unknown",
+            path.display()
+        )),
+        OwnerRecord::Mine(_) | OwnerRecord::Absent => Ok(DistributedTarget::None { stale: None }),
     }
 }
 
@@ -1926,6 +1980,67 @@ devices:
             refused.contains(&format!("serves '{HF}', the device wants '{NODE_MODEL}'")),
             "{refused}"
         );
+    }
+
+    /// A second desktop window runs its own goosed, whose distributed manager supervises nothing:
+    /// the record the owning window published is what points its router at the engine. A stale
+    /// record is named and ignored; an unreadable one refuses to guess.
+    #[test]
+    fn another_windows_distributed_engine_is_found_through_its_published_record() {
+        use mlx_distributed_owner::{OwnerRecord, PublishedEngine};
+        let engine = PublishedEngine {
+            pid: 4242,
+            base_url: "http://127.0.0.1:8191".to_string(),
+            served_model_id: "mihai-qwen3.8-27b-atlassian-q8-mlx".to_string(),
+            model_id: "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string(),
+            backend: "jaccl".to_string(),
+            node_names: vec!["a".to_string(), "b".to_string()],
+        };
+        match distributed_target(None, OwnerRecord::Other(engine.clone())).unwrap() {
+            DistributedTarget::At { base, diagnostic } => {
+                assert_eq!(base, "http://127.0.0.1:8191");
+                assert!(
+                    diagnostic.contains("another window (goosed pid 4242)"),
+                    "{diagnostic}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            distributed_target(
+                Some("http://127.0.0.1:9000".to_string()),
+                OwnerRecord::Other(engine.clone())
+            )
+            .unwrap(),
+            DistributedTarget::At {
+                base: "http://127.0.0.1:9000".to_string(),
+                diagnostic: "the distributed MLX engine owns this Mac".to_string()
+            },
+            "this process's own run wins over any record"
+        );
+        match distributed_target(None, OwnerRecord::Stale(engine.clone())).unwrap() {
+            DistributedTarget::None { stale: Some(stale) } => {
+                assert!(
+                    stale.contains("goosed pid 4242") && stale.contains("gone"),
+                    "{stale}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            distributed_target(None, OwnerRecord::Mine(engine)).unwrap(),
+            DistributedTarget::None { stale: None },
+            "our own record with our manager idle is a run that ended, not an engine"
+        );
+        let unreadable = distributed_target(
+            None,
+            OwnerRecord::Unreadable {
+                path: "/x/mlx-distributed-owner.json".into(),
+                error: "EOF".to_string(),
+            },
+        )
+        .unwrap_err();
+        assert!(unreadable.contains("unreadable (EOF)"), "{unreadable}");
     }
 
     #[test]

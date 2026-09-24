@@ -70,6 +70,32 @@ const DIST_READY: MlxDistributedStatus = {
   baseUrl: 'http://127.0.0.1:8091',
 };
 const DIST_STARTING: MlxDistributedStatus = { ...DIST_READY, state: 'starting' };
+/** A second window's goosed supervises nothing; the first window's run reaches it as `owner`. */
+const OTHER_WINDOW: MlxDistributedStatus = {
+  mode: 'single',
+  state: 'stopped',
+  admissionOpen: true,
+  nodes: [],
+  events: [],
+  restarts: 0,
+  owner: {
+    state: 'answering',
+    pid: 4242,
+    baseUrl: 'http://127.0.0.1:8191',
+    servedModelId: ALIAS,
+    modelId: HF,
+    backend: 'jaccl',
+    nodeNames: ['Mihai Macbook', 'Work’s Mac Studio'],
+  },
+};
+const OTHER_WINDOW_LOADING: MlxDistributedStatus = {
+  ...OTHER_WINDOW,
+  owner: {
+    ...OTHER_WINDOW.owner!,
+    state: 'notAnswering',
+    detail: 'GET http://127.0.0.1:8191/v1/models failed (connection refused)',
+  },
+};
 /** What 3.0.19 served: the HF id, which the node does not name. */
 const DIST_HF_ID: MlxDistributedStatus = { ...DIST_READY, servedModelId: HF };
 
@@ -161,6 +187,26 @@ describe('swarmReadiness — the distributed engine owns this Mac', () => {
     const stopped: MlxDistributedStatus = { ...DIST_READY, mode: 'single', state: 'stopped' };
     expect(swarmReadiness(ready([MLX_NODE]), RUNNING, stopped)).toEqual({ kind: 'ready' });
     expect(swarmReadiness(ready([MLX_NODE]), STOPPED, stopped)).toMatchObject({
+      kind: 'unmounted',
+    });
+  });
+});
+
+describe('swarmReadiness — another window’s goosed owns the distributed engine', () => {
+  it('its engine answering the node’s id is ready; not answering is its own state, never Mount', () => {
+    expect(swarmReadiness(ready([MLX_NODE]), STOPPED, OTHER_WINDOW)).toEqual({ kind: 'ready' });
+    expect(swarmReadiness(ready([MLX_NODE]), STOPPED, OTHER_WINDOW_LOADING)).toMatchObject({
+      kind: 'distributed',
+      wanted: ALIAS,
+    });
+  });
+
+  it('a stale record owns nothing: the single engine’s rules apply', () => {
+    const stale: MlxDistributedStatus = {
+      ...OTHER_WINDOW,
+      owner: { ...OTHER_WINDOW.owner!, state: 'stale' },
+    };
+    expect(swarmReadiness(ready([MLX_NODE]), STOPPED, stale)).toMatchObject({
       kind: 'unmounted',
     });
   });
@@ -286,6 +332,32 @@ describe('ComposerReadinessStrip (UX audit C1)', () => {
 
     mockExtMethod.mockRejectedValue(new Error('goosed gone'));
     await expect(mlxDistributedStatus()).rejects.toThrow('goosed gone');
+    expect(await screen.findByTestId('composer-readiness-mount')).toBeInTheDocument();
+  });
+
+  it('another window’s run: named as owned there, read-only here, and its stop brings Mount back', async () => {
+    const report = vi.fn();
+    (window as unknown as { electron: unknown }).electron = { mlxDistributedReport: report };
+    mockExtMethod.mockResolvedValue({ status: OTHER_WINDOW_LOADING });
+    await mlxDistributedStatus();
+    expect(report).not.toHaveBeenCalled();
+    wrap('swarm');
+    const strip = await screen.findByTestId('composer-readiness');
+    expect(strip.textContent).toContain(
+      'Distributed · 2 nodes · JACCL · Not answering · owned by another window — mihai-mlx'
+    );
+    expect(screen.getByTestId('composer-readiness-detail').textContent).toContain(
+      'connection refused'
+    );
+    expect(screen.queryByTestId('composer-readiness-mount')).toBeNull();
+
+    mockExtMethod.mockResolvedValue({ status: OTHER_WINDOW });
+    await mlxDistributedStatus();
+    await waitFor(() => expect(screen.queryByTestId('composer-readiness')).toBeNull());
+
+    mockExtMethod.mockResolvedValue({ status: { ...OTHER_WINDOW, owner: undefined } });
+    await mlxDistributedStatus();
+    expect(report).toHaveBeenCalledTimes(1);
     expect(await screen.findByTestId('composer-readiness-mount')).toBeInTheDocument();
   });
 

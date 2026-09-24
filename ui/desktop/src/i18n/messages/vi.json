@@ -3389,6 +3389,12 @@
   "mlxMode.state.stopping": {
     "defaultMessage": "Đang dừng"
   },
+  "mlxMount.foreignAnswering": {
+    "defaultMessage": "Sẵn sàng · thuộc cửa sổ khác"
+  },
+  "mlxMount.foreignNotAnswering": {
+    "defaultMessage": "Không phản hồi · thuộc cửa sổ khác"
+  },
   "mlxReplica.cancel": {
     "defaultMessage": "Hủy"
   },

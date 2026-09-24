@@ -8,6 +8,7 @@ import {
   mlxEngineUnmount,
 } from '../acp/mlx-engine';
 import {
+  foreignOwner,
   latestMlxDistributedStatus,
   mlxDistributedStatus,
   mlxDistributedStop,
@@ -101,7 +102,9 @@ export function useMlxDistributedReporter(enabled: boolean): void {
         timer = null;
       }
       try {
-        owned = (await mlxDistributedStatus()).mode === 'distributed';
+        const status = await mlxDistributedStatus();
+        // Another window's run is followed too, so its stop reaches this window's readiness.
+        owned = status.mode === 'distributed' || foreignOwner(status) != null;
       } catch {
         // Nothing to report; `owned` keeps the last good read's word.
       } finally {
@@ -112,10 +115,18 @@ export function useMlxDistributedReporter(enabled: boolean): void {
     void read();
     const onWake = () => void read();
     window.electron.on('mlx-distributed-wake', onWake);
+    // Another window may have started a run while this one was in the background.
+    window.addEventListener('focus', onWake);
     // A run started from the Engine tab is first seen by ITS read: join the loop then, so the
     // latest status (the composer's readiness reads it) stays current after that view closes.
     const unsubscribe = subscribeMlxDistributedStatus(() => {
-      if (disposed || reading || timer || latestMlxDistributedStatus()?.mode !== 'distributed') {
+      const latest = latestMlxDistributedStatus();
+      if (
+        disposed ||
+        reading ||
+        timer ||
+        (latest?.mode !== 'distributed' && foreignOwner(latest) == null)
+      ) {
         return;
       }
       owned = true;
@@ -125,6 +136,7 @@ export function useMlxDistributedReporter(enabled: boolean): void {
       disposed = true;
       if (timer) clearTimeout(timer);
       unsubscribe();
+      window.removeEventListener('focus', onWake);
       window.electron.off('mlx-distributed-wake', onWake);
     };
   }, [enabled]);
