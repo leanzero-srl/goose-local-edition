@@ -9,6 +9,7 @@ import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import type { PlacementPlan } from '../../acp/mlx-placement';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import type { NodesResponse } from '../../acp/leanzero-link';
+import DISCOVERY from './mlxDistributedDiscovery.fixture.json';
 
 const mockPlan = vi.fn();
 const mockMeasure = vi.fn();
@@ -31,10 +32,17 @@ vi.mock('../../acp/mlx-remote-single', () => ({
   latestMlxRemoteSingleStatus: () => remoteLatest,
   subscribeMlxRemoteSingleStatus: () => () => undefined,
 }));
+const mockDiscover = vi.fn();
+const mockProvision = vi.fn();
+const mockDistributedStatus = vi.fn();
 vi.mock('../../acp/mlx-distributed', () => ({
   mlxDistributedStart: (...a: unknown[]) => mockDistributedStart(...a),
   mlxDistributedStop: (...a: unknown[]) => mockDistributedStop(...a),
+  mlxDistributedDiscover: (...a: unknown[]) => mockDiscover(...a),
+  mlxDistributedProvision: (...a: unknown[]) => mockProvision(...a),
+  mlxDistributedStatus: (...a: unknown[]) => mockDistributedStatus(...a),
 }));
+vi.mock('./LocalNetworkNotice', () => ({ touchLocalNetwork: vi.fn(async () => undefined) }));
 
 // The Macs Run it names and copies between: the Link roster, each Mac's models and the links.
 const mockNodes = vi.fn();
@@ -174,6 +182,165 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/**
+ * The owner's walkthrough of 3.0.27: "Run across both Macs" for a model other than the saved split
+ * said "open Details › Set up, pick this one, then Run". Run now switches the split itself.
+ */
+describe('Run across both Macs for a model the split is not set up with', () => {
+  /** The saved split: the same two Macs, serving the Flash model, with the owner's own ports. */
+  const SAVED = {
+    ...DISCOVERY.chosen27b.config,
+    modelId: 'rapid-mlx/Qwen3.8-Flash-Next-4bit',
+    port: 9191,
+    watchdogWarnRatio: 0.07,
+    nodes: DISCOVERY.chosen27b.config.nodes.map((n) => ({
+      ...n,
+      modelDir: `/models/rapid-mlx/Qwen3.8-Flash-Next-4bit`,
+    })),
+  };
+  const STOPPED_FLASH = {
+    mode: 'single',
+    state: 'stopped',
+    admissionOpen: true,
+    nodes: [],
+    config: SAVED,
+  } as unknown as MlxDistributedStatus;
+  const readyEnv = (d: typeof DISCOVERY.chosen27b) => ({
+    ...d,
+    nodes: d.nodes.map((n) => ({ ...n, env: { ...n.env, state: 'ready' } })),
+  });
+
+  it('Run detects the Macs for THIS model, keeps the saved setup, and starts — no Set up trip', async () => {
+    mockDiscover.mockResolvedValue(readyEnv(DISCOVERY.chosen27b));
+    mockDistributedStart.mockResolvedValue({ started: true });
+    renderCard({ distributed: STOPPED_FLASH });
+    const split = await screen.findByTestId('placement-way-split');
+    expect(within(split).queryByText(/Set up, pick this one/)).toBeNull();
+    await userEvent.click(within(split).getByTestId('placement-run-split'));
+    await waitFor(() => expect(mockDistributedStart).toHaveBeenCalledTimes(1));
+    expect(mockDiscover).toHaveBeenCalledWith(['workhorse'], MODEL);
+    const config = mockDistributedStart.mock.calls[0][0];
+    expect(config.modelId).toBe(MODEL);
+    // The owner's setup survives the switch; the model's own folders come from the discovery.
+    expect(config.port).toBe(9191);
+    expect(config.watchdogWarnRatio).toBe(0.07);
+    expect(config.nodes.map((n: { modelDir: string }) => n.modelDir)).toEqual(
+      DISCOVERY.chosen27b.config.nodes.map((n) => n.modelDir)
+    );
+    expect(mockProvision).not.toHaveBeenCalled();
+    expect(await screen.findByText('Starting — this card follows it.')).toBeInTheDocument();
+  });
+
+  it('a Mac without goose’s Python gets it built first, then the split starts', async () => {
+    mockDiscover.mockResolvedValue(DISCOVERY.chosen27b);
+    mockProvision.mockResolvedValue({ state: 'running', startedMs: 1, nodes: [] });
+    mockDistributedStatus.mockResolvedValue({
+      provision: { state: 'done', startedMs: 1, finishedMs: 2, nodes: [] },
+    });
+    mockDistributedStart.mockResolvedValue({ started: true });
+    renderCard({ distributed: STOPPED_FLASH });
+    const split = await screen.findByTestId('placement-way-split');
+    await userEvent.click(within(split).getByTestId('placement-run-split'));
+    await waitFor(() => expect(mockDistributedStart).toHaveBeenCalledTimes(1), { timeout: 5000 });
+    expect(mockProvision).toHaveBeenCalledTimes(1);
+    expect(mockProvision.mock.calls[0][0].modelId).toBe(MODEL);
+  });
+
+  it('a build that fails names the Mac and its words; nothing starts', async () => {
+    mockDiscover.mockResolvedValue(DISCOVERY.chosen27b);
+    mockProvision.mockResolvedValue({
+      state: 'failed',
+      startedMs: 1,
+      nodes: [
+        {
+          rank: 1,
+          name: 'Work’s Mac Studio',
+          python: '/p',
+          state: 'failed',
+          detail: 'uv pip install mlx: no space left on device',
+          lines: [],
+          startedMs: 1,
+        },
+      ],
+    });
+    renderCard({ distributed: STOPPED_FLASH });
+    await userEvent.click(
+      within(await screen.findByTestId('placement-way-split')).getByTestId('placement-run-split')
+    );
+    expect(
+      await screen.findByText(
+        'goose’s Python did not build on Work’s Mac Studio: uv pip install mlx: no space left on device'
+      )
+    ).toBeInTheDocument();
+    expect(mockDistributedStart).not.toHaveBeenCalled();
+  });
+
+  it('the model missing on a Mac is said by name, and nothing starts', async () => {
+    const missing = readyEnv(DISCOVERY.chosen27b);
+    missing.models = missing.models.map((m) =>
+      m.id === MODEL
+        ? {
+            ...m,
+            onEveryNode: false,
+            nodes: m.nodes.map((n) => (n.rank === 1 ? { ...n, state: 'absent' } : n)),
+          }
+        : m
+    );
+    mockDiscover.mockResolvedValue(missing);
+    renderCard({ distributed: STOPPED_FLASH });
+    await userEvent.click(
+      within(await screen.findByTestId('placement-way-split')).getByTestId('placement-run-split')
+    );
+    expect(
+      await screen.findByText(
+        'Qwen3.8-27B-Atlassian-Q8-mlx is not on Work’s Mac Studio yet — copy it there, then Run.'
+      )
+    ).toBeInTheDocument();
+    expect(mockDistributedStart).not.toHaveBeenCalled();
+  });
+
+  it('“Run part of a split model” off on the Studio names the Mac and the switch — no probe', async () => {
+    const plan: PlacementPlan = {
+      ...PLAN_27B,
+      candidates: (PLAN_27B.candidates ?? []).map((c) =>
+        c.key.kind === 'tensor' ? { ...c, key: { ...c.key, nodes: ['local', 'link:wh'] } } : c
+      ),
+    };
+    mockPlan.mockResolvedValue(answer(plan));
+    mockNodes.mockResolvedValue({
+      self: SELF,
+      peers: [{ ...PEER, allows: { manage_models: true, answer_chat: true, run_split: false } }],
+    });
+    renderCard({ distributed: STOPPED_FLASH });
+    const split = await screen.findByTestId('placement-way-split');
+    await waitFor(() => expect(mockModelsList).toHaveBeenCalledWith('wh'));
+    await userEvent.click(within(split).getByTestId('placement-run-split'));
+    expect(
+      await screen.findByText(
+        'Run part of a split model is off on Work’s Mac Studio — turn on “Let my other Macs use this Mac” there (Providers › My Macs)'
+      )
+    ).toBeInTheDocument();
+    expect(mockDiscover).not.toHaveBeenCalled();
+  });
+
+  it('set up for THIS model already: Run starts the saved split as it is', async () => {
+    const plan: PlacementPlan = {
+      ...PLAN_27B,
+      candidates: (PLAN_27B.candidates ?? []).map((c) =>
+        c.key.kind === 'tensor' ? { ...c, action: { kind: 'startSplit', setupMatches: true } } : c
+      ),
+    };
+    mockPlan.mockResolvedValue(answer(plan));
+    mockDistributedStart.mockResolvedValue({ started: true });
+    renderCard({ distributed: STOPPED_FLASH });
+    await userEvent.click(
+      within(await screen.findByTestId('placement-way-split')).getByTestId('placement-run-split')
+    );
+    await waitFor(() => expect(mockDistributedStart).toHaveBeenCalledWith(null));
+    expect(mockDiscover).not.toHaveBeenCalled();
+  });
+});
+
 describe('Run it on the real 27B plan', () => {
   it('three ways — this Mac, the Studio, both — each with its figure or the reason it lost', async () => {
     renderCard();
@@ -306,12 +473,17 @@ describe('Run it on the real 27B plan', () => {
     expect(screen.getByText('Run across your Macs')).toBeInTheDocument();
   });
 
-  it('a split set up with another model says what to do first, with its Details open', async () => {
+  it('the split’s Details is folded on first view, and the choice holds for the session', async () => {
     renderCard();
     const split = await screen.findByTestId('placement-way-split');
-    expect(within(split).queryByTestId('placement-run-split')).toBeNull();
-    expect(within(split).getByText(/open Details › Set up, pick this one, then Run/)).toBeVisible();
+    expect(within(split).queryByTestId('split-details-body')).not.toBeVisible();
+    await userEvent.click(within(split).getByText('Details'));
     expect(within(split).getByTestId('split-details-body')).toBeVisible();
+    cleanup();
+    renderCard();
+    expect(
+      within(await screen.findByTestId('placement-way-split')).getByTestId('split-details-body')
+    ).toBeVisible();
   });
 
   it('the Studio lacks the model: Copy to it first over Thunderbolt, and the start goes on by itself', async () => {

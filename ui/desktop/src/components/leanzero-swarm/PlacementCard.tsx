@@ -33,7 +33,10 @@ import {
 } from '../../acp/mlx-placement';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import {
+  mlxDistributedDiscover,
+  mlxDistributedProvision,
   mlxDistributedStart,
+  mlxDistributedStatus,
   mlxDistributedStop,
   type MlxDistributedStatus,
 } from '../../acp/mlx-distributed';
@@ -45,7 +48,15 @@ import {
   subscribeMlxRemoteSingleStatus,
 } from '../../acp/mlx-remote-single';
 import { mlxErrorMessage } from './mlxErrorMessage';
-import { ownsTheMac } from './mlxDistributed';
+import {
+  cleanConfig,
+  ownsTheMac,
+  splitConfigFor,
+  splitPlan,
+  type SplitBlocker,
+} from './mlxDistributed';
+import { MLX_STATUS_POLL_MS } from './mlxLiveStats';
+import { touchLocalNetwork } from './LocalNetworkNotice';
 import { distributedStateWord } from './mlxModeLabel';
 import { remotePhase, runPhase, singlePhase } from './mlxPhase';
 import { formatGb } from './primitives';
@@ -113,10 +124,41 @@ const i18n = defineMessages({
     defaultMessage:
       'Running and not measured yet — Measure speed replaces the estimate with this Mac’s own number.',
   },
-  setupFirst: {
-    id: 'placementCard.setupFirst',
-    defaultMessage:
-      'The split is set up with another model — open Details › Set up, pick this one, then Run.',
+  splitChecking: {
+    id: 'placementCard.splitChecking',
+    defaultMessage: 'Checking {nodes} for {model}…',
+  },
+  splitBuilding: {
+    id: 'placementCard.splitBuilding',
+    defaultMessage: 'Building goose’s Python on {nodes}…',
+  },
+  splitStarting: {
+    id: 'placementCard.splitStarting',
+    defaultMessage: 'Starting {model} across {nodes}…',
+  },
+  splitNotSplittable: {
+    id: 'placementCard.splitNotSplittable',
+    defaultMessage: 'goose found no way to split {model}.',
+  },
+  splitModelMissing: {
+    id: 'placementCard.splitModelMissing',
+    defaultMessage: '{model} is not on {nodes} yet — copy it there, then Run.',
+  },
+  splitNoUv: {
+    id: 'placementCard.splitNoUv',
+    defaultMessage: 'goose cannot build its Python on {nodes}: there is no uv there.',
+  },
+  splitNotFound: {
+    id: 'placementCard.splitNotFound',
+    defaultMessage: 'goose could not find what the split needs: {items}',
+  },
+  splitBuildFailed: {
+    id: 'placementCard.splitBuildFailed',
+    defaultMessage: 'goose’s Python did not build on {node}: {reason}',
+  },
+  splitNoPeers: {
+    id: 'placementCard.splitNoPeers',
+    defaultMessage: 'goose planned this split without another Mac — open Details › Set up.',
   },
   distributedOwns: {
     id: 'placementCard.distributedOwns',
@@ -206,6 +248,39 @@ const i18n = defineMessages({
 });
 
 type NoticeTone = Exclude<Tone, 'secondary'>;
+
+/** Details under the split: folded until the person opens it, and remembered for the session. */
+const SPLIT_DETAILS_KEY = 'placement-split-details-open';
+
+function splitDetailsOpenAtFirst(): boolean {
+  return sessionStorage.getItem(SPLIT_DETAILS_KEY) === 'open';
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A split's blocker, in the person's words, naming each Mac. */
+export function splitBlockerText(intl: IntlShape, blocker: SplitBlocker, modelId: string): string {
+  const model = modelId.split('/').pop() || modelId;
+  switch (blocker.kind) {
+    case 'notSplittable':
+      return blocker.reason ?? intl.formatMessage(i18n.splitNotSplittable, { model });
+    case 'modelMissing':
+      return intl.formatMessage(i18n.splitModelMissing, {
+        model,
+        nodes: intl.formatList(blocker.nodes, { type: 'conjunction' }),
+      });
+    case 'noUv':
+      return intl.formatMessage(i18n.splitNoUv, {
+        nodes: intl.formatList(blocker.nodes, { type: 'conjunction' }),
+      });
+    case 'notFound':
+      return intl.formatMessage(i18n.splitNotFound, {
+        items: blocker.items
+          .map((item) => `${item.node ? `${item.node} · ` : ''}${item.field}: ${item.reason}`)
+          .join('; '),
+      });
+  }
+}
 
 const GIB = 1024 * 1024 * 1024;
 
@@ -510,7 +585,11 @@ function PlacementCardBody({
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: NoticeTone; text: string } | null>(null);
   const [othersOpen, setOthersOpen] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpenState] = useState(splitDetailsOpenAtFirst);
+  const setDetailsOpen = useCallback((open: boolean) => {
+    sessionStorage.setItem(SPLIT_DETAILS_KEY, open ? 'open' : 'folded');
+    setDetailsOpenState(open);
+  }, []);
   const [confirmStopSplit, setConfirmStopSplit] = useState(false);
   const [, setRemoteTick] = useState(0);
   const request = useRef(0);
@@ -543,6 +622,72 @@ function PlacementCardBody({
   }, [load]);
 
   const refused = intl.formatMessage(i18n.refusedUnnamed);
+  const savedSplit = distributed?.config ?? null;
+
+  /**
+   * The split for a model the saved setup does not carry (or with nothing saved): goose detects
+   * the candidate's Macs for THIS model, keeps the owner's saved config where it spans the same
+   * Macs, builds its Python where a node has none, and starts — preflight included. Only a
+   * genuinely missing piece stops it, named by Mac.
+   */
+  const startSplitFor = useCallback(
+    async (way: Way): Promise<string | null> => {
+      // The plan's Macs for this split; with no plan, the Macs the saved setup spans.
+      const peers = way.candidate
+        ? way.candidate.key.nodes.filter((node) => node !== 'local')
+        : (savedSplit?.nodes ?? []).flatMap((node) => (node.ssh ? [node.ssh] : []));
+      if (peers.length === 0) return intl.formatMessage(i18n.splitNoPeers);
+      const targets = peers
+        .map((id) => macForPlacementNode(macs.macs, id))
+        .filter((m): m is Mac => m != null);
+      const off = targets.find((mac) => peerRefuses(mac, 'split'));
+      if (off) return macs.offText(off, 'split');
+      const names = intl.formatList(
+        way.candidate?.nodeNames ?? savedSplit?.nodes.map((n) => n.name) ?? [],
+        { type: 'conjunction' }
+      );
+      const model = modelId.split('/').pop() || modelId;
+      const say = (text: string) => setNotice({ tone: 'accent', text });
+
+      say(intl.formatMessage(i18n.splitChecking, { nodes: names, model }));
+      await touchLocalNetwork();
+      const discovery = await mlxDistributedDiscover(peers, modelId);
+      const config = cleanConfig(splitConfigFor(discovery, savedSplit));
+      const plan = splitPlan(discovery, modelId, config);
+      if ('blocker' in plan) {
+        if (plan.blocker.kind === 'modelMissing') {
+          for (const mac of targets) void macs.refreshModels(mac.key);
+        }
+        return splitBlockerText(intl, plan.blocker, modelId);
+      }
+      if (plan.provision.length > 0) {
+        say(
+          intl.formatMessage(i18n.splitBuilding, {
+            nodes: intl.formatList(plan.provision, { type: 'conjunction' }),
+          })
+        );
+        let provision = await mlxDistributedProvision(config);
+        // Bounded by the build's own state, never a clock: it ends done or failed.
+        while (provision.state === 'running') {
+          await sleep(MLX_STATUS_POLL_MS);
+          const status = await mlxDistributedStatus();
+          if (!status.provision) break;
+          provision = status.provision;
+        }
+        const failed = provision.nodes.find((n) => n.state === 'failed');
+        if (provision.state === 'failed' || failed) {
+          return intl.formatMessage(i18n.splitBuildFailed, {
+            node: failed?.name ?? names,
+            reason: failed?.detail || failed?.lines[failed.lines.length - 1] || refused,
+          });
+        }
+      }
+      say(intl.formatMessage(i18n.splitStarting, { nodes: names, model }));
+      const response = await mlxDistributedStart(config);
+      return response.started ? null : (response.refusal?.message ?? refused);
+    },
+    [intl, macs, modelId, refused, savedSplit]
+  );
 
   /** Start one way; the refusal/failure text, or null when it started. */
   const startWay = useCallback(
@@ -556,10 +701,16 @@ function PlacementCardBody({
         const response = await mlxRemoteSingleStart(way.peerNodeId, modelId);
         return response.started ? null : (response.refusal?.message ?? refused);
       }
+      const action = way.candidate?.action;
+      const setUpForThisModel =
+        action?.kind === 'startSplit'
+          ? action.setupMatches
+          : savedSplit != null && savedSplit.modelId === modelId;
+      if (!setUpForThisModel) return startSplitFor(way);
       const response = await mlxDistributedStart(null);
       return response.started ? null : (response.refusal?.message ?? refused);
     },
-    [modelId, onMountHere, refused]
+    [modelId, onMountHere, refused, savedSplit, startSplitFor]
   );
 
   const run = async (way: Way) => {
@@ -714,14 +865,12 @@ function PlacementCardBody({
     const needsCopy = missingOn(way);
     const copyJob = needsCopy ? macs.copies[copyKey(modelId, needsCopy.key)] : undefined;
     const copyLink = needsCopy ? macs.linkBetween(SELF_KEY, needsCopy.key) : null;
-    const setupFirst = action?.kind === 'startSplit' && !action.setupMatches;
     const blockedByDistributed = way.kind === 'local' && distributedOwns;
     // A way goose judged short (or could not judge) is not offered: the start would be refused.
     const fitsForGoose =
       c == null || (c.supported && c.fit.status !== 'short' && c.fit.status !== 'unknown');
     const startable =
       !running &&
-      !setupFirst &&
       !blockedByDistributed &&
       needsCopy == null &&
       fitsForGoose &&
@@ -898,17 +1047,12 @@ function PlacementCardBody({
             {way.mac ? macs.describeError(way.mac, action.reason) : action.reason}
           </p>
         )}
-        {setupFirst && (
-          <p className={cx('break-words', TYPE.meta, WEIGHT.semibold)}>
-            {intl.formatMessage(i18n.setupFirst)}
-          </p>
-        )}
         {way.kind === 'split' && splitDetails && (
           <Disclosure
             variant="plain"
             title={intl.formatMessage(i18n.details)}
             meta={<span className={TYPE.meta}>{intl.formatMessage(i18n.detailsMeta)}</span>}
-            open={detailsOpen || setupFirst}
+            open={detailsOpen}
             onOpenChange={setDetailsOpen}
             testId="placement-split-details"
           >

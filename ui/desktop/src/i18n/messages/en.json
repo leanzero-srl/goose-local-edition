@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "Run on {name}"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "The split is set up with another model — open Details › Set up, pick this one, then Run."
-  },
   "placementCard.short": {
     "defaultMessage": "Does not fit: short {gb} on {node}"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "fits only at {tokens} context"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "goose’s Python did not build on {node}: {reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "Building goose’s Python on {nodes}…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "Checking {nodes} for {model}…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model} is not on {nodes} yet — copy it there, then Run."
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose planned this split without another Mac — open Details › Set up."
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose cannot build its Python on {nodes}: there is no uv there."
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose could not find what the split needs: {items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose found no way to split {model}."
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "Starting {model} across {nodes}…"
   },
   "placementCard.started": {
     "defaultMessage": "Starting — this card follows it."

@@ -2887,16 +2887,17 @@ describe('Run it — the ways follow the placement plan', () => {
     unmount();
   });
 
-  it('a split whose setup names another model: no Run, and its Details open on what to do first', async () => {
+  it('a split whose setup names another model: Run is offered (it switches the model itself), Details folded', async () => {
     mockFeatures.mlxDistributed = true;
     mockDistributedStatus.mockResolvedValue(STOPPED_WITH_CONFIG);
     withFlash({ ...PLAN_27B, modelId: FLASH });
     const { unmount } = render(<MlxEngineView />);
     const split = await screen.findByTestId('placement-way-split');
-    expect(within(split).queryByTestId('placement-run-split')).toBeNull();
+    expect(await within(split).findByTestId('placement-run-split')).toBeEnabled();
+    expect(within(split).queryByText(/Set up, pick this one/)).toBeNull();
     expect(within(split).getByTestId('placement-split-details')).toHaveAttribute(
       'data-state',
-      'open'
+      'closed'
     );
     unmount();
   });

@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "{name} पर चलाएँ"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "विभाजन किसी दूसरे मॉडल के साथ सेट है — विवरण › सेट अप खोलें, यह मॉडल चुनें, फिर चलाएँ।"
-  },
   "placementCard.short": {
     "defaultMessage": "नहीं समाता: {node} पर {gb} कम"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "केवल {tokens} संदर्भ पर समाता है"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "{node} पर goose का Python नहीं बना: {reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "{nodes} पर goose का Python बनाया जा रहा है…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "{model} के लिए {nodes} की जाँच हो रही है…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model} अभी {nodes} पर नहीं है — इसे वहाँ कॉपी करें, फिर Run करें।"
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose ने यह स्प्लिट किसी दूसरे Mac के बिना योजनाबद्ध किया — Details › Set up खोलें।"
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose {nodes} पर अपना Python नहीं बना सकता: वहाँ uv नहीं है।"
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose को वह नहीं मिला जिसकी स्प्लिट को ज़रूरत है: {items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose को {model} को बाँटने का कोई तरीका नहीं मिला।"
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "{nodes} पर {model} शुरू हो रहा है…"
   },
   "placementCard.started": {
     "defaultMessage": "शुरू हो रहा है — यह कार्ड इसे फ़ॉलो करता है।"

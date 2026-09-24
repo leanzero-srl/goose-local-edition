@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "Запустить на {name}"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "Разделение настроено на другую модель — откройте Подробности › Настроить, выберите эту и нажмите «Запустить»."
-  },
   "placementCard.short": {
     "defaultMessage": "Не помещается: не хватает {gb} на {node}"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "помещается только с контекстом {tokens}"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "Python для goose не собрался на {node}: {reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "Сборка Python для goose на {nodes}…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "Проверка {nodes} для {model}…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model} ещё нет на {nodes} — скопируйте его туда, затем Запуск."
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose спланировал это разделение без другого Mac — откройте «Подробности › Настроить»."
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose не может собрать свой Python на {nodes}: там нет uv."
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose не нашёл того, что нужно для разделения: {items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose не нашёл способа разделить {model}."
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "Запуск {model} на {nodes}…"
   },
   "placementCard.started": {
     "defaultMessage": "Запуск — карточка следит за ним."

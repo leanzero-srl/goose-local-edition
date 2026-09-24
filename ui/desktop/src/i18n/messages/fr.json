@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "Exécuter sur {name}"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "La répartition est configurée avec un autre modèle — ouvrez Détails › Configurer, choisissez celui-ci, puis Exécuter."
-  },
   "placementCard.short": {
     "defaultMessage": "Ne tient pas : il manque {gb} sur {node}"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "ne tient qu’avec un contexte de {tokens}"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "Le Python de goose n’a pas pu être construit sur {node} : {reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "Construction du Python de goose sur {nodes}…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "Vérification de {nodes} pour {model}…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model} n’est pas encore sur {nodes} — copiez-le, puis Exécuter."
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose a planifié cette répartition sans autre Mac — ouvrez Détails › Configurer."
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose ne peut pas construire son Python sur {nodes} : uv n’y est pas installé."
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose n’a pas trouvé ce dont la répartition a besoin : {items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose n’a trouvé aucun moyen de répartir {model}."
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "Démarrage de {model} sur {nodes}…"
   },
   "placementCard.started": {
     "defaultMessage": "Démarrage — cette carte le suit."

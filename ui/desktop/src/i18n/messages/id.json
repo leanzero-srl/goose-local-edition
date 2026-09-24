@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "Jalankan di {name}"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "Pembagian disiapkan dengan model lain — buka Detail › Siapkan, pilih model ini, lalu Jalankan."
-  },
   "placementCard.short": {
     "defaultMessage": "Tidak muat: kurang {gb} di {node}"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "hanya muat pada konteks {tokens}"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "Python goose gagal dibangun di {node}: {reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "Membangun Python goose di {nodes}…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "Memeriksa {nodes} untuk {model}…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model} belum ada di {nodes} — salin ke sana, lalu Jalankan."
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose merencanakan pembagian ini tanpa Mac lain — buka Detail › Siapkan."
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose tidak dapat membangun Python-nya di {nodes}: tidak ada uv di sana."
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose tidak menemukan yang dibutuhkan pembagian: {items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose tidak menemukan cara untuk membagi {model}."
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "Memulai {model} di {nodes}…"
   },
   "placementCard.started": {
     "defaultMessage": "Memulai — kartu ini mengikutinya."

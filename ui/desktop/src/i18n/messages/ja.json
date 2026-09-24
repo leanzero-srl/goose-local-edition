@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "{name} で実行"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "分割は別のモデルで設定されています — 詳細 › セットアップを開き、このモデルを選んでから実行してください。"
-  },
   "placementCard.short": {
     "defaultMessage": "収まりません：{node} で {gb} 不足"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "コンテキスト {tokens} でのみ収まる"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "{node} で goose の Python を構築できませんでした: {reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "{nodes} に goose の Python を構築中…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "{model} のために {nodes} を確認中…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model} はまだ {nodes} にありません — コピーしてから実行してください。"
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose はほかの Mac なしでこの分割を計画しました — 詳細 › セットアップを開いてください。"
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose は {nodes} で Python を構築できません: uv がありません。"
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose は分割に必要なものを見つけられませんでした: {items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose は {model} を分割する方法を見つけられませんでした。"
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "{nodes} で {model} を起動中…"
   },
   "placementCard.started": {
     "defaultMessage": "開始しています — このカードで追跡します。"

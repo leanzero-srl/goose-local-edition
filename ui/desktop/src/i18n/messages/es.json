@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "Ejecutar en {name}"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "La división está configurada con otro modelo — abre Detalles › Configurar, elige este y luego Ejecutar."
-  },
   "placementCard.short": {
     "defaultMessage": "No cabe: faltan {gb} en {node}"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "solo cabe con un contexto de {tokens}"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "El Python de goose no se creó en {node}: {reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "Creando el Python de goose en {nodes}…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "Comprobando {nodes} para {model}…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model} aún no está en {nodes}: cópialo allí y luego Ejecutar."
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose planificó esta división sin otro Mac: abre Detalles › Configurar."
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose no puede crear su Python en {nodes}: allí no hay uv."
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose no encontró lo que necesita la división: {items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose no encontró forma de dividir {model}."
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "Iniciando {model} en {nodes}…"
   },
   "placementCard.started": {
     "defaultMessage": "Iniciando: esta tarjeta lo sigue."

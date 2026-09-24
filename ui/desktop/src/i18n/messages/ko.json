@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "{name}에서 실행"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "분할이 다른 모델로 설정되어 있습니다 — 세부 정보 › 설정을 열어 이 모델을 고른 뒤 실행하세요."
-  },
   "placementCard.short": {
     "defaultMessage": "들어가지 않음: {node}에서 {gb} 부족"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "컨텍스트 {tokens}에서만 들어감"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "{node}에서 goose의 Python 빌드에 실패했습니다: {reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "{nodes}에 goose의 Python을 빌드하는 중…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "{model}을(를) 위해 {nodes} 확인 중…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model}이(가) 아직 {nodes}에 없습니다 — 복사한 뒤 실행하세요."
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose가 다른 Mac 없이 이 분할을 계획했습니다 — 세부 정보 › 설정을 여세요."
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose가 {nodes}에서 Python을 빌드할 수 없습니다: uv가 없습니다."
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose가 분할에 필요한 항목을 찾지 못했습니다: {items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose가 {model}을(를) 분할할 방법을 찾지 못했습니다."
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "{nodes}에서 {model} 시작 중…"
   },
   "placementCard.started": {
     "defaultMessage": "시작 중 — 이 카드가 따라갑니다."

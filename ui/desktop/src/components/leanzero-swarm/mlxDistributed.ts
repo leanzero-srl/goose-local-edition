@@ -1,6 +1,7 @@
 import type {
   MlxDistributedCompactionDto,
   MlxDistributedConfigDto,
+  MlxDistributedDiscoveryDto,
   MlxDistributedNodeConfigDto,
   MlxDistributedRankPlanDto,
   MlxDistributedStatusDto,
@@ -149,8 +150,7 @@ export function nodeLoadProgress(fields: object): LoadProgress | null {
       ? { unit: 'bytes', done: Math.min(done, total) * scale, total: total * scale }
       : null;
   return (
-    pair(f.loadedBytes, f.plannedWeightBytes, 1) ??
-    pair(f.activeMemoryGb, f.plannedWeightsGb, GIB)
+    pair(f.loadedBytes, f.plannedWeightBytes, 1) ?? pair(f.activeMemoryGb, f.plannedWeightsGb, GIB)
   );
 }
 
@@ -391,6 +391,107 @@ export function cleanConfig(config: MlxDistributedConfigDto): MlxDistributedConf
   if (next.context == null) delete next.context;
   if (next.slots == null) delete next.slots;
   return next;
+}
+
+// ---------------------------------------------------------------------------
+// Switching the split to another model (Run it's Run, no Set up trip)
+// ---------------------------------------------------------------------------
+
+/**
+ * The config a split of the discovered model starts with. When the saved config spans the SAME
+ * Macs (their hosts, in rank order), it is the owner's config — backend, ports, each node's Python,
+ * the watchdog reserves, "free memory automatically", any Advanced edit — with only what belongs to
+ * the model replaced from the fresh discovery: the model id, each node's model folder and pipeline
+ * Python, and the context/slots it is planned for. Other Macs, or nothing saved: the discovery's own.
+ */
+export function splitConfigFor(
+  discovery: Pick<MlxDistributedDiscoveryDto, 'config'>,
+  saved: MlxDistributedConfigDto | null | undefined
+): MlxDistributedConfigDto {
+  const found = discovery.config;
+  const hosts = (c: MlxDistributedConfigDto) => c.nodes.map((n) => n.ssh ?? null).join('\n');
+  if (!saved || saved.nodes.length !== found.nodes.length || hosts(saved) !== hosts(found)) {
+    return found;
+  }
+  const next: MlxDistributedConfigDto = {
+    ...saved,
+    modelId: found.modelId,
+    context: found.context,
+    slots: found.slots,
+    nodes: saved.nodes.map((node, i) => ({
+      ...node,
+      modelDir: found.nodes[i].modelDir,
+      pipelinePython: found.nodes[i].pipelinePython,
+    })),
+  };
+  if (next.context == null) delete next.context;
+  if (next.slots == null) delete next.slots;
+  return next;
+}
+
+/** What stops a split of `modelId` before it starts — each a genuinely missing piece, by Mac. */
+export type SplitBlocker =
+  /** goose found no runner for the model, in its own words when it gave them. */
+  | { kind: 'notSplittable'; reason: string | null }
+  /** The model is not (or not the same) on these Macs. */
+  | { kind: 'modelMissing'; nodes: string[] }
+  /** These Macs have no uv, so goose cannot build its Python there. */
+  | { kind: 'noUv'; nodes: string[] }
+  /** Values the discovery could not find and the saved config does not carry. */
+  | { kind: 'notFound'; items: Array<{ node: string | null; field: string; reason: string }> };
+
+/**
+ * The discovery's verdict on starting `config` for `modelId`: a blocker, or the Macs whose goose
+ * Python must be built first (`provision`, empty when every one is ready).
+ */
+export function splitPlan(
+  discovery: MlxDistributedDiscoveryDto,
+  modelId: string,
+  config: MlxDistributedConfigDto
+): { blocker: SplitBlocker } | { provision: string[] } {
+  const nameOf = (rank: number) =>
+    discovery.nodes.find((n) => n.rank === rank)?.name ?? String(rank);
+  const model = discovery.models.find((m) => m.id === modelId);
+  if (!model) {
+    const gap = discovery.gaps.find((g) => g.field === 'modelId');
+    return { blocker: { kind: 'notSplittable', reason: gap?.reason ?? null } };
+  }
+  if (!model.onEveryNode) {
+    const lacking = model.nodes.filter((n) => n.state !== 'match').map((n) => nameOf(n.rank));
+    return { blocker: { kind: 'modelMissing', nodes: lacking } };
+  }
+  if (config.modelId !== modelId) {
+    const gap = discovery.gaps.find((g) => g.field === 'modelId');
+    return {
+      blocker: {
+        kind: 'notFound',
+        items: [
+          {
+            node: null,
+            field: 'modelId',
+            reason: gap?.reason ?? `the discovery filled in ${config.modelId || 'no model'}`,
+          },
+        ],
+      },
+    };
+  }
+  const missing = missingFields(config);
+  if (missing.length > 0) {
+    const items = missing.map((m) => ({
+      node: m.node != null ? nameOf(m.node) : null,
+      field: m.field,
+      reason:
+        discovery.gaps.find((g) => (g.node ?? null) === m.node && g.field === m.field)?.reason ??
+        'not found',
+    }));
+    return { blocker: { kind: 'notFound', items } };
+  }
+  const noUv = discovery.nodes.filter((n) => n.env?.state === 'noUv').map((n) => n.name);
+  if (noUv.length > 0) return { blocker: { kind: 'noUv', nodes: noUv } };
+  const build = discovery.nodes
+    .filter((n) => n.env?.state === 'absent' || n.env?.state === 'broken')
+    .map((n) => n.name);
+  return { provision: build };
 }
 
 // ---------------------------------------------------------------------------

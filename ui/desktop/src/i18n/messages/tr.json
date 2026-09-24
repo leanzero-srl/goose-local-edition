@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "{name} üzerinde çalıştır"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "Bölme başka bir modelle kurulmuş — Ayrıntılar › Kur’u açın, bunu seçin, sonra Çalıştır’a basın."
-  },
   "placementCard.short": {
     "defaultMessage": "Sığmıyor: {node} üzerinde {gb} eksik"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "yalnızca {tokens} bağlamla sığar"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "goose Python’u {node} üzerinde oluşturulamadı: {reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "{nodes} üzerinde goose Python’u oluşturuluyor…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "{model} için {nodes} denetleniyor…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model} henüz {nodes} üzerinde değil — oraya kopyalayın, sonra Çalıştır."
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose bu bölmeyi başka bir Mac olmadan planladı — Ayrıntılar › Kur’u açın."
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose, {nodes} üzerinde Python’unu oluşturamıyor: orada uv yok."
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose, bölmenin ihtiyaç duyduğunu bulamadı: {items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose, {model} modelini bölmenin bir yolunu bulamadı."
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "{model}, {nodes} üzerinde başlatılıyor…"
   },
   "placementCard.started": {
     "defaultMessage": "Başlatılıyor — bu kart onu izliyor."

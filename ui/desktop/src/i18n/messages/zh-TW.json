@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "在 {name} 上執行"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "分割使用的是另一個模型 — 打開 詳細資訊 › 設定，選擇這個模型，然後執行。"
-  },
   "placementCard.short": {
     "defaultMessage": "放不下：{node} 上還差 {gb}"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "僅在 {tokens} 上下文時可放入"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "goose 的 Python 未能在 {node} 上建置：{reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "正在 {nodes} 上建置 goose 的 Python…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "正在為 {model} 檢查 {nodes}…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model} 尚不在 {nodes} 上——先複製過去，再執行。"
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose 在沒有另一台 Mac 的情況下規劃了此拆分——請開啟「詳細資料 › 設定」。"
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose 無法在 {nodes} 上建置其 Python：那裡沒有 uv。"
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose 未找到拆分所需的內容：{items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose 找不到拆分 {model} 的方式。"
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "正在 {nodes} 上啟動 {model}…"
   },
   "placementCard.started": {
     "defaultMessage": "正在啟動 — 此卡片會追蹤它。"

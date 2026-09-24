@@ -5030,9 +5030,6 @@
   "placementCard.runOn": {
     "defaultMessage": "Chạy trên {name}"
   },
-  "placementCard.setupFirst": {
-    "defaultMessage": "Bản chia được thiết lập với mô hình khác — mở Chi tiết › Thiết lập, chọn mô hình này rồi Chạy."
-  },
   "placementCard.short": {
     "defaultMessage": "Không vừa: thiếu {gb} trên {node}"
   },
@@ -5044,6 +5041,33 @@
   },
   "placementCard.smallerContext": {
     "defaultMessage": "chỉ vừa với ngữ cảnh {tokens}"
+  },
+  "placementCard.splitBuildFailed": {
+    "defaultMessage": "Python của goose không dựng được trên {node}: {reason}"
+  },
+  "placementCard.splitBuilding": {
+    "defaultMessage": "Đang dựng Python của goose trên {nodes}…"
+  },
+  "placementCard.splitChecking": {
+    "defaultMessage": "Đang kiểm tra {nodes} cho {model}…"
+  },
+  "placementCard.splitModelMissing": {
+    "defaultMessage": "{model} chưa có trên {nodes} — hãy sao chép sang đó, rồi Chạy."
+  },
+  "placementCard.splitNoPeers": {
+    "defaultMessage": "goose đã lập kế hoạch chia này mà không có Mac nào khác — mở Chi tiết › Thiết lập."
+  },
+  "placementCard.splitNoUv": {
+    "defaultMessage": "goose không thể dựng Python trên {nodes}: ở đó không có uv."
+  },
+  "placementCard.splitNotFound": {
+    "defaultMessage": "goose không tìm thấy những gì cần cho việc chia: {items}"
+  },
+  "placementCard.splitNotSplittable": {
+    "defaultMessage": "goose không tìm được cách chia {model}."
+  },
+  "placementCard.splitStarting": {
+    "defaultMessage": "Đang khởi động {model} trên {nodes}…"
   },
   "placementCard.started": {
     "defaultMessage": "Đang khởi động — thẻ này theo dõi nó."
