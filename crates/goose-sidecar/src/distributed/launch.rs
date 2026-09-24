@@ -25,7 +25,6 @@ use tokio::process::{Child, Command};
 
 use super::config::{Backend, DistributedConfig, NodeConfig};
 use super::exec::{sh_quote, SSH_OPTIONS};
-use super::{MEMORY_LIMIT_RATIO, WIRED_LIMIT_RATIO};
 
 /// The literal every goose rank carries on its command line, so `ps` can name a rank a previous
 /// goosed left behind (and `stop` can reclaim it per-pid).
@@ -43,13 +42,13 @@ const TAIL_LINES: usize = 200;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "program", rename_all = "camelCase")]
 pub enum RankProgram {
-    /// `mlx_lm.server` under `rank_wrapper.py` (tensor split).
+    /// `mlx_lm.server` under `rank_wrapper.py` (tensor split). Its in-process memory and wired
+    /// limits sit at the node's own GPU ceiling (`max_recommended_working_set_size`, read on the
+    /// rank), the cache limit at the ceiling less the planned bytes.
     MlxLmServer {
         context_window: u64,
         prompt_cache_bytes: u64,
         planned_bytes: u64,
-        memory_limit_ratio: f64,
-        wired_limit_ratio: f64,
     },
     /// The fork's `pipeline_qwen4_serve.serve` under `pipeline_rank.py` (layer split): the exact
     /// `pipeline_qwen4 serve` arguments, parsed on the rank by the fork's own parser.
@@ -90,8 +89,6 @@ pub fn rank_specs(
             context_window,
             prompt_cache_bytes,
             planned_bytes,
-            memory_limit_ratio: MEMORY_LIMIT_RATIO,
-            wired_limit_ratio: WIRED_LIMIT_RATIO,
         }
     })
 }

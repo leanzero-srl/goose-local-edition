@@ -23,6 +23,7 @@ use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use super::compaction::{self, CompactionRefusal, NodeCompaction};
 use super::config::{Backend, DistributedConfig, Runner};
 use super::exec::{NodeExec, SystemExec};
 use super::launch::{self, RankProcess, RANK_MARKER};
@@ -141,6 +142,11 @@ pub enum EventKind {
     /// A rank on THIS Mac died naming EHOSTUNREACH: macOS local network privacy (see
     /// `local_network`), not the cable.
     LocalNetworkBlocked,
+    /// A node's memory was compacted ("Make room"): the message carries before → settled and the
+    /// kernel's WARN point.
+    MemoryCompacted,
+    /// A compaction did not run on a node (an engine loaded there, pressure not NORMAL) or failed.
+    CompactionSkipped,
 }
 
 impl EventKind {
@@ -168,6 +174,8 @@ impl EventKind {
             EventKind::LinkControlLost => "linkControlLost",
             EventKind::LinkControlRestored => "linkControlRestored",
             EventKind::LocalNetworkBlocked => "localNetworkBlocked",
+            EventKind::MemoryCompacted => "memoryCompacted",
+            EventKind::CompactionSkipped => "compactionSkipped",
         }
     }
 }
@@ -262,6 +270,8 @@ pub struct DistributedStatus {
     pub restarts: u32,
     pub last_error: Option<String>,
     pub config: Option<DistributedConfig>,
+    /// The latest compaction per node (automatic or "Make room"), newest last.
+    pub compactions: Vec<NodeCompaction>,
 }
 
 impl DistributedStatus {
@@ -288,6 +298,7 @@ impl DistributedStatus {
             restarts: 0,
             last_error: None,
             config: None,
+            compactions: Vec::new(),
         }
     }
 
@@ -346,6 +357,21 @@ struct Shared {
 }
 
 impl Shared {
+    fn record_compaction(&mut self, record: NodeCompaction) {
+        let (kind, message) = match (&record.report, &record.refusal, &record.error) {
+            (Some(report), _, _) => (EventKind::MemoryCompacted, report.summary()),
+            (_, Some(refusal), _) => (
+                EventKind::CompactionSkipped,
+                format!("{}: {}", refusal.code, refusal.message),
+            ),
+            (_, _, Some(error)) => (EventKind::CompactionSkipped, format!("failed: {error}")),
+            (None, None, None) => (EventKind::CompactionSkipped, "no outcome".to_string()),
+        };
+        self.event(kind, Some(&record.node), message);
+        self.status.compactions.retain(|c| c.node != record.node);
+        self.status.compactions.push(record);
+    }
+
     fn event(&mut self, kind: EventKind, node: Option<&str>, message: impl Into<String>) {
         let message = message.into();
         match kind {
@@ -1691,7 +1717,7 @@ async fn supervise(
                 }
                 backoff = (backoff * 2).min(parity.backoff_cap);
                 ctx.update(|s| s.status.state = RunState::Preflight);
-                match preflight::run_preflight(&ctx.config, Arc::clone(&ctx.exec), true).await {
+                match preflight_making_room(&ctx.config, &ctx.exec, &ctx.shared, true).await {
                     Ok(report) if report.ok => {
                         for repair in &report.repairs {
                             ctx.event(EventKind::LinkRepaired, None, repair.clone());
@@ -1720,6 +1746,65 @@ async fn supervise(
             }
         }
     }
+}
+
+/// The ranks a failed preflight found SHORT (their plan exceeds their budget) whose owner left
+/// "Free memory automatically" on. None when the preflight passed.
+fn nodes_to_compact(config: &DistributedConfig, report: &PreflightReport) -> Vec<usize> {
+    if report.ok {
+        return Vec::new();
+    }
+    report
+        .nodes
+        .iter()
+        .filter(|n| n.short_bytes.is_some())
+        .map(|n| n.rank)
+        .filter(|rank| {
+            config
+                .nodes
+                .get(*rank)
+                .is_some_and(|n| n.free_memory_automatically)
+        })
+        .collect()
+}
+
+/// Preflight; when a node is SHORT (its rank's plan exceeds its budget) and its owner left "Free
+/// memory automatically" on, compact the short nodes (concurrently — they are different Macs) and
+/// preflight once more. The second preflight's verdict is the answer; a compaction that did not
+/// run is recorded with its reason and leaves the first verdict standing.
+async fn preflight_making_room(
+    config: &DistributedConfig,
+    exec: &Arc<dyn NodeExec>,
+    shared: &Arc<StdMutex<Shared>>,
+    repair_link: bool,
+) -> Result<PreflightReport> {
+    let first = preflight::run_preflight(config, Arc::clone(exec), repair_link).await?;
+    let short: Vec<_> = nodes_to_compact(config, &first)
+        .into_iter()
+        .map(|rank| &config.nodes[rank])
+        .collect();
+    if short.is_empty() {
+        return Ok(first);
+    }
+    let records = futures::future::join_all(short.iter().map(|node| {
+        compaction::compact_recorded(exec.as_ref(), node.host(), &node.name, "automatic")
+    }))
+    .await;
+    let ran = records.iter().any(|r| r.report.is_some());
+    {
+        let mut shared = shared.lock().unwrap();
+        for record in records {
+            shared.record_compaction(record);
+        }
+    }
+    if !ran {
+        return Ok(first);
+    }
+    let mut second = preflight::run_preflight(config, Arc::clone(exec), repair_link).await?;
+    let mut repairs = first.repairs;
+    repairs.append(&mut second.repairs);
+    second.repairs = repairs;
+    Ok(second)
 }
 
 pub struct DistributedManager {
@@ -1773,7 +1858,8 @@ impl DistributedManager {
         config: &DistributedConfig,
         repair_link: bool,
     ) -> Result<PreflightReport> {
-        let report = preflight::run_preflight(config, Arc::clone(&self.exec), repair_link).await?;
+        let report =
+            preflight_making_room(config, &self.exec, &self.shared, repair_link).await?;
         let mut shared = self.shared.lock().unwrap();
         for repair in &report.repairs {
             shared.event(EventKind::LinkRepaired, None, repair.clone());
@@ -1841,7 +1927,7 @@ impl DistributedManager {
             shared.status.served_model_id = Some(served_id.clone());
             shared.event(EventKind::Preflight, None, "preflight before launch");
         }
-        let report = match preflight::run_preflight(&config, Arc::clone(&self.exec), true).await {
+        let report = match preflight_making_room(&config, &self.exec, &self.shared, true).await {
             Ok(report) => report,
             Err(e) => {
                 let mut shared = self.shared.lock().unwrap();
@@ -1997,6 +2083,53 @@ impl DistributedManager {
         report
     }
 
+    /// "Make room" on one configured node: compact it now and record the outcome. Refused while
+    /// the distributed engine owns this Mac — its ranks are loaded models, never pressured.
+    pub async fn make_room(
+        &self,
+        config: &DistributedConfig,
+        node_name: &str,
+    ) -> Result<NodeCompaction> {
+        let node = config
+            .nodes
+            .iter()
+            .find(|n| n.name == node_name)
+            .ok_or_else(|| {
+                anyhow!(
+                    "no node named '{node_name}' in the distributed config (nodes: {})",
+                    config
+                        .nodes
+                        .iter()
+                        .map(|n| n.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+        let record = if self.owns_the_mac() {
+            NodeCompaction::refused(
+                &node.name,
+                "manual",
+                CompactionRefusal {
+                    code: "engineLoaded".to_string(),
+                    message: format!(
+                        "the distributed engine is {} — its ranks are loaded models; stop it before \
+                         making room",
+                        self.status().state.as_str()
+                    ),
+                },
+            )
+        } else {
+            let _control = self.control.lock().await;
+            compaction::compact_recorded(self.exec.as_ref(), node.host(), &node.name, "manual")
+                .await
+        };
+        self.shared
+            .lock()
+            .unwrap()
+            .record_compaction(record.clone());
+        Ok(record)
+    }
+
     /// Remember a config without starting (the UI's editor persists through this).
     pub fn set_config(&self, config: Option<DistributedConfig>) {
         let mut shared = self.shared.lock().unwrap();
@@ -2020,6 +2153,103 @@ mod tests {
 
     fn at(start: Instant, ms: u64) -> Instant {
         start + Duration::from_millis(ms)
+    }
+
+    fn node_preflight(rank: usize, short_bytes: Option<u64>) -> preflight::NodePreflight {
+        preflight::NodePreflight {
+            name: format!("node{rank}"),
+            rank,
+            host: None,
+            checks: Vec::new(),
+            available_bytes: None,
+            total_bytes: None,
+            pressure: None,
+            plan: None,
+            link_speed: None,
+            mlx_version: None,
+            ceiling_bytes: None,
+            wired_limit_mb: None,
+            short_bytes,
+            top_apps: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn only_short_nodes_with_free_memory_on_are_compacted_and_only_after_a_failed_preflight() {
+        let mut config = two_mac_config();
+        let mut report = PreflightReport {
+            ok: false,
+            ran_at_ms: 0,
+            backend: config.backend,
+            runner: None,
+            model_type: None,
+            context_limit: None,
+            context_source: None,
+            max_context_fits: None,
+            pipeline_starts: None,
+            slots: None,
+            checks: Vec::new(),
+            nodes: vec![node_preflight(0, None), node_preflight(1, Some(3 * GIB))],
+            repairs: Vec::new(),
+        };
+        assert_eq!(nodes_to_compact(&config, &report), vec![1]);
+        config.nodes[1].free_memory_automatically = false;
+        assert!(nodes_to_compact(&config, &report).is_empty());
+        config.nodes[1].free_memory_automatically = true;
+        report.ok = true;
+        assert!(nodes_to_compact(&config, &report).is_empty());
+    }
+
+    #[test]
+    fn the_status_keeps_the_latest_compaction_per_node_and_names_it_in_an_event() {
+        let mut shared = Shared {
+            status: DistributedStatus::stopped(),
+            stop_tx: None,
+            task: None,
+        };
+        let refused = NodeCompaction::refused(
+            "workhorse",
+            "automatic",
+            CompactionRefusal {
+                code: "engineLoaded".into(),
+                message: "pid 7: mlx_lm.server".into(),
+            },
+        );
+        shared.record_compaction(refused);
+        let report = compaction::CompactionReport {
+            node: "workhorse".into(),
+            at_ms: 1,
+            total_bytes: 96 * GIB,
+            before_available_bytes: (72.4 * GIB as f64) as u64,
+            peak_available_bytes: (3.73 * GIB as f64) as u64,
+            end: compaction::PhaseEnd::Warn,
+            ballast_pid: 16716,
+            settled_available_bytes: 78 * GIB,
+            gained_bytes: 78 * GIB as i64 - (72.4 * GIB as f64) as i64,
+            settle_samples: 6,
+        };
+        shared.record_compaction(NodeCompaction {
+            node: "workhorse".into(),
+            at_ms: 2,
+            trigger: "manual".into(),
+            report: Some(report),
+            refusal: None,
+            error: None,
+        });
+        assert_eq!(shared.status.compactions.len(), 1);
+        assert_eq!(shared.status.compactions[0].trigger, "manual");
+        let kinds: Vec<EventKind> = shared.status.events.iter().map(|e| e.kind).collect();
+        assert_eq!(
+            kinds,
+            [EventKind::CompactionSkipped, EventKind::MemoryCompacted]
+        );
+        let message = &shared.status.events[1].message;
+        assert!(
+            message.contains("freed 5.6 GiB")
+                && message.contains("72.4 → 78.0")
+                && message.contains("reached WARN at 3.7 GiB"),
+            "{message}"
+        );
     }
 
     #[test]

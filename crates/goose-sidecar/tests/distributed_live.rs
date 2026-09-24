@@ -70,6 +70,8 @@ pub fn recorded_config() -> DistributedConfig {
                         .display()
                         .to_string(),
                 ),
+                // These tests measure the engine, not compaction: nothing pressures the Macs.
+                free_memory_automatically: false,
             },
             NodeConfig {
                 name: "workhorse".to_string(),
@@ -88,6 +90,7 @@ pub fn recorded_config() -> DistributedConfig {
                     "GOOSE_DIST_REMOTE_MODEL",
                     "/Users/workhorse/jaccl-smoke/models/Qwen3.8-27B-Atlassian-Q8-mlx",
                 ),
+                free_memory_automatically: false,
             },
         ],
     }

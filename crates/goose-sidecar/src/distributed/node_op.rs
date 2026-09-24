@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use super::config::{Backend, DistributedConfig, NodeConfig, Runner};
 use super::launch::RANK_MARKER;
 use super::provision::{EnvSpec, ENVS_DIR};
-use super::{preflight, supervisor};
+use super::{compaction, preflight, supervisor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -65,6 +65,10 @@ pub enum NodeOp {
     Signal { pid: u32, signal: Signal },
     /// Every process with its command line (the rank-marker sweep).
     ProcessList,
+    /// Memory compaction (`compaction::compaction_script`): raise pressure to the kernel's WARN
+    /// with Apple's `memory_pressure`, release it at once, report before/peak/after. A Link peer
+    /// refuses it while any MLX engine runs there.
+    Compact,
 }
 
 impl NodeOp {
@@ -77,6 +81,7 @@ impl NodeOp {
             NodeOp::PidRow { .. } => "pidRow",
             NodeOp::Signal { .. } => "signal",
             NodeOp::ProcessList => "processList",
+            NodeOp::Compact => "compact",
         }
     }
 
@@ -102,6 +107,7 @@ impl NodeOp {
             NodeOp::PidRow { pid } => pid_row_script(*pid),
             NodeOp::Signal { pid, signal } => format!("/bin/kill -{} {pid}", signal.name()),
             NodeOp::ProcessList => PROCESS_LIST_SCRIPT.to_string(),
+            NodeOp::Compact => compaction::compaction_script(),
         })
     }
 
@@ -141,10 +147,13 @@ impl NodeOp {
                     command.chars().take(160).collect::<String>()
                 ),
             },
+            // A compaction's own guard (no engine on the node) is the peer's, checked against its
+            // live process list right before it runs (`link_host`).
             NodeOp::Link { .. }
             | NodeOp::Sample { .. }
             | NodeOp::PidRow { .. }
-            | NodeOp::ProcessList => Ok(()),
+            | NodeOp::ProcessList
+            | NodeOp::Compact => Ok(()),
         }
     }
 }
