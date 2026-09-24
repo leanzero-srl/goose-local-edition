@@ -925,13 +925,39 @@ describe('MlxEngineView state tile instrument', () => {
     unmount();
   });
 
-  it('STOPPED prices the picked model against free memory and mounts from the tile', async () => {
-    mockStatus.mockResolvedValue(
-      statusOf({ state: 'stopped', availableMemoryGb: 40.2, totalMemoryGb: 64 })
+  it('STOPPED draws the sidecar fit verdict for the picked model and mounts from the tile', async () => {
+    const GIB = 1024 * 1024 * 1024;
+    // The status asks the sidecar for the picked model's verdict (fitModelId) and the tile draws
+    // it as given: 17 GB needed, a 32.2 GB budget of 40.2 GB free — 15.2 to spare.
+    mockStatus.mockImplementation(async (_nodeId?: string, fitModelId?: string | null) =>
+      statusOf({
+        state: 'stopped',
+        availableMemoryGb: 40.2,
+        totalMemoryGb: 64,
+        mountFit:
+          fitModelId === QWEN
+            ? {
+                modelId: QWEN,
+                verdict: 'allow',
+                needBytes: 17 * GIB,
+                weightsBytes: 17 * GIB,
+                kvBytes: 0,
+                contextTokens: 2304,
+                budgetBytes: 32.2 * GIB,
+                availableBytes: 40.2 * GIB,
+                totalBytes: 64 * GIB,
+                ceilingBytes: 48 * GIB,
+                marginBytes: 5.952 * GIB,
+                marginRatio: 0.093,
+                spareBytes: 15.2 * GIB,
+                message: 'needs 17.0 GiB with 15.2 GiB to spare',
+              }
+            : undefined,
+      })
     );
     const { unmount } = render(<MlxEngineView />);
     const cost = await screen.findByTestId('mlx-mount-cost');
-    // 40.2 free − 17 model − 8 reserve (max(8, 6.4)) = 15.2 spare.
+    expect(mockStatus).toHaveBeenCalledWith(undefined, QWEN);
     expect(cost).toHaveAttribute('data-verdict', 'fits');
     expect(cost).toHaveTextContent('Fits, 15.2 GB to spare');
     const tile = screen.getByTestId('mlx-state-badge');
@@ -2179,7 +2205,7 @@ describe('MlxEngineView device picker (remote model management)', () => {
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => expect(mockStatus).toHaveBeenCalled());
     expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
-    expect(mockStatus).toHaveBeenCalledWith(undefined);
+    expect(mockStatus.mock.calls.map((call) => call[0])).toContain(undefined);
     expect(mockModelsList).toHaveBeenCalledWith(undefined);
     expect(mockLinkNodes).not.toHaveBeenCalled();
     unmount();
@@ -2193,7 +2219,9 @@ describe('MlxEngineView device picker (remote model management)', () => {
     });
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => expect(mockLinkStatus).toHaveBeenCalled());
-    await waitFor(() => expect(mockStatus).toHaveBeenCalledWith(undefined));
+    await waitFor(() =>
+      expect(mockStatus.mock.calls.map((call) => call[0])).toContain(undefined)
+    );
     expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
     unmount();
   });
@@ -2202,7 +2230,9 @@ describe('MlxEngineView device picker (remote model management)', () => {
     withMesh([]);
     const { unmount } = render(<MlxEngineView />);
     await waitFor(() => expect(mockLinkNodes).toHaveBeenCalled());
-    await waitFor(() => expect(mockStatus).toHaveBeenCalledWith(undefined));
+    await waitFor(() =>
+      expect(mockStatus.mock.calls.map((call) => call[0])).toContain(undefined)
+    );
     expect(screen.queryByTestId('mlx-device-target')).not.toBeInTheDocument();
     unmount();
   });
@@ -2237,7 +2267,7 @@ describe('MlxEngineView device picker (remote model management)', () => {
     await selectPeer();
     await waitFor(() => {
       expect(mockModelsList).toHaveBeenCalledWith('peer-workhorse');
-      expect(mockStatus).toHaveBeenCalledWith('peer-workhorse');
+      expect(mockStatus.mock.calls.map((call) => call[0])).toContain('peer-workhorse');
       expect(mockSettingsRead).toHaveBeenCalledWith('peer-workhorse');
     });
     expect(screen.getByText('Managing models on workhorse (remote)')).toBeInTheDocument();

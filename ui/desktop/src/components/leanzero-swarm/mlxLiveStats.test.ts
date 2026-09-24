@@ -10,7 +10,7 @@ import {
   liveDecodeTps,
   measuredPrefillTps,
   mlxActivity,
-  mountCost,
+  mountCostOf,
   mountFill,
   parseMlxLiveStatus,
   pushSample,
@@ -213,23 +213,31 @@ describe('the mount memory fill', () => {
   });
 });
 
-describe('what a mount would cost (the sidecar gate verdict)', () => {
-  it('the running Mac: 31 GB model, 68.6 of 128 GB free — fits above the 12.8 GB reserve', () => {
-    const c = mountCost(31 * GIB, 68.6, 128);
-    expect(c.reserveGb).toBeCloseTo(12.8, 5);
-    expect(c.spareGb).toBeCloseTo(24.8, 5);
+describe('what a mount would cost (READ from the sidecar fit rule, never recomputed)', () => {
+  const fit = (verdict: string, needGb: number, availableGb: number, budgetGb: number) => ({
+    verdict,
+    needBytes: needGb * GIB,
+    availableBytes: availableGb * GIB,
+    budgetBytes: budgetGb * GIB,
+  });
+
+  it('the 27B on the M4 Max (the live mount, 2026-09-24): needs 30.6, budget 73.7 of 85.6 free', () => {
+    const c = mountCostOf(fit('allow', 30.6, 85.6, 73.7))!;
     expect(c.verdict).toBe('fits');
+    expect(c.modelGb).toBeCloseTo(30.6, 5);
+    expect(c.spareGb).toBeCloseTo(43.1, 5);
+    expect(c.reserveGb).toBeCloseTo(11.9, 5);
   });
 
-  it('under 4 GB above the reserve is tight; past it the gate would refuse', () => {
-    expect(mountCost(31 * GIB, 46, 128).verdict).toBe('tight');
-    const no = mountCost(31 * GIB, 40, 128);
+  it('the recorded Flash refusal: 97.5 against a budget of 81.1 — short 16.4', () => {
+    const no = mountCostOf(fit('block', 97.5, 93.0, 81.1))!;
     expect(no.verdict).toBe('no-fit');
-    expect(no.spareGb).toBeCloseTo(-3.8, 5);
+    expect(no.spareGb).toBeCloseTo(-16.4, 5);
   });
 
-  it('the reserve floor is 8 GB on a small machine', () => {
-    expect(mountCost(4 * GIB, 20, 32).reserveGb).toBe(8);
+  it('warn is tight, and a verdict word it does not know draws nothing', () => {
+    expect(mountCostOf(fit('warn', 30, 50, 31))!.verdict).toBe('tight');
+    expect(mountCostOf(fit('maybe', 30, 50, 31))).toBeNull();
   });
 });
 

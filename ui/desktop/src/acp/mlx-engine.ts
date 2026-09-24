@@ -1,4 +1,8 @@
-import type { MlxPlacementBadgeDto, MlxPlacementCandidateDto } from '@aaif/goose-sdk';
+import type {
+  MlxMountFitDto,
+  MlxPlacementBadgeDto,
+  MlxPlacementCandidateDto,
+} from '@aaif/goose-sdk';
 import { getAcpClient } from './acpConnection';
 
 /**
@@ -62,6 +66,12 @@ export interface MlxEngineStatus {
    * warming, the engine process's resident bytes against the model's bytes on disk.
    */
   load?: { phase: string; residentBytes?: number | null; weightsBytes: number } | null;
+  /**
+   * The sidecar's one fit rule for the status request's `fitModelId` on this Mac now — what a
+   * Mount would be judged on; absent exactly when `mountFitError` says why (or none was asked).
+   */
+  mountFit?: MlxMountFitDto | null;
+  mountFitError?: string | null;
 }
 
 /**
@@ -355,10 +365,13 @@ function withNode(params: Record<string, unknown>, nodeId?: string): Record<stri
   return params;
 }
 
-export async function mlxEngineStatus(nodeId?: string): Promise<MlxEngineStatus> {
+export async function mlxEngineStatus(
+  nodeId?: string,
+  fitModelId?: string | null
+): Promise<MlxEngineStatus> {
   const response = await call<{ status: MlxEngineStatus }>(
     '_goose/unstable/mlxEngine/status',
-    withNode({}, nodeId)
+    withNode(fitModelId ? { fitModelId } : {}, nodeId)
   );
   if (nodeId == null) reportToMain(response.status);
   return response.status;

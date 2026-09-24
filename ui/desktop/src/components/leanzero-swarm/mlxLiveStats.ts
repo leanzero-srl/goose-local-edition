@@ -308,34 +308,41 @@ export function singleLoad(status: object | null): SingleLoad | null {
 }
 
 /**
- * What a mount of `modelBytes` would cost against free memory, with the SAME verdict the sidecar's
- * mount gate gives (crates/goose-sidecar/src/memory.rs `MemoryGate::default`: a reserve of
- * max(8 GiB, 10% of total) kept free; block when the model plus reserve exceeds free memory, warn
- * when less than 4 GiB is left above the reserve). A second copy of that rule — the tile must not say
- * "fits" for a mount the gate would refuse; if the gate moves, this moves with it.
+ * What a mount would cost, READ from the sidecar's one fit rule (crates/goose-sidecar/src/fit.rs,
+ * `mlxEngine/status` `mountFit`) — never recomputed here: the tile's old copy of the gate (8 GiB /
+ * 10% / 4 GiB) said "fits" where the mount and the placement badge judged on other numbers.
  */
 export type FitVerdict = 'fits' | 'tight' | 'no-fit';
 
 export interface MountCost {
+  /** What the mount needs: the weights plus KV for the smallest useful context. */
   modelGb: number;
   freeGb: number;
+  /** What the rule keeps back from free memory: the margin, or more where the GPU ceiling binds. */
   reserveGb: number;
-  /** Free memory left above the reserve after the mount; negative = short by that much. */
+  /** The budget left after the mount; negative = short by that much. */
   spareGb: number;
   verdict: FitVerdict;
 }
 
-const GATE_RESERVE_MIN_GB = 8;
-const GATE_RESERVE_FRACTION = 0.1;
-const GATE_WARN_BAND_GB = 4;
+const VERDICT: Record<string, FitVerdict> = { allow: 'fits', warn: 'tight', block: 'no-fit' };
 
-export function mountCost(modelBytes: number, freeGb: number, totalGb: number): MountCost {
-  const modelGb = modelBytes / GIB;
-  const reserveGb = Math.max(GATE_RESERVE_MIN_GB, totalGb * GATE_RESERVE_FRACTION);
-  const spareGb = freeGb - modelGb - reserveGb;
-  const verdict: FitVerdict =
-    spareGb < 0 ? 'no-fit' : spareGb < GATE_WARN_BAND_GB ? 'tight' : 'fits';
-  return { modelGb, freeGb, reserveGb, spareGb, verdict };
+/** The sidecar's verdict in the tile's units; null for a verdict word it does not know. */
+export function mountCostOf(fit: {
+  verdict: string;
+  needBytes: number;
+  availableBytes: number;
+  budgetBytes: number;
+}): MountCost | null {
+  const verdict = VERDICT[fit.verdict];
+  if (!verdict) return null;
+  return {
+    modelGb: fit.needBytes / GIB,
+    freeGb: fit.availableBytes / GIB,
+    reserveGb: (fit.availableBytes - fit.budgetBytes) / GIB,
+    spareGb: (fit.budgetBytes - fit.needBytes) / GIB,
+    verdict,
+  };
 }
 
 /** "32k" for a token count a person reads at a glance; small counts stay exact. */

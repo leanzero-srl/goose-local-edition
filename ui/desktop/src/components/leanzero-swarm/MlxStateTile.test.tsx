@@ -10,7 +10,7 @@ import {
   NO_RATES,
   advanceLastRates,
   advanceMountWatch,
-  mountCost,
+  mountCostOf,
   mountFill,
   parseMlxLiveStatus,
   type LastRates,
@@ -74,6 +74,16 @@ async function expectDesigned(container: HTMLElement) {
   const utilities = allClasses(container).filter((c) => !c.startsWith('lucide'));
   expect(await missingUtilities(utilities)).toEqual([]);
 }
+
+
+/** The sidecar's fit verdict in the tile's units (a 12.8 GB reserve, as before the one rule). */
+const cost = (needGb: number, freeGb: number, verdict: string) =>
+  mountCostOf({
+    verdict,
+    needBytes: needGb * GIB,
+    availableBytes: freeGb * GIB,
+    budgetBytes: (freeGb - 12.8) * GIB,
+  });
 
 describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => {
   it('writing: GREEN, the live writing rate big, the reading rate beside it, rows, lifetime facts', async () => {
@@ -266,7 +276,7 @@ describe('MlxStateTile STOPPED — what mounting would cost, and Mount on the ti
   it('fits: the size, the meter against free memory, the verdict and the action', async () => {
     const { container } = tile({
       state: 'stopped',
-      cost: mountCost(31 * GIB, 68.6, 128),
+      cost: cost(31, 68.6, 'allow'),
       action: <button type="button">Mount</button>,
     });
     const t = screen.getByTestId('mlx-state-badge');
@@ -281,7 +291,7 @@ describe('MlxStateTile STOPPED — what mounting would cost, and Mount on the ti
   });
 
   it('no-fit names the shortfall; no model picked asks for one', () => {
-    const { unmount } = tile({ state: 'stopped', cost: mountCost(31 * GIB, 40, 128) });
+    const { unmount } = tile({ state: 'stopped', cost: cost(31, 40, 'block') });
     expect(screen.getByTestId('mlx-mount-cost')).toHaveAttribute('data-verdict', 'no-fit');
     expect(screen.getByTestId('mlx-state-badge')).toHaveTextContent(
       'Needs 3.8 GB more free memory'
@@ -430,7 +440,7 @@ describe('MlxStateTile — the engine-phase palette, one colour per state', () =
   const phaseOf = () => screen.getByTestId('mlx-state-badge').getAttribute('data-phase');
 
   it('stopped with no model: the dark neutral tile, OUTLINED', async () => {
-    const { container } = tile({ state: 'stopped', cost: mountCost(17 * GIB, 96.6, 128) });
+    const { container } = tile({ state: 'stopped', cost: cost(17, 96.6, 'allow') });
     const t = screen.getByTestId('mlx-state-badge');
     expect(phaseOf()).toBe('unloaded');
     expect(t.className).toContain('bg-lz-phase-unloaded');

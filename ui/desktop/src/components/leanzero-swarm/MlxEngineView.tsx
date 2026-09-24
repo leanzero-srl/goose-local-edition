@@ -108,7 +108,7 @@ import {
   advanceMountWatch,
   liveDecodeTps,
   mlxActivity,
-  mountCost,
+  mountCostOf,
   mountFill,
   MLX_STATUS_POLL_MS,
   singleLoad,
@@ -947,11 +947,9 @@ function EngineSection(props: EngineSectionProps) {
     state === 'mounting' && status
       ? mountFill(mountWatch, status.availableMemoryGb, sizeOf(mountedModelId))
       : null;
-  const pickedBytes = sizeOf(mountModelId);
+  const fit = status?.mountFit;
   const cost =
-    state === 'stopped' && status && pickedBytes != null && pickedBytes > 0
-      ? mountCost(pickedBytes, status.availableMemoryGb, status.totalMemoryGb)
-      : null;
+    state === 'stopped' && fit && fit.modelId === mountModelId ? mountCostOf(fit) : null;
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -2709,7 +2707,7 @@ const MlxEngineView: React.FC = () => {
   const refreshStatus = useCallback(async () => {
     let next: MlxEngineStatus;
     try {
-      next = await mlxEngineStatus(activeNodeId);
+      next = await mlxEngineStatus(activeNodeId, mountModelId);
       if (activeNodeRef.current !== activeNodeId) return; // switched away mid-flight — drop
       setStatus(next);
       setStatusError(null);
@@ -2727,7 +2725,7 @@ const MlxEngineView: React.FC = () => {
       setMountWatch(null);
     }
     await refreshLive(next);
-  }, [activeNodeId, refreshLive]);
+  }, [activeNodeId, refreshLive, mountModelId]);
 
   // Poll status every 2s while this window is actually visible; stop when hidden.
   useEffect(() => {
