@@ -299,13 +299,19 @@ pub fn expand_tilde(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-/// The id the engine will advertise in `/v1/models` — `served_model_name` when set, else the
-/// HF directory id. Both the serve argv and the readiness check derive from this one place.
+/// The id an engine serving `model_id` advertises in `/v1/models`. `served_model_name` is the
+/// alias of ONE model — `model_id`, the model the swarm node was set up for (AddNodeDialog and
+/// `goose swarm` write the pair together) — so it applies only when `model_id` IS that model;
+/// every other model is served under its own HF directory id. Applying the alias to any model put
+/// the 27B's name on a Flash split (live 2026-09-24: `/v1/models` on :8091 answered
+/// `mihai-qwen3.8-27b-atlassian-q8-mlx` while serving Qwen3.8-Flash-Next-4bit), so a swarm node
+/// named for the 27B routed to a different model. The serve argv, the readiness check, the
+/// distributed ranks and the router all derive from this one place.
 pub fn served_model_id(settings: &EngineSettings, model_id: &str) -> String {
-    settings
-        .served_model_name
-        .clone()
-        .unwrap_or_else(|| model_id.to_string())
+    match &settings.served_model_name {
+        Some(alias) if settings.model_id.as_deref() == Some(model_id) => alias.clone(),
+        _ => model_id.to_string(),
+    }
 }
 
 /// What the model directory itself says about how it must be served. Read at argv build
@@ -1347,6 +1353,7 @@ mod tests {
     #[test]
     fn serve_command_uses_served_model_name_alias_when_set() {
         let settings = EngineSettings {
+            model_id: Some("mlx-community/Qwen3.5-9B-MLX-4bit".to_string()),
             served_model_name: Some("workhorse-qwen3.5-9b-4bit-mlx".to_string()),
             ..Default::default()
         };
@@ -1359,6 +1366,36 @@ mod tests {
         assert!(argv
             .iter()
             .any(|a| a.ends_with("mlx-community/Qwen3.5-9B-MLX-4bit")));
+    }
+
+    /// The alias names ONE model. Live 2026-09-24: a Flash split served under the 27B's alias
+    /// because the alias applied to any model id handed in.
+    #[test]
+    fn the_served_alias_belongs_to_its_own_model_only() {
+        let settings = EngineSettings {
+            model_id: Some("Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string()),
+            served_model_name: Some("mihai-qwen3.8-27b-atlassian-q8-mlx".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            served_model_id(&settings, "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx"),
+            "mihai-qwen3.8-27b-atlassian-q8-mlx"
+        );
+        assert_eq!(
+            served_model_id(&settings, "rapid-mlx/Qwen3.8-Flash-Next-4bit"),
+            "rapid-mlx/Qwen3.8-Flash-Next-4bit"
+        );
+        let argv = build_serve_command(&settings, "rapid-mlx/Qwen3.8-Flash-Next-4bit").unwrap();
+        let pos = argv
+            .iter()
+            .position(|a| a == "--served-model-name")
+            .unwrap();
+        assert_eq!(argv[pos + 1], "rapid-mlx/Qwen3.8-Flash-Next-4bit");
+        let no_model = EngineSettings {
+            served_model_name: Some("orphan-alias".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(served_model_id(&no_model, "pub/small"), "pub/small");
     }
 
     fn full_profile() -> ModelProfile {
@@ -2152,6 +2189,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
             port,
+            model_id: Some("pub/small".to_string()),
             served_model_name: Some("busy-alias".to_string()),
             spawn_command: vec![
                 "python3".to_string(),
@@ -2175,6 +2213,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
             port,
+            model_id: Some("pub/small".to_string()),
             served_model_name: Some("mute-alias".to_string()),
             spawn_command: vec![
                 "python3".to_string(),
@@ -2295,6 +2334,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
             port,
+            model_id: Some("pub/small".to_string()),
             served_model_name: Some("node-alias".to_string()),
             spawn_command: vec![
                 "python3".to_string(),
@@ -2377,6 +2417,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         manager.set_settings(EngineSettings {
             models_dir,
             port,
+            model_id: Some(model_id.clone()),
             served_model_name: Some("live-alias".to_string()),
             model_profiles: BTreeMap::from([(
                 model_id.clone(),

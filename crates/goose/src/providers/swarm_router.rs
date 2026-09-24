@@ -945,19 +945,22 @@ impl TemplateKwargsSource for ConfiguredTemplateKwargs {
     }
 }
 
-/// The served id names its HF directory through the settings: the configured model when its
-/// served id matches (an alias via `served_model_name` included), else the served id itself when
-/// no alias is configured. A served id no profile can be tied to sends nothing — unless some
-/// profile DOES carry thinking choices, which would then be silently dropped: that is an error.
+/// The served id names its HF directory the way `engine::served_model_id` made it: the alias
+/// names the configured model, and every other served id IS its HF directory id (the alias applies
+/// to its own model only). An alias with no configured model behind it cannot be tied to a
+/// profile and sends nothing — unless some profile DOES carry thinking choices, which would then
+/// be silently dropped: that is an error.
 fn profile_template_kwargs(
     settings: &EngineSettings,
     served: &str,
 ) -> Result<Option<Map<String, Value>>, String> {
-    let hf_id = settings
-        .model_id
-        .as_deref()
-        .filter(|id| served_model_id(settings, id) == served)
-        .or_else(|| settings.served_model_name.is_none().then_some(served));
+    let hf_id = match settings.served_model_name.as_deref() {
+        Some(alias) if alias == served => settings
+            .model_id
+            .as_deref()
+            .filter(|id| served_model_id(settings, id) == served),
+        _ => Some(served),
+    };
     if let Some(hf_id) = hf_id {
         return Ok(settings
             .model_profiles
@@ -1786,11 +1789,28 @@ devices:
         };
         let aliased = engine_settings(on.clone());
         assert!(profile_template_kwargs(&aliased, SERVED).unwrap().is_some());
-        let err = profile_template_kwargs(&aliased, "something-else").unwrap_err();
-        assert!(
-            err.contains(HF_ID) && err.contains("something-else"),
-            "{err}"
+        // Another model is served under its own HF id (the alias is the configured model's), so
+        // it reads its own profile — none here.
+        assert_eq!(
+            profile_template_kwargs(&aliased, "something-else").unwrap(),
+            None
         );
+        let with_other = EngineSettings {
+            model_profiles: std::collections::BTreeMap::from([
+                (HF_ID.to_string(), on.clone()),
+                ("pub/other".to_string(), on.clone()),
+            ]),
+            ..aliased.clone()
+        };
+        assert!(profile_template_kwargs(&with_other, "pub/other")
+            .unwrap()
+            .is_some());
+        let orphan_alias = EngineSettings {
+            model_id: None,
+            ..aliased.clone()
+        };
+        let err = profile_template_kwargs(&orphan_alias, SERVED).unwrap_err();
+        assert!(err.contains(HF_ID) && err.contains(SERVED), "{err}");
 
         let unaliased = EngineSettings {
             served_model_name: None,
@@ -2353,6 +2373,42 @@ devices:
             .unwrap_err();
         assert!(
             refused.contains(&format!("serves '{HF}', the device wants '{NODE_MODEL}'")),
+            "{refused}"
+        );
+
+        // Live 2026-09-24 (3.0.26): a Flash split served under the 27B's alias. The alias is the
+        // 27B's own, so a split of ANOTHER model serves that model's HF id, and the node named for
+        // the 27B is refused by name instead of routed to Flash.
+        const FLASH: &str = "rapid-mlx/Qwen3.8-Flash-Next-4bit";
+        let flash_config = DistributedConfig {
+            model_id: FLASH.to_string(),
+            ..config.clone()
+        };
+        let flash_served = served_model_id(&settings, &flash_config.model_id);
+        assert_eq!(flash_served, FLASH);
+        let flash_specs = rank_specs(&flash_config, &flash_served, &[(1, 1), (1, 1)], 65_536, 2.0);
+        assert!(
+            flash_specs.iter().all(|s| s.served_id == FLASH),
+            "{flash_specs:?}"
+        );
+        let flash = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(wrapper(FLASH)))
+            .mount(&flash)
+            .await;
+        let refused = probe
+            .probe_mlx_at(
+                &flash.uri(),
+                NODE_MODEL,
+                "the distributed MLX engine owns this Mac",
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            refused.contains(&format!(
+                "serves '{FLASH}', the device wants '{NODE_MODEL}'"
+            )),
             "{refused}"
         );
     }
