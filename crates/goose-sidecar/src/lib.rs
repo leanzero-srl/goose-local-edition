@@ -113,6 +113,9 @@ impl SidecarConfig {
 
 struct ChildHandle {
     child: Child,
+    /// Captured at spawn: once the exit is reaped `Child::id` answers `None`, and the exit
+    /// report must still name which process died.
+    pid: Option<u32>,
     stderr_tail: Arc<StdMutex<VecDeque<String>>>,
     stderr_lines: Arc<AtomicU64>,
 }
@@ -121,6 +124,15 @@ struct State {
     handle: Option<ChildHandle>,
     restarts: VecDeque<Instant>,
     backoff: Duration,
+}
+
+/// The engine process ended while supervised — observed (and reaped) by [`Sidecar::exited`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidecarExit {
+    pub pid: Option<u32>,
+    /// `exit status: N` or `signal: 9 (SIGKILL)` — the OS's own words.
+    pub status: String,
+    pub stderr_tail: String,
 }
 
 pub struct Sidecar {
@@ -166,6 +178,25 @@ impl Sidecar {
             .handle
             .as_ref()
             .and_then(|h| h.child.id())
+    }
+
+    /// Whether the supervised process has ENDED, asked of the OS now (`try_wait`, which also
+    /// reaps it — a dead engine is never left a zombie of goosed). `None` while it runs or when
+    /// nothing is supervised. Nothing restarts here: the caller names the state.
+    pub async fn exited(&self) -> Result<Option<SidecarExit>> {
+        let mut state = self.state.lock().await;
+        let Some(handle) = state.handle.as_mut() else {
+            return Ok(None);
+        };
+        Ok(handle
+            .child
+            .try_wait()
+            .context("try_wait on sidecar")?
+            .map(|status| SidecarExit {
+                pid: handle.pid,
+                status: status.to_string(),
+                stderr_tail: stderr_tail_string(&handle.stderr_tail),
+            }))
     }
 
     pub async fn healthy(&self) -> bool {
@@ -285,6 +316,7 @@ impl Sidecar {
             });
         }
         Ok(ChildHandle {
+            pid: child.id(),
             child,
             stderr_tail,
             stderr_lines,

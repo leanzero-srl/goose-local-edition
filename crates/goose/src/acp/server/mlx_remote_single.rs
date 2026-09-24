@@ -267,10 +267,9 @@ async fn route_status(
     status
 }
 
-/// Why the peer's engine does not serve through the proxy, in the peer's own words first. Its
-/// goose can report `running` for an engine that no longer answers (measured live 2026-09-24: the
-/// engine process SIGKILLed, its launcher a zombie, the peer's manager still `running` with a
-/// connection-refused probe) — so the proxy's answer is always part of the reason.
+/// Why the peer's engine does not serve through the proxy, in the peer's own words first (a dead
+/// engine is its `failed` with the exit and last log lines), then the proxy's answer — a peer
+/// goose older than the liveness fix still says `running` for a dead engine.
 fn peer_engine_failure(peer: &str, engine: &MlxEngineStatusDto, proxy_answer: &str) -> String {
     let own_words = engine
         .last_error
@@ -417,22 +416,13 @@ impl GooseAcpAgent {
             .get(&req.model_id)
             .and_then(goose_sidecar::thinking::chat_template_kwargs);
 
-        let claims_running = peer_status.status.state == "running";
+        // A peer engine that died reports `failed` (goose-sidecar observes its process on every
+        // poll) and one that hangs does not answer the proxy: either way the Mount below runs,
+        // and for the same model the peer's supervisor restarts it behind its crash breaker.
         let already_serving = engine_answers
-            && claims_running
+            && peer_status.status.state == "running"
             && peer_status.status.served_model_id.as_deref() == Some(served.as_str());
         if !already_serving {
-            if claims_running && !engine_answers {
-                // Its goose says running while nothing answers (a dead engine it has not noticed):
-                // a mount of the same model would be a no-op there, so its engine is reset first.
-                let _: EmptyResponse = peer_op(
-                    &manager,
-                    &req.peer,
-                    MlxOp::Unmount,
-                    &MlxEngineUnmountRequest { node_id: None },
-                )
-                .await?;
-            }
             let _: EmptyResponse = peer_op(
                 &manager,
                 &req.peer,
@@ -468,7 +458,6 @@ impl GooseAcpAgent {
             served = %route.served_model_id,
             capacity = route.capacity,
             mounted = !already_serving,
-            reset_dead_engine = claims_running && !engine_answers,
             "mlx remote single: chat routed to the peer's engine through LeanZero Link"
         );
         Ok(route_status(Some(&manager), &route).await)

@@ -624,6 +624,21 @@ async fn reclaim_port(port: u16) {
     );
 }
 
+/// A supervised engine that ended: what ended, how, and its last words — and the restart
+/// policy, stated (the single engine's is the distributed engine's with `restartOnFailure` off:
+/// no silent restart; a Mount restarts it, behind the same crash breaker).
+fn engine_exit_message(exit: &crate::SidecarExit) -> String {
+    let pid = exit
+        .pid
+        .map(|pid| format!(" (pid {pid})"))
+        .unwrap_or_default();
+    format!(
+        "the engine process{pid} exited: {} — not restarted automatically; Mount restarts it \
+         (the crash breaker applies). Last log lines:\n{}",
+        exit.status, exit.stderr_tail
+    )
+}
+
 pub struct MlxEngineManager {
     state: Arc<Mutex<ManagerState>>,
     settings: StdMutex<EngineSettings>,
@@ -926,11 +941,31 @@ impl MlxEngineManager {
                     sidecar,
                     argv,
                 } => {
-                    status.state = "running".to_string();
                     status.model_id = Some(model_id.clone());
-                    status.base_url = Some(sidecar.base_url().to_string());
-                    status.pid = sidecar.pid().await;
-                    Some((model_id.clone(), argv.clone()))
+                    // The state is the PROCESS's, asked of the OS on every poll — never the
+                    // flag the mount left (measured 2026-09-24: the engine SIGKILLed, its uvx
+                    // launcher a zombie of goosed, status said `running` for minutes). The
+                    // supervisor is kept, so a Mount of the same model restarts it through
+                    // the crash breaker; nothing restarts on its own.
+                    match sidecar.exited().await {
+                        Ok(Some(exit)) => {
+                            status.state = "failed".to_string();
+                            status.last_error = Some(engine_exit_message(&exit));
+                            None
+                        }
+                        Ok(None) => {
+                            status.state = "running".to_string();
+                            status.base_url = Some(sidecar.base_url().to_string());
+                            status.pid = sidecar.pid().await;
+                            Some((model_id.clone(), argv.clone()))
+                        }
+                        Err(e) => {
+                            status.state = "failed".to_string();
+                            status.last_error =
+                                Some(format!("the engine process cannot be observed: {e:#}"));
+                            None
+                        }
+                    }
                 }
             }
         };
@@ -1960,6 +1995,85 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         assert!(absence.contains("no `num_running`"), "{absence}");
         manager.unmount().await;
         assert_eq!(manager.status().await.active_requests, None);
+    }
+
+    /// Measured 2026-09-24 on the workhorse: the engine SIGKILLed, and status kept saying
+    /// `running` (the stored flag) with its launcher left a zombie. The very next poll must say
+    /// `failed`, naming the pid, the signal, the restart policy and the engine's last log lines;
+    /// the process is reaped; and a Mount of the same model restarts it (no silent restart).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_killed_engine_is_failed_on_the_next_poll_and_a_mount_restarts_it() {
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        let manager = MlxEngineManager::new();
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                format!("import sys; print('engine log: loaded', file=sys.stderr, flush=True)\n{ARGV_FAKE_ENGINE}"),
+            ],
+            ..Default::default()
+        });
+        manager.mount("pub/small").await.unwrap();
+        let status = settle(&manager).await;
+        assert_eq!(status.state, "running", "{:?}", status.last_error);
+        let pid = status.pid.unwrap();
+
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let failed = loop {
+            let status = manager.status().await;
+            if status.state == "failed" {
+                break status;
+            }
+            assert_eq!(status.state, "running");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the dead engine still reads running"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let error = failed.last_error.expect("a named failure");
+        assert!(
+            error.contains(&format!("(pid {pid}) exited: signal: 9")),
+            "{error}"
+        );
+        assert!(
+            error.contains("not restarted automatically; Mount restarts it"),
+            "{error}"
+        );
+        assert!(
+            error.contains("engine log: loaded"),
+            "the last log lines: {error}"
+        );
+        assert_eq!(failed.pid, None);
+        assert_eq!(failed.model_id.as_deref(), Some("pub/small"));
+        let zombie = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&zombie.stdout).contains('Z'),
+            "the dead engine is reaped, not left a zombie"
+        );
+        assert_eq!(
+            manager.status().await.state,
+            "failed",
+            "stays failed: nothing restarts"
+        );
+
+        manager.mount("pub/small").await.unwrap();
+        let restarted = settle(&manager).await;
+        assert_eq!(restarted.state, "running", "{:?}", restarted.last_error);
+        assert_ne!(restarted.pid, Some(pid));
+        manager.unmount().await;
     }
 
     /// S-L8: the circuit breaker now sits on the production re-mount path. A mount of the

@@ -105,6 +105,16 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
     expect(h.scheduled).toHaveLength(0);
   });
 
+  it('an engine that DIED while running is failed with its exit — goose sends no port for it', async () => {
+    const exit =
+      'the engine process (pid 83454) exited: signal: 9 (SIGKILL) — not restarted automatically; Mount restarts it (the crash breaker applies). Last log lines:\nINFO: loaded';
+    const h = harness({ status: () => refused });
+    h.monitor.reportFromRenderer({ state: 'failed', modelId: 'org/m', lastError: exit });
+    await vi.waitFor(() => expect(h.snapshots).toHaveLength(1));
+    expect(h.monitor.current()).toMatchObject({ mode: 'failed', failedError: exit });
+    expect(h.scheduled).toHaveLength(0);
+  });
+
   it('a timeout on a running engine holds the last read and says why it is stale', async () => {
     let result: MlxLiveStatusResult = answered(GENERATING_STATUS);
     const h = harness({ status: () => result });

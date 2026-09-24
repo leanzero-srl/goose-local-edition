@@ -199,7 +199,7 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
     };
     const model = buildMlxTrayModel(failed, OPTS);
     expect(labels(model.items)).toEqual([
-      'LeanZero MLX: mount failed',
+      'LeanZero MLX: failed',
       `Model: ${CONFIGURED}`,
       'Error: port 8090 never opened',
       '---',

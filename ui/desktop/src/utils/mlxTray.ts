@@ -129,7 +129,7 @@ function headline(snapshot: MlxEngineSnapshot): string {
     case 'mounting':
       return 'LeanZero MLX: mounting';
     case 'failed':
-      return 'LeanZero MLX: mount failed';
+      return 'LeanZero MLX: failed';
     case 'running':
       break;
   }
