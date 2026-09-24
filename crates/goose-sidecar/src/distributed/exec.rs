@@ -9,6 +9,8 @@ use std::process::Stdio;
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
+use super::node_op::NodeOp;
+
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// ssh's own transport bounds. `ConnectTimeout` fails an unreachable peer instead of waiting on
@@ -51,6 +53,20 @@ pub trait NodeExec: Send + Sync {
         host: Option<&'a str>,
         script: &'a str,
     ) -> BoxFuture<'a, Result<ExecOutput>>;
+
+    /// Run one of goose's own node operations on `host`. Over ssh (and on this Mac) that is its
+    /// script; a LeanZero Link peer receives the typed op and builds the script itself
+    /// (`link_control::LinkRoutedExec`), so every call site that may reach a Link node uses this.
+    fn run_op<'a>(
+        &'a self,
+        host: Option<&'a str>,
+        op: &'a NodeOp,
+    ) -> BoxFuture<'a, Result<ExecOutput>> {
+        Box::pin(async move {
+            let script = op.script()?;
+            self.run(host, &script).await
+        })
+    }
 }
 
 /// The real transport.

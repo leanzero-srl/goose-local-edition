@@ -26,7 +26,9 @@ use tokio::task::JoinHandle;
 use super::config::{Backend, DistributedConfig, Runner};
 use super::exec::{NodeExec, SystemExec};
 use super::launch::{self, RankProcess, RANK_MARKER};
+use super::link_control::{self, ControlEvent, LinkRoutedExec};
 use super::local_network;
+use super::node_op::{NodeOp, Signal};
 use super::preflight::{self, now_ms, PreflightReport};
 use super::probe::{self, Pressure, SseVerdict};
 use super::{HANG_MEDIAN_MULTIPLE, HANG_MIN_SAMPLES};
@@ -36,9 +38,9 @@ use crate::{SidecarConfig, GIB, GRACE_TICK, GRACE_TICKS};
 /// rank wrapper's memory report cadence. It samples; it decides nothing by itself — the hang bound
 /// is a multiple of the MEASURED progress intervals, which this cadence only quantises. Parity with
 /// the MLX view's own 2 s status cadence.
-const POLL_INTERVAL: Duration = Duration::from_secs(2);
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Readiness polling tick (parity with `Sidecar::await_ready`'s 400 ms).
-const READY_TICK: Duration = Duration::from_millis(400);
+pub(crate) const READY_TICK: Duration = Duration::from_millis(400);
 /// A transport bound on the control endpoints (`/goose/progress`, `/goose/admission`) — parity
 /// with the single manager's 5 s probe client. The readiness completion has NO read timeout: it
 /// is bounded by rank progress, never by a clock.
@@ -131,6 +133,11 @@ pub enum EventKind {
     StopRequested,
     Stopped,
     OrphanReclaimed,
+    /// The LeanZero Link control session to a Link node stopped answering. The ranks are not
+    /// stopped by it: the message says whether the data plane (rank 0's step counter) still moves.
+    LinkControlLost,
+    /// It answers again.
+    LinkControlRestored,
     /// A rank on THIS Mac died naming EHOSTUNREACH: macOS local network privacy (see
     /// `local_network`), not the cable.
     LocalNetworkBlocked,
@@ -158,6 +165,8 @@ impl EventKind {
             EventKind::StopRequested => "stopRequested",
             EventKind::Stopped => "stopped",
             EventKind::OrphanReclaimed => "orphanReclaimed",
+            EventKind::LinkControlLost => "linkControlLost",
+            EventKind::LinkControlRestored => "linkControlRestored",
             EventKind::LocalNetworkBlocked => "localNetworkBlocked",
         }
     }
@@ -347,6 +356,7 @@ impl Shared {
             | EventKind::WatchdogCritical
             | EventKind::BreakerOpen
             | EventKind::StartFailed
+            | EventKind::LinkControlLost
             | EventKind::LocalNetworkBlocked => {
                 tracing::warn!(kind = kind.as_str(), node, "distributed engine: {message}")
             }
@@ -498,9 +508,7 @@ fn gib(bytes: u64) -> String {
 
 /// Whether `pid` still runs on `host` (a zombie counts as gone: it holds no memory and no port).
 async fn pid_alive(exec: &dyn NodeExec, host: Option<&str>, pid: u32) -> Result<bool> {
-    let out = exec
-        .run(host, &format!("/bin/ps -o pid=,stat=,time= -p {pid}"))
-        .await?;
+    let out = exec.run_op(host, &NodeOp::PidRow { pid }).await?;
     if out.ssh_failed() {
         return Err(anyhow!("ssh failed: {}", out.stderr.trim()));
     }
@@ -519,15 +527,17 @@ async fn wait_gone(exec: &dyn NodeExec, host: Option<&str>, pid: u32) -> Result<
 }
 
 /// Signal one pid on a node, per pid: `kill -<SIG> <pid>`.
-async fn signal_pid(exec: &dyn NodeExec, host: Option<&str>, pid: u32, signal: &str) -> String {
-    match exec.run(host, &format!("/bin/kill -{signal} {pid}")).await {
+async fn signal_pid(exec: &dyn NodeExec, host: Option<&str>, pid: u32, signal: Signal) -> String {
+    match exec.run_op(host, &NodeOp::Signal { pid, signal }).await {
         Ok(out) if out.success() => "sent".to_string(),
         Ok(out) => format!("kill exited {:?}: {}", out.status, out.stderr.trim()),
         Err(e) => format!("{e:#}"),
     }
 }
 
-async fn wait_child_exit(child: &mut tokio::process::Child) -> Option<std::process::ExitStatus> {
+pub(crate) async fn wait_child_exit(
+    child: &mut tokio::process::Child,
+) -> Option<std::process::ExitStatus> {
     for _ in 0..GRACE_TICKS {
         if let Ok(Some(status)) = child.try_wait() {
             return Some(status);
@@ -591,6 +601,13 @@ pub(crate) async fn stop_ranks(
     for rank in ranks.iter_mut().filter(|r| r.host.is_some()) {
         let host = rank.host.clone();
         let host = host.as_deref();
+        if link_control::link_peer(host).is_some() {
+            // The peer's own goosed stops its rank per pid and verifies it gone.
+            let (line, verified) = link_control::stop_link_rank(rank, peers_follow_rank0).await;
+            report.verified &= verified;
+            report.steps.push(line);
+            continue;
+        }
         let Some(pid) = rank.pid() else {
             report.steps.push(format!(
                 "rank {} ({}): the peer never reported its pid; its ssh session is ended below and the node is swept for goose ranks",
@@ -631,7 +648,7 @@ pub(crate) async fn stop_ranks(
             ),
         };
         if matches!(gone, Ok(None)) {
-            let sent = signal_pid(exec, host, pid, "TERM").await;
+            let sent = signal_pid(exec, host, pid, Signal::Term).await;
             gone = wait_gone(exec, host, pid).await;
             line = format!(
                 "rank {} ({}) pid {pid}: alive after rank 0's exit{} → SIGTERM ({sent})",
@@ -644,7 +661,7 @@ pub(crate) async fn stop_ranks(
                 }
             );
             if matches!(gone, Ok(None)) {
-                let sent = signal_pid(exec, host, pid, "KILL").await;
+                let sent = signal_pid(exec, host, pid, Signal::Kill).await;
                 gone = wait_gone(exec, host, pid).await;
                 line.push_str(&format!(" → alive after the grace → SIGKILL ({sent})"));
             }
@@ -708,7 +725,7 @@ async fn reclaim_marked_ranks(
     host: Option<&str>,
     node: &str,
 ) -> (Vec<String>, bool) {
-    let listing = match exec.run(host, "/bin/ps -axo pid=,command=").await {
+    let listing = match exec.run_op(host, &NodeOp::ProcessList).await {
         Ok(out) if !out.ssh_failed() => out.stdout,
         Ok(out) => {
             return (
@@ -726,11 +743,11 @@ async fn reclaim_marked_ranks(
     let mut steps = Vec::new();
     let mut verified = true;
     for pid in marked {
-        let sent = signal_pid(exec, host, pid, "TERM").await;
+        let sent = signal_pid(exec, host, pid, Signal::Term).await;
         let mut gone = wait_gone(exec, host, pid).await;
         let mut line = format!("{node}: goose rank pid {pid} → SIGTERM ({sent})");
         if matches!(gone, Ok(None)) {
-            let sent = signal_pid(exec, host, pid, "KILL").await;
+            let sent = signal_pid(exec, host, pid, Signal::Kill).await;
             gone = wait_gone(exec, host, pid).await;
             line.push_str(&format!(" → SIGKILL ({sent})"));
         }
@@ -835,8 +852,9 @@ fn local_progress_mark(sys: &mut System, ranks: &[RankProcess]) -> Vec<u64> {
         .collect()
 }
 
-/// A dead rank, named. A rank on THIS Mac whose last output names EHOSTUNREACH is the app's
-/// Local Network privilege (the peers run under ssh, which macOS exempts), not a dead link.
+/// A dead rank, named. A rank an APP runs — this Mac's, or a Link peer's (spawned by the peer's
+/// goosed) — whose last output names EHOSTUNREACH is that app's Local Network privilege, not a
+/// dead link; a peer under ssh is exempt (TN3179).
 fn rank_exit(
     rank: &RankProcess,
     status: std::process::ExitStatus,
@@ -844,19 +862,25 @@ fn rank_exit(
     after: &str,
 ) -> (EventKind, String) {
     let tail = rank.tail();
-    let what = if rank.host.is_some() {
-        "its ssh session ended"
-    } else {
-        "exited"
+    let link = link_control::link_peer(rank.host.as_deref()).is_some();
+    let what = match (&rank.host, link) {
+        (None, _) => "exited",
+        (Some(_), true) => "ended on its Link node (its LeanZero Link session closed)",
+        (Some(_), false) => "its ssh session ended",
     };
     let message = format!(
         "rank {} {what}{when} ({status}){after} Last output:\n{tail}",
         rank.rank
     );
-    if rank.host.is_none() && local_network::names_host_unreachable(&tail) {
+    if (rank.host.is_none() || link) && local_network::names_host_unreachable(&tail) {
+        let whose = if link {
+            format!("on {}", rank.node)
+        } else {
+            "on this Mac".to_string()
+        };
         (
             EventKind::LocalNetworkBlocked,
-            format!("{}: {message}", local_network::BLOCKED),
+            format!("{} ({whose}): {message}", local_network::BLOCKED),
         )
     } else {
         (EventKind::RankDied, message)
@@ -1071,7 +1095,63 @@ async fn set_admission(ctx: &RunContext, open: bool, reason: &str) -> Result<()>
     Ok(())
 }
 
-fn sample_script(pid: Option<u32>) -> String {
+/// A Link control event, named with what the DATA plane shows at the same poll: rank 0's step
+/// counter and the ranks' CPU are the supervisor's own measure, read over loopback, not the mesh.
+fn link_control_event(
+    ctx: &RunContext,
+    rank: &RankProcess,
+    event: ControlEvent,
+    reading: &MeterReading,
+    progress: &Option<Progress>,
+) -> (EventKind, String) {
+    let data_plane = format!(
+        "{} over {}",
+        ctx.config.backend.as_str(),
+        ctx.config.nodes[rank.rank].tb_interface
+    );
+    match event {
+        ControlEvent::Lost(error) => {
+            let moving = match progress {
+                Some(p) if reading.progressed => format!(
+                    "the data plane ({data_plane}) is still carrying the run: rank 0's step counter \
+                     is at {} and advanced this poll",
+                    p.steps
+                ),
+                Some(p) => format!(
+                    "the data plane ({data_plane}) shows no progress this poll (rank 0's step \
+                     counter at {}, {} in flight) — idle, or stalled; the hang rule decides",
+                    p.steps, p.inflight
+                ),
+                None => format!(
+                    "the data plane ({data_plane}) is unverified: rank 0's progress counter did \
+                     not answer either"
+                ),
+            };
+            (
+                EventKind::LinkControlLost,
+                format!(
+                    "the LeanZero Link control session to rank {} ({}) stopped answering: {error}. \
+                     {moving}. The run is not stopped for it; the peer stops its rank if no poll \
+                     reaches it for {} s (its lease)",
+                    rank.rank,
+                    rank.node,
+                    link_control::LINK_LEASE.as_secs()
+                ),
+            )
+        }
+        ControlEvent::Restored(after) => (
+            EventKind::LinkControlRestored,
+            format!(
+                "the LeanZero Link control session to rank {} ({}) answers again after {:.1} s",
+                rank.rank,
+                rank.node,
+                after.as_secs_f64()
+            ),
+        ),
+    }
+}
+
+pub(crate) fn sample_script(pid: Option<u32>) -> String {
     let mut script = String::from(
         "echo; echo @@vm; /usr/bin/vm_stat\necho; echo @@sysctl; /usr/sbin/sysctl -n hw.memsize kern.memorystatus_vm_pressure_level\n",
     );
@@ -1108,8 +1188,8 @@ async fn monitor(
             futures::future::join_all(ctx.config.nodes.iter().zip(&pids).map(|(node, pid)| {
                 let exec = Arc::clone(&ctx.exec);
                 let host = node.ssh.clone();
-                let script = sample_script(*pid);
-                async move { exec.run(host.as_deref(), &script).await }
+                let op = NodeOp::Sample { pid: *pid };
+                async move { exec.run_op(host.as_deref(), &op).await }
             }))
             .await;
         let progress = async {
@@ -1250,6 +1330,12 @@ async fn monitor(
         }
 
         let reading = meter.observe(Instant::now(), progress.as_ref().map(|p| p.steps), &cpu);
+        for rank in ranks.iter() {
+            for event in link_control::drain_events(rank) {
+                let (kind, message) = link_control_event(ctx, rank, event, &reading, &progress);
+                ctx.event(kind, Some(&rank.node), message);
+            }
+        }
         let serving = progress.as_ref().is_some_and(|p| p.inflight > 0);
         ctx.update(|s| {
             s.status.inflight = progress.as_ref().map(|p| p.inflight);
@@ -1407,8 +1493,18 @@ async fn supervise(
         });
         let mut ranks = Vec::new();
         let mut spawn_error = None;
+        let link_launch = link_control::LinkLaunch {
+            run_id: format!("{}-{}", std::process::id(), now_ms()),
+            model_id: ctx.config.model_id.clone(),
+            served_model_id: ctx.served_id.clone(),
+            runner: ctx.runner,
+        };
         for (node, spec) in ctx.config.nodes.iter().zip(&specs) {
-            match launch::spawn_rank(node, spec) {
+            let spawned = match link_control::link_peer(node.host()) {
+                Some(_) => link_control::spawn_link_rank(node, spec, &link_launch).await,
+                None => launch::spawn_rank(node, spec),
+            };
+            match spawned {
                 Ok(rank) => ranks.push(rank),
                 Err(e) => {
                     spawn_error = Some((node.name.clone(), format!("{e:#}")));
@@ -1622,7 +1718,7 @@ pub struct DistributedManager {
 
 impl Default for DistributedManager {
     fn default() -> Self {
-        Self::new(Arc::new(SystemExec))
+        Self::new(Arc::new(LinkRoutedExec::new(Arc::new(SystemExec))))
     }
 }
 

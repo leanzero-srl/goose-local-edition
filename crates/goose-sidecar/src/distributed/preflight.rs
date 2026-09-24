@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use super::config::{Backend, DistributedConfig, NodeConfig, Runner};
 use super::exec::{sh_quote, ExecOutput, NodeExec};
+use super::link_control::link_peer;
 use super::local_network::{self, PeerAnswer, PingLine};
+use super::node_op::NodeOp;
 use super::plan::{self, PipelinePlan, PipelineRatios, RankPlan};
 use super::probe::{self, Pressure};
 use super::provision::{EnvSpec, PIPELINE_FORK_COMMIT};
@@ -241,7 +243,7 @@ pub(crate) fn node_probe_script(
     script
 }
 
-fn link_script(node: &NodeConfig, backend: Backend) -> String {
+pub(crate) fn link_script(node: &NodeConfig, backend: Backend) -> String {
     let mut script = format!(
         "echo; echo @@ifconfig; /sbin/ifconfig {} 2>&1\n",
         sh_quote(&node.tb_interface)
@@ -799,9 +801,13 @@ pub async fn run_preflight(
 
     let answers = futures::future::join_all((0..config.size()).map(|rank| {
         let exec = Arc::clone(&exec);
-        let script = node_probe_script(config, runner, rank);
+        let op = NodeOp::Probe {
+            config: config.clone(),
+            runner,
+            rank,
+        };
         let host = config.nodes[rank].ssh.clone();
-        async move { exec.run(host.as_deref(), &script).await }
+        async move { exec.run_op(host.as_deref(), &op).await }
     }))
     .await;
     let mut answers: Vec<NodeAnswer> = answers
@@ -1037,8 +1043,8 @@ pub async fn run_preflight(
     Ok(report)
 }
 
-/// Only THIS Mac's own process tree (the node with no ssh alias) is subject to the app's Local
-/// Network privilege; every peer is probed over ssh, which macOS exempts.
+/// An APP's process tree is subject to its Local Network privilege: this Mac's, and a LeanZero Link
+/// node's (its goosed runs the probe); a peer probed over ssh is exempt.
 fn local_network_checks(config: &DistributedConfig, answers: &mut [NodeAnswer]) {
     let answered: Vec<bool> = answers
         .iter()
@@ -1048,11 +1054,12 @@ fn local_network_checks(config: &DistributedConfig, answers: &mut [NodeAnswer]) 
                 .any(|c| c.id == "reachable" && c.verdict == CheckVerdict::Pass)
         })
         .collect();
+    // A LeanZero Link node's probe runs in its goosed — an app, like this Mac's.
     let findings: Vec<(usize, String)> = config
         .nodes
         .iter()
         .enumerate()
-        .filter(|(_, node)| node.ssh.is_none())
+        .filter(|(_, node)| node.ssh.is_none() || link_peer(node.host()).is_some())
         .filter_map(|(rank, node)| {
             let peers: Vec<PeerAnswer> = config
                 .nodes
@@ -1066,15 +1073,28 @@ fn local_network_checks(config: &DistributedConfig, answers: &mut [NodeAnswer]) 
                     pings: &answers[i].pings,
                 })
                 .collect();
-            local_network::diagnose(&node.tb_ip, &answers[rank].pings, &peers)
-                .map(|evidence| (rank, evidence))
+            match node.ssh {
+                None => local_network::diagnose(&node.tb_ip, &answers[rank].pings, &peers)
+                    .map(|evidence| (rank, format!("{} ({evidence})", local_network::BLOCKED))),
+                Some(_) => local_network::diagnose_on(
+                    &node.name,
+                    &node.tb_ip,
+                    &answers[rank].pings,
+                    &peers,
+                )
+                .map(|evidence| {
+                    (
+                        rank,
+                        format!("{} ({evidence})", local_network::blocked_on(&node.name)),
+                    )
+                }),
+            }
         })
         .collect();
-    for (rank, evidence) in findings {
-        answers[rank].checks.push(Check::fail(
-            local_network::CHECK_ID,
-            format!("{} ({evidence})", local_network::BLOCKED),
-        ));
+    for (rank, message) in findings {
+        answers[rank]
+            .checks
+            .push(Check::fail(local_network::CHECK_ID, message));
     }
 }
 
@@ -1379,7 +1399,9 @@ async fn repair_node(
 ) -> (Vec<Check>, String) {
     let node = &config.nodes[rank];
     let host = node.host();
-    let run = exec.run(host, &repair_script(node)).await;
+    let run = exec
+        .run_op(host, &NodeOp::Repair { node: node.clone() })
+        .await;
     let applied = match run {
         Ok(out) if out.success() => "applied".to_string(),
         Ok(out) => format!(
@@ -1392,7 +1414,11 @@ async fn repair_node(
     let mut last = Vec::new();
     for _ in 0..crate::GRACE_TICKS / 5 {
         tokio::time::sleep(crate::GRACE_TICK * 5).await;
-        let Ok(out) = exec.run(host, &link_script(node, config.backend)).await else {
+        let link = NodeOp::Link {
+            node: node.clone(),
+            backend: config.backend,
+        };
+        let Ok(out) = exec.run_op(host, &link).await else {
             continue;
         };
         let sections = probe::sections(&out.stdout);
