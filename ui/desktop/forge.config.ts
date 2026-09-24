@@ -69,12 +69,17 @@ function mirrorSwarmBenchPayload() {
 
 let cfg = {
   // The product is "Goose Swarm" (package.json productName drives the bundle, Finder, dock,
-  // app-menu and executable names). The bundle id electron-packager would otherwise DERIVE from
-  // that name is pinned to its pre-rename value so auto-update, the notarization identity and the
-  // keychain entries do not change under an installed 3.0.7. The executable is deliberately NOT
-  // pinned: the packager copies executableName into CFBundleDisplayName AFTER extendInfo, so a
-  // pinned "Goose" executable would have left the display name "Goose".
-  appBundleId: 'com.electron.goose',
+  // app-menu and executable names). The executable is deliberately NOT pinned: the packager copies
+  // executableName into CFBundleDisplayName AFTER extendInfo, so a pinned "Goose" executable would
+  // have left the display name "Goose".
+  // The bundle id left com.electron.goose in 3.0.21: macOS 26.7 held that id in Local Network
+  // privacy as undecided-deny (MulticastPreferenceSet false, no Path) and never raised the alert —
+  // not for a UDP connect, a renderer WebSocket or a main-process fetch — so the app could not reach
+  // a peer over Thunderbolt and never appeared in Settings to be allowed. A fresh id gets a fresh
+  // decision. Cost: Squirrel validates an update against the running app's designated requirement,
+  // which names the old id, so installs of 3.0.20 and earlier take this one by hand, once.
+  // userData is pinned separately (utils/userDataPath.ts) and does not follow the id.
+  appBundleId: 'net.leanzero.goose-swarm',
   asar: true,
   extraResource: ['src/bin', 'src/images', 'src/app-update.yml', 'src/swarm-bench', 'bundled-mcps'],
   icon: 'src/images/icon',
