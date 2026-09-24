@@ -54,6 +54,7 @@ import {
 } from '../lz';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { MlxThinkingFields } from './MlxThinkingFields';
+import { MlxKvCacheFields } from './MlxKvCacheFields';
 import {
   mlxEngineBrowse,
   mlxEngineBrowseFilters,
@@ -210,7 +211,13 @@ export const CONTEXT_LIMIT_FIELD: NumericFieldSpec = {
 export type LaneSettingKey = 'speculative' | 'adapterPath' | 'textOnly';
 /** `thinking` is '' (auto) | 'on' | 'off'; `reasoningEffort` is '' (template default) | a level. */
 export type ThinkingSettingKey = 'thinking' | 'reasoningEffort';
-export type ProfileDraftKey = NumericSettingKey | LaneSettingKey | ThinkingSettingKey;
+/** `kvCache` is '' (off — the engine's bf16 cache) | 'int8' | 'int4'. */
+export type KvCacheSettingKey = 'kvCache';
+export type ProfileDraftKey =
+  | NumericSettingKey
+  | LaneSettingKey
+  | ThinkingSettingKey
+  | KvCacheSettingKey;
 
 export type NumericDrafts = Record<ProfileDraftKey, string>;
 
@@ -219,7 +226,12 @@ const NUMERIC_KEYS: NumericSettingKey[] = [...SAMPLING_FIELDS, CONTEXT_LIMIT_FIE
 );
 const LANE_KEYS: LaneSettingKey[] = ['speculative', 'adapterPath', 'textOnly'];
 const THINKING_KEYS: ThinkingSettingKey[] = ['thinking', 'reasoningEffort'];
-const PROFILE_KEYS: ProfileDraftKey[] = [...NUMERIC_KEYS, ...LANE_KEYS, ...THINKING_KEYS];
+const PROFILE_KEYS: ProfileDraftKey[] = [
+  ...NUMERIC_KEYS,
+  ...LANE_KEYS,
+  ...THINKING_KEYS,
+  'kvCache',
+];
 
 export function draftsFromProfile(profile: MlxModelProfile | undefined): NumericDrafts {
   const drafts = {} as NumericDrafts;
@@ -232,6 +244,7 @@ export function draftsFromProfile(profile: MlxModelProfile | undefined): Numeric
   drafts.textOnly = profile?.textOnly == null ? '' : String(profile.textOnly);
   drafts.thinking = profile?.thinking ?? '';
   drafts.reasoningEffort = profile?.reasoningEffort ?? '';
+  drafts.kvCache = profile?.kvCache ?? '';
   return drafts;
 }
 
@@ -254,6 +267,7 @@ export function profileFromDrafts(drafts: NumericDrafts): MlxModelProfile {
   if (drafts.thinking === 'on' || drafts.thinking === 'off') profile.thinking = drafts.thinking;
   const effort = drafts.reasoningEffort.trim();
   if (effort !== '') profile.reasoningEffort = effort;
+  if (drafts.kvCache === 'int8' || drafts.kvCache === 'int4') profile.kvCache = drafts.kvCache;
   return profile;
 }
 
@@ -1116,6 +1130,11 @@ function SamplingSection(props: SamplingSectionProps) {
               />
               <LaneFields drafts={drafts} setDraft={setDraft} />
               <MlxThinkingFields
+                model={models.find((m) => m.id === selectedModelId)}
+                drafts={drafts}
+                setDraft={setDraft}
+              />
+              <MlxKvCacheFields
                 model={models.find((m) => m.id === selectedModelId)}
                 drafts={drafts}
                 setDraft={setDraft}

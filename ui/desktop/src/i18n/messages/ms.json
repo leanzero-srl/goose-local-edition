@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Menyediakan merentas Mac"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}: {bytes} KiB bagi setiap token dan bukan {bf16} KiB — memori yang sama memuatkan {ratio}× konteks."
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4-bit"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8-bit"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "Cache KV"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "Diukur pada model ini ({date}): padanan token dengan bf16 {agreement}%, {identical} daripada {prompts} jawapan serupa, fakta tersembunyi: {retrieval}; bf16 berbanding dirinya: {floor}%."
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "padanan {agreement}%"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "Kelajuan nyahkod pada konteks terpanjang: {ratio}% daripada bf16."
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "Rekod pengukuran tidak dapat dibaca: {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "Model ini tiada lapisan perhatian penuh, jadi tiada KV yang berkembang untuk dimampatkan."
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "Saiz kepala model ini ({headDim}) tidak sesuai dengan mana-mana kumpulan pengkuantuman enjin, jadi KV-nya tidak boleh dimampatkan."
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "Pemampatan cache KV memerlukan config.json model, dan model ini tiada dalam folder model."
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "Kualiti belum diukur pada model ini — bandingkan jawapannya sebelum bergantung padanya."
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "Mati (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "Mati: cache bf16 enjin, {bytes} KiB bagi setiap token konteks."
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "ditemui"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "TERLEPAS"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "Hanya {attention} lapisan perhatian penuh yang berkembang bersama konteks dan dimampatkan; {state} lapisan perhatian linear menyimpan keadaan bersaiz tetap. Berkuat kuasa pada lekapan seterusnya. Larian teragih kekal dengan cache bf16."
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "Pemampatan cache KV tidak tersedia: {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {Teragih · # nod · {backend}}}"
   },

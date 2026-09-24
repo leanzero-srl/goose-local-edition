@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "複数の Mac で提供中"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}: 1 トークンあたり {bf16} KiB ではなく {bytes} KiB — 同じメモリに {ratio}× のコンテキストが入ります。"
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4 ビット"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8 ビット"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "KV キャッシュ"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "このモデルで計測 ({date}): bf16 とのトークン一致率 {agreement}%、同一回答 {identical}/{prompts}、埋め込んだ事実: {retrieval}。bf16 同士の一致率: {floor}%。"
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "一致率 {agreement}%"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "最長コンテキストでのデコード速度: bf16 の {ratio}%。"
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "計測記録を読み込めません: {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "このモデルにはフルアテンション層がないため、圧縮すべき増加する KV がありません。"
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "このモデルのヘッドサイズ ({headDim}) はエンジンのどの量子化グループにも合わないため、KV を圧縮できません。"
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "KV キャッシュ圧縮にはモデルの config.json が必要ですが、このモデルはモデルフォルダーにありません。"
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "このモデルでは品質が未計測です — 使う前に回答を比較してください。"
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "オフ (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "オフ: エンジンの bf16 キャッシュ。コンテキスト 1 トークンあたり {bytes} KiB。"
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "発見"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "見逃し"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "コンテキストとともに増えて圧縮されるのは {attention} 個のフルアテンション層だけです。{state} 個のリニアアテンション層は固定サイズの状態を保持します。次回のマウント時に適用されます。分散実行は bf16 キャッシュのままです。"
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "KV キャッシュ圧縮は利用できません: {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {分散 · # ノード · {backend}}}"
   },

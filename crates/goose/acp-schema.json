@@ -7091,6 +7091,17 @@
             "null"
           ],
           "description": "One of the model's `MlxThinkingCapabilitiesDto::effort_levels`, sent as\n`chat_template_kwargs.reasoning_effort`. Absent = the template's own default. Captured once\nper session (it rewrites the system prompt, so a mid-session change would void the cache)."
+        },
+        "kvCache": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxKvCacheModeDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Compressed live KV cache, passed as `--kv-cache-dtype`: `\"int8\"` | `\"int4\"`. Absent = off\n(the engine's bf16 cache, no flag). A change restarts the engine. The mount is refused when\nthe model's KV cannot take it (goose: no attention layers / no quantization group for its\nhead_dim; the engine: a cache layout it cannot quantize — both name the reason)."
         }
       },
       "description": "Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each\nmounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`."
@@ -7100,6 +7111,13 @@
       "enum": [
         "on",
         "off"
+      ]
+    },
+    "MlxKvCacheModeDto": {
+      "type": "string",
+      "enum": [
+        "int8",
+        "int4"
       ]
     },
     "MlxEngineSettingsUpdateRequest_unstable": {
@@ -7199,6 +7217,40 @@
             "string",
             "null"
           ]
+        },
+        "kvCache": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxKvCacheFactsDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "KV bytes per token at each cache setting; absent exactly when `kv_cache_error` says why."
+        },
+        "kvCacheError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kvCacheMeasurement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxKvCacheMeasurementDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The measured quality of each setting on THIS model; absent with no error = never measured."
+        },
+        "kvCacheMeasurementError": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -7247,6 +7299,148 @@
         "budgetForcible"
       ],
       "description": "What the model's own chat template lets a request steer about reasoning, proven on the\ntemplate's Jinja AST with the engine's detection rules."
+    },
+    "MlxKvCacheFactsDto": {
+      "type": "object",
+      "properties": {
+        "attentionLayers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stateLayers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "slidingLayers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kvHeads": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "headDim": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "groupSize": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The engine's quantization group for this head_dim; absent = none fits, so the model's KV\ncannot be compressed (both byte figures below are absent too).",
+          "minimum": 0
+        },
+        "bf16BytesPerToken": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "int8BytesPerToken": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "int4BytesPerToken": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "attentionLayers",
+        "stateLayers",
+        "slidingLayers",
+        "kvHeads",
+        "headDim",
+        "bf16BytesPerToken"
+      ],
+      "description": "What one token of context costs in KV for this model at each cache setting, from its\nconfig.json and the engine's packed layout (bits/8 bytes per element + one scale and one bias\nper group). Only full-attention layers grow with context; linear-attention state is fixed-size."
+    },
+    "MlxKvCacheMeasurementDto": {
+      "type": "object",
+      "properties": {
+        "measuredAt": {
+          "type": "string"
+        },
+        "engine": {
+          "type": "string"
+        },
+        "prompts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "noiseFloor": {
+          "$ref": "#/$defs/MlxKvModeMeasurementDto",
+          "description": "bf16 measured against itself — the floor every setting is read against."
+        },
+        "int8": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxKvModeMeasurementDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "int4": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxKvModeMeasurementDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "measuredAt",
+        "engine",
+        "prompts",
+        "noiseFloor",
+        "source"
+      ],
+      "description": "The model directory's `goose-kv-cache.json`, written by evals/mlx-engine-bench/kv_quant_compare.py."
+    },
+    "MlxKvModeMeasurementDto": {
+      "type": "object",
+      "properties": {
+        "agreement": {
+          "type": "number",
+          "format": "double",
+          "description": "Tokens emitted before the first divergence from bf16, over bf16's tokens (0..1)."
+        },
+        "identicalAnswers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retrievalFound": {
+          "type": "boolean",
+          "description": "The fact buried ~31k tokens deep was answered correctly."
+        },
+        "decodeTpsRatio": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "Decode tok/s at the longest measured context, over bf16's."
+        }
+      },
+      "required": [
+        "agreement",
+        "identicalAnswers",
+        "retrievalFound"
+      ],
+      "description": "One setting's measured quality against the bf16 cache on the same prompts, greedy."
     },
     "MlxEngineModelDeleteRequest_unstable": {
       "type": "object",

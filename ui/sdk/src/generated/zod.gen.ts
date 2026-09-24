@@ -2853,6 +2853,8 @@ export const zMlxEngineSettingsReadRequest_unstable = z.object({
 
 export const zMlxThinkingModeDto = z.enum(['on', 'off']);
 
+export const zMlxKvCacheModeDto = z.enum(['int8', 'int4']);
+
 /**
  * Per-model sampling/context profile. Sampling is per MODEL: the engine spawns each
  * mounted model with the flags from ITS profile in `MlxEngineSettingsDto::model_profiles`.
@@ -2908,6 +2910,10 @@ export const zMlxModelProfileDto = z.object({
     ]).optional(),
     reasoningEffort: z.union([
         z.string(),
+        z.null()
+    ]).optional(),
+    kvCache: z.union([
+        zMlxKvCacheModeDto,
         z.null()
     ]).optional()
 });
@@ -3003,6 +3009,64 @@ export const zMlxThinkingCapabilitiesDto = z.object({
     budgetForcible: z.boolean()
 });
 
+/**
+ * What one token of context costs in KV for this model at each cache setting, from its
+ * config.json and the engine's packed layout (bits/8 bytes per element + one scale and one bias
+ * per group). Only full-attention layers grow with context; linear-attention state is fixed-size.
+ */
+export const zMlxKvCacheFactsDto = z.object({
+    attentionLayers: z.number().int().gte(0),
+    stateLayers: z.number().int().gte(0),
+    slidingLayers: z.number().int().gte(0),
+    kvHeads: z.number().int().gte(0),
+    headDim: z.number().int().gte(0),
+    groupSize: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    bf16BytesPerToken: z.number().int().gte(0),
+    int8BytesPerToken: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    int4BytesPerToken: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * One setting's measured quality against the bf16 cache on the same prompts, greedy.
+ */
+export const zMlxKvModeMeasurementDto = z.object({
+    agreement: z.number(),
+    identicalAnswers: z.number().int().gte(0),
+    retrievalFound: z.boolean(),
+    decodeTpsRatio: z.union([
+        z.number(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * The model directory's `goose-kv-cache.json`, written by evals/mlx-engine-bench/kv_quant_compare.py.
+ */
+export const zMlxKvCacheMeasurementDto = z.object({
+    measuredAt: z.string(),
+    engine: z.string(),
+    prompts: z.number().int().gte(0),
+    noiseFloor: zMlxKvModeMeasurementDto,
+    int8: z.union([
+        zMlxKvModeMeasurementDto,
+        z.null()
+    ]).optional(),
+    int4: z.union([
+        zMlxKvModeMeasurementDto,
+        z.null()
+    ]).optional(),
+    source: z.string()
+});
+
 export const zMlxLocalModelDto = z.object({
     id: z.string(),
     sizeBytes: z.number().int().gte(0),
@@ -3013,6 +3077,22 @@ export const zMlxLocalModelDto = z.object({
         z.null()
     ]).optional(),
     thinkingError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    kvCache: z.union([
+        zMlxKvCacheFactsDto,
+        z.null()
+    ]).optional(),
+    kvCacheError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    kvCacheMeasurement: z.union([
+        zMlxKvCacheMeasurementDto,
+        z.null()
+    ]).optional(),
+    kvCacheMeasurementError: z.union([
         z.string(),
         z.null()
     ]).optional()

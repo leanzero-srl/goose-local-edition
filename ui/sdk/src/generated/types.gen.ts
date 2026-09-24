@@ -2745,9 +2745,18 @@ export type MlxModelProfileDto = {
      * per session (it rewrites the system prompt, so a mid-session change would void the cache).
      */
     reasoningEffort?: string | null;
+    /**
+     * Compressed live KV cache, passed as `--kv-cache-dtype`: `"int8"` | `"int4"`. Absent = off
+     * (the engine's bf16 cache, no flag). A change restarts the engine. The mount is refused when
+     * the model's KV cannot take it (goose: no attention layers / no quantization group for its
+     * head_dim; the engine: a cache layout it cannot quantize — both name the reason).
+     */
+    kvCache?: MlxKvCacheModeDto | null;
 };
 
 export type MlxThinkingModeDto = 'on' | 'off';
+
+export type MlxKvCacheModeDto = 'int8' | 'int4';
 
 /**
  * Persist MLX engine settings. A running engine keeps its old arguments; status reports
@@ -2797,6 +2806,16 @@ export type MlxLocalModelDto = {
      */
     thinking?: MlxThinkingCapabilitiesDto | null;
     thinkingError?: string | null;
+    /**
+     * KV bytes per token at each cache setting; absent exactly when `kv_cache_error` says why.
+     */
+    kvCache?: MlxKvCacheFactsDto | null;
+    kvCacheError?: string | null;
+    /**
+     * The measured quality of each setting on THIS model; absent with no error = never measured.
+     */
+    kvCacheMeasurement?: MlxKvCacheMeasurementDto | null;
+    kvCacheMeasurementError?: string | null;
 };
 
 /**
@@ -2825,6 +2844,62 @@ export type MlxThinkingCapabilitiesDto = {
      * force-close (necessary, not sufficient — the engine skips it on tool requests).
      */
     budgetForcible: boolean;
+};
+
+/**
+ * What one token of context costs in KV for this model at each cache setting, from its
+ * config.json and the engine's packed layout (bits/8 bytes per element + one scale and one bias
+ * per group). Only full-attention layers grow with context; linear-attention state is fixed-size.
+ */
+export type MlxKvCacheFactsDto = {
+    attentionLayers: number;
+    stateLayers: number;
+    slidingLayers: number;
+    kvHeads: number;
+    headDim: number;
+    /**
+     * The engine's quantization group for this head_dim; absent = none fits, so the model's KV
+     * cannot be compressed (both byte figures below are absent too).
+     */
+    groupSize?: number | null;
+    bf16BytesPerToken: number;
+    int8BytesPerToken?: number | null;
+    int4BytesPerToken?: number | null;
+};
+
+/**
+ * The model directory's `goose-kv-cache.json`, written by evals/mlx-engine-bench/kv_quant_compare.py.
+ */
+export type MlxKvCacheMeasurementDto = {
+    measuredAt: string;
+    engine: string;
+    prompts: number;
+    /**
+     * bf16 measured against itself — the floor every setting is read against.
+     */
+    noiseFloor: MlxKvModeMeasurementDto;
+    int8?: MlxKvModeMeasurementDto | null;
+    int4?: MlxKvModeMeasurementDto | null;
+    source: string;
+};
+
+/**
+ * One setting's measured quality against the bf16 cache on the same prompts, greedy.
+ */
+export type MlxKvModeMeasurementDto = {
+    /**
+     * Tokens emitted before the first divergence from bf16, over bf16's tokens (0..1).
+     */
+    agreement: number;
+    identicalAnswers: number;
+    /**
+     * The fact buried ~31k tokens deep was answered correctly.
+     */
+    retrievalFound: boolean;
+    /**
+     * Decode tok/s at the longest measured context, over bf16's.
+     */
+    decodeTpsRatio?: number | null;
 };
 
 /**

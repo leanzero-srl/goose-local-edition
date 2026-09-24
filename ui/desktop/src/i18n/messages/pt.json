@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Servindo em vários Macs"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}: {bytes} KiB por token em vez de {bf16} KiB — a mesma memória comporta {ratio}× o contexto."
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4 bits"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8 bits"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "Cache KV"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "Medido neste modelo ({date}): {agreement}% de concordância de tokens com bf16, {identical} de {prompts} respostas idênticas, fato oculto: {retrieval}; bf16 contra si mesmo: {floor}%."
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "{agreement}% de concordância"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "Velocidade de decodificação no contexto mais longo: {ratio}% de bf16."
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "Não é possível ler o registro de medição: {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "Este modelo não tem camadas de atenção completa, então não há KV crescente para comprimir."
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "O tamanho de cabeça deste modelo ({headDim}) não cabe em nenhum grupo de quantização do motor, então o seu KV não pode ser comprimido."
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "A compressão da cache KV precisa do config.json do modelo, e este modelo não está na pasta de modelos."
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "Qualidade não medida neste modelo — compare as respostas antes de confiar nele."
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "Desligada (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "Desligada: a cache bf16 do motor, {bytes} KiB por token de contexto."
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "encontrado"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "NÃO ENCONTRADO"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "Só as {attention} camadas de atenção completa crescem com o contexto e são comprimidas; {state} camadas de atenção linear mantêm um estado de tamanho fixo. Vale a partir da próxima montagem. Execuções distribuídas mantêm uma cache bf16."
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "Compressão da cache KV indisponível: {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Distribuído · # nó · {backend}} other {Distribuído · # nós · {backend}}}"
   },

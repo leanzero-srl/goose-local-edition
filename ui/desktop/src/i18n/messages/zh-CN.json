@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "跨多台 Mac 提供服务"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}：每个 token {bytes} KiB，而不是 {bf16} KiB — 同样的内存可容纳 {ratio}× 的上下文。"
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4 位"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8 位"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "KV 缓存"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "在此模型上测得（{date}）：与 bf16 的 token 一致率 {agreement}%，{prompts} 个回答中 {identical} 个相同，埋藏事实：{retrieval}；bf16 与自身对比：{floor}%。"
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "一致率 {agreement}%"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "最长上下文下的解码速度：bf16 的 {ratio}%。"
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "无法读取测量记录：{reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "此模型没有全注意力层，因此没有可压缩的增长型 KV。"
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "此模型的头尺寸（{headDim}）不适合引擎的任何量化分组，因此其 KV 无法压缩。"
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "KV 缓存压缩需要模型的 config.json，而此模型不在模型文件夹中。"
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "此模型的质量尚未测量 — 依赖它之前请先比较其回答。"
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "关闭 (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "关闭：引擎的 bf16 缓存，每个上下文 token {bytes} KiB。"
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "找到"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "未找到"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "只有 {attention} 个全注意力层会随上下文增长并被压缩；{state} 个线性注意力层保持固定大小的状态。下次挂载时生效。分布式运行保持 bf16 缓存。"
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "KV 缓存压缩不可用：{reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, other {分布式 · # 个节点 · {backend}}}"
   },

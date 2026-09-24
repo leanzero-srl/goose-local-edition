@@ -3479,6 +3479,60 @@
   "mlxEngineView.servingDistributed": {
     "defaultMessage": "Birden çok Mac üzerinde sunuluyor"
   },
+  "mlxKvCache.effect": {
+    "defaultMessage": "{mode}: token başına {bf16} KiB yerine {bytes} KiB — aynı bellek {ratio}× bağlam tutar."
+  },
+  "mlxKvCache.int4": {
+    "defaultMessage": "4 bit"
+  },
+  "mlxKvCache.int8": {
+    "defaultMessage": "8 bit"
+  },
+  "mlxKvCache.kvCache": {
+    "defaultMessage": "KV önbelleği"
+  },
+  "mlxKvCache.measured": {
+    "defaultMessage": "Bu modelde ölçüldü ({date}): bf16 ile token uyumu %{agreement}, {prompts} yanıttan {identical} tanesi aynı, gömülü bilgi: {retrieval}; bf16 kendisine karşı: %{floor}."
+  },
+  "mlxKvCache.measuredChip": {
+    "defaultMessage": "%{agreement} uyum"
+  },
+  "mlxKvCache.measuredDecode": {
+    "defaultMessage": "En uzun bağlamda çözme hızı: bf16'nın %{ratio} kadarı."
+  },
+  "mlxKvCache.measurementUnreadable": {
+    "defaultMessage": "Ölçüm kaydı okunamıyor: {reason}"
+  },
+  "mlxKvCache.noAttention": {
+    "defaultMessage": "Bu modelde tam dikkat katmanı yok, bu yüzden sıkıştırılacak büyüyen KV yok."
+  },
+  "mlxKvCache.noGroup": {
+    "defaultMessage": "Bu modelin kafa boyutu ({headDim}) motorun hiçbir niceleme grubuna uymuyor, bu yüzden KV sıkıştırılamaz."
+  },
+  "mlxKvCache.notLocal": {
+    "defaultMessage": "KV önbelleği sıkıştırması modelin config.json dosyasına ihtiyaç duyar ve bu model modeller klasöründe değil."
+  },
+  "mlxKvCache.notMeasured": {
+    "defaultMessage": "Bu modelde kalite ölçülmedi — güvenmeden önce yanıtlarını karşılaştırın."
+  },
+  "mlxKvCache.off": {
+    "defaultMessage": "Kapalı (bf16)"
+  },
+  "mlxKvCache.offNote": {
+    "defaultMessage": "Kapalı: motorun bf16 önbelleği, bağlam token başına {bytes} KiB."
+  },
+  "mlxKvCache.retrievalFound": {
+    "defaultMessage": "bulundu"
+  },
+  "mlxKvCache.retrievalMissed": {
+    "defaultMessage": "KAÇIRILDI"
+  },
+  "mlxKvCache.scope": {
+    "defaultMessage": "Yalnızca {attention} tam dikkat katmanı bağlamla büyür ve sıkıştırılır; {state} doğrusal dikkat katmanı sabit boyutlu durum tutar. Bir sonraki bağlamada uygulanır. Dağıtık çalışmalar bf16 önbelleği korur."
+  },
+  "mlxKvCache.unavailable": {
+    "defaultMessage": "KV önbelleği sıkıştırması kullanılamıyor: {reason}"
+  },
   "mlxMode.distributed": {
     "defaultMessage": "{count, plural, one {Dağıtık · # düğüm · {backend}} other {Dağıtık · # düğüm · {backend}}}"
   },

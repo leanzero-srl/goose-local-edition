@@ -98,6 +98,53 @@ export interface MlxModelProfile {
    * Absent = the template's own default. Captured once per session.
    */
   reasoningEffort?: string;
+  /**
+   * Compressed live KV cache (`--kv-cache-dtype`). Absent = off: the engine's bf16 cache, no
+   * flag. A change restarts the engine; the mount is refused, with the reason, when the model's
+   * KV cannot take it.
+   */
+  kvCache?: MlxKvCacheMode;
+}
+
+export type MlxKvCacheMode = 'int8' | 'int4';
+
+/**
+ * KV bytes one token of context costs at each cache setting, from the model's config.json and
+ * the engine's packed layout. Only full-attention layers grow with the context.
+ */
+export interface MlxKvCacheFacts {
+  attentionLayers: number;
+  stateLayers: number;
+  slidingLayers: number;
+  kvHeads: number;
+  headDim: number;
+  /** Absent = no quantization group fits head_dim: the KV cannot be compressed. */
+  groupSize?: number | null;
+  bf16BytesPerToken: number;
+  int8BytesPerToken?: number | null;
+  int4BytesPerToken?: number | null;
+}
+
+/** One setting's greedy quality against the bf16 cache on the same prompts. */
+export interface MlxKvModeMeasurement {
+  /** Tokens before the first divergence from bf16, over bf16's tokens (0..1). */
+  agreement: number;
+  identicalAnswers: number;
+  retrievalFound: boolean;
+  /** Decode tok/s at the longest measured context, over bf16's. */
+  decodeTpsRatio?: number | null;
+}
+
+/** The model folder's goose-kv-cache.json (evals/mlx-engine-bench/kv_quant_compare.py). */
+export interface MlxKvCacheMeasurement {
+  measuredAt: string;
+  engine: string;
+  prompts: number;
+  /** bf16 against itself — the floor every setting is read against. */
+  noiseFloor: MlxKvModeMeasurement;
+  int8?: MlxKvModeMeasurement | null;
+  int4?: MlxKvModeMeasurement | null;
+  source: string;
 }
 
 export interface MlxEngineSettings {
@@ -152,6 +199,12 @@ export interface MlxLocalModel {
   /** Absent exactly when `thinkingError` says why. */
   thinking?: MlxThinkingCapabilities | null;
   thinkingError?: string | null;
+  /** Absent exactly when `kvCacheError` says why. */
+  kvCache?: MlxKvCacheFacts | null;
+  kvCacheError?: string | null;
+  /** Absent with no error = never measured on this model. */
+  kvCacheMeasurement?: MlxKvCacheMeasurement | null;
+  kvCacheMeasurementError?: string | null;
 }
 
 export interface MlxModelsList {
@@ -446,5 +499,8 @@ export async function mlxEngineBrowseFilters(nodeId?: string): Promise<MlxBrowse
 }
 
 export async function mlxEngineModelCard(repoId: string, nodeId?: string): Promise<MlxModelCard> {
-  return await call<MlxModelCard>('_goose/unstable/mlxEngine/modelCard', withNode({ repoId }, nodeId));
+  return await call<MlxModelCard>(
+    '_goose/unstable/mlxEngine/modelCard',
+    withNode({ repoId }, nodeId)
+  );
 }

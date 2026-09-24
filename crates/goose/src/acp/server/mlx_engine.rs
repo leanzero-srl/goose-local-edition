@@ -9,6 +9,9 @@ use goose_sidecar::engine::{
     expand_tilde, global_manager, EngineSettings, MlxEngineManager, ModelProfile, ThinkingMode,
 };
 use goose_sidecar::hf::{self, DownloadTracker};
+use goose_sidecar::kv_cache::{
+    self, KvCacheFacts, KvCacheMeasurement, KvCacheMode, KvModeMeasurement,
+};
 use goose_sidecar::thinking::{self, ThinkingCapabilities};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -161,6 +164,55 @@ fn profile_to_dto(profile: ModelProfile) -> MlxModelProfileDto {
             ThinkingMode::Off => MlxThinkingModeDto::Off,
         }),
         reasoning_effort: profile.reasoning_effort,
+        kv_cache: profile.kv_cache.map(kv_mode_to_dto),
+    }
+}
+
+fn kv_mode_to_dto(mode: KvCacheMode) -> MlxKvCacheModeDto {
+    match mode {
+        KvCacheMode::Int8 => MlxKvCacheModeDto::Int8,
+        KvCacheMode::Int4 => MlxKvCacheModeDto::Int4,
+    }
+}
+
+fn kv_facts_to_dto(facts: KvCacheFacts) -> MlxKvCacheFactsDto {
+    MlxKvCacheFactsDto {
+        attention_layers: facts.attention_layers,
+        state_layers: facts.state_layers,
+        sliding_layers: facts.sliding_layers,
+        kv_heads: facts.kv_heads,
+        head_dim: facts.head_dim,
+        group_size: facts.group_size,
+        bf16_bytes_per_token: facts.bf16_bytes_per_token,
+        int8_bytes_per_token: facts.int8_bytes_per_token,
+        int4_bytes_per_token: facts.int4_bytes_per_token,
+    }
+}
+
+fn kv_mode_measurement_to_dto(m: KvModeMeasurement) -> MlxKvModeMeasurementDto {
+    MlxKvModeMeasurementDto {
+        agreement: m.agreement,
+        identical_answers: m.identical_answers,
+        retrieval_found: m.retrieval_found,
+        decode_tps_ratio: m.decode_tps_ratio,
+    }
+}
+
+fn kv_measurement_to_dto(mut m: KvCacheMeasurement) -> MlxKvCacheMeasurementDto {
+    MlxKvCacheMeasurementDto {
+        measured_at: m.measured_at,
+        engine: m.engine,
+        prompts: m.prompts,
+        noise_floor: kv_mode_measurement_to_dto(m.noise_floor),
+        int8: m
+            .modes
+            .remove(&KvCacheMode::Int8)
+            .map(kv_mode_measurement_to_dto),
+        int4: m
+            .modes
+            .remove(&KvCacheMode::Int4)
+            .map(kv_mode_measurement_to_dto),
+        source: m.source,
     }
 }
 
@@ -182,6 +234,10 @@ fn profile_from_dto(dto: MlxModelProfileDto) -> ModelProfile {
             MlxThinkingModeDto::Off => ThinkingMode::Off,
         }),
         reasoning_effort: dto.reasoning_effort,
+        kv_cache: dto.kv_cache.map(|mode| match mode {
+            MlxKvCacheModeDto::Int8 => KvCacheMode::Int8,
+            MlxKvCacheModeDto::Int4 => KvCacheMode::Int4,
+        }),
     }
 }
 
@@ -380,9 +436,18 @@ async fn core_models_list(
         models: models
             .into_iter()
             .map(|m| {
-                let (thinking, thinking_error) =
-                    match thinking::model_thinking_capabilities(&models_dir.join(&m.id)) {
-                        Ok(capabilities) => (Some(thinking_to_dto(capabilities)), None),
+                let dir = models_dir.join(&m.id);
+                let (thinking, thinking_error) = match thinking::model_thinking_capabilities(&dir) {
+                    Ok(capabilities) => (Some(thinking_to_dto(capabilities)), None),
+                    Err(e) => (None, Some(format!("{e:#}"))),
+                };
+                let (kv_cache, kv_cache_error) = match kv_cache::kv_cache_facts(&dir) {
+                    Ok(facts) => (Some(kv_facts_to_dto(facts)), None),
+                    Err(e) => (None, Some(format!("{e:#}"))),
+                };
+                let (kv_cache_measurement, kv_cache_measurement_error) =
+                    match kv_cache::read_measurement(&dir) {
+                        Ok(record) => (record.map(kv_measurement_to_dto), None),
                         Err(e) => (None, Some(format!("{e:#}"))),
                     };
                 MlxLocalModelDto {
@@ -392,6 +457,10 @@ async fn core_models_list(
                     missing_files: m.missing_files,
                     thinking,
                     thinking_error,
+                    kv_cache,
+                    kv_cache_error,
+                    kv_cache_measurement,
+                    kv_cache_measurement_error,
                 }
             })
             .collect(),
