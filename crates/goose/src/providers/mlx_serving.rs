@@ -4,9 +4,10 @@
 //! Rapid-MLX cannot tell its clients apart: its `/v1/status` lists requests by an internal id.
 //! goose can, at the two doors its own work leaves through:
 //!
-//! - the swarm router's lease on an `mlx-sidecar` node (`swarm_router::Router::leased`) — every
-//!   `swarm` chat turn, session title and OpenAI-compatible request routed to the local engine,
-//!   carrying the session id the agent's reply loop scoped (`session_context::SESSION_ID`);
+//! - the swarm router's lease on an MLX node (`swarm_router::Router::leased`) — every `swarm` chat
+//!   turn, session title and OpenAI-compatible request routed to this Mac's `mlx-sidecar` engine or
+//!   to a linked Mac's engine through the remote route (`peer` names that Mac), carrying the
+//!   session id the agent's reply loop scoped (`session_context::SESSION_ID`);
 //! - the OpenAI-compatible route (`api::openai_compat::chat_completions`) — one entry per external
 //!   request for the life of its turn, whatever provider it names.
 //!
@@ -26,7 +27,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ServingVia {
-    /// The swarm router leased a slot on the local `mlx-sidecar` node for this turn.
+    /// The swarm router leased a slot on an MLX node — this Mac's or a linked Mac's — for this turn.
     SwarmRouter,
     /// An external client's `POST /v1/chat/completions` is running its turn.
     OpenaiApi,
@@ -44,6 +45,10 @@ pub struct ServingEntry {
     pub model: String,
     /// The swarm pool device the router leased (router entries only).
     pub node_id: Option<String>,
+    /// The linked Mac whose engine the lease went to (a remote single route), by its one name;
+    /// `None` = this Mac's own engine. The desktop counts a row only against the engine it reads,
+    /// so a turn served by the Studio is never listed as the local engine's, nor the reverse.
+    pub peer: Option<String>,
     pub started_at: DateTime<Utc>,
 }
 
@@ -70,6 +75,7 @@ pub fn register(
     provider: &str,
     model: &str,
     node_id: Option<&str>,
+    peer: Option<&str>,
 ) -> ServingGuard {
     let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     IN_FLIGHT.lock().unwrap_or_else(|e| e.into_inner()).insert(
@@ -81,6 +87,7 @@ pub fn register(
             provider: provider.to_string(),
             model: model.to_string(),
             node_id: node_id.map(str::to_string),
+            peer: peer.map(str::to_string),
             started_at: Utc::now(),
         },
     );
@@ -116,6 +123,15 @@ mod tests {
             "omlx",
             "mihai-qwen3.8-27b-atlassian-q8-mlx",
             Some("mihai-mlx"),
+            None,
+        );
+        let remote = register(
+            ServingVia::SwarmRouter,
+            Some("20260923_9".to_string()),
+            "omlx",
+            "mihai-qwen3.8-27b-atlassian-q8-mlx",
+            Some("remote-WorksMacStudio.lan"),
+            Some("Work's Mac Studio"),
         );
         let api = register(
             ServingVia::OpenaiApi,
@@ -123,13 +139,17 @@ mod tests {
             "omlx",
             "mihai-qwen3.8-27b-atlassian-q8-mlx",
             None,
+            None,
         );
-        let ids = [router.0, api.0];
+        let ids = [router.0, remote.0, api.0];
         let live = ours(&ids);
-        assert_eq!(live.len(), 2);
+        assert_eq!(live.len(), 3);
         assert_eq!(live[0].via, ServingVia::SwarmRouter);
         assert_eq!(live[0].node_id.as_deref(), Some("mihai-mlx"));
-        assert_eq!(live[1].session_id.as_deref(), Some("20260923_8"));
+        assert_eq!(live[0].peer, None);
+        assert_eq!(live[1].peer.as_deref(), Some("Work's Mac Studio"));
+        assert_eq!(live[2].session_id.as_deref(), Some("20260923_8"));
+        drop(remote);
 
         drop(router);
         let live = ours(&ids);
@@ -141,7 +161,14 @@ mod tests {
 
     #[test]
     fn entries_serialize_in_the_desktops_camel_case() {
-        let guard = register(ServingVia::OpenaiApi, None, "anthropic", "claude", None);
+        let guard = register(
+            ServingVia::OpenaiApi,
+            None,
+            "anthropic",
+            "claude",
+            None,
+            None,
+        );
         let entry = ours(&[guard.0]).remove(0);
         let json = serde_json::to_value(&entry).unwrap();
         assert_eq!(json["via"], "openaiApi");

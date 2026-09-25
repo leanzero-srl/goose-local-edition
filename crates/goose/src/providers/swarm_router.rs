@@ -874,13 +874,19 @@ impl Router {
             queue_depth = self.queued.load(Ordering::SeqCst),
             "pick"
         );
-        let serving = matches!(node.kind, NodeKind::MlxSidecar).then(|| {
+        let peer = match &node.kind {
+            NodeKind::MlxSidecar => Some(None),
+            NodeKind::MlxRemote(target) => Some(Some(target.peer_name.as_str())),
+            NodeKind::LmStudio { .. } | NodeKind::Cloud { .. } => None,
+        };
+        let serving = peer.map(|peer| {
             super::mlx_serving::register(
                 super::mlx_serving::ServingVia::SwarmRouter,
                 crate::session_context::current_session_id(),
                 node.provider_name(),
                 &node.model_id,
                 Some(&node.id),
+                peer,
             )
         });
         Lease {
@@ -1301,6 +1307,35 @@ mod tests {
         assert_eq!(listed[0].session_id.as_deref(), Some("20260923_42"));
         assert_eq!(listed[0].provider, "omlx");
         assert_eq!(listed[0].model, "serving-test-mlx-model");
+        assert_eq!(listed[0].peer, None);
+
+        // A lease on a linked Mac's engine is listed too, naming that Mac, so the desktop counts
+        // this app's turn against the engine that runs it instead of as someone else's request.
+        let remote = Node {
+            kind: NodeKind::MlxRemote(RemoteTarget {
+                peer_name: "Work's Mac Studio".to_string(),
+                base_url: "http://127.0.0.1:61001/relay/cafe".to_string(),
+                template_kwargs: None,
+            }),
+            ..node("serving-test-remote", 2, 1)
+        };
+        let probe_remote = FakeProbe::all_idle(std::slice::from_ref(&remote));
+        let routed = crate::session_context::with_session_id(Some("20260923_43".to_string()), {
+            router.pick(
+                std::slice::from_ref(&remote),
+                &probe_remote,
+                13,
+                &HashSet::new(),
+            )
+        })
+        .await
+        .unwrap();
+        let listed_remote = mine("serving-test-remote");
+        assert_eq!(listed_remote.len(), 1);
+        assert_eq!(listed_remote[0].session_id.as_deref(), Some("20260923_43"));
+        assert_eq!(listed_remote[0].peer.as_deref(), Some("Work's Mac Studio"));
+        drop(routed);
+        assert!(mine("serving-test-remote").is_empty());
 
         // An LM Studio lease is not the MLX engine's work and is never listed.
         let other = router

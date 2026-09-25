@@ -25,6 +25,12 @@ export interface MlxServingRow {
   /** goose's SessionType, snake_case: `user`, `scheduled`, `sub_agent`, `hidden`, `terminal`, … */
   sessionType: string | null;
   sessionError: string | null;
+  /**
+   * The linked Mac whose engine a router lease went to (a remote single), by its one name; absent or
+   * null = this Mac's engine. A backend older than the field never leased a linked Mac's engine at
+   * all (its router listed only `mlx-sidecar` leases), so absent really does mean this Mac.
+   */
+  peer?: string | null;
 }
 
 export type MlxClient =
@@ -50,6 +56,28 @@ export interface MlxServing {
   swarmRuns: string[];
   /** Why goose's own list could not be read (the rows are then empty, not assumed empty). */
   error: string | null;
+}
+
+/**
+ * The rows that belong to the engine being read: this Mac's (`onPeer` false — the single engine or a
+ * split's rank 0) or the linked Mac's that serves this Mac's chat (`onPeer` true). A router lease
+ * says which by its `peer`; an external /v1 row follows the router lease of its session, and one
+ * with no lease went straight to a provider on this Mac. Without this, this app's own turn on the
+ * Studio was counted "not from this app's chats" (3.0.29, live).
+ */
+export function servingRowsForEngine(
+  rows: readonly MlxServingRow[],
+  onPeer: boolean
+): MlxServingRow[] {
+  const peerSessions = new Set<string>();
+  for (const row of rows) {
+    if (row.via === 'swarmRouter' && row.peer && row.sessionId) peerSessions.add(row.sessionId);
+  }
+  return rows.filter((row) => {
+    if (row.via === 'swarmRouter') return Boolean(row.peer) === onPeer;
+    const leasedOnPeer = row.sessionId !== null && peerSessions.has(row.sessionId);
+    return leasedOnPeer === onPeer;
+  });
 }
 
 /**

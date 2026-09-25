@@ -731,6 +731,7 @@ async fn chat_completions(
         &model_ref.provider,
         &model_ref.model,
         None,
+        None,
     );
     drop(tokio::spawn(async move {
         let _serving = serving;

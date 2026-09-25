@@ -7,7 +7,12 @@ import {
   type MlxLiveStats,
 } from '../components/leanzero-swarm/mlxLiveStats';
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
-import { attributeServing, type MlxServing, type MlxServingRead } from './mlxServing';
+import {
+  attributeServing,
+  servingRowsForEngine,
+  type MlxServing,
+  type MlxServingRead,
+} from './mlxServing';
 
 /**
  * MAIN's one read loop over the local LeanZero MLX engine, for the surfaces that must not depend on
@@ -224,18 +229,18 @@ export class MlxEngineMonitor {
       stats,
       statusDetail: null,
       last: advanceLastRates(last, stats),
-      serving: await this.attribute(stats),
+      serving: await this.attribute(stats, engine === 'remote'),
       failedError: null,
     };
   }
 
-  private async attribute(stats: MlxLiveStats): Promise<MlxServing> {
+  private async attribute(stats: MlxLiveStats, onPeer: boolean): Promise<MlxServing> {
     if (stats.requests.length === 0) {
       return attributeServing([], 0, this.deps.swarmRuns(), null);
     }
     const read = await this.deps.readServing();
     return attributeServing(
-      read.ok ? read.rows : [],
+      read.ok ? servingRowsForEngine(read.rows, onPeer) : [],
       stats.requests.length,
       this.deps.swarmRuns(),
       read.ok ? null : read.detail
@@ -298,7 +303,7 @@ export class MlxEngineMonitor {
     const stats = parsed.stats;
     const bodyModel = (result.body as { model?: unknown }).model;
     const engineModel = typeof bodyModel === 'string' && bodyModel ? bodyModel : null;
-    const serving = await this.attribute(stats);
+    const serving = await this.attribute(stats, false);
     return {
       engine: 'single',
       mode: 'running',

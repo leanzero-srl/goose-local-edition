@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { attributeServing, fetchMlxServing, serveHttpBase, type MlxServingRow } from './mlxServing';
+import {
+  attributeServing,
+  fetchMlxServing,
+  serveHttpBase,
+  servingRowsForEngine,
+  type MlxServingRow,
+} from './mlxServing';
 
 const MODEL = 'mihai-qwen3.8-27b-atlassian-q8-mlx';
 
@@ -156,5 +162,52 @@ describe('fetchMlxServing — one backend, its own secret, every failure named',
       ok: false,
       detail: 'serving row 0 is not a serving row',
     });
+  });
+});
+
+describe('servingRowsForEngine — a row counts against the engine that runs it', () => {
+  const rows = [
+    row({
+      id: 1,
+      via: 'swarmRouter',
+      sessionId: 'local',
+      sessionType: 'user',
+      nodeId: 'mihai-mlx',
+    }),
+    row({
+      id: 2,
+      via: 'swarmRouter',
+      sessionId: 'studio',
+      sessionType: 'user',
+      nodeId: 'remote-WorksMacStudio.lan',
+      peer: "Work's Mac Studio",
+    }),
+    row({ id: 3, via: 'openaiApi', sessionId: 'ext-studio', provider: 'swarm', model: 'swarm' }),
+    row({
+      id: 4,
+      via: 'swarmRouter',
+      sessionId: 'ext-studio',
+      sessionType: 'user',
+      nodeId: 'remote-WorksMacStudio.lan',
+      peer: "Work's Mac Studio",
+    }),
+    row({ id: 5, via: 'openaiApi', sessionId: 'ext-direct', provider: 'omlx' }),
+  ];
+
+  it("reading the linked Mac's engine keeps this app's leases there and their external rows", () => {
+    expect(servingRowsForEngine(rows, true).map((r) => r.id)).toEqual([2, 3, 4]);
+    const s = attributeServing(servingRowsForEngine(rows, true), 2, [], null);
+    expect(s.clients.map((c) => c.key)).toEqual(['chat:studio', 'external:ext-studio']);
+    expect(s.unattributed).toBe(0);
+  });
+
+  it("reading this Mac's engine drops the leases that went to the linked Mac", () => {
+    expect(servingRowsForEngine(rows, false).map((r) => r.id)).toEqual([1, 5]);
+  });
+
+  it('a row from a backend that predates `peer` is this Mac’s', () => {
+    const old = row({ id: 6, via: 'swarmRouter', sessionId: 'o', sessionType: 'user' });
+    expect(servingRowsForEngine([old], false)).toEqual([old]);
+    expect(servingRowsForEngine([old], true)).toEqual([]);
   });
 });
