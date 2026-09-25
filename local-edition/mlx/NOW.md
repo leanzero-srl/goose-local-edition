@@ -1,5 +1,13 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## 2026-09-25 — 3.0.30 PUBLISHED + installed on BOTH Macs: Run is a switch (47c31c32e), rates over Link (6e287d4b9), attribution (7d9b1b85c)
+Verified live: Studio single → Run across both Macs (stopped Studio, tensor split Ready 17.8 GiB/Mac) → Run on Studio (split
+gone on both Macs, Studio serving in 12 s); tile shows the Studio's live rates + "Chat · <session>"; relaunch restores the
+Studio route (intent file `mlx-serving-intent.json` kind remoteSingle). After 3.0.30: d0e64fdd0 (idle tile wording "since this
+page opened") rides the next build. OPEN: a running SPLIT's per-rank memory is not credited to other placements; P4 "Many
+requests" (one copy per Mac); goose's 49k-token first prompt (offered, unanswered). Current state: 27B served from Work's Mac
+Studio for this Mac's chat.
+
 ## 2026-09-24 (night) — DISTRIBUTED SETS ITSELF UP: Set up = one peer field + Detect (ff38b70f9, d61595bb6, 66a28a80f)
 Detect (`distributedDiscover`) probes this Mac + the peer with one read-only /bin/sh script each (~1.2–1.6 s for the pair) and
 fills every field with evidence (names, TB link via netpath, RDMA/GID, backend+reason, models on every node, ports, Python);
