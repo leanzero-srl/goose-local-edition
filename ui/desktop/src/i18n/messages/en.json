@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "Waiting for {mac} to reconnect…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Start an AI session about this run"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "The last mount failed: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause,select,restart{{turn,select,yes{{peer} is restarting goose — this answer stops} other{{peer} is restarting goose}}} other{{turn,select,yes{{peer} quit goose — this answer stops} other{{peer} quit goose}}}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "goose reconnects when it is back"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "{size,select,none{Load {model} here} other{Load {model} here ({size} GB)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "The saved MLX model serves {served}; the node wants {wanted}."
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "Lost contact with {peer} — reconnecting…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose keeps trying — an answer in progress continues if it comes back, or stops with a Retry"
+    "defaultMessage": "goose keeps trying; once {peer} answers, goose checks whether it still has your answer"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "The engine on {peer} failed — nothing there can answer a message"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "Run on this Mac instead"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "Stops sending chat to {peer} and runs it on this Mac"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Could not move chat to this Mac: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "Details"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} dropped off LeanZero Link mid-answer — the answer above stops there."
+    "defaultMessage": "{cause,select,quit{{mac} quit goose mid-answer — the answer above stops there.} restart{{mac} restarted goose mid-answer — the answer above stops there.} other{{mac} stopped answering mid-reply — the answer above stops there.}}"
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} dropped off LeanZero Link — this turn got no answer."
+    "defaultMessage": "{cause,select,quit{{mac} quit goose — this turn got no answer.} restart{{mac} restarted goose — this turn got no answer.} other{{mac} stopped answering — this turn got no answer.}}"
   },
   "linkDropNotice.retry": {
     "defaultMessage": "Retry"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "prompt tokens read"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "requests served"
+    "defaultMessage": "{count,plural,one{request served} other{requests served}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "engine uptime"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose would like to call {toolName}. Allow?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "Checking whether {mac} still has your answer…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} is reading your prompt ({tokens} tokens) — {elapsed} so far"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} is reading your prompt ({tokens} tokens) — {elapsed} of about {expected} at its measured {rate} tok/s"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} is reading your prompt ({tokens} tokens) — {percent}%"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} is reading your prompt ({tokens} tokens)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "Waiting for {mac} to reconnect…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "No words from {mac} for a moment — checking…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose will download the update in the background and install it the next time you quit or restart."

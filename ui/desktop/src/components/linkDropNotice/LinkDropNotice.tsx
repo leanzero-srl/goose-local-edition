@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { RotateCcw, Unplug } from 'lucide-react';
 import {
   latestMlxRemoteSingleStatus,
@@ -8,15 +8,18 @@ import { defineMessages, useIntl } from '../../i18n';
 import { routePeerName } from '../leanzero-swarm/macs';
 import { Button, Disclosure, SPACE, SURFACE, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
 import type { LinkDrop } from './parseLinkDrop';
+import { rememberDropName, storedDropName } from './dropNames';
 
 const i18n = defineMessages({
   midAnswer: {
     id: 'linkDropNotice.midAnswer',
-    defaultMessage: '{mac} dropped off LeanZero Link mid-answer — the answer above stops there.',
+    defaultMessage:
+      '{cause, select, quit {{mac} quit goose mid-answer} restart {{mac} restarted goose mid-answer} other {{mac} stopped answering mid-reply}} — the answer above stops there.',
   },
   noAnswer: {
     id: 'linkDropNotice.noAnswer',
-    defaultMessage: '{mac} dropped off LeanZero Link — this turn got no answer.',
+    defaultMessage:
+      '{cause, select, quit {{mac} quit goose} restart {{mac} restarted goose} other {{mac} stopped answering}} — this turn got no answer.',
   },
   unnamed: { id: 'linkDropNotice.unnamed', defaultMessage: 'The linked Mac' },
   retry: { id: 'linkDropNotice.retry', defaultMessage: 'Retry' },
@@ -24,14 +27,20 @@ const i18n = defineMessages({
 });
 
 /**
- * The Mac a dropped turn was served by, by its one name: the route this window last read names it
- * when its node id is the one the relay reported; otherwise nothing here knows it, and it is "the
- * linked Mac" — never the node id.
+ * The Mac a dropped turn was served by, by its one name, stored with the drop (Q-62): the drop's
+ * own words when they carry it ("Work's Mac Studio quit goose"), else the name kept for this
+ * message, else the route this window reads when its node id is the one the relay reported — then
+ * kept. Otherwise nothing here knows it: "the linked Mac", never the node id.
  */
-function useLinkedMacName(peerId: string | null): string | null {
+function useDroppedMacName(messageId: string, drop: LinkDrop): string | null {
   const route = useSyncExternalStore(subscribeMlxRemoteSingleStatus, latestMlxRemoteSingleStatus);
-  if (peerId == null || route?.peer !== peerId) return null;
-  return routePeerName(route);
+  const fromRoute =
+    drop.peerId != null && route?.peer === drop.peerId ? routePeerName(route) : null;
+  const name = drop.macName ?? storedDropName(messageId) ?? fromRoute;
+  useEffect(() => {
+    if (name) rememberDropName(messageId, name);
+  }, [messageId, name]);
+  return name;
 }
 
 /**
@@ -40,12 +49,15 @@ function useLinkedMacName(peerId: string | null): string | null {
  * behind Details.
  */
 export default function LinkDropNotice({
+  messageId,
   drop,
   hasAnswer,
   live,
   retryText,
   onRetry,
 }: {
+  /** The message the drop ended — the name is stored with it. */
+  messageId: string;
   drop: LinkDrop;
   /** The model wrote something before the drop — it is shown above this notice. */
   hasAnswer: boolean;
@@ -55,7 +67,8 @@ export default function LinkDropNotice({
   onRetry: (text: string) => void;
 }) {
   const intl = useIntl();
-  const mac = useLinkedMacName(drop.peerId) ?? intl.formatMessage(i18n.unnamed);
+  const mac = useDroppedMacName(messageId, drop) ?? intl.formatMessage(i18n.unnamed);
+  const cause = drop.cause ?? 'none';
   return (
     <div
       role="alert"
@@ -68,7 +81,7 @@ export default function LinkDropNotice({
           data-testid="link-drop-headline"
           className={cx('min-w-0 flex-1', TYPE.body, WEIGHT.semibold)}
         >
-          {intl.formatMessage(hasAnswer ? i18n.midAnswer : i18n.noAnswer, { mac })}
+          {intl.formatMessage(hasAnswer ? i18n.midAnswer : i18n.noAnswer, { mac, cause })}
         </p>
       </div>
       {live && retryText != null && (

@@ -1,13 +1,14 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IntlProvider } from 'react-intl';
 import { createUserMessage, type Message } from '../../types/message';
 import { mlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 import { assertStudioClean } from '../lz/assertStudioClean';
 import GooseMessage from '../GooseMessage';
 import { splitLinkDrop } from './parseLinkDrop';
+import { resetDropNamesForTests } from './dropNames';
 
 const mockExtMethod = vi.fn();
 vi.mock('../../acp/acpConnection', () => ({
@@ -16,6 +17,7 @@ vi.mock('../../acp/acpConnection', () => ({
 
 const RETRY_LINE = '\n\nPlease retry if you think this is a transient or recoverable error.';
 const PEER = 'worksmacstudio-lan-6a972f';
+const MAC_NAME = "Work's Mac Studio";
 /** recovery-kill-link, 23 s (after-error.png): the story, then the relay's error, glued. */
 const KILL_LINK_ANSWER =
   'The light out Harrow Rock was supposed to go out with him.\n\nIn the morning he did what he’d always done. Wound. Clean';
@@ -34,6 +36,8 @@ describe('splitLinkDrop — the two recorded drops, split off the partial answer
       raw: KILL_LINK_ERROR.trim(),
       peerId: PEER,
       inFlight: true,
+      cause: null,
+      macName: null,
     });
   });
 
@@ -90,6 +94,7 @@ function show(message: Message, append = vi.fn(), trailing: Message[] = []) {
 }
 
 describe('GooseMessage — a turn the serving Mac dropped (Q-49)', () => {
+  beforeEach(() => resetDropNamesForTests());
   afterEach(async () => {
     mockExtMethod.mockResolvedValue({ status: { state: 'off' } });
     await act(async () => {
@@ -114,7 +119,7 @@ describe('GooseMessage — a turn the serving Mac dropped (Q-49)', () => {
     expect(screen.getByText(/Wound\. Clean$/)).toBeInTheDocument();
     const notice = screen.getByTestId('link-drop-notice');
     expect(notice.textContent).toContain(
-      "Work's Mac Studio dropped off LeanZero Link mid-answer — the answer above stops there."
+      "Work's Mac Studio stopped answering mid-reply — the answer above stops there."
     );
     // The error's words live only behind Details — never in the answer.
     expect(screen.getAllByText(/Ran into this error/).map((el) => el.dataset.testid)).toEqual([
@@ -136,14 +141,14 @@ describe('GooseMessage — a turn the serving Mac dropped (Q-49)', () => {
     show(assistant(RELAUNCH_ANSWER + RELAUNCH_ERROR));
     const headline = screen.getByTestId('link-drop-headline');
     expect(headline.textContent).toBe(
-      'The linked Mac dropped off LeanZero Link mid-answer — the answer above stops there.'
+      'The linked Mac stopped answering mid-reply — the answer above stops there.'
     );
   });
 
   it('the error as its own message: no answer above, so the notice says the turn got none', () => {
     show(assistant(UNREACHABLE_ERROR));
     expect(screen.getByTestId('link-drop-notice').textContent).toContain(
-      'The linked Mac dropped off LeanZero Link — this turn got no answer.'
+      'The linked Mac stopped answering — this turn got no answer.'
     );
     expect(screen.getByTestId('link-drop-retry')).toBeInTheDocument();
   });
@@ -152,5 +157,35 @@ describe('GooseMessage — a turn the serving Mac dropped (Q-49)', () => {
     show(assistant(RELAUNCH_ANSWER + RELAUNCH_ERROR), vi.fn(), [createUserMessage('another turn')]);
     expect(screen.getByTestId('link-drop-notice')).toBeInTheDocument();
     expect(screen.queryByTestId('link-drop-retry')).toBeNull();
+  });
+
+  it('Q-54: a Mac that restarted goose mid-answer is named so — from the drop’s own words', () => {
+    const restart = `Ran into this error: Server error: linkRelayFailed: Link peer '${PEER}' lost this request in flight: Work's Mac Studio is restarting goose.${RETRY_LINE}`;
+    expect(splitLinkDrop(restart)).toMatchObject({ cause: 'restart', macName: MAC_NAME });
+    show(assistant(RELAUNCH_ANSWER + restart));
+    expect(screen.getByTestId('link-drop-headline').textContent).toBe(
+      "Work's Mac Studio restarted goose mid-answer — the answer above stops there."
+    );
+  });
+
+  it('Q-62: the name is stored with the drop — a later route change does not rename it', async () => {
+    mockExtMethod.mockResolvedValue({
+      status: { state: 'ready', peer: PEER, peerComputerName: MAC_NAME },
+    });
+    await act(async () => {
+      await mlxRemoteSingleStatus();
+    });
+    const first = show(assistant(RELAUNCH_ANSWER + RELAUNCH_ERROR));
+    expect(screen.getByTestId('link-drop-headline').textContent).toContain(MAC_NAME);
+    first.unmount();
+    // The route moves to another Mac (or ends): the old notice keeps its Mac.
+    mockExtMethod.mockResolvedValue({ status: { state: 'off' } });
+    await act(async () => {
+      await mlxRemoteSingleStatus();
+    });
+    show(assistant(RELAUNCH_ANSWER + RELAUNCH_ERROR));
+    expect(screen.getByTestId('link-drop-headline').textContent).toBe(
+      "Work's Mac Studio stopped answering mid-reply — the answer above stops there."
+    );
   });
 });

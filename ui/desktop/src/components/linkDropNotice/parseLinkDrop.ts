@@ -19,6 +19,8 @@ export const AGENT_ERROR_WRAP = 'Ran into this error: ';
 const LINK_DROP =
   /linkRelayFailed: (?:Link peer '([^']+)' lost this request in flight|cannot reach Link peer '([^']+)')/;
 
+import { leaveCause, type LeaveCause } from '../../utils/leaveCause';
+
 export interface LinkDrop {
   /** What the model wrote before the drop — rendered as the answer, unchanged. */
   answer: string;
@@ -28,6 +30,13 @@ export interface LinkDrop {
   peerId: string | null;
   /** The relay had sent the request (it was lost mid-way), vs never reached the peer at all. */
   inFlight: boolean;
+  /**
+   * The Mac said it quit or is restarting goose (fdc737969: the relay ends a request in flight to a
+   * leaving peer with its words, "Work's Mac Studio quit goose"); null = not said.
+   */
+  cause: LeaveCause | null;
+  /** The Mac's name as the drop's own words carry it; null when they name none. */
+  macName: string | null;
 }
 
 /** The dropped turn's parts when `text` ENDS with a Link relay error, else null. */
@@ -37,10 +46,16 @@ export function splitLinkDrop(text: string): LinkDrop | null {
   const tail = text.slice(at);
   const m = LINK_DROP.exec(tail);
   if (!m) return null;
+  const said =
+    /(?:in flight|cannot reach Link peer '[^']+'): (.+?) (quit goose|is restarting goose)\b/.exec(
+      tail
+    );
   return {
     answer: text.slice(0, at),
     raw: tail.trim(),
     peerId: m[1] ?? m[2] ?? null,
     inFlight: m[1] != null,
+    cause: leaveCause(tail),
+    macName: said ? said[1].trim() : null,
   };
 }
