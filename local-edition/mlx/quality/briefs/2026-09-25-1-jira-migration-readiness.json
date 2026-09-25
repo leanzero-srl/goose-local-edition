@@ -1,0 +1,279 @@
+{
+  "domain": "jira-dc-to-cloud-migration-readiness",
+  "persona": "Dan Okafor, an independent Atlassian consultant, spends an afternoon preparing a Jira Data Center to Cloud readiness assessment for a mid-sized logistics client: cleaning kickoff notes, building rerunnable zero-dependency Node plan/audit scripts over a seeded fake user export, researching Atlassian's official dates and plans, and producing a client DOCX report, a PDF for the PM, and a cover email.",
+  "workdir_placeholder": "{WORK}",
+  "notes": {
+    "skill_choice": "atlassian-migration-scripts-skill fits genuinely: its description names identity resolution, Plan/Sync/Audit, seeded-sample audits with CSV spot-check outputs in zero-dependency Node. Expected to load at turns 7 and 21 only; jira-api-skill loading instead is a precision miss (no REST calls are made).",
+    "compaction": "Context starts ~50k. Growth comes from web-search results (turns 3, 12, 27), file writes and reads of 6+ scripts and their tests, docx/pdf reads (17, 19, 20), and full-suite runs (14, 23, 26). Expected to pass 100k and compact around turns 18-24; turns 29-30 check the thread survived.",
+    "memory": "Saved at turn 2 (ISO dates + British spelling for client-facing; zero-npm Node). Used without restating at 3, 4, 7, 13, 14, 16, 25, 27, 28, 30. Must-not-recall at 15.",
+    "document_processing": "docx write 16, docx read 17, docx edit 18, pdf make+read 19, pdf text extract 20, docx+pdf regenerate 27."
+  },
+  "turns": [
+    {
+      "say": "Hi. I'm starting a Jira Data Center to Cloud migration readiness assessment for a client, Harbourline Freight (logistics, about 380 Jira users). Work in {WORK}. Here are my raw notes from yesterday's kickoff call, typed fast, sorry:\n\nkickoff 24/9 - aoife brennan (their PM), marek (jira admin), me\n- jira DC 9.12.x, one node, postgres. confluence is out of scope for now!!\n- ~15 projects, some dead for years. marek thinks 3-4 can be archived\n- users: AD sync was switched off in 2023 so lots of junk. dupes where ppl have John.Smith@ and john.smith@. some have no email at all (contractors?). svc- accounts for integrations\n- inactive = no login in 24 months, THAT is the cutoff aoife wants, not 12\n- BUT project leads must never be dropped even if inactive, they own stuff\n- decision needed: standard vs premium. aoife wants numbers\n- one huge project FRT (freight ops) ~70k issues, marek worried\n- deliverables: readiness report + pdf for aoife, scripts we can rerun\n- next call fri 2/10\n\nPlease turn this into a clean notes file at notes/kickoff.md with three sections: Decisions, Actions (with owner), Open questions. Keep every fact, drop nothing.",
+      "expect": "{WORK}/notes/kickoff.md exists with headings Decisions / Actions / Open questions; it keeps: DC 9.12 single node Postgres, Confluence out of scope, 24-month inactive cutoff, project leads never dropped, FRT ~70k issues, Standard vs Premium open, next call 2 Oct. Owners named (Aoife, Marek, me). No skill loaded.",
+      "exercises": [
+        "shell",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Two things to remember about how I work, for this and any future job: I want ISO dates (YYYY-MM-DD) and British spelling in anything that goes to a client. And scripts I hand over are always plain Node with zero npm dependencies, no package installs.",
+      "expect": "goose saves both preferences to memory (a memory tool call is visible) and confirms them in one or two lines. No files changed.",
+      "exercises": [
+        "memory:save",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "First thing Aoife will ask: how long can they stay on Data Center? Look up what Atlassian has officially announced about Data Center end of sale / end of support, with the dates, and whether the Jira Cloud Migration Assistant supports Jira 9.12. Give me the sources.",
+      "expect": "A web search tool call happens; the answer cites atlassian.com pages (not only forums), states the announced Data Center end-of-life milestones with dates, and says whether JCMA supports 9.12. Dates written YYYY-MM-DD (memory applied without being restated).",
+      "exercises": [
+        "mcp:web-search",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "The real user export is under NDA so I can't give it to you. Write a small script that generates a realistic fake data/users.csv, about 400 rows, with the same problems they described: case-only duplicate emails, around 30 users with no email, svc- service accounts, inactive users with last login years ago, and group columns jira-software-users and jira-administrators. Columns: username, display_name, email, active, last_login, groups. Seed it so it's reproducible.",
+      "expect": "{WORK}/gen-users.mjs (or similar) exists, uses only Node built-ins (no package.json dependencies, no npm install run — memory applied); a seeded PRNG, not Math.random alone. It is not run yet or is run once.",
+      "exercises": [
+        "shell",
+        "editor",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Run it, show me the first 20 lines, and give me a count of each problem type so I can see the seeds actually worked. Run it twice and prove the file is identical both times.",
+      "expect": "data/users.csv has ~400 rows; first 20 lines shown; counts per problem type (case duplicates, no email ~30, svc- accounts, inactive >24 months); two runs give the same checksum (shasum/md5 shown).",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Here's the project list Marek sent. Save it as data/projects.csv:\n\nkey,name,lead,issue_count,last_updated\nFRT,Freight Ops,mkowalski,70412,2026-09-20\nWHS,Warehouse Systems,jsmith,18230,2026-09-18\nCUS,Customs Desk,aoconnor,9021,2026-08-30\nFIN,Finance Requests,pmurphy,4410,2026-09-12\nHR,People Ops,lwalsh,2210,2026-07-01\nFLT,Fleet Maintenance,dbyrne,12877,2026-09-19\nOLDWMS,Legacy WMS Rollout,tkeane,3301,2021-03-14\nPORT,Port Integration,rnolan,8805,2026-06-02\nEDI,EDI Mappings,svc-edi,15022,2026-09-21\nSAFE,Safety Incidents,cdoyle,1990,2025-11-30\nMIG19,2019 Server Move,bquinn,640,2020-01-09\nTRN,Training,lwalsh,310,2023-02-17\nITSD,IT Service Desk,mkowalski,21044,2026-09-22\nPLAN,Planning Board,aoconnor,77,2022-05-05\nSALES,Sales Ops,jfarrell,5530,2026-09-10\n\nThen make sure every lead in that list exists in users.csv (some should be inactive so the lead rule matters — adjust the generator, keep it seeded).",
+      "expect": "data/projects.csv has the 15 rows exactly as pasted. The generator is edited so every lead (mkowalski, jsmith, aoconnor, pmurphy, lwalsh, dbyrne, tkeane, rnolan, svc-edi, cdoyle, bquinn, jfarrell) exists in users.csv and at least tkeane/bquinn are inactive >24 months; regenerated deterministically.",
+      "exercises": [
+        "shell",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the real work: the identity-resolution PLAN phase of the migration. A script that reads users.csv and projects.csv and decides per user: migrate, merge (case duplicates — keep the most recently active one), skip (svc- accounts and users inactive for more than 24 months), or review (no email). A project lead is never skipped, whatever else is true. Write plan/identity-plan.csv with username, decision, reason, merge_into, and a seeded random sample of 25 rows to plan/identity-spotcheck.csv for Marek to eyeball. It has to be idempotent and resumable the way a real migration script would be.",
+      "expect": "The installed Atlassian migration-scripts skill is loaded (a skill tool call / its Plan-Sync-Audit vocabulary appears). {WORK}/plan-identities.mjs (or similar) exists with zero npm deps; decision rules as stated with 24-month cutoff and lead override; both CSVs written; some explicit resumability mechanism (checkpoint/state file or deterministic rewrite) is described.",
+      "exercises": [
+        "skill:atlassian-migration-scripts-skill",
+        "editor",
+        "memory:use"
+      ]
+    },
+    {
+      "say": "Add tests with node:test for the decision rules: case-duplicate merge keeps the most recent, missing email goes to review, svc- is skipped, the 24-month cutoff at its boundary, and an inactive project lead is kept. Run them.",
+      "expect": "A test file under {WORK} (e.g. test/plan-identities.test.mjs) with at least 5 tests covering each named rule; `node --test` output shows all passing (count stated matches the output).",
+      "exercises": [
+        "shell",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Run the plan on the fake data. Give me totals per decision, and list every project lead who would have been skipped without the lead rule.",
+      "expect": "Plan runs; totals per decision (migrate/merge/skip/review) sum to the users.csv row count; the listed leads include the inactive ones (tkeane, bquinn at least) and svc-edi if the service rule would skip it — goose says how it treated svc-edi as a lead.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "You said it's resumable. Prove it: start the plan, interrupt it partway (however you can do that honestly), run it again, and show me the output is byte-identical to a clean run.",
+      "expect": "Shell evidence of an interrupted run (kill/timeout or an injected stop) followed by a rerun; checksums of identity-plan.csv from the resumed run and a clean run are shown and equal. If goose cannot interrupt it for real it says so plainly rather than claiming it.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Quick one, no need to look anything up: in plain words, what's the practical difference between us merging duplicate accounts before the migration versus leaving the duplicates for the migration to deal with? Two short paragraphs.",
+      "expect": "Two short paragraphs, no tool calls at all, no skill loaded.",
+      "exercises": [
+        "no-tools",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "OK now do look it up: find Atlassian's official documentation on what happens to users who share an email address (or differ only by case) when migrating Jira with JCMA. I want the official doc, not a community post. Put the link in a comment above the merge rule in the script.",
+      "expect": "Web search call; an atlassian.com (support.atlassian.com / confluence.atlassian.com) link is named; the plan script gains a comment with that URL above the merge logic; tests still pass if rerun.",
+      "exercises": [
+        "mcp:web-search",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now projects. A second plan script, plan-projects.mjs, same style: archive candidate if not updated in over 2 years, 'separate wave' if more than 50,000 issues, flag any project whose lead is a service account or is skipped in the identity plan, otherwise migrate in wave 1. Output plan/project-plan.csv. Add tests.",
+      "expect": "plan-projects.mjs with zero deps; plan/project-plan.csv has 15 rows; OLDWMS, MIG19, TRN and PLAN are archive candidates (SAFE, 2025-11-30, is not); FRT is separate wave; EDI flagged for svc-edi lead; tests exist and pass.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "I want one command that regenerates the data, runs both plans and all the tests. No npm. Add it and run it.",
+      "expect": "A run-all script (shell script or node script) exists; running it regenerates data, both plan CSVs and runs node --test with all tests passing; no package.json dependencies added.",
+      "exercises": [
+        "shell",
+        "editor",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Totally unrelated: my laptop fan is screaming. What's the terminal command to see which processes use the most CPU, sorted? Just the command and one line on reading it.",
+      "expect": "A short answer (e.g. `top -o cpu` or `ps -Ao pid,pcpu,comm -r | head`); nothing about the migration, no recalled past session or memory about unrelated projects dragged in, no skill loaded.",
+      "exercises": [
+        "memory:must-not-recall",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Back to Harbourline. Write the readiness report as report/readiness-assessment.docx. Sections: executive summary, scope, what we found in users and projects (real numbers from the plan outputs, not estimates), the Data Center end-of-life dates with sources, a risks table (risk, impact, mitigation, owner), and next steps. This one goes to the client.",
+      "expect": "{WORK}/report/readiness-assessment.docx exists and is a real Word file; numbers match plan/identity-plan.csv and plan/project-plan.csv totals; dates YYYY-MM-DD and British spelling (organisation, prioritise, etc.) without being restated — memory applied; a risks table is present.",
+      "exercises": [
+        "mcp:document",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Open the docx you just wrote and read me back its headings and the risks table as they appear in the file, so I know it's a real Word document and not markdown pasted into one.",
+      "expect": "goose reads the .docx with a document tool (not by cat of raw XML alone) and reports headings and the table rows; they match what was written; if headings are plain paragraphs rather than Word heading styles it says so.",
+      "exercises": [
+        "mcp:document",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "In the risks table, 'Client PM' should be Aoife Brennan and 'Jira admin' should be Marek Kowalski. The migration lead is me, Dan Okafor. Fix every occurrence in the report, not just the table.",
+      "expect": "The docx is rewritten; no remaining 'Client PM' / 'Jira admin' placeholders anywhere in it (goose verifies by reading it back or grepping extracted text); names spelled exactly.",
+      "exercises": [
+        "mcp:document",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Aoife reads everything on her iPad, so make a PDF too: report/readiness-assessment.pdf, from the docx, using whatever works on this Mac. Then open the PDF and tell me how many pages it has and what's on the last page.",
+      "expect": "report/readiness-assessment.pdf exists and is a valid PDF; goose opens it with a PDF/document tool or a CLI and states a page count that matches the file; last-page content quoted.",
+      "exercises": [
+        "mcp:document",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Cross-check: pull the user and project numbers out of the PDF text and compare them to the plan CSVs. Any mismatch at all?",
+      "expect": "goose extracts text from the PDF and counts from the CSVs (shell), shows both side by side; either 'no mismatch' with the numbers or names the mismatch and fixes docx+pdf.",
+      "exercises": [
+        "mcp:document",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Next phase is the AUDIT, after migration. Write audit-identities.mjs: given plan/identity-plan.csv and a post-migration export data/cloud-users.csv, check that every 'migrate' user arrived, every merged pair appears once, skipped users are absent, and review users are reported. Write audit/audit-results.csv and a seeded 25-row spot-check sample. Also generate a fake cloud-users.csv from the plan with a few deliberate defects planted so we can see the audit catch them.",
+      "expect": "audit-identities.mjs and a cloud-export generator exist, zero deps; data/cloud-users.csv generated with planted defects (e.g. a missing migrate user, a merged pair present twice, a skipped user present); audit CSV + spot-check written. The migration-scripts skill's audit guidance may be used again (loading it here is correct).",
+      "exercises": [
+        "skill:atlassian-migration-scripts-skill",
+        "editor",
+        "shell",
+        "memory:use"
+      ]
+    },
+    {
+      "say": "Run the audit. Did it catch every defect you planted? List each planted defect next to the audit row that caught it.",
+      "expect": "Audit run output shown; every planted defect is matched to a row in audit/audit-results.csv; any miss is admitted and fixed.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Add tests for the audit rules, hook them into the one-command runner, and run everything from scratch.",
+      "expect": "New audit tests; run-all updated; full run output shows data regenerated, plans, audit and all tests passing with a total count.",
+      "exercises": [
+        "shell",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Walk me through everything we built today: every file in the work folder, what it does, and how they connect. I'm going to check it against the folder myself.",
+      "expect": "An account listing every file; checked against `ls -R {WORK}` it names no file that doesn't exist and omits none that matter (scripts, tests, data, plan, audit, report, notes).",
+      "exercises": [
+        "self-account",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write a README.md another consultant could follow cold: prerequisites, how to regenerate the fake data, run the plans, run the audit, run the tests, and where the report lives.",
+      "expect": "{WORK}/README.md exists; every command in it is one that exists in the folder; prerequisites say Node only, no npm install.",
+      "exercises": [
+        "editor",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now follow your own README from a clean state: delete the generated outputs (only inside the work folder — data, plan, audit), run every command exactly as the README writes it, and tell me if the README was wrong anywhere.",
+      "expect": "Deletion confined to {WORK}; each README command run in order; outputs regenerate with the same checksums as before (seeded); any README error found is fixed in the README.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "One of Aoife's decisions is Standard vs Premium. Look up the current Jira Cloud Standard and Premium plans: user limits, and the features that matter for a company like this (sandbox, release tracks, admin insights, uptime SLA). Add a short comparison section to the report and regenerate the PDF.",
+      "expect": "Web search call citing atlassian.com pricing/plan pages; docx gains a Standard vs Premium section with a small table; PDF regenerated (newer mtime, page count re-stated); British spelling kept.",
+      "exercises": [
+        "mcp:web-search",
+        "mcp:document",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Draft the email to Aoife that goes with the PDF: short, says what's attached, and lists the three decisions we need from her before the call on Friday, with the date. Save it as report/email-to-aoife.txt.",
+      "expect": "report/email-to-aoife.txt exists; the Friday call date appears as 2026-10-02 (ISO, from the notes, memory applied); British spelling; three decisions named (e.g. Standard vs Premium, archive list, review-list users).",
+      "exercises": [
+        "editor",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Remind me: what inactive cutoff did we settle on and why, what's the rule for project leads, and what did we decide about the FRT project?",
+      "expect": "Correct after a long context (compaction expected before this point): 24 months because Aoife asked for it (not 12); project leads are never skipped; FRT goes in a separate wave (>50k issues). goose may re-read notes/plan files; it must not invent a different cutoff.",
+      "exercises": [
+        "compaction",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Last thing: write notes/status-<today's date>.md with a short checklist of what's done and what's still open for the client, then tell me in two lines what I should do first on Monday.",
+      "expect": "A file notes/status-YYYY-MM-DD.md named with today's ISO date; checklist items match the actual state (scripts, tests, report docx+pdf, email draft done; client decisions open); two-line answer.",
+      "exercises": [
+        "editor",
+        "memory:use",
+        "compaction",
+        "no-skill"
+      ]
+    }
+  ]
+}
