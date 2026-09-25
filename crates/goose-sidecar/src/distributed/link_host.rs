@@ -266,11 +266,7 @@ async fn exec(request: ExecRequest) -> Result<ExecAnswer, HostError> {
     let op = request.op;
     let home = home()?;
     let command = match &op {
-        NodeOp::Signal { pid, .. } => {
-            let out = run_here(&format!("/bin/ps -o command= -p {pid}")).await?;
-            let line = out.stdout.trim().to_string();
-            Some((!line.is_empty()).then_some(line))
-        }
+        NodeOp::Signal { pid, .. } => Some(signal_proof(*pid).await?),
         _ => None,
     };
     let services = match &op {
@@ -295,6 +291,17 @@ async fn exec(request: ExecRequest) -> Result<ExecAnswer, HostError> {
             ));
         }
         let listing = run_here(super::node_op::PROCESS_LIST_SCRIPT).await?;
+        if !listing.success() {
+            return Err(refused(
+                "processListUnreadable",
+                format!(
+                    "this Mac's process list could not be read (exit {:?}: {}); compaction never \
+                     runs without proof no engine is loaded here",
+                    listing.status,
+                    listing.stderr.trim()
+                ),
+            ));
+        }
         let engines = super::compaction::engines_in(&listing.stdout);
         if let Some(refusal) = super::compaction::engine_refusal("this Mac", &engines) {
             return Err(refused(&refusal.code, refusal.message));
@@ -326,6 +333,33 @@ async fn exec(request: ExecRequest) -> Result<ExecAnswer, HostError> {
         );
     }
     Ok(run_here(&script).await?.into())
+}
+
+/// The command line behind `pid` on this Mac, or `None` when ps PROVED no process holds it. A
+/// ps that could not answer is refused here (`pidUnproven`) BEFORE `authorize` — gate 4: an
+/// unanswered ps once read as "no such process" and the `/bin/kill` ran on a pid nobody had
+/// proven was a goose rank. Nothing is signalled; the requester's next observation of the pid
+/// (its `pidRow`) decides what the stop reports.
+async fn signal_proof(pid: u32) -> Result<Option<String>, HostError> {
+    let answer = match run_here(&format!("/bin/ps -o command= -p {pid}")).await {
+        Ok(out) => out
+            .ps_answer()
+            .map(|line| line.map(str::to_string))
+            .map_err(|e| format!("{e:#}")),
+        Err(e) => Err(e.to_string()),
+    };
+    answer.map_err(|why| {
+        tracing::warn!(
+            event = "link_signal_unproven",
+            pid,
+            why = %why,
+            "distributed node: signal NOT sent: ps could not prove the pid is a goose rank"
+        );
+        refused(
+            "pidUnproven",
+            format!("pid {pid}: ps could not prove what runs there ({why}); nothing was signalled"),
+        )
+    })
 }
 
 fn provision_start(request: ProvisionStartRequest) -> Result<ProvisionStartAnswer, HostError> {
@@ -601,7 +635,10 @@ async fn stop_hosted(hosted: &mut Hosted, follow_rank0: bool, why: String) -> St
     }
     if let Some(pid) = pid {
         match run_here(&node_op::pid_row_script(pid)).await {
-            Ok(out) => match super::probe::parse_ps_row(&out.stdout) {
+            Ok(out) => match out
+                .ps_answer()
+                .and_then(|rows| rows.map_or(Ok(None), super::probe::parse_ps_row))
+            {
                 Ok(None) => report
                     .steps
                     .push(format!("ps -p {pid}: no such process (verified here)")),
@@ -668,10 +705,12 @@ fn ensure_lease_watch() {
 /// so neither its exit path nor its lease watcher ran. Stopped here, per pid, only while the pid's
 /// command line still carries the goose rank marker (a reused pid is somebody else's process).
 /// `Ok(None)` = nothing of ours runs at `pid`; otherwise the step line and whether it is gone.
+/// A ps that could not answer is an `Err` (`pidUnproven`, nothing signalled): the caller keeps
+/// the record, so the mount stays refused by name and the next reclaim looks again.
 pub async fn reclaim_orphan(pid: u32) -> Result<Option<(String, bool)>, HostError> {
-    let out = run_here(&format!("/bin/ps -o command= -p {pid}")).await?;
-    if !out.stdout.contains(RANK_MARKER) {
-        return Ok(None);
+    match signal_proof(pid).await? {
+        Some(command) if command.contains(RANK_MARKER) => {}
+        _ => return Ok(None),
     }
     Ok(Some(
         supervisor::reclaim_rank_pid(&SystemExec, None, "this Mac", pid).await,
@@ -738,6 +777,26 @@ mod tests {
         .unwrap_err();
         match err {
             HostError::Refused(r) => assert_eq!(r.code, "notAGooseRank", "{}", r.message),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// Gate 4 through the real `/bin/ps`: a pid ps cannot answer for (`process id too large`,
+    /// exit 1 with stderr) is refused by name and nothing is signalled — the failed proof never
+    /// reads as "no such process".
+    #[tokio::test]
+    async fn a_signal_whose_pid_ps_cannot_answer_for_is_refused_unsent() {
+        let err = dispatch(
+            LinkOp::Exec,
+            serde_json::json!({"op": {"kind": "signal", "pid": 999_999_999u32, "signal": "TERM"}}),
+        )
+        .await
+        .unwrap_err();
+        match err {
+            HostError::Refused(r) => {
+                assert_eq!(r.code, "pidUnproven", "{}", r.message);
+                assert!(r.message.contains("nothing was signalled"), "{}", r.message);
+            }
             other => panic!("{other:?}"),
         }
     }

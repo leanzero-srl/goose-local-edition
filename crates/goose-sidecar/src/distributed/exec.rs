@@ -44,6 +44,25 @@ impl ExecOutput {
     pub fn ssh_failed(&self) -> bool {
         self.status == Some(255)
     }
+
+    /// What a `/bin/ps … -p <pid>` run PROVES about the pid: `Ok(Some(rows))` it runs,
+    /// `Ok(None)` no process holds it, `Err` ps could not answer — and an unanswered ps is
+    /// never read as either (a guard that signals on it fails OPEN). Measured on macOS 26.6:
+    /// a pid with no process exits 1 with empty stdout AND empty stderr; a ps that failed
+    /// (`ps: Invalid process id`, `process id too large`, a missing binary, ssh's 255) exits
+    /// non-zero WITH stderr, or with a code other than 0/1.
+    pub fn ps_answer(&self) -> Result<Option<&str>> {
+        let rows = self.stdout.trim();
+        match self.status {
+            Some(0) if !rows.is_empty() => Ok(Some(rows)),
+            Some(1) if rows.is_empty() && self.stderr.trim().is_empty() => Ok(None),
+            status => anyhow::bail!(
+                "ps could not answer (exit {status:?}, stdout {} bytes): {}",
+                rows.len(),
+                self.stderr.trim()
+            ),
+        }
+    }
 }
 
 pub trait NodeExec: Send + Sync {
@@ -135,5 +154,41 @@ mod tests {
             .unwrap();
         assert!(out.success());
         assert_eq!(out.stdout, value);
+    }
+
+    /// The real `/bin/ps`, all three answers: a live pid, a pid no process holds, and a ps that
+    /// could not answer — the last must never read as "no such process".
+    #[tokio::test]
+    async fn ps_proves_a_pid_runs_or_is_gone_and_a_failed_ps_proves_neither() {
+        let ps = |pid: String| async move {
+            SystemExec
+                .run(None, &format!("/bin/ps -o command= -p {pid}"))
+                .await
+                .unwrap()
+        };
+        let live = ps(std::process::id().to_string()).await;
+        assert!(live.ps_answer().unwrap().is_some(), "{live:?}");
+
+        let mut exited = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        let gone = exited.id();
+        exited.wait().unwrap();
+        let absent = ps(gone.to_string()).await;
+        assert_eq!(absent.ps_answer().unwrap(), None, "{absent:?}");
+
+        let refused = ps("999999999".into()).await;
+        let err = refused.ps_answer().unwrap_err().to_string();
+        assert!(err.contains("ps could not answer"), "{err}");
+
+        let missing = SystemExec
+            .run(None, "/bin/ps-not-installed -o command= -p 1")
+            .await
+            .unwrap();
+        assert!(missing.ps_answer().is_err(), "{missing:?}");
+        let ssh_down = ExecOutput {
+            status: Some(255),
+            stdout: String::new(),
+            stderr: "ssh: connect to host peer: Connection refused".into(),
+        };
+        assert!(ssh_down.ps_answer().is_err());
     }
 }

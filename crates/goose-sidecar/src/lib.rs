@@ -748,10 +748,28 @@ pub(crate) async fn listening_pids(port: u16) -> Result<Vec<u32>> {
         .output()
         .await
         .with_context(|| format!("running {}", lsof.display()))?;
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .filter_map(|s| s.parse().ok())
-        .collect())
+    listening_pids_of(&lsof, &output)
+}
+
+/// An lsof that failed is an `Err`, never "no listener" — its caller signals what this names.
+/// Measured on macOS 26.6 (lsof 4.91): no listener → exit 1 with empty stdout AND stderr; a
+/// failed lsof (an illegal option) → exit 1 WITH stderr. `-t` implies `-w`, so a warning never
+/// lands on stderr of an answered run.
+fn listening_pids_of(lsof: &std::path::Path, output: &std::process::Output) -> Result<Vec<u32>> {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    match output.status.code() {
+        Some(0) => Ok(stdout
+            .split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .collect()),
+        Some(1) if stdout.trim().is_empty() && stderr.trim().is_empty() => Ok(Vec::new()),
+        status => anyhow::bail!(
+            "{} could not answer (exit {status:?}): {}",
+            lsof.display(),
+            stderr.trim()
+        ),
+    }
 }
 
 /// Why `/v1/models` did not count as ready. `OtherId` is kept apart because it is the one
@@ -831,6 +849,26 @@ fn stderr_tail_string(tail: &Arc<StdMutex<VecDeque<String>>>) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// The real lsof, all three answers: our own listener, a port nobody listens on, and an lsof
+    /// that failed — which must be an error, never an empty (and so unsignalled-but-"clear") port.
+    #[tokio::test]
+    async fn a_failed_lsof_is_an_error_never_an_empty_port() {
+        let lsof = resolve_lsof().unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let pids = listening_pids(port).await.unwrap();
+        assert_eq!(pids, vec![std::process::id()]);
+        drop(listener);
+        assert_eq!(listening_pids(port).await.unwrap(), Vec::<u32>::new());
+
+        let failed = std::process::Command::new(&lsof)
+            .args(["-ti", &format!("TCP:{port}"), "-sTCP:LISTEN", "-Z"])
+            .output()
+            .unwrap();
+        let err = listening_pids_of(&lsof, &failed).unwrap_err().to_string();
+        assert!(err.contains("could not answer"), "{err}");
+    }
 
     fn dir_with_lsof(root: &std::path::Path, name: &str) -> PathBuf {
         let dir = root.join(name);

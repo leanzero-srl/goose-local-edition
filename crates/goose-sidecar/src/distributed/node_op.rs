@@ -113,7 +113,8 @@ impl NodeOp {
 
     /// The peer's own verdict on an op a same-account requester sent: `Ok` or the named reason it
     /// is refused. `home` is the peer's `$HOME`; `command_of` answers a pid's command line on the
-    /// peer (`None` = no such process); `services` answers the peer's
+    /// peer (`None` = ps PROVED no such process; a ps that could not answer is the caller's `Err`,
+    /// never `None`); `services` answers the peer's
     /// `networksetup -listnetworkserviceorder`.
     pub fn authorize(
         &self,
@@ -138,8 +139,10 @@ impl NodeOp {
                 preflight::repair_licence(node, &listing)
                     .map_err(|why| anyhow!("the TB link repair is refused on this Mac: {why}"))
             }
+            // Only a pid PROVEN to carry the rank marker is signalled; a pid with no process has
+            // nothing to prove it goose's, and the requester's next `pidRow` observes it gone.
             NodeOp::Signal { pid, .. } => match command_of(*pid)? {
-                None => Ok(()),
+                None => bail!("pid {pid} runs no process on this Mac; nothing was signalled"),
                 Some(command) if command.contains(RANK_MARKER) => Ok(()),
                 Some(command) => bail!(
                     "pid {pid} is not a goose rank (its command line carries no \
@@ -327,8 +330,20 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("not a goose rank"), "{err}");
-        // A pid that is already gone: the kill is harmless and the caller observes it gone.
-        term(12).authorize(HOME, no_process, no_services).unwrap();
+        // A pid that is already gone: nothing is proven, nothing is sent.
+        let err = term(12)
+            .authorize(HOME, no_process, no_services)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("runs no process"), "{err}");
+        // A ps that could not answer never reaches a kill.
+        assert!(term(13)
+            .authorize(
+                HOME,
+                |_| Err(anyhow!("ps could not answer (exit Some(1))")),
+                no_services
+            )
+            .is_err());
     }
 
     #[test]
