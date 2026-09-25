@@ -122,11 +122,11 @@ import { formatMlxMode, formatRemoteMode } from './mlxModeLabel';
 import {
   latestMlxRemoteSingleStatus,
   mlxRemoteSingleStop,
-  remoteRouteUp,
   subscribeMlxRemoteSingleStatus,
   type MlxRemoteSingleStatus,
 } from '../../acp/mlx-remote-single';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
+import { routeServesChat } from '../chatServedBy/chatServedBy';
 import { PlacementBadge, PlacementCard, badgesOf, usePlacementPlans } from './PlacementCard';
 import type { PlacementBadge as PlacementBadgeDto } from '../../acp/mlx-placement';
 
@@ -145,6 +145,12 @@ const i18n = defineMessages({
     defaultMessage: 'Serving across Macs',
   },
   servingRemote: { id: 'mlxEngineView.servingRemote', defaultMessage: 'Serving on {peer}' },
+  memoryOn: { id: 'mlxEngineView.memoryOn', defaultMessage: 'Memory on {mac}' },
+  memoryReading: { id: 'mlxEngineView.memoryReading', defaultMessage: 'Reading its memory…' },
+  memoryUnread: {
+    id: 'mlxEngineView.memoryUnread',
+    defaultMessage: 'Memory unmeasured: {error}',
+  },
   stopRemote: { id: 'mlxEngineView.stopRemote', defaultMessage: 'Stop' },
   stopRemoteFailed: {
     id: 'mlxEngineView.stopRemoteFailed',
@@ -740,6 +746,22 @@ interface EngineSectionProps {
   onStopRemote: () => void;
   /** Why the last Stop of that route did not finish — goose's words. */
   remoteStopError: string | null;
+  /** Whose memory the hero shows: the Mac whose engine serves chat. */
+  memory: ServingMemory;
+}
+
+/**
+ * The memory under the "Serving" heading belongs to the Mac that serves (Q-15): under "Serving on
+ * Work's Mac Studio" it showed this MacBook's 63.9 of 128 GB while My Macs gave the Studio's 23.0
+ * of 96. While a route is up it is the peer's own status from My Macs' facts (useMacs), labelled
+ * with its name; otherwise this Mac's, labelled only when the heading does not already say so.
+ */
+export interface ServingMemory {
+  /** null = this Mac under a heading that already says so. */
+  macName: string | null;
+  status: MlxEngineStatus | null;
+  /** Why that Mac's status could not be read — its words. */
+  error: string | null;
 }
 
 function EngineSection(props: EngineSectionProps) {
@@ -768,6 +790,7 @@ function EngineSection(props: EngineSectionProps) {
     remote,
     onStopRemote,
     remoteStopError,
+    memory,
   } = props;
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Re-planned whenever the model list or what this Mac serves changes: a mount moves every fit.
@@ -798,11 +821,12 @@ function EngineSection(props: EngineSectionProps) {
 
   // Available = free pages plus reclaimable file cache (the sidecar's measure), so a full file
   // cache after a big download no longer reads as memory pressure.
+  const memStatus = memory.status;
   const memoryTight =
-    status != null &&
-    status.memoryError == null &&
-    status.totalMemoryGb > 0 &&
-    status.availableMemoryGb / status.totalMemoryGb < 0.15;
+    memStatus != null &&
+    memStatus.memoryError == null &&
+    memStatus.totalMemoryGb > 0 &&
+    memStatus.availableMemoryGb / memStatus.totalMemoryGb < 0.15;
 
   // Every row is backend truth or an honest "—"; nothing here is fabricated. The state, the served
   // model and the memory headroom live in the hero above — these are the running engine's facts.
@@ -1013,27 +1037,49 @@ function EngineSection(props: EngineSectionProps) {
               Probe failed: {status.probeError}
             </p>
           )}
-          {status?.memoryError != null && (
-            <p className={cx('break-words text-lz-body', WEIGHT.semibold, TONE_TEXT.err)}>
-              Memory unmeasured: {status.memoryError}
-            </p>
-          )}
-          {status && status.memoryError == null && (
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <span
+          <div data-testid="mlx-serving-memory" className="flex min-w-0 flex-col gap-1.5">
+            {memory.macName != null && (
+              <span className={TYPE.meta}>
+                {intl.formatMessage(i18n.memoryOn, { mac: memory.macName })}
+              </span>
+            )}
+            {memStatus == null && memory.macName != null && (
+              <p
                 className={cx(
-                  'text-lz-body',
-                  TNUM,
-                  memoryTight ? cx(WEIGHT.semibold, TONE_TEXT.warn) : 'text-lz-ink'
+                  'break-words text-lz-body',
+                  memory.error ? cx(WEIGHT.semibold, TONE_TEXT.err) : 'text-lz-ink-2'
                 )}
               >
-                {`${status.availableMemoryGb.toFixed(1)} GB available of ${status.totalMemoryGb.toFixed(1)} GB`}
-                {status.reclaimableCacheGb != null &&
-                  ` (${status.reclaimableCacheGb.toFixed(1)} GB is reclaimable file cache)`}
-              </span>
-              <MemoryBar availableGb={status.availableMemoryGb} totalGb={status.totalMemoryGb} />
-            </div>
-          )}
+                {memory.error
+                  ? intl.formatMessage(i18n.memoryUnread, { error: memory.error })
+                  : intl.formatMessage(i18n.memoryReading)}
+              </p>
+            )}
+            {memStatus?.memoryError != null && (
+              <p className={cx('break-words text-lz-body', WEIGHT.semibold, TONE_TEXT.err)}>
+                {intl.formatMessage(i18n.memoryUnread, { error: memStatus.memoryError })}
+              </p>
+            )}
+            {memStatus && memStatus.memoryError == null && (
+              <>
+                <span
+                  className={cx(
+                    'text-lz-body',
+                    TNUM,
+                    memoryTight ? cx(WEIGHT.semibold, TONE_TEXT.warn) : 'text-lz-ink'
+                  )}
+                >
+                  {`${memStatus.availableMemoryGb.toFixed(1)} GB available of ${memStatus.totalMemoryGb.toFixed(1)} GB`}
+                  {memStatus.reclaimableCacheGb != null &&
+                    ` (${memStatus.reclaimableCacheGb.toFixed(1)} GB is reclaimable file cache)`}
+                </span>
+                <MemoryBar
+                  availableGb={memStatus.availableMemoryGb}
+                  totalGb={memStatus.totalMemoryGb}
+                />
+              </>
+            )}
+          </div>
           {/* flex-wrap + a min width on the picker: at ~800px the buttons otherwise crushed the
               model picker into unreadability. */}
           <div className="flex flex-wrap items-start gap-2">
@@ -2293,14 +2339,31 @@ function MlxEngineViewBody() {
     subscribeMlxRemoteSingleStatus,
     latestMlxRemoteSingleStatus
   );
-  const remote =
-    remoteRouteUp(remoteStatus) && !ownsTheMac(distributed.status) ? remoteStatus : null;
+  const remote = routeServesChat(remoteStatus, distributed.status) ? remoteStatus : null;
   const modeLabel = remote
     ? formatRemoteMode(intl, routePeerName(remote))
     : formatMlxMode(intl, modeSummary(distributed.status), null);
 
   const [status, setStatus] = useState<MlxEngineStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const servingPeer = remote?.peer ? macsCtx.macByKey(remote.peer) : null;
+  const peerFacts = remote?.peer ? macsCtx.factsOf(remote.peer) : null;
+  const servingMemory: ServingMemory = remote
+    ? {
+        macName: routePeerName(remote),
+        status: peerFacts?.status ?? null,
+        error:
+          peerFacts?.statusError ??
+          (servingPeer && peerRefuses(servingPeer, 'manage')
+            ? macsCtx.offText(servingPeer, 'manage')
+            : null),
+      }
+    : {
+        // "Serving across Macs" names no Mac: say whose memory this is.
+        macName: ownsTheMac(distributed.status) ? macsCtx.self.name : null,
+        status,
+        error: null,
+      };
   useEffect(() => {
     settleRestoreLine({ single: status, remote: remoteStatus, distributed: distributed.status });
   }, [status, remoteStatus, distributed.status]);
@@ -2818,6 +2881,7 @@ function MlxEngineViewBody() {
           remote={remote}
           onStopRemote={onStopRemote}
           remoteStopError={remoteStopError}
+          memory={servingMemory}
         />
       )}
       {tab === 'models' && (
