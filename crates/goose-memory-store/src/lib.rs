@@ -435,6 +435,66 @@ pub fn validate_category(category: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Which hits COVER the query they were searched with — are ABOUT it rather than sharing its words —
+/// in the store's order: an entry the query NAMES (and, once the topic word names an entry, only
+/// a named entry carrying the topic word; once a named entry carries the whole query, only a
+/// named entry carrying it all or the topic word), a nameless body carrying every term with two of
+/// them said together, or an entry whose name carries the topic word with half the terms and a
+/// majority of the specific ones — each with at least one rare term. This is recall's selection
+/// law (VA-179..VA-188; the measurements sit on `recall::select_hits`, which adds its share-of-top
+/// floor and slot count); `search_memories` reads the same law so the tool and the automatic
+/// recall agree on what a memory is about.
+pub fn covering(hits: &[SearchHit], term_count: usize) -> Vec<bool> {
+    let topic_names_an_entry = hits.iter().any(|hit| hit.named && hit.topic_in_name);
+    let whole_request_named = hits
+        .iter()
+        .any(|hit| hit.named && hit.matched_terms >= term_count);
+    hits.iter()
+        .map(|hit| {
+            hit.rare_terms >= 1
+                && if hit.named {
+                    hit.topic_in_name
+                        || (!topic_names_an_entry
+                            && (!whole_request_named || hit.matched_terms >= term_count))
+                } else {
+                    (hit.matched_terms >= term_count && hit.together)
+                        || (hit.topic_in_name
+                            && hit.matched_terms * 2 >= term_count
+                            && hit.matched_specific * 2 > hit.specific_terms)
+                }
+        })
+        .collect()
+}
+
+/// Which hits an explicit `search_memories` query is ABOUT. A search query is a LIST — the tool asks
+/// for "several related terms and synonyms" — so it often carries two topics at once, and an entry
+/// that answers one of them matches half the list at best. It covers what recall's law covers
+/// ([`covering`]), plus an entry whose NAME carries two of the query's words (with a rare one
+/// matched) whatever share of the list it matches, and on a one-word query every entry that has
+/// the word. Measured (Q-98, a replica of the 64-entry global store plus the two rules E2E #1 saved,
+/// query "ISO dates British spelling client deliverables Node zero dependencies scripts"): recall's
+/// law covers `client-deliverables` (6/10, named) and not `handover-scripts` ("Handover scripts are
+/// always plain Node with zero npm dependencies.", 5/10, 4 in name, 1 of 5 specific) — the list's
+/// second topic; the name path adds it and nothing else (every other hit has at most one query word
+/// in its name: `jira-mentions-indexed-by-accountid` 4/10 by "ZERO mentions" in its headline). On
+/// the real store without the two rules the same query covers nothing — the answer is "none".
+/// The cost, measured on the same store with seven of the probe corpus' SENTENCE requests (JQL,
+/// Forge deploy, SSH, blog post, sandbox deploy, strongest node, rotate the key; stopwords out): six
+/// extra entries in full, each named by two plain words (VA-179's shape — `khoros-editor-renders-
+/// markdown-literally` for "blog post"); on six keyword queries, none. Before this law the tool
+/// printed every one of those requests' 19–47 matches in full, ten at a time.
+pub fn search_covering(hits: &[SearchHit], term_count: usize) -> Vec<bool> {
+    covering(hits, term_count)
+        .into_iter()
+        .zip(hits)
+        .map(|(covers, hit)| {
+            covers
+                || term_count == 1
+                || (hit.name_terms >= NAMED_MIN_NAME_TERMS && hit.rare_terms >= 1)
+        })
+        .collect()
+}
+
 /// Read, change and rewrite one store file as ONE step: an exclusive lock on the sidecar
 /// `<file>.lock` is held from the read to the rename, and the new text lands through a temporary
 /// file renamed over the old, so a reader never sees a half-written file. `change` gets the current

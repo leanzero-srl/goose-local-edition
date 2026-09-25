@@ -17,8 +17,8 @@ use crate::session::session_manager::SessionType;
 use anyhow::Result;
 use async_trait::async_trait;
 use goose_memory_store::{
-    headline, rarity_weight, said_together, search_terms, term_occurrences, tokenize, MemoryStore,
-    SearchHit, STOPWORDS,
+    covering, headline, rarity_weight, said_together, search_terms, term_occurrences, tokenize,
+    MemoryStore, SearchHit, STOPWORDS,
 };
 use goose_sdk_types::custom_requests::{SourceEntry, SourceType};
 use rmcp::model::{
@@ -428,31 +428,20 @@ pub fn query_terms(text: &str) -> Vec<String> {
 /// shares with production, not whether to change the scheme). After: the rule alone; the killpg pair
 /// stays (`launch-longlived-apps-via-launchd`, 5/6, carries the tied topic word "reap" in its name);
 /// the thirty-five other requests identical.
+/// The coverage law itself lives in the store (`goose_memory_store::covering`), shared with the
+/// memory extension's `search_memories`; recall adds the share-of-top floor and the slot count.
 pub fn select_hits(hits: Vec<SearchHit>, term_count: usize) -> Vec<SearchHit> {
-    let topic_names_an_entry = hits.iter().any(|hit| hit.named && hit.topic_in_name);
-    let whole_request_named = hits
-        .iter()
-        .any(|hit| hit.named && hit.matched_terms >= term_count);
-    let covers = |hit: &SearchHit| {
-        hit.rare_terms >= 1
-            && if hit.named {
-                hit.topic_in_name
-                    || (!topic_names_an_entry
-                        && (!whole_request_named || hit.matched_terms >= term_count))
-            } else {
-                (hit.matched_terms >= term_count && hit.together)
-                    || (hit.topic_in_name
-                        && hit.matched_terms * 2 >= term_count
-                        && hit.matched_specific * 2 > hit.specific_terms)
-            }
-    };
+    let covers = covering(&hits, term_count);
     let top = hits
         .iter()
-        .filter(|hit| covers(hit))
-        .map(|hit| hit.score)
+        .zip(&covers)
+        .filter(|(_, covers)| **covers)
+        .map(|(hit, _)| hit.score)
         .fold(0.0_f64, f64::max);
     hits.into_iter()
-        .filter(|hit| covers(hit) && hit.score >= top * RECALL_MIN_SHARE_OF_TOP)
+        .zip(covers)
+        .filter(|(hit, covers)| *covers && hit.score >= top * RECALL_MIN_SHARE_OF_TOP)
+        .map(|(hit, _)| hit)
         .take(RECALL_MAX_MEMORIES)
         .collect()
 }

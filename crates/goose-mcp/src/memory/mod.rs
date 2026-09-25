@@ -1,5 +1,7 @@
 use etcetera::{choose_app_strategy, AppStrategy};
-use goose_memory_store::{scope_label, search_terms, MemoryStore, RememberOutcome};
+use goose_memory_store::{
+    scope_label, search_covering, search_terms, MemoryStore, RememberOutcome, STOPWORDS,
+};
 use indoc::formatdoc;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -668,8 +670,9 @@ impl MemoryServer {
     /// Searches memories by keywords and returns the matching entries in full
     #[tool(
         name = "search_memories",
-        description = "Search your long-term memory by keywords and get the matching entries IN FULL, best \
-                       match first (category, tags and content are all searched). Use it when a line of \
+        description = "Search your long-term memory by keywords: the entries ABOUT them come IN FULL, best \
+                       match first (category, tags and content are all searched); entries that only share a \
+                       word come as one headline line each, and when none is about them it says so. Use it when a line of \
                        the memory index looks relevant, when the user refers to something from an earlier \
                        session, and BEFORE remember_memory so you update an existing memory instead of \
                        duplicating it."
@@ -681,36 +684,82 @@ impl MemoryServer {
     ) -> Result<CallToolResult, ErrorData> {
         let params = params.0;
         let working_dir = extract_working_dir_from_meta(&context.meta);
+        let report = self.search_report(
+            &params.query,
+            params.is_global,
+            params.limit,
+            working_dir.as_ref(),
+        )?;
+        Ok(CallToolResult::success(vec![Content::text(report)]))
+    }
 
-        let terms = search_terms(&params.query);
+    /// What `search_memories` answers. The entries the query is ABOUT
+    /// (`goose_memory_store::search_covering` — recall's law, plus an entry whose name carries two
+    /// of the query's words, plus every hit of a one-word query) come in full; an entry that only
+    /// shares a word with it comes as one headline line, so the model can still open it but does
+    /// not read its body as an answer; when nothing covers the query it says so first. Function
+    /// words and one-letter tokens are dropped from the query, as recall drops them.
+    ///
+    /// Why (Q-98, E2E #2 turn 1): "ISO dates British spelling client deliverables Node zero
+    /// dependencies scripts" — two rules the user had just stated, neither saved yet — answered
+    /// "10 of 32 matching memories", in full, topped by `jira-mentions-indexed-by-accountid` (4/10:
+    /// client, node, scripts, zero — "finds ZERO mentions", "a mention node"), then an article
+    /// playbook (3/10) and a production-config rule (1/10); recall had put none of them in the turn.
+    fn search_report(
+        &self,
+        query: &str,
+        is_global: Option<bool>,
+        limit: Option<usize>,
+        working_dir: Option<&PathBuf>,
+    ) -> Result<String, ErrorData> {
+        let terms: Vec<String> = search_terms(query)
+            .into_iter()
+            .filter(|t| t.chars().count() > 1 && !STOPWORDS.contains(&t.as_str()))
+            .collect();
         if terms.is_empty() {
             return Err(ErrorData::new(
                 ErrorCode::INVALID_PARAMS,
-                "query must contain at least one word".to_string(),
+                "query must contain at least one word that is not a function word".to_string(),
                 None,
             ));
         }
         let hits = self
-            .search(&params.query, params.is_global, working_dir.as_ref())
+            .search(&terms.join(" "), is_global, working_dir)
             .map_err(memory_error)?;
         if hits.is_empty() {
-            return Ok(CallToolResult::success(vec![Content::text(format!(
-                "No memory matched \"{}\". The memory index in your instructions lists every saved entry \
-                 by category; retrieve_memories(category, is_global) loads one in full.",
-                params.query
-            ))]));
+            return Ok(format!(
+                "No memory matched \"{query}\". The memory index in your instructions lists every saved entry \
+                 by category; retrieve_memories(category, is_global) loads one in full."
+            ));
         }
 
-        let limit = params.limit.unwrap_or(SEARCH_DEFAULT_LIMIT).max(1);
-        let total = hits.len();
-        tracing::info!(query = %params.query, hits = total, "memories searched");
-        let mut out = format!(
-            "{} of {} matching memories for \"{}\":\n",
-            total.min(limit),
-            total,
-            params.query
+        let limit = limit.unwrap_or(SEARCH_DEFAULT_LIMIT).max(1);
+        let covers = search_covering(&hits, terms.len());
+        let (about, sharing): (Vec<_>, Vec<_>) = hits
+            .into_iter()
+            .zip(covers)
+            .partition(|(_, covers)| *covers);
+        tracing::info!(
+            query,
+            covering = about.len(),
+            sharing = sharing.len(),
+            "memories searched"
         );
-        for hit in hits.into_iter().take(limit) {
+
+        let mut out = if about.is_empty() {
+            format!(
+                "No memory covers \"{query}\": {} share a word with it, and none is named by it, \
+                 says its words together, or carries its rarest word in its name.\n",
+                sharing.len()
+            )
+        } else {
+            format!(
+                "{} of {} memories covering \"{query}\":\n",
+                about.len().min(limit),
+                about.len()
+            )
+        };
+        for (hit, _) in about.iter().take(limit) {
             let phrase = if hit.phrase { ", exact phrase" } else { "" };
             out.push_str(&format!(
                 "\n{}/{} terms ({} rare, {} in name){phrase}, score {:.2} — ",
@@ -722,14 +771,38 @@ impl MemoryServer {
             ));
             out.push_str(&hit.entry.render());
         }
-        if total > limit {
+        if about.len() > limit {
             out.push_str(&format!(
-                "\n{} more matched; narrow the query or raise limit.\n",
-                total - limit
+                "\n{} more cover it; narrow the query or raise limit.\n",
+                about.len() - limit
             ));
         }
-
-        Ok(CallToolResult::success(vec![Content::text(out)]))
+        if !sharing.is_empty() {
+            out.push_str(&format!(
+                "\n{} {} share a word with the query without being about it — headlines only; \
+                 retrieve_memories(category, is_global) reads one in full:\n",
+                sharing.len(),
+                if sharing.len() == 1 {
+                    "entry"
+                } else {
+                    "entries"
+                }
+            ));
+            for (hit, _) in sharing.iter().take(limit) {
+                out.push_str(&format!(
+                    "- {} ({}, {}/{} terms): {}\n",
+                    hit.entry.category,
+                    hit.entry.scope_label(),
+                    hit.matched_terms,
+                    terms.len(),
+                    hit.entry.headline()
+                ));
+            }
+            if sharing.len() > limit {
+                out.push_str(&format!("- … and {} more\n", sharing.len() - limit));
+            }
+        }
+        Ok(out)
     }
 
     /// Removes all memories within a specified category
@@ -1356,6 +1429,109 @@ mod tests {
             description
                 .contains("add a reason only when the user gave one, never one you inferred"),
             "{description}"
+        );
+    }
+
+    /// Q-98: E2E #2 searched "ISO dates British spelling client deliverables Node zero dependencies
+    /// scripts" before saving two rules nobody had saved yet, and read "10 of 32 matching memories"
+    /// in full, topped by `jira-mentions-indexed-by-accountid` (client, node, scripts, zero). The
+    /// entries here carry the matched words where the real ones do.
+    #[test]
+    fn search_says_none_covers_a_query_and_lists_word_sharers_by_headline_only() {
+        const QUERY: &str =
+            "ISO dates British spelling client deliverables Node zero dependencies scripts";
+        let temp_dir = tempdir().unwrap();
+        let wd = temp_dir.path().join("project");
+        let server = MemoryServer::with_global_dir(temp_dir.path().join("global"));
+        let save = |category: &str, data: &str, tags: &[&str]| {
+            server
+                .remember("context", category, data, tags, true, Some(&wd))
+                .unwrap();
+        };
+        save(
+            "jira-mentions-indexed-by-accountid",
+            "Jira indexes @mentions by accountId, NOT display name — a display-name search finds ZERO mentions.\nA mention node renders the accountId. The client's mention sweep in scripts/sweep.py returns 0 and looks like an empty queue.",
+            &["reference", "imported:claude-code"],
+        );
+        save(
+            "article-authoring-unlocked",
+            "Community article authoring is live via the Contributors group.\nThe weekly flag resets on ISO-week rollover; the discover script is scripts/discover.mjs. Every article carries ZERO app references.",
+            &["project"],
+        );
+        save(
+            "ask-before-client-prod-config",
+            "Ask the CLIENT before any config change on their production system.\nSandbox: go ahead. Production: ask, wait for their yes, then act.",
+            &["feedback"],
+        );
+        for (category, data) in [
+            ("vendor-port", "The vendor API listens on 8850."),
+            ("fmt-first", "Run cargo fmt before every commit."),
+            (
+                "tick-cadence",
+                "Tick every five minutes during a benchmark run.",
+            ),
+            ("workhorse", "The workhorse is a Mac Studio on the LAN."),
+            ("reaping", "Kill pids, never a process group."),
+            ("plans", "A plan opens with the phases before and after."),
+            (
+                "keyring",
+                "Secrets come from secrets.yaml; the keyring is off.",
+            ),
+        ] {
+            save(category, data, &["project"]);
+        }
+
+        let report = server.search_report(QUERY, None, None, Some(&wd)).unwrap();
+        assert!(
+            report.starts_with(&format!(
+                "No memory covers \"{QUERY}\": 3 share a word with it"
+            )),
+            "{report}"
+        );
+        assert!(
+            report.contains("- jira-mentions-indexed-by-accountid (global, 4/10 terms): Jira indexes @mentions by accountId"),
+            "{report}"
+        );
+        assert!(
+            !report.contains("mention sweep"),
+            "a body that only shares words is not read as an answer: {report}"
+        );
+
+        save(
+            "client-deliverables",
+            "Client-facing output uses ISO dates (YYYY-MM-DD) and British spelling.\nApplies to reports, PDFs and every client deliverable; internal notes are exempt.",
+            &["user", "preference", "iso-dates", "british-spelling"],
+        );
+        save(
+            "handover-scripts",
+            "Handover scripts are always plain Node with zero npm dependencies.\nNode stdlib only: no package installs, no node_modules.",
+            &["user", "preference", "node", "zero-dependencies", "scripts"],
+        );
+        let report = server.search_report(QUERY, None, None, Some(&wd)).unwrap();
+        assert!(
+            report.starts_with(&format!("2 of 2 memories covering \"{QUERY}\":")),
+            "{report}"
+        );
+        let dates = report.find("## client-deliverables").unwrap();
+        let scripts = report.find("## handover-scripts").unwrap();
+        let sharers = report.find("share a word with the query").unwrap();
+        assert!(dates < sharers && scripts < sharers, "{report}");
+        assert!(
+            report.contains("Node stdlib only"),
+            "both rules come in full"
+        );
+        assert!(!report.contains("mention sweep"), "{report}");
+
+        let one_word = server
+            .search_report("postgres", None, None, Some(&wd))
+            .unwrap();
+        assert!(one_word.starts_with("No memory matched"), "{one_word}");
+        let one_word = server
+            .search_report("the scripts", None, None, Some(&wd))
+            .unwrap();
+        assert!(
+            one_word.starts_with("3 of 3 memories covering"),
+            "a one-word query (function words out) is covered by every entry with the word: {one_word}"
         );
     }
 
