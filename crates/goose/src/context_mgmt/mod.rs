@@ -659,7 +659,7 @@ pub const TOOL_RECORD_HEADER: &str =
 
 // measured: round 4's ten model-written pair summaries (sessions.db 764259-68) ran 84–716 chars; one
 // excerpt per argument and per output end at this length keeps a record inside that band.
-const RECORD_EXCERPT_CHARS: usize = 160;
+pub const RECORD_EXCERPT_CHARS: usize = 160;
 
 fn excerpt(text: &str) -> String {
     let mut chars = text.chars();

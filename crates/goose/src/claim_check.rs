@@ -54,11 +54,11 @@ fn is_human_message(message: &Message) -> bool {
 }
 
 /// Index of the message that opened this turn: the user's last own words.
-fn turn_start(messages: &[Message]) -> usize {
+pub(crate) fn turn_start(messages: &[Message]) -> usize {
     messages.iter().rposition(is_human_message).unwrap_or(0)
 }
 
-fn text_of(message: &Message) -> String {
+pub(crate) fn text_of(message: &Message) -> String {
     message
         .content
         .iter()

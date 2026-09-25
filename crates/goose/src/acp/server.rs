@@ -2769,6 +2769,42 @@ impl GooseAcpAgent {
                 session_id.clone(),
                 self.config_dir.clone(),
             ));
+            // Q-90: the answer check lands under the reply that is still on screen, and is stored
+            // so a reload shows it again.
+            let (agent, session_manager, session_id, cx) = (
+                agent.clone(),
+                self.session_manager.clone(),
+                session_id.clone(),
+                cx.clone(),
+            );
+            let custom_notifications = self.supports_goose_custom_notifications();
+            tokio::spawn(async move {
+                let Some(notice) = crate::turn_assessment::check_turn_answer(
+                    agent,
+                    session_manager,
+                    session_id.clone(),
+                )
+                .await
+                else {
+                    return;
+                };
+                for content in &notice.content {
+                    if let MessageContent::SystemNotification(notification) = content {
+                        if let Err(err) = send_status_message_update(
+                            &cx,
+                            custom_notifications,
+                            &session_id,
+                            notification,
+                        ) {
+                            tracing::warn!(
+                                session_id,
+                                ?err,
+                                "answer check: the notice was not sent"
+                            );
+                        }
+                    }
+                }
+            });
         }
         Ok(response)
     }
