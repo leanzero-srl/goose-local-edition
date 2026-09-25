@@ -41,6 +41,10 @@ def one(kind, worker, content, max_tokens, abort_after):
             for raw in r:
                 line = raw.decode(errors='replace').strip()
                 if not line.startswith('data:') or line == 'data: [DONE]': continue
+                # The relay ends a stream it lost in flight with one SSE error event (c9b5f03a7):
+                # that is the stream's outcome, never a token.
+                if '"error"' in line[:40]:
+                    err = line[5:].strip()[:200]; break
                 now = time.time()
                 if ttft is None: ttft = now - t0
                 if last is not None: gap = max(gap, now - last)
