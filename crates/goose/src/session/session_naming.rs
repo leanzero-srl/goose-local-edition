@@ -253,4 +253,32 @@ mod tests {
             "List current folder files"
         );
     }
+
+    /// The title's ThinkingEffort::Off reaches an MLX engine as the template switch. The title row
+    /// that looked right in E2E-1's calls.csv (3 tokens, no thinking) was another goose on OpenRouter
+    /// with gemini-2.5-flash as its fast model (`reasoning: {effort: none}`); on the MLX engine the
+    /// same Off had been dropped by the chat format.
+    #[tokio::test]
+    async fn the_title_reaches_the_mlx_engine_with_thinking_off() {
+        use crate::model_config::mlx_endpoint::{thinking_off, MlxEndpoint, SERVED};
+        let engine = MlxEndpoint::start().await;
+        let conversation = Conversation::new_unvalidated(vec![Message::user()
+            .with_text("Start a Jira Data Center to Cloud migration readiness assessment")]);
+        let title = generate_session_name(
+            engine.provider.as_ref(),
+            &goose_providers::model::ModelConfig::new(SERVED),
+            "s",
+            &conversation,
+        )
+        .await
+        .unwrap();
+        assert!(!title.is_empty());
+        let bodies = engine.bodies().await;
+        assert_eq!(bodies.len(), 1);
+        assert!(bodies[0]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .starts_with("Generate a short title (four words or less)"));
+        assert_eq!(bodies[0]["chat_template_kwargs"], thinking_off());
+    }
 }
