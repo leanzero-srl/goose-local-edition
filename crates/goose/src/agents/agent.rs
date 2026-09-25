@@ -294,6 +294,10 @@ pub struct Agent {
     /// judge supervises and whose golden benchmark was measured without it. Shared with the
     /// repetition inspector and read again where tool results are noted.
     repeat_guard: Arc<std::sync::atomic::AtomicBool>,
+    /// Set by `configure_swarm_worker`. Chat-only context changes made after the golden benchmark
+    /// (393a99351) check it, so a swarm worker's context stays what that run measured until a run
+    /// measures the change.
+    swarm_worker: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone, Debug)]
@@ -432,6 +436,7 @@ impl Agent {
             swarm_single_owned_file: std::sync::RwLock::new(None),
             swarm_measured_context: std::sync::atomic::AtomicBool::new(false),
             repeat_guard,
+            swarm_worker: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -447,6 +452,12 @@ impl Agent {
     pub fn configure_swarm_worker(&self, single_owned_file: Option<String>) {
         self.set_swarm_single_owned_file(single_owned_file);
         self.set_repeat_guard(false);
+        self.swarm_worker
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn is_swarm_worker(&self) -> bool {
+        self.swarm_worker.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// SWARM: register the task's single owned file so a pathless `write`/`edit` gets repaired (see the field
@@ -2215,6 +2226,7 @@ impl Agent {
                         conversation.clone(),
                         tool_call_cut_off,
                         current_turn_tool_count,
+                        !self.is_swarm_worker(),
                     )
                 };
 

@@ -652,6 +652,160 @@ pub async fn summarize_tool_call(
     Ok(response.with_generated_id())
 }
 
+/// Opens every condensed tool pair, so the model reads it as goose's bookkeeping about a call it
+/// made — not as a new message from the user (the pair is stored with role `user`).
+pub const TOOL_RECORD_HEADER: &str =
+    "[goose's record of an earlier tool call, condensed to save context; not a message from the user]";
+
+// measured: round 4's ten model-written pair summaries (sessions.db 764259-68) ran 84–716 chars; one
+// excerpt per argument and per output end at this length keeps a record inside that band.
+const RECORD_EXCERPT_CHARS: usize = 160;
+
+fn excerpt(text: &str) -> String {
+    let mut chars = text.chars();
+    let head: String = chars.by_ref().take(RECORD_EXCERPT_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
+    }
+}
+
+fn quoted(text: &str) -> String {
+    serde_json::Value::String(text.to_string()).to_string()
+}
+
+fn arguments_excerpt(arguments: Option<&rmcp::model::JsonObject>) -> String {
+    let Some(arguments) = arguments else {
+        return "{}".to_string();
+    };
+    let cut: serde_json::Map<String, serde_json::Value> = arguments
+        .iter()
+        .map(|(key, value)| {
+            let text = match value {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            let kept = if text.chars().count() > RECORD_EXCERPT_CHARS {
+                serde_json::Value::String(excerpt(&text))
+            } else {
+                value.clone()
+            };
+            (key.clone(), kept)
+        })
+        .collect();
+    serde_json::Value::Object(cut).to_string()
+}
+
+fn outcome_and_output(result: &rmcp::model::CallToolResult) -> (String, String) {
+    let exit_code = result
+        .structured_content
+        .as_ref()
+        .and_then(|s| s.get("exit_code"))
+        .and_then(serde_json::Value::as_i64);
+    let verb = if result.is_error == Some(true) {
+        "failed"
+    } else {
+        "succeeded"
+    };
+    let outcome = match exit_code {
+        Some(code) => format!("{verb} (exit {code})"),
+        None => verb.to_string(),
+    };
+
+    let text = result
+        .content
+        .iter()
+        .filter_map(|c| c.as_text().map(|t| t.text.as_str()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let non_text = result
+        .content
+        .iter()
+        .filter(|c| c.as_text().is_none())
+        .count();
+    let text = text.trim_end();
+    let mut output = if text.is_empty() {
+        "No text output.".to_string()
+    } else if text.chars().count() <= 2 * RECORD_EXCERPT_CHARS {
+        format!("Output: {}", quoted(text))
+    } else {
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        let first = lines.first().copied().unwrap_or(text);
+        let last = lines.last().copied().unwrap_or(text);
+        format!(
+            "Output, {} lines; first: {}; last: {}",
+            text.lines().count(),
+            quoted(&excerpt(first)),
+            quoted(&excerpt(last))
+        )
+    };
+    if non_text > 0 {
+        output.push_str(&format!(" Plus {non_text} non-text item(s)."));
+    }
+    (outcome, output)
+}
+
+/// A condensed tool pair built only from what the call and its result actually carry: the tool,
+/// its arguments, the outcome and excerpts of the output. Round 4 measured the model-written
+/// summaries it replaces: of ten, one ended in an order ("Write the E2E test artifacts … into this
+/// file.") and two stated file contents the outputs contradicted ("still ends with an em dash";
+/// the od dump ended with "!"). Checking such prose against the output cannot catch a narrative
+/// claim, so no model writes any of this.
+pub fn record_tool_call(conversation: &Conversation, tool_id: &str) -> Result<Message> {
+    let messages = conversation.messages();
+    let request = messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .find_map(|c| match c {
+            MessageContent::ToolRequest(req) if req.id == tool_id => Some(req),
+            _ => None,
+        });
+    let response = messages.iter().find_map(|m| {
+        m.content.iter().find_map(|c| match c {
+            MessageContent::ToolResponse(resp) if resp.id == tool_id => Some((m.created, resp)),
+            _ => None,
+        })
+    });
+    let (Some(request), Some((response_created, response))) = (request, response) else {
+        return Err(anyhow::anyhow!(
+            "No request/response pair found for tool id: {}",
+            tool_id
+        ));
+    };
+
+    let call = match &request.tool_call {
+        Ok(call) => format!(
+            "{} {}",
+            call.name,
+            arguments_excerpt(call.arguments.as_ref())
+        ),
+        Err(e) => format!(
+            "A tool call goose could not parse ({})",
+            excerpt(&e.message)
+        ),
+    };
+    let (outcome, output) = match &response.tool_result {
+        Ok(result) => outcome_and_output(result),
+        Err(e) => (
+            format!("failed: {}", quoted(&excerpt(&e.message))),
+            String::new(),
+        ),
+    };
+    let mut record = format!("{TOOL_RECORD_HEADER}\n{call} {outcome}.");
+    if !output.is_empty() {
+        record.push('\n');
+        record.push_str(&output);
+    }
+
+    let mut message = Message::user().with_text(record);
+    message.created = response_created;
+    message.metadata = MessageMetadata::agent_only();
+    Ok(message.with_generated_id())
+}
+
+/// `faithful_records`: chat agents get `record_tool_call` (facts only, no model call); the swarm's
+/// workers keep the model-written summary their golden benchmark was measured with.
 pub fn maybe_summarize_tool_pairs(
     provider: Arc<dyn Provider>,
     model_config: ModelConfig,
@@ -659,6 +813,7 @@ pub fn maybe_summarize_tool_pairs(
     conversation: Conversation,
     cutoff: usize,
     protect_last_n: usize,
+    faithful_records: bool,
 ) -> Option<JoinHandle<Vec<(Message, String)>>> {
     if !tool_pair_summarization_enabled() || provider.manages_own_context() {
         return None;
@@ -667,6 +822,21 @@ pub fn maybe_summarize_tool_pairs(
     let tool_ids = tool_ids_to_summarize(&conversation, cutoff, protect_last_n);
     if tool_ids.is_empty() {
         return None;
+    }
+
+    if faithful_records {
+        return Some(tokio::spawn(async move {
+            tool_ids
+                .into_iter()
+                .filter_map(|tool_id| match record_tool_call(&conversation, &tool_id) {
+                    Ok(record) => Some((record, tool_id)),
+                    Err(e) => {
+                        warn!("Failed to record tool pair: {}", e);
+                        None
+                    }
+                })
+                .collect()
+        }));
     }
 
     Some(tokio::spawn(async move {
@@ -987,6 +1157,184 @@ mod tests {
         assert_eq!(result.len(), TOOLCALL_SUMMARIZATION_BATCH_SIZE);
         assert_eq!(result[0], "call0");
         assert_eq!(result[9], "call9");
+    }
+
+    fn recorded_pair(
+        name: &str,
+        arguments: serde_json::Value,
+        result: Result<rmcp::model::CallToolResult, rmcp::model::ErrorData>,
+    ) -> String {
+        let call = CallToolRequestParams::new(name.to_string())
+            .with_arguments(arguments.as_object().unwrap().clone());
+        let conversation = Conversation::new_unvalidated(vec![
+            Message::user().with_text("go"),
+            Message::assistant().with_tool_request("c1", Ok(call)),
+            Message::user().with_tool_response("c1", result),
+        ]);
+        let record = record_tool_call(&conversation, "c1").unwrap();
+        assert!(!record.is_user_visible() && record.is_agent_visible());
+        record.as_concat_text()
+    }
+
+    fn shell_result(stdout: &str, stderr: &str, exit_code: i64) -> rmcp::model::CallToolResult {
+        let text = if stderr.is_empty() {
+            stdout.to_string()
+        } else {
+            format!("{stdout}\n{stderr}\n\nCommand exited with code {exit_code}")
+        };
+        let mut result = if exit_code == 0 {
+            rmcp::model::CallToolResult::success(vec![RawContent::text(text).no_annotation()])
+        } else {
+            rmcp::model::CallToolResult::error(vec![RawContent::text(text).no_annotation()])
+        };
+        result.structured_content = Some(serde_json::json!({
+            "stdout": stdout, "stderr": stderr, "exit_code": exit_code
+        }));
+        result
+    }
+
+    /// Every quoted excerpt in a record is text the tool actually returned.
+    fn assert_excerpts_come_from(record: &str, source: &str) {
+        for line in record.lines().filter(|l| l.starts_with("Output")) {
+            let mut rest = line;
+            while let Some(start) = rest.find('"') {
+                let tail = rest.get(start..).unwrap();
+                let quoted: String = serde_json::Deserializer::from_str(tail)
+                    .into_iter::<String>()
+                    .next()
+                    .unwrap()
+                    .unwrap();
+                let consumed = serde_json::Value::String(quoted.clone()).to_string().len();
+                let bare = quoted.trim_end_matches('…');
+                assert!(source.contains(bare), "{bare:?} is not in the output");
+                rest = tail.get(consumed..).unwrap();
+            }
+        }
+    }
+
+    /// Round 4, sessions.db 764255/764256 (#2b): a shell call that failed with exit 2.
+    #[test]
+    fn a_failed_shell_call_is_recorded_as_failed_with_its_own_stderr() {
+        let stderr = "bash: -c: line 1: syntax error near unexpected token `newline'\nbash: -c: line 1: `</parameter>'";
+        let record = recorded_pair(
+            "shell",
+            serde_json::json!({"command": "curl -s --max-time 20 -A \"Mozilla/5.0\" \"https://support.atlassian.com/totally-bogus-page-12345/\" | wc -c\n</parameter>\n!\n</parameter>\n!"}),
+            Ok(shell_result("   69272", stderr, 2)),
+        );
+        assert!(record.starts_with(TOOL_RECORD_HEADER), "{record}");
+        assert!(record.contains("shell {\"command\":"), "{record}");
+        assert!(record.contains(" failed (exit 2)."), "{record}");
+        assert!(record.contains("69272") && record.contains("unexpected token `newline'"));
+        assert_excerpts_come_from(
+            &record,
+            &format!("   69272\n{stderr}\n\nCommand exited with code 2"),
+        );
+    }
+
+    /// Round 4, 764166/764167: the model-written summary said the file "still ends with an em dash";
+    /// the output's last lines are the od dump ending in "!" and a smart-quote count of 0.
+    #[test]
+    fn a_long_output_is_quoted_from_its_own_ends_never_paraphrased() {
+        let output = r#"--- last 60 chars (od) ---
+0000000    n   e   x   t       c   a   l   l       —  **  **       n   o
+0000020    t   e   d       a   s       *   *   F   r   i       2   /   1
+0000040    0   *   *       (   O   c   t       2   )   ?  \n  \n   <   /
+0000060    p   a   r   a   m   e   t   e   r   >  \n   !
+0000074
+--- smart-quote count (expect 0) ---
+0"#;
+        let record = recorded_pair(
+            "shell",
+            serde_json::json!({"command": "cd work && echo '--- last 60 chars (od) ---' && tail -c 60 notes/kickoff.md | od -c | tail -8"}),
+            Ok(shell_result(output, "", 0)),
+        );
+        assert!(record.contains(" succeeded (exit 0)."), "{record}");
+        assert!(
+            record.contains("Output, 8 lines; first: \"--- last 60 chars (od) ---\"; last: \"0\""),
+            "{record}"
+        );
+        assert!(!record.contains("em dash"));
+        assert_excerpts_come_from(&record, output);
+    }
+
+    /// Round 4, 764160/764161: a write that lost its `path`; 764261's summary of the pair before it
+    /// ended "Write the E2E test artifacts … into this file." — a record states, it never asks.
+    #[test]
+    fn a_rejected_write_is_recorded_with_the_error_and_the_content_cut() {
+        let content =
+            "# Kickoff — Harbourline Freight Jira DC→Cloud Migration Readiness\n\n".repeat(20);
+        let record = recorded_pair(
+            "write",
+            serde_json::json!({"content": content}),
+            Ok(rmcp::model::CallToolResult::error(vec![RawContent::text(
+                "Error: Failed to parse arguments: missing field `path`",
+            )
+            .no_annotation()])),
+        );
+        assert!(record.contains(" failed."), "{record}");
+        assert!(
+            record.contains("Output: \"Error: Failed to parse arguments: missing field `path`\"")
+        );
+        assert!(record.contains("…"), "a long argument is cut: {record}");
+        assert!(record.len() < content.len(), "{record}");
+        let body = record.trim_start_matches(TOOL_RECORD_HEADER);
+        assert!(!body.contains("\nWrite ") && !body.to_lowercase().contains("please"));
+    }
+
+    #[test]
+    fn a_protocol_error_is_recorded_as_the_error() {
+        let record = recorded_pair(
+            "fetch",
+            serde_json::json!({"url": "https://support.atlassian.com/x"}),
+            Err(rmcp::model::ErrorData::internal_error(
+                "Resource not found: Request failed with status code 404",
+                None,
+            )),
+        );
+        assert!(
+            record.contains(
+                "fetch {\"url\":\"https://support.atlassian.com/x\"} failed: \"Resource not found: Request failed with status code 404\"."
+            ),
+            "{record}"
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_agents_record_pairs_without_asking_the_model() {
+        let mock = MockProvider::new(
+            Message::assistant().with_text("Write the E2E test artifacts into this file."),
+            1000,
+        );
+        let model_config = mock.config.clone();
+        let provider: Arc<dyn Provider> = Arc::new(mock);
+        let mut messages = vec![Message::user().with_text("hello")];
+        for i in 0..16 {
+            messages.extend(create_tool_pair(
+                &format!("call{i}"),
+                &format!("resp{i}"),
+                "read_file",
+                "content",
+            ));
+        }
+        let conversation = Conversation::new_unvalidated(messages);
+        let faithful = maybe_summarize_tool_pairs(
+            provider.clone(),
+            model_config.clone(),
+            "s".to_string(),
+            conversation.clone(),
+            5,
+            0,
+            true,
+        )
+        .unwrap()
+        .await
+        .unwrap();
+        assert_eq!(faithful.len(), TOOLCALL_SUMMARIZATION_BATCH_SIZE);
+        for (record, _) in &faithful {
+            let text = record.as_concat_text();
+            assert!(text.starts_with(TOOL_RECORD_HEADER), "{text}");
+            assert!(!text.contains("E2E"), "{text}");
+        }
     }
 
     #[test]
