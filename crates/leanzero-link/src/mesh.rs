@@ -286,8 +286,8 @@ impl MeshConfig {
 }
 
 fn default_state_dir() -> Result<PathBuf, MeshError> {
-    dirs::home_dir()
-        .map(|home| home.join(".leanzero").join("tailscale"))
+    crate::identity::leanzero_dir()
+        .map(|dir| dir.join("tailscale"))
         .ok_or(MeshError::NoHomeDir)
 }
 

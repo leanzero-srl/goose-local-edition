@@ -60,8 +60,19 @@ pub enum IdentityError {
 
 /// The default on-disk location: `~/.leanzero/identity.json`.
 pub fn default_identity_path() -> Result<PathBuf, IdentityError> {
-    let home = dirs::home_dir().ok_or(IdentityError::NoHomeDir)?;
-    Ok(home.join(".leanzero").join("identity.json"))
+    Ok(leanzero_dir()
+        .ok_or(IdentityError::NoHomeDir)?
+        .join("identity.json"))
+}
+
+/// `~/.leanzero`, or `$GOOSE_PATH_ROOT/.leanzero` when goose's state root is overridden — the
+/// same seam goose's own dirs hang from, so a test process never reads or writes the owner's
+/// live Link account, node id or mesh state.
+pub(crate) fn leanzero_dir() -> Option<PathBuf> {
+    std::env::var_os("GOOSE_PATH_ROOT")
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+        .map(|root| root.join(".leanzero"))
 }
 
 /// Reads and writes the persisted [`Identity`]. Cheap to clone; holds only a path.
