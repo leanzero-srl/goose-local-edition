@@ -5,7 +5,7 @@
 # a wait loop keyed on the word "Invalid" in the build's JSON output fired early; the old one-liner
 # rm -rf'd the installed app before ditto found no build).
 set -euo pipefail
-v=$1; repo=/Users/mihaiperdum/Projects/goose/ui/desktop
+v=$1; repo=${REPO:-/Users/mihaiperdum/Projects/goose}/ui/desktop
 dmg="$repo/out/make/Goose-Swarm-$v.dmg"; app="$repo/out/Goose Swarm-darwin-arm64/Goose Swarm.app"
 grep -q ">>> DONE" ~/goose-builds/release-$v.log || { echo "build $v has not finished (no >>> DONE)"; exit 2; }
 [ -f "$dmg" ] && [ -d "$app" ] || { echo "missing $dmg or $app"; exit 2; }
