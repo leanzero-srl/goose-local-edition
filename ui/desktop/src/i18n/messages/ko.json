@@ -4004,9 +4004,6 @@
   "mlxStateTile.readRateLast": {
     "defaultMessage": "tok/s (읽기, 마지막 프롬프트)"
   },
-  "mlxStateTile.readRateNone": {
-    "defaultMessage": "이 페이지를 연 뒤로 읽은 프롬프트 없음"
-  },
   "mlxStateTile.readingLive": {
     "defaultMessage": "실시간 통계 읽는 중…"
   },
@@ -4099,9 +4096,6 @@
   },
   "mlxStateTile.writeRateLast": {
     "defaultMessage": "tok/s (작성, 마지막 실행)"
-  },
-  "mlxStateTile.writeRateNone": {
-    "defaultMessage": "이 페이지를 연 뒤로 쓴 것 없음"
   },
   "mlxThinking.auto": {
     "defaultMessage": "자동"

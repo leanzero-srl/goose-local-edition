@@ -4004,9 +4004,6 @@
   "mlxStateTile.readRateLast": {
     "defaultMessage": "tok/s（読み込み、直前のプロンプト）"
   },
-  "mlxStateTile.readRateNone": {
-    "defaultMessage": "このページを開いてからプロンプトの読み取りなし"
-  },
   "mlxStateTile.readingLive": {
     "defaultMessage": "ライブ統計を読み込み中…"
   },
@@ -4099,9 +4096,6 @@
   },
   "mlxStateTile.writeRateLast": {
     "defaultMessage": "tok/s（書き込み、前回）"
-  },
-  "mlxStateTile.writeRateNone": {
-    "defaultMessage": "このページを開いてから書き込みなし"
   },
   "mlxThinking.auto": {
     "defaultMessage": "自動"

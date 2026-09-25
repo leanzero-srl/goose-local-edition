@@ -4004,9 +4004,6 @@
   "mlxStateTile.readRateLast": {
     "defaultMessage": "tok/s पढ़ते हुए, पिछला प्रॉम्प्ट"
   },
-  "mlxStateTile.readRateNone": {
-    "defaultMessage": "यह पेज खुलने के बाद से कोई प्रॉम्प्ट नहीं पढ़ा गया"
-  },
   "mlxStateTile.readingLive": {
     "defaultMessage": "लाइव आँकड़े पढ़े जा रहे हैं…"
   },
@@ -4099,9 +4096,6 @@
   },
   "mlxStateTile.writeRateLast": {
     "defaultMessage": "tok/s लिखते हुए, पिछला रन"
-  },
-  "mlxStateTile.writeRateNone": {
-    "defaultMessage": "यह पेज खुलने के बाद से कुछ नहीं लिखा गया"
   },
   "mlxThinking.auto": {
     "defaultMessage": "ऑटो"

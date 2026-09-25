@@ -4004,9 +4004,6 @@
   "mlxStateTile.readRateLast": {
     "defaultMessage": "tok/s membaca, prompt terakhir"
   },
-  "mlxStateTile.readRateNone": {
-    "defaultMessage": "tiada prompt dibaca sejak halaman ini dibuka"
-  },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Membaca statistik langsung…"
   },
@@ -4099,9 +4096,6 @@
   },
   "mlxStateTile.writeRateLast": {
     "defaultMessage": "tok/s menulis, larian terakhir"
-  },
-  "mlxStateTile.writeRateNone": {
-    "defaultMessage": "tiada apa-apa ditulis sejak halaman ini dibuka"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Auto"

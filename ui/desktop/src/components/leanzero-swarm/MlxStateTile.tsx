@@ -92,16 +92,8 @@ const i18n = defineMessages({
   },
   writeRate: { id: 'mlxStateTile.writeRate', defaultMessage: 'tok/s writing' },
   writeRateLast: { id: 'mlxStateTile.writeRateLast', defaultMessage: 'tok/s writing, last run' },
-  writeRateNone: {
-    id: 'mlxStateTile.writeRateNone',
-    defaultMessage: 'nothing written since this page opened',
-  },
   readRate: { id: 'mlxStateTile.readRate', defaultMessage: 'tok/s reading this prompt' },
   readRateLast: { id: 'mlxStateTile.readRateLast', defaultMessage: 'tok/s reading, last prompt' },
-  readRateNone: {
-    id: 'mlxStateTile.readRateNone',
-    defaultMessage: 'no prompt read since this page opened',
-  },
   promptSize: {
     id: 'mlxStateTile.promptSize',
     defaultMessage: 'prompt tokens, reading for {elapsed}',
@@ -622,16 +614,16 @@ interface Figure {
   label: string;
 }
 
-/** The two figures the tile leads with, per activity — each one measured, or a dash that says so. */
+/** The two figures the tile leads with, per activity — each one measured, or null (not drawn). */
 function figures(
   intl: IntlShape,
   stats: MlxLiveStats,
   last: LastRates
-): { hero: Figure; second: Figure } {
+): { hero: Figure | null; second: Figure | null } {
   const activity = mlxActivity(stats);
   const rate = (tps: number) => formatRate(tps, intl.locale);
   const prefillNow = measuredPrefillTps(stats);
-  const readFigure: Figure =
+  const readFigure: Figure | null =
     prefillNow > 0
       ? {
           testId: 'mlx-live-pps',
@@ -644,15 +636,15 @@ function figures(
             value: rate(last.prefillTps),
             label: intl.formatMessage(i18n.readRateLast),
           }
-        : { testId: 'mlx-live-pps', value: '—', label: intl.formatMessage(i18n.readRateNone) };
-  const lastWrite: Figure =
+        : null;
+  const lastWrite: Figure | null =
     last.decodeTps != null
       ? {
           testId: 'mlx-live-tps',
           value: rate(last.decodeTps),
           label: intl.formatMessage(i18n.writeRateLast),
         }
-      : { testId: 'mlx-live-tps', value: '—', label: intl.formatMessage(i18n.writeRateNone) };
+      : null;
 
   if (activity === 'generating') {
     return {
@@ -707,9 +699,9 @@ function LiveReadout({
   const activity = mlxActivity(stats);
   const active = activity === 'generating' || activity === 'prefill' || activity === 'queued';
   const { hero, second } = figures(intl, stats, last);
-  // Idle with no rate this page measured: the counters below say what the engine did; two dashes
-  // saying "nothing" beside "2 requests served" were noise.
-  const showFigures = active || last.decodeTps != null || last.prefillTps != null;
+  // Only measured figures are drawn: a dash beside "Reading prompt · 2m 37s" said no prompt was
+  // read, and two dashes beside "2 requests served" said nothing happened (3.0.31–3.0.32).
+  const shown = [hero, second].filter((f): f is Figure => f != null);
   // Running requests first, then the queue — the engine's own order within each.
   const requests = [
     ...stats.requests.filter((r) => r.status !== 'waiting'),
@@ -767,20 +759,19 @@ function LiveReadout({
   }
   return (
     <div data-testid="mlx-live" data-activity={activity} className="flex flex-col gap-4">
-      {showFigures && (
+      {shown.length > 0 && (
         <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] items-end gap-4">
-          <div className="flex min-w-0 flex-col gap-1">
-            <span data-testid={hero.testId} className={active ? HERO : HERO_QUIET}>
-              {hero.value}
-            </span>
-            <span className={LABEL}>{hero.label}</span>
-          </div>
-          <div className="flex min-w-0 flex-col gap-1">
-            <span data-testid={second.testId} className={SECOND}>
-              {second.value}
-            </span>
-            <span className={LABEL}>{second.label}</span>
-          </div>
+          {shown.map((f, i) => (
+            <div key={f.testId} className="flex min-w-0 flex-col gap-1">
+              <span
+                data-testid={f.testId}
+                className={i === 0 ? (active ? HERO : HERO_QUIET) : SECOND}
+              >
+                {f.value}
+              </span>
+              <span className={LABEL}>{f.label}</span>
+            </div>
+          ))}
         </div>
       )}
       {/* The writing rate's trace means something only while it writes; idle it was a flat line

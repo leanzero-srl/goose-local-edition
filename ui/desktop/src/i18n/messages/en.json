@@ -4004,9 +4004,6 @@
   "mlxStateTile.readRateLast": {
     "defaultMessage": "tok/s reading, last prompt"
   },
-  "mlxStateTile.readRateNone": {
-    "defaultMessage": "no prompt read since this page opened"
-  },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Reading live stats…"
   },
@@ -4099,9 +4096,6 @@
   },
   "mlxStateTile.writeRateLast": {
     "defaultMessage": "tok/s writing, last run"
-  },
-  "mlxStateTile.writeRateNone": {
-    "defaultMessage": "nothing written since this page opened"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Auto"

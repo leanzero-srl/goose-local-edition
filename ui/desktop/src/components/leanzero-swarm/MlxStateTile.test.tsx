@@ -202,6 +202,28 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     expect(screen.getByText('requests served')).toBeInTheDocument();
   });
 
+  it('reading a prompt with no rate yet: the prompt and its time, never a dash saying no prompt was read', () => {
+    tile({
+      live: parseMlxLiveStatus({
+        status: 'running',
+        requests: [
+          {
+            request_id: 'r1',
+            status: 'running',
+            phase: 'prefill',
+            prompt_tokens: 48200,
+            elapsed_s: 157,
+          },
+        ],
+      }),
+    });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(within(t).getByRole('status')).toHaveTextContent('Reading prompt');
+    expect(screen.getByTestId('mlx-live-prompt')).toHaveTextContent('48.2K');
+    expect(screen.queryByTestId('mlx-live-pps')).toBeNull();
+    expect(within(t).queryByText('—')).toBeNull();
+  });
+
   it('serving: a chat, an external /v1 client, and the unexplained rest COUNTED beside the live swarm run', async () => {
     const rows: MlxServingRow[] = [
       {
