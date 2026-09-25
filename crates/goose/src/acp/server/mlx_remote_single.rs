@@ -19,9 +19,12 @@ use crate::config::ConfigError;
 use crate::providers::mlx_remote::{self, PublishedRoute, RouteRecord};
 use crate::providers::mlx_serving_intent::{IntentKind, ServingIntent};
 use goose_sidecar::engine::{served_model_id, EngineSettings};
-use leanzero_link::inference::{InferenceRelay, PeerCallResolver, ENGINE_UNREACHABLE};
+use leanzero_link::inference::{
+    InferenceRelay, PeerCallResolver, ENGINE_UNREACHABLE, RELAY_FAILED,
+};
 use leanzero_link::manager::{AuthState, LinkError, LinkManager};
 use leanzero_link::state::{ChatServing, MlxOp};
+use leanzero_link::wire::NodeStatus;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::sync::Mutex as StdMutex;
@@ -199,8 +202,23 @@ fn link_refusal(error: &LinkError) -> MlxRemoteSingleRefusalDto {
     }
 }
 
-/// The engine ops a route makes on its peer over LeanZero Link (the mesh's `mlx_proxy`) — a seam
-/// so the restore runs against a stand-in peer in tests.
+/// Whether a Link op's error means the peer never answered — this Mac is off the mesh, the mesh
+/// does not list the peer, or the dial or the send through the mesh failed — rather than the
+/// peer answering with a refusal (`peer returned <code>`, an undecodable body, a classed
+/// `MlxControl` answer).
+fn peer_did_not_answer(error: &LinkError) -> bool {
+    match error {
+        LinkError::NotConnected | LinkError::UnknownPeer(_) | LinkError::PeerDial(_) => true,
+        LinkError::MlxProxy(text) => {
+            !text.starts_with("peer returned") && !text.starts_with("peer responded")
+        }
+        _ => false,
+    }
+}
+
+/// The engine ops a route makes on its peer over LeanZero Link (the mesh's `mlx_proxy`), and the
+/// mesh fabric's own view of that peer — a seam so the restore runs against a stand-in peer in
+/// tests.
 #[async_trait::async_trait]
 pub(super) trait PeerControl: Send + Sync {
     async fn mlx_op(
@@ -209,6 +227,13 @@ pub(super) trait PeerControl: Send + Sync {
         op: MlxOp,
         body: serde_json::Value,
     ) -> Result<serde_json::Value, LinkError>;
+
+    /// The fabric's verdict on `peer` from its own polls — no dial: the words while it cannot
+    /// reach the peer (or this Mac is off the mesh), `None` while it reaches it.
+    async fn unreachable(&self, peer: &str) -> Option<String>;
+
+    /// Resolves with [`Self::unreachable`]'s words the first time the fabric cannot reach `peer`.
+    async fn lost(&self, peer: &str) -> String;
 }
 
 #[async_trait::async_trait]
@@ -221,6 +246,72 @@ impl PeerControl for LinkManager {
     ) -> Result<serde_json::Value, LinkError> {
         self.mlx_proxy(peer, op, body).await
     }
+
+    async fn unreachable(&self, peer: &str) -> Option<String> {
+        let Some(registry) = self.active_registry().await else {
+            return Some(link_refusal(&LinkError::NotConnected).message);
+        };
+        let node = registry
+            .peer_nodes()
+            .into_iter()
+            .find(|node| node.node_id == peer || node.hostname == peer);
+        match node {
+            None => Some(link_refusal(&LinkError::UnknownPeer(peer.to_string())).message),
+            Some(node) if node.status == NodeStatus::Offline => Some(match node.last_poll_error {
+                Some(error) => format!("the LeanZero Link mesh cannot reach it ({error})"),
+                None => "the LeanZero Link mesh has not reached it since it listed it".to_string(),
+            }),
+            Some(_) => None,
+        }
+    }
+
+    /// The fabric's view changes only when one of its polls lands, so it is looked at on the
+    /// fabric's own poll cadence (`liveness_interval`, the cadence the relay's in-flight watch
+    /// looks on) — never a clock of this file's.
+    async fn lost(&self, peer: &str) -> String {
+        loop {
+            if let Some(words) = self.unreachable(peer).await {
+                return words;
+            }
+            match self.peer_call(peer).await {
+                Ok(call) => tokio::time::sleep(call.liveness_interval).await,
+                Err(error) => return link_refusal(&error).message,
+            }
+        }
+    }
+}
+
+/// A Link op's refusal, and whether the peer answered at all ([`peer_did_not_answer`]).
+struct PeerRefusal {
+    refusal: MlxRemoteSingleRefusalDto,
+    no_answer: bool,
+}
+
+async fn peer_op_answer<Req: Serialize, Resp: DeserializeOwned>(
+    control: &dyn PeerControl,
+    peer: &str,
+    op: MlxOp,
+    req: &Req,
+) -> Result<Resp, PeerRefusal> {
+    let answered = |refusal| PeerRefusal {
+        refusal,
+        no_answer: false,
+    };
+    let body = serde_json::to_value(req)
+        .map_err(|e| answered(refusal("peerUnreachable", e.to_string())))?;
+    let value = control
+        .mlx_op(peer, op, body)
+        .await
+        .map_err(|e| PeerRefusal {
+            refusal: link_refusal(&e),
+            no_answer: peer_did_not_answer(&e),
+        })?;
+    serde_json::from_value(value).map_err(|e| {
+        answered(refusal(
+            "peerTooOld",
+            format!("the peer's {} answer did not decode: {e}", op.path()),
+        ))
+    })
 }
 
 async fn peer_op<Req: Serialize, Resp: DeserializeOwned>(
@@ -229,23 +320,19 @@ async fn peer_op<Req: Serialize, Resp: DeserializeOwned>(
     op: MlxOp,
     req: &Req,
 ) -> Result<Resp, MlxRemoteSingleRefusalDto> {
-    let body = serde_json::to_value(req).map_err(|e| refusal("peerUnreachable", e.to_string()))?;
-    let value = control
-        .mlx_op(peer, op, body)
+    peer_op_answer(control, peer, op, req)
         .await
-        .map_err(|e| link_refusal(&e))?;
-    serde_json::from_value(value).map_err(|e| {
-        refusal(
-            "peerTooOld",
-            format!("the peer's {} answer did not decode: {e}", op.path()),
-        )
-    })
+        .map_err(|refused| refused.refusal)
 }
 
 /// The peer engine's `/v1/models` through the relay: its context window when it serves the route's
 /// model, else why not in words.
 async fn route_models(route: &PublishedRoute) -> Result<Option<u64>, String> {
-    match relay_get(&route.base_url, "v1/models").await {
+    served_window(route, relay_get(&route.base_url, "v1/models").await)
+}
+
+fn served_window(route: &PublishedRoute, answer: RelayAnswer) -> Result<Option<u64>, String> {
+    match answer {
         RelayAnswer::Ok(body) => match goose_sidecar::engine::parse_model_info(&body) {
             Ok((Some(served), window, _)) if served == route.served_model_id => Ok(window),
             Ok((served, _, _)) => Err(format!(
@@ -259,6 +346,12 @@ async fn route_models(route: &PublishedRoute) -> Result<Option<u64>, String> {
         RelayAnswer::Status { code, body } => Err(format!("{code}: {body}")),
         RelayAnswer::NoAnswer(why) => Err(why),
     }
+}
+
+/// The relay's own `502` for a peer it could not reach at all — as opposed to the peer's proxy
+/// answering that its engine does not (`engineUnreachable`).
+fn relay_lost_the_peer(answer: &RelayAnswer) -> bool {
+    matches!(answer, RelayAnswer::Status { code: 502, body } if body.starts_with(RELAY_FAILED))
 }
 
 /// A status read: the route's status and, when the proxy did not serve, the peer's own engine
@@ -275,13 +368,8 @@ async fn route_status(
     observe_route(control, route).await.status
 }
 
-/// The route's state, re-probed through the relay, and the peer's own engine status when the
-/// relay says it is not serving yet (mounting vs failed).
-async fn observe_route(
-    control: Option<&dyn PeerControl>,
-    route: &PublishedRoute,
-) -> RouteObservation {
-    let mut status = MlxRemoteSingleStatusDto {
+fn route_facts(route: &PublishedRoute) -> MlxRemoteSingleStatusDto {
+    MlxRemoteSingleStatusDto {
         state: "mounting".to_string(),
         peer: Some(route.peer.clone()),
         peer_hostname: Some(route.peer_hostname.clone()),
@@ -291,8 +379,65 @@ async fn observe_route(
         served_model_id: Some(route.served_model_id.clone()),
         capacity: Some(route.capacity),
         ..Default::default()
+    }
+}
+
+/// `reconnecting`: the route is published and its Mac does not answer right now — LeanZero Link
+/// cannot reach it, so nothing about its engine is known and nothing is asked of it.
+fn reconnecting(route: &PublishedRoute, why: String) -> RouteObservation {
+    let words = format!(
+        "{} does not answer over LeanZero Link right now: {why}",
+        route.peer_name()
+    );
+    RouteObservation {
+        status: MlxRemoteSingleStatusDto {
+            state: "reconnecting".to_string(),
+            active_requests_error: Some(words.clone()),
+            last_error: Some(words),
+            ..route_facts(route)
+        },
+        peer_engine: None,
+    }
+}
+
+/// The route's state. The mesh fabric's own view of the peer is read FIRST — it costs no dial —
+/// and a peer it cannot reach is `reconnecting` at once: every probe through the mesh to a dead
+/// peer waits on the transport (measured 2026-09-25: tailscaled's SOCKS listener holds a dial to
+/// a mesh address nothing answers for 5.0 s, where a live peer answers in 4.6 ms; a request sent
+/// down the relay's kept-alive connection to a gone peer is silent until the relay's in-flight
+/// watch gives up, five looks). Otherwise the route is re-probed through the relay, and the
+/// probes race the fabric losing the peer, so a read that started just before the peer went
+/// away answers when the fabric notices instead of when the transport does.
+async fn observe_route(
+    control: Option<&dyn PeerControl>,
+    route: &PublishedRoute,
+) -> RouteObservation {
+    let Some(control) = control else {
+        return probe_route(None, route).await;
     };
-    let models_error = match route_models(route).await {
+    if let Some(why) = control.unreachable(&route.peer).await {
+        return reconnecting(route, why);
+    }
+    tokio::select! {
+        biased;
+        observed = probe_route(Some(control), route) => observed,
+        why = control.lost(&route.peer) => reconnecting(route, why),
+    }
+}
+
+/// The route re-probed through the relay, and the peer's own engine status when the relay says
+/// it is not serving yet (mounting vs failed vs not answering at all).
+async fn probe_route(
+    control: Option<&dyn PeerControl>,
+    route: &PublishedRoute,
+) -> RouteObservation {
+    let mut status = route_facts(route);
+    let (models, engine_status) = tokio::join!(
+        relay_get(&route.base_url, "v1/models"),
+        relay_get(&route.base_url, "v1/status")
+    );
+    let relay_lost_peer = relay_lost_the_peer(&models);
+    let models_error = match served_window(route, models) {
         Ok(window) => {
             status.state = "ready".to_string();
             status.context_window = window;
@@ -300,7 +445,7 @@ async fn observe_route(
         }
         Err(why) => Some(why),
     };
-    match relay_get(&route.base_url, "v1/status").await {
+    match engine_status {
         RelayAnswer::Ok(body) => {
             match goose_sidecar::engine::parse_active_requests(&body) {
                 Ok(n) => status.active_requests = Some(n),
@@ -324,7 +469,7 @@ async fn observe_route(
     // Not serving through the proxy: the peer's own engine state says loading or failed.
     let peer_state = match control {
         Some(control) => {
-            peer_op::<_, MlxEngineStatusResponse>(
+            peer_op_answer::<_, MlxEngineStatusResponse>(
                 control,
                 &route.peer,
                 MlxOp::Status,
@@ -335,10 +480,14 @@ async fn observe_route(
             )
             .await
         }
-        None => Err(refusal(
-            "linkNotConnected",
-            "LeanZero Link has not started in this goose",
-        )),
+        None => Err(PeerRefusal {
+            refusal: refusal(
+                "linkNotConnected",
+                "LeanZero Link has not started in this goose",
+            ),
+            // This goose cannot ask the peer; the relay's own 502 says whether it reached it.
+            no_answer: relay_lost_peer,
+        }),
     };
     let mut peer_engine = None;
     match peer_state {
@@ -372,8 +521,13 @@ async fn observe_route(
             peer_engine = Some(peer.status);
         }
         Err(refused) => {
-            status.state = "failed".to_string();
-            status.last_error = Some(format!("{models_error}; {}", refused.message));
+            status.state = if refused.no_answer {
+                "reconnecting"
+            } else {
+                "failed"
+            }
+            .to_string();
+            status.last_error = Some(format!("{models_error}; {}", refused.refusal.message));
         }
     }
     RouteObservation {
@@ -699,7 +853,8 @@ fn restore_failure(route: &PublishedRoute, words: &str) -> String {
 /// The owner's status read, and the restore it may start. The trigger is the peer's answer on
 /// this read — engine `stopped`, nothing stopped it ([`restore_step`]) — never a clock; one
 /// restore per outage (the route serving again re-arms it), and a failed one stays a named
-/// `failed` with the peer's words until the route serves or the owner runs it again.
+/// `failed` with the peer's words until the route serves or the owner runs it again. A peer that
+/// does not answer at all is `reconnecting`: its engine is unknown, so it starts nothing.
 async fn owned_route_status(
     book: &'static RouteRestore,
     control: Option<Arc<dyn PeerControl>>,
@@ -710,6 +865,11 @@ async fn owned_route_status(
     let mut status = observed.status;
     if status.state == "ready" {
         book.rearm(route);
+        return status;
+    }
+    if status.state == "reconnecting" {
+        // Nothing is known of the peer's engine and nothing can be asked of it: no restore
+        // starts, and one under way keeps its phase until the peer answers again.
         return status;
     }
     match book.phase(route) {
@@ -846,7 +1006,9 @@ impl GooseAcpAgent {
         match mlx_remote::read() {
             RouteRecord::Mine(route) if route.peer == req.peer && route.model_id == req.model_id => {
                 let manager = super::link::existing_link_manager();
-                // A restore under way reads `mounting` here: the same placement asked again joins it.
+                // A restore under way reads `mounting` here: the same placement asked again joins
+                // it. A peer that does not answer (`reconnecting`) is kept too: a fresh start
+                // would withdraw the route and then fail to reach the same peer.
                 let status = owned_route_status(
                     &ROUTE_RESTORE,
                     manager.map(|m| m as Arc<dyn PeerControl>),
@@ -1171,6 +1333,13 @@ mod tests {
         /// The model the peer's engine lists on `/v1/models` through the proxy; `None` = nothing
         /// listens there (the proxy's `502 engineUnreachable`).
         proxy_serves: Arc<StdMutex<Option<String>>>,
+        /// The Studio's Link is gone and the fabric has not noticed yet: every op fails in the
+        /// transport with these words, and the relay answers its own `502 linkRelayFailed`.
+        link_down: Arc<StdMutex<Option<String>>>,
+        /// The fabric's verdict (`unreachable`): `Some` once its polls cannot reach the Studio.
+        fabric_lost: StdMutex<Option<String>>,
+        /// Every op the route made on the peer over Link.
+        ops: AtomicUsize,
     }
 
     impl StandInPeer {
@@ -1180,7 +1349,27 @@ mod tests {
                 mount_refusal: None,
                 mounts: AtomicUsize::new(0),
                 proxy_serves: Arc::new(StdMutex::new(None)),
+                link_down: Arc::new(StdMutex::new(None)),
+                fabric_lost: StdMutex::new(None),
+                ops: AtomicUsize::new(0),
             })
+        }
+
+        fn ops(&self) -> usize {
+            self.ops.load(Ordering::SeqCst)
+        }
+
+        fn link_dies(&self, words: &str) {
+            *self.link_down.lock().unwrap() = Some(words.to_string());
+        }
+
+        fn link_returns(&self) {
+            *self.link_down.lock().unwrap() = None;
+            *self.fabric_lost.lock().unwrap() = None;
+        }
+
+        fn fabric_notices(&self, words: &str) {
+            *self.fabric_lost.lock().unwrap() = Some(words.to_string());
         }
 
         fn mounts(&self) -> usize {
@@ -1208,6 +1397,10 @@ mod tests {
             op: MlxOp,
             body: serde_json::Value,
         ) -> Result<serde_json::Value, LinkError> {
+            self.ops.fetch_add(1, Ordering::SeqCst);
+            if let Some(words) = self.link_down.lock().unwrap().clone() {
+                return Err(LinkError::MlxProxy(words));
+            }
             match op {
                 MlxOp::Status => {
                     let mut status = self.engine.lock().unwrap().clone();
@@ -1233,20 +1426,45 @@ mod tests {
                 other => panic!("the restore made an op it has no business making: {other:?}"),
             }
         }
+
+        async fn unreachable(&self, _peer: &str) -> Option<String> {
+            self.fabric_lost.lock().unwrap().clone()
+        }
+
+        /// The fabric's polls, as a test join: looked at until a test says it noticed.
+        async fn lost(&self, peer: &str) -> String {
+            loop {
+                if let Some(words) = self.unreachable(peer).await {
+                    return words;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        }
     }
 
     /// This Mac's relay to the stand-in's chat proxy: `/v1/models` and `/v1/status` answer as the
     /// proxy does — the engine's own answer, or r3-2's `502 engineUnreachable` while nothing
     /// listens on the peer.
-    async fn stand_in_relay(serves: Arc<StdMutex<Option<String>>>) -> String {
+    async fn stand_in_relay(peer: &StandInPeer) -> String {
         const UNREACHABLE: &str = "engineUnreachable: no MLX engine answers at http://127.0.0.1:8090 on WorksMacStudio.lan — mount a model there first (error sending request for url (http://127.0.0.1:8090/v1/models))";
-        let models = serves.clone();
+        let serves = peer.proxy_serves.clone();
+        let (models, models_down, status_down) = (
+            serves.clone(),
+            peer.link_down.clone(),
+            peer.link_down.clone(),
+        );
+        let relay_failed =
+            |why: String| format!("linkRelayFailed: cannot reach Link peer 'wh': {why}");
         let app = axum::Router::new()
             .route(
                 "/relay/cap/v1/models",
                 axum::routing::get(move || {
                     let serves = models.lock().unwrap().clone();
+                    let down = models_down.lock().unwrap().clone();
                     async move {
+                        if let Some(why) = down {
+                            return (axum::http::StatusCode::BAD_GATEWAY, relay_failed(why));
+                        }
                         match serves {
                             Some(id) => (
                                 axum::http::StatusCode::OK,
@@ -1263,7 +1481,11 @@ mod tests {
                 "/relay/cap/v1/status",
                 axum::routing::get(move || {
                     let up = serves.lock().unwrap().is_some();
+                    let down = status_down.lock().unwrap().clone();
                     async move {
+                        if let Some(why) = down {
+                            return (axum::http::StatusCode::BAD_GATEWAY, relay_failed(why));
+                        }
                         if up {
                             (
                                 axum::http::StatusCode::OK,
@@ -1328,7 +1550,7 @@ mod tests {
     #[tokio::test]
     async fn r3_2_a_peer_back_without_its_engine_gets_the_routes_model_once_and_serves() {
         let peer = StandInPeer::new(relaunched_engine());
-        let route = route_to(stand_in_relay(peer.proxy_serves.clone()).await);
+        let route = route_to(stand_in_relay(&peer).await);
         let (book, routed) = (fresh_book(), Arc::new(AtomicBool::new(true)));
 
         // 12:18:04 in r3-2: Link is back, the proxy says engineUnreachable, the Studio says stopped.
@@ -1378,7 +1600,7 @@ mod tests {
     #[tokio::test]
     async fn a_stop_from_this_mac_that_gets_the_lock_first_leaves_nothing_mounted() {
         let peer = StandInPeer::new(relaunched_engine());
-        let route = route_to(stand_in_relay(peer.proxy_serves.clone()).await);
+        let route = route_to(stand_in_relay(&peer).await);
         let (book, routed) = (fresh_book(), Arc::new(AtomicBool::new(true)));
 
         // Stop holds the route's op lock while it withdraws the route.
@@ -1401,7 +1623,7 @@ mod tests {
             ..Default::default()
         });
         *peer.proxy_serves.lock().unwrap() = Some(flash.to_string());
-        let route = route_to(stand_in_relay(peer.proxy_serves.clone()).await);
+        let route = route_to(stand_in_relay(&peer).await);
         let (book, routed) = (fresh_book(), Arc::new(AtomicBool::new(true)));
 
         let status = read(book, &peer, &route, &routed).await;
@@ -1423,7 +1645,7 @@ mod tests {
             stopped_by: Some("owner".to_string()),
             ..Default::default()
         });
-        let route = route_to(stand_in_relay(peer.proxy_serves.clone()).await);
+        let route = route_to(stand_in_relay(&peer).await);
         let (book, routed) = (fresh_book(), Arc::new(AtomicBool::new(true)));
 
         let status = read(book, &peer, &route, &routed).await;
@@ -1443,7 +1665,7 @@ mod tests {
             mount_refusal: Some("memory gate BLOCK: model needs 40GB, 12GB free".to_string()),
             ..Arc::into_inner(StandInPeer::new(relaunched_engine())).unwrap()
         });
-        let route = route_to(stand_in_relay(peer.proxy_serves.clone()).await);
+        let route = route_to(stand_in_relay(&peer).await);
         let (book, routed) = (fresh_book(), Arc::new(AtomicBool::new(true)));
 
         assert_eq!(read(book, &peer, &route, &routed).await.state, "mounting");
@@ -1470,7 +1692,7 @@ mod tests {
     #[tokio::test]
     async fn a_remount_whose_load_fails_there_ends_failed_with_the_peers_words() {
         let peer = StandInPeer::new(relaunched_engine());
-        let route = route_to(stand_in_relay(peer.proxy_serves.clone()).await);
+        let route = route_to(stand_in_relay(&peer).await);
         let (book, routed) = (fresh_book(), Arc::new(AtomicBool::new(true)));
 
         read(book, &peer, &route, &routed).await;
@@ -1494,6 +1716,205 @@ mod tests {
         assert_eq!(failed.restore.unwrap().phase, "failed");
         read(book, &peer, &route, &routed).await;
         assert_eq!(peer.mounts(), 1);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Q-47: a published route whose Mac stops answering is `reconnecting`, never `failed`.
+    // -----------------------------------------------------------------------------------------
+
+    /// The words this Mac's goosed logged for the Studio during the 2026-09-25 relaunch
+    /// (11:21:49.595Z, `leanzero_link::state`) — a send the mesh could not deliver.
+    const STUDIO_GONE: &str =
+        "error sending request for url (http://100.64.0.5:41226/v1/swarm/mlx/status)";
+    const FABRIC_LOST: &str = "the LeanZero Link mesh cannot reach it (error sending request for url (http://100.64.0.5:41226/v1/swarm/nodes))";
+
+    fn serving_engine() -> MlxEngineStatusDto {
+        MlxEngineStatusDto {
+            state: "running".to_string(),
+            model_id: Some(QWEN.to_string()),
+            served_model_id: Some(QWEN.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_studio_that_relaunches_reads_reconnecting_then_restoring_then_ready() {
+        let peer = StandInPeer::new(serving_engine());
+        *peer.proxy_serves.lock().unwrap() = Some(QWEN.to_string());
+        let route = route_to(stand_in_relay(&peer).await);
+        let (book, routed) = (fresh_book(), Arc::new(AtomicBool::new(true)));
+        assert_eq!(read(book, &peer, &route, &routed).await.state, "ready");
+
+        // t≈9 s: the Studio's goose quits and its Link with it; the fabric has not polled yet.
+        peer.link_dies(STUDIO_GONE);
+        let lost = read(book, &peer, &route, &routed).await;
+        assert_eq!(lost.state, "reconnecting", "{:?}", lost.last_error);
+        let why = lost.last_error.unwrap();
+        assert!(
+            why.starts_with(
+                "502: linkRelayFailed: cannot reach Link peer 'wh': error sending request"
+            ),
+            "{why}"
+        );
+        assert!(
+            why.ends_with(&format!(
+                "; mlx proxy request to a peer failed: {STUDIO_GONE}"
+            )),
+            "{why}"
+        );
+        assert_eq!(lost.restore, None);
+        assert_eq!(
+            book.phase(&route),
+            None,
+            "an unreachable peer starts no restore"
+        );
+
+        // t≈17 s: the fabric's poll failed — every read answers from that, with no dial.
+        peer.fabric_notices(FABRIC_LOST);
+        let ops = peer.ops();
+        for _ in 0..3 {
+            let known = read(book, &peer, &route, &routed).await;
+            assert_eq!(known.state, "reconnecting");
+            assert_eq!(
+                known.last_error.as_deref(),
+                Some(
+                    format!("Work's Mac Studio does not answer over LeanZero Link right now: {FABRIC_LOST}")
+                        .as_str()
+                )
+            );
+            assert_eq!(known.active_requests, None);
+            assert_eq!(known.active_requests_error, known.last_error);
+        }
+        assert_eq!(
+            peer.ops(),
+            ops,
+            "the fabric's verdict costs no op on the peer"
+        );
+        assert_eq!(peer.mounts(), 0);
+
+        // t≈20 s: the Studio answers again, its relaunched goose without an engine: the restore.
+        peer.set_engine(relaunched_engine());
+        *peer.proxy_serves.lock().unwrap() = None;
+        peer.link_returns();
+        let back = read(book, &peer, &route, &routed).await;
+        assert_eq!(back.state, "mounting", "{:?}", back.last_error);
+        assert_eq!(back.restore.unwrap().phase, "restoring");
+        assert_eq!(
+            restore_settles(book, &route).await,
+            Some(RestorePhase::Mounted)
+        );
+        assert_eq!(peer.mounts(), 1);
+
+        peer.load_finishes();
+        let served = read(book, &peer, &route, &routed).await;
+        assert_eq!(served.state, "ready", "{:?}", served.last_error);
+        assert_eq!(served.last_error, None);
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_answers_with_its_engine_failed_is_failed_not_reconnecting() {
+        let peer = StandInPeer::new(MlxEngineStatusDto {
+            state: "failed".to_string(),
+            model_id: Some(QWEN.to_string()),
+            last_error: Some("engine exited with status 1".to_string()),
+            ..Default::default()
+        });
+        let route = route_to(stand_in_relay(&peer).await);
+        let (book, routed) = (fresh_book(), Arc::new(AtomicBool::new(true)));
+
+        let status = read(book, &peer, &route, &routed).await;
+        assert_eq!(status.state, "failed");
+        let why = status.last_error.unwrap();
+        assert!(
+            why.starts_with(
+                "Work's Mac Studio's goose reports its engine failed (engine exited with status 1)"
+            ),
+            "{why}"
+        );
+        assert_eq!(status.restore, None);
+        assert_eq!(peer.mounts(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_read_in_flight_when_the_studio_goes_answers_when_the_fabric_notices() {
+        // A relay whose kept-alive connection to the gone Studio never answers; it says when a
+        // probe has reached it.
+        let asked = Arc::new(tokio::sync::Notify::new());
+        let silent_get = |asked: Arc<tokio::sync::Notify>| {
+            axum::routing::get(move || {
+                asked.notify_one();
+                std::future::pending::<&'static str>()
+            })
+        };
+        let silent = axum::Router::new()
+            .route("/relay/cap/v1/models", silent_get(asked.clone()))
+            .route("/relay/cap/v1/status", silent_get(asked.clone()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, silent).await.unwrap() });
+        let route = route_to(format!("http://{addr}/relay/cap"));
+        let peer = StandInPeer::new(serving_engine());
+        let (book, routed) = (fresh_book(), Arc::new(AtomicBool::new(true)));
+
+        let reading = {
+            let (peer, route, routed) = (peer.clone(), route.clone(), routed.clone());
+            tokio::spawn(async move { read(book, &peer, &route, &routed).await })
+        };
+        asked.notified().await;
+        peer.fabric_notices(FABRIC_LOST);
+        // A test bound, so a regression fails instead of hanging.
+        let status = tokio::time::timeout(std::time::Duration::from_secs(10), reading)
+            .await
+            .expect("the read must answer when the fabric loses the peer")
+            .unwrap();
+        assert_eq!(status.state, "reconnecting");
+        assert!(status.last_error.unwrap().ends_with(FABRIC_LOST));
+        assert_eq!(peer.ops(), 0);
+    }
+
+    #[tokio::test]
+    async fn without_link_in_this_goose_the_relays_own_502_is_reconnecting() {
+        let peer = StandInPeer::new(relaunched_engine());
+        let route = route_to(stand_in_relay(&peer).await);
+
+        let loading = route_status(None, &route).await;
+        assert_eq!(
+            loading.state, "failed",
+            "the peer's proxy answered: its engine does not"
+        );
+        assert!(loading
+            .last_error
+            .unwrap()
+            .starts_with("502: engineUnreachable"));
+
+        peer.link_dies(STUDIO_GONE);
+        let lost = route_status(None, &route).await;
+        assert_eq!(lost.state, "reconnecting");
+        assert!(lost
+            .last_error
+            .unwrap()
+            .starts_with("502: linkRelayFailed: cannot reach Link peer 'wh'"));
+    }
+
+    #[test]
+    fn only_a_link_error_with_no_answer_from_the_peer_means_reconnecting() {
+        for silent in [
+            LinkError::NotConnected,
+            LinkError::UnknownPeer("wh".into()),
+            LinkError::MlxProxy(STUDIO_GONE.into()),
+        ] {
+            assert!(peer_did_not_answer(&silent), "{silent}");
+        }
+        for answered in [
+            LinkError::MlxProxy("peer returned 403: remote model management is disabled".into()),
+            LinkError::MlxProxy("peer returned 501: mlx control is not wired".into()),
+            LinkError::MlxProxy("peer responded but its body did not parse: eof".into()),
+            LinkError::MlxControl(leanzero_link::state::MlxControlError::Failed(
+                "engine exited".into(),
+            )),
+        ] {
+            assert!(!peer_did_not_answer(&answered), "{answered}");
+        }
     }
 
     #[test]

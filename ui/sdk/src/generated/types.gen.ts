@@ -4195,8 +4195,11 @@ export type MlxRemoteSingleRefusalDto = {
 /**
  * The remote-single route of THIS goosed. `state`: `off` (no route) · `mounting` (the peer is
  * loading the model, or this goosed is re-mounting it there — `restore`) · `ready` (the peer's
- * engine serves `servedModelId` through the proxy — chat goes there) · `failed` (the peer's
- * engine failed or went away; `lastError` says why).
+ * engine serves `servedModelId` through the proxy — chat goes there) · `reconnecting` (the route
+ * is published but its Mac does not answer over LeanZero Link right now — the mesh cannot reach
+ * it, or the relay and the peer's status op both got no answer; `lastError` carries the words;
+ * nothing is restored or mounted until it answers again) · `failed` (the peer ANSWERED and its
+ * engine failed, stopped, or serves something else; `lastError` says why).
  */
 export type MlxRemoteSingleStatusDto = {
     state: string;
