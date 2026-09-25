@@ -34,7 +34,9 @@ a command's output, a remembered preference applied, a skill used or not, a tool
 reading the work dir and the transcript — never "the answer is good".
 
 ## Output
-One JSON file `local-edition/mlx/quality/briefs/<date>-<n>-<domain>.json`:
+One JSON file at the ABSOLUTE path `/Users/mihaiperdum/Projects/goose/local-edition/mlx/quality/briefs/<date>-<n>-<domain>.json`
+(never a relative path, never inside `.claude/worktrees/*` — round 3's brief landed in another agent's worktree and was
+committed on its branch; do NOT commit, the orchestrator commits):
 `{ "domain", "persona", "workdir_placeholder": "{WORK}", "turns": [ { "say": "...", "expect": "..." | null,
 "exercises": ["memory"|"skill:<name>"|"no-skill"|"mcp:<name>"|"shell"|"compaction"|...] } ] }`.
 Use `{WORK}` wherever the work dir goes. Report in under 100 words: the domain, the turn count, and which
