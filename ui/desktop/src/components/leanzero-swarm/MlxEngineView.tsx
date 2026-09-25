@@ -128,8 +128,13 @@ import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import { PeerHeldLine } from './PeerHeldLine';
 import { dropRoute } from './routeSwitch';
 import { routeServesChat } from '../chatServedBy/chatServedBy';
-import { PlacementBadge, PlacementCard, badgesOf, usePlacementPlans } from './PlacementCard';
-import type { PlacementBadge as PlacementBadgeDto } from '../../acp/mlx-placement';
+import {
+  PlacementBadge,
+  PlacementCard,
+  badgesOf,
+  usePlacementPlans,
+  type PickerBadge,
+} from './PlacementCard';
 
 // Formatters stay importable from this module — tests and older callers reach them here.
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
@@ -146,6 +151,22 @@ const i18n = defineMessages({
     defaultMessage: 'Serving across Macs',
   },
   servingRemote: { id: 'mlxEngineView.servingRemote', defaultMessage: 'Serving on {peer}' },
+  engineDetails: { id: 'mlxEngineView.engineDetails', defaultMessage: 'Engine details' },
+  thisMacEngine: { id: 'mlxEngineView.thisMacEngine', defaultMessage: 'This Mac’s engine' },
+  thisMacEngineStopped: {
+    id: 'mlxEngineView.thisMacEngineStopped',
+    defaultMessage: 'This Mac’s engine · not running',
+  },
+  detailsElsewhereRemote: {
+    id: 'mlxEngineView.detailsElsewhereRemote',
+    defaultMessage:
+      'Chat is served by the engine on {peer} — its figures are in the tile above. These rows are this Mac’s own engine.',
+  },
+  detailsElsewhereSplit: {
+    id: 'mlxEngineView.detailsElsewhereSplit',
+    defaultMessage:
+      'Chat is served by the split across your Macs — its figures are in the tile above. These rows are this Mac’s own single engine.',
+  },
   memoryOn: { id: 'mlxEngineView.memoryOn', defaultMessage: 'Memory on {mac}' },
   memoryReading: { id: 'mlxEngineView.memoryReading', defaultMessage: 'Reading its memory…' },
   memoryPeerOffline: {
@@ -583,7 +604,7 @@ function NumericField({
 
 interface ModelOption extends StudioSelectOption {
   model: MlxLocalModel;
-  badge?: PlacementBadgeDto;
+  badge?: PickerBadge;
 }
 
 function ModelOptionLabel({ option }: { option: ModelOption }) {
@@ -613,7 +634,7 @@ function ModelPicker({
   onChange: (id: string | null) => void;
   disabled: boolean;
   /** Where each model fits (the placement planner), by model id. */
-  badges?: Map<string, PlacementBadgeDto>;
+  badges?: Map<string, PickerBadge>;
 }) {
   const options: ModelOption[] = models.map((model) => ({
     value: model.id,
@@ -900,8 +921,22 @@ function EngineSection(props: EngineSectionProps) {
     },
   ];
 
+  // While a route or the split serves chat, every row above still reads THIS Mac's single engine —
+  // "Context length —" and "PID —" under a tile saying "Serving from Work's Mac Studio" read as the
+  // serving engine's facts (Q-43). The section says whose rows these are.
+  const servedElsewhere = remote != null || distributedOwns;
+  const detailsTitle = !servedElsewhere
+    ? intl.formatMessage(i18n.engineDetails)
+    : intl.formatMessage(running ? i18n.thisMacEngine : i18n.thisMacEngineStopped);
   const details = (
     <div className="flex flex-col gap-4">
+      {servedElsewhere && (
+        <p data-testid="mlx-details-elsewhere" className={cx('break-words', TYPE.meta)}>
+          {remote != null
+            ? intl.formatMessage(i18n.detailsElsewhereRemote, { peer: routePeerName(remote) })
+            : intl.formatMessage(i18n.detailsElsewhereSplit)}
+        </p>
+      )}
       <KeyValue items={facts} aria-label="Engine status" />
       {settings && (
         // Spawn command — visible, not editable here: the owner sees exactly what would run.
@@ -1133,10 +1168,10 @@ function EngineSection(props: EngineSectionProps) {
       {/* The running engine's facts are the point of the page once it runs; before that they are
           all "—", so they fold away under a disclosure instead of leading the page. */}
       {running ? (
-        <Panel title="Engine details">{details}</Panel>
+        <Panel title={detailsTitle}>{details}</Panel>
       ) : (
         <Disclosure
-          title="Engine details"
+          title={detailsTitle}
           open={detailsOpen}
           onOpenChange={setDetailsOpen}
           testId="mlx-engine-details"
@@ -2313,24 +2348,24 @@ function draftKey(macKey: string, modelId: string): string {
 }
 
 /**
- * The run book outlives the page: one per engine source ('single', 'distributed', 'remote:<peer>')
- * for the window's life, so leaving the Engine tab and coming back keeps the runs it saw (the
- * page-held "last run" reset on every visit). A new source starts a new book; a restarted engine
- * starts one inside advanceRateBook.
+ * The run books outlive the page: one per engine source and model ('single', 'distributed',
+ * 'remote:<peer>', each with the model it serves) for the window's life, so leaving the Engine tab
+ * and coming back keeps the runs it saw (the page-held "last run" reset on every visit), and an
+ * engine that restarts — or stops and is started again with the same model — keeps its median
+ * (Q-44). Another model on the same engine is another book.
  */
-let rateBook: { source: string | null; book: RateBook } = { source: null, book: EMPTY_BOOK };
+const rateBooks = new Map<string, RateBook>();
 
-function ratesFor(source: string | null): RateBook {
-  // No engine read yet (a remount's first tick, or stopped): show nothing, keep the book — a new
-  // engine replaces it below, and a restarted one inside advanceRateBook.
-  if (source === null) return EMPTY_BOOK;
-  if (rateBook.source !== source) rateBook = { source, book: EMPTY_BOOK };
-  return rateBook.book;
+function ratesFor(bookKey: string | null): RateBook {
+  // No engine read yet (a remount's first tick, or stopped): show nothing, keep the books.
+  if (bookKey === null) return EMPTY_BOOK;
+  return rateBooks.get(bookKey) ?? EMPTY_BOOK;
 }
 
-function foldRates(source: string, stats: MlxLiveStats): RateBook {
-  rateBook = { source, book: advanceRateBook(ratesFor(source), stats) };
-  return rateBook.book;
+function foldRates(bookKey: string, stats: MlxLiveStats): RateBook {
+  const book = advanceRateBook(ratesFor(bookKey), stats);
+  rateBooks.set(bookKey, book);
+  return book;
 }
 
 function MlxEngineViewBody() {
@@ -2415,7 +2450,7 @@ function MlxEngineViewBody() {
   // SAME 2-second status poll below — no second clock.
   const [live, setLive] = useState<MlxLiveRead | null>(null);
   const [tpsHistory, setTpsHistory] = useState<TpsSample[]>([]);
-  const [rates, setRates] = useState<RateBook>(() => rateBook.book);
+  const [rates, setRates] = useState<RateBook>(EMPTY_BOOK);
   const [serving, setServing] = useState<MlxServing | null>(null);
   const [mountWatch, setMountWatch] = useState<MountWatch | null>(null);
   // Free memory at the last status that was NOT mounting: the baseline a mount's claim is measured
@@ -2455,12 +2490,14 @@ function MlxEngineViewBody() {
         : next.state === 'running'
           ? 'single'
           : null;
-    if (source !== liveSource.current) {
-      liveSource.current = source;
+    const servedModel = distUp ? distUp.modelId : remoteUp ? remoteUp.modelId : next.modelId;
+    const bookKey = source === null ? null : `${source}\n${servedModel ?? ''}`;
+    if (bookKey !== liveSource.current) {
+      liveSource.current = bookKey;
       setTpsHistory([]);
-      setRates(ratesFor(source));
+      setRates(ratesFor(bookKey));
     }
-    if (source === null) {
+    if (source === null || bookKey === null) {
       setLive(null);
       setServing(null);
       return;
@@ -2485,7 +2522,7 @@ function MlxEngineViewBody() {
       setServing(main?.serving ?? null);
       if (read.ok) {
         const stats = read.stats;
-        const own = foldRates(source, stats);
+        const own = foldRates(bookKey, stats);
         // Main reads the engine the whole time it answers; the page only while this tab is open.
         // Main's runs of the SAME engine kind join the page's — a chat served while the tab was
         // closed counts in the median.

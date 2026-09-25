@@ -3689,11 +3689,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Le chat est servi par le moteur de {peer} — ses chiffres sont dans la tuile ci-dessus. Ces lignes sont celles du moteur de ce Mac."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Le chat est servi par la répartition sur vos Mac — ses chiffres sont dans la tuile ci-dessus. Ces lignes sont celles du moteur unique de ce Mac."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Distribué"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Le moteur distribué occupe ce Mac : le moteur unique ne peut pas être monté tant qu’il n’est pas arrêté dans la section Moteur distribué ci-dessous."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Détails du moteur"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Mémoire sur {mac}"
@@ -3736,6 +3745,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Impossible d’arrêter le service depuis l’autre Mac."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Moteur de ce Mac"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Moteur de ce Mac · arrêté"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode} : {bytes} Kio par jeton au lieu de {bf16} Kio — la même mémoire contient {ratio}× plus de contexte."
@@ -4087,6 +4102,12 @@
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Il faut {gb} Go de mémoire libre en plus"
+  },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "Aucune exécution depuis son redémarrage — la prochaine réponse donnera une vitesse d’écriture"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "Aucune exécution mesurée pour l’instant — la prochaine réponse donnera une vitesse d’écriture"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "sur {gb} Go"
@@ -4664,6 +4685,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "Contexte de {tokens} jetons"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "{tokens} de contexte sur cette répartition — dimensionné selon la mémoire libre au démarrage ; redémarrez-la pour l’agrandir"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Arrêté — démarrez-le depuis le moteur"
   },
@@ -4678,6 +4702,12 @@
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
+  },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Utiliser plutôt un fournisseur cloud"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Quitte {model} pour ce chat"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Effacez vos paramètres de modèle et de fournisseur sélectionnés pour repartir de zéro"
@@ -5090,6 +5120,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "Nécessite les deux Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {Tient sur les deux Mac} other {Tient sur les # Mac}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Tient sur {name}"
   },
@@ -5189,6 +5222,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Sans plan, pas de chiffre de vitesse — chaque option peut tout de même être lancée."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Tient sur ce seul Mac : il écrit ~{singleWrite} tok/s contre ~{splitWrite} pour la répartition, et laisse vos autres Mac libres."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# autre répartition} other{# autres répartitions}}"
   },
@@ -5252,6 +5288,9 @@
   "placementCard.splitChecking": {
     "defaultMessage": "Vérification de {nodes} pour {model}…"
   },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Son contexte de {tokens} a été dimensionné selon la mémoire libre au démarrage et reste ainsi tant qu’il tourne — redémarrez-le avec plus de mémoire libre pour l’agrandir."
+  },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} n’est pas encore sur {nodes} — copiez-le, puis Exécuter."
   },
@@ -5302,6 +5341,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "~{value} tok/s au total à {concurrency} en même temps"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} seul peut accueillir ce modèle. Réparti sur vos Mac, il écrit ~{splitWrite} tok/s contre ~{singleWrite} là-bas, et lit les prompts {ratio}× plus vite (~{splitRead} contre ~{singleRead} tok/s) — utile seulement pour de longs prompts et des réponses courtes."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} seul peut accueillir ce modèle. Réparti sur vos Mac, il écrit ~{splitWrite} tok/s contre ~{singleWrite} là-bas, et lit aussi les prompts plus lentement (~{splitRead} contre ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} seul peut accueillir ce modèle. Réparti sur vos Mac, il écrit ~{splitWrite} tok/s contre ~{singleWrite} là-bas."
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/s en écriture"

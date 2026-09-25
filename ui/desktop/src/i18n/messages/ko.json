@@ -3689,11 +3689,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "채팅은 {peer}의 엔진이 응답합니다. 그 수치는 위 타일에 있습니다. 이 행들은 이 Mac 자체 엔진의 것입니다."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "채팅은 여러 Mac에 나눈 엔진이 응답합니다. 그 수치는 위 타일에 있습니다. 이 행들은 이 Mac 자체 단일 엔진의 것입니다."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "분산"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "분산 엔진이 이 Mac을 사용 중입니다. 아래의 분산 엔진 섹션에서 중지할 때까지 단일 엔진을 마운트할 수 없습니다."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "엔진 세부 정보"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac}의 메모리"
@@ -3736,6 +3745,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "다른 Mac에서의 제공을 중지할 수 없습니다."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "이 Mac의 엔진"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "이 Mac의 엔진 · 실행 중 아님"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: 토큰당 {bf16} KiB 대신 {bytes} KiB — 같은 메모리에 {ratio}×의 컨텍스트가 들어갑니다."
@@ -4087,6 +4102,12 @@
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "여유 메모리가 {gb}GB 더 필요합니다"
+  },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "재시작 이후 실행 없음 — 다음 응답에서 쓰기 속도가 나옵니다"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "아직 측정된 실행 없음 — 다음 응답에서 쓰기 속도가 나옵니다"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb}GB"
@@ -4664,6 +4685,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens}토큰 컨텍스트"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "이 분할의 컨텍스트 {tokens} — 시작할 때 남은 메모리로 정해졌습니다. 늘리려면 다시 시작하세요"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "실행 중 아님 — 엔진에서 시작하세요"
   },
@@ -4678,6 +4702,12 @@
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
+  },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "대신 클라우드 제공자 사용"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "이 채팅에서 {model} 사용을 그만둡니다"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "선택한 모델 및 제공업체 설정을 지우고 새로 시작합니다."
@@ -5090,6 +5120,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "두 Mac 모두 필요"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {두 Mac 모두에 맞음} other {Mac # 대 모두에 맞음}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name}에 들어감"
   },
@@ -5189,6 +5222,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "계획이 없어 속도 수치는 없지만, 어떤 방법이든 시작할 수 있습니다."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "이 Mac 한 대에 들어갑니다: 쓰기 ~{singleWrite} tok/s(분할은 ~{splitWrite})이고, 다른 Mac은 비워 둡니다."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{다른 분할 #개} other{다른 분할 #개}}"
   },
@@ -5252,6 +5288,9 @@
   "placementCard.splitChecking": {
     "defaultMessage": "{model}을(를) 위해 {nodes} 확인 중…"
   },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "컨텍스트 {tokens}는 시작할 때 남은 메모리로 정해졌고 실행 중에는 그대로입니다. 늘리려면 메모리를 더 비운 뒤 다시 시작하세요."
+  },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model}이(가) 아직 {nodes}에 없습니다 — 복사한 뒤 실행하세요."
   },
@@ -5302,6 +5341,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "동시 {concurrency}개일 때 총 ~{value} tok/s"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} 하나로 이 모델이 들어갑니다. 여러 Mac에 나누면 쓰기는 ~{splitWrite} tok/s(단독은 ~{singleWrite}), 프롬프트 읽기는 {ratio}× 빨라집니다(~{splitRead} 대 ~{singleRead} tok/s). 프롬프트가 길고 답이 짧을 때만 이득입니다."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} 하나로 이 모델이 들어갑니다. 여러 Mac에 나누면 쓰기는 ~{splitWrite} tok/s(단독은 ~{singleWrite})이고, 프롬프트 읽기도 느려집니다(~{splitRead} 대 ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} 하나로 이 모델이 들어갑니다. 여러 Mac에 나누면 쓰기는 ~{splitWrite} tok/s(단독은 ~{singleWrite})입니다."
   },
   "placementCard.writes": {
     "defaultMessage": "쓰기 ~{value} tok/s"

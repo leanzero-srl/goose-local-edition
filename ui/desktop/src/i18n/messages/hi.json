@@ -3689,11 +3689,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "चैट {peer} के इंजन से चल रही है — उसके आँकड़े ऊपर की टाइल में हैं। ये पंक्तियाँ इस Mac के अपने इंजन की हैं।"
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "चैट आपके Mac पर बँटे इंजन से चल रही है — उसके आँकड़े ऊपर की टाइल में हैं। ये पंक्तियाँ इस Mac के अपने एकल इंजन की हैं।"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "वितरित"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "वितरित इंजन इस Mac पर है: जब तक इसे नीचे वितरित इंजन अनुभाग में रोका नहीं जाता, एकल इंजन माउंट नहीं हो सकता।"
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "इंजन विवरण"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} पर मेमोरी"
@@ -3736,6 +3745,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "दूसरे Mac से सर्विंग रोकी नहीं जा सकी।"
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "इस Mac का इंजन"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "इस Mac का इंजन · नहीं चल रहा"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: हर टोकन पर {bf16} KiB की जगह {bytes} KiB — उसी मेमोरी में {ratio}× संदर्भ आता है।"
@@ -4087,6 +4102,12 @@
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "{gb} GB और खाली मेमोरी चाहिए"
+  },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "रीस्टार्ट के बाद कोई रन नहीं — अगला उत्तर लिखने की दर देगा"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "अभी तक कोई रन मापा नहीं गया — अगला उत्तर लिखने की दर देगा"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "{gb} GB में से"
@@ -4664,6 +4685,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens}-टोकन संदर्भ"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "इस बँटवारे पर {tokens} संदर्भ — शुरू होते समय खाली मेमोरी से तय हुआ; बढ़ाने के लिए इसे रीस्टार्ट करें"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "नहीं चल रहा — इसे इंजन से शुरू करें"
   },
@@ -4678,6 +4702,12 @@
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
+  },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "इसके बजाय क्लाउड प्रदाता का उपयोग करें"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "इस चैट के लिए {model} छोड़ देता है"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "नए सिरे से शुरुआत करने के लिए अपने चयनित मॉडल और प्रदाता सेटिंग्स को साफ़ करें"
@@ -5090,6 +5120,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "दोनों Mac चाहिए"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {दोनों Mac पर फ़िट} other {सभी # Mac पर फ़िट}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name} में समाता है"
   },
@@ -5189,6 +5222,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "योजना के बिना गति का कोई आँकड़ा नहीं — फिर भी हर तरीका शुरू किया जा सकता है।"
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "यह इस एक Mac पर फ़िट है: यह ~{singleWrite} tok/s लिखता है, बँटवारे के ~{splitWrite} के मुकाबले, और आपके बाकी Mac खाली रहते हैं।"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# अन्य विभाजन} other{# अन्य विभाजन}}"
   },
@@ -5252,6 +5288,9 @@
   "placementCard.splitChecking": {
     "defaultMessage": "{model} के लिए {nodes} की जाँच हो रही है…"
   },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "इसका {tokens} संदर्भ शुरू होते समय खाली मेमोरी से तय हुआ और चलते रहने तक वही रहता है — बढ़ाने के लिए ज़्यादा खाली मेमोरी के साथ रीस्टार्ट करें।"
+  },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} अभी {nodes} पर नहीं है — इसे वहाँ कॉपी करें, फिर Run करें।"
   },
@@ -5302,6 +5341,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "एक साथ {concurrency} पर कुल ~{value} tok/s"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} अकेले इस मॉडल को चला सकता है। आपके Mac पर बँटकर यह ~{splitWrite} tok/s लिखता है, जबकि वहाँ ~{singleWrite}, और प्रॉम्प्ट {ratio}× तेज़ पढ़ता है (~{splitRead} बनाम ~{singleRead} tok/s) — यह तभी फ़ायदेमंद है जब प्रॉम्प्ट लंबे और उत्तर छोटे हों।"
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} अकेले इस मॉडल को चला सकता है। आपके Mac पर बँटकर यह ~{splitWrite} tok/s लिखता है, जबकि वहाँ ~{singleWrite}, और प्रॉम्प्ट भी धीमे पढ़ता है (~{splitRead} बनाम ~{singleRead} tok/s)।"
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} अकेले इस मॉडल को चला सकता है। आपके Mac पर बँटकर यह ~{splitWrite} tok/s लिखता है, जबकि वहाँ ~{singleWrite}।"
   },
   "placementCard.writes": {
     "defaultMessage": "लिखना ~{value} tok/s"

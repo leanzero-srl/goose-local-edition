@@ -213,6 +213,7 @@ describe('deriveChatServedBy — the six moments', () => {
       peerNodeId: null,
       foreign: false,
       contextWindow: 65536,
+      contextFromFreeMemory: false,
       phase: 'idle',
       activity: null,
       busyWithOthers: null,
@@ -581,6 +582,7 @@ describe('THIS turn on the engine (Q-13) and the Mac that said it is leaving (Q-
         ['b', { decodeTps: 20.1, prefillTps: 318 }],
         ['c', { decodeTps: null, prefillTps: 340 }],
       ]),
+      restarted: false,
     },
   });
 

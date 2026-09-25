@@ -390,8 +390,12 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     expect(open).toHaveTextContent('Change the model or the Mac it runs on');
     await userEvent.setup().click(open);
     expect(setView).toHaveBeenCalledWith('mlxEngine');
-    // The provider switch stays for anyone leaving for a cloud provider.
-    expect(screen.getByText('Change Provider')).toBeInTheDocument();
+    // Q-41: the provider switch stays for anyone leaving for a cloud provider — and says that,
+    // never "Change Provider" into a picker whose swarm row names no model.
+    const leave = screen.getByTestId('model-menu-switch');
+    expect(leave).toHaveTextContent('Use a cloud provider instead');
+    expect(leave).toHaveTextContent('Leaves Qwen3.8-27B-Atlassian-Q8-mlx for this chat');
+    expect(screen.queryByText('Change Provider')).toBeNull();
   });
 
   it('the split names both Macs; another window’s run says so', () => {
@@ -406,6 +410,25 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
       'Qwen3.8-27B-Atlassian-Q8-mlx · Mihai Macbook and Work’s Mac Studio'
     );
     expect(screen.getByTestId('model-menu-served')).toHaveTextContent('run by another window');
+  });
+
+  it('Q-71: a split whose window was sized from free memory says so, and how to grow it', () => {
+    renderChip({
+      ...STUDIO,
+      engine: 'split',
+      where: ['Mihai Macbook', 'Work’s Mac Studio'],
+      peerNodeId: null,
+      contextWindow: 141568,
+      contextFromFreeMemory: true,
+    });
+    expect(screen.getByTestId('model-menu-context')).toHaveTextContent(
+      '142k context on this split — sized from the memory free when it started; restart it to grow'
+    );
+  });
+
+  it('a route’s window is the model’s: the plain token count', () => {
+    renderChip(STUDIO);
+    expect(screen.getByTestId('model-menu-context')).toHaveTextContent('262,144-token context');
   });
 
   it('nothing runs: the model a Mount would bring, "not running", the unloaded dot — and Open Engine', () => {
@@ -476,5 +499,6 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     expect(screen.queryByTestId('model-chip-served')).toBeNull();
     expect(screen.queryByTestId('model-menu-open-engine')).toBeNull();
     expect(screen.getByText('swarm')).toBeInTheDocument();
+    expect(screen.getByTestId('model-menu-switch')).toHaveTextContent('Change Provider');
   });
 });

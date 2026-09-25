@@ -57,6 +57,34 @@ mod imp {
             .internal_err_ctx("placement DTO mirror")
     }
 
+    /// A size the way the model picker writes it (`formatGb`): GiB labelled GB, whole from 10 up,
+    /// one decimal below — the Run it note said "31.1 GiB" beside the picker's "31 GB" (Q-46).
+    pub(super) fn gb_words(bytes: u64) -> String {
+        let gb = bytes as f64 / goose_sidecar::GIB as f64;
+        if gb >= 10.0 {
+            format!("{gb:.0} GB")
+        } else {
+            format!("{gb:.1} GB")
+        }
+    }
+
+    /// Why this Mac's figures count another mounted model's memory as free, in plain words.
+    pub(super) fn mounted_here_note(mounted: &str, bytes: u64) -> String {
+        format!(
+            "Starting it here frees the {} {mounted} holds on this Mac: Run replaces that model, it \
+             never adds a second one",
+            gb_words(bytes)
+        )
+    }
+
+    /// Why the linked Mac's figures count this model's memory there as free, in plain words.
+    pub(super) fn moved_from_peer_note(mac: &str, bytes: u64) -> String {
+        format!(
+            "Moving it frees its {} on {mac}: Run moves the model, it never adds a second copy",
+            gb_words(bytes)
+        )
+    }
+
     fn goal_of(dto: MlxPlacementGoalDto) -> Goal {
         match dto {
             MlxPlacementGoalDto::Chat => Goal::Chat,
@@ -520,9 +548,9 @@ mod imp {
         /// The single engine's resident bytes when a model is mounted here, and whose.
         pub single_footprint: Option<(String, u64)>,
         /// The Metal memory the engine on the linked Mac serving this Mac's chat holds:
-        /// (its placement node id, model id, bytes). Every other placement of that model on that
-        /// Mac gets it back, because Run switches rather than adds a copy.
-        pub peer_footprint: Option<(String, String, u64)>,
+        /// (its placement node id, model id, bytes, the Mac's name). Every other placement of that
+        /// model on that Mac gets it back, because Run switches rather than adds a copy.
+        pub peer_footprint: Option<(String, String, u64, String)>,
         pub notes: Vec<String>,
     }
 
@@ -577,7 +605,12 @@ mod imp {
             let node = format!("link:{}", route.peer);
             match super::super::mlx_remote_single::peer_engine_held_bytes(&route.base_url).await {
                 Ok(bytes) => {
-                    out.peer_footprint = Some((node.clone(), route.model_id.clone(), bytes))
+                    out.peer_footprint = Some((
+                        node.clone(),
+                        route.model_id.clone(),
+                        bytes,
+                        route.peer_name().to_string(),
+                    ))
                 }
                 Err(e) => out.notes.push(format!(
                     "{} is served from {} but its memory could not be read ({e}); that Mac's \
@@ -665,7 +698,7 @@ mod imp {
         }
         // The linked Mac's copy of THIS model is what Run replaces there (a switch, never a second
         // copy), so every placement of it — the fork planner's included — sees that memory free.
-        if let Some((node_id, model, bytes)) = &ctx.serving.peer_footprint {
+        if let Some((node_id, model, bytes, _)) = &ctx.serving.peer_footprint {
             if model == model_id {
                 if let Some(Ok(memory)) = nodes
                     .iter_mut()
@@ -759,20 +792,12 @@ mod imp {
         let mut dto: MlxPlacementPlanDto = mirror(&plan)?;
         if let Some((mounted, bytes)) = &ctx.serving.single_footprint {
             if mounted != model_id {
-                dto.notes.push(format!(
-                    "{mounted} is mounted here: its {:.1} GiB count as free on this Mac, because \
-                     [Use this] replaces it",
-                    *bytes as f64 / goose_sidecar::GIB as f64
-                ));
+                dto.notes.push(mounted_here_note(mounted, *bytes));
             }
         }
-        if let Some((_, served, bytes)) = &ctx.serving.peer_footprint {
+        if let Some((_, served, bytes, mac)) = &ctx.serving.peer_footprint {
             if served == model_id {
-                dto.notes.push(format!(
-                    "{served} runs on a linked Mac now: its {:.1} GiB there count as free for this \
-                     model's other placements, because Run moves it rather than adding a copy",
-                    *bytes as f64 / goose_sidecar::GIB as f64
-                ));
+                dto.notes.push(moved_from_peer_note(mac, *bytes));
             }
         }
         dto.notes.extend(ctx.serving.notes.iter().cloned());
@@ -1150,6 +1175,28 @@ mod tests {
                 serde_json::to_value(value).unwrap()
             )
         })
+    }
+
+    /// Q-46: "runs on a linked Mac now: its 31.1 GiB there count as free for this model's other
+    /// placements, because Run moves it rather than adding a copy" — jargon, and GiB beside the
+    /// picker's "31 GB".
+    #[test]
+    fn the_run_it_notes_are_plain_words_in_the_pickers_gb() {
+        let bytes = (31.1 * goose_sidecar::GIB as f64) as u64;
+        assert_eq!(imp::gb_words(bytes), "31 GB");
+        assert_eq!(imp::gb_words(goose_sidecar::GIB / 2), "0.5 GB");
+        assert_eq!(
+            imp::moved_from_peer_note("Work's Mac Studio", bytes),
+            "Moving it frees its 31 GB on Work's Mac Studio: Run moves the model, it never adds \
+             a second copy"
+        );
+        let here = imp::mounted_here_note("Qwen3.8-Flash", 18 * goose_sidecar::GIB);
+        assert_eq!(
+            here,
+            "Starting it here frees the 18 GB Qwen3.8-Flash holds on this Mac: Run replaces that \
+             model, it never adds a second one"
+        );
+        assert!(!here.contains("GiB") && !here.contains("count as free"));
     }
 
     #[test]

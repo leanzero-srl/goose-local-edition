@@ -3689,11 +3689,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "チャットは {peer} のエンジンが応答しています。その数値は上のタイルにあります。ここに並ぶのはこの Mac 自身のエンジンです。"
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "チャットは複数の Mac にまたがる分割エンジンが応答しています。その数値は上のタイルにあります。ここに並ぶのはこの Mac 自身の単体エンジンです。"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "分散"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "分散エンジンがこの Mac を使用中です。下の「分散エンジン」セクションで停止するまで、単一エンジンはマウントできません。"
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "エンジンの詳細"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} のメモリ"
@@ -3736,6 +3745,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "もう一方の Mac からの提供を停止できませんでした。"
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "この Mac のエンジン"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "この Mac のエンジン · 停止中"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: 1 トークンあたり {bf16} KiB ではなく {bytes} KiB — 同じメモリに {ratio}× のコンテキストが入ります。"
@@ -4087,6 +4102,12 @@
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "あと {gb} GB の空きメモリが必要"
+  },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "再起動後の実行はまだありません — 次の応答で書き込み速度が出ます"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "まだ計測された実行はありません — 次の応答で書き込み速度が出ます"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
@@ -4664,6 +4685,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens} トークンのコンテキスト"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "この分割のコンテキストは {tokens} — 起動時の空きメモリで決まりました。広げるには再起動してください"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "停止中 — エンジンから起動してください"
   },
@@ -4678,6 +4702,12 @@
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
+  },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "代わりにクラウドプロバイダーを使う"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "このチャットでは {model} から切り替えます"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "選択したモデルとプロバイダー設定をクリアして最初からやり直します"
@@ -5090,6 +5120,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "両方の Mac が必要"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {両方の Mac に収まる} other {# 台すべての Mac に収まる}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name} に収まる"
   },
@@ -5189,6 +5222,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "プランがないため速度の数値はありませんが、どの方法でも起動できます。"
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "この 1 台の Mac に収まります：書き込みは ~{singleWrite} tok/s（分割では ~{splitWrite}）で、ほかの Mac も空いたままです。"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{他の分割 # 件} other{他の分割 # 件}}"
   },
@@ -5252,6 +5288,9 @@
   "placementCard.splitChecking": {
     "defaultMessage": "{model} のために {nodes} を確認中…"
   },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "コンテキスト {tokens} は起動時の空きメモリで決まり、実行中はそのままです。広げるには空きメモリを増やして再起動してください。"
+  },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} はまだ {nodes} にありません — コピーしてから実行してください。"
   },
@@ -5302,6 +5341,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "同時 {concurrency} 件で合計 ~{value} tok/s"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} だけでこのモデルが収まります。Mac に分割すると書き込みは ~{splitWrite} tok/s（単体では ~{singleWrite}）、プロンプトの読み込みは {ratio}× 速くなります（~{splitRead} 対 ~{singleRead} tok/s）。長いプロンプトに短い応答のときだけ意味があります。"
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} だけでこのモデルが収まります。Mac に分割すると書き込みは ~{splitWrite} tok/s（単体では ~{singleWrite}）、プロンプトの読み込みも遅くなります（~{splitRead} 対 ~{singleRead} tok/s）。"
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} だけでこのモデルが収まります。Mac に分割すると書き込みは ~{splitWrite} tok/s（単体では ~{singleWrite}）です。"
   },
   "placementCard.writes": {
     "defaultMessage": "書き込み ~{value} tok/s"

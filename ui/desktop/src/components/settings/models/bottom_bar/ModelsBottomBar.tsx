@@ -35,6 +35,7 @@ import type { Message } from '../../../../types/message';
 import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
 import { splitStopReason } from '../../../chatServedBy/splitStopText';
 import { shortModelName } from '../../../noNodeNotice/mlxMount';
+import { compactTokens } from '../../../leanzero-swarm/mlxLiveStats';
 
 const i18n = defineMessages({
   selectModel: {
@@ -56,6 +57,14 @@ const i18n = defineMessages({
   changeProvider: {
     id: 'modelsBottomBar.changeProvider',
     defaultMessage: 'Change Provider',
+  },
+  useCloudInstead: {
+    id: 'modelsBottomBar.useCloudInstead',
+    defaultMessage: 'Use a cloud provider instead',
+  },
+  useCloudInsteadHint: {
+    id: 'modelsBottomBar.useCloudInsteadHint',
+    defaultMessage: 'Leaves {model} for this chat',
   },
   swarmDocs: {
     id: 'modelsBottomBar.swarmDocs',
@@ -104,6 +113,11 @@ const i18n = defineMessages({
   servedContext: {
     id: 'modelsBottomBar.servedContext',
     defaultMessage: '{tokens}-token context',
+  },
+  servedContextSplit: {
+    id: 'modelsBottomBar.servedContextSplit',
+    defaultMessage:
+      '{tokens} context on this split — sized from the memory free when it started; restart it to grow',
   },
   openEngine: {
     id: 'modelsBottomBar.openEngine',
@@ -378,10 +392,14 @@ export default function ModelsBottomBar({
                     : intl.formatMessage(i18n.servedNotRunning)}
               </p>
               {served.contextWindow != null && (
-                <p className={cx(TYPE.meta, TNUM)}>
-                  {intl.formatMessage(i18n.servedContext, {
-                    tokens: served.contextWindow.toLocaleString(),
-                  })}
+                <p data-testid="model-menu-context" className={cx(TYPE.meta, TNUM)}>
+                  {served.contextFromFreeMemory
+                    ? intl.formatMessage(i18n.servedContextSplit, {
+                        tokens: compactTokens(served.contextWindow),
+                      })
+                    : intl.formatMessage(i18n.servedContext, {
+                        tokens: served.contextWindow.toLocaleString(),
+                      })}
                 </p>
               )}
             </div>
@@ -417,9 +435,24 @@ export default function ModelsBottomBar({
               <Cpu className="ml-auto h-4 w-4 shrink-0" />
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={() => setIsAddModelModalOpen(true)}>
-            <span>{intl.formatMessage(isSwarm ? i18n.changeProvider : i18n.changeModel)}</span>
-            <Sliders className="ml-auto h-4 w-4 rotate-90" />
+          <DropdownMenuItem
+            data-testid="model-menu-switch"
+            onClick={() => setIsAddModelModalOpen(true)}
+          >
+            {/* While the chip names the model on your Macs, "Change Provider" opened a picker whose
+                swarm row names no model and contradicts the chip (Q-41): the one thing that
+                picker still does from here is leave for a cloud provider, so it says that. */}
+            {servedModel != null ? (
+              <span className="flex min-w-0 flex-col">
+                <span>{intl.formatMessage(i18n.useCloudInstead)}</span>
+                <span className={TYPE.meta}>
+                  {intl.formatMessage(i18n.useCloudInsteadHint, { model: servedModel })}
+                </span>
+              </span>
+            ) : (
+              <span>{intl.formatMessage(isSwarm ? i18n.changeProvider : i18n.changeModel)}</span>
+            )}
+            <Sliders className="ml-auto h-4 w-4 shrink-0 rotate-90" />
           </DropdownMenuItem>
           {isSwarm && (
             <>

@@ -3689,11 +3689,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "聊天由 {peer} 上的引擎提供——其數據在上方的卡片中。這些列是此 Mac 自己的引擎。"
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "聊天由跨多台 Mac 的拆分引擎提供——其數據在上方的卡片中。這些列是此 Mac 自己的單機引擎。"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "分散式"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "分散式引擎正佔用這台 Mac：在下方「分散式引擎」區段停止它之前，單機引擎無法掛載。"
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "引擎詳細資料"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} 的記憶體"
@@ -3736,6 +3745,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "無法停止由另一台 Mac 提供的服務。"
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "此 Mac 的引擎"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "此 Mac 的引擎 · 未執行"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}：每個 token {bytes} KiB，而不是 {bf16} KiB — 同樣的記憶體可容納 {ratio}× 的上下文。"
@@ -4087,6 +4102,12 @@
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "還需要 {gb} GB 可用記憶體"
+  },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "重新啟動後還沒有執行紀錄——下一次回覆會給出寫入速度"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "還沒有測得執行紀錄——下一次回覆會給出寫入速度"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
@@ -4664,6 +4685,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens} 詞元上下文"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "此拆分的上下文為 {tokens}——按啟動時的可用記憶體決定；重新啟動即可加大"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "未執行 — 請在引擎中啟動"
   },
@@ -4678,6 +4702,12 @@
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
+  },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "改用雲端供應商"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "此聊天將不再使用 {model}"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "清除您選定的模型與供應商設定以重新開始"
@@ -5090,6 +5120,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "需要兩台 Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {兩台 Mac 都放得下} other {全部 # 台 Mac 都放得下}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "可放入 {name}"
   },
@@ -5189,6 +5222,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "沒有計畫就沒有速度數字 — 但每種方式仍然可以啟動。"
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "這一台 Mac 就放得下：寫入 ~{singleWrite} tok/s，拆分為 ~{splitWrite}，且其他 Mac 保持空閒。"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{另外 # 種分割} other{另外 # 種分割}}"
   },
@@ -5252,6 +5288,9 @@
   "placementCard.splitChecking": {
     "defaultMessage": "正在為 {model} 檢查 {nodes}…"
   },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "它的 {tokens} 上下文按啟動時的可用記憶體決定，執行期間維持不變——在可用記憶體更多時重新啟動即可加大。"
+  },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} 尚不在 {nodes} 上——先複製過去，再執行。"
   },
@@ -5302,6 +5341,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "同時 {concurrency} 個時總計 ~{value} tok/s"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "僅 {name} 一台就放得下此模型。拆分到多台 Mac 後，寫入為 ~{splitWrite} tok/s（單機 ~{singleWrite}），讀取提示快 {ratio}×（~{splitRead} 對 ~{singleRead} tok/s）——只有提示很長、回覆很短時才划算。"
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "僅 {name} 一台就放得下此模型。拆分到多台 Mac 後，寫入為 ~{splitWrite} tok/s（單機 ~{singleWrite}），讀取提示也更慢（~{splitRead} 對 ~{singleRead} tok/s）。"
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "僅 {name} 一台就放得下此模型。拆分到多台 Mac 後，寫入為 ~{splitWrite} tok/s（單機 ~{singleWrite}）。"
   },
   "placementCard.writes": {
     "defaultMessage": "寫入 ~{value} tok/s"

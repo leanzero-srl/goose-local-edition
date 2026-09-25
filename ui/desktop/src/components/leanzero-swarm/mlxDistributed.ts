@@ -167,6 +167,25 @@ export function nodeStartWord(status: object, node: { name: string; state: strin
   return node.state;
 }
 
+/**
+ * The running split's context window was SIZED FROM FREE MEMORY at its start (the preflight
+ * derived it: no context was requested) — so it is fixed for this run's life and a restart, with
+ * more memory free, is what grows it (Q-71: 141,568 with a test engine holding ~30 GB, 262,144 with
+ * the memory free). True only while the split is up and the stored preflight is the one that sized
+ * THIS run's window (a later standalone preflight with another figure proves nothing about it).
+ */
+export function splitContextFromFreeMemory(
+  status: Pick<MlxDistributedStatusDto, 'state' | 'contextLimit' | 'lastPreflight'> | null
+): boolean {
+  if (!status || (status.state !== 'ready' && status.state !== 'serving')) return false;
+  const preflight = status.lastPreflight;
+  return (
+    preflight?.contextSource === 'derived' &&
+    preflight.contextLimit != null &&
+    preflight.contextLimit === status.contextLimit
+  );
+}
+
 /** The rank's plan from the last preflight — the only place a memory BUDGET is reported. */
 export function planForRank(
   status: Pick<MlxDistributedStatusDto, 'lastPreflight'> | null,

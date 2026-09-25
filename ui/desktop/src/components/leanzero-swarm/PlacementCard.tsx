@@ -50,6 +50,7 @@ import { mlxErrorMessage } from './mlxErrorMessage';
 import {
   cleanConfig,
   ownsTheMac,
+  splitContextFromFreeMemory,
   splitConfigFor,
   splitPlan,
   type SplitBlocker,
@@ -185,6 +186,31 @@ const i18n = defineMessages({
     id: 'placementCard.smallerContext',
     defaultMessage: 'fits only at {tokens} context',
   },
+  tradeOffReadsFaster: {
+    id: 'placementCard.tradeOffReadsFaster',
+    defaultMessage:
+      '{name} alone fits this model. Split across your Macs it writes ~{splitWrite} tok/s against ~{singleWrite} there, and reads prompts {ratio}× faster (~{splitRead} vs ~{singleRead} tok/s) — worth it only when prompts are long and replies short.',
+  },
+  tradeOffReadsSlower: {
+    id: 'placementCard.tradeOffReadsSlower',
+    defaultMessage:
+      '{name} alone fits this model. Split across your Macs it writes ~{splitWrite} tok/s against ~{singleWrite} there, and reads prompts slower too (~{splitRead} vs ~{singleRead} tok/s).',
+  },
+  tradeOffWritesOnly: {
+    id: 'placementCard.tradeOffWritesOnly',
+    defaultMessage:
+      '{name} alone fits this model. Split across your Macs it writes ~{splitWrite} tok/s against ~{singleWrite} there.',
+  },
+  oneMacPreferred: {
+    id: 'placementCard.oneMacPreferred',
+    defaultMessage:
+      'Fits on this one Mac: it writes ~{singleWrite} tok/s against the split’s ~{splitWrite}, and leaves your other Macs free.',
+  },
+  splitContextFixed: {
+    id: 'placementCard.splitContextFixed',
+    defaultMessage:
+      'Its {tokens} context was sized from the memory free when it started, and stays that size while it runs — restart it with more memory free to grow it.',
+  },
   started: { id: 'placementCard.started', defaultMessage: 'Starting — this card follows it.' },
   switching: {
     id: 'placementCard.switching',
@@ -205,6 +231,10 @@ const i18n = defineMessages({
   },
   badgeThisMac: { id: 'placementCard.badgeThisMac', defaultMessage: 'Fits this Mac' },
   badgePeer: { id: 'placementCard.badgePeer', defaultMessage: 'Fits {name}' },
+  badgeEvery: {
+    id: 'placementCard.badgeEvery',
+    defaultMessage: 'Fits {count, plural, =2 {both Macs} other {all # Macs}}',
+  },
   badgeBoth: { id: 'placementCard.badgeBoth', defaultMessage: 'Needs both Macs' },
   badgeTooBig: { id: 'placementCard.badgeTooBig', defaultMessage: 'Too big, short {gb}' },
   badgeUnknown: { id: 'placementCard.badgeUnknown', defaultMessage: 'Fit unknown' },
@@ -359,6 +389,88 @@ export function outcomeText(intl: IntlShape, candidate: PlacementCandidate): str
   }
 }
 
+/** A single-Mac candidate goose's fit rule lets one engine hold. */
+function fitsAlone(c: PlacementCandidate): boolean {
+  return (
+    c.key.kind === 'single' &&
+    c.supported &&
+    (c.fit.status === 'fits' || c.fit.status === 'smallerContext')
+  );
+}
+
+/**
+ * What the split costs against running the model on ONE Mac, from the plan's own speed figures
+ * (measured where goose has runs, else its estimate — never a typed number). Null when no single
+ * Mac fits the model, or either side lacks a writing figure. The single compared is the fitting
+ * Mac that writes fastest.
+ */
+export interface SplitTradeOff {
+  single: PlacementCandidate;
+  splitWrite: number;
+  singleWrite: number;
+  splitRead: number | null;
+  singleRead: number | null;
+}
+
+export function splitTradeOff(
+  plan: PlacementPlan | null,
+  split: PlacementCandidate
+): SplitTradeOff | null {
+  if (split.key.kind === 'single') return null;
+  const splitWrite = split.speed.decode?.estimate.value;
+  if (splitWrite == null) return null;
+  let single: PlacementCandidate | null = null;
+  for (const c of plan?.candidates ?? []) {
+    const write = c.speed.decode?.estimate.value;
+    if (!fitsAlone(c) || write == null) continue;
+    if (single == null || write > (single.speed.decode?.estimate.value ?? 0)) single = c;
+  }
+  if (!single) return null;
+  return {
+    single,
+    splitWrite,
+    singleWrite: single.speed.decode!.estimate.value,
+    splitRead: split.speed.prefill?.estimate.value ?? null,
+    singleRead: single.speed.prefill?.estimate.value ?? null,
+  };
+}
+
+/**
+ * The way Run it recommends ("Best"): goose's best for the goal — unless that is a split while the
+ * model FITS one Mac. Then one Mac is recommended: measured on E2E #1/#2b, the split wrote ~14 tok/s
+ * against ~22 on the Studio alone and its turns ran 1,220 / 507 / 3,207 s against 300 / 43 / 573 s,
+ * so the ~1.2× faster prompt reading never paid back. Among the Macs that fit, the one with the best
+ * figure for the goal.
+ */
+export function recommendedCandidate(plan: PlacementPlan | null): string | null {
+  if (!plan?.best) return null;
+  const candidates = plan.candidates ?? [];
+  const best = candidates.find((c) => c.id === plan.best);
+  if (!best || best.key.kind === 'single') return plan.best;
+  const alone = candidates.filter(fitsAlone);
+  if (alone.length === 0) return plan.best;
+  const score = (c: PlacementCandidate) => goalFigure(c, plan.goal)?.estimate.value ?? -1;
+  return alone.reduce((a, b) => (score(b) > score(a) ? b : a)).id;
+}
+
+function tradeOffText(intl: IntlShape, t: SplitTradeOff): string {
+  const base = {
+    name: t.single.nodeNames[0] ?? '—',
+    splitWrite: tps(t.splitWrite),
+    singleWrite: tps(t.singleWrite),
+  };
+  if (t.splitRead == null || t.singleRead == null || t.singleRead <= 0) {
+    return intl.formatMessage(i18n.tradeOffWritesOnly, base);
+  }
+  const reads = { ...base, splitRead: tps(t.splitRead), singleRead: tps(t.singleRead) };
+  return t.splitRead > t.singleRead
+    ? intl.formatMessage(i18n.tradeOffReadsFaster, {
+        ...reads,
+        ratio: intl.formatNumber(t.splitRead / t.singleRead, { maximumFractionDigits: 1 }),
+      })
+    : intl.formatMessage(i18n.tradeOffReadsSlower, reads);
+}
+
 function badgeTone(badge: PlacementBadgeDto): Tone | undefined {
   switch (badge.kind) {
     case 'fitsThisMac':
@@ -374,19 +486,50 @@ function badgeTone(badge: PlacementBadgeDto): Tone | undefined {
   }
 }
 
-/** The model picker's badge: where this model fits, measured just now. */
-export function PlacementBadge({ badge }: { badge: PlacementBadgeDto }) {
+/**
+ * The picker's badge for one model: goose's badge, plus every Mac ONE engine fits it on, by name,
+ * from the plan's own single candidates. goose's `fitsThisMac` names no Mac, and under "Memory on
+ * Work's Mac Studio" the picker's "Fits this Mac" read as the Studio when it meant the MacBook (Q-42).
+ */
+export interface PickerBadge {
+  badge: PlacementBadgeDto;
+  /** The Macs a single engine fits the model on (goose's fit rule), in the plan's order. */
+  fitsOn: string[];
+  /** How many Macs the plan judged alone — "both" / "all" only when every one fits. */
+  macs: number;
+}
+
+/** The picker's badge from one plan (`null` when goose sent none). */
+export function pickerBadgeOf(plan: PlacementPlan): PickerBadge | null {
+  if (!plan.badge) return null;
+  const singles = (plan.candidates ?? []).filter((c) => c.key.kind === 'single');
+  const fitsOn = singles
+    .filter((c) => c.supported && (c.fit.status === 'fits' || c.fit.status === 'smallerContext'))
+    .flatMap((c) => (c.nodeNames[0] ? [c.nodeNames[0]] : []));
+  return { badge: plan.badge, fitsOn, macs: singles.length };
+}
+
+/** The model picker's badge: where this model fits, measured just now — each Mac by its name. */
+export function PlacementBadge({ badge: picker }: { badge: PickerBadge }) {
   const intl = useIntl();
+  const { badge, fitsOn, macs } = picker;
+  const fitsAlone = badge.kind === 'fitsThisMac' || badge.kind === 'fitsPeer';
   const text =
-    badge.kind === 'fitsThisMac'
-      ? intl.formatMessage(i18n.badgeThisMac)
-      : badge.kind === 'fitsPeer'
-        ? intl.formatMessage(i18n.badgePeer, { name: badge.name })
-        : badge.kind === 'needsBothMacs'
-          ? intl.formatMessage(i18n.badgeBoth)
-          : badge.kind === 'tooBig'
-            ? intl.formatMessage(i18n.badgeTooBig, { gb: gb(badge.shortBytes) })
-            : intl.formatMessage(i18n.badgeUnknown);
+    fitsAlone && fitsOn.length >= 2 && fitsOn.length === macs
+      ? intl.formatMessage(i18n.badgeEvery, { count: fitsOn.length })
+      : fitsAlone && fitsOn.length > 0
+        ? intl.formatMessage(i18n.badgePeer, {
+            name: intl.formatList(fitsOn, { type: 'conjunction' }),
+          })
+        : badge.kind === 'fitsThisMac'
+          ? intl.formatMessage(i18n.badgeThisMac)
+          : badge.kind === 'fitsPeer'
+            ? intl.formatMessage(i18n.badgePeer, { name: badge.name })
+            : badge.kind === 'needsBothMacs'
+              ? intl.formatMessage(i18n.badgeBoth)
+              : badge.kind === 'tooBig'
+                ? intl.formatMessage(i18n.badgeTooBig, { gb: gb(badge.shortBytes) })
+                : intl.formatMessage(i18n.badgeUnknown);
   return (
     <Chip tone={badgeTone(badge)} title={badge.kind === 'unknown' ? badge.reason : undefined}>
       {text}
@@ -418,9 +561,12 @@ export function usePlacementPlans(modelKey: string): Map<string, PlacementPlan> 
 }
 
 /** The picker's badge per model, from the plans. */
-export function badgesOf(plans: Map<string, PlacementPlan>): Map<string, PlacementBadgeDto> {
-  const out = new Map<string, PlacementBadgeDto>();
-  for (const [id, plan] of plans) if (plan.badge) out.set(id, plan.badge);
+export function badgesOf(plans: Map<string, PlacementPlan>): Map<string, PickerBadge> {
+  const out = new Map<string, PickerBadge>();
+  for (const [id, plan] of plans) {
+    const badge = pickerBadgeOf(plan);
+    if (badge) out.set(id, badge);
+  }
   return out;
 }
 
@@ -962,6 +1108,11 @@ function PlacementCardBody({
 
   const { ways, otherSplits } = waysOf(plan, macs.macs, distributedCapability);
   const distributedOwns = ownsTheMac(distributed);
+  const recommended = recommendedCandidate(plan);
+  const bestSplit =
+    plan?.best != null && plan.best !== recommended
+      ? ((plan.candidates ?? []).find((x) => x.id === plan.best) ?? null)
+      : null;
 
   const title = (way: Way): string => {
     if (way.kind === 'local') return intl.formatMessage(i18n.runHere);
@@ -982,9 +1133,24 @@ function PlacementCardBody({
     const running = live != null && live.state !== 'failed';
     const figure = c ? goalFigure(c, goal) : null;
     const action = c?.action ?? null;
-    const isBest = c != null && plan?.best === c.id;
-    const isBestNow = c != null && plan?.bestAvailable === c.id && plan.bestAvailable !== plan.best;
-    const why = c ? outcomeText(intl, c) : null;
+    const isBest = c != null && recommended === c.id;
+    const isBestNow =
+      c != null && plan?.bestAvailable === c.id && plan.bestAvailable !== recommended;
+    // The split beside a Mac the model fits on states what it costs and buys (Q-72) — that line
+    // carries both writing figures, so goose's "Slower for this" would only repeat half of it.
+    const tradeOff = c && way.kind === 'split' ? splitTradeOff(plan, c) : null;
+    // One Mac recommended over goose's best (a split): its "slower" is the reading figure alone.
+    const oneMacOverSplit = isBest && c != null && plan?.best !== c.id ? bestSplit : null;
+    const why = tradeOff
+      ? tradeOffText(intl, tradeOff)
+      : oneMacOverSplit && c
+        ? intl.formatMessage(i18n.oneMacPreferred, {
+            singleWrite: tps(c.speed.decode?.estimate.value ?? 0),
+            splitWrite: tps(oneMacOverSplit.speed.decode?.estimate.value ?? 0),
+          })
+        : c
+          ? outcomeText(intl, c)
+          : null;
     const needsCopy = missingOn(way);
     const copyJob = needsCopy ? macs.copies[copyKey(modelId, needsCopy.key)] : undefined;
     const copyLink = needsCopy ? macs.linkBetween(SELF_KEY, needsCopy.key) : null;
@@ -1054,6 +1220,16 @@ function PlacementCardBody({
             {why}
           </p>
         )}
+        {way.kind === 'split' &&
+          running &&
+          distributed?.contextLimit != null &&
+          splitContextFromFreeMemory(distributed) && (
+            <p data-testid="placement-split-context" className={cx('break-words', TYPE.meta)}>
+              {intl.formatMessage(i18n.splitContextFixed, {
+                tokens: distributed.contextLimit.toLocaleString(),
+              })}
+            </p>
+          )}
         <div className="flex flex-wrap items-center gap-2">
           {startable && (
             <Button

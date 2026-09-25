@@ -3689,11 +3689,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Cuộc trò chuyện do engine trên {peer} phục vụ — số liệu của nó ở ô phía trên. Các dòng này là engine của chính máy Mac này."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Cuộc trò chuyện do bản chia trên các máy Mac của bạn phục vụ — số liệu ở ô phía trên. Các dòng này là engine đơn của chính máy Mac này."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Phân tán"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Engine phân tán đang chiếm máy Mac này: engine đơn không thể gắn cho đến khi nó được dừng trong mục Engine phân tán bên dưới."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Chi tiết engine"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Bộ nhớ trên {mac}"
@@ -3736,6 +3745,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Không thể dừng phục vụ từ Mac kia."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Engine của máy Mac này"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Engine của máy Mac này · không chạy"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB mỗi token thay vì {bf16} KiB — cùng bộ nhớ chứa được {ratio}× ngữ cảnh."
@@ -4087,6 +4102,12 @@
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Cần thêm {gb} GB bộ nhớ trống"
+  },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "Chưa có lượt chạy nào từ khi khởi động lại — câu trả lời tiếp theo sẽ cho tốc độ viết"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "Chưa đo lượt chạy nào — câu trả lời tiếp theo sẽ cho tốc độ viết"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "trên {gb} GB"
@@ -4664,6 +4685,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "Ngữ cảnh {tokens} token"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "Ngữ cảnh {tokens} trên bản chia này — tính theo bộ nhớ trống lúc khởi động; khởi động lại để tăng"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Không chạy — khởi động từ Engine"
   },
@@ -4678,6 +4702,12 @@
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
+  },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Dùng nhà cung cấp đám mây thay thế"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Rời {model} cho cuộc trò chuyện này"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Xóa các cài đặt mô hình và nhà cung cấp đã chọn để bắt đầu lại từ đầu"
@@ -5090,6 +5120,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "Cần cả hai máy Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {Vừa cả hai máy Mac} other {Vừa cả # máy Mac}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Vừa với {name}"
   },
@@ -5189,6 +5222,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Không có kế hoạch thì không có con số tốc độ — nhưng vẫn có thể khởi chạy mọi cách."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Vừa trên một máy Mac này: viết ~{singleWrite} tok/s so với ~{splitWrite} của bản chia, và để trống các máy Mac khác."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# cách chia khác} other{# cách chia khác}}"
   },
@@ -5252,6 +5288,9 @@
   "placementCard.splitChecking": {
     "defaultMessage": "Đang kiểm tra {nodes} cho {model}…"
   },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Ngữ cảnh {tokens} được tính theo bộ nhớ trống lúc khởi động và giữ nguyên khi đang chạy — khởi động lại khi có nhiều bộ nhớ trống hơn để tăng."
+  },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} chưa có trên {nodes} — hãy sao chép sang đó, rồi Chạy."
   },
@@ -5302,6 +5341,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "Tổng ~{value} tok/s với {concurrency} cùng lúc"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "Riêng {name} đã chứa được mô hình này. Chia trên các máy Mac, nó viết ~{splitWrite} tok/s so với ~{singleWrite} ở đó, và đọc prompt nhanh hơn {ratio}× (~{splitRead} so với ~{singleRead} tok/s) — chỉ đáng khi prompt dài và câu trả lời ngắn."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "Riêng {name} đã chứa được mô hình này. Chia trên các máy Mac, nó viết ~{splitWrite} tok/s so với ~{singleWrite} ở đó, và đọc prompt cũng chậm hơn (~{splitRead} so với ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "Riêng {name} đã chứa được mô hình này. Chia trên các máy Mac, nó viết ~{splitWrite} tok/s so với ~{singleWrite} ở đó."
   },
   "placementCard.writes": {
     "defaultMessage": "ghi ~{value} tok/s"

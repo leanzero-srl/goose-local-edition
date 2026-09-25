@@ -3689,11 +3689,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Obrolan dilayani mesin di {peer} — angkanya ada di ubin di atas. Baris ini milik mesin Mac ini sendiri."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Obrolan dilayani pembagian di seluruh Mac Anda — angkanya ada di ubin di atas. Baris ini milik mesin tunggal Mac ini sendiri."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Terdistribusi"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Mesin terdistribusi menguasai Mac ini: mesin tunggal tidak bisa dipasang sampai mesin itu dihentikan di bagian Mesin terdistribusi di bawah."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Detail mesin"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memori di {mac}"
@@ -3736,6 +3745,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Tidak dapat menghentikan layanan dari Mac lain."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Mesin Mac ini"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Mesin Mac ini · tidak berjalan"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token, bukan {bf16} KiB — memori yang sama memuat {ratio}× konteks."
@@ -4087,6 +4102,12 @@
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Butuh {gb} GB memori bebas lagi"
+  },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "Belum ada run sejak dimulai ulang — balasan berikutnya memberi laju menulis"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "Belum ada run yang diukur — balasan berikutnya memberi laju menulis"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "dari {gb} GB"
@@ -4664,6 +4685,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "Konteks {tokens} token"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "Konteks {tokens} pada pembagian ini — diukur dari memori bebas saat dimulai; mulai ulang untuk memperbesar"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Tidak berjalan — jalankan dari Engine"
   },
@@ -4678,6 +4702,12 @@
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
+  },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Gunakan penyedia cloud sebagai gantinya"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Meninggalkan {model} untuk obrolan ini"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Bersihkan pengaturan model dan penyedia yang dipilih untuk memulai dari awal"
@@ -5090,6 +5120,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "Perlu kedua Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {Muat di kedua Mac} other {Muat di semua # Mac}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Muat di {name}"
   },
@@ -5189,6 +5222,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Tanpa rencana tidak ada angka kecepatan — setiap cara tetap bisa dimulai."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Muat di satu Mac ini: menulis ~{singleWrite} tok/s dibanding ~{splitWrite} pada pembagian, dan Mac Anda yang lain tetap bebas."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# pembagian lain} other{# pembagian lain}}"
   },
@@ -5252,6 +5288,9 @@
   "placementCard.splitChecking": {
     "defaultMessage": "Memeriksa {nodes} untuk {model}…"
   },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Konteks {tokens}-nya diukur dari memori bebas saat dimulai dan tetap sebesar itu selama berjalan — mulai ulang dengan lebih banyak memori bebas untuk memperbesarnya."
+  },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} belum ada di {nodes} — salin ke sana, lalu Jalankan."
   },
@@ -5302,6 +5341,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "Total ~{value} tok/dtk dengan {concurrency} sekaligus"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} sendiri muat untuk model ini. Dibagi ke seluruh Mac Anda, model menulis ~{splitWrite} tok/s dibanding ~{singleWrite} di sana, dan membaca prompt {ratio}× lebih cepat (~{splitRead} vs ~{singleRead} tok/s) — hanya sepadan untuk prompt panjang dan balasan pendek."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} sendiri muat untuk model ini. Dibagi ke seluruh Mac Anda, model menulis ~{splitWrite} tok/s dibanding ~{singleWrite} di sana, dan membaca prompt juga lebih lambat (~{splitRead} vs ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} sendiri muat untuk model ini. Dibagi ke seluruh Mac Anda, model menulis ~{splitWrite} tok/s dibanding ~{singleWrite} di sana."
   },
   "placementCard.writes": {
     "defaultMessage": "menulis ~{value} tok/dtk"

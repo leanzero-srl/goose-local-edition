@@ -3689,11 +3689,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Sohbete {peer} üzerindeki motor yanıt veriyor; onun değerleri yukarıdaki kutuda. Bu satırlar bu Mac’in kendi motoruna ait."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Sohbete Mac’lerinize bölünmüş motor yanıt veriyor; onun değerleri yukarıdaki kutuda. Bu satırlar bu Mac’in kendi tekil motoruna ait."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Dağıtık"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Dağıtık motor bu Mac'i kullanıyor: tekli motor, aşağıdaki Dağıtık motor bölümünde durdurulana kadar bağlanamaz."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Motor ayrıntıları"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} üzerindeki bellek"
@@ -3736,6 +3745,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Diğer Mac üzerinden sunum durdurulamadı."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Bu Mac’in motoru"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Bu Mac’in motoru · çalışmıyor"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: token başına {bf16} KiB yerine {bytes} KiB — aynı bellek {ratio}× bağlam tutar."
@@ -4087,6 +4102,12 @@
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "{gb} GB daha boş bellek gerekiyor"
+  },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "Yeniden başladığından beri çalıştırma yok — sonraki yanıt bir yazma hızı verir"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "Henüz ölçülen çalıştırma yok — sonraki yanıt bir yazma hızı verir"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
@@ -4664,6 +4685,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens} tokenlik bağlam"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "Bu bölmede {tokens} bağlam — başlarken boş belleğe göre boyutlandı; büyütmek için yeniden başlatın"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Çalışmıyor — Motor’dan başlatın"
   },
@@ -4678,6 +4702,12 @@
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
+  },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Bunun yerine bir bulut sağlayıcı kullan"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Bu sohbet için {model} bırakılır"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Yeni bir başlangıç yapmak için seçtiğiniz model ve sağlayıcı ayarlarını temizleyin"
@@ -5090,6 +5120,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "İki Mac de gerekli"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {İki Mac’e de sığar} other {# Mac’in hepsine sığar}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name} üzerine sığar"
   },
@@ -5189,6 +5222,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Plan olmadan hız rakamı yok — yine de her yol başlatılabilir."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Bu tek Mac’e sığar: bölmenin ~{splitWrite} değerine karşı ~{singleWrite} tok/s yazar ve diğer Mac’lerinizi boş bırakır."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# diğer bölme} other{# diğer bölme}}"
   },
@@ -5252,6 +5288,9 @@
   "placementCard.splitChecking": {
     "defaultMessage": "{model} için {nodes} denetleniyor…"
   },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "{tokens} bağlamı başlarken boş belleğe göre boyutlandı ve çalıştığı sürece öyle kalır — büyütmek için daha fazla boş bellekle yeniden başlatın."
+  },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} henüz {nodes} üzerinde değil — oraya kopyalayın, sonra Çalıştır."
   },
@@ -5302,6 +5341,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "Aynı anda {concurrency} ile toplam ~{value} tok/sn"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} bu modeli tek başına taşır. Mac’lerinize bölündüğünde ~{singleWrite} yerine ~{splitWrite} tok/s yazar ve istemleri {ratio}× daha hızlı okur (~{splitRead} ile ~{singleRead} tok/s) — yalnızca istemler uzun, yanıtlar kısa olduğunda değer."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} bu modeli tek başına taşır. Mac’lerinize bölündüğünde ~{singleWrite} yerine ~{splitWrite} tok/s yazar ve istemleri de daha yavaş okur (~{splitRead} ile ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} bu modeli tek başına taşır. Mac’lerinize bölündüğünde ~{singleWrite} yerine ~{splitWrite} tok/s yazar."
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/sn yazma"

@@ -279,11 +279,14 @@ function MatrixCell({ mac, modelId, macs, onPending, onOpenSampling }: CellProps
               {intl.formatMessage(i18n.incomplete, { count: Math.max(1, model.missingFiles) })}
             </Chip>
           ) : inEngine ? (
+            // The copy an engine holds is the one FILLED chip in the table, in the engine-phase
+            // palette; a copy that only sits on disk is quiet. A solid green "On disk" beside a
+            // grey "Loaded" made the serving copy look the least alive (Q-45).
             <Chip phase={phase}>
               {intl.formatMessage(phase === 'loading' ? i18n.loading : i18n.loaded)}
             </Chip>
           ) : (
-            <Chip tone="ok">{intl.formatMessage(i18n.onDisk)}</Chip>
+            <Chip>{intl.formatMessage(i18n.onDisk)}</Chip>
           )}
           <span className={cx(TYPE.meta, TNUM)}>{formatGb(model.sizeBytes)}</span>
           {incomplete ? (

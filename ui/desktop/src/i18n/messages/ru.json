@@ -3689,11 +3689,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Чат обслуживает движок на {peer} — его показатели в плитке выше. Эти строки относятся к движку этого Mac."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Чат обслуживает разделение между вашими Mac — его показатели в плитке выше. Эти строки относятся к одиночному движку этого Mac."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Распределённо"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Распределённый движок занимает этот Mac: одиночный движок нельзя загрузить, пока распределённый не остановлен в разделе «Распределённый движок» ниже."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Сведения о движке"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Память на {mac}"
@@ -3736,6 +3745,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Не удалось остановить обслуживание с другого Mac."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Движок этого Mac"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Движок этого Mac · не запущен"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} КиБ на токен вместо {bf16} КиБ — в той же памяти помещается в {ratio}× больше контекста."
@@ -4087,6 +4102,12 @@
   },
   "mlxStateTile.needsMore": {
     "defaultMessage": "Нужно ещё {gb} ГБ свободной памяти"
+  },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "Запусков после перезапуска нет — следующий ответ даст скорость записи"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "Запусков пока не измерено — следующий ответ даст скорость записи"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "из {gb} ГБ"
@@ -4664,6 +4685,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "Контекст {tokens} токенов"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "Контекст {tokens} на этом разделении — рассчитан по свободной памяти при запуске; перезапустите, чтобы увеличить"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Не запущена — запустите её в движке"
   },
@@ -4678,6 +4702,12 @@
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
+  },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Использовать облачного провайдера"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Уходит с {model} в этом чате"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Очистить выбранную модель и настройки провайдера, чтобы начать заново"
@@ -5090,6 +5120,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "Нужны оба Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {Помещается на оба Mac} other {Помещается на все # Mac}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Помещается на {name}"
   },
@@ -5189,6 +5222,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Без плана нет оценки скорости — но любой способ всё равно можно запустить."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Помещается на этот один Mac: пишет ~{singleWrite} tok/s против ~{splitWrite} у разделения и оставляет другие Mac свободными."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{Ещё # разделение} few{Ещё # разделения} many{Ещё # разделений} other{Ещё # разделения}}"
   },
@@ -5252,6 +5288,9 @@
   "placementCard.splitChecking": {
     "defaultMessage": "Проверка {nodes} для {model}…"
   },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Его контекст {tokens} рассчитан по свободной памяти при запуске и не меняется, пока он работает, — перезапустите при большем объёме свободной памяти, чтобы увеличить."
+  },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} ещё нет на {nodes} — скопируйте его туда, затем Запуск."
   },
@@ -5302,6 +5341,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "~{value} ток/с всего при {concurrency} одновременно"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} в одиночку вмещает эту модель. Разделённая между вашими Mac, она пишет ~{splitWrite} tok/s против ~{singleWrite} там и читает промпты в {ratio}× быстрее (~{splitRead} против ~{singleRead} tok/s) — это окупается только при длинных промптах и коротких ответах."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} в одиночку вмещает эту модель. Разделённая между вашими Mac, она пишет ~{splitWrite} tok/s против ~{singleWrite} там и читает промпты тоже медленнее (~{splitRead} против ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} в одиночку вмещает эту модель. Разделённая между вашими Mac, она пишет ~{splitWrite} tok/s против ~{singleWrite} там."
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} ток/с на запись"

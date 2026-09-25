@@ -197,6 +197,27 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
     expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBeNull();
   });
 
+  it('Q-44: the same model back after a stop or a restart finds its runs; another model starts its own book', async () => {
+    let result: MlxLiveStatusResult = answered(GENERATING_STATUS);
+    const h = harness({ status: () => result });
+    await h.monitor.tick();
+    expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBe(19.9);
+    // The engine goes away (a relaunch), then answers again with a younger uptime.
+    result = refused;
+    await h.monitor.tick();
+    expect(bookSpreads(h.monitor.current().rates).writing).toBeNull();
+    result = answered({ ...IDLE_STATUS, uptime_s: 12 });
+    await h.monitor.tick();
+    const back = h.monitor.current().rates;
+    expect(bookSpreads(back).writing?.median ?? null).toBe(19.9);
+    expect(back.restarted).toBe(true);
+    // Another model on the same port: its own, empty book.
+    result = answered({ ...IDLE_STATUS, model: 'another-model', uptime_s: 5 });
+    await h.monitor.tick();
+    expect(bookSpreads(h.monitor.current().rates).writing).toBeNull();
+    expect(h.monitor.current().rates.restarted).toBe(false);
+  });
+
   it('no port anywhere: nothing is read, the state is unknown', async () => {
     const h = harness({ status: () => answered(IDLE_STATUS), configBaseUrl: null });
     await h.monitor.tick();
