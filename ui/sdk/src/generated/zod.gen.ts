@@ -3844,6 +3844,10 @@ export const zMlxDistributedNodeStatusDto = z.object({
         z.number(),
         z.null()
     ]).optional(),
+    cacheMemoryGb: z.union([
+        z.number(),
+        z.null()
+    ]).optional(),
     plannedMemoryGb: z.union([
         z.number(),
         z.null()
@@ -4009,7 +4013,11 @@ export const zMlxDistributedPreflightDto = z.object({
  * A supervisor event. `kind`: "preflight" | "linkRepaired" | "launched" | "ready" |
  * "startFailed" | "rankDied" | "rankFrozen" | "hang" | "streamWithoutDone" | "restart" |
  * "breakerOpen" | "watchdogWarn" | "watchdogCritical" | "watchdogBlind" | "admissionClosed" |
- * "admissionOpened" | "stopRequested" | "stopped" | "orphanReclaimed".
+ * "admissionOpened" | "stopRequested" | "stopped" | "orphanReclaimed" | "linkControlLost" |
+ * "linkControlRestored" | "localNetworkBlocked" | "memoryCompacted" | "compactionSkipped" |
+ * "rankOutOfMemory" (a rank died of memory; the pair restarts once memory recovered) |
+ * "memoryGrowth" (a busy stretch took at least what is left above CRITICAL on a node: admission
+ * closes) | "rankOverPlan" (a rank's MLX active bytes exceed its plan) | "memoryRecovered".
  */
 export const zMlxDistributedEventDto = z.object({
     atMs: z.number().int().gte(0),
@@ -4193,6 +4201,10 @@ export const zMlxDistributedCompactionDto = z.object({
 export const zMlxDistributedStatusDto = z.object({
     mode: z.string(),
     state: z.string(),
+    memoryRecovery: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
     backend: z.union([
         z.string(),
         z.null()

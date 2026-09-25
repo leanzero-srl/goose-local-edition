@@ -249,6 +249,7 @@ fn status_to_dto(
     MlxDistributedStatusDto {
         mode: status.mode().to_string(),
         state: status.state.as_str().to_string(),
+        memory_recovery: status.memory_recovery,
         backend: status.backend.map(|b| b.as_str().to_string()),
         runner: status.runner.map(|r| r.as_str().to_string()),
         model_id: status.model_id,
@@ -283,6 +284,7 @@ fn status_to_dto(
                 memory_error: n.memory_error,
                 active_memory_gb: n.active_bytes.map(gib),
                 peak_memory_gb: n.peak_bytes.map(gib),
+                cache_memory_gb: n.cache_bytes.map(gib),
                 planned_memory_gb: n.planned_bytes.map(gib),
                 memory_limit_gb: n.memory_limit_bytes.map(gib),
                 wired_limit_gb: n.wired_limit_bytes.map(gib),

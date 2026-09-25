@@ -2597,6 +2597,7 @@ devices:
             planned_bytes: 1,
             prompt_cache_limit_bytes: 1,
             prompt_cache_entries: 1,
+            mlx_cache_limit_bytes: 1,
         };
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};

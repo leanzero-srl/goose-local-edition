@@ -637,9 +637,11 @@ mod tests {
 
     /// A process standing in for a rank: `perl` sleeps, and `marker` (when given) rides its
     /// command line the way the goose rank marker rides a real rank's.
+    /// A process carrying `marker` on its command line. It leaves with the test process: a marked
+    /// orphan reads as a foreign goose rank to every real goosed on this Mac.
     fn sleeper(marker: Option<&str>) -> tokio::process::Child {
         let mut cmd = tokio::process::Command::new("/usr/bin/perl");
-        cmd.args(["-e", "sleep 600"]);
+        cmd.args(["-e", "my $p = getppid(); sleep 1 while getppid() == $p"]);
         cmd.args(marker);
         cmd.kill_on_drop(true).spawn().expect("perl spawns")
     }

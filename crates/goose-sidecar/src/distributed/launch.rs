@@ -59,8 +59,8 @@ const TAIL_LINES: usize = 200;
 pub enum RankProgram {
     /// `mlx_lm.server` under `rank_wrapper.py` (tensor split). Its in-process memory and wired
     /// limits sit at the node's own GPU ceiling (`max_recommended_working_set_size`, read on the
-    /// rank), the cache limit at the ceiling less the planned bytes. The prompt cache's two bounds
-    /// are the same on every rank (see [`TensorLaunch`]).
+    /// rank); MLX's free-buffer cache at the plan's transient allowance (`mlx_cache_limit_bytes`).
+    /// The prompt cache's two bounds are the same on every rank (see [`TensorLaunch`]).
     ///
     /// Tagged `mlxLmServerDoorbell` since the doorbell (Q-66): an idle worker parks in recv(1)
     /// instead of spinning in JACCL's all_sum, which needs every rank's wrapper to take part.
@@ -68,7 +68,16 @@ pub enum RankProgram {
     /// doorbell's port all_sum (a hang). The new tag makes that peer's goosed refuse the spec at
     /// rank start instead (serde: unknown variant; see `older_peer_refusal`). `mlxLmServer`
     /// (an older requester's spec) still reads, with `doorbell` false: upstream waiting.
-    #[serde(rename = "mlxLmServerDoorbell", alias = "mlxLmServer")]
+    ///
+    /// Tagged `mlxLmServerBounded` since Q-79: `prompt_cache_live_bound` changes what the prompt
+    /// cache evicts, and every rank must evict alike, so a peer whose wrapper cannot bound cached +
+    /// live at each insert must refuse the rank rather than join it. `mlxLmServerDoorbell` (a
+    /// Q-66..Q-73 requester) still reads, with the bound off: that requester's policy.
+    #[serde(
+        rename = "mlxLmServerBounded",
+        alias = "mlxLmServerDoorbell",
+        alias = "mlxLmServer"
+    )]
     MlxLmServer {
         context_window: u64,
         /// `--prompt-cache-bytes` and the prompt cache's own `max_bytes`
@@ -87,6 +96,15 @@ pub enum RankProgram {
         planned_bytes: u64,
         #[serde(default)]
         doorbell: bool,
+        /// `mx.set_cache_limit` on the rank (`RankPlan::mlx_cache_limit_bytes`). Absent in an
+        /// older requester's spec: the rank then keeps that requester's rule (its ceiling less
+        /// `planned_bytes`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mlx_cache_limit_bytes: Option<u64>,
+        /// The prompt cache holds cached + live KV inside `prompt_cache_limit_bytes` at every
+        /// insert, not only at admission.
+        #[serde(default)]
+        prompt_cache_live_bound: bool,
     },
     /// The fork's `pipeline_qwen4_serve.serve` under `pipeline_rank.py` (layer split): the exact
     /// `pipeline_qwen4 serve` arguments, parsed on the rank by the fork's own parser.
@@ -134,6 +152,8 @@ pub struct TensorLaunch {
     pub planned_bytes: u64,
     pub prompt_cache_limit_bytes: u64,
     pub prompt_cache_entries: u64,
+    /// Per rank: it bounds only this process's free buffers, nothing a peer must mirror.
+    pub mlx_cache_limit_bytes: u64,
 }
 
 impl TensorLaunch {
@@ -142,6 +162,7 @@ impl TensorLaunch {
             planned_bytes: plan.planned_bytes,
             prompt_cache_limit_bytes: plan.prompt_cache_limit_bytes(),
             prompt_cache_entries: plan.prompt_cache_entries,
+            mlx_cache_limit_bytes: plan.mlx_cache_limit_bytes(),
         }
     }
 
@@ -185,6 +206,8 @@ pub fn rank_specs(
             prompt_cache_bytes: None,
             planned_bytes: launch.planned_bytes,
             doorbell: true,
+            mlx_cache_limit_bytes: Some(launch.mlx_cache_limit_bytes),
+            prompt_cache_live_bound: true,
         }
     })
 }
@@ -528,6 +551,7 @@ mod tests {
             planned_bytes,
             prompt_cache_limit_bytes,
             prompt_cache_entries: 3,
+            mlx_cache_limit_bytes: planned_bytes / 10,
         }
     }
 
@@ -556,6 +580,8 @@ mod tests {
                 prompt_cache_bytes: None,
                 context_window: 65_536,
                 doorbell: true,
+                mlx_cache_limit_bytes: Some(2),
+                prompt_cache_live_bound: true,
             }
         ));
         assert!(specs[0].ring_hosts.is_none());
@@ -1022,8 +1048,45 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerDoorbell");
+        assert_eq!(json["program"], "mlxLmServerBounded");
         assert_eq!(json["doorbell"], true);
+        assert_eq!(json["prompt_cache_live_bound"], true);
+
+        // A Q-66..Q-73 requester's spec (the doorbell tag, no live bound, no MLX cache figure)
+        // runs that requester's own eviction policy here.
+        let mut doorbell = json.clone();
+        doorbell["program"] = "mlxLmServerDoorbell".into();
+        let fields = doorbell.as_object_mut().unwrap();
+        fields.remove("prompt_cache_live_bound");
+        fields.remove("mlx_cache_limit_bytes");
+        let read: RankSpec = serde_json::from_value(doorbell).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                doorbell: true,
+                prompt_cache_live_bound: false,
+                mlx_cache_limit_bytes: None,
+                ..
+            }
+        ));
+
+        // A Q-66..Q-73 peer's goosed (its enum knows the doorbell tag, not the bounded one)
+        // refuses this spec, and the requester says what to do about it.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum DoorbellProgram {
+            #[serde(rename = "mlxLmServerDoorbell", alias = "mlxLmServer")]
+            MlxLmServer {
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused = serde_json::from_value::<DoorbellProgram>(json.clone()).unwrap_err();
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
 
         // An older requester's spec (no doorbell, the old tag, its one prompt cache number)
         // still starts a rank here, waiting the upstream way.
@@ -1073,8 +1136,13 @@ print("ok")
     /// The REAL tensor program, booted as a rank is (doorbell off: the stand-in has no peer),
     /// against stand-in `mlx.core` and `mlx_lm` modules whose `run` builds its prompt cache
     /// exactly as mlx_lm 0.31.3's does (`LRUPromptCache(cli_args.prompt_cache_size)`,
-    /// server.py:1743). Returns what that `run` saw: argv, the cache's max_size / max_bytes.
-    async fn boot_against_stand_ins(mut spec: RankSpec) -> serde_json::Value {
+    /// server.py:1743). Returns what that `run` saw — argv, the cache's max_size / max_bytes, the
+    /// trims an insert made beside a live batch of 7 bytes — plus the rank's `caps`, its `fatal`
+    /// line and exit `code`. `generation_dies`: the stand-in generation loop raises a Metal OOM.
+    async fn boot_against_stand_ins(
+        mut spec: RankSpec,
+        generation_dies: bool,
+    ) -> serde_json::Value {
         let root = tempfile::tempdir().unwrap();
         let site = root.path();
         std::fs::create_dir_all(site.join("mlx")).unwrap();
@@ -1097,22 +1165,33 @@ print("ok")
              def set_cache_limit(n): pass\n\
              def get_active_memory(): return 1\n\
              def get_peak_memory(): return 1\n\
-             def get_cache_memory(): return 0\n",
+             def get_cache_memory(): return 0\n\
+             def clear_cache(): pass\n\
+             class array: pass\n\
+             def contiguous(x): return x\n\
+             def eval(*arrays): pass\n",
         )
         .unwrap();
         std::fs::write(site.join("mlx_lm/__init__.py"), "__version__ = '0.31.3'\n").unwrap();
         std::fs::write(
             site.join("mlx_lm/server.py"),
-            "import argparse, json, sys\n\
+            "import argparse, json, os, sys\n\
              class LRUPromptCache:\n\
              \x20   def __init__(self, max_size=10, max_bytes=1 << 63):\n\
-             \x20       self.max_size, self.max_bytes = max_size, max_bytes\n\
+             \x20       self.max_size, self.max_bytes, self.trims = max_size, max_bytes, []\n\
+             \x20   def insert_cache(self, model, tokens, prompt_cache, *, cache_type='assistant'): pass\n\
+             \x20   def trim_to(self, *, n_sequences=None, n_bytes=None): self.trims.append(n_bytes)\n\
+             class BatchGenerator:\n\
+             \x20   prompt_cache_nbytes = 7\n\
+             \x20   def close(self): pass\n\
              class ResponseGenerator:\n\
              \x20   def _next_request(self, timeout=None): pass\n\
              \x20   def generate(self, request, args, progress_callback=None): pass\n\
              \x20   def _tokenize(self, tokenizer, request, args): pass\n\
              \x20   def _share_request(self, request): pass\n\
-             \x20   def _generate(self): pass\n\
+             \x20   def _generate(self):\n\
+             \x20       if os.environ.get('STANDIN_GENERATION_DIES'):\n\
+             \x20           raise RuntimeError('[METAL] Command buffer execution failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)')\n\
              class APIHandler:\n\
              \x20   def do_GET(self): pass\n\
              \x20   def do_POST(self): pass\n\
@@ -1123,8 +1202,11 @@ print("ok")
              \x20   def load(self, *a): pass\n\
              def run(host, port, model_provider):\n\
              \x20   cache = LRUPromptCache(model_provider.cli_args.prompt_cache_size)\n\
+             \x20   BatchGenerator()\n\
+             \x20   cache.insert_cache('model', [1, 2], [], cache_type='user')\n\
              \x20   print('GOOSE_STANDIN ' + json.dumps({'argv': sys.argv[1:], 'max_size': cache.max_size, \
-             'max_bytes': cache.max_bytes, 'served': model_provider._model_map}), flush=True)\n\
+             'max_bytes': cache.max_bytes, 'trims': cache.trims, 'served': model_provider._model_map}), flush=True)\n\
+             \x20   ResponseGenerator()._generate()\n\
              def main():\n\
              \x20   p = argparse.ArgumentParser()\n\
              \x20   p.add_argument('--model'); p.add_argument('--host'); p.add_argument('--port', type=int)\n\
@@ -1138,25 +1220,33 @@ print("ok")
         if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
             *doorbell = false;
         }
-        let out = tokio::process::Command::new("/usr/bin/python3")
+        let mut command = tokio::process::Command::new("/usr/bin/python3");
+        command
             .args(python_args(&spec).unwrap())
             .env("PYTHONPATH", site)
-            .output()
-            .await
-            .unwrap();
+            .kill_on_drop(true);
+        if generation_dies {
+            command.env("STANDIN_GENERATION_DIES", "1");
+        }
+        let out = command.output().await.unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(
+        assert_eq!(
             out.status.success(),
+            !generation_dies,
             "{stdout}{}",
             String::from_utf8_lossy(&out.stderr)
         );
-        serde_json::from_str(
+        let line = |tag: &str| {
             stdout
                 .lines()
-                .find_map(|l| l.strip_prefix("GOOSE_STANDIN "))
-                .unwrap_or_else(|| panic!("{stdout}")),
-        )
-        .unwrap()
+                .find_map(|l| l.strip_prefix(tag))
+                .map(|json| serde_json::from_str::<serde_json::Value>(json).unwrap())
+        };
+        let mut served = line("GOOSE_STANDIN ").unwrap_or_else(|| panic!("{stdout}"));
+        served["caps"] = line("GOOSE_RANK_CAPS ").unwrap_or_else(|| panic!("{stdout}"));
+        served["fatal"] = line("GOOSE_RANK_FATAL ").unwrap_or_default();
+        served["code"] = out.status.code().into();
+        served
     }
 
     fn flag(served: &serde_json::Value, name: &str) -> Option<String> {
@@ -1174,9 +1264,19 @@ print("ok")
             planned_bytes: 27_456_216_576,
             prompt_cache_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 110,
+            mlx_cache_limit_bytes: 2_745_621_658,
         };
         let spec = rank_specs(&config, "node-alias", &[e2e, e2e], 141_568, 2.0).remove(1);
-        let served = boot_against_stand_ins(spec).await;
+        let served = boot_against_stand_ins(spec, false).await;
+        assert_eq!(
+            served["caps"]["cache_limit"], 2_745_621_658u64,
+            "MLX's free-buffer cache holds the plan's transient allowance, not the ceiling's rest"
+        );
+        assert_eq!(
+            served["trims"],
+            serde_json::json!([9_431_744_512u64 - 7]),
+            "an insert beside a live batch keeps cached + live inside the plan's KV charge"
+        );
         assert_eq!(flag(&served, "--prompt-cache-size").as_deref(), Some("110"));
         assert_eq!(
             flag(&served, "--prompt-cache-bytes").as_deref(),
@@ -1210,14 +1310,23 @@ print("ok")
             prompt_cache_limit_bytes,
             prompt_cache_entries,
             prompt_cache_bytes,
+            mlx_cache_limit_bytes,
+            prompt_cache_live_bound,
             ..
         } = &mut spec.program
         {
             *prompt_cache_limit_bytes = None;
             *prompt_cache_entries = None;
             *prompt_cache_bytes = Some(4_715_872_256);
+            *mlx_cache_limit_bytes = None;
+            *prompt_cache_live_bound = false;
         }
-        let served = boot_against_stand_ins(spec).await;
+        let served = boot_against_stand_ins(spec, false).await;
+        assert_eq!(
+            served["caps"]["cache_limit"], 99,
+            "that requester's rule: the ceiling (100) less the planned bytes (1)"
+        );
+        assert_eq!(served["trims"], serde_json::json!([]));
         assert_eq!(
             flag(&served, "--prompt-cache-bytes").as_deref(),
             Some("4715872256")
@@ -1225,6 +1334,33 @@ print("ok")
         assert_eq!(flag(&served, "--prompt-cache-size"), None);
         assert_eq!(served["max_size"], 10);
         assert_eq!(served["max_bytes"], serde_json::json!(1u64 << 63));
+    }
+
+    /// E2E #2's Studio rank: mlx_lm's generation thread raised a Metal OOM, the worker's main
+    /// thread only joins it, and the rank exited 0. Now the death is named and the exit is not a
+    /// success.
+    #[tokio::test]
+    async fn a_generation_thread_that_dies_ends_the_rank_named_and_non_zero() {
+        let config = two_mac_config();
+        let spec = rank_specs(
+            &config,
+            "node-alias",
+            &[launch(1, 1), launch(1, 1)],
+            8_192,
+            2.0,
+        )
+        .remove(1);
+        let served = boot_against_stand_ins(spec, true).await;
+        assert_eq!(served["code"], 70);
+        assert_eq!(served["fatal"]["thread"], "generation");
+        assert_eq!(served["fatal"]["out_of_memory"], true);
+        assert!(
+            served["fatal"]["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("kIOGPUCommandBufferCallbackErrorOutOfMemory")),
+            "{}",
+            served["fatal"]
+        );
     }
 
     /// The phases a pipeline rank walks, from its own lines (the 27B's figures as a reporter thread

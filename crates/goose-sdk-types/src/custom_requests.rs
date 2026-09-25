@@ -3576,11 +3576,16 @@ pub struct MlxDistributedNodeStatusDto {
     pub active_memory_gb: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_memory_gb: Option<f64>,
+    /// MLX's free-buffer cache on the rank (`mx.get_cache_memory`): resident and counted in the
+    /// node's footprint, but not in `activeMemoryGb` — the rank holds active + cache.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_memory_gb: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planned_memory_gb: Option<f64>,
-    /// The in-process caps the rank reported applying: `mx.set_memory_limit` (0.75 × RAM),
-    /// `mx.set_wired_limit` (min(0.60 × RAM, the GPU's recommended working set)) and
-    /// `mx.set_cache_limit`. Absent until the rank reported them.
+    /// The in-process caps the rank reported applying: `mx.set_memory_limit` and
+    /// `mx.set_wired_limit` (the node's GPU ceiling, `max_recommended_working_set_size`) and
+    /// `mx.set_cache_limit` (the plan's transient allowance, planned × 0.10, on a tensor rank
+    /// launched by this goose). Absent until the rank reported them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_limit_gb: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3608,7 +3613,11 @@ pub struct MlxDistributedNodeStatusDto {
 /// A supervisor event. `kind`: "preflight" | "linkRepaired" | "launched" | "ready" |
 /// "startFailed" | "rankDied" | "rankFrozen" | "hang" | "streamWithoutDone" | "restart" |
 /// "breakerOpen" | "watchdogWarn" | "watchdogCritical" | "watchdogBlind" | "admissionClosed" |
-/// "admissionOpened" | "stopRequested" | "stopped" | "orphanReclaimed".
+/// "admissionOpened" | "stopRequested" | "stopped" | "orphanReclaimed" | "linkControlLost" |
+/// "linkControlRestored" | "localNetworkBlocked" | "memoryCompacted" | "compactionSkipped" |
+/// "rankOutOfMemory" (a rank died of memory; the pair restarts once memory recovered) |
+/// "memoryGrowth" (a busy stretch took at least what is left above CRITICAL on a node: admission
+/// closes) | "rankOverPlan" (a rank's MLX active bytes exceed its plan) | "memoryRecovered".
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxDistributedEventDto {
@@ -3637,8 +3646,14 @@ pub struct MlxDistributedLivenessDto {
 pub struct MlxDistributedStatusDto {
     /// Which engine owns this Mac: "single" | "distributed".
     pub mode: String,
-    /// "stopped" | "preflight" | "starting" | "ready" | "serving" | "failed" | "stopping".
+    /// "stopped" | "preflight" | "starting" | "ready" | "serving" | "failed" | "stopping" |
+    /// "recovering" (a rank died of memory; `memoryRecovery` says what the restart waits for).
     pub state: String,
+    /// While `state` is "recovering": what the restart after a memory death waits for, per node
+    /// ("waiting for memory to recover before restarting: <node>: kernel …, available … of …
+    /// (WARN below …)").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_recovery: Option<String>,
     /// "jaccl" | "ring".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,

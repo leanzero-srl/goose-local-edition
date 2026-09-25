@@ -9031,7 +9031,14 @@
         },
         "state": {
           "type": "string",
-          "description": "\"stopped\" | \"preflight\" | \"starting\" | \"ready\" | \"serving\" | \"failed\" | \"stopping\"."
+          "description": "\"stopped\" | \"preflight\" | \"starting\" | \"ready\" | \"serving\" | \"failed\" | \"stopping\" |\n\"recovering\" (a rank died of memory; `memoryRecovery` says what the restart waits for)."
+        },
+        "memoryRecovery": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "While `state` is \"recovering\": what the restart after a memory death waits for, per node\n(\"waiting for memory to recover before restarting: <node>: kernel …, available … of …\n(WARN below …)\")."
         },
         "backend": {
           "type": [
@@ -9378,6 +9385,14 @@
           ],
           "format": "double"
         },
+        "cacheMemoryGb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "description": "MLX's free-buffer cache on the rank (`mx.get_cache_memory`): resident and counted in the\nnode's footprint, but not in `activeMemoryGb` — the rank holds active + cache."
+        },
         "plannedMemoryGb": {
           "type": [
             "number",
@@ -9391,7 +9406,7 @@
             "null"
           ],
           "format": "double",
-          "description": "The in-process caps the rank reported applying: `mx.set_memory_limit` (0.75 × RAM),\n`mx.set_wired_limit` (min(0.60 × RAM, the GPU's recommended working set)) and\n`mx.set_cache_limit`. Absent until the rank reported them."
+          "description": "The in-process caps the rank reported applying: `mx.set_memory_limit` and\n`mx.set_wired_limit` (the node's GPU ceiling, `max_recommended_working_set_size`) and\n`mx.set_cache_limit` (the plan's transient allowance, planned × 0.10, on a tensor rank\nlaunched by this goose). Absent until the rank reported them."
         },
         "wiredLimitGb": {
           "type": [
@@ -9803,7 +9818,7 @@
         "kind",
         "message"
       ],
-      "description": "A supervisor event. `kind`: \"preflight\" | \"linkRepaired\" | \"launched\" | \"ready\" |\n\"startFailed\" | \"rankDied\" | \"rankFrozen\" | \"hang\" | \"streamWithoutDone\" | \"restart\" |\n\"breakerOpen\" | \"watchdogWarn\" | \"watchdogCritical\" | \"watchdogBlind\" | \"admissionClosed\" |\n\"admissionOpened\" | \"stopRequested\" | \"stopped\" | \"orphanReclaimed\"."
+      "description": "A supervisor event. `kind`: \"preflight\" | \"linkRepaired\" | \"launched\" | \"ready\" |\n\"startFailed\" | \"rankDied\" | \"rankFrozen\" | \"hang\" | \"streamWithoutDone\" | \"restart\" |\n\"breakerOpen\" | \"watchdogWarn\" | \"watchdogCritical\" | \"watchdogBlind\" | \"admissionClosed\" |\n\"admissionOpened\" | \"stopRequested\" | \"stopped\" | \"orphanReclaimed\" | \"linkControlLost\" |\n\"linkControlRestored\" | \"localNetworkBlocked\" | \"memoryCompacted\" | \"compactionSkipped\" |\n\"rankOutOfMemory\" (a rank died of memory; the pair restarts once memory recovered) |\n\"memoryGrowth\" (a busy stretch took at least what is left above CRITICAL on a node: admission\ncloses) | \"rankOverPlan\" (a rank's MLX active bytes exceed its plan) | \"memoryRecovered\"."
     },
     "MlxDistributedConfigDto": {
       "type": "object",

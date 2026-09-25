@@ -3554,9 +3554,16 @@ export type MlxDistributedStatusDto = {
      */
     mode: string;
     /**
-     * "stopped" | "preflight" | "starting" | "ready" | "serving" | "failed" | "stopping".
+     * "stopped" | "preflight" | "starting" | "ready" | "serving" | "failed" | "stopping" |
+     * "recovering" (a rank died of memory; `memoryRecovery` says what the restart waits for).
      */
     state: string;
+    /**
+     * While `state` is "recovering": what the restart after a memory death waits for, per node
+     * ("waiting for memory to recover before restarting: <node>: kernel …, available … of …
+     * (WARN below …)").
+     */
+    memoryRecovery?: string | null;
     /**
      * "jaccl" | "ring".
      */
@@ -3714,11 +3721,17 @@ export type MlxDistributedNodeStatusDto = {
      */
     activeMemoryGb?: number | null;
     peakMemoryGb?: number | null;
+    /**
+     * MLX's free-buffer cache on the rank (`mx.get_cache_memory`): resident and counted in the
+     * node's footprint, but not in `activeMemoryGb` — the rank holds active + cache.
+     */
+    cacheMemoryGb?: number | null;
     plannedMemoryGb?: number | null;
     /**
-     * The in-process caps the rank reported applying: `mx.set_memory_limit` (0.75 × RAM),
-     * `mx.set_wired_limit` (min(0.60 × RAM, the GPU's recommended working set)) and
-     * `mx.set_cache_limit`. Absent until the rank reported them.
+     * The in-process caps the rank reported applying: `mx.set_memory_limit` and
+     * `mx.set_wired_limit` (the node's GPU ceiling, `max_recommended_working_set_size`) and
+     * `mx.set_cache_limit` (the plan's transient allowance, planned × 0.10, on a tensor rank
+     * launched by this goose). Absent until the rank reported them.
      */
     memoryLimitGb?: number | null;
     wiredLimitGb?: number | null;
@@ -3886,7 +3899,11 @@ export type MlxDistributedAppMemoryDto = {
  * A supervisor event. `kind`: "preflight" | "linkRepaired" | "launched" | "ready" |
  * "startFailed" | "rankDied" | "rankFrozen" | "hang" | "streamWithoutDone" | "restart" |
  * "breakerOpen" | "watchdogWarn" | "watchdogCritical" | "watchdogBlind" | "admissionClosed" |
- * "admissionOpened" | "stopRequested" | "stopped" | "orphanReclaimed".
+ * "admissionOpened" | "stopRequested" | "stopped" | "orphanReclaimed" | "linkControlLost" |
+ * "linkControlRestored" | "localNetworkBlocked" | "memoryCompacted" | "compactionSkipped" |
+ * "rankOutOfMemory" (a rank died of memory; the pair restarts once memory recovered) |
+ * "memoryGrowth" (a busy stretch took at least what is left above CRITICAL on a node: admission
+ * closes) | "rankOverPlan" (a rank's MLX active bytes exceed its plan) | "memoryRecovered".
  */
 export type MlxDistributedEventDto = {
     atMs: number;

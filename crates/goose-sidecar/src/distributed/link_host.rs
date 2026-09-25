@@ -803,7 +803,10 @@ mod tests {
 
     /// A stand-in pipeline rank under the REAL rank program (rank_env.py + pipeline_rank.py) and
     /// a goose-managed interpreter under a temp home: it joins its "group", reports ready, and
-    /// leaves on SIGTERM with 0.
+    /// leaves on SIGTERM with 0 — or when the test process that spawned it is gone. The host
+    /// holding it is a process global nothing drops, so a test that fails before its stop used to
+    /// leave a `/usr/bin/python3 … goose-distributed-rank` orphan behind — the shape of the pid
+    /// 9425 found on 2026-09-25, which then blocked a real split's restore as a foreign rank.
     fn stand_in_node(home: &std::path::Path) -> crate::distributed::NodeConfig {
         let site = home.join("site");
         std::fs::create_dir_all(site.join("mlx")).unwrap();
@@ -839,7 +842,8 @@ mod tests {
              \x20   signal.signal(signal.SIGTERM, lambda *a: done.set())\n\
              \x20   emit('RANK_GROUP', {'rank': int(os.environ['MLX_RANK']), 'size': 2})\n\
              \x20   emit('READY', {'port': options.port})\n\
-             \x20   done.wait()\n\
+             \x20   parent = os.getppid()\n\
+             \x20   while not done.wait(0.2) and os.getppid() == parent: pass\n\
              \x20   return 0\n",
         )
         .unwrap();
