@@ -27,6 +27,35 @@ use crate::{
 /// argv and for every router that sizes a sidecar node's slots.
 pub const MAX_CONCURRENT_REQUESTS: u32 = 8; // measured: 9th concurrent request got 503 (MLX busy-signal agent, 2026-09-02)
 
+/// The prefix cache's share of the memory the engine finds FREE ONCE ITS WEIGHTS ARE IN
+/// (`--cache-memory-percent`): Rapid-MLX builds the cache after the model load and multiplies
+/// this by psutil's available bytes at that moment, so the Mac measures its own budget. The
+/// engine default (0.20) gave the Studio 12,512,444,416 B, and ONE 49k-token agent turn with its
+/// title, reviewer and canary requests filled 9,765,978,112 B of it (78%, /v1/status 2026-09-25):
+/// a second session's prompt, or the next turn's own entries, had to evict the first. Receipt for the value, the Studio (M3 Ultra 96 GB,
+/// Qwen3.8-27B Q8, /v1/status after one 49k turn): post-load free 62.56e9 B, engine base 30.44e9
+/// (Metal active 40.21e9 − cache 9.77e9), a cold 49k prefill's peak +6.14e9, a live 49k sequence
+/// 3.37e9, the engine's own pressure-eviction line 0.9 × 0.9 × the 83.49e9 GPU ceiling = 67.63e9.
+/// Holding two measured turns needs ≥ 0.312; staying under that line with the cache full, one
+/// prefill peak and two more live 49k sequences needs ≤ 0.389 — see
+/// `the_prefix_cache_share_holds_two_turns_under_the_pressure_line`.
+pub const PREFIX_CACHE_SHARE_OF_FREE: f64 = 0.35; // ratio: of the engine's post-load available memory; receipt above
+
+/// Recurrent-state (GatedDeltaNet) and sliding-window caches cannot be trimmed, so Rapid-MLX
+/// bounds how many such prefix entries it keeps by COUNT (`--hybrid-cache-entries`), auto-set to
+/// 8 — a count that knows nothing of the byte budget above. Every request stores this many
+/// (measured: 12 radix inserts for 4 requests on the Studio, 2026-09-25), and goose sends an
+/// agent turn plus its title, reviewer and canary requests, so the 8 were full (8 of 8, one
+/// eviction) after ONE user turn; raising the byte share alone would not keep a second.
+pub const PREFIX_ENTRIES_PER_REQUEST: u32 = 3; // measured: 12 radix inserts / 4 requests, Studio /v1/status 2026-09-25
+
+/// The non-trimmable entry count: every request the engine admits at once keeps its entries, so
+/// the count never evicts before a full admission window has been stored — the byte share
+/// governs everything beyond it.
+pub fn hybrid_cache_entries() -> u32 {
+    MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
+}
+
 /// v0.14.3-lz.4 = lz.3 + a `logprobs` request on an MTP-mounted engine is answered instead of
 /// aborting the whole process (fork ce15b39ff): the speculative paths yielded LAZY logprob rows
 /// built on the engine's step-thread stream, and the route's `np.array` evaluated them on a thread
@@ -426,6 +455,10 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Result<
         "--served-model-name".to_string(),
         served_model_id(settings, model_id),
         "--enable-prefix-cache".to_string(),
+        "--cache-memory-percent".to_string(),
+        PREFIX_CACHE_SHARE_OF_FREE.to_string(),
+        "--hybrid-cache-entries".to_string(),
+        hybrid_cache_entries().to_string(),
         "--max-concurrent-requests".to_string(),
         MAX_CONCURRENT_REQUESTS.to_string(),
     ]);
@@ -1438,6 +1471,66 @@ mod tests {
         }
     }
 
+    /// The receipt behind `PREFIX_CACHE_SHARE_OF_FREE`, in the Studio's measured bytes (M3 Ultra
+    /// 96 GB serving Qwen3.8-27B Q8, /v1/status 2026-09-25 after one 49,016-token agent turn):
+    /// the share must hold two measured turns, and with the cache full, one cold 49k prefill's
+    /// peak and two more live 49k sequences the engine must stay under its OWN pressure-eviction
+    /// line — above it the engine sheds prefix entries and calls `mx.clear_cache()` per entry,
+    /// the eviction churn of the IOGPU panic recipe (research D3).
+    #[test]
+    fn the_prefix_cache_share_holds_two_turns_under_the_pressure_line() {
+        const ENGINE_DEFAULT_SHARE: f64 = 0.20;
+        const DEFAULT_BUDGET: f64 = 12_512_444_416.0;
+        const ONE_TURN: f64 = 9_765_978_112.0;
+        const METAL_ACTIVE: f64 = 40.21e9;
+        const PREFILL_PEAK_RISE: f64 = 46.35e9 - 40.21e9;
+        const M3_ULTRA_CEILING: f64 = 83_494_174_720.0;
+        // Rapid-MLX's --gpu-memory-utilization default and its metal_pressure_evict_fraction.
+        const ENGINE_CAP_SHARE: f64 = 0.90;
+        const PRESSURE_EVICT_SHARE: f64 = 0.90;
+        // Qwen3.8-27B: 16 full-attention layers × 4 KV heads × 256 head dim × K,V × bf16, and
+        // 48 GatedDeltaNet layers × (48 × 128 × 128 f32 state + 3 × 10,240 bf16 conv state).
+        const KV_BYTES_PER_TOKEN: f64 = 16.0 * 4.0 * 256.0 * 2.0 * 2.0;
+        const RECURRENT_STATE: f64 = 48.0 * (48.0 * 128.0 * 128.0 * 4.0 + 3.0 * 10_240.0 * 2.0);
+        const PROMPT_TOKENS: f64 = 49_016.0;
+
+        let free_after_load = DEFAULT_BUDGET / ENGINE_DEFAULT_SHARE;
+        let base = METAL_ACTIVE - ONE_TURN;
+        let live_sequence = PROMPT_TOKENS * KV_BYTES_PER_TOKEN + RECURRENT_STATE;
+        let pressure_line = M3_ULTRA_CEILING * ENGINE_CAP_SHARE * PRESSURE_EVICT_SHARE;
+        let cache = PREFIX_CACHE_SHARE_OF_FREE * free_after_load;
+
+        assert_eq!(
+            KV_BYTES_PER_TOKEN, 65_536.0,
+            "the fit rule's own 27B figure"
+        );
+        assert!(
+            cache >= 2.0 * ONE_TURN,
+            "{cache:.3e} B cannot hold two measured {ONE_TURN:.3e} B turns"
+        );
+        let worst = base + cache + PREFILL_PEAK_RISE + 2.0 * live_sequence;
+        assert!(
+            worst <= pressure_line,
+            "{worst:.3e} B crosses the engine's pressure-eviction line {pressure_line:.3e} B"
+        );
+        let floor = 2.0 * ONE_TURN / free_after_load;
+        let ceiling =
+            (pressure_line - base - PREFILL_PEAK_RISE - 2.0 * live_sequence) / free_after_load;
+        assert!(
+            (0.31..0.32).contains(&floor) && (0.38..0.39).contains(&ceiling),
+            "the admissible band moved: [{floor:.3}, {ceiling:.3}]"
+        );
+    }
+
+    #[test]
+    fn the_hybrid_entry_count_keeps_a_full_admission_window() {
+        assert_eq!(hybrid_cache_entries(), 24);
+        assert_eq!(
+            hybrid_cache_entries(),
+            MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
+        );
+    }
+
     #[test]
     fn serve_command_golden_with_all_sampling_flags_from_profile() {
         let settings = EngineSettings {
@@ -1464,6 +1557,10 @@ mod tests {
                 "--served-model-name",
                 "mlx-community/Qwen3.5-9B-MLX-4bit",
                 "--enable-prefix-cache",
+                "--cache-memory-percent",
+                "0.35",
+                "--hybrid-cache-entries",
+                "24",
                 "--max-concurrent-requests",
                 "8",
                 "--default-temperature",
@@ -1632,7 +1729,7 @@ mod tests {
         .unwrap();
         assert_eq!(&argv[..base.len() - 1], &base[..base.len() - 1]);
         assert_eq!(
-            &argv[13..],
+            &argv[17..],
             &[
                 "--speculative-config".to_string(),
                 expected_json,
@@ -1775,7 +1872,8 @@ mod tests {
     }
 
     /// A plain text checkpoint (no MTP head, no vision config, no adapter) mounts with the
-    /// argv this crate produced before the lane flags existed — byte for byte.
+    /// argv this crate produced before the lane flags existed — byte for byte, plus the prefix
+    /// cache's two sizing flags, which every model carries.
     #[test]
     fn a_plain_model_dir_keeps_the_pre_lane_argv_byte_identical() {
         let (root, settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[]);
@@ -1795,6 +1893,10 @@ mod tests {
                 "--served-model-name",
                 "pub/model",
                 "--enable-prefix-cache",
+                "--cache-memory-percent",
+                "0.35",
+                "--hybrid-cache-entries",
+                "24",
                 "--max-concurrent-requests",
                 "8",
             ]
