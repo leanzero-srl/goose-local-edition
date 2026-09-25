@@ -6,3 +6,6 @@
 | E2E #1 | 3.0.40 | ″ | ″ | 1 | 507 | 79 | 55,977 cold mid-turn (Q-73) | 97–145 | 2 memories saved ✓ |
 | E2E #1 | 3.0.40 | ″ | ″ | 2 | 3207 | 79 | 5 of 9 cold (62,154 / 0); a label ran to 3,383 thinking tokens | up to 3,383 | EOL dates + JCMA answer from atlassian.com ✓ |
 | E2E #2 | 3.0.41 | split tensor, 262,144, GOOSE_TOOL_DEFERRAL | ″ | 0 | 551 (−55%) | 27 | 30–35k; first cold, then 29,295 / 33,319 / 33,890 / 34,489 reused (≈98%) | 5–7 (no thinking) | kickoff.md ✓ all facts |
+| E2E #2b | 3.0.41 | Studio single over Link, 262,144, deferral | ″ | 0 | 300 | 27 (+2 load_tools) | 3 of 32 agent calls cold across turns 0–2 | — | kickoff.md ✓ |
+| E2E #2b | 3.0.41 | ″ | ″ | 1 | 43 | ″ | ″ | — | 2 memories saved — to ~/.goose/memory/working-agents.txt (category "working-agents") |
+| E2E #2b | 3.0.41 | ″ | ″ | 2 | 573 (split #1: 3207) | ″ | ″ | — | 4 web searches + 28 shell |
