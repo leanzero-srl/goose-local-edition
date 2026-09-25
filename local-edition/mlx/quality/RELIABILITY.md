@@ -26,3 +26,8 @@ Failure modes and sources: `RESEARCH-failure-modes.md` (ids D=MLX/exo, L=LM Link
 | R4 | Relaunch/restore races | relaunch during mount, during split start, both Macs together — 20×; SIGKILL one rank mid-generation then relaunch | ends serving (canary), no false failure line; wired back to the pre-mount baseline after teardown (D12/D13: 90+ GB left wired); restored split uses Thunderbolt; tok/s within 10% | partial — Q-10 (3.0.31) fixed | — |
 | R5 | Switch races | Run on B while A mounts; Run twice; Stop during provisioning; two windows; single↔split on different models 20× | exactly one engine and no orphan rank on either Mac after every step; wired/footprint match the mounted model; no jetsam; no "busy" once idle | — | — |
 | R6 | Sleep/wake | `pmset sleepnow` on the Studio idle and mid-stream, wake; MacBook lid mid-stream; the same during a split | in-flight stream ends with a named error within a bound; wake → first good token timed; path back to direct; prefill tok/s after wake vs baseline (S13: launchd-spawned servers ~100× slower prefill) | — | — |
+
+## Baselines
+- 2026-09-25 11:4x — correctness ladder on the 27B SINGLE engine on Work's Mac Studio, through the Link relay (3.0.35):
+  7/7 correct at 545 / 2,801 / 3,593 / 5,965 / 9,544 / 19,729 / 39,343 prompt tokens; 39k read in 134 s (~290 tok/s).
+  Evidence ~/goose-builds/quality/R1-baseline-single/. This is the reference the split must match in R1.
