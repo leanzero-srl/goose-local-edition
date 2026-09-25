@@ -1,5 +1,5 @@
 // R1 — a long AGENTIC goose session on whatever engine serves chat (the split, for R1), through the product.
-// usage: node r1.mjs <dir> [--turns N]
+// usage: node r1.mjs <dir> [--turns N] [--brief <brief.json>]   (a goose-task-author brief; {WORK} → <dir>/work)
 // One new chat; turn after turn of real tool work inside <dir>/work (files, shell, tests), so the context
 // climbs from goose's ~49k-token prompt toward compaction. Per turn one TSV row: start, end, seconds, how the
 // turn ended (done / notice / stall), the chip, the context counter, the notice text if any.
@@ -7,19 +7,21 @@
 // turn's own length) is logged STALL with a screenshot and the soak goes on waiting; HANG_FACTOR x ends the soak —
 // a hang is the finding, and the driver never cancels, retries or edits the turn itself.
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
-import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync } from 'node:fs';
 const dir = process.argv[2];
-const maxTurns = Number(process.argv[process.argv.indexOf('--turns') + 1]) || 200;
+const turnsArg = process.argv.indexOf('--turns'); const maxTurnsArg = turnsArg > 0 ? Number(process.argv[turnsArg + 1]) : 0;
 const work = `${dir}/work`; mkdirSync(work, { recursive: true });
 const STALL_FACTOR = 5; // ratio: of the median turn length measured in this soak
 const HANG_FACTOR = 15; // ratio: same; the soak.py hang rule of Step 1b used 10x a running median
 const out = `${dir}/turns.tsv`;
-writeFileSync(out, 'turn\tstart\tend\tsecs\tended\ttools\tchip\tcounter\tnotice\n');
+writeFileSync(out, 'turn\tstart\tend\tsecs\tended\ttools\trecalled\tchip\tcounter\tnotice\n');
 // What THIS turn added: the messages after the send, never the whole page (the smoke run matched an older
 // session's notice). A failed turn is any goose notice or the engine's empty-response line.
 const FAIL = /empty response|stopped answering|quit goose mid|No node can|Ran into this error/;
-const added = (n0) => p.evaluate((n0) => { const ms = [...document.querySelectorAll('.goose-message')].slice(n0).map((m) => m.innerText); const tools = [...document.querySelectorAll('.goose-message')].slice(n0).reduce((k, m) => k + m.querySelectorAll('[class*=tool i], details').length, 0); return { text: ms.join(' ').replace(/\s+/g, ' '), tools }; }, n0);
-const steps = [
+const added = (n0) => p.evaluate((n0) => { const ms = [...document.querySelectorAll('.goose-message')].slice(n0).map((m) => m.innerText); const recalled = ms.join('\n').split('\n').filter((l) => /^recalled:/.test(l.trim())).join(' | '); const tools = [...document.querySelectorAll('.goose-message')].slice(n0).reduce((k, m) => k + m.querySelectorAll('[class*=tool i], details').length, 0); return { text: ms.join(' ').replace(/\s+/g, ' '), tools, recalled }; }, n0);
+const briefArg = process.argv.indexOf('--brief');
+const brief = briefArg > 0 ? JSON.parse(readFileSync(process.argv[briefArg + 1], 'utf8')) : null;
+const builtin = [
   `Work only inside ${work}. Create a Python package "ledger" with ledger/__init__.py and ledger/core.py holding a class Ledger that records (date, account, amount, memo) entries in memory. Show me the files.`,
   `Add pytest tests in ${work}/tests/test_core.py for adding entries and for the balance of one account. Run them with python3 -m pytest -q from ${work} and show the output.`,
   `Add CSV import and export to Ledger (ledger/io.py), with tests. Run the whole test suite.`,
@@ -41,6 +43,14 @@ const steps = [
   `Run the full suite, then the CLI end to end on the 2,000-row file: import, summary, budget report, export JSON. Show all outputs.`,
   `Summarise this whole session: the package layout, every command, and the test count. Then continue: add a 'search' command filtering by memo text with a test.`,
 ];
+const steps = brief ? brief.turns.map((t) => t.say.replaceAll('{WORK}', work)) : builtin;
+// Every provider call goose makes lands in a rotating llm_request.<n>.jsonl whose LAST line carries usage
+// (input, output, cache_read). Read on every poll so no call of a many-tool turn is missed.
+const LOGS = `${process.env.HOME}/.local/state/goose/logs`;
+const seenCalls = new Map();
+const pollCalls = () => { const got = []; for (const f of readdirSync(LOGS)) { if (!/^llm_request\.\d+\.jsonl$/.test(f)) continue; const st = statSync(`${LOGS}/${f}`); const key = `${f}:${st.mtimeMs}`; if (seenCalls.has(key)) continue; try { const L = readFileSync(`${LOGS}/${f}`, 'utf8').trimEnd().split('\n'); const u = JSON.parse(L.at(-1)).usage; if (!u) continue; seenCalls.set(key, 1); got.push(u); } catch {} } return got; };
+pollCalls();
+writeFileSync(`${dir}/calls.tsv`, 'turn\tinput\toutput\tcache_read\n');
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
 const p = b.contexts()[0].pages().find((x) => x.url().includes('index.html'));
 await p.goto(p.url().split('#')[0] + '#/'); await p.waitForTimeout(2500);
@@ -53,6 +63,7 @@ const screen = () => p.evaluate(() => {
   return { len: main.innerText.length, chip: (chipEl?.innerText ?? '').replace(/\s+/g, ' '), counter, stop };
 });
 const lengths = []; const median = () => { const s = [...lengths].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
+const maxTurns = maxTurnsArg || (brief ? steps.length : 200);
 for (let turn = 0; turn < maxTurns; turn++) {
   const prompt = turn < steps.length ? steps[turn] : `Continue improving the ledger package in ${work}: pick the next most useful feature or fix, implement it with a test, and run the suite. (turn ${turn})`;
   const n0 = await p.evaluate(() => document.querySelectorAll('.goose-message').length);
@@ -61,6 +72,7 @@ for (let turn = 0; turn < maxTurns; turn++) {
   const start = Date.now(); let lastChange = Date.now(); let prev = null; let ended = ''; let stallLogged = false;
   await p.waitForTimeout(3000);
   while (true) {
+    for (const u of pollCalls()) appendFileSync(`${dir}/calls.tsv`, [turn, u.input_tokens, u.output_tokens, u.cache_read_input_tokens ?? ''].join('\t') + '\n');
     const s = await screen();
     if (!prev || s.len !== prev.len || s.chip !== prev.chip) lastChange = Date.now();
     prev = s;
@@ -74,7 +86,7 @@ for (let turn = 0; turn < maxTurns; turn++) {
   const a = await added(n0); const failed = a.text.match(FAIL);
   if (failed && ended === 'done') { ended = 'notice'; await p.screenshot({ path: `${dir}/notice-${turn}.png` }); }
   if (ended === 'done') lengths.push(secs);
-  appendFileSync(out, [turn, new Date(start).toISOString(), new Date(end).toISOString(), secs.toFixed(1), ended, a.tools, s.chip, s.counter, failed ? a.text.slice(Math.max(0, failed.index - 60), failed.index + 140) : ''].join('\t') + '\n');
+  appendFileSync(out, [turn, new Date(start).toISOString(), new Date(end).toISOString(), secs.toFixed(1), ended, a.tools, a.recalled, s.chip, s.counter, failed ? a.text.slice(Math.max(0, failed.index - 60), failed.index + 140) : ''].join('\t') + '\n');
   if (turn % 5 === 0) await p.screenshot({ path: `${dir}/turn-${turn}.png` });
   if (ended === 'hang') break;
   await p.waitForTimeout(3000);
