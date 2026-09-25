@@ -118,6 +118,17 @@ fn text_of(message: &Message) -> String {
         .to_string()
 }
 
+/// The turn's last word is goose's own notice to the user, not the model's reply: an assistant
+/// message the agent never sees (`user_only`) — a provider error ("Ran into this error: …
+/// linkRelayFailed …"), a refusal, credits exhausted, a failed compaction, a slash command's
+/// output. There is no answer to judge, and asking the model anyway is a request the user reads
+/// as goose retrying on its own (Q-61: the chip lit 3–4 s after "the answer above stops there").
+pub fn turn_ended_on_a_notice(messages: &[Message]) -> bool {
+    messages
+        .last()
+        .is_some_and(|last| effective_role(last) == "assistant" && !last.is_agent_visible())
+}
+
 /// Walk back from the end: the assistant's last text is the reply; the user texts before it, up
 /// to the previous assistant text, are this turn's request(s). Tool traffic is skipped.
 pub fn turn_facts(messages: &[Message]) -> TurnFacts {
@@ -279,6 +290,13 @@ pub async fn assess_turn(
     let Some(conversation) = session.conversation.as_ref() else {
         return;
     };
+    if turn_ended_on_a_notice(conversation.messages()) {
+        tracing::debug!(
+            session_id,
+            "assessment: the turn ended on goose's own notice, not a reply; nothing assessed"
+        );
+        return;
+    }
     let facts = turn_facts(conversation.messages());
     if facts.user_texts.is_empty() || facts.assistant_text.is_empty() {
         return;
@@ -390,6 +408,29 @@ mod tests {
                 ProviderUsage::new("test".to_string(), Default::default()),
             ))
         }
+    }
+
+    /// 3.0.38 kill-link, 13:22:04.967Z: the relay lost the answer, the turn ended on the agent's
+    /// user-only error, and at 13:22:04.998Z the reviewer was routed to the Studio anyway
+    /// (llm_request.4, "You are goose's end-of-turn reviewer", done 16:22:08 local).
+    #[test]
+    fn a_turn_that_ended_on_a_provider_error_is_not_assessed() {
+        let partial = Message::assistant().with_text("The tram left Martim Moniz at six, and");
+        let dropped = Message::assistant()
+            .with_text("Ran into this error: Server error: linkRelayFailed: Link peer 'worksmacstudio-lan-6a972f' lost this request in flight: the peer answers but no longer holds it.\n\nPlease retry if you think this is a transient or recoverable error.")
+            .user_only();
+        let asked =
+            Message::user().with_text("Write a 300-word story about a tram driver in Lisbon.");
+        assert!(turn_ended_on_a_notice(&[
+            asked.clone(),
+            partial.clone(),
+            dropped
+        ]));
+
+        // A turn the model answered is assessed; a conversation ending on the user is not a notice.
+        assert!(!turn_ended_on_a_notice(&[asked.clone(), partial]));
+        assert!(!turn_ended_on_a_notice(&[asked]));
+        assert!(!turn_ended_on_a_notice(&[]));
     }
 
     #[tokio::test]
