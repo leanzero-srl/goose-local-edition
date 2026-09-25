@@ -44,7 +44,9 @@ const SEARCH_DEFAULT_LIMIT: usize = 10;
 /// Parameters for the remember_memory tool
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RememberMemoryParams {
-    /// The category to store the memory in
+    /// The memory's TOPIC as a short kebab-case name in its own words (client-deliverables,
+    /// handover-scripts, deploy-commands); it is the file the memory lives in. Reuse a category from
+    /// the index when the topic matches.
     pub category: String,
     /// The data to remember. Its FIRST LINE is the headline shown in the memory index — make it one
     /// specific sentence; details go on the following lines.
@@ -52,9 +54,43 @@ pub struct RememberMemoryParams {
     /// Tags; put the kind first: user, feedback, project or reference
     #[serde(default)]
     pub tags: Vec<String>,
-    /// true = user-wide (global); false or omitted = this project only (local)
+    /// true = GLOBAL, about the user and every project (how they work, preferences, a rule meant for
+    /// "any future job"); false = LOCAL, about this project only (its files, hosts, commands). Omitted:
+    /// the kind decides — user/feedback global, project/reference local.
     #[serde(default)]
-    pub is_global: bool,
+    pub is_global: Option<bool>,
+}
+
+/// The scope of a memory saved without `is_global`, read from the kind the model gave it (its first tag).
+///
+/// Q-83, measured 2026-09-25 on the same user turn ("Two things to remember about how I work, for this and
+/// any future job: …"): sessions 20260925_33 and _38 passed `is_global: true`; session _39 (Qwen3.8-27B,
+/// Studio single) OMITTED it with tags `["feedback", "user", …]` and its own words "Let me save them so
+/// every future job picks them up" — and the schema default `false` stored both rules LOCALLY, in
+/// ~/.goose/memory, invisible to the next project. The kind the model declared is its scope decision; the
+/// default no longer contradicts it.
+fn scope_of_kind(tags: &[String]) -> bool {
+    matches!(
+        tags.first()
+            .map(|kind| kind.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("user" | "feedback")
+    )
+}
+
+/// The home folder is not a project: a "local" memory there lands in ~/.goose/memory, which every chat
+/// started in the home folder shares and no project reads. All three Q-83 sessions ran in the home folder.
+fn home_folder_note(working_dir: &std::path::Path) -> Option<&'static str> {
+    let home = etcetera::home_dir().ok()?;
+    let same = working_dir == home
+        || matches!(
+            (working_dir.canonicalize(), home.canonicalize()),
+            (Ok(a), Ok(b)) if a == b
+        );
+    same.then_some(
+        "This session's folder is the user's HOME folder, not a project: save to global unless the \
+         user names a project.",
+    )
 }
 
 /// Parameters for the retrieve_memories tool
@@ -177,8 +213,12 @@ impl MemoryServer {
              - a stable PROJECT or ENVIRONMENT fact (paths, hosts, where credentials live, build/run/test
                commands, naming conventions)
              - a recurring COMMAND or workflow you had to figure out and would want again next time
-             Choose a fitting category + tags, and the right scope (local for project-specific, global for
-             user-wide). Write the data so its FIRST LINE is one specific sentence — that line is the
+             SCOPE: GLOBAL (is_global: true) for anything about the USER — how they work, a preference, a
+             correction or rule they mean for "any future job", "always", "every project"; LOCAL (false)
+             only for facts about THIS project — its files, hosts, commands, conventions. CATEGORY: the
+             memory's topic as a short kebab-case name in its own words (client-deliverables,
+             handover-scripts), reusing one from the index when the topic matches.
+             Write the data so its FIRST LINE is one specific sentence — that line is the
              headline the index shows — and put the kind first among the tags: user, feedback, project or
              reference. Saving data whose first line matches an existing memory's headline UPDATES that
              memory in place, so restate the headline when you correct a fact. Do NOT store secrets/tokens
@@ -206,6 +246,13 @@ impl MemoryServer {
         };
 
         let mut updated_instructions = instructions;
+        if let Some(note) = std::env::current_dir()
+            .ok()
+            .and_then(|wd| home_folder_note(&wd))
+        {
+            updated_instructions.push_str("\n\n");
+            updated_instructions.push_str(note);
+        }
         updated_instructions.push_str("\n\nMemory index:\n");
         updated_instructions.push_str(&memory_router.index(None));
         memory_router.set_instructions(updated_instructions);
@@ -411,17 +458,26 @@ impl MemoryServer {
                        correction the user made, a stable project/environment fact (paths, hosts, build/run \
                        commands, conventions), or a recurring command/workflow. The data's first line is the \
                        headline the index shows: one specific sentence. Re-saving with the same headline \
-                       updates that memory. Pick a category, tags (kind first: user/feedback/project/reference) \
-                       and scope. Do not store secrets verbatim or transient chatter."
+                       updates that memory. Pick a category naming its topic, tags (kind first: \
+                       user/feedback/project/reference) and scope: global for how the user works and rules \
+                       meant for any future job, local for this project's facts. Do not store secrets \
+                       verbatim or transient chatter."
     )]
     pub async fn remember_memory(
         &self,
         params: Parameters<RememberMemoryParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
-        let params = params.0;
         let working_dir = extract_working_dir_from_meta(&context.meta);
+        let message = self.remember_memory_inner(params.0, working_dir)?;
+        Ok(CallToolResult::success(vec![Content::text(message)]))
+    }
 
+    fn remember_memory_inner(
+        &self,
+        params: RememberMemoryParams,
+        working_dir: Option<PathBuf>,
+    ) -> Result<String, ErrorData> {
         if params.data.is_empty() {
             return Err(ErrorData::new(
                 ErrorCode::INVALID_PARAMS,
@@ -430,6 +486,9 @@ impl MemoryServer {
             ));
         }
 
+        let is_global = params
+            .is_global
+            .unwrap_or_else(|| scope_of_kind(&params.tags));
         let tags: Vec<&str> = params.tags.iter().map(|s| s.as_str()).collect();
         let outcome = self
             .remember(
@@ -437,13 +496,13 @@ impl MemoryServer {
                 &params.category,
                 &params.data,
                 &tags,
-                params.is_global,
+                is_global,
                 working_dir.as_ref(),
             )
             .map_err(memory_error)?;
 
-        let scope = scope_label(params.is_global);
-        let message = match outcome {
+        let scope = scope_label(is_global);
+        let mut message = match outcome {
             RememberOutcome::Added => format!(
                 "Stored a new {scope} memory in category \"{}\"; it joins the index next session.",
                 params.category
@@ -457,8 +516,14 @@ impl MemoryServer {
                 params.category
             ),
         };
+        if params.is_global.is_none() {
+            let kind = params.tags.first().map(String::as_str).unwrap_or("none");
+            message.push_str(&format!(
+                " Scope {scope} because is_global was omitted and the kind is `{kind}`."
+            ));
+        }
         tracing::info!(category = %params.category, scope, ?outcome, "memory remembered");
-        Ok(CallToolResult::success(vec![Content::text(message)]))
+        Ok(message)
     }
 
     /// FRAME 1.14, event A on the session path: knowledge that RESEARCH creates. The instructions
@@ -1236,5 +1301,67 @@ mod tests {
         let entries = router.entries(true, None).unwrap();
         assert_eq!(entries.len(), 1);
         assert!(entries[0].content.contains("four spaces"));
+    }
+
+    fn remember(
+        server: &MemoryServer,
+        working_dir: &std::path::Path,
+        category: &str,
+        tags: &[&str],
+        is_global: Option<bool>,
+    ) -> String {
+        server
+            .remember_memory_inner(
+                RememberMemoryParams {
+                    category: category.to_string(),
+                    data: format!("A rule saved in {category}.\nDetail."),
+                    tags: tags.iter().map(|t| t.to_string()).collect(),
+                    is_global,
+                },
+                Some(working_dir.to_path_buf()),
+            )
+            .unwrap()
+    }
+
+    /// Q-83: session 20260925_39 omitted is_global on "for this and any future job" with tags
+    /// ["feedback", "user", …]; the default `false` stored both rules in ~/.goose/memory. Omitted now
+    /// follows the kind; an explicit choice is always kept, so the local option stays.
+    #[test]
+    fn an_omitted_scope_follows_the_kind_and_an_explicit_one_is_kept() {
+        let dir = tempdir().unwrap();
+        let wd = dir.path().join("project");
+        let router = server(dir.path(), true);
+
+        let reply = remember(
+            &router,
+            &wd,
+            "client-deliverables",
+            &["feedback", "user"],
+            None,
+        );
+        assert!(reply.starts_with("Stored a new global memory"), "{reply}");
+        assert!(reply.contains("the kind is `feedback`"), "{reply}");
+        assert!(dir.path().join("memory/client-deliverables.txt").is_file());
+
+        let reply = remember(&router, &wd, "build-commands", &["project"], None);
+        assert!(reply.starts_with("Stored a new local memory"), "{reply}");
+        assert!(wd.join(".goose/memory/build-commands.txt").is_file());
+
+        let reply = remember(&router, &wd, "editor-style", &["user"], Some(false));
+        assert!(reply.starts_with("Stored a new local memory"), "{reply}");
+        assert!(!reply.contains("omitted"), "{reply}");
+        assert!(wd.join(".goose/memory/editor-style.txt").is_file());
+
+        let reply = remember(&router, &wd, "untagged", &[], None);
+        assert!(reply.starts_with("Stored a new local memory"), "{reply}");
+        assert!(reply.contains("the kind is `none`"), "{reply}");
+    }
+
+    #[test]
+    fn the_home_folder_is_named_as_no_project() {
+        let home = etcetera::home_dir().unwrap();
+        assert!(home_folder_note(&home).is_some());
+        let dir = tempdir().unwrap();
+        assert_eq!(home_folder_note(dir.path()), None);
     }
 }
