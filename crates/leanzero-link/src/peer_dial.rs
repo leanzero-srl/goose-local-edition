@@ -15,8 +15,9 @@
 //! peer's netstack forwards tailnet TCP to its own loopback ([`crate::control::MeshBind`]).
 //!
 //! Every peer-dialing client in this crate is built HERE — the fabric's polls
-//! ([`crate::state::PeerRegistry`]), its `/stream` WebSocket, and the manager's
-//! `/execute` and `/mlx/*` POSTs. A missing proxy is [`PeerDialError::NoMeshProxy`],
+//! ([`crate::state::PeerRegistry`]), its `/stream` WebSocket, the manager's
+//! `/execute` and `/mlx/*` POSTs, and the chat relay's requests and in-flight looks
+//! ([`crate::inference`]). A missing proxy is [`PeerDialError::NoMeshProxy`],
 //! never a silent direct dial (which cannot reach the peer — and, on a machine whose
 //! personal Tailscale holds a route for the same 100.x address, would reach a device on
 //! the WRONG tailnet: this Mac's personal daemon installs per-peer /32s on utun0).
@@ -92,6 +93,12 @@ pub enum PeerDialError {
 pub enum PeerTimeout {
     Total(Duration),
     ConnectOnly(Duration),
+    /// A LIVENESS LOOK (the chat relay's in-flight watch): bounded in TOTAL — the dial and
+    /// the peer's in-memory answer — and never over a pooled connection. A kept-alive
+    /// connection to a peer whose Link died stays open and silent through the local
+    /// daemon (r3-1.log 12:14:59: the request in flight hung 120 s), so only a fresh dial
+    /// can tell whether the peer is still there.
+    FreshTotal(Duration),
 }
 
 /// The goose-owned tailscaled's SOCKS5 listener — loopback by construction.
@@ -142,6 +149,7 @@ impl MeshProxy {
         let builder = match timeout {
             PeerTimeout::Total(limit) => builder.timeout(limit),
             PeerTimeout::ConnectOnly(limit) => builder.connect_timeout(limit),
+            PeerTimeout::FreshTotal(limit) => builder.timeout(limit).pool_max_idle_per_host(0),
         };
         builder.build().map_err(client_err)
     }
