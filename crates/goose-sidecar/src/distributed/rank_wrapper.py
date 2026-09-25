@@ -10,7 +10,12 @@
 #   and a request naming any of those would make every rank try to load it), the goose id maps to
 #   each rank's OWN --model path (paths differ per node), /goose/progress exposes the
 #   generation loop's step counter (the supervisor's liveness measure), /goose/admission lets the
-#   memory watchdog stop admitting new requests.
+#   memory watchdog stop admitting new requests;
+# - the generation budget (rank_budget.py): a request with no max_tokens generates until the model
+#   stops or the launch's context window is full, never to mlx_lm's 512 default; an explicit one is
+#   held inside the window. Rank 0 settles it BEFORE the request is shared, so every rank receives
+#   the same integer — a peer running an older wrapper (its own goosed embeds its program) still
+#   reads an int, never an absence it would crash on.
 group = mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -22,6 +27,8 @@ if group.rank() != spec["rank"] or group.size() != spec["size"]:
         f"goose rank wrapper: MLX reports rank {group.rank()} of {group.size()}, "
         f"goose launched rank {spec['rank']} of {spec['size']}"
     )
+
+import copy  # noqa: E402
 
 import mlx_lm  # noqa: E402
 import mlx_lm.server as server  # noqa: E402
@@ -35,6 +42,8 @@ for owner, name in (
     (server.APIHandler, "_set_completion_headers"),
     (server.ModelProvider, "load"),
     (server.ResponseGenerator, "generate"),
+    (server.ResponseGenerator, "_tokenize"),
+    (server.ResponseGenerator, "_share_request"),
 ):
     if not hasattr(owner, name):
         raise SystemExit(
@@ -128,9 +137,13 @@ def generate(self, request, generation_args, progress_callback=None):
 
     try:
         ctx, tokens = original_generate(self, request, generation_args, progress)
+    except ContextFull as full:
+        leave()
+        raise Refused(400, str(full), "context_length_exceeded") from None
     except BaseException:
         leave()
         raise
+    entry["max_tokens"] = generation_args.max_tokens
     # The generation thread hands back the context as it takes the request into its batch: from
     # here the engine is reading the prompt, though mlx_lm reports the first progress only after
     # its first chunks (measured: 6,144 of 15,249 tokens, 30 s in, on a 2-rank 27B).
@@ -157,12 +170,43 @@ def generate(self, request, generation_args, progress_callback=None):
 
 server.ResponseGenerator.generate = generate
 
+original_share_request = server.ResponseGenerator._share_request
 
-class Refused(Exception):
-    def __init__(self, status, message):
+
+def _share_request(self, request):
+    # Rank 0's generation thread, the model loaded, before the request reaches the other ranks: the
+    # prompt is counted with mlx_lm's own _tokenize on a COPY (_tokenize rewrites messages in place
+    # — tool-call arguments become dicts — and a second pass over the same objects would fail), and
+    # the budget replaces the client's absence (None, kept by validate_model_parameters below). A
+    # request that cannot be counted or has no room is answered on its own queue and never shared,
+    # as mlx_lm answers a tokenization failure.
+    if request is not None and group.rank() == 0:
+        rqueue, completion, args = request
+        try:
+            prompt = original_tokenize(
+                self, self.model_provider.tokenizer, copy.deepcopy(completion), args
+            )[0]
+            args.max_tokens = generation_budget(
+                spec["context_window"], len(prompt), args.max_tokens
+            )
+        except Exception as refusal:
+            rqueue.put(refusal)
+            request = None
+    return original_share_request(self, request)
+
+
+original_tokenize = server.ResponseGenerator._tokenize
+server.ResponseGenerator._share_request = _share_request
+
+
+# A BaseException so mlx_lm's handle_completion (`except Exception` → 404) lets it through to
+# do_POST, which answers with the status it names.
+class Refused(BaseException):
+    def __init__(self, status, message, code=None):
         super().__init__(message)
         self.status = status
         self.message = message
+        self.code = code
 
 
 def send_json(handler, status, payload):
@@ -250,14 +294,27 @@ def do_POST(self):
     try:
         original_post(self)
     except Refused as refusal:
-        send_json(self, refusal.status, {"error": {"message": refusal.message}})
+        error = {"message": refusal.message}
+        if refusal.code is not None:
+            error["code"] = refusal.code
+            error["type"] = "invalid_request_error"
+        send_json(self, refusal.status, {"error": error})
     finally:
         with lock:
             state["inflight"] -= 1
 
 
 def validate_model_parameters(self):
+    # mlx_lm read an absent max_tokens as its `--max-tokens` default; the absence is kept instead
+    # (None rides the shared request to every rank), and _tokenize turns it into the room left.
+    absent = all(
+        self.body.get(key) is None for key in ("max_completion_tokens", "max_tokens")
+    )
+    if absent:
+        self.max_tokens = spec["context_window"]
     original_validate(self)
+    if absent:
+        self.max_tokens = None
     if self.requested_model not in (served, "default_model"):
         raise Refused(
             404,

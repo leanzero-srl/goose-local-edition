@@ -10,8 +10,8 @@
 //! The program is embedded here and passed base64 on the command line, so a node needs nothing
 //! installed beyond its interpreter: `rank_env.py` (the backend env, `emit`, the memory reporter —
 //! every rank), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
-//! then the runner's program — `rank_wrapper.py` (`mlx_lm.server`, tensor
-//! split, under `NodeConfig::python`) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
+//! then the runner's program — `rank_budget.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor
+//! split, under `NodeConfig::python`; the budget is what an absent max_tokens generates) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
 //! layer split, under `NodeConfig::pipeline_python`).
 
 use std::collections::VecDeque;
@@ -34,6 +34,7 @@ pub const RANK_MARKER: &str = "goose-distributed-rank";
 const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_env.py"),
     include_str!("rank_live.py"),
+    include_str!("rank_budget.py"),
     include_str!("rank_wrapper.py")
 );
 const PIPELINE_PROGRAM: &str = concat!(
@@ -750,6 +751,64 @@ print("ok")
             String::from_utf8_lossy(&out.stderr)
         );
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    /// rank_budget.py under a real interpreter, on Q-65's turn (2026-09-25, the 2-rank 27B split
+    /// launched for 262,144 tokens): a 49,939-token prompt with no max_tokens stopped at exactly
+    /// 512 — mlx_lm's `--max-tokens` default. The budget is the window's room instead.
+    #[test]
+    fn a_request_without_max_tokens_runs_to_the_windows_room_not_512() {
+        let checks = r#"
+assert generation_budget(262144, 49939, None) == 262144 - 49939
+assert generation_budget(262144, 49939, None) > 512
+assert generation_budget(262144, 49939, 4096) == 4096, "a client's own max_tokens stands"
+assert generation_budget(262144, 262000, 4096) == 144, "never past the window"
+assert generation_budget(262144, 262143, None) == 1
+for full in (262144, 300000):
+    try:
+        generation_budget(262144, full, None)
+    except ContextFull as refusal:
+        assert "262144" in str(refusal) and str(full) in str(refusal), refusal
+        assert "maximum context length" in str(refusal), "goose reads it as context-exceeded"
+    else:
+        raise AssertionError(f"a {full}-token prompt has no room")
+print("ok")
+"#;
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_budget.py")))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    /// The tensor program a rank receives carries the budget ahead of the wrapper that calls it,
+    /// and the spec hands it the launch's window under the key the wrapper reads
+    /// (`spec["context_window"]`).
+    #[test]
+    fn the_tensor_program_carries_the_budget_and_the_launch_window() {
+        let config = two_mac_config();
+        let specs = rank_specs(&config, "node-alias", &[(1, 2), (3, 4)], 262_144, 2.0);
+        let args = python_args(&specs[1]).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let program = String::from_utf8(b64.decode(&args[2]).unwrap()).unwrap();
+        assert_eq!(
+            program,
+            concat!(
+                include_str!("rank_env.py"),
+                include_str!("rank_live.py"),
+                include_str!("rank_budget.py"),
+                include_str!("rank_wrapper.py")
+            )
+        );
+        let spec: serde_json::Value =
+            serde_json::from_slice(&b64.decode(&args[3]).unwrap()).unwrap();
+        assert_eq!(spec["context_window"], 262_144);
     }
 
     /// The phases a pipeline rank walks, from its own lines (the 27B's figures as a reporter thread
