@@ -1,9 +1,10 @@
 #!/bin/zsh
 # sampler.sh <out-dir> [interval-s] — until killed (by pid): one CSV row per Mac per interval.
 # Fields: t, mac, wired_gib, pressure_free, engine_pid, engine_footprint_mb, tailscaled_footprint_mb,
-# engine_running, engine_waiting, new_panic_files, new_ips_files. Read-only on both Macs.
+# engine_running, engine_waiting, new_panic_files, new_ips_files, and for the SPLIT: rank count, the ranks'
+# summed footprint and CPU% (rank spin = CPU pinned while no tokens move — R1). Read-only on both Macs.
 out=$1; iv=${2:-30}; mkdir -p "$out"; csv="$out/samples.csv"
-[ -s "$csv" ] || echo "t,mac,wired_gib,pressure_free,engine_pid,engine_fp_mb,tailscaled_fp_mb,running,waiting,new_panic,new_ips" > "$csv"
+[ -s "$csv" ] || echo "t,mac,wired_gib,pressure_free,engine_pid,engine_fp_mb,tailscaled_fp_mb,running,waiting,new_panic,new_ips,ranks,rank_fp_mb,rank_cpu" > "$csv"
 probe='
 since=${SINCE:-0}
 wired=$(vm_stat | awk "/wired down/ {gsub(\"\\\\.\",\"\",\$4); printf \"%.2f\", \$4*16384/1073741824}")
@@ -18,7 +19,11 @@ try:
 except Exception: print(\"- -\")")
 np=$(find /Library/Logs/DiagnosticReports ~/Library/Logs/DiagnosticReports -name "*.panic" -newermt "@$since" 2>/dev/null | wc -l | tr -d " ")
 ni=$(find /Library/Logs/DiagnosticReports ~/Library/Logs/DiagnosticReports -name "*.ips" -newermt "@$since" 2>/dev/null | wc -l | tr -d " ")
-echo "$wired,$free,$epid,$efp,$tfp,${st% *},${st#* },$np,$ni"'
+rp=$(pgrep -f "\.goose/distributed/" | tr "\n" " ")
+rn=$(echo $rp | wc -w | tr -d " ")
+rfp=0; rcpu=0
+for q in $rp; do f=$(footprint -p $q 2>/dev/null | awk "/phys_footprint:/ {v=\$2; if (\$3==\"GB\") v*=1024; if (\$3==\"KB\") v/=1024; print int(v); exit}"); rfp=$((rfp + ${f:-0})); c=$(ps -o %cpu= -p $q | tr -d " "); rcpu=$(echo "$rcpu + ${c:-0}" | bc); done
+echo "$wired,$free,$epid,$efp,$tfp,${st% *},${st#* },$np,$ni,$rn,$rfp,$rcpu"'
 since=$(date +%s)
 while true; do
   t=$(date +%Y-%m-%dT%H:%M:%S)
