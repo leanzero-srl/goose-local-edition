@@ -359,6 +359,11 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     mockCurrentProvider = 'config-provider';
   });
 
+  it('Q-56: the dot’s word is ON SCREEN beside it, not only its aria-label', async () => {
+    renderChip({ ...STUDIO, phase: 'writing', activity: 'generating' });
+    expect((await screen.findByTestId('model-chip-phase')).textContent).toBe('Writing');
+  });
+
   it('a route to the Studio: "<model> · Work\'s Mac Studio" with the phase dot — never "swarm"', () => {
     const { container } = renderChip(STUDIO);
     const chip = screen.getByTestId('model-chip-served');

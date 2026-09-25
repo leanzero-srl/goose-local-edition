@@ -39,6 +39,11 @@ import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
 import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
 import { useChatServedBy } from './chatServedBy/useChatServedBy';
 import type { ChatServedBy } from './chatServedBy/chatServedBy';
+import {
+  nextMeasuredPrompt,
+  shownContextTokens,
+  type MeasuredPrompt,
+} from './chatServedBy/contextFloor';
 import { PersonaChooser } from './swarm/PersonaChooser';
 import { usePersona } from './swarm/usePersona';
 import AgentSetupWizard from './swarm/AgentSetupWizard';
@@ -634,6 +639,12 @@ export default function ChatInput({
         setIsTokenLimitLoaded(true);
         return;
       }
+      // The Mac that serves chat is not answering: its window did not change, only the read of it
+      // fails — keep the last limit instead of dropping the counter under the bar (Q-60).
+      if (servedRef.current.readiness.kind === 'reconnecting') {
+        setIsTokenLimitLoaded(true);
+        return;
+      }
 
       // Swarm: the local fleet. Its context window is whatever the resident models were loaded with —
       // LM Studio reports it per model, the LeanZero MLX engine reports it on its status — read live from
@@ -714,17 +725,29 @@ export default function ChatInput({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveModel, effectiveProvider, configModel, configProvider, servedAt]);
 
+  // The prompt the engine read for this chat's turn is a measured floor on the context until goose
+  // reports usage again — a dropped turn reports none (Q-60, chatServedBy/contextFloor.ts).
+  const turnPromptTokens = chatServing.served.turnRequest?.promptTokens ?? null;
+  const reportedTokens = totalTokens ?? 0;
+  const [measuredPrompt, setMeasuredPrompt] = useState<MeasuredPrompt | null>(null);
+  useEffect(() => {
+    setMeasuredPrompt((prev) =>
+      nextMeasuredPrompt(prev, sessionId, turnPromptTokens, reportedTokens)
+    );
+  }, [turnPromptTokens, reportedTokens, sessionId]);
+  const shownTokens = shownContextTokens(measuredPrompt, sessionId, reportedTokens);
+
   // Handle token usage alerts
   useEffect(() => {
     clearAlerts();
 
     // Show alert when either there is registered token usage, or we know the limit
-    if ((totalTokens && totalTokens > 0) || (isTokenLimitLoaded && tokenLimit)) {
+    if (shownTokens > 0 || (isTokenLimitLoaded && tokenLimit)) {
       addAlert({
-        type: getContextAlertType(totalTokens || 0, tokenLimit),
+        type: getContextAlertType(shownTokens, tokenLimit),
         message: intl.formatMessage(i18n.contextWindow),
         progress: {
-          current: totalTokens || 0,
+          current: shownTokens,
           total: tokenLimit,
         },
         showCompactButton: true,
@@ -739,7 +762,7 @@ export default function ChatInput({
 
     // Keep alert recalculation scoped to token state changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totalTokens, tokenLimit, isTokenLimitLoaded, addAlert, clearAlerts]);
+  }, [shownTokens, totalTokens, tokenLimit, isTokenLimitLoaded, addAlert, clearAlerts]);
 
   // Cleanup effect for component unmount - prevent memory leaks
   useEffect(() => {
@@ -1818,7 +1841,7 @@ export default function ChatInput({
 
             {/* Right: context window indicator (its own chip) */}
             <ContextWindowIndicator
-              totalTokens={totalTokens || 0}
+              totalTokens={shownTokens}
               tokenLimit={tokenLimit}
               alerts={alerts}
             />

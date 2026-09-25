@@ -306,7 +306,16 @@ export default function ModelsBottomBar({
         >
           <div className="flex items-center truncate max-w-[130px] md:max-w-[200px] lg:max-w-[360px] min-w-0">
             {chipLabel != null && served?.phase ? (
-              <StatusDot phase={served.phase} label={phaseWord} className="mr-1.5" />
+              <>
+                <StatusDot phase={served.phase} label={phaseWord} className="mr-1.5" />
+                {/* The dot's word, on screen — not only its aria-label (Q-56). */}
+                <span
+                  data-testid="model-chip-phase"
+                  className="mr-1.5 shrink-0 text-lz-meta font-lz-semibold"
+                >
+                  {phaseWord}
+                </span>
+              </>
             ) : (
               <Bot className="mr-1 h-4 w-4 flex-shrink-0" />
             )}
