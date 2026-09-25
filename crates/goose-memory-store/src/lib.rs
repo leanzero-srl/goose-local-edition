@@ -435,6 +435,53 @@ pub fn validate_category(category: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Read, change and rewrite one store file as ONE step: an exclusive lock on the sidecar
+/// `<file>.lock` is held from the read to the rename, and the new text lands through a temporary
+/// file renamed over the old, so a reader never sees a half-written file. `change` gets the current
+/// text (None when the file does not exist) and returns its result plus the text to write, or None
+/// to leave the file alone. The lock lives beside the file rather than on it: a lock on the file
+/// itself would block other readers on Windows, and every reader of the store picks files by their
+/// `.txt` / `.json` suffix, so `<file>.lock` and `<file>.tmp` are never read as a category or a
+/// proposal list.
+///
+/// Why (Q-87, E2E #2b, 2026-09-25): the model saved two preferences with two PARALLEL
+/// remember_memory calls into one category; each read the file, appended its entry and wrote the
+/// whole file back, and the second write erased the first — the chat said "Both saved" while
+/// working-agents.txt held only the dates rule. Two parallel propose_knowledge calls lost one
+/// proposal the same way (E2E #1, "Proposed as knowledge" twice, one row on disk).
+pub fn update_file_locked<T>(
+    path: &Path,
+    change: impl FnOnce(Option<&str>) -> io::Result<(T, Option<String>)>,
+) -> io::Result<T> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let with_suffix = |suffix: &str| {
+        let mut name = path.as_os_str().to_os_string();
+        name.push(suffix);
+        PathBuf::from(name)
+    };
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(with_suffix(".lock"))?;
+    lock.lock()?;
+    let current = match fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => return Err(err),
+    };
+    let (value, rewritten) = change(current.as_deref())?;
+    if let Some(text) = rewritten {
+        let temporary = with_suffix(".tmp");
+        fs::write(&temporary, text)?;
+        fs::rename(&temporary, path)?;
+    }
+    lock.unlock()?;
+    Ok(value)
+}
+
 /// The two directories one session's memories live in.
 #[derive(Debug, Clone)]
 pub struct MemoryStore {
@@ -723,42 +770,34 @@ impl MemoryStore {
         is_global: bool,
     ) -> io::Result<RememberOutcome> {
         let path = self.category_file(category, is_global)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let existing = if path.exists() {
-            fs::read_to_string(&path)?
-        } else {
-            String::new()
-        };
-        let mut entries = parse_entries(&existing);
         let content = content.trim_matches('\n');
         let incoming_headline = headline(content);
-
-        if entries
-            .iter()
-            .any(|(stored_tags, stored)| stored == content && stored_tags == tags)
-        {
-            return Ok(RememberOutcome::Unchanged);
-        }
-        let outcome = match entries.iter().position(|(_, stored)| {
-            !incoming_headline.is_empty() && headline(stored) == incoming_headline
-        }) {
-            Some(index) => {
-                entries[index] = (tags.to_vec(), content.to_string());
-                RememberOutcome::Updated
+        update_file_locked(&path, |existing| {
+            let mut entries = parse_entries(existing.unwrap_or_default());
+            if entries
+                .iter()
+                .any(|(stored_tags, stored)| stored == content && stored_tags == tags)
+            {
+                return Ok((RememberOutcome::Unchanged, None));
             }
-            None => {
-                entries.push((tags.to_vec(), content.to_string()));
-                RememberOutcome::Added
-            }
-        };
-        let serialized: String = entries
-            .iter()
-            .map(|(tags, content)| format_entry(tags, content))
-            .collect();
-        fs::write(&path, serialized)?;
-        Ok(outcome)
+            let outcome = match entries.iter().position(|(_, stored)| {
+                !incoming_headline.is_empty() && headline(stored) == incoming_headline
+            }) {
+                Some(index) => {
+                    entries[index] = (tags.to_vec(), content.to_string());
+                    RememberOutcome::Updated
+                }
+                None => {
+                    entries.push((tags.to_vec(), content.to_string()));
+                    RememberOutcome::Added
+                }
+            };
+            let serialized: String = entries
+                .iter()
+                .map(|(tags, content)| format_entry(tags, content))
+                .collect();
+            Ok((outcome, Some(serialized)))
+        })
     }
 }
 
@@ -1942,5 +1981,48 @@ mod tests {
         let entries = store.entries(true).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].category, "ok");
+    }
+
+    /// Q-87: E2E #2b saved two rules with two PARALLEL remember_memory calls into one category and
+    /// said "Both saved"; the file held one. Every parallel save must survive, and the lock and
+    /// temporary files beside the category must never be read as categories.
+    #[test]
+    fn parallel_saves_into_one_category_all_survive() {
+        let temp_dir = tempdir().unwrap();
+        let store = std::sync::Arc::new(store_in(&temp_dir));
+        let writers = 16;
+        let start = std::sync::Arc::new(std::sync::Barrier::new(writers));
+        let handles: Vec<_> = (0..writers)
+            .map(|i| {
+                let store = store.clone();
+                let start = start.clone();
+                std::thread::spawn(move || {
+                    start.wait();
+                    store
+                        .remember(
+                            "working-agents",
+                            &format!("Rule number {i} for client output.\nDetail {i}."),
+                            &tags(&["feedback"]),
+                            true,
+                        )
+                        .unwrap()
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert_eq!(handle.join().unwrap(), RememberOutcome::Added);
+        }
+        let entries = store.entries(true).unwrap();
+        assert_eq!(entries.len(), writers, "{entries:?}");
+        for i in 0..writers {
+            assert!(
+                entries
+                    .iter()
+                    .any(|e| e.headline() == format!("Rule number {i} for client output.")),
+                "rule {i} was lost"
+            );
+        }
+        assert!(entries.iter().all(|e| e.category == "working-agents"));
+        assert!(store.index().contains("(16 entries, is_global=true)"));
     }
 }

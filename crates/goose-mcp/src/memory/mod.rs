@@ -370,20 +370,16 @@ impl MemoryServer {
             return Ok(());
         }
 
-        let mut file = fs::File::open(&memory_file_path)?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-
-        let memories: Vec<&str> = content.split("\n\n").collect();
-        let new_content: Vec<String> = memories
-            .into_iter()
-            .filter(|entry| !entry.contains(memory_content))
-            .map(|s| s.to_string())
-            .collect();
-
-        fs::write(memory_file_path, new_content.join("\n\n"))?;
-
-        Ok(())
+        goose_memory_store::update_file_locked(&memory_file_path, |content| {
+            let Some(content) = content else {
+                return Ok(((), None));
+            };
+            let kept: Vec<&str> = content
+                .split("\n\n")
+                .filter(|entry| !entry.contains(memory_content))
+                .collect();
+            Ok(((), Some(kept.join("\n\n"))))
+        })
     }
 
     pub fn clear_memory(
