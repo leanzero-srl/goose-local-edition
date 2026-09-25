@@ -5,6 +5,11 @@ use futures::StreamExt;
 use goose::agents::{Agent, AgentEvent, GoosePlatform};
 use goose::config::extensions::{set_extension, ExtensionEntry};
 
+#[ctor::ctor]
+fn hermetic_path_root() {
+    goose_test_support::hermetic_path_root();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

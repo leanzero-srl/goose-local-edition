@@ -3,10 +3,26 @@ use std::path::PathBuf;
 
 pub struct Paths;
 
+#[cfg(test)]
+#[ctor::ctor]
+fn hermetic_path_root_for_unit_tests() {
+    goose_test_support::hermetic_path_root();
+}
+
 impl Paths {
+    /// `GOOSE_PATH_ROOT` when set: every goose dir then hangs from it instead of the owner's home.
+    pub fn root_override() -> Option<PathBuf> {
+        let exported = std::env::var_os("GOOSE_PATH_ROOT").map(PathBuf::from);
+        // A unit test that clears the variable (env_lock, remove_var) still never reaches the
+        // owner's live dirs.
+        #[cfg(test)]
+        let exported =
+            exported.or_else(|| Some(goose_test_support::hermetic_path_root().to_path_buf()));
+        exported
+    }
+
     fn get_dir(dir_type: DirType) -> PathBuf {
-        if let Ok(test_root) = std::env::var("GOOSE_PATH_ROOT") {
-            let base = PathBuf::from(test_root);
+        if let Some(base) = Self::root_override() {
             match dir_type {
                 DirType::Config => base.join("config"),
                 DirType::Data => base.join("data"),

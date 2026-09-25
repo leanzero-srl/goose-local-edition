@@ -10,6 +10,11 @@ use rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
 use rmcp::object;
 use tokio_util::sync::CancellationToken;
 
+#[ctor::ctor]
+fn hermetic_path_root() {
+    goose_test_support::hermetic_path_root();
+}
+
 use goose::agents::extension::{Envs, ExtensionConfig};
 use goose::agents::extension_manager::{ExtensionManager, ExtensionManagerCapabilities};
 use goose::agents::GoosePlatform;

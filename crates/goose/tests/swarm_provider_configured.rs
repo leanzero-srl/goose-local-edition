@@ -1,3 +1,8 @@
+#[ctor::ctor]
+fn hermetic_path_root() {
+    goose_test_support::hermetic_path_root();
+}
+
 /// A fresh install must be able to pick Goose Swarm at onboarding: the provider needs no credential,
 /// so it is configured before anything is written to the profile (the defaults save refuses an
 /// unconfigured provider — that refusal broke "Use Goose Swarm" on every new install, 2026-09-22).

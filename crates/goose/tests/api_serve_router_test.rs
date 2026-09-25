@@ -10,6 +10,11 @@ use axum::Router;
 use goose::acp::server_factory::{AcpServer, AcpServerFactoryConfig};
 use goose::acp::transport::create_router;
 use goose::agents::GoosePlatform;
+
+#[ctor::ctor]
+fn hermetic_path_root() {
+    goose_test_support::hermetic_path_root();
+}
 use tower::ServiceExt;
 
 const SECRET: &str = "serve-test-secret";
