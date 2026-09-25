@@ -1,41 +1,28 @@
-import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Network, ServerOff, Settings2 } from 'lucide-react';
-import { acpReadConfig } from '../../acp/config';
-import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
-import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
-import { foreignOwner } from '../../acp/mlx-distributed';
-import {
-  latestMlxRemoteSingleStatus,
-  remoteRouteUp,
-  subscribeMlxRemoteSingleStatus,
-  type MlxRemoteSingleStatus,
-} from '../../acp/mlx-remote-single';
-import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
+import { Hourglass, Loader2, Network, ServerOff, Settings2 } from 'lucide-react';
+import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import { routePeerName } from '../leanzero-swarm/macs';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
-import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
-import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
-import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
+import { compactTokens } from '../leanzero-swarm/mlxLiveStats';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, PHASE_FILL, RADIUS, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
 import { RestoreActions, restoreLineText, useRestoreLine } from '../leanzero-swarm/MlxRestoreLine';
 import {
-  distributedFact,
+  servedReady,
+  type ChatBusy,
+  type ChatServedBy,
+  type ComposerReadiness,
+} from '../chatServedBy/chatServedBy';
+import type { ChatServing } from '../chatServedBy/useChatServedBy';
+import {
   distributedProblem,
   distributedServedId,
   distributedServes,
   distributedStateLabel,
   distributedSummary,
-  engineFact,
-  resolveMountTarget,
   shortModelName,
-  useLatestMlxDistributedStatus,
   useMlxMount,
-  useMountLookup,
-  type EngineFact,
-  type MountLookup,
-  type MountTarget,
 } from './mlxMount';
 
 const i18n = defineMessages({
@@ -47,7 +34,6 @@ const i18n = defineMessages({
     id: 'composerReadiness.noNodes',
     defaultMessage: 'No swarm node is enabled — nothing can answer a message',
   },
-  mlxEngine: { id: 'composerReadiness.mlxEngine', defaultMessage: 'LeanZero MLX' },
   failed: {
     id: 'composerReadiness.failed',
     defaultMessage: 'The last mount failed: {error}',
@@ -68,172 +54,54 @@ const i18n = defineMessages({
     id: 'composerReadiness.distributedMismatch',
     defaultMessage: 'The distributed engine serves {served}; the node wants {wanted}.',
   },
-  remote: {
-    id: 'composerReadiness.remote',
-    defaultMessage: 'Serving from {peer} · {state}',
+  remoteLoading: {
+    id: 'composerReadiness.remoteLoading',
+    defaultMessage: 'Loading {model} on {peer} — a message waits until it is ready',
+  },
+  remoteLoadingUnnamed: {
+    id: 'composerReadiness.remoteLoadingUnnamed',
+    defaultMessage: 'Loading the model on {peer} — a message waits until it is ready',
+  },
+  remoteFailed: {
+    id: 'composerReadiness.remoteFailed',
+    defaultMessage: 'The engine on {peer} failed — nothing there can answer a message',
+  },
+  busy: {
+    id: 'composerReadiness.busy',
+    defaultMessage:
+      '{where} is working on {count, plural, one {another request} other {# other requests}} — your message waits its turn',
+  },
+  busyReading: {
+    id: 'composerReadiness.busyReading',
+    defaultMessage:
+      '{where} is reading another request’s {tokens}-token prompt — your message waits its turn',
   },
   mount: { id: 'composerReadiness.mount', defaultMessage: 'Mount {model}' },
   mounting: { id: 'composerReadiness.mounting', defaultMessage: 'Mounting {model}' },
-  openProviders: { id: 'composerReadiness.openProviders', defaultMessage: 'Open Providers' },
+  openEngine: { id: 'composerReadiness.openEngine', defaultMessage: 'Open Engine' },
+  theEngine: { id: 'composerReadiness.theEngine', defaultMessage: 'The engine' },
 });
 
-/**
- * Can the ACTIVE provider answer a message right now? Only what the renderer can actually know:
- *
- *  - `swarm`: the router (crates/goose/src/providers/swarm_router.rs) routes to ENABLED devices only
- *    (`enabled` absent = false). Zero enabled devices can never serve. When every enabled device is a
- *    LOCAL `mlx-sidecar` node, the engine status this app supervises is the whole truth: one of them
- *    served → ready, none → not ready. Any other device (LM Studio, cloud, a remote MLX host) is a
- *    node this surface cannot probe, so the answer is `unknown` — never a fake green, never a fake red.
- *  - the LeanZero MLX provider (`omlx`): the engine itself.
- *  - everything else: `unknown`.
- *
- * A status poll that has not answered, or failed, is `unknown`; so is a stray listener on the
- * engine's port (something serves there that this app's manager does not know about).
- *
- * While the DISTRIBUTED engine owns this Mac it is the local MLX node (the router probes it, a
- * single mount is refused): serving the node's id is `ready`, anything else is `distributed` —
- * its state and mode, never a Mount offer.
- *
- * While chat is routed to a LeanZero Link peer's engine (REMOTE SINGLE) that engine is the MLX node
- * (the router adds it and sets this Mac's sidecar aside; `omlx` follows the relay): `remote` — where
- * chat goes and how that engine is doing, shown even when it serves, so it is never a surprise.
- */
-export type ComposerReadiness =
-  | { kind: 'unknown' }
-  | { kind: 'ready' }
-  | { kind: 'no-nodes' }
-  | { kind: 'unmounted'; nodes: string[]; target: MountTarget; fact: EngineFact }
-  | { kind: 'distributed'; nodes: string[]; status: MlxDistributedStatus; wanted: string | null }
-  | { kind: 'remote'; status: MlxRemoteSingleStatus };
-
-const UNKNOWN: ComposerReadiness = { kind: 'unknown' };
-
-function statusIsKnowable(status: MlxEngineStatus | null): status is MlxEngineStatus {
-  return status != null && status.strayListenerPort == null;
-}
-
-export function swarmReadiness(
-  lookup: MountLookup,
-  status: MlxEngineStatus | null,
-  distributed: MlxDistributedStatus | null,
-  remote: MlxRemoteSingleStatus | null = null
-): ComposerReadiness {
-  if (remote && remoteRouteUp(remote)) return { kind: 'remote', status: remote };
-  if (lookup.state !== 'ready') return UNKNOWN;
-  const enabled = lookup.devices.filter((d) => d.enabled === true);
-  if (enabled.length === 0) return { kind: 'no-nodes' };
-  const localMlx = (d: SwarmDeviceRow) =>
-    d.engine === 'mlx-sidecar' &&
-    d.host == null &&
-    (d.provider == null || d.provider.toLowerCase() === 'lmstudio');
-  if (!enabled.every(localMlx)) return UNKNOWN;
-  if (distributed && (ownsTheMac(distributed) || foreignOwner(distributed))) {
-    if (enabled.some((d) => distributedFact(distributed, d.model_id) === 'up')) {
-      return { kind: 'ready' };
-    }
-    return {
-      kind: 'distributed',
-      nodes: enabled.map((d) => d.id),
-      status: distributed,
-      wanted: enabled[0].model_id,
-    };
-  }
-  if (!statusIsKnowable(status)) return UNKNOWN;
-  const targets = enabled.map((d) => resolveMountTarget(d.id, lookup.devices, lookup.settings));
-  const facts = enabled.map((d) => engineFact(status, d.model_id));
-  if (facts.includes('up')) return { kind: 'ready' };
-  const target = targets.find((t) => t.kind === 'ok') ?? targets[0];
-  const fact = facts.includes('mounting')
-    ? 'mounting'
-    : facts.includes('failed')
-      ? 'failed'
-      : 'down';
-  return { kind: 'unmounted', nodes: enabled.map((d) => d.id), target, fact };
-}
-
-export function mlxProviderReadiness(
-  settings: MlxEngineSettings | null,
-  status: MlxEngineStatus | null,
-  distributed: MlxDistributedStatus | null,
-  engineLabel: string,
-  remote: MlxRemoteSingleStatus | null = null
-): ComposerReadiness {
-  if (remote && remoteRouteUp(remote)) return { kind: 'remote', status: remote };
-  if (distributed && (ownsTheMac(distributed) || foreignOwner(distributed))) {
-    // The omlx provider follows the distributed engine's port while it owns the Mac — this
-    // window's run or another's (mlx_engine.rs align_omlx_host_env) — and asks for whatever id
-    // that engine lists.
-    return distributedServes(distributed)
-      ? { kind: 'ready' }
-      : { kind: 'distributed', nodes: [engineLabel], status: distributed, wanted: null };
-  }
-  if (!settings || !statusIsKnowable(status)) return UNKNOWN;
-  if (status.state === 'running') return { kind: 'ready' };
-  const target: MountTarget = settings.modelId
-    ? {
-        kind: 'ok',
-        modelId: settings.modelId,
-        servedId: settings.servedModelName || settings.modelId,
-      }
-    : { kind: 'none' };
-  return {
-    kind: 'unmounted',
-    nodes: [engineLabel],
-    target,
-    fact: engineFact(status, target.kind === 'ok' ? target.servedId : null),
-  };
-}
-
-const readSwarm = () => acpReadConfig('swarm', false) as Promise<SwarmConfig | null>;
+/** Where "Open Engine" goes: the Providers view's LeanZero MLX tab (Engine, with Run it). */
+export const ENGINE_ROUTE = '/leanzero-swarm?tab=mlx';
 
 /**
- * The composer's readiness strip: a solid warning ABOVE the input when the active provider provably
- * cannot answer, with the same actions as the transcript's no-node notice (Mount, Open Providers).
- * It never blocks typing, and it renders nothing when readiness is unknowable.
+ * The composer's readiness bar: a solid bar ABOVE the input ONLY when something needs the user —
+ * a model loading or failed, nothing mounted, no node, a split not answering, a relaunch bringing
+ * the engine back, or the engine busy with another client's request (a new turn would queue behind
+ * it). While everything is ready it renders nothing: the model chip names what serves (Q-8, Q-17).
+ * It never blocks typing. Every fact comes from `serving` — the one derivation, never its own read.
  */
-export function ComposerReadinessStrip({ provider }: { provider: string | null | undefined }) {
+export function ComposerReadinessStrip({ serving }: { serving: ChatServing }) {
   const intl = useIntl();
-  const isSwarm = provider === 'swarm';
-  const isMlx = provider === MLX_PROVIDER_ID;
-  const armed = isSwarm || isMlx;
-
-  // Re-read the pool when the window regains focus: devices are edited in Providers.
-  const [focusEpoch, setFocusEpoch] = useState(0);
-  useEffect(() => {
-    if (!armed) return undefined;
-    const onFocus = () => setFocusEpoch((n) => n + 1);
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [armed]);
-
-  const lookup = useMountLookup(armed, readSwarm, `${provider}:${focusEpoch}`);
-  const pollsEngine =
-    lookup.state === 'ready' &&
-    (isMlx ||
-      (isSwarm &&
-        lookup.devices.some((d) => d.enabled === true && d.engine === 'mlx-sidecar' && !d.host)));
-  const { status } = useMlxEngineStatusPoll(pollsEngine, 3000);
-  const distributed = useLatestMlxDistributedStatus();
-  const remote = useSyncExternalStore(subscribeMlxRemoteSingleStatus, latestMlxRemoteSingleStatus);
-  const { requestingNodeId, mountErrors, mount } = useMlxMount(status);
+  const { served, single, armed } = serving;
+  const { readiness } = served;
+  const { requestingNodeId, mountErrors, mount } = useMlxMount(single);
   const restore = useRestoreLine();
   const restoreText = restoreLineText(intl, restore);
 
-  const readiness: ComposerReadiness = isSwarm
-    ? swarmReadiness(lookup, status, distributed, remote)
-    : isMlx
-      ? mlxProviderReadiness(
-          lookup.state === 'ready' ? lookup.settings : null,
-          status,
-          distributed,
-          intl.formatMessage(i18n.mlxEngine),
-          remote
-        )
-      : UNKNOWN;
-
   // A relaunch bringing back what served: that is the line, not "No model is mounted" + Mount.
-  if (armed && restoreText != null && readiness.kind !== 'ready') {
+  if (armed && restoreText != null && !servedReady(served)) {
     return (
       <div
         role={restore.phase === 'failed' ? 'alert' : 'status'}
@@ -255,11 +123,17 @@ export function ComposerReadinessStrip({ provider }: { provider: string | null |
       </div>
     );
   }
+  if (servedReady(served)) {
+    return served.busyWithOthers ? (
+      <BusyBar served={served} busy={served.busyWithOthers} />
+    ) : null;
+  }
   if (readiness.kind === 'unknown' || readiness.kind === 'ready') return null;
   return (
     <ReadinessStripBody
       readiness={readiness}
-      status={status}
+      model={served.model}
+      status={single}
       requesting={requestingNodeId != null}
       mountError={mountErrors[STRIP_MOUNT_KEY] ?? null}
       onMount={(modelId) => void mount(STRIP_MOUNT_KEY, modelId)}
@@ -270,56 +144,108 @@ export function ComposerReadinessStrip({ provider }: { provider: string | null |
 /** The strip mounts ONE engine whatever the node count, so its mount state has one key. */
 const STRIP_MOUNT_KEY = 'composer';
 
+function OpenEngineButton() {
+  const intl = useIntl();
+  const navigate = useNavigate();
+  const openEngine = useCallback(() => navigate(ENGINE_ROUTE), [navigate]);
+  return (
+    <Button
+      size="sm"
+      variant="secondary"
+      icon={<Settings2 />}
+      data-testid="composer-readiness-open-engine"
+      onClick={openEngine}
+    >
+      {intl.formatMessage(i18n.openEngine)}
+    </Button>
+  );
+}
+
+/** The engine that serves chat is answering someone else: a turn sent now queues behind them. */
+function BusyBar({ served, busy }: { served: ChatServedBy; busy: ChatBusy }) {
+  const intl = useIntl();
+  const where = served.where.length
+    ? intl.formatList(served.where, { type: 'conjunction' })
+    : intl.formatMessage(i18n.theEngine);
+  const headline =
+    busy.readingTokens != null
+      ? intl.formatMessage(i18n.busyReading, {
+          where,
+          tokens: compactTokens(busy.readingTokens),
+        })
+      : intl.formatMessage(i18n.busy, { where, count: busy.requests });
+  return (
+    <div
+      role="status"
+      data-testid="composer-readiness"
+      data-readiness="busy"
+      className={cx(
+        'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
+        RADIUS.control,
+        PHASE_FILL.held
+      )}
+    >
+      <Hourglass aria-hidden className="size-4 shrink-0" />
+      <span className={cx('min-w-0 flex-1 break-words text-lz-body', WEIGHT.semibold)}>
+        {headline}
+      </span>
+      <div className="flex shrink-0 items-center gap-2">
+        <OpenEngineButton />
+      </div>
+    </div>
+  );
+}
+
 function ReadinessStripBody({
   readiness,
+  model,
   status,
   requesting,
   mountError,
   onMount,
 }: {
   readiness: Exclude<ComposerReadiness, { kind: 'unknown' } | { kind: 'ready' }>;
+  model: string | null;
   status: MlxEngineStatus | null;
   requesting: boolean;
   mountError: string | null;
   onMount: (modelId: string) => void;
 }) {
   const intl = useIntl();
-  const navigate = useNavigate();
-  const openProviders = useCallback(() => navigate('/leanzero-swarm'), [navigate]);
 
-  const headline =
-    readiness.kind === 'no-nodes'
-      ? intl.formatMessage(i18n.noNodes)
-      : readiness.kind === 'remote'
-        ? intl.formatMessage(i18n.remote, {
-            peer: routePeerName(readiness.status),
-            state: readiness.status.state,
-          })
-        : readiness.kind === 'distributed'
-          ? intl.formatMessage(i18n.distributed, {
-              mode: formatMlxMode(intl, distributedSummary(readiness.status), null),
-              state: distributedStateLabel(intl, readiness.status),
-              nodes: readiness.nodes.join(', '),
-            })
-          : intl.formatMessage(i18n.unmounted, { nodes: readiness.nodes.join(', ') });
-
+  let headline: string;
   let detail: string | null = null;
   let action: ReactNode = null;
-  const remoteServing = readiness.kind === 'remote' && readiness.status.state === 'ready';
-  if (readiness.kind === 'remote') {
+  let fill = TONE_FILL.warn;
+
+  if (readiness.kind === 'no-nodes') {
+    headline = intl.formatMessage(i18n.noNodes);
+  } else if (readiness.kind === 'remote') {
+    const peer = routePeerName(readiness.status);
     detail = readiness.status.lastError ?? null;
-    if (readiness.status.state === 'mounting') {
+    if (readiness.status.state === 'failed') {
+      headline = intl.formatMessage(i18n.remoteFailed, { peer });
+      fill = PHASE_FILL.failed;
+    } else {
+      headline = model
+        ? intl.formatMessage(i18n.remoteLoading, { model: shortModelName(model), peer })
+        : intl.formatMessage(i18n.remoteLoadingUnnamed, { peer });
+      fill = PHASE_FILL.loading;
       action = (
         <Loader2
           aria-hidden
           data-testid="composer-readiness-remote-mounting"
-          className="size-4 animate-spin text-white"
+          className="size-4 animate-spin"
         />
       );
     }
-  }
-  if (readiness.kind === 'distributed') {
+  } else if (readiness.kind === 'distributed') {
     const { status: dist, wanted } = readiness;
+    headline = intl.formatMessage(i18n.distributed, {
+      mode: formatMlxMode(intl, distributedSummary(dist), null),
+      state: distributedStateLabel(intl, dist),
+      nodes: readiness.nodes.join(', '),
+    });
     const served = distributedServedId(dist);
     if (distributedServes(dist) && wanted != null && served != null && served !== wanted) {
       detail = intl.formatMessage(i18n.distributedMismatch, { served, wanted });
@@ -327,16 +253,17 @@ function ReadinessStripBody({
       detail = distributedProblem(dist);
     }
     if (dist.state === 'preflight' || dist.state === 'starting') {
+      fill = PHASE_FILL.loading;
       action = (
         <Loader2
           aria-hidden
           data-testid="composer-readiness-distributed-starting"
-          className="size-4 animate-spin text-white"
+          className="size-4 animate-spin"
         />
       );
     }
-  }
-  if (readiness.kind === 'unmounted') {
+  } else {
+    headline = intl.formatMessage(i18n.unmounted, { nodes: readiness.nodes.join(', ') });
     const { target, fact } = readiness;
     const failure =
       mountError ??
@@ -379,11 +306,7 @@ function ReadinessStripBody({
       role="status"
       data-testid="composer-readiness"
       data-readiness={readiness.kind}
-      className={cx(
-        'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
-        RADIUS.control,
-        remoteServing ? TONE_FILL.ok : TONE_FILL.warn
-      )}
+      className={cx('mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2', RADIUS.control, fill)}
     >
       {readiness.kind === 'remote' ? (
         <Network aria-hidden className="size-4 shrink-0" />
@@ -400,15 +323,7 @@ function ReadinessStripBody({
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {action}
-        <Button
-          size="sm"
-          variant="secondary"
-          icon={<Settings2 />}
-          data-testid="composer-readiness-open-providers"
-          onClick={openProviders}
-        >
-          {intl.formatMessage(i18n.openProviders)}
-        </Button>
+        <OpenEngineButton />
       </div>
     </div>
   );

@@ -1,12 +1,8 @@
 import { acpReadConfig } from '../../acp/config';
 import { mlxEngineStatus, type MlxEngineStatus } from '../../acp/mlx-engine';
-import {
-  mlxRemoteSingleStatus,
-  remoteRouteUp,
-  type MlxRemoteSingleStatus,
-} from '../../acp/mlx-remote-single';
+import { mlxRemoteSingleStatus, type MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
-import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
+import { mlxEngineServing } from '../chatServedBy/chatServedBy';
 import { deviceEnabled, type SwarmConfig, type SwarmDeviceRow } from '../settings/swarm/golden';
 import { fetchSwarmContextLimit } from './useFleet';
 
@@ -30,25 +26,22 @@ export interface SwarmPoolLimitDeps {
 }
 
 /**
- * The window of the MLX engine this Mac's chat actually reaches — the router's own choice: the
- * split while it owns the Mac, else a linked Mac's engine while the route is up (this Mac's
- * sidecar is then not a candidate), else this Mac's single engine. 3.0.33: with the 27B served
- * from Work's Mac Studio (262,144) the composer showed "0 / 128k" — only the stopped local engine
- * was asked, nothing answered, and the generic default stood in.
+ * The window of the MLX engine this Mac's chat actually reaches — `mlxEngineServing`, the one rule
+ * every chat surface reads: the split while it owns the Mac, else a linked Mac's engine while the
+ * route is up (this Mac's sidecar is then not a candidate), else this Mac's single engine. 3.0.33:
+ * with the 27B served from Work's Mac Studio (262,144) the composer showed "0 / 128k" — only the
+ * stopped local engine was asked, nothing answered, and the generic default stood in. This Mac's
+ * engine is asked only when neither the split nor a route serves.
  */
 async function mlxChatWindow(deps: SwarmPoolLimitDeps): Promise<number | null> {
   const [dist, remote] = await Promise.all([
     deps.distributedStatus().catch(() => null),
     deps.remoteStatus().catch(() => null),
   ]);
-  if (dist && ownsTheMac(dist)) {
-    return dist.state === 'ready' || dist.state === 'serving' ? (dist.contextLimit ?? null) : null;
-  }
-  if (remote && remoteRouteUp(remote)) {
-    return remote.state === 'ready' ? (remote.contextWindow ?? null) : null;
-  }
+  const elsewhere = mlxEngineServing(null, dist, remote, '');
+  if (elsewhere.engine !== 'none') return elsewhere.contextWindow;
   const single = await deps.mlxStatus().catch(() => null);
-  return single?.state === 'running' ? (single.contextWindow ?? null) : null;
+  return mlxEngineServing(single, dist, remote, '').contextWindow;
 }
 
 /** Which engines the configured pool spans. No/empty devices is the legacy LM Studio discovery pool. */

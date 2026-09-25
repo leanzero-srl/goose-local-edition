@@ -41,7 +41,6 @@ import RunSamplingStrip from './swarm/RunSamplingStrip';
 import { useSwarmRun } from './swarm/useSwarmRun';
 import SwarmWorkspace from './swarm/SwarmWorkspace';
 import MemoryProposalCards from './memories/MemoryProposalCard';
-import NodesStrip from './swarm/NodesStrip';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
 import {
   Button,
@@ -595,10 +594,6 @@ export default function BaseChat({
             <div className="block h-8" />
           </>
         ) : null}
-
-        {/* Blank session (pass E): show YOUR configured nodes and their occupancy — never a stale
-            board. Disappears the moment the conversation starts or a run takes the stage. */}
-        {isLocal && messages.length === 0 && !recipe && <NodesStrip className="mb-3" />}
 
         {/* With the split up, the run has its OWN pane — leaving these here too would render the whole
             panel twice. Inline in the conversation is the layout for every other moment. */}

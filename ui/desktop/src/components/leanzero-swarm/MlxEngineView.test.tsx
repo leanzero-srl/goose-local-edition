@@ -3014,3 +3014,76 @@ describe('Run it — the ways follow the placement plan', () => {
     });
   });
 });
+
+/**
+ * Q-15, round 1 (21 vs 30): under "Serving on Work's Mac Studio" the hero showed THIS MacBook's
+ * "63.9 GB available of 128.0 GB" while My Macs gave the Studio as 23.0 of 96. The memory line
+ * follows the engine that serves: the peer's own status from My Macs' facts, under its name.
+ */
+describe('MlxEngineView — the memory under "Serving on <peer>" is the peer’s', () => {
+  const STUDIO_ID = 'worksmacstudio-lan-9c1e2a';
+  const ROUTE = {
+    state: 'ready',
+    peer: STUDIO_ID,
+    peerHostname: 'WorksMacStudio.lan',
+    peerComputerName: "Work's Mac Studio",
+    modelId: QWEN,
+    servedModelId: 'leanzero-mlx',
+  };
+
+  it('a route to the Studio: "Memory on Work’s Mac Studio · 23.0 of 96.0", never this Mac’s 63.9 of 128', async () => {
+    withMesh([
+      peerNode({
+        node_id: STUDIO_ID,
+        hostname: 'WorksMacStudio.lan',
+        computer_name: "Work's Mac Studio",
+      }),
+    ]);
+    mockStatus.mockImplementation(async (nodeId?: string) =>
+      nodeId === STUDIO_ID
+        ? statusOf({ state: 'running', availableMemoryGb: 23, totalMemoryGb: 96 })
+        : statusOf({ state: 'stopped', availableMemoryGb: 63.9, totalMemoryGb: 128 })
+    );
+    remoteStore.publish(ROUTE);
+    const { unmount } = render(<MlxEngineView />);
+    const hero = await screen.findByTestId('mlx-engine-hero');
+    expect(within(hero).getByText("Serving on Work's Mac Studio")).toBeInTheDocument();
+    const memory = within(hero).getByTestId('mlx-serving-memory');
+    expect(await within(memory).findByText('23.0 GB available of 96.0 GB')).toBeInTheDocument();
+    expect(within(memory).getByText("Memory on Work's Mac Studio")).toBeInTheDocument();
+    expect(within(hero).queryByText(/63\.9 GB available/)).toBeNull();
+    unmount();
+  });
+
+  it('before the peer’s status lands it says so — this Mac’s figure never stands in', async () => {
+    withMesh([
+      peerNode({
+        node_id: STUDIO_ID,
+        hostname: 'WorksMacStudio.lan',
+        computer_name: "Work's Mac Studio",
+      }),
+    ]);
+    mockStatus.mockImplementation(async (nodeId?: string) =>
+      nodeId === STUDIO_ID
+        ? Promise.reject(new Error('leanzero-link: peer did not answer'))
+        : statusOf({ state: 'stopped', availableMemoryGb: 63.9, totalMemoryGb: 128 })
+    );
+    remoteStore.publish(ROUTE);
+    const { unmount } = render(<MlxEngineView />);
+    const memory = await screen.findByTestId('mlx-serving-memory');
+    expect(await within(memory).findByText(/Memory unmeasured: .*peer did not answer/)).toBeInTheDocument();
+    expect(within(memory).queryByText(/GB available of/)).toBeNull();
+    unmount();
+  });
+
+  it('no route: this Mac’s memory, unlabelled as before', async () => {
+    mockStatus.mockResolvedValue(
+      statusOf({ state: 'stopped', availableMemoryGb: 96.6, totalMemoryGb: 128 })
+    );
+    const { unmount } = render(<MlxEngineView />);
+    const memory = await screen.findByTestId('mlx-serving-memory');
+    expect(await within(memory).findByText('96.6 GB available of 128.0 GB')).toBeInTheDocument();
+    expect(within(memory).queryByText(/Memory on/)).toBeNull();
+    unmount();
+  });
+});

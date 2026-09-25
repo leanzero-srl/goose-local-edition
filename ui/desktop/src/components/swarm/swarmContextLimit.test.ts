@@ -164,12 +164,15 @@ describe('the MLX window is the engine chat reaches — the router’s own choic
       lmStudioLimit: async () => null,
       mlxStatus: async () => running(32768),
       remoteStatus: async () => OFF,
-      distributedStatus: async () =>
-        ({
-          mode: 'distributed',
-          state: 'ready',
-          contextLimit: 65536,
-        }) as unknown as MlxDistributedStatus,
+      distributedStatus: async (): Promise<MlxDistributedStatus> => ({
+        mode: 'distributed',
+        state: 'ready',
+        contextLimit: 65536,
+        admissionOpen: true,
+        nodes: [],
+        events: [],
+        restarts: 0,
+      }),
     });
     expect(limit).toBe(65536);
   });

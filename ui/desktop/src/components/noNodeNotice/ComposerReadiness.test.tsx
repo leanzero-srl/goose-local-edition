@@ -1,12 +1,17 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IntlProvider } from 'react-intl';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import { assertStudioClean } from '../lz/assertStudioClean';
-import { ComposerReadinessStrip, mlxProviderReadiness, swarmReadiness } from './ComposerReadiness';
+import { ComposerReadinessStrip } from './ComposerReadiness';
+import { mlxProviderReadiness, swarmReadiness } from '../chatServedBy/chatServedBy';
+import { useChatServedBy } from '../chatServedBy/useChatServedBy';
+import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
+import { parseMlxLiveStatus, EMPTY_BOOK } from '../leanzero-swarm/mlxLiveStats';
+import { PREFILL_STATUS } from '../leanzero-swarm/mlxLiveStatus.fixtures';
 import type { MountLookup } from './mlxMount';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
@@ -256,7 +261,13 @@ describe('mlxProviderReadiness', () => {
   });
 });
 
-function wrap(provider: string) {
+/** The composer's one read of where chat goes, handed to the bar — as ChatInput does. */
+function Composer({ provider, sessionId }: { provider: string; sessionId: string | null }) {
+  const serving = useChatServedBy(provider, sessionId, false);
+  return <ComposerReadinessStrip serving={serving} />;
+}
+
+function wrap(provider: string, sessionId: string | null = null) {
   return render(
     <IntlProvider locale="en" defaultLocale="en" messages={{}}>
       <MemoryRouter initialEntries={['/pair']}>
@@ -265,7 +276,7 @@ function wrap(provider: string) {
             path="/pair"
             element={
               <div>
-                <ComposerReadinessStrip provider={provider} />
+                <Composer provider={provider} sessionId={sessionId} />
                 <textarea data-testid="composer" />
               </div>
             }
@@ -318,25 +329,121 @@ describe('ComposerReadinessStrip — a relaunch bringing back what served', () =
 });
 
 describe('ComposerReadinessStrip — a route to another Mac', () => {
-  it('names that Mac the one way (its owner’s name), never its mesh hostname', async () => {
-    mockExtMethod.mockResolvedValue({
-      status: {
-        state: 'ready',
-        peer: 'worksmacstudio-lan-9c1e2a',
-        peerHostname: 'WorksMacStudio.lan',
-        peerComputerName: "Work's Mac Studio",
-        modelId: HF,
-      },
-    });
-    await mlxRemoteSingleStatus();
-    wrap('swarm');
-    const strip = await screen.findByTestId('composer-readiness');
-    expect(strip.textContent).toContain("Serving from Work's Mac Studio · ready");
-    expect(strip.textContent).not.toContain('WorksMacStudio.lan');
+  const ROUTE = {
+    peer: 'worksmacstudio-lan-9c1e2a',
+    peerHostname: 'WorksMacStudio.lan',
+    peerComputerName: "Work's Mac Studio",
+    modelId: HF,
+  };
+  afterEach(async () => {
     mockExtMethod.mockResolvedValue({ status: { state: 'off' } });
     await act(async () => {
       await mlxRemoteSingleStatus();
     });
+  });
+
+  it('while the route LOADS: names the model and that Mac the one way (its owner’s name), never its mesh hostname', async () => {
+    mockExtMethod.mockResolvedValue({ status: { ...ROUTE, state: 'mounting' } });
+    await mlxRemoteSingleStatus();
+    wrap('swarm');
+    const strip = await screen.findByTestId('composer-readiness');
+    expect(strip.textContent).toContain(
+      "Loading Qwen3.8-27B-Atlassian-Q8-mlx on Work's Mac Studio — a message waits until it is ready"
+    );
+    expect(strip.className).toContain('bg-lz-phase-loading');
+    expect(strip.textContent).not.toContain('WorksMacStudio.lan');
+    expect(screen.getByTestId('composer-readiness-remote-mounting')).toBeInTheDocument();
+  });
+
+  it('a FAILED route is red and says why in the peer’s words', async () => {
+    mockExtMethod.mockResolvedValue({
+      status: { ...ROUTE, state: 'failed', lastError: 'its engine exited (137)' },
+    });
+    await mlxRemoteSingleStatus();
+    wrap('swarm');
+    const strip = await screen.findByTestId('composer-readiness');
+    expect(strip.textContent).toContain("The engine on Work's Mac Studio failed");
+    expect(strip.className).toContain('bg-lz-phase-failed');
+    expect(screen.getByTestId('composer-readiness-detail').textContent).toBe(
+      'its engine exited (137)'
+    );
+  });
+
+  it('Q-8: a READY route renders NO bar — the chip names what serves; a permanent green "ready" is noise', async () => {
+    mockExtMethod.mockResolvedValue({ status: { ...ROUTE, state: 'ready' } });
+    await mlxRemoteSingleStatus();
+    wrap('swarm');
+    await waitFor(() => expect(mockReadConfig).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId('composer-readiness')).toBeNull();
+  });
+});
+
+describe('ComposerReadinessStrip — the engine busy with another client (Q-17)', () => {
+  const ROUTE = {
+    state: 'ready',
+    peer: 'worksmacstudio-lan-9c1e2a',
+    peerHostname: 'WorksMacStudio.lan',
+    peerComputerName: "Work's Mac Studio",
+    modelId: HF,
+  };
+  function snapshot(serving: MlxEngineSnapshot['serving']): MlxEngineSnapshot {
+    const read = parseMlxLiveStatus(PREFILL_STATUS);
+    if (!read.ok) throw new Error(read.detail);
+    return {
+      engine: 'remote',
+      mode: 'running',
+      modelId: HF,
+      baseUrl: 'http://127.0.0.1:61001/relay/cafe',
+      stats: read.stats,
+      statusDetail: null,
+      rates: EMPTY_BOOK,
+      serving,
+      failedError: null,
+    };
+  }
+  afterEach(async () => {
+    (window as unknown as { electron: unknown }).electron = {};
+    mockExtMethod.mockResolvedValue({ status: { state: 'off' } });
+    await act(async () => {
+      await mlxRemoteSingleStatus();
+    });
+  });
+
+  it('round 1, 08:42: the Studio reads another client’s prompt — the bar says so, names the Mac, and the turn will wait', async () => {
+    (window as unknown as { electron: unknown }).electron = {
+      mlxEngineActivity: async () =>
+        snapshot({ clients: [], unattributed: 1, swarmRuns: [], error: null }),
+    };
+    mockExtMethod.mockResolvedValue({ status: ROUTE });
+    await mlxRemoteSingleStatus();
+    wrap('swarm', 's-mine');
+    const strip = await screen.findByTestId('composer-readiness');
+    expect(strip).toHaveAttribute('data-readiness', 'busy');
+    expect(strip.textContent).toMatch(
+      /^Work's Mac Studio is reading another request’s [\d.]+k?-token prompt — your message waits its turn/
+    );
+    expect(strip.className).toContain('bg-lz-phase-held');
+    expect(strip.textContent).not.toContain('ready');
+    expect(screen.getByTestId('composer-readiness-open-engine')).toBeInTheDocument();
+  });
+
+  it('this chat’s own request is never "another request" — no bar', async () => {
+    (window as unknown as { electron: unknown }).electron = {
+      mlxEngineActivity: async () =>
+        snapshot({
+          clients: [{ key: 'chat:s-mine', kind: 'chat', sessionId: 's-mine', sessionName: 'x', count: 1 }],
+          unattributed: 0,
+          swarmRuns: [],
+          error: null,
+        }),
+    };
+    mockExtMethod.mockResolvedValue({ status: ROUTE });
+    await mlxRemoteSingleStatus();
+    wrap('swarm', 's-mine');
+    await waitFor(() => expect(mockReadConfig).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 10));
+    expect(screen.queryByTestId('composer-readiness')).toBeNull();
   });
 });
 
@@ -436,10 +543,10 @@ describe('ComposerReadinessStrip (UX audit C1)', () => {
     expect(await screen.findByTestId('composer-readiness-mount')).toBeInTheDocument();
   });
 
-  it('Open Providers goes to the Providers view', async () => {
+  it('Open Engine goes to the Providers view’s engine', async () => {
     const user = userEvent.setup();
     wrap('swarm');
-    await user.click(await screen.findByTestId('composer-readiness-open-providers'));
+    await user.click(await screen.findByTestId('composer-readiness-open-engine'));
     expect(screen.getByTestId('providers-view')).toBeInTheDocument();
   });
 });

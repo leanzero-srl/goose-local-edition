@@ -1,4 +1,13 @@
-import { Sliders, Bot, LoaderCircle, Settings, BookOpen, ExternalLink, X } from 'lucide-react';
+import {
+  Sliders,
+  Bot,
+  LoaderCircle,
+  Settings,
+  BookOpen,
+  ExternalLink,
+  X,
+  Cpu,
+} from 'lucide-react';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useModelAndProvider } from '../../../ModelAndProviderContext';
 import { useFeatures } from '../../../../contexts/FeaturesContext';
@@ -19,9 +28,21 @@ import { getModelDisplayName } from '../predefinedModelsUtils';
 
 import { ModelSettingsPanel } from '../../localInference/ModelSettingsPanel';
 import { ScrollArea } from '../../../ui/scroll-area';
-import { Button as StudioButton, MOTION, SURFACE, TYPE, WEIGHT, cx } from '../../../lz';
+import {
+  Button as StudioButton,
+  MOTION,
+  StatusDot,
+  SURFACE,
+  TNUM,
+  TYPE,
+  WEIGHT,
+  cx,
+  type EnginePhase,
+} from '../../../lz';
 import { defineMessages, useIntl } from '../../../../i18n';
 import type { Message } from '../../../../types/message';
+import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
+import { shortModelName } from '../../../noNodeNotice/mlxMount';
 
 const i18n = defineMessages({
   selectModel: {
@@ -68,7 +89,57 @@ const i18n = defineMessages({
     id: 'modelsBottomBar.close',
     defaultMessage: 'Close',
   },
+  servedChip: {
+    id: 'modelsBottomBar.servedChip',
+    defaultMessage: '{model} · {where}',
+  },
+  servedChipNotRunning: {
+    id: 'modelsBottomBar.servedChipNotRunning',
+    defaultMessage: '{model} · not running',
+  },
+  servedWhere: {
+    id: 'modelsBottomBar.servedWhere',
+    defaultMessage: '{phase} on {where}',
+  },
+  servedWhereForeign: {
+    id: 'modelsBottomBar.servedWhereForeign',
+    defaultMessage: '{phase} on {where} · run by another window',
+  },
+  servedNotRunning: {
+    id: 'modelsBottomBar.servedNotRunning',
+    defaultMessage: 'Not running — start it from the Engine',
+  },
+  servedContext: {
+    id: 'modelsBottomBar.servedContext',
+    defaultMessage: '{tokens}-token context',
+  },
+  openEngine: {
+    id: 'modelsBottomBar.openEngine',
+    defaultMessage: 'Open Engine',
+  },
+  openEngineHint: {
+    id: 'modelsBottomBar.openEngineHint',
+    defaultMessage: 'Change the model or the Mac it runs on',
+  },
+  phaseUnloaded: { id: 'modelsBottomBar.phase.unloaded', defaultMessage: 'Not loaded' },
+  phaseIdle: { id: 'modelsBottomBar.phase.idle', defaultMessage: 'Idle' },
+  phaseLoading: { id: 'modelsBottomBar.phase.loading', defaultMessage: 'Loading' },
+  phaseReading: { id: 'modelsBottomBar.phase.reading', defaultMessage: 'Reading a prompt' },
+  phaseWriting: { id: 'modelsBottomBar.phase.writing', defaultMessage: 'Writing' },
+  phaseHeld: { id: 'modelsBottomBar.phase.held', defaultMessage: 'Queued' },
+  phaseFailed: { id: 'modelsBottomBar.phase.failed', defaultMessage: 'Failed' },
+  phaseUnknown: { id: 'modelsBottomBar.phase.unknown', defaultMessage: 'Serving' },
 });
+
+const PHASE_WORD: Record<EnginePhase, (typeof i18n)['phaseIdle']> = {
+  unloaded: i18n.phaseUnloaded,
+  idle: i18n.phaseIdle,
+  loading: i18n.phaseLoading,
+  reading: i18n.phaseReading,
+  writing: i18n.phaseWriting,
+  held: i18n.phaseHeld,
+  failed: i18n.phaseFailed,
+};
 
 interface ModelsBottomBarProps {
   sessionId: string | null;
@@ -79,6 +150,11 @@ interface ModelsBottomBarProps {
   latestInference?: Message['metadata']['inference'] | null;
   onModelChanged: (override: { model: string; provider: string }) => void;
   sessionLoaded?: boolean;
+  /**
+   * Where chat goes (`deriveChatServedBy`, computed once by the composer). When it names a model,
+   * the chip names THAT model and its Mac — never the provider id "swarm" (Q-5, Q-12).
+   */
+  served?: ChatServedBy | null;
 }
 
 export default function ModelsBottomBar({
@@ -90,6 +166,7 @@ export default function ModelsBottomBar({
   latestInference,
   onModelChanged,
   sessionLoaded,
+  served = null,
 }: ModelsBottomBarProps) {
   // ChatInput owns the override state and passes effective model/provider as sessionModel/sessionProvider.
   // Fall back to config defaults when no session-specific model is available.
@@ -204,6 +281,24 @@ export default function ModelsBottomBar({
     onModelChanged({ model, provider });
   };
 
+  // The MLX engine that serves this chat, as the one derivation names it. `where` is empty only
+  // when nothing is named — the chip then keeps the provider's own label.
+  const servedModel = !isModelLoading && served?.model ? shortModelName(served.model) : null;
+  const servedWhere =
+    served && served.where.length > 0
+      ? intl.formatList(served.where, { type: 'conjunction' })
+      : null;
+  const servedRunning = served != null && served.engine !== 'none';
+  const phaseWord = served?.phase
+    ? intl.formatMessage(PHASE_WORD[served.phase])
+    : intl.formatMessage(i18n.phaseUnknown);
+  const chipLabel =
+    servedModel == null
+      ? null
+      : servedRunning && servedWhere
+        ? intl.formatMessage(i18n.servedChip, { model: servedModel, where: servedWhere })
+        : intl.formatMessage(i18n.servedChipNotRunning, { model: servedModel });
+
   return (
     <div className="relative flex items-center" ref={dropdownRef}>
       <DropdownMenu>
@@ -214,8 +309,21 @@ export default function ModelsBottomBar({
           )}
         >
           <div className="flex items-center truncate max-w-[130px] md:max-w-[200px] lg:max-w-[360px] min-w-0">
-            <Bot className="mr-1 h-4 w-4 flex-shrink-0" />
-            {isModelLoading ? (
+            {chipLabel != null && served?.phase ? (
+              <StatusDot phase={served.phase} label={phaseWord} className="mr-1.5" />
+            ) : (
+              <Bot className="mr-1 h-4 w-4 flex-shrink-0" />
+            )}
+            {chipLabel != null ? (
+              <span
+                data-testid="model-chip-served"
+                data-engine={served?.engine}
+                title={served?.model ?? undefined}
+                className="truncate text-lz-meta"
+              >
+                {chipLabel}
+              </span>
+            ) : isModelLoading ? (
               <span
                 data-testid="model-loading-state"
                 className="inline-flex items-center gap-1 truncate text-lz-meta"
@@ -232,16 +340,43 @@ export default function ModelsBottomBar({
           <h6 className={cx('mt-2 ml-2', TYPE.meta)}>
             {intl.formatMessage(i18n.currentModel)}
           </h6>
-          <p
-            className={cx(
-              'mx-2 mb-2 flex items-center justify-between border-b pb-2',
-              TYPE.body,
-              SURFACE.hairline
-            )}
-          >
-            {menuModelLabel}
-            {!isModelLoading && displayProvider && ` — ${displayProvider}`}
-          </p>
+          {servedModel != null && served ? (
+            <div
+              data-testid="model-menu-served"
+              className={cx('mx-2 mb-2 flex flex-col gap-0.5 border-b pb-2', SURFACE.hairline)}
+            >
+              <p className={cx('break-all', TYPE.body, WEIGHT.semibold)} title={served.model ?? ''}>
+                {servedModel}
+              </p>
+              <p className={cx('flex items-center gap-1.5', TYPE.meta)}>
+                {served.phase && <StatusDot phase={served.phase} label={phaseWord} />}
+                {servedRunning && servedWhere
+                  ? intl.formatMessage(
+                      served.foreign ? i18n.servedWhereForeign : i18n.servedWhere,
+                      { phase: phaseWord, where: servedWhere }
+                    )
+                  : intl.formatMessage(i18n.servedNotRunning)}
+              </p>
+              {served.contextWindow != null && (
+                <p className={cx(TYPE.meta, TNUM)}>
+                  {intl.formatMessage(i18n.servedContext, {
+                    tokens: served.contextWindow.toLocaleString(),
+                  })}
+                </p>
+              )}
+            </div>
+          ) : (
+            <p
+              className={cx(
+                'mx-2 mb-2 flex items-center justify-between border-b pb-2',
+                TYPE.body,
+                SURFACE.hairline
+              )}
+            >
+              {menuModelLabel}
+              {!isModelLoading && displayProvider && ` — ${displayProvider}`}
+            </p>
+          )}
           {shouldShowResolvedModel && resolvedDisplayModelName && (
             <div className={cx('mx-2 mb-2 border-b pb-2', SURFACE.hairline)}>
               <h6 className={TYPE.meta}>
@@ -251,6 +386,15 @@ export default function ModelsBottomBar({
                 {resolvedDisplayModelName}
               </p>
             </div>
+          )}
+          {servedModel != null && (
+            <DropdownMenuItem data-testid="model-menu-open-engine" onClick={() => setView('mlxEngine')}>
+              <span className="flex min-w-0 flex-col">
+                <span>{intl.formatMessage(i18n.openEngine)}</span>
+                <span className={TYPE.meta}>{intl.formatMessage(i18n.openEngineHint)}</span>
+              </span>
+              <Cpu className="ml-auto h-4 w-4 shrink-0" />
+            </DropdownMenuItem>
           )}
           <DropdownMenuItem onClick={() => setIsAddModelModalOpen(true)}>
             <span>{intl.formatMessage(isSwarm ? i18n.changeProvider : i18n.changeModel)}</span>
