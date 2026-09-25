@@ -381,7 +381,7 @@ export default function ImportRecipeForm({ isOpen, onClose, onSuccess }: ImportR
               {intl.formatMessage(i18n.schemaDescription)}
             </p>
             <div className="flex-1 overflow-auto">
-              <pre className="text-xs bg-whitedark:bg-gray-800 p-4 rounded overflow-auto whitespace-pre font-mono">
+              <pre className="text-xs bg-white dark:bg-gray-800 p-4 rounded overflow-auto whitespace-pre font-mono">
                 {JSON.stringify(getRecipeJsonSchema(), null, 2)}
               </pre>
             </div>
