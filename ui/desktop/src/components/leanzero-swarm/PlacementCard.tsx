@@ -630,6 +630,27 @@ function PlacementCardBody({
     void load();
   }, [load]);
 
+  // What serves this model decides the plan's credits and its notes ("its memory could not be
+  // read" while the Studio's engine loaded stayed under Run it after it served — 3.0.31). The plan
+  // is asked again whenever that changes; the notice stays, since a start's failure moves the state
+  // too.
+  const remoteNow = latestMlxRemoteSingleStatus();
+  const servingKey = [
+    single?.state,
+    single?.modelId,
+    distributed?.state,
+    distributed?.modelId,
+    remoteNow?.state,
+    remoteNow?.peer,
+    remoteNow?.modelId,
+  ].join('|');
+  const plannedFor = useRef(servingKey);
+  useEffect(() => {
+    if (plannedFor.current === servingKey) return;
+    plannedFor.current = servingKey;
+    void load();
+  }, [servingKey, load]);
+
   const refused = intl.formatMessage(i18n.refusedUnnamed);
   const savedSplit = distributed?.config ?? null;
 

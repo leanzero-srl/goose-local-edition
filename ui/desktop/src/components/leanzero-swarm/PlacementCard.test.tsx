@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
@@ -513,6 +514,39 @@ describe('Run it on the real 27B plan', () => {
       await screen.findByText(/Nothing started: Qwen3.8-27B-Atlassian-Q8-mlx could not be stopped/)
     ).toBeInTheDocument();
     expect(onMountHere).not.toHaveBeenCalled();
+  });
+
+  it('plans again when what serves changes — a note from the loading moment does not outlive it', async () => {
+    let setSingle: (s: MlxEngineStatus) => void = () => undefined;
+    function Harness() {
+      const [single, set] = useState<MlxEngineStatus>({
+        state: 'mounting',
+        modelId: MODEL,
+      } as MlxEngineStatus);
+      setSingle = set;
+      return (
+        <PlacementCard
+          modelId={MODEL}
+          single={single}
+          distributed={null}
+          onMountHere={() => undefined}
+          onStopHere={() => undefined}
+          mountBusy={false}
+          distributedCapability
+        />
+      );
+    }
+    render(
+      <IntlTestWrapper>
+        <Harness />
+      </IntlTestWrapper>
+    );
+    await waitFor(() => expect(mockPlan).toHaveBeenCalledTimes(1));
+    act(() => setSingle({ state: 'running', modelId: MODEL } as MlxEngineStatus));
+    await waitFor(() => expect(mockPlan).toHaveBeenCalledTimes(2));
+    act(() => setSingle({ state: 'running', modelId: MODEL } as MlxEngineStatus));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockPlan).toHaveBeenCalledTimes(2);
   });
 
   it('with no plan, every way can still be started — the failure is named, this Mac leads', async () => {
