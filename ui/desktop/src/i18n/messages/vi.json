@@ -4082,6 +4082,12 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Cần thêm {gb} GB bộ nhớ trống"
   },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "Chưa có lượt chạy nào từ khi khởi động lại — câu trả lời tiếp theo sẽ cho tốc độ viết"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "Chưa đo lượt chạy nào — câu trả lời tiếp theo sẽ cho tốc độ viết"
+  },
   "mlxStateTile.ofGb": {
     "defaultMessage": "trên {gb} GB"
   },

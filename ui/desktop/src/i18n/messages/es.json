@@ -4082,6 +4082,12 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Necesita {gb} GB más de memoria libre"
   },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "Sin ejecuciones desde que se reinició: la próxima respuesta dará una velocidad de escritura"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "Aún no hay ejecuciones medidas: la próxima respuesta dará una velocidad de escritura"
+  },
   "mlxStateTile.ofGb": {
     "defaultMessage": "de {gb} GB"
   },

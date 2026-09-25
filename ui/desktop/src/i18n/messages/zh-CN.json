@@ -4082,6 +4082,12 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "还需要 {gb} GB 可用内存"
   },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "重启后还没有运行记录——下一次回复会给出写入速度"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "还没有测得运行记录——下一次回复会给出写入速度"
+  },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
   },

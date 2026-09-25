@@ -4082,6 +4082,12 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "{gb} GB daha boş bellek gerekiyor"
   },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "Yeniden başladığından beri çalıştırma yok — sonraki yanıt bir yazma hızı verir"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "Henüz ölçülen çalıştırma yok — sonraki yanıt bir yazma hızı verir"
+  },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
   },

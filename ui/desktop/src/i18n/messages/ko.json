@@ -4082,6 +4082,12 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "여유 메모리가 {gb}GB 더 필요합니다"
   },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "재시작 이후 실행 없음 — 다음 응답에서 쓰기 속도가 나옵니다"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "아직 측정된 실행 없음 — 다음 응답에서 쓰기 속도가 나옵니다"
+  },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb}GB"
   },

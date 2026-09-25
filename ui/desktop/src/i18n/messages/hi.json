@@ -4082,6 +4082,12 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "{gb} GB और खाली मेमोरी चाहिए"
   },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "रीस्टार्ट के बाद कोई रन नहीं — अगला उत्तर लिखने की दर देगा"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "अभी तक कोई रन मापा नहीं गया — अगला उत्तर लिखने की दर देगा"
+  },
   "mlxStateTile.ofGb": {
     "defaultMessage": "{gb} GB में से"
   },

@@ -4091,6 +4091,12 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Needs {gb} GB more free memory"
   },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "No runs since it restarted — the next reply gives it a writing rate"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "No runs measured yet — the next reply gives it a writing rate"
+  },
   "mlxStateTile.ofGb": {
     "defaultMessage": "of {gb} GB"
   },

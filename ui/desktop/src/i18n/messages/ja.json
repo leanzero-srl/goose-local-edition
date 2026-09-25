@@ -4082,6 +4082,12 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "あと {gb} GB の空きメモリが必要"
   },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "再起動後の実行はまだありません — 次の応答で書き込み速度が出ます"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "まだ計測された実行はありません — 次の応答で書き込み速度が出ます"
+  },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
   },

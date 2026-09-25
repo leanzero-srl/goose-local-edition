@@ -4082,6 +4082,12 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Нужно ещё {gb} ГБ свободной памяти"
   },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "Запусков после перезапуска нет — следующий ответ даст скорость записи"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "Запусков пока не измерено — следующий ответ даст скорость записи"
+  },
   "mlxStateTile.ofGb": {
     "defaultMessage": "из {gb} ГБ"
   },

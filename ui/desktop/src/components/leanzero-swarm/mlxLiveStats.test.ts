@@ -401,11 +401,24 @@ describe('the run book — every run a read caught, summarised as a median and a
     expect(bookSpreads(both).writing?.median).toBe(24.1);
   });
 
-  it('an engine whose uptime went backwards restarted: its runs are dropped', () => {
+  /**
+   * Q-44: after the Studio relaunched at 13:58 the tile showed "274 requests served … 11m 7s engine
+   * uptime" and no rate — the 8-run median was dropped with the engine's uptime. The readers key a
+   * book by Mac and model, so a restart of the same model keeps its runs and says it restarted.
+   */
+  it('an engine whose uptime went backwards restarted: its runs stay, and the book says it restarted', () => {
     const before = advanceRateBook(EMPTY_BOOK, statsOf(GENERATING_STATUS));
+    expect(before.restarted).toBe(false);
     const after = advanceRateBook(before, statsOf({ ...IDLE_STATUS, uptime_s: 3 }));
-    expect(after.runs.size).toBe(0);
+    expect(after.runs.size).toBe(1);
+    expect(bookSpreads(after).writing?.median).toBe(19.9);
     expect(after.uptimeS).toBe(3);
+    expect(after.restarted).toBe(true);
+    // A run of the new life joins the old ones.
+    const next = advanceRateBook(after, gen('fresh', 23.0, 40));
+    expect(next.runs.size).toBe(2);
+    expect(next.restarted).toBe(true);
+    expect(mergeRateBooks(EMPTY_BOOK, next).restarted).toBe(true);
   });
 });
 

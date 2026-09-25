@@ -4082,6 +4082,12 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Perlu {gb} GB lagi memori bebas"
   },
+  "mlxStateTile.noRunsSinceRestart": {
+    "defaultMessage": "Tiada larian sejak dimulakan semula — balasan seterusnya memberi kadar menulis"
+  },
+  "mlxStateTile.noRunsYet": {
+    "defaultMessage": "Belum ada larian diukur — balasan seterusnya memberi kadar menulis"
+  },
   "mlxStateTile.ofGb": {
     "defaultMessage": "daripada {gb} GB"
   },

@@ -238,6 +238,20 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     // "0 prompt tokens from cache" repeated what "0% of cache lookups hit" says.
     expect(screen.queryByText('prompt tokens from cache')).toBeNull();
     expect(screen.getByText('requests served')).toBeInTheDocument();
+    // Q-44: an empty book says so, instead of a tile of lifetime counters and no rate.
+    expect(screen.getByTestId('mlx-no-runs')).toHaveTextContent(
+      'No runs measured yet — the next reply gives it a writing rate'
+    );
+  });
+
+  it('Q-44: idle after a restart with no run kept says "since it restarted"; with runs kept, their median leads', () => {
+    const idle = parseMlxLiveStatus({ ...IDLE_STATUS, uptime_s: 667 });
+    const { unmount } = tile({ live: idle, rates: { ...EMPTY_BOOK, restarted: true } });
+    expect(screen.getByTestId('mlx-no-runs')).toHaveTextContent('No runs since it restarted');
+    unmount();
+    tile({ live: idle, rates: { ...LAST_AFTER_GENERATING, restarted: true } });
+    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');
+    expect(screen.queryByTestId('mlx-no-runs')).toBeNull();
   });
 
   it('reading a prompt with no rate yet: the prompt and its time, never a dash saying no prompt was read', () => {

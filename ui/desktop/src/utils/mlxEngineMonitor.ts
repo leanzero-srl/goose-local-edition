@@ -75,7 +75,7 @@ export interface MlxEngineSnapshot {
   stats: MlxLiveStats | null;
   /** Why `stats` is absent or stale, verbatim. */
   statusDetail: string | null;
-  /** Every run the reads caught on this engine: the tray's median and range. */
+  /** Every run the reads caught on this engine's Mac and model: the tray's median and range. */
   rates: RateBook;
   /** Null until the engine has been read at least once while running. */
   serving: MlxServing | null;
@@ -93,7 +93,13 @@ export interface MlxEngineMonitorDeps {
    * The route to a linked Mac's engine while one is published (a remote single serves this Mac's
    * chat): its state and goosed's relay to it; null = no route, chat stays on this Mac.
    */
-  remoteRoute(): { state: string; baseUrl: string | null } | null;
+  remoteRoute(): {
+    state: string;
+    baseUrl: string | null;
+    /** The Mac it serves from and the model — the run book's key; absent = the relay names it. */
+    peerName?: string;
+    modelId?: string | null;
+  } | null;
   swarmRuns(): string[];
   onSnapshot(snapshot: MlxEngineSnapshot): void;
   schedule(fn: () => void, ms: number): () => void;
@@ -161,13 +167,30 @@ export function mlxEngineConfigFromYaml(text: string): {
   };
 }
 
+/** The model a `/v1/status` body names, if it names one. */
+function bodyModel(body: unknown): string | null {
+  const model = (body as { model?: unknown } | null)?.model;
+  return typeof model === 'string' && model ? model : null;
+}
+
 export class MlxEngineMonitor {
   private report: MlxEngineReport | null = null;
   private snapshot: MlxEngineSnapshot = INITIAL_SNAPSHOT;
   private cancelNext: (() => void) | null = null;
   private inFlight: Promise<void> | null = null;
+  /**
+   * The run books, one per (engine kind, Mac, model): an engine that restarts, stops or is switched
+   * away from and back finds its runs again (Q-44). A handful of keys for the process's life.
+   */
+  private readonly books = new Map<string, RateBook>();
 
   constructor(private readonly deps: MlxEngineMonitorDeps) {}
+
+  private fold(key: string, stats: MlxLiveStats): RateBook {
+    const book = advanceRateBook(this.books.get(key) ?? EMPTY_BOOK, stats);
+    this.books.set(key, book);
+    return book;
+  }
 
   current(): MlxEngineSnapshot {
     return this.snapshot;
@@ -209,11 +232,14 @@ export class MlxEngineMonitor {
 
   private async read(): Promise<MlxEngineSnapshot> {
     const distributedBase = this.deps.distributedBaseUrl();
-    if (distributedBase) return this.readRouted('distributed', distributedBase);
+    // The split's key names no Mac: this Mac supervises it, and its model is its identity.
+    if (distributedBase) return this.readRouted('distributed', distributedBase, '', null);
     const route = this.deps.remoteRoute();
     if (route) {
       const base = remoteLiveBase(route);
-      return base ? this.readRouted('remote', base) : this.routeUnread(route.state);
+      return base
+        ? this.readRouted('remote', base, route.peerName ?? base, route.modelId ?? null)
+        : this.routeUnread(route.state);
     }
     return { ...(await this.readSingle()), engine: 'single' };
   }
@@ -238,7 +264,9 @@ export class MlxEngineMonitor {
    */
   private async readRouted(
     engine: 'distributed' | 'remote',
-    baseUrl: string
+    baseUrl: string,
+    mac: string,
+    routeModel: string | null
   ): Promise<MlxEngineSnapshot> {
     const held = this.snapshot.engine === engine ? this.snapshot : null;
     const rates = held?.rates ?? EMPTY_BOOK;
@@ -274,6 +302,7 @@ export class MlxEngineMonitor {
       };
     }
     const stats = parsed.stats;
+    const model = bodyModel(result.body) ?? routeModel ?? '';
     return {
       engine,
       mode: 'running',
@@ -281,7 +310,7 @@ export class MlxEngineMonitor {
       baseUrl,
       stats,
       statusDetail: null,
-      rates: advanceRateBook(rates, stats),
+      rates: this.fold(`${engine}\n${mac}\n${model}`, stats),
       serving: await this.attribute(stats, engine === 'remote'),
       failedError: null,
     };
@@ -354,8 +383,7 @@ export class MlxEngineMonitor {
       };
     }
     const stats = parsed.stats;
-    const bodyModel = (result.body as { model?: unknown }).model;
-    const engineModel = typeof bodyModel === 'string' && bodyModel ? bodyModel : null;
+    const engineModel = bodyModel(result.body);
     const serving = await this.attribute(stats, false);
     return {
       engine: 'single',
@@ -364,7 +392,7 @@ export class MlxEngineMonitor {
       baseUrl,
       stats,
       statusDetail: null,
-      rates: advanceRateBook(rates, stats),
+      rates: this.fold(`single\n\n${engineModel ?? reportedModel ?? ''}`, stats),
       serving,
       failedError: null,
     };

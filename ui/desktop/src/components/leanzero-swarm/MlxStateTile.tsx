@@ -102,6 +102,14 @@ const i18n = defineMessages({
     defaultMessage: 'tok/s writing, {count, plural, one {# run} other {median of # runs}}',
   },
   writeRange: { id: 'mlxStateTile.writeRange', defaultMessage: 'tok/s writing, slowest–fastest' },
+  noRunsSinceRestart: {
+    id: 'mlxStateTile.noRunsSinceRestart',
+    defaultMessage: 'No runs since it restarted — the next reply gives it a writing rate',
+  },
+  noRunsYet: {
+    id: 'mlxStateTile.noRunsYet',
+    defaultMessage: 'No runs measured yet — the next reply gives it a writing rate',
+  },
   readRate: { id: 'mlxStateTile.readRate', defaultMessage: 'tok/s reading this prompt' },
   readRateMedian: {
     id: 'mlxStateTile.readRateMedian',
@@ -809,6 +817,13 @@ function LiveReadout({
             </div>
           ))}
         </div>
+      )}
+      {/* Idle with no run in the book: say so, instead of a tile whose only figures are lifetime
+          counters (Q-44: "274 requests served … 11m 7s engine uptime" and no rate). */}
+      {activity === 'idle' && spreads.writing == null && (
+        <p data-testid="mlx-no-runs" className={LINE}>
+          {intl.formatMessage(rates.restarted ? i18n.noRunsSinceRestart : i18n.noRunsYet)}
+        </p>
       )}
       {/* The writing rate's trace means something only while it writes; idle it was a flat line
           with a dot that read as a slider. */}

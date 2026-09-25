@@ -204,17 +204,25 @@ export interface RunRates {
 }
 
 /**
- * Every run this reader saw on ONE engine life, by request id — what the idle tile and the tray
+ * Every run this reader saw on ONE (Mac, model), by request id — what the idle tile and the tray
  * summarise as a median and a slowest–fastest range instead of one "last run" (the owner, 3.0.33:
  * "this only shows the last reported value instead of showing a median"). A run shorter than one
  * read is never seen; that is the reader's limit, stated by the count shown beside the median.
+ *
+ * The book OUTLIVES an engine restart (Q-44: after the Studio relaunched, the 8-run median was gone
+ * and the tile showed no rate at all) — the same model on the same Mac writes at the same rate, so
+ * the runs before the restart still measure it. The readers key their books by Mac and model, so a
+ * different model never inherits them. Request ids are the engine's own; a restarted engine's ids
+ * do not repeat the old ones, and one that did would overwrite a run, never invent one.
  */
 export interface RateBook {
   uptimeS: number | null;
   runs: ReadonlyMap<string, RunRates>;
+  /** The engine restarted while this book was kept: an empty book then says "since it restarted". */
+  restarted: boolean;
 }
 
-export const EMPTY_BOOK: RateBook = { uptimeS: null, runs: new Map() };
+export const EMPTY_BOOK: RateBook = { uptimeS: null, runs: new Map(), restarted: false };
 
 function runPrefillTps(r: MlxLiveRequest): number | null {
   // The distributed engine's rank 0 reports the prompt's own rate while it reads.
@@ -228,10 +236,10 @@ function runPrefillTps(r: MlxLiveRequest): number | null {
   return r.promptTps ?? computed / r.ttftS;
 }
 
-/** Fold one read into the book; an engine whose uptime went backwards starts a new one. */
+/** Fold one read into the book; an engine whose uptime went backwards restarted — its runs stay. */
 export function advanceRateBook(prev: RateBook, stats: MlxLiveStats): RateBook {
   const restarted = prev.uptimeS != null && stats.uptimeS != null && stats.uptimeS < prev.uptimeS;
-  const runs = new Map(restarted ? [] : prev.runs);
+  const runs = new Map(prev.runs);
   for (const r of stats.requests) {
     const decode =
       r.phase === 'generation' && r.completionTokens >= 2 && (r.tokensPerSecond ?? 0) > 0
@@ -245,7 +253,11 @@ export function advanceRateBook(prev: RateBook, stats: MlxLiveStats): RateBook {
       prefillTps: prefill ?? had?.prefillTps ?? null,
     });
   }
-  return { uptimeS: stats.uptimeS ?? (restarted ? null : prev.uptimeS), runs };
+  return {
+    uptimeS: stats.uptimeS ?? (restarted ? null : prev.uptimeS),
+    runs,
+    restarted: prev.restarted || restarted,
+  };
 }
 
 export interface RateSpread {
@@ -500,5 +512,6 @@ export function mergeRateBooks(a: RateBook, b: RateBook): RateBook {
   return {
     uptimeS: uptimes.length ? Math.max(...uptimes) : null,
     runs: new Map([...a.runs, ...b.runs]),
+    restarted: a.restarted || b.restarted,
   };
 }
