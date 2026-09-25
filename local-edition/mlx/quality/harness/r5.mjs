@@ -41,10 +41,12 @@ async function settle(tag, maxS = 420) {
   while ((Date.now() - t0) / 1000 < maxS) {
     await p.waitForTimeout(3000);
     const t = await tile();
-    same = t === last ? same + 1 : 0; last = t;
+    // Only the headline decides "settled": the tile's counters (uptime, requests) change every poll.
+    const head = t.split(' | ').slice(0, 4).join(' | ');
+    same = head === last ? same + 1 : 0; last = head;
     if (same >= 3 && !/Mounting|Loading|Starting|Stopping|Checking|Restoring|Building/.test(t)) break;
   }
-  log(`${tag} settled: ${last.slice(0, 220)}`);
+  log(`${tag} settled in ${Math.round((Date.now() - t0) / 1000)}s: ${last.slice(0, 220)}`);
   await p.screenshot({ path: `${dir}/${tag}.png` });
   log(census(tag));
 }
