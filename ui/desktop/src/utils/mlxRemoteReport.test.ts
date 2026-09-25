@@ -95,7 +95,7 @@ describe('the tray while chat is served from a linked Mac', () => {
   it('WRITING on the peer: green, its live rate in the title, the live lines, and a Stop', () => {
     const report = toMlxRemoteReport(READY)!;
     const model = buildMlxTrayModel(remoteSnapshot(GENERATING_STATUS), options(report));
-    expect(model.title).toBe('Remote · 19.9 tok/s');
+    expect(model.title).toBe("Work's Mac Studio · 19.9 tok/s");
     expect(model.phase).toBe('writing');
     expect(model.items[0]).toMatchObject({
       type: 'info',
@@ -117,10 +117,10 @@ describe('the tray while chat is served from a linked Mac', () => {
     const report = toMlxRemoteReport(READY)!;
     const reading = buildMlxTrayModel(remoteSnapshot(PREFILL_STATUS), options(report));
     expect(reading.phase).toBe('reading');
-    expect(reading.title).toMatch(/^Remote · Reading/);
+    expect(reading.title).toMatch(/^Work's Mac Studio · Reading/);
     const idle = buildMlxTrayModel(remoteSnapshot(IDLE_STATUS), options(report));
     expect(idle.phase).toBe('idle');
-    expect(idle.title).toBe('Remote · Idle');
+    expect(idle.title).toBe("Work's Mac Studio · Idle");
   });
 
   it('mounting there is amber and says so; failed is red with the peer’s words', () => {
@@ -129,7 +129,7 @@ describe('the tray while chat is served from a linked Mac', () => {
       "Serving from Work's Mac Studio · Qwen3.8-27B-Atlassian-Q8-mlx · mounting"
     );
     const m = buildMlxTrayModel(INITIAL_SNAPSHOT, options(mounting));
-    expect(m.title).toBe('Remote · mounting');
+    expect(m.title).toBe("Work's Mac Studio · mounting");
     expect(m.phase).toBe('loading');
 
     const failed = toMlxRemoteReport({
@@ -138,7 +138,7 @@ describe('the tray while chat is served from a linked Mac', () => {
       lastError: "Work's Mac Studio's goose reports its engine failed (exit 137)",
     })!;
     const f = buildMlxTrayModel(INITIAL_SNAPSHOT, options(failed));
-    expect(f.title).toBe('Remote failed');
+    expect(f.title).toBe("Work's Mac Studio · failed");
     expect(f.phase).toBe('failed');
     expect(labels(f)).toContain(
       "Error: Work's Mac Studio's goose reports its engine failed (exit 137)"
@@ -156,7 +156,7 @@ describe('the tray while chat is served from a linked Mac', () => {
       },
       options(report)
     );
-    expect(model.title).toBe('Remote');
+    expect(model.title).toBe("Work's Mac Studio");
     expect(model.phase).toBe('idle');
     expect(labels(model)).toContain(
       'Rates unavailable over LeanZero Link: timeout: no answer within 1500 ms'

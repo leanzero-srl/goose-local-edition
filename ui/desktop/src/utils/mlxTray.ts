@@ -141,9 +141,14 @@ function remoteLive(
     : null;
 }
 
+/**
+ * The title names the Mac that serves chat — its one name (`routePeerName`, carried as
+ * `peerName`) — never "Remote", which said a route exists without saying where (Q-27).
+ */
 function remoteTrayTitle(report: MlxRemoteReport, live: MlxEngineSnapshot | null): string {
-  if (report.state === 'ready') return live ? `Remote · ${mlxTrayTitle(live)}` : 'Remote';
-  return report.state === 'failed' ? 'Remote failed' : `Remote · ${report.state}`;
+  const mac = report.peerName;
+  if (report.state === 'ready') return live ? `${mac} · ${mlxTrayTitle(live)}` : mac;
+  return report.state === 'failed' ? `${mac} · failed` : `${mac} · ${report.state}`;
 }
 
 /** Chat is served by a linked Mac's engine: the tray speaks for THAT engine, and offers its Stop. */
