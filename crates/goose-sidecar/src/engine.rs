@@ -747,6 +747,8 @@ pub struct MlxEngineManager {
     /// The model a mount is making room for (macOS compaction runs before the gate judges again).
     making_room: StdMutex<Option<(String, u64)>>,
     probe_client: reqwest::Client,
+    #[cfg(test)]
+    test_gpu_ceiling: StdMutex<Option<u64>>,
 }
 
 impl MlxEngineManager {
@@ -760,7 +762,17 @@ impl MlxEngineManager {
                 .timeout(Duration::from_secs(5))
                 .build()
                 .expect("reqwest client with static configuration"),
+            #[cfg(test)]
+            test_gpu_ceiling: StdMutex::new(None),
         }
+    }
+
+    fn gpu_ceiling(&self) -> Result<u64> {
+        #[cfg(test)]
+        if let Some(bytes) = *self.test_gpu_ceiling.lock().unwrap() {
+            return Ok(bytes);
+        }
+        local_gpu_ceiling()
     }
 
     /// Legacy flat sampling fields migrate into profiles here, in memory, so EVERY
@@ -807,7 +819,9 @@ impl MlxEngineManager {
         model: &LocalModel,
     ) -> Result<FitVerdict> {
         let reading = measure()?;
-        let ceiling = local_gpu_ceiling().context("reading the GPU ceiling the fit rule needs")?;
+        let ceiling = self
+            .gpu_ceiling()
+            .context("reading the GPU ceiling the fit rule needs")?;
         let (freed, note) = self.mounted_footprint(settings).await;
         let need = single_engine_need(
             &expand_tilde(&settings.models_dir).join(&model.id),
@@ -1330,6 +1344,18 @@ mod tests {
     }
 
     use super::*;
+
+    /// Metal exists only on macOS. On a Linux CI host the fit rule's ceiling is the host's whole
+    /// RAM, so the RAM budget alone decides and the mount lifecycle under test is unchanged; on a
+    /// Mac the real Metal ceiling is read.
+    fn test_manager() -> MlxEngineManager {
+        let manager = MlxEngineManager::new();
+        #[cfg(not(target_os = "macos"))]
+        {
+            *manager.test_gpu_ceiling.lock().unwrap() = Some(measure().unwrap().total_bytes);
+        }
+        manager
+    }
 
     /// Rapid-MLX v0.14.3-lz.4's own stderr on a 27B mount (2026-09-24), in order.
     #[test]
@@ -2035,7 +2061,7 @@ mod tests {
     async fn status_reports_a_stray_listener_on_the_configured_port() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let manager = MlxEngineManager::new();
+        let manager = test_manager();
         manager.set_settings(EngineSettings {
             port,
             ..Default::default()
@@ -2071,7 +2097,7 @@ mod tests {
         }
         assert!(port_has_listener(port), "orphan never came up");
 
-        let manager = MlxEngineManager::new();
+        let manager = test_manager();
         manager.set_settings(EngineSettings {
             port,
             ..Default::default()
@@ -2181,7 +2207,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     async fn status_carries_the_engines_in_flight_count_and_never_fabricates_it() {
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
-        let manager = MlxEngineManager::new();
+        let manager = test_manager();
         let port = {
             let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             probe.local_addr().unwrap().port()
@@ -2251,7 +2277,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         };
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
-        let manager = MlxEngineManager::new();
+        let manager = test_manager();
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
             port,
@@ -2330,7 +2356,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         };
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
-        let manager = MlxEngineManager::new();
+        let manager = test_manager();
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
             port,
@@ -2413,7 +2439,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             probe.local_addr().unwrap().port()
         };
-        let manager = MlxEngineManager::new();
+        let manager = test_manager();
         manager.set_settings(EngineSettings {
             models_dir,
             port,
@@ -2603,7 +2629,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let tmp = tempfile::tempdir().unwrap();
         complete_small_model(tmp.path(), "pub/small");
 
-        let manager = MlxEngineManager::new();
+        let manager = test_manager();
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
             port,
@@ -2638,7 +2664,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let weights = std::fs::File::create(model_dir.join("model.safetensors")).unwrap();
         weights.set_len(4096 * crate::GIB).unwrap();
 
-        let manager = MlxEngineManager::new();
+        let manager = test_manager();
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
             ..Default::default()
@@ -2677,7 +2703,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
     #[tokio::test]
     async fn mount_refuses_missing_and_incomplete_models() {
         let tmp = tempfile::tempdir().unwrap();
-        let manager = MlxEngineManager::new();
+        let manager = test_manager();
         manager.set_settings(EngineSettings {
             models_dir: tmp.path().to_string_lossy().into_owned(),
             ..Default::default()

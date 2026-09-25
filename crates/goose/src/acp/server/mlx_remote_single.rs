@@ -8,6 +8,11 @@
 //!   existing `/v1/swarm/mlx/mount` op (the peer's memory gate decides), start this goosed's
 //!   loopback relay to the peer's proxy, and publish the route ([`mlx_remote`]) so every window's
 //!   swarm router serves MLX chat from the peer.
+//! - RESTORING (Q-34): while this goosed owns a route and the peer answers over Link with its
+//!   engine `stopped` and `stoppedBy: notStarted` (its goose relaunched — quitting the app stops
+//!   its sidecar), this goosed re-mounts the route's model there through the same start path
+//!   Run takes ([`mount_on_peer`]), once per outage, reported as `restore` on the status. The
+//!   trigger is the peer's reported state on a status read, never a clock.
 
 use super::*;
 use crate::config::ConfigError;
@@ -20,6 +25,7 @@ use leanzero_link::state::{ChatServing, MlxOp};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::sync::Mutex as StdMutex;
+use tokio::sync::Mutex as TokioMutex;
 
 /// The owner's switch ("Let my other Macs use this Mac › Answer chat"): a goose config key, or
 /// the same name as an env override (`Config::get_param` upper-cases the key). Absent = OFF.
@@ -193,15 +199,39 @@ fn link_refusal(error: &LinkError) -> MlxRemoteSingleRefusalDto {
     }
 }
 
+/// The engine ops a route makes on its peer over LeanZero Link (the mesh's `mlx_proxy`) — a seam
+/// so the restore runs against a stand-in peer in tests.
+#[async_trait::async_trait]
+pub(super) trait PeerControl: Send + Sync {
+    async fn mlx_op(
+        &self,
+        peer: &str,
+        op: MlxOp,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, LinkError>;
+}
+
+#[async_trait::async_trait]
+impl PeerControl for LinkManager {
+    async fn mlx_op(
+        &self,
+        peer: &str,
+        op: MlxOp,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, LinkError> {
+        self.mlx_proxy(peer, op, body).await
+    }
+}
+
 async fn peer_op<Req: Serialize, Resp: DeserializeOwned>(
-    manager: &LinkManager,
+    control: &dyn PeerControl,
     peer: &str,
     op: MlxOp,
     req: &Req,
 ) -> Result<Resp, MlxRemoteSingleRefusalDto> {
     let body = serde_json::to_value(req).map_err(|e| refusal("peerUnreachable", e.to_string()))?;
-    let value = manager
-        .mlx_proxy(peer, op, body)
+    let value = control
+        .mlx_op(peer, op, body)
         .await
         .map_err(|e| link_refusal(&e))?;
     serde_json::from_value(value).map_err(|e| {
@@ -231,12 +261,23 @@ async fn route_models(route: &PublishedRoute) -> Result<Option<u64>, String> {
     }
 }
 
-/// The route's state, re-probed through the relay, and the peer's own engine status when the
-/// relay says it is not serving yet (mounting vs failed).
+/// A status read: the route's status and, when the proxy did not serve, the peer's own engine
+/// status as it answered over Link (`None` when it did not answer, or was not asked).
+struct RouteObservation {
+    status: MlxRemoteSingleStatusDto,
+    peer_engine: Option<MlxEngineStatusDto>,
+}
+
 async fn route_status(
-    manager: Option<&LinkManager>,
+    control: Option<&dyn PeerControl>,
     route: &PublishedRoute,
 ) -> MlxRemoteSingleStatusDto {
+    observe_route(control, route).await.status
+}
+
+/// The route's state, re-probed through the relay, and the peer's own engine status when the
+/// relay says it is not serving yet (mounting vs failed).
+async fn observe_route(control: Option<&dyn PeerControl>, route: &PublishedRoute) -> RouteObservation {
     let mut status = MlxRemoteSingleStatusDto {
         state: "mounting".to_string(),
         peer: Some(route.peer.clone()),
@@ -272,13 +313,16 @@ async fn route_status(
         RelayAnswer::NoAnswer(why) => status.active_requests_error = Some(why),
     }
     let Some(models_error) = models_error else {
-        return status;
+        return RouteObservation {
+            status,
+            peer_engine: None,
+        };
     };
     // Not serving through the proxy: the peer's own engine state says loading or failed.
-    let peer_state = match manager {
-        Some(manager) => {
+    let peer_state = match control {
+        Some(control) => {
             peer_op::<_, MlxEngineStatusResponse>(
-                manager,
+                control,
                 &route.peer,
                 MlxOp::Status,
                 &MlxEngineStatusRequest {
@@ -293,8 +337,9 @@ async fn route_status(
             "LeanZero Link has not started in this goose",
         )),
     };
+    let mut peer_engine = None;
     match peer_state {
-        Ok(peer) if peer.status.state == "mounting" => {}
+        Ok(peer) if peer.status.state == "mounting" => peer_engine = Some(peer.status),
         Ok(peer) => {
             // The proxy was asked BEFORE the peer answered. An engine that became ready between
             // the two reads says `running` here and failed there — measured on the 3.0.31
@@ -321,13 +366,17 @@ async fn route_status(
                     ));
                 }
             }
+            peer_engine = Some(peer.status);
         }
         Err(refused) => {
             status.state = "failed".to_string();
             status.last_error = Some(format!("{models_error}; {}", refused.message));
         }
     }
-    status
+    RouteObservation {
+        status,
+        peer_engine,
+    }
 }
 
 /// Why the peer's engine does not serve through the proxy, in the peer's own words first (a dead
@@ -346,9 +395,23 @@ fn peer_engine_failure(peer: &str, engine: &MlxEngineStatusDto, proxy_answer: &s
     )
 }
 
-async fn current_status(manager: Option<&LinkManager>) -> MlxRemoteSingleStatusDto {
+/// The route as every surface reads it. Only the goosed that owns the route restores it; another
+/// window's goosed reports what it sees.
+async fn current_status() -> MlxRemoteSingleStatusDto {
+    let manager = super::link::existing_link_manager();
     match mlx_remote::read() {
-        RouteRecord::Mine(route) | RouteRecord::Other(route) => route_status(manager, &route).await,
+        RouteRecord::Mine(route) => {
+            owned_route_status(
+                &ROUTE_RESTORE,
+                manager.map(|m| m as Arc<dyn PeerControl>),
+                &route,
+                routed_here(),
+            )
+            .await
+        }
+        RouteRecord::Other(route) => {
+            route_status(manager.as_deref().map(|m| m as &dyn PeerControl), &route).await
+        }
         RouteRecord::Unreadable { path, error } => MlxRemoteSingleStatusDto {
             state: "failed".to_string(),
             last_error: Some(format!(
@@ -358,6 +421,408 @@ async fn current_status(manager: Option<&LinkManager>) -> MlxRemoteSingleStatusD
             ..Default::default()
         },
         RouteRecord::Absent | RouteRecord::Stale(_) => off_status(),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The start path, shared by Run and the route's own restore.
+// ---------------------------------------------------------------------------------------------
+
+/// What a start (or a restore) does once it has read the peer's engine.
+enum PeerMountStep {
+    Mount,
+    /// The engine already serves, or is loading, the route's model: nothing to mount.
+    Keep,
+    Refuse(MlxRemoteSingleRefusalDto),
+}
+
+/// What the peer said on the way: what a route publishes.
+struct PeerMount {
+    capacity: u32,
+    served: String,
+    template_kwargs: Option<serde_json::Map<String, serde_json::Value>>,
+    mounted: bool,
+}
+
+/// The serving precheck through the relay (a peer whose owner has not opted in costs no mount),
+/// the peer's engine status and saved settings, `decide` on those facts (the engine's status, the
+/// served id, whether the proxy answered), then the peer's Mount — its memory gate decides.
+async fn mount_on_peer(
+    control: &dyn PeerControl,
+    relay_base: &str,
+    peer: &str,
+    peer_name: &str,
+    model_id: &str,
+    decide: impl FnOnce(&MlxEngineStatusDto, &str, bool) -> PeerMountStep,
+) -> Result<PeerMount, MlxRemoteSingleRefusalDto> {
+    let precheck = relay_get(relay_base, "v1/status").await;
+    if let Some(refused) = serving_refusal(&precheck) {
+        return Err(refused);
+    }
+    let engine_answers = matches!(precheck, RelayAnswer::Ok(_));
+
+    let peer_status: MlxEngineStatusResponse = peer_op(
+        control,
+        peer,
+        MlxOp::Status,
+        &MlxEngineStatusRequest {
+            node_id: None,
+            fit_model_id: None,
+        },
+    )
+    .await?;
+    let capacity = peer_status.status.max_concurrent_requests.ok_or_else(|| {
+        refusal(
+            "peerTooOld",
+            format!("{peer_name}'s goose does not report its admission cap (maxConcurrentRequests); update goose there"),
+        )
+    })?;
+    let peer_settings: MlxEngineSettingsResponse = peer_op(
+        control,
+        peer,
+        MlxOp::SettingsRead,
+        &MlxEngineSettingsReadRequest { node_id: None },
+    )
+    .await?;
+    let peer_settings = super::mlx_engine::settings_from_dto(peer_settings.settings);
+    let served = served_model_id(&peer_settings, model_id);
+    let template_kwargs = peer_settings
+        .model_profiles
+        .get(model_id)
+        .and_then(goose_sidecar::thinking::chat_template_kwargs);
+
+    let mounted = match decide(&peer_status.status, &served, engine_answers) {
+        PeerMountStep::Keep => false,
+        PeerMountStep::Refuse(refused) => return Err(refused),
+        PeerMountStep::Mount => {
+            let mounted: MlxEngineMountResponse = peer_op(
+                control,
+                peer,
+                MlxOp::Mount,
+                &MlxEngineMountRequest {
+                    model_id: model_id.to_string(),
+                    node_id: None,
+                },
+            )
+            .await?;
+            if let Some(refused) = mounted.refusal {
+                return Err(refusal(
+                    "peerMountFailed",
+                    format!(
+                        "{peer_name}'s memory gate refused '{model_id}': {}",
+                        refused.fit.message
+                    ),
+                ));
+            }
+            true
+        }
+    };
+    Ok(PeerMount {
+        capacity,
+        served,
+        template_kwargs,
+        mounted,
+    })
+}
+
+// ---------------------------------------------------------------------------------------------
+// The route's own restore (Q-34).
+// ---------------------------------------------------------------------------------------------
+
+/// What the peer's reported engine says a restore may do. Decided from the peer's own facts only:
+/// `stoppedBy` (who stopped the engine since its goose started), `servingIntent` (what its owner
+/// serves there at its launch), `hosting`, and the model it runs.
+#[derive(Debug, PartialEq)]
+enum RestoreStep {
+    /// Stopped and nobody stopped it — its goose relaunched: mount the route's model again.
+    Mount,
+    /// The route's own model is loading or running there.
+    Keep,
+    /// Not this goosed's to start, in words; `None` = not a stopped engine at all (it failed with
+    /// its own reason, which the status already carries).
+    Decline(Option<String>),
+}
+
+fn restore_step(route: &PublishedRoute, engine: &MlxEngineStatusDto) -> RestoreStep {
+    let peer = route.peer_name();
+    let model = &route.model_id;
+    if engine.hosting.is_some() {
+        return RestoreStep::Decline(Some(format!(
+            "{peer} serves a rank of a split across Macs now, so this Mac does not mount '{model}' there"
+        )));
+    }
+    match engine.state.as_str() {
+        "mounting" | "running" if engine.model_id.as_deref() == Some(model.as_str()) => {
+            RestoreStep::Keep
+        }
+        "mounting" | "running" => RestoreStep::Decline(Some(format!(
+            "{peer}'s engine runs '{}' now, started there after this route's '{model}'; this Mac does not mount over it — Run it again to take {peer} back",
+            engine.model_id.as_deref().unwrap_or("a model it does not name")
+        ))),
+        "stopped" => match engine.stopped_by.as_deref() {
+            Some("notStarted") => match &engine.serving_intent {
+                Some(intent) if intent.kind == "single" && intent.model_id != *model => {
+                    RestoreStep::Decline(Some(format!(
+                        "{peer}'s owner serves '{}' there and its own launch brings it back; this Mac does not mount '{model}' over it — Run it again to take {peer} back",
+                        intent.model_id
+                    )))
+                }
+                Some(intent) if intent.kind == "split" => RestoreStep::Decline(Some(format!(
+                    "{peer}'s owner runs a split ('{}') from there and its own launch brings it back; this Mac does not mount '{model}' over it",
+                    intent.model_id
+                ))),
+                _ => RestoreStep::Mount,
+            },
+            Some("owner") => RestoreStep::Decline(Some(format!(
+                "{peer}'s owner stopped its engine there, so this Mac does not start it again — Run it again to bring '{model}' back"
+            ))),
+            Some("linkedMac") => RestoreStep::Decline(Some(format!(
+                "a linked Mac stopped {peer}'s engine over LeanZero Link, so this Mac does not start it again — Run it again to bring '{model}' back"
+            ))),
+            Some(other) => RestoreStep::Decline(Some(format!(
+                "{peer}'s goose says its engine was stopped by '{other}', which this goose does not know; not restoring '{model}'"
+            ))),
+            None => RestoreStep::Decline(Some(format!(
+                "{peer}'s goose does not say what stopped its engine (it predates stoppedBy), so this Mac cannot tell its relaunch from its owner's Stop and does not mount over it — update goose there, or Run it again"
+            ))),
+        },
+        _ => RestoreStep::Decline(None),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum RestorePhase {
+    /// The restore holds the route's op lock and is on its way through [`mount_on_peer`].
+    Mounting,
+    /// The peer accepted the Mount; the engine loads there.
+    Mounted,
+    /// The words that ended it. Not tried again until the route serves or the owner runs it.
+    Failed(String),
+}
+
+/// Where the route's restore stands, keyed by the route's relay base URL (a Run is a fresh relay,
+/// so a fresh key), and the lock Start, Stop and a restore's mount take so a Stop never lands
+/// between a restore's "the route is still up" and its Mount.
+pub(super) struct RouteRestore {
+    phase: StdMutex<Option<(String, RestorePhase)>>,
+    ops: TokioMutex<()>,
+}
+
+impl RouteRestore {
+    const fn new() -> Self {
+        Self {
+            phase: StdMutex::new(None),
+            ops: TokioMutex::const_new(()),
+        }
+    }
+
+    fn entry(&self) -> std::sync::MutexGuard<'_, Option<(String, RestorePhase)>> {
+        self.phase.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn phase(&self, route: &PublishedRoute) -> Option<RestorePhase> {
+        match &*self.entry() {
+            Some((key, phase)) if *key == route.base_url => Some(phase.clone()),
+            _ => None,
+        }
+    }
+
+    /// Arm-and-take in one step: true for exactly one caller per outage.
+    fn claim(&self, route: &PublishedRoute) -> bool {
+        let mut entry = self.entry();
+        if matches!(&*entry, Some((key, _)) if *key == route.base_url) {
+            return false;
+        }
+        *entry = Some((route.base_url.clone(), RestorePhase::Mounting));
+        true
+    }
+
+    /// Moves this route's restore on; a route served (re-armed) or replaced meanwhile is left be.
+    fn advance(&self, route: &PublishedRoute, phase: RestorePhase) {
+        let mut entry = self.entry();
+        if let Some((key, current)) = &mut *entry {
+            if *key == route.base_url {
+                *current = phase;
+            }
+        }
+    }
+
+    fn rearm(&self, route: &PublishedRoute) {
+        let mut entry = self.entry();
+        if matches!(&*entry, Some((key, _)) if *key == route.base_url) {
+            *entry = None;
+        }
+    }
+
+    fn forget(&self) {
+        *self.entry() = None;
+    }
+}
+
+static ROUTE_RESTORE: RouteRestore = RouteRestore::new();
+
+/// Is `route` still this goosed's route — read at the moment a restore would mount.
+type RouteCheck = Arc<dyn Fn(&PublishedRoute) -> bool + Send + Sync>;
+
+fn routed_here() -> RouteCheck {
+    Arc::new(|route: &PublishedRoute| {
+        matches!(mlx_remote::read(), RouteRecord::Mine(now) if now.base_url == route.base_url)
+    })
+}
+
+fn model_short_name(model_id: &str) -> &str {
+    model_id.rsplit('/').next().unwrap_or(model_id)
+}
+
+fn restoring_line(route: &PublishedRoute) -> MlxRemoteSingleRestoreDto {
+    MlxRemoteSingleRestoreDto {
+        phase: "restoring".to_string(),
+        message: format!(
+            "Restoring {} on {}…",
+            model_short_name(&route.model_id),
+            route.peer_name()
+        ),
+    }
+}
+
+fn restore_failure(route: &PublishedRoute, words: &str) -> String {
+    format!(
+        "Restoring {} on {} failed: {words}",
+        model_short_name(&route.model_id),
+        route.peer_name()
+    )
+}
+
+/// The owner's status read, and the restore it may start. The trigger is the peer's answer on
+/// this read — engine `stopped`, nothing stopped it ([`restore_step`]) — never a clock; one
+/// restore per outage (the route serving again re-arms it), and a failed one stays a named
+/// `failed` with the peer's words until the route serves or the owner runs it again.
+async fn owned_route_status(
+    book: &'static RouteRestore,
+    control: Option<Arc<dyn PeerControl>>,
+    route: &PublishedRoute,
+    still_routed: RouteCheck,
+) -> MlxRemoteSingleStatusDto {
+    let observed = observe_route(control.as_deref(), route).await;
+    let mut status = observed.status;
+    if status.state == "ready" {
+        book.rearm(route);
+        return status;
+    }
+    match book.phase(route) {
+        None => {
+            let (Some(control), Some(engine)) = (control, observed.peer_engine.as_ref()) else {
+                return status;
+            };
+            if status.state != "failed" {
+                return status;
+            }
+            match restore_step(route, engine) {
+                RestoreStep::Mount => {
+                    if book.claim(route) {
+                        tokio::spawn(restore_route(
+                            book,
+                            control,
+                            route.clone(),
+                            still_routed,
+                        ));
+                    }
+                    status.state = "mounting".to_string();
+                    status.last_error = None;
+                    status.restore = Some(restoring_line(route));
+                }
+                RestoreStep::Decline(Some(why)) => {
+                    status.last_error = Some(match status.last_error.take() {
+                        Some(observed) => format!("{why}. {observed}"),
+                        None => why,
+                    });
+                }
+                RestoreStep::Keep | RestoreStep::Decline(None) => {}
+            }
+        }
+        Some(RestorePhase::Mounting) => {
+            status.state = "mounting".to_string();
+            status.last_error = None;
+            status.restore = Some(restoring_line(route));
+        }
+        Some(RestorePhase::Mounted) if status.state == "failed" => {
+            let words = status
+                .last_error
+                .take()
+                .unwrap_or_else(|| format!("{}'s engine did not come up", route.peer_name()));
+            let message = restore_failure(route, &words);
+            book.advance(route, RestorePhase::Failed(message.clone()));
+            status.last_error = Some(message.clone());
+            status.restore = Some(MlxRemoteSingleRestoreDto {
+                phase: "failed".to_string(),
+                message,
+            });
+        }
+        Some(RestorePhase::Mounted) => status.restore = Some(restoring_line(route)),
+        Some(RestorePhase::Failed(message)) => {
+            if status.state == "failed" {
+                status.last_error = Some(message.clone());
+                status.restore = Some(MlxRemoteSingleRestoreDto {
+                    phase: "failed".to_string(),
+                    message,
+                });
+            }
+        }
+    }
+    status
+}
+
+/// One re-mount, through the same path Run takes. Under the route's op lock: a Stop that got
+/// there first has withdrawn the route (nothing is mounted), and the peer's engine is read again
+/// here, so an engine its owner started meanwhile is kept or declined, never mounted over.
+async fn restore_route(
+    book: &'static RouteRestore,
+    control: Arc<dyn PeerControl>,
+    route: PublishedRoute,
+    still_routed: RouteCheck,
+) {
+    let _ops = book.ops.lock().await;
+    if !still_routed(&route) {
+        book.rearm(&route);
+        return;
+    }
+    let outcome = mount_on_peer(
+        control.as_ref(),
+        &route.base_url,
+        &route.peer,
+        route.peer_name(),
+        &route.model_id,
+        |engine, _, _| match restore_step(&route, engine) {
+            RestoreStep::Mount => PeerMountStep::Mount,
+            RestoreStep::Keep => PeerMountStep::Keep,
+            RestoreStep::Decline(why) => PeerMountStep::Refuse(refusal(
+                "restoreDeclined",
+                why.unwrap_or_else(|| {
+                    format!(
+                        "{}'s goose reports its engine {}",
+                        route.peer_name(),
+                        engine.state
+                    )
+                }),
+            )),
+        },
+    )
+    .await;
+    match outcome {
+        Ok(mount) => {
+            tracing::info!(
+                peer = %route.peer_name(),
+                model = %route.model_id,
+                mounted = mount.mounted,
+                "mlx remote single: the peer came back without its engine; the route's model was mounted there again"
+            );
+            book.advance(&route, RestorePhase::Mounted);
+        }
+        Err(refused) => {
+            let message = restore_failure(&route, &refused.message);
+            warn!(code = %refused.code, "{message}");
+            book.advance(&route, RestorePhase::Failed(message));
+        }
     }
 }
 
@@ -379,10 +844,18 @@ impl GooseAcpAgent {
         &self,
         req: &MlxEngineRemoteSingleStartRequest,
     ) -> Result<MlxRemoteSingleStatusDto, MlxRemoteSingleRefusalDto> {
+        let _ops = ROUTE_RESTORE.ops.lock().await;
         match mlx_remote::read() {
             RouteRecord::Mine(route) if route.peer == req.peer && route.model_id == req.model_id => {
                 let manager = super::link::existing_link_manager();
-                let status = route_status(manager.as_deref(), &route).await;
+                // A restore under way reads `mounting` here: the same placement asked again joins it.
+                let status = owned_route_status(
+                    &ROUTE_RESTORE,
+                    manager.map(|m| m as Arc<dyn PeerControl>),
+                    &route,
+                    routed_here(),
+                )
+                .await;
                 if status.state != "failed" {
                     return Ok(status);
                 }
@@ -397,7 +870,11 @@ impl GooseAcpAgent {
             }
             RouteRecord::Other(route) if route.peer == req.peer && route.model_id == req.model_id => {
                 let manager = super::link::existing_link_manager();
-                return Ok(route_status(manager.as_deref(), &route).await);
+                return Ok(route_status(
+                    manager.as_deref().map(|m| m as &dyn PeerControl),
+                    &route,
+                )
+                .await);
             }
             RouteRecord::Mine(route) => {
                 return Err(refusal(
@@ -453,69 +930,27 @@ impl GooseAcpAgent {
                 format!("starting this Mac's Link relay: {e}"),
             )
         })?;
-        let precheck = relay_get(relay.base_url(), "v1/status").await;
-        if let Some(refused) = serving_refusal(&precheck) {
-            return Err(refused);
-        }
-        let engine_answers = matches!(precheck, RelayAnswer::Ok(_));
-
-        let peer_status: MlxEngineStatusResponse = peer_op(
-            &manager,
+        // A peer engine that died reports `failed` (goose-sidecar observes its process on every
+        // poll) and one that hangs does not answer the proxy: either way the Mount runs, and for
+        // the same model the peer's supervisor restarts it behind its crash breaker.
+        let mount = mount_on_peer(
+            manager.as_ref(),
+            relay.base_url(),
             &req.peer,
-            MlxOp::Status,
-            &MlxEngineStatusRequest {
-                node_id: None,
-                fit_model_id: None,
+            &peer_name,
+            &req.model_id,
+            |engine, served, engine_answers| {
+                let already_serving = engine_answers
+                    && engine.state == "running"
+                    && engine.served_model_id.as_deref() == Some(served);
+                if already_serving {
+                    PeerMountStep::Keep
+                } else {
+                    PeerMountStep::Mount
+                }
             },
         )
         .await?;
-        let capacity = peer_status.status.max_concurrent_requests.ok_or_else(|| {
-            refusal(
-                "peerTooOld",
-                format!("{peer_name}'s goose does not report its admission cap (maxConcurrentRequests); update goose there"),
-            )
-        })?;
-        let peer_settings: MlxEngineSettingsResponse = peer_op(
-            &manager,
-            &req.peer,
-            MlxOp::SettingsRead,
-            &MlxEngineSettingsReadRequest { node_id: None },
-        )
-        .await?;
-        let peer_settings = super::mlx_engine::settings_from_dto(peer_settings.settings);
-        let served = served_model_id(&peer_settings, &req.model_id);
-        let template_kwargs = peer_settings
-            .model_profiles
-            .get(&req.model_id)
-            .and_then(goose_sidecar::thinking::chat_template_kwargs);
-
-        // A peer engine that died reports `failed` (goose-sidecar observes its process on every
-        // poll) and one that hangs does not answer the proxy: either way the Mount below runs,
-        // and for the same model the peer's supervisor restarts it behind its crash breaker.
-        let already_serving = engine_answers
-            && peer_status.status.state == "running"
-            && peer_status.status.served_model_id.as_deref() == Some(served.as_str());
-        if !already_serving {
-            let mounted: MlxEngineMountResponse = peer_op(
-                &manager,
-                &req.peer,
-                MlxOp::Mount,
-                &MlxEngineMountRequest {
-                    model_id: req.model_id.clone(),
-                    node_id: None,
-                },
-            )
-            .await?;
-            if let Some(refused) = mounted.refusal {
-                return Err(refusal(
-                    "peerMountFailed",
-                    format!(
-                        "{peer_name}'s memory gate refused '{}': {}",
-                        req.model_id, refused.fit.message
-                    ),
-                ));
-            }
-        }
 
         let route = PublishedRoute {
             pid: std::process::id(),
@@ -524,9 +959,9 @@ impl GooseAcpAgent {
             peer_hostname,
             peer_computer_name,
             model_id: req.model_id.clone(),
-            served_model_id: served,
-            capacity,
-            template_kwargs,
+            served_model_id: mount.served,
+            capacity: mount.capacity,
+            template_kwargs: mount.template_kwargs,
         };
         mlx_remote::install(relay, route.clone()).map_err(|e| {
             refusal(
@@ -534,16 +969,17 @@ impl GooseAcpAgent {
                 format!("publishing the route for this Mac's other windows failed: {e:#}"),
             )
         })?;
+        ROUTE_RESTORE.forget();
         super::mlx_engine::align_omlx_host_env();
         tracing::info!(
             peer = %route.peer_name(),
             model = %route.model_id,
             served = %route.served_model_id,
             capacity = route.capacity,
-            mounted = !already_serving,
+            mounted = mount.mounted,
             "mlx remote single: chat routed to the peer's engine through LeanZero Link"
         );
-        Ok(route_status(Some(&manager), &route).await)
+        Ok(route_status(Some(manager.as_ref()), &route).await)
     }
 
     pub(super) async fn on_mlx_engine_remote_single_start(
@@ -571,7 +1007,7 @@ impl GooseAcpAgent {
             Err(refused) => MlxEngineRemoteSingleStartResponse {
                 started: false,
                 refusal: Some(refused),
-                status: current_status(super::link::existing_link_manager().as_deref()).await,
+                status: current_status().await,
             },
         })
     }
@@ -587,8 +1023,12 @@ impl GooseAcpAgent {
                 route.peer_name()
             )));
         }
+        // Withdrawn under the route's op lock: a restore waiting for it finds no route and mounts
+        // nothing; one that got there first finishes its Mount before the Unmount below.
+        let _ops = ROUTE_RESTORE.ops.lock().await;
         let route = mlx_remote::uninstall()
             .internal_err_ctx("withdrawing the remote-single route record")?;
+        ROUTE_RESTORE.forget();
         super::mlx_engine::forget_serving(IntentKind::RemoteSingle);
         super::mlx_engine::align_omlx_host_env();
         let (mut unmounted, mut unmount_error) = (false, None);
@@ -596,7 +1036,7 @@ impl GooseAcpAgent {
             let outcome = match self.connected_link_manager().await {
                 Ok(manager) => {
                     peer_op::<_, EmptyResponse>(
-                        &manager,
+                        manager.as_ref(),
                         &route.peer,
                         MlxOp::Unmount,
                         &MlxEngineUnmountRequest { node_id: None },
@@ -619,7 +1059,7 @@ impl GooseAcpAgent {
         Ok(MlxEngineRemoteSingleStopResponse {
             unmounted,
             unmount_error,
-            status: current_status(super::link::existing_link_manager().as_deref()).await,
+            status: current_status().await,
         })
     }
 
@@ -628,7 +1068,7 @@ impl GooseAcpAgent {
         _req: MlxEngineRemoteSingleStatusRequest,
     ) -> Result<MlxEngineRemoteSingleStatusResponse, agent_client_protocol::Error> {
         super::mlx_engine::align_omlx_host_env();
-        let status = current_status(super::link::existing_link_manager().as_deref()).await;
+        let status = current_status().await;
         let entered_ready = {
             let mut last = LAST_REMOTE_STATE.lock().unwrap_or_else(|e| e.into_inner());
             let entered = status.state == "ready" && *last != "ready";
