@@ -62,6 +62,16 @@ pub struct ListResourcesParams {
     pub extension_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LoadToolsParams {
+    /// Exact tool names from the "Deferred tools" list, e.g. "playwright__browser_navigate".
+    #[serde(default)]
+    pub names: Vec<String>,
+    /// Or words describing what the tool should do, e.g. "open a web page".
+    #[serde(default)]
+    pub query: Option<String>,
+}
+
 pub const READ_RESOURCE_TOOL_NAME: &str = "read_resource";
 pub const LIST_RESOURCES_TOOL_NAME: &str = "list_resources";
 pub const SEARCH_AVAILABLE_EXTENSIONS_TOOL_NAME: &str = "search_available_extensions";
@@ -337,6 +347,49 @@ impl ExtensionManagerClient {
         }
     }
 
+    async fn handle_load_tools(
+        &self,
+        session_id: &str,
+        arguments: Option<JsonObject>,
+    ) -> Result<Vec<Content>, ExtensionManagerToolError> {
+        let params: LoadToolsParams =
+            serde_json::from_value(Value::Object(arguments.unwrap_or_default()))?;
+        let manager = self
+            .context
+            .extension_manager
+            .as_ref()
+            .and_then(|weak| weak.upgrade())
+            .ok_or(ExtensionManagerToolError::ManagerUnavailable)?;
+        let tools = manager
+            .get_prefixed_tools(session_id, None)
+            .await
+            .map_err(|e| ExtensionManagerToolError::OperationFailed {
+                message: e.to_string(),
+            })?;
+        let deferrable = manager.deferrable_extensions().await;
+        let (_, deferred) = crate::agents::tool_deferral::split(&tools, &deferrable);
+        let found =
+            crate::agents::tool_deferral::find(&deferred, &params.names, params.query.as_deref());
+        tracing::info!(
+            session_id,
+            asked = ?params.names,
+            query = ?params.query,
+            loaded = ?found.iter().map(|t| t.name.as_ref()).collect::<Vec<_>>(),
+            "load_tools"
+        );
+        if found.is_empty() {
+            return Err(ExtensionManagerToolError::OperationFailed {
+                message: format!(
+                    "no deferred tool matches names {:?} or query {:?}; the names are listed under \"Deferred tools\" in your instructions",
+                    params.names, params.query
+                ),
+            });
+        }
+        Ok(vec![Content::text(crate::agents::tool_deferral::render(
+            &found,
+        ))])
+    }
+
     #[allow(clippy::too_many_lines)]
     async fn get_tools(&self) -> Vec<Tool> {
         let mut tools = vec![
@@ -384,6 +437,34 @@ impl ExtensionManagerClient {
                 Some(false),
             )),
         ];
+
+        if crate::agents::tool_deferral::enabled() {
+            tools.push(
+                Tool::new(
+                    crate::agents::tool_deferral::LOAD_TOOLS_TOOL_NAME.to_string(),
+                    indoc! {r#"
+            Read the parameters of tools listed under "Deferred tools" in your instructions. Pass
+            their exact `names`, or a `query` describing what you need; the result is each tool's
+            description and JSON Schema. Then call the tool by its exact name, as any other tool.
+        "#}
+                    .to_string(),
+                    Arc::new(
+                        serde_json::to_value(schema_for!(LoadToolsParams))
+                            .expect("Failed to serialize schema")
+                            .as_object()
+                            .expect("Schema must be an object")
+                            .clone(),
+                    ),
+                )
+                .annotate(ToolAnnotations::from_raw(
+                    Some("Load tool parameters".to_string()),
+                    Some(true),
+                    Some(false),
+                    Some(true),
+                    Some(false),
+                )),
+            );
+        }
 
         // Only offer self-built tooling when the agent is in Agent mode.
         let agent_mode = Config::global().get_goose_agent_mode().unwrap_or_default();
@@ -537,6 +618,9 @@ impl McpClientTrait for ExtensionManagerClient {
             }
             MANAGE_EXTENSIONS_TOOL_NAME => self.handle_manage_extensions(arguments).await,
             CREATE_TOOL_TOOL_NAME => self.handle_create_tool(arguments).await,
+            crate::agents::tool_deferral::LOAD_TOOLS_TOOL_NAME => {
+                self.handle_load_tools(session_id, arguments).await
+            }
             LIST_RESOURCES_TOOL_NAME => self.handle_list_resources(session_id, arguments).await,
             READ_RESOURCE_TOOL_NAME => self.handle_read_resource(session_id, arguments).await,
             _ => Err(ExtensionManagerToolError::UnknownTool {
