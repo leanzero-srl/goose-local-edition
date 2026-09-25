@@ -56,9 +56,15 @@ export function applyToolCallUpdate(
   state: AdapterState,
   update: ToolCallUpdate
 ): AcpChatStateChange[] {
+  const identity = toolIdentity(update);
+  const labelled = applyModelLabel(state, update, identity);
+
   if (update.status !== 'completed' && update.status !== 'failed') {
     const notificationChange = toolNotificationChange(update);
-    return notificationChange ? [notificationChange] : [];
+    return [
+      ...(labelled ? messagesChange(state) : []),
+      ...(notificationChange ? [notificationChange] : []),
+    ];
   }
 
   if (hasToolResponse(state, update.toolCallId)) {
@@ -67,7 +73,6 @@ export function applyToolCallUpdate(
 
   const gooseMeta = getGooseMessageMeta(update);
   const message = getOrCreateToolResponseMessageForUpdate(state, gooseMeta);
-  const identity = toolIdentity(update);
   const metadata = toolResponseMetadata(update, identity);
 
   message.content.push({
@@ -81,6 +86,35 @@ export function applyToolCallUpdate(
   });
 
   return messagesChange(state);
+}
+
+/** The engine writes a short label for each call after the call starts and sends it as a
+ *  title-only update (Q-99). It lands on the call's REQUEST, where the card draws its label from;
+ *  a title that is not the model's (the engine's name-and-argument fallback) replaces nothing. */
+function applyModelLabel(
+  state: AdapterState,
+  update: ToolCallUpdate,
+  identity: ToolIdentity
+): boolean {
+  const title = update.title?.trim();
+  if (!title || !identity.titleFromModel) return false;
+  for (const message of state.messages) {
+    const index = message.content.findIndex(
+      (content) => content.type === 'toolRequest' && content.id === update.toolCallId
+    );
+    if (index === -1) continue;
+    const request = message.content[index];
+    if (request.type !== 'toolRequest') return false;
+    if (request.metadata?.title === title && request.metadata?.titleFromModel === true) {
+      return false;
+    }
+    message.content[index] = {
+      ...request,
+      metadata: { ...(request.metadata ?? {}), title, titleFromModel: true },
+    };
+    return true;
+  }
+  return false;
 }
 
 function getOrCreateAssistantMessageForUpdate(
@@ -176,6 +210,9 @@ function baseToolMetadata(
 
   if (update.title) {
     metadata.title = update.title;
+    if (identity.titleFromModel) {
+      metadata.titleFromModel = true;
+    }
   }
   if (update.status) {
     metadata.status = update.status;

@@ -273,6 +273,16 @@ export default function ToolCallWithResponse({
 
   const showInlineApproval = isPendingApproval && confirmationContent && sessionId;
   const repeat = getRepeatMarker(toolResponse);
+  const requestMeta = toolRequest.metadata;
+  const modelLabel =
+    requestMeta?.titleFromModel === true &&
+    typeof requestMeta.title === 'string' &&
+    requestMeta.title.trim()
+      ? requestMeta.title.trim()
+      : undefined;
+  // A Failed card says why on its face (Q-99: a Write that lost `path` showed only the repeat
+  // line; "missing field `path`" sat inside the collapsed output). A declined repeat is not a failure.
+  const failure = repeat === 'skipped' ? null : toolFailureText(toolResponse?.toolResult);
 
   return (
     <>
@@ -288,11 +298,20 @@ export default function ToolCallWithResponse({
           {...{
             isCancelledMessage,
             toolCall,
+            modelLabel,
             toolResponse,
             notifications,
             isStreamingMessage,
           }}
         />
+        {failure && (
+          <div
+            data-testid="tool-call-failure"
+            className="border-t border-lz-border px-4 py-2 font-mono text-xs text-lz-err whitespace-pre-wrap break-words"
+          >
+            {failure.length > FAILURE_MAX ? `${failure.slice(0, FAILURE_MAX - 1)}…` : failure}
+          </div>
+        )}
         {repeat && (
           <div className="border-t border-lz-border px-4 py-2 text-xs font-medium text-lz-warn">
             {intl.formatMessage(repeat === 'skipped' ? i18n.repeatSkipped : i18n.repeatSameOutput)}
@@ -340,6 +359,8 @@ interface ToolCallViewProps {
     name: string;
     arguments: Record<string, unknown>;
   };
+  /** The model's short label for this call, when the engine sent one (Q-99). */
+  modelLabel?: string;
   toolResponse?: ToolResponseMessageContent;
   notifications?: NotificationEvent[];
   isStreamingMessage?: boolean;
@@ -463,9 +484,61 @@ const getExtensionTooltip = (toolCallName: string): string | null => {
   return `${extensionName} extension`;
 };
 
+// The argument keys that name what a call acts on, in the engine's order (acp/server.rs
+// `summarize_tool_call`), so a card and the engine's fallback title agree on what to show.
+const TELLING_ARGUMENT_KEYS = [
+  'path',
+  'file',
+  'command',
+  'query',
+  'url',
+  'uri',
+  'name',
+  'pattern',
+  'source',
+];
+const DETAIL_MAX = 80;
+// The card's face carries the error's head; the whole of it stays in the Output section.
+const FAILURE_MAX = 400;
+
+function tellingArgumentValue(args: Record<string, ToolCallArgumentValue>): string | null {
+  const firstLine = (value: string) => {
+    const line = value.trim().split('\n')[0];
+    return line.length > DETAIL_MAX ? `${line.slice(0, DETAIL_MAX - 1)}…` : line;
+  };
+  for (const key of TELLING_ARGUMENT_KEYS) {
+    const value = args[key];
+    if (typeof value === 'string' && value.trim()) return firstLine(value);
+  }
+  const firstString = Object.values(args).find(
+    (value): value is string => typeof value === 'string' && value.trim().length > 0
+  );
+  return firstString ? firstLine(firstString) : null;
+}
+
+/** The failure's own words for a Failed card: the error string, or the error result's text. */
+function toolFailureText(toolResult: unknown): string | null {
+  if (!toolResult || typeof toolResult !== 'object') return null;
+  const record = toolResult as Record<string, unknown>;
+  if (record.status === 'error') {
+    const error = record.error;
+    const text = typeof error === 'string' ? error : error ? JSON.stringify(error) : '';
+    return text.trim() || null;
+  }
+  const value = record.value as ToolResultValue | undefined;
+  if (value?.isError !== true || !Array.isArray(value.content)) return null;
+  const text = value.content
+    .map((item) => ('text' in item && typeof item.text === 'string' ? item.text : ''))
+    .filter((t) => t.trim())
+    .join('\n')
+    .trim();
+  return text || null;
+}
+
 function ToolCallView({
   isCancelledMessage,
   toolCall,
+  modelLabel,
   toolResponse,
   notifications,
   isStreamingMessage = false,
@@ -563,6 +636,9 @@ function ToolCallView({
         break;
 
       case 'shell':
+        if (modelLabel) {
+          return `Shell · ${modelLabel}`;
+        }
         if (args.command) {
           return `Shell · ${getStringValue(args.command).split('\n')[0]}`;
         }
@@ -589,6 +665,7 @@ function ToolCallView({
         if (args.url) {
           return `Read · ${getStringValue(args.url)}`;
         }
+        if (modelLabel) return `${snakeToTitleCase(toolName)} · ${modelLabel}`;
         break;
       }
 
@@ -692,25 +769,15 @@ function ToolCallView({
       }
 
       default: {
-        // Generic fallback for unknown tools: ToolName + CompactArguments
-        // This ensures any MCP tool works without explicit handling
+        // Any MCP tool: its name, then what it is doing — the model's label once it lands, else
+        // the call's most telling argument VALUE. Argument names ("Ledger Append kind, text",
+        // Q-99) say nothing about this call.
         const toolDisplayName = snakeToTitleCase(toolName);
-        const entries = Object.entries(args);
-
-        if (entries.length === 0) {
-          return `${toolDisplayName}`;
+        if (modelLabel) {
+          return `${toolDisplayName} · ${modelLabel}`;
         }
-
-        // For a single parameter, show key and truncated value
-        if (entries.length === 1) {
-          const [key, value] = entries[0];
-          const stringValue = getStringValue(value);
-          return `${toolDisplayName} ${key}: ${stringValue}`;
-        }
-
-        // For multiple parameters, show tool name and keys
-        const keys = entries.map(([key]) => key).join(', ');
-        return `${toolDisplayName} ${keys}`;
+        const detail = tellingArgumentValue(args);
+        return detail ? `${toolDisplayName} · ${detail}` : toolDisplayName;
       }
     }
 
