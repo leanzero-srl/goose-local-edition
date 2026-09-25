@@ -3076,7 +3076,26 @@ impl Agent {
                 for msg in &messages_to_add {
                     session_manager.add_message(&session_config.id, msg).await?;
                 }
+                let response_starts_at = conversation.len();
                 conversation.extend(messages_to_add);
+
+                // Q-84/Q-91: the reply is held against this turn's tool results, and what does not
+                // hold is said under it — on screen and in the session, never only in a log.
+                if !self.is_swarm_worker() {
+                    let findings = crate::claim_check::check_new_text(
+                        conversation.messages(),
+                        response_starts_at,
+                        &working_dir,
+                        &|path: &std::path::Path| path.exists(),
+                        chrono::Datelike::year(&chrono::Local::now()),
+                    );
+                    if let Some(line) = crate::claim_check::correction_line(&findings) {
+                        let notice = crate::claim_check::correction_notice(line);
+                        session_manager.add_message(&session_config.id, &notice).await?;
+                        conversation.push(notice.clone());
+                        yield AgentEvent::Message(notice);
+                    }
+                }
 
                 // local-edition: PER-TURN proactive compaction. Goose's built-in proactive check runs
                 // only once before the loop, so an effective-window cap (GOOSE_LOCAL_CONTEXT_CAP) never
