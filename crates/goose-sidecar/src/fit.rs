@@ -133,14 +133,14 @@ impl Need {
         match &self.kv_gap {
             None => format!(
                 "{} ({} of weights + {} of KV for {} tokens)",
-                gib(self.total_bytes()),
-                gib(self.weights_bytes),
-                gib(self.kv_bytes),
+                gb(self.total_bytes()),
+                gb(self.weights_bytes),
+                gb(self.kv_bytes),
                 self.context_tokens
             ),
             Some(gap) => format!(
                 "{} of weights (KV not sized: {gap})",
-                gib(self.weights_bytes)
+                gb(self.weights_bytes)
             ),
         }
     }
@@ -183,11 +183,11 @@ pub fn judge(need: Need, facts: NodeMemoryFacts) -> FitVerdict {
     let needed = need.total_bytes();
     let rule = format!(
         "budget {} = min(available {} − the {:.1}% margin {}, GPU ceiling {})",
-        gib(budget),
-        gib(facts.available_bytes),
+        gb(budget),
+        gb(facts.available_bytes),
         AVAILABLE_MARGIN_RATIO * 100.0,
-        gib(facts.margin_bytes()),
-        gib(facts.ceiling_bytes)
+        gb(facts.margin_bytes()),
+        gb(facts.ceiling_bytes)
     );
     let (verdict, message) = if needed > budget {
         (
@@ -195,7 +195,7 @@ pub fn judge(need: Need, facts: NodeMemoryFacts) -> FitVerdict {
             format!(
                 "needs {} but the {rule} (short {})",
                 need.describe(),
-                gib(needed - budget)
+                gb(needed - budget)
             ),
         )
     } else if budget - needed < facts.tight_band_bytes() {
@@ -204,7 +204,7 @@ pub fn judge(need: Need, facts: NodeMemoryFacts) -> FitVerdict {
             format!(
                 "fits, but only {} under the {rule} — inside the {:.0}% live-memory drift, expect \
                  pressure under load",
-                gib(budget - needed),
+                gb(budget - needed),
                 DERIVED_CONTEXT_MARGIN_RATIO * 100.0
             ),
         )
@@ -214,7 +214,7 @@ pub fn judge(need: Need, facts: NodeMemoryFacts) -> FitVerdict {
             format!(
                 "needs {} with {} to spare under the {rule}",
                 need.describe(),
-                gib(budget - needed)
+                gb(budget - needed)
             ),
         )
     };
@@ -227,8 +227,11 @@ pub fn judge(need: Need, facts: NodeMemoryFacts) -> FitVerdict {
     }
 }
 
-fn gib(bytes: u64) -> String {
-    format!("{:.1} GiB", bytes as f64 / GIB as f64)
+/// A size in the mount gate's words, in the product's unit: GiB labelled GB, as the desktop's
+/// picker and memory line write it ("31 GB", "37.0 GB available of 96.0 GB"). One decimal, so the
+/// gate's arithmetic (budget = available − margin) still adds up on screen.
+pub fn gb(bytes: u64) -> String {
+    format!("{:.1} GB", bytes as f64 / GIB as f64)
 }
 
 #[cfg(test)]
@@ -267,14 +270,15 @@ mod tests {
             gib_f(93.0) - (M4_TOTAL as f64 * 0.093) as u64
         );
         assert_eq!(v.short_bytes(), Some(gib_f(97.5) - v.budget_bytes));
-        assert!(v.message.contains("budget 81.1 GiB"), "{}", v.message);
+        assert!(v.message.contains("budget 81.1 GB"), "{}", v.message);
         assert!(
-            v.message.contains("the 9.3% margin 11.9 GiB"),
+            v.message.contains("the 9.3% margin 11.9 GB"),
             "{}",
             v.message
         );
-        assert!(v.message.contains("GPU ceiling 107.5 GiB"), "{}", v.message);
-        assert!(v.message.contains("short 16.4 GiB"), "{}", v.message);
+        assert!(v.message.contains("GPU ceiling 107.5 GB"), "{}", v.message);
+        assert!(v.message.contains("short 16.4 GB"), "{}", v.message);
+        assert!(!v.message.contains("GiB"), "{}", v.message);
         assert!(
             v.could_ever_fit(),
             "all 128 GiB free would give a 107.5 GiB budget"

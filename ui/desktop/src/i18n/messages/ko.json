@@ -3935,11 +3935,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "{file} 확인 중"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "세부 정보"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "닫기"
   },
   "mlxRestore.failed": {
     "defaultMessage": "{model}을(를) {kind, select, single {이 Mac에서} split {내 Mac 전체에서} other {{peer}에서}} 복원할 수 없습니다: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "세부 정보 숨기기"
   },
   "mlxRestore.label": {
     "defaultMessage": "복원"
@@ -3961,6 +3967,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "다시 시작하기 전에 무엇을 제공했는지 읽을 수 없습니다: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "이전 분할이 {node}에서 아직 종료 중입니다 — 끝나면 goose가 복원합니다"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "작성 중"
@@ -5222,9 +5231,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "계획이 없어 속도 수치는 없지만, 어떤 방법이든 시작할 수 있습니다."
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "이 Mac 한 대에 들어갑니다: 쓰기 ~{singleWrite} tok/s(분할은 ~{splitWrite})이고, 다른 Mac은 비워 둡니다."
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{다른 분할 #개} other{다른 분할 #개}}"
   },
@@ -5242,6 +5248,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "읽기 ~{value} tok/s"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "문서 한 턴 전체 기준 ~{value} tok/s, 답변 포함"
   },
   "placementCard.refresh": {
     "defaultMessage": "다시 계획"

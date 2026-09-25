@@ -12,7 +12,7 @@ use super::bench::Workload;
 use super::chip::ChipIdentity;
 use super::model::ModelFacts;
 use super::predict::{self, Calibration, Estimate, PlacedNode};
-use super::store::{PlacementKey, PlacementKind, SpeedRecord};
+use super::store::{PlacementKey, PlacementKind, RecordSource, SpeedRecord};
 use crate::distributed::plan::TensorModelFacts;
 use crate::distributed::Runner;
 use crate::fit::{self, Need, NodeMemoryFacts, Verdict};
@@ -189,6 +189,10 @@ pub struct Speed {
     pub decode: Option<Figure>,
     pub prefill: Option<Figure>,
     pub throughput: Option<Figure>,
+    /// Long documents only: a whole long-document turn as a rate — the document's tokens over the
+    /// seconds to read it AND write the answer (`turn_figure`), so ranking by it is ranking by the
+    /// turn's expected time. Reading speed alone ranked a split first that writes a third slower.
+    pub turn: Option<Figure>,
     pub concurrency: Option<u32>,
     pub basis: Vec<String>,
 }
@@ -260,7 +264,7 @@ impl Candidate {
     fn metric(&self, goal: Goal) -> Option<&Figure> {
         match goal {
             Goal::Chat => self.speed.decode.as_ref(),
-            Goal::LongDocuments => self.speed.prefill.as_ref(),
+            Goal::LongDocuments => self.speed.turn.as_ref(),
             Goal::ManyRequests => self.speed.throughput.as_ref(),
         }
     }
@@ -640,6 +644,69 @@ fn pipeline_fit(
     }
 }
 
+/// The long-document turn a plan times: the prompt it reads and the answer it writes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TurnShape {
+    pub prompt_tokens: f64,
+    pub answer_tokens: f64,
+    /// This model's recorded chat turns the shape is the median of; 0 = the workload's own shape.
+    pub turns: usize,
+}
+
+/// The typical long-document turn for THIS model: the median prompt and answer of its own recorded
+/// chat turns at the long-document size (prompt bucket at or above the workload's), else the
+/// long-document workload's own shape. The answer's length is what decides a split against one
+/// Mac: the split reads faster and writes slower, so a short answer favours it and a long one does
+/// not (the 27B: ~416 vs ~335 tok/s reading, ~13.9 vs ~21.9 writing — even at 30k tokens the
+/// split's lead is gone past a ~660-token answer).
+pub fn long_turn_shape(model_id: &str, records: &[SpeedRecord]) -> TurnShape {
+    let bucket = Workload::LongDocument.bucket();
+    let turns: Vec<&SpeedRecord> = records
+        .iter()
+        .filter(|r| {
+            r.model_id == model_id && r.source == RecordSource::Chat && r.context_bucket >= bucket
+        })
+        .collect();
+    let median = |pick: fn(&SpeedRecord) -> u64| {
+        let values: Vec<f64> = turns.iter().map(|r| pick(r) as f64).collect();
+        Estimate::of_measurements(&values).map(|e| e.value)
+    };
+    match (median(|r| r.prompt_tokens), median(|r| r.completion_tokens)) {
+        (Some(prompt_tokens), Some(answer_tokens)) if prompt_tokens > 0.0 => TurnShape {
+            prompt_tokens,
+            answer_tokens,
+            turns: turns.len(),
+        },
+        _ => TurnShape {
+            prompt_tokens: Workload::LongDocument.prompt_tokens() as f64,
+            answer_tokens: Workload::LongDocument.answer_tokens() as f64,
+            turns: 0,
+        },
+    }
+}
+
+/// A whole turn of `shape` as a rate: the document's tokens over (prompt ÷ reading rate + answer
+/// ÷ writing rate) seconds. The slow case takes both slow ends, the fast case both fast ends, so
+/// the planner's "within the error → fewer Macs" rule sees the turn's own range. `None` when
+/// either rate is missing.
+pub fn turn_figure(speed: &Speed, shape: TurnShape) -> Option<Figure> {
+    let (read, write) = (speed.prefill.as_ref()?, speed.decode.as_ref()?);
+    let rate = |r: f64, w: f64| {
+        (r > 0.0 && w > 0.0)
+            .then(|| shape.prompt_tokens / (shape.prompt_tokens / r + shape.answer_tokens / w))
+    };
+    Some(Figure {
+        estimate: Estimate {
+            value: rate(read.estimate.value, write.estimate.value)?,
+            low: rate(read.estimate.low, write.estimate.low)?,
+            high: rate(read.estimate.high, write.estimate.high)?,
+        },
+        measured: read.measured && write.measured,
+        runs: read.runs.min(write.runs),
+        last_measured_ms: read.last_measured_ms.max(write.last_measured_ms),
+    })
+}
+
 /// Goose's measurements for this placement at the goal's shape.
 fn measured(
     records: &[&SpeedRecord],
@@ -1010,6 +1077,33 @@ pub fn plan(input: &PlanInput) -> Plan {
                 nodes: c.fit.nodes.clone(),
                 detail: "running now — its memory is already in use".to_string(),
             };
+        }
+    }
+    if input.goal == Goal::LongDocuments {
+        let shape = long_turn_shape(input.model_id, input.records);
+        let source = if shape.turns > 0 {
+            format!(
+                "the median of {} of this model's own long turns",
+                shape.turns
+            )
+        } else {
+            "the long-document benchmark's shape".to_string()
+        };
+        for c in &mut candidates {
+            let Some(turn) = turn_figure(&c.speed, shape) else {
+                c.speed.basis.push(
+                    "no long-document turn time: it needs both a reading and a writing figure"
+                        .to_string(),
+                );
+                continue;
+            };
+            let seconds = shape.prompt_tokens / turn.estimate.value;
+            c.speed.basis.push(format!(
+                "long documents: timed as a whole turn — a {:.0}-token document read and a \
+                 {:.0}-token answer written in ~{seconds:.0} s ({source})",
+                shape.prompt_tokens, shape.answer_tokens
+            ));
+            c.speed.turn = Some(turn);
         }
     }
     let (best, best_available) = pick(&mut candidates, input.goal);
@@ -1485,28 +1579,108 @@ mod tests {
         );
     }
 
+    /// One of this model's recorded chat turns at the long-document size.
+    fn long_turn(prompt_tokens: u64, completion_tokens: u64, at: u64) -> SpeedRecord {
+        SpeedRecord {
+            model_id: "m".into(),
+            placement: PlacementKey::single("local"),
+            node_names: vec!["Mihai Macbook".into()],
+            chips: vec![None],
+            backend: BACKEND_SINGLE.into(),
+            context_bucket: crate::placement::store::context_bucket(prompt_tokens),
+            prompt_tokens,
+            completion_tokens,
+            prefill_tps: None,
+            decode_tps: None,
+            ttft_ms: None,
+            recorded_at_ms: at,
+            source: RecordSource::Chat,
+            workload: None,
+            kv_cache: None,
+        }
+    }
+
+    /// Long documents time a WHOLE turn, not the prompt read alone. The 27B split reads ~406 tok/s
+    /// against the Studio's ~335 but writes a third slower (~13.9 vs ~21.9), so what decides is the
+    /// answer's length. At the benchmark's shape (30,000-token document, 200-token answer) the
+    /// split's turn (~87 s) sits inside the error of the Studio's (~99 s) and the one Mac wins the
+    /// tie; this model's own recorded turns replace that shape — short answers make the split
+    /// faster outright, long ones the Studio.
     #[test]
-    fn the_27b_picks_tensor_for_long_documents() {
+    fn the_27b_long_documents_rank_by_the_whole_turn() {
         let plan = the_27b().plan(Goal::LongDocuments);
+        assert_eq!(
+            plan.best.as_deref(),
+            Some("single:link:worksmacstudio"),
+            "{plan:#?}"
+        );
+        let split = by_id(&plan, "tensor:jaccl:local+link:worksmacstudio");
+        assert!(
+            matches!(split.outcome, Outcome::TiedNeedsMoreMacs { .. }),
+            "{:?}",
+            split.outcome
+        );
+        let prefill = split.speed.prefill.clone().unwrap();
+        assert!(
+            (prefill.estimate.value - 405.7).abs() / 405.7 < 0.1,
+            "{prefill:?}"
+        );
+        assert!(
+            split.speed.basis.iter().any(|b| b.contains(
+                "a 30000-token document read and a 200-token answer written in ~87 s \
+                 (the long-document benchmark's shape)"
+            )),
+            "{:?}",
+            split.speed.basis
+        );
+
+        let mut short = the_27b();
+        for (i, answer) in [40, 64, 80].into_iter().enumerate() {
+            short.records.push(long_turn(30_000, answer, i as u64));
+        }
+        let plan = short.plan(Goal::LongDocuments);
         assert_eq!(
             plan.best.as_deref(),
             Some("tensor:jaccl:local+link:worksmacstudio"),
             "{plan:#?}"
         );
-        // The saved setup names another model, so the split is not startable as things stand.
-        assert_eq!(
-            plan.best_available.as_deref(),
-            Some("single:link:worksmacstudio")
-        );
-        let prefill = by_id(&plan, &plan.best.clone().unwrap())
+        assert!(by_id(&plan, "tensor:jaccl:local+link:worksmacstudio")
             .speed
-            .prefill
-            .clone()
-            .unwrap();
-        assert!(
-            (prefill.estimate.value - 405.7).abs() / 405.7 < 0.1,
-            "{prefill:?}"
+            .basis
+            .iter()
+            .any(|b| b.contains("a 64-token answer") && b.contains("the median of 3")));
+
+        let mut long = the_27b();
+        for (i, answer) in [2_000, 2_500, 3_000].into_iter().enumerate() {
+            long.records.push(long_turn(30_000, answer, i as u64));
+        }
+        let plan = long.plan(Goal::LongDocuments);
+        assert_eq!(
+            plan.best.as_deref(),
+            Some("single:link:worksmacstudio"),
+            "{plan:#?}"
         );
+        assert!(matches!(
+            by_id(&plan, "tensor:jaccl:local+link:worksmacstudio").outcome,
+            Outcome::Slower { .. }
+        ));
+    }
+
+    #[test]
+    fn a_turn_needs_both_rates_and_falls_back_to_the_workload_shape_only_without_turns() {
+        let shape = long_turn_shape("m", &[]);
+        assert_eq!(
+            (shape.prompt_tokens, shape.answer_tokens, shape.turns),
+            (30_000.0, 200.0, 0)
+        );
+        let other_model = SpeedRecord {
+            model_id: "other".into(),
+            ..long_turn(30_000, 9, 1)
+        };
+        assert_eq!(long_turn_shape("m", &[other_model]).turns, 0);
+        let short_prompt = long_turn(2_000, 9, 1);
+        assert_eq!(long_turn_shape("m", &[short_prompt]).turns, 0);
+        assert!(turn_figure(&Speed::default(), shape).is_none());
     }
 
     #[test]
@@ -1746,7 +1920,7 @@ mod tests {
         assert_eq!(gate.verdict, Verdict::Block);
         assert_eq!(here.fit.detail, format!("Mihai Macbook: {}", gate.message));
         assert_eq!(here.fit.short_bytes, gate.short_bytes());
-        assert!(gate.message.contains("budget 81.1 GiB"), "{}", gate.message);
+        assert!(gate.message.contains("budget 81.1 GB"), "{}", gate.message);
         let split = split_that_fits(&plan.candidates).expect("a split fits");
         assert_eq!(split.id, "pipeline:jaccl:local+link:worksmacstudio");
         assert_eq!(

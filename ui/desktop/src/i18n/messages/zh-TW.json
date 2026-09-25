@@ -3935,11 +3935,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "正在校驗 {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "詳細資料"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "關閉"
   },
   "mlxRestore.failed": {
     "defaultMessage": "無法{kind, select, single {在這台 Mac 上} split {在你的多台 Mac 上} other {在 {peer} 上}}還原 {model}：{reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "隱藏詳細資料"
   },
   "mlxRestore.label": {
     "defaultMessage": "還原"
@@ -3961,6 +3967,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "無法讀取重新啟動前正在提供的內容：{reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "先前的拆分仍在 {node} 上關閉——完成後 goose 會恢復它"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "正在生成"
@@ -5222,9 +5231,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "沒有計畫就沒有速度數字 — 但每種方式仍然可以啟動。"
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "這一台 Mac 就放得下：寫入 ~{singleWrite} tok/s，拆分為 ~{splitWrite}，且其他 Mac 保持空閒。"
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{另外 # 種分割} other{另外 # 種分割}}"
   },
@@ -5242,6 +5248,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "讀取 ~{value} tok/s"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "整輪文件處理 ~{value} tok/s（含回答）"
   },
   "placementCard.refresh": {
     "defaultMessage": "重新規劃"

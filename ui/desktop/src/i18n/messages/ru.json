@@ -3935,11 +3935,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "проверка {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Подробности"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Скрыть"
   },
   "mlxRestore.failed": {
     "defaultMessage": "Не удалось восстановить {model} {kind, select, single {на этом Mac} split {на ваших Mac} other {на {peer}}}: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Скрыть подробности"
   },
   "mlxRestore.label": {
     "defaultMessage": "Восстановление"
@@ -3961,6 +3967,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Не удалось прочитать, что работало до перезапуска: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "Предыдущее разделение ещё завершается на {node} — goose восстановит его, когда это закончится"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Пишет"
@@ -5222,9 +5231,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Без плана нет оценки скорости — но любой способ всё равно можно запустить."
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "Помещается на этот один Mac: пишет ~{singleWrite} tok/s против ~{splitWrite} у разделения и оставляет другие Mac свободными."
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{Ещё # разделение} few{Ещё # разделения} many{Ещё # разделений} other{Ещё # разделения}}"
   },
@@ -5242,6 +5248,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "~{value} ток/с на чтение"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "~{value} tok/s за весь ход с документом, включая ответ"
   },
   "placementCard.refresh": {
     "defaultMessage": "Спланировать снова"

@@ -3935,11 +3935,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "verifica di {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Dettagli"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Chiudi"
   },
   "mlxRestore.failed": {
     "defaultMessage": "Impossibile ripristinare {model} {kind, select, single {su questo Mac} split {sui tuoi Mac} other {su {peer}}}: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Nascondi dettagli"
   },
   "mlxRestore.label": {
     "defaultMessage": "Ripristino"
@@ -3961,6 +3967,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Impossibile leggere cosa era in servizio prima del riavvio: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "La suddivisione precedente si sta ancora chiudendo su {node}: goose la ripristina appena finisce"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Scrive"
@@ -5222,9 +5231,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Senza un piano non c’è una stima di velocità — ogni via si può comunque avviare."
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "Sta su questo solo Mac: scrive ~{singleWrite} tok/s contro i ~{splitWrite} della suddivisione, e lascia liberi gli altri Mac."
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# altra suddivisione} other{# altre suddivisioni}}"
   },
@@ -5242,6 +5248,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "~{value} tok/s in lettura"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "~{value} tok/s su un intero turno di documento, risposta inclusa"
   },
   "placementCard.refresh": {
     "defaultMessage": "Pianifica di nuovo"

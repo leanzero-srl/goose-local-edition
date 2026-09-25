@@ -5049,6 +5049,10 @@ pub struct MlxPlacementSpeedDto {
     /// Total tok/s across `concurrency` requests (derived from decode × a measured gain).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub throughput: Option<MlxSpeedFigureDto>,
+    /// Long documents only: a whole long-document turn as a rate — the document's tokens over the
+    /// seconds to read it and write the answer; what the long-documents goal ranks by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<MlxSpeedFigureDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<u32>,
     /// What the figures rest on, one line each (English diagnostics).

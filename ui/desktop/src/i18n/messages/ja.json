@@ -3935,11 +3935,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "{file} を検証中"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "詳細"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "閉じる"
   },
   "mlxRestore.failed": {
     "defaultMessage": "{model} を {kind, select, single {この Mac で} split {あなたの Mac 全体で} other {{peer} で}} 復元できませんでした: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "詳細を隠す"
   },
   "mlxRestore.label": {
     "defaultMessage": "復元"
@@ -3961,6 +3967,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "再起動前に何を提供していたか読み取れませんでした: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "前の分割が {node} でまだ終了処理中です — 終わり次第 goose が復元します"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "書き込み中"
@@ -5222,9 +5231,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "プランがないため速度の数値はありませんが、どの方法でも起動できます。"
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "この 1 台の Mac に収まります：書き込みは ~{singleWrite} tok/s（分割では ~{splitWrite}）で、ほかの Mac も空いたままです。"
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{他の分割 # 件} other{他の分割 # 件}}"
   },
@@ -5242,6 +5248,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "読み込み ~{value} tok/s"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "文書 1 ターン全体で ~{value} tok/s（回答を含む）"
   },
   "placementCard.refresh": {
     "defaultMessage": "再計画"

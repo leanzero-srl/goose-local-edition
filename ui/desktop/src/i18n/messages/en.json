@@ -5231,9 +5231,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Without a plan there is no speed figure — every way can still be started."
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "Fits on this one Mac: it writes ~{singleWrite} tok/s against the split’s ~{splitWrite}, and leaves your other Macs free."
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# other split} other{# other splits}}"
   },
@@ -5251,6 +5248,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "~{value} tok/s reading"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "~{value} tok/s through a whole document turn, answer included"
   },
   "placementCard.refresh": {
     "defaultMessage": "Plan again"

@@ -3935,11 +3935,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "comprobando {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Detalles"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Descartar"
   },
   "mlxRestore.failed": {
     "defaultMessage": "No se pudo restaurar {model} {kind, select, single {en este Mac} split {en tus Macs} other {en {peer}}}: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Ocultar detalles"
   },
   "mlxRestore.label": {
     "defaultMessage": "Restaurar"
@@ -3961,6 +3967,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "No se pudo leer qué se servía antes del reinicio: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "La división anterior aún se está cerrando en {node}; goose la restaura cuando termine"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Escribiendo"
@@ -5222,9 +5231,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Sin un plan no hay cifra de velocidad — aun así se puede iniciar cualquier opción."
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "Cabe en este único Mac: escribe ~{singleWrite} tok/s frente a ~{splitWrite} de la división, y deja libres tus otros Mac."
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# otra división} other{# otras divisiones}}"
   },
@@ -5242,6 +5248,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "~{value} tok/s leyendo"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "~{value} tok/s en un turno completo de documento, respuesta incluida"
   },
   "placementCard.refresh": {
     "defaultMessage": "Planificar de nuevo"

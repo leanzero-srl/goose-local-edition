@@ -7500,6 +7500,17 @@
           ],
           "description": "Total tok/s across `concurrency` requests (derived from decode × a measured gain)."
         },
+        "turn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxSpeedFigureDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Long documents only: a whole long-document turn as a rate — the document's tokens over the\nseconds to read it and write the answer; what the long-documents goal ranks by."
+        },
         "concurrency": {
           "type": [
             "integer",

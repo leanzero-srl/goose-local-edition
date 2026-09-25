@@ -3935,11 +3935,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "menyemak {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Butiran"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Tutup"
   },
   "mlxRestore.failed": {
     "defaultMessage": "Tidak dapat memulihkan {model} {kind, select, single {pada Mac ini} split {merentas Mac anda} other {pada {peer}}}: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Sembunyikan butiran"
   },
   "mlxRestore.label": {
     "defaultMessage": "Pemulihan"
@@ -3961,6 +3967,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Tidak dapat membaca apa yang dihidangkan sebelum pelancaran semula: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "Pembahagian sebelumnya masih ditutup pada {node} — goose memulihkannya sebaik sahaja selesai"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Menulis"
@@ -5222,9 +5231,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Tanpa pelan tiada angka kelajuan — setiap cara masih boleh dimulakan."
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "Muat pada satu Mac ini: ia menulis ~{singleWrite} tok/s berbanding ~{splitWrite} bagi pembahagian, dan Mac anda yang lain kekal bebas."
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# pembahagian lain} other{# pembahagian lain}}"
   },
@@ -5242,6 +5248,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "membaca ~{value} tok/s"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "~{value} tok/s untuk satu giliran dokumen penuh, termasuk jawapan"
   },
   "placementCard.refresh": {
     "defaultMessage": "Rancang semula"
