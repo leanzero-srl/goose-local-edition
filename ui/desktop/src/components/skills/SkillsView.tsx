@@ -8,7 +8,13 @@ import type { SourceEntry } from '@aaif/goose-sdk';
 import { SkillDetail } from './SkillDetail';
 import { TreeContextMenu } from '../Layout/tree';
 import { useStartChatAbout } from '../Layout/useStartChatAbout';
-import { isEditable, PERSONA_USER_MARKER, skillOrigin, type SkillOrigin } from './skillKinds';
+import {
+  isEditable,
+  PERSONA_USER_MARKER,
+  readError,
+  skillOrigin,
+  type SkillOrigin,
+} from './skillKinds';
 import { Button, EmptyState, TYPE, cx } from '../lz';
 import { LibraryGroup, LibraryRow, LibraryShell, shownSelection } from '../library/Library';
 
@@ -242,12 +248,19 @@ export default function SkillsView() {
       .map((origin) => ({
         origin,
         title: titles[origin],
-        items: filteredSkills.filter((s) => skillOrigin(s) === origin),
+        items: filteredSkills.filter((s) => !readError(s) && skillOrigin(s) === origin),
       }))
       .filter((g) => g.items.length > 0);
   }, [filteredSkills]);
 
-  const visible = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+  // Files goose found and could not read lead the list: each is a skill the user wrote that the model
+  // cannot see, and this row is the one place that says so.
+  const unreadable = useMemo(() => filteredSkills.filter((s) => readError(s)), [filteredSkills]);
+
+  const visible = useMemo(
+    () => [...unreadable, ...groups.flatMap((g) => g.items)],
+    [unreadable, groups]
+  );
   const selected = shownSelection(visible, selectedPath, (s) => s.path);
 
   const loadSkills = useCallback(async () => {
@@ -305,27 +318,45 @@ export default function SkillsView() {
         </div>
       );
     }
-    return groups.map((group) => (
-      <LibraryGroup key={group.origin} title={group.title} count={group.items.length}>
-        {group.items.map((skill) => (
-          <SkillItem
-            key={skill.path}
-            skill={skill}
-            selected={skill.path === selected?.path}
-            onSelect={() => setSelectedPath(skill.path)}
-            onEdit={() => {
-              setSelectedPath(skill.path);
-              setEditRequest((n) => n + 1);
-            }}
-            onDelete={() => {
-              setSelectedPath(skill.path);
-              setDeleteRequest((n) => n + 1);
-            }}
-            onAsk={() => void startChat(askAboutSkillPrompt(skill, getInitialWorkingDir()))}
-          />
-        ))}
-      </LibraryGroup>
-    ));
+    const unreadableGroup =
+      unreadable.length > 0 ? (
+        <LibraryGroup key="unreadable" title="Couldn't read" count={unreadable.length}>
+          {unreadable.map((skill) => (
+            <LibraryRow
+              key={skill.path}
+              testId="skill-unreadable-row"
+              title={skill.name}
+              label="not loaded"
+              preview={skill.description}
+              selected={skill.path === selected?.path}
+              onSelect={() => setSelectedPath(skill.path)}
+            />
+          ))}
+        </LibraryGroup>
+      ) : null;
+    return [unreadableGroup].concat(
+      groups.map((group) => (
+        <LibraryGroup key={group.origin} title={group.title} count={group.items.length}>
+          {group.items.map((skill) => (
+            <SkillItem
+              key={skill.path}
+              skill={skill}
+              selected={skill.path === selected?.path}
+              onSelect={() => setSelectedPath(skill.path)}
+              onEdit={() => {
+                setSelectedPath(skill.path);
+                setEditRequest((n) => n + 1);
+              }}
+              onDelete={() => {
+                setSelectedPath(skill.path);
+                setDeleteRequest((n) => n + 1);
+              }}
+              onAsk={() => void startChat(askAboutSkillPrompt(skill, getInitialWorkingDir()))}
+            />
+          ))}
+        </LibraryGroup>
+      ))
+    );
   };
 
   return (
@@ -341,7 +372,16 @@ export default function SkillsView() {
       }}
       list={renderList()}
       detail={
-        selected ? (
+        selected && readError(selected) ? (
+          <div className="h-full min-h-0 px-lz-page pt-4" data-testid="skill-unreadable-detail">
+            <p className={TYPE.body}>{selected.description}</p>
+            <p className={cx(TYPE.bodyMuted, 'mt-2')}>
+              goose does not offer this skill to the model until the file can be read. Fix the
+              frontmatter at the top of {selected.path}/SKILL.md and this page picks it up on the
+              next look.
+            </p>
+          </div>
+        ) : selected ? (
           <div className="h-full min-h-0 px-lz-page pt-4">
             <SkillDetail
               entry={selected}

@@ -77,6 +77,16 @@ export function recomposePersona(engine: string, notes: string): string {
 /** Where a skill came from, for the reader who has to tell three roots apart at a glance. */
 export type SkillOrigin = 'persona' | 'builtin' | 'global' | 'project';
 
+/**
+ * Why goose could not read this SKILL.md, or null for a skill it read. The backend lists an unreadable file
+ * (skills/mod.rs `UnreadableSkill`) with `properties.readError` set and the description "couldn't read
+ * <file>: <why>", so the page says so once, by name — goose never hands it to the model.
+ */
+export function readError(entry: Pick<SourceEntry, 'properties'>): string | null {
+  const why = entry.properties?.readError;
+  return typeof why === 'string' ? why : null;
+}
+
 export function skillOrigin(entry: Pick<SourceEntry, 'type' | 'path' | 'global'>): SkillOrigin {
   if (entry.type === 'builtinSkill') return 'builtin';
   if (isPersonaPath(entry.path)) return 'persona';
