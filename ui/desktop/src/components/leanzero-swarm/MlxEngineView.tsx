@@ -91,6 +91,7 @@ import { SELF_KEY, macTarget, peerRefuses, routePeerName, type Mac } from './mac
 import { WithMacs, useMacs } from './useMacs';
 import { MlxStateTile, servingEngine } from './MlxStateTile';
 import { MlxRestoreBanner } from './MlxRestoreLine';
+import { settleRestoreLine } from './mlxRestore';
 import type { MlxServing } from '../../utils/mlxServing';
 import {
   NO_RATES,
@@ -2277,6 +2278,9 @@ function MlxEngineViewBody() {
 
   const [status, setStatus] = useState<MlxEngineStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  useEffect(() => {
+    settleRestoreLine({ single: status, remote: remoteStatus, distributed: distributed.status });
+  }, [status, remoteStatus, distributed.status]);
   const [settings, setSettings] = useState<MlxEngineSettings | null>(null);
 
   const [browseFilters, setBrowseFilters] = useState<MlxBrowseFilters | null>(null);

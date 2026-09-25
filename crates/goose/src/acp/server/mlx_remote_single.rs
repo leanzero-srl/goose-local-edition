@@ -212,6 +212,25 @@ async fn peer_op<Req: Serialize, Resp: DeserializeOwned>(
     })
 }
 
+/// The peer engine's `/v1/models` through the relay: its context window when it serves the route's
+/// model, else why not in words.
+async fn route_models(route: &PublishedRoute) -> Result<Option<u64>, String> {
+    match relay_get(&route.base_url, "v1/models").await {
+        RelayAnswer::Ok(body) => match goose_sidecar::engine::parse_model_info(&body) {
+            Ok((Some(served), window, _)) if served == route.served_model_id => Ok(window),
+            Ok((served, _, _)) => Err(format!(
+                "{} now serves {:?}, the route wants '{}'",
+                route.peer_name(),
+                served,
+                route.served_model_id
+            )),
+            Err(e) => Err(format!("{e:#}")),
+        },
+        RelayAnswer::Status { code, body } => Err(format!("{code}: {body}")),
+        RelayAnswer::NoAnswer(why) => Err(why),
+    }
+}
+
 /// The route's state, re-probed through the relay, and the peer's own engine status when the
 /// relay says it is not serving yet (mounting vs failed).
 async fn route_status(
@@ -229,23 +248,13 @@ async fn route_status(
         capacity: Some(route.capacity),
         ..Default::default()
     };
-    let models_error = match relay_get(&route.base_url, "v1/models").await {
-        RelayAnswer::Ok(body) => match goose_sidecar::engine::parse_model_info(&body) {
-            Ok((Some(served), window, _)) if served == route.served_model_id => {
-                status.state = "ready".to_string();
-                status.context_window = window;
-                None
-            }
-            Ok((served, _, _)) => Some(format!(
-                "{} now serves {:?}, the route wants '{}'",
-                route.peer_name(),
-                served,
-                route.served_model_id
-            )),
-            Err(e) => Some(format!("{e:#}")),
-        },
-        RelayAnswer::Status { code, body } => Some(format!("{code}: {body}")),
-        RelayAnswer::NoAnswer(why) => Some(why),
+    let models_error = match route_models(route).await {
+        Ok(window) => {
+            status.state = "ready".to_string();
+            status.context_window = window;
+            None
+        }
+        Err(why) => Some(why),
     };
     match relay_get(&route.base_url, "v1/status").await {
         RelayAnswer::Ok(body) => {
@@ -287,12 +296,31 @@ async fn route_status(
     match peer_state {
         Ok(peer) if peer.status.state == "mounting" => {}
         Ok(peer) => {
-            status.state = "failed".to_string();
-            status.last_error = Some(peer_engine_failure(
-                route.peer_name(),
-                &peer.status,
-                &models_error,
-            ));
+            // The proxy was asked BEFORE the peer answered. An engine that became ready between
+            // the two reads says `running` here and failed there — measured on the 3.0.31
+            // restore: the Studio's engine was ready at 06:22:53.638, between the proxy's 502 and
+            // the status op at 06:22:53.655, and the restore gave up on an engine that served.
+            // The proxy is asked again now that the peer says running; only its answer after
+            // that decides.
+            let proxy_answer = if peer.status.state == "running" {
+                route_models(route).await
+            } else {
+                Err(models_error)
+            };
+            match proxy_answer {
+                Ok(window) => {
+                    status.state = "ready".to_string();
+                    status.context_window = window;
+                }
+                Err(proxy_answer) => {
+                    status.state = "failed".to_string();
+                    status.last_error = Some(peer_engine_failure(
+                        route.peer_name(),
+                        &peer.status,
+                        &proxy_answer,
+                    ));
+                }
+            }
         }
         Err(refused) => {
             status.state = "failed".to_string();
@@ -659,6 +687,55 @@ fn distributed_owner() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn route_to(base_url: String) -> PublishedRoute {
+        PublishedRoute {
+            pid: 1,
+            base_url,
+            peer: "wh".to_string(),
+            peer_hostname: "WorksMacStudio.lan".to_string(),
+            peer_computer_name: Some("Work's Mac Studio".to_string()),
+            model_id: "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string(),
+            served_model_id: "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string(),
+            capacity: 8,
+            template_kwargs: None,
+        }
+    }
+
+    /// A relay stand-in: `/v1/models` answers with `status` and `body`.
+    async fn relay(status: u16, body: &'static str) -> String {
+        let app = axum::Router::new().route(
+            "/relay/cap/v1/models",
+            axum::routing::get(move || async move {
+                (axum::http::StatusCode::from_u16(status).unwrap(), body)
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}/relay/cap")
+    }
+
+    #[tokio::test]
+    async fn the_route_serves_when_the_peer_engine_lists_its_model_through_the_relay() {
+        let base = relay(
+            200,
+            r#"{"object":"list","data":[{"id":"Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx","object":"model","context_length":262144}]}"#,
+        )
+        .await;
+        assert!(route_models(&route_to(base)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_loading_peer_engine_is_the_proxys_502_in_words() {
+        let base = relay(
+            502,
+            "engineUnreachable: no MLX engine answers at http://127.0.0.1:8090",
+        )
+        .await;
+        let why = route_models(&route_to(base)).await.unwrap_err();
+        assert!(why.starts_with("502: engineUnreachable"), "{why}");
+    }
 
     #[test]
     fn a_peer_engine_holds_its_active_and_cached_metal_memory() {

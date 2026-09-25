@@ -6,6 +6,7 @@ import type { LinkState } from '../../acp/leanzero-link';
 import type { MlxServingIntent } from '../../acp/mlx-serving-intent';
 import { MlxMountRefusedError } from '../../acp/mlx-engine';
 import {
+  settleRestoreLine,
   REMOTE_START_TRIES,
   latestRestoreLine,
   publishRestoreLine,
@@ -317,5 +318,40 @@ describe('the restore’s one line, and what main is told', () => {
       label: "Restoring Qwen3.8-27B-Atlassian-Q8-mlx on Work's Mac Studio…",
       phase: 'loading',
     });
+  });
+});
+
+describe('settleRestoreLine — a failed line clears once what it names serves', () => {
+  const MODEL = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';
+  const failedOnStudio = () =>
+    publishRestoreLine({
+      phase: 'failed',
+      what: { kind: 'remoteSingle', modelId: MODEL, peerName: "Work's Mac Studio" },
+      reason: { code: 'said', text: 'engineUnreachable' },
+    });
+
+  it('the Studio serving the model clears "Could not restore … on Work’s Mac Studio"', () => {
+    failedOnStudio();
+    settleRestoreLine({
+      single: null,
+      remote: { state: 'ready', modelId: MODEL } as MlxRemoteSingleStatus,
+      distributed: null,
+    });
+    expect(latestRestoreLine()).toEqual({ phase: 'idle' });
+  });
+
+  it('still mounting, another model, or this Mac serving instead: the line stays', () => {
+    failedOnStudio();
+    settleRestoreLine({
+      single: { state: 'running', modelId: MODEL } as MlxEngineStatus,
+      remote: { state: 'mounting', modelId: MODEL } as MlxRemoteSingleStatus,
+      distributed: null,
+    });
+    settleRestoreLine({
+      single: null,
+      remote: { state: 'ready', modelId: 'other/model' } as MlxRemoteSingleStatus,
+      distributed: null,
+    });
+    expect(latestRestoreLine().phase).toBe('failed');
   });
 });

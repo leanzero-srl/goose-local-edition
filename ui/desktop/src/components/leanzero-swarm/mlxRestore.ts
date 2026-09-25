@@ -283,6 +283,32 @@ export function publishRestoreLine(line: RestoreLine): void {
 let running: Promise<void> | null = null;
 let lastDeps: RestoreDeps | null = null;
 
+/**
+ * A failed line whose engine serves now says something false — measured on 3.0.31: "Could not
+ * restore … on Work's Mac Studio" stayed up beside the Studio's engine serving this Mac's chat. The
+ * Engine view hands its reads here on every change; a line whose model serves the way it names is
+ * cleared, never left as a claim the tile below contradicts.
+ */
+export function settleRestoreLine(serving: {
+  single: MlxEngineStatus | null;
+  remote: MlxRemoteSingleStatus | null;
+  distributed: MlxDistributedStatus | null;
+}): void {
+  const line = current;
+  if (line.phase !== 'failed' || !line.what) return;
+  const { kind, modelId } = line.what;
+  const served =
+    kind === 'single'
+      ? serving.single?.state === 'running' && serving.single.modelId === modelId
+      : kind === 'remoteSingle'
+        ? serving.remote?.state === 'ready' && serving.remote.modelId === modelId
+        : serving.distributed != null &&
+          ownsTheMac(serving.distributed) &&
+          (serving.distributed.state === 'ready' || serving.distributed.state === 'serving') &&
+          serving.distributed.modelId === modelId;
+  if (served) publishRestoreLine({ phase: 'idle' });
+}
+
 /** Run one restore and keep the line current; a second call while one runs joins it. */
 export function runRestore(deps: RestoreDeps): Promise<void> {
   if (running) return running;
