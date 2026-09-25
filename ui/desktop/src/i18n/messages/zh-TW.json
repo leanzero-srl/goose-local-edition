@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "沒有計畫就沒有速度數字 — 但每種方式仍然可以啟動。"
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "這一台 Mac 就放得下：寫入 ~{singleWrite} tok/s，拆分為 ~{splitWrite}，且其他 Mac 保持空閒。"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{另外 # 種分割} other{另外 # 種分割}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "同時 {concurrency} 個時總計 ~{value} tok/s"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "僅 {name} 一台就放得下此模型。拆分到多台 Mac 後，寫入為 ~{splitWrite} tok/s（單機 ~{singleWrite}），讀取提示快 {ratio}×（~{splitRead} 對 ~{singleRead} tok/s）——只有提示很長、回覆很短時才划算。"
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "僅 {name} 一台就放得下此模型。拆分到多台 Mac 後，寫入為 ~{splitWrite} tok/s（單機 ~{singleWrite}），讀取提示也更慢（~{splitRead} 對 ~{singleRead} tok/s）。"
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "僅 {name} 一台就放得下此模型。拆分到多台 Mac 後，寫入為 ~{splitWrite} tok/s（單機 ~{singleWrite}）。"
   },
   "placementCard.writes": {
     "defaultMessage": "寫入 ~{value} tok/s"

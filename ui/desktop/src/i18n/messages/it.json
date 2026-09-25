@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Senza un piano non c’è una stima di velocità — ogni via si può comunque avviare."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Sta su questo solo Mac: scrive ~{singleWrite} tok/s contro i ~{splitWrite} della suddivisione, e lascia liberi gli altri Mac."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# altra suddivisione} other{# altre suddivisioni}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "~{value} tok/s in totale con {concurrency} alla volta"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} da solo contiene questo modello. Suddiviso sui tuoi Mac scrive ~{splitWrite} tok/s contro ~{singleWrite} lì, e legge i prompt {ratio}× più velocemente (~{splitRead} contro ~{singleRead} tok/s): conviene solo con prompt lunghi e risposte brevi."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} da solo contiene questo modello. Suddiviso sui tuoi Mac scrive ~{splitWrite} tok/s contro ~{singleWrite} lì, e legge anche i prompt più lentamente (~{splitRead} contro ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} da solo contiene questo modello. Suddiviso sui tuoi Mac scrive ~{splitWrite} tok/s contro ~{singleWrite} lì."
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/s in scrittura"

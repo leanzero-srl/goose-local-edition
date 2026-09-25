@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "योजना के बिना गति का कोई आँकड़ा नहीं — फिर भी हर तरीका शुरू किया जा सकता है।"
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "यह इस एक Mac पर फ़िट है: यह ~{singleWrite} tok/s लिखता है, बँटवारे के ~{splitWrite} के मुकाबले, और आपके बाकी Mac खाली रहते हैं।"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# अन्य विभाजन} other{# अन्य विभाजन}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "एक साथ {concurrency} पर कुल ~{value} tok/s"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} अकेले इस मॉडल को चला सकता है। आपके Mac पर बँटकर यह ~{splitWrite} tok/s लिखता है, जबकि वहाँ ~{singleWrite}, और प्रॉम्प्ट {ratio}× तेज़ पढ़ता है (~{splitRead} बनाम ~{singleRead} tok/s) — यह तभी फ़ायदेमंद है जब प्रॉम्प्ट लंबे और उत्तर छोटे हों।"
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} अकेले इस मॉडल को चला सकता है। आपके Mac पर बँटकर यह ~{splitWrite} tok/s लिखता है, जबकि वहाँ ~{singleWrite}, और प्रॉम्प्ट भी धीमे पढ़ता है (~{splitRead} बनाम ~{singleRead} tok/s)।"
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} अकेले इस मॉडल को चला सकता है। आपके Mac पर बँटकर यह ~{splitWrite} tok/s लिखता है, जबकि वहाँ ~{singleWrite}।"
   },
   "placementCard.writes": {
     "defaultMessage": "लिखना ~{value} tok/s"

@@ -4,7 +4,14 @@ import { useState } from 'react';
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
-import { PlacementBadge, PlacementCard, pickerBadgeOf, type PickerBadge } from './PlacementCard';
+import {
+  PlacementBadge,
+  PlacementCard,
+  pickerBadgeOf,
+  recommendedCandidate,
+  splitTradeOff,
+  type PickerBadge,
+} from './PlacementCard';
 import { PLAN_27B, PLAN_FLASH, NODES } from './placement.fixtures';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import type { PlacementPlan } from '../../acp/mlx-placement';
@@ -388,6 +395,62 @@ describe('Run it on the real 27B plan', () => {
     // No hardware lines under the card: the chips live on My Macs.
     expect(screen.queryByTestId('placement-nodes')).toBeNull();
     expect(mockPlan).toHaveBeenCalledWith('chat', MODEL);
+  });
+
+  /**
+   * Q-72: E2E #1 turn 0 took 20 min 20 s on the split — it writes ~14 tok/s against 22 on the Studio
+   * alone, for ~1.2× faster prompt reading. For a model that fits one Mac, the split's row states the
+   * trade-off in the plan's own figures, and goose's bare "Slower for this" is not repeated.
+   */
+  it('the split beside a Mac the model fits on says what it costs and buys, in the plan’s figures', async () => {
+    renderCard();
+    const split = await screen.findByTestId('placement-way-split');
+    expect(
+      within(split).getByText(
+        'Work’s Mac Studio alone fits this model. Split across your Macs it writes ~13.9 tok/s against ~21.9 there, and reads prompts 1.2× faster (~416 vs ~335 tok/s) — worth it only when prompts are long and replies short.'
+      )
+    ).toBeInTheDocument();
+    expect(within(split).queryByText(/Slower for this/)).toBeNull();
+    // The Studio stays the recommendation for chat.
+    expect(within(screen.getByTestId('placement-way-peer')).getByText('Best')).toBeInTheDocument();
+    expect(within(split).queryByText('Best')).toBeNull();
+  });
+
+  it('Long documents: goose ranks the split first by reading, Run it still recommends the one Mac it fits on', async () => {
+    const split = PLAN_27B.candidates!.find((c) => c.key.kind === 'tensor')!;
+    const long: PlacementPlan = {
+      ...PLAN_27B,
+      goal: 'longDocuments',
+      best: split.id,
+      bestAvailable: split.id,
+    };
+    expect(recommendedCandidate(long)).toBe('single:workhorse');
+    mockPlan.mockResolvedValue(answer(long));
+    renderCard();
+    const peer = await screen.findByTestId('placement-way-peer');
+    expect(within(peer).getByText('Best')).toBeInTheDocument();
+    expect(
+      within(peer).getByText(
+        'Fits on this one Mac: it writes ~21.9 tok/s against the split’s ~13.9, and leaves your other Macs free.'
+      )
+    ).toBeInTheDocument();
+    const row = screen.getByTestId('placement-way-split');
+    expect(within(row).queryByText('Best')).toBeNull();
+    expect(within(row).getByText(/reads prompts 1\.2× faster/)).toBeInTheDocument();
+  });
+
+  it('a model no single Mac fits: the split keeps goose’s recommendation and says no trade-off', () => {
+    const split = PLAN_27B.candidates!.find((c) => c.key.kind === 'tensor')!;
+    const tooBig: PlacementPlan = {
+      ...PLAN_27B,
+      best: split.id,
+      candidates: PLAN_27B.candidates!.map((c) =>
+        c.key.kind === 'single' ? { ...c, fit: { ...c.fit, status: 'short' as const } } : c
+      ),
+    };
+    expect(recommendedCandidate(tooBig)).toBe(split.id);
+    expect(splitTradeOff(tooBig, split)).toBeNull();
+    expect(recommendedCandidate(null)).toBeNull();
   });
 
   it('switches the goal and plans again for it', async () => {

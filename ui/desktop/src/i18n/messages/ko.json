@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "계획이 없어 속도 수치는 없지만, 어떤 방법이든 시작할 수 있습니다."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "이 Mac 한 대에 들어갑니다: 쓰기 ~{singleWrite} tok/s(분할은 ~{splitWrite})이고, 다른 Mac은 비워 둡니다."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{다른 분할 #개} other{다른 분할 #개}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "동시 {concurrency}개일 때 총 ~{value} tok/s"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} 하나로 이 모델이 들어갑니다. 여러 Mac에 나누면 쓰기는 ~{splitWrite} tok/s(단독은 ~{singleWrite}), 프롬프트 읽기는 {ratio}× 빨라집니다(~{splitRead} 대 ~{singleRead} tok/s). 프롬프트가 길고 답이 짧을 때만 이득입니다."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} 하나로 이 모델이 들어갑니다. 여러 Mac에 나누면 쓰기는 ~{splitWrite} tok/s(단독은 ~{singleWrite})이고, 프롬프트 읽기도 느려집니다(~{splitRead} 대 ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} 하나로 이 모델이 들어갑니다. 여러 Mac에 나누면 쓰기는 ~{splitWrite} tok/s(단독은 ~{singleWrite})입니다."
   },
   "placementCard.writes": {
     "defaultMessage": "쓰기 ~{value} tok/s"

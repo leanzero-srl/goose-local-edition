@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "プランがないため速度の数値はありませんが、どの方法でも起動できます。"
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "この 1 台の Mac に収まります：書き込みは ~{singleWrite} tok/s（分割では ~{splitWrite}）で、ほかの Mac も空いたままです。"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{他の分割 # 件} other{他の分割 # 件}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "同時 {concurrency} 件で合計 ~{value} tok/s"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} だけでこのモデルが収まります。Mac に分割すると書き込みは ~{splitWrite} tok/s（単体では ~{singleWrite}）、プロンプトの読み込みは {ratio}× 速くなります（~{splitRead} 対 ~{singleRead} tok/s）。長いプロンプトに短い応答のときだけ意味があります。"
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} だけでこのモデルが収まります。Mac に分割すると書き込みは ~{splitWrite} tok/s（単体では ~{singleWrite}）、プロンプトの読み込みも遅くなります（~{splitRead} 対 ~{singleRead} tok/s）。"
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} だけでこのモデルが収まります。Mac に分割すると書き込みは ~{splitWrite} tok/s（単体では ~{singleWrite}）です。"
   },
   "placementCard.writes": {
     "defaultMessage": "書き込み ~{value} tok/s"

@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Tanpa pelan tiada angka kelajuan — setiap cara masih boleh dimulakan."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Muat pada satu Mac ini: ia menulis ~{singleWrite} tok/s berbanding ~{splitWrite} bagi pembahagian, dan Mac anda yang lain kekal bebas."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# pembahagian lain} other{# pembahagian lain}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "Jumlah ~{value} tok/s dengan {concurrency} serentak"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} sahaja muat untuk model ini. Dibahagi merentas Mac anda, ia menulis ~{splitWrite} tok/s berbanding ~{singleWrite} di sana, dan membaca prompt {ratio}× lebih pantas (~{splitRead} lwn ~{singleRead} tok/s) — hanya berbaloi untuk prompt panjang dan balasan pendek."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} sahaja muat untuk model ini. Dibahagi merentas Mac anda, ia menulis ~{splitWrite} tok/s berbanding ~{singleWrite} di sana, dan membaca prompt juga lebih perlahan (~{splitRead} lwn ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} sahaja muat untuk model ini. Dibahagi merentas Mac anda, ia menulis ~{splitWrite} tok/s berbanding ~{singleWrite} di sana."
   },
   "placementCard.writes": {
     "defaultMessage": "menulis ~{value} tok/s"

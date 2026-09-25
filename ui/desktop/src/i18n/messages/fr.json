@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Sans plan, pas de chiffre de vitesse — chaque option peut tout de même être lancée."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Tient sur ce seul Mac : il écrit ~{singleWrite} tok/s contre ~{splitWrite} pour la répartition, et laisse vos autres Mac libres."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# autre répartition} other{# autres répartitions}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "~{value} tok/s au total à {concurrency} en même temps"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} seul peut accueillir ce modèle. Réparti sur vos Mac, il écrit ~{splitWrite} tok/s contre ~{singleWrite} là-bas, et lit les prompts {ratio}× plus vite (~{splitRead} contre ~{singleRead} tok/s) — utile seulement pour de longs prompts et des réponses courtes."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} seul peut accueillir ce modèle. Réparti sur vos Mac, il écrit ~{splitWrite} tok/s contre ~{singleWrite} là-bas, et lit aussi les prompts plus lentement (~{splitRead} contre ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} seul peut accueillir ce modèle. Réparti sur vos Mac, il écrit ~{splitWrite} tok/s contre ~{singleWrite} là-bas."
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/s en écriture"

@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Ohne Plan gibt es keine Geschwindigkeitsangabe — jeder Weg kann trotzdem gestartet werden."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Passt auf diesen einen Mac: Er schreibt ~{singleWrite} tok/s statt ~{splitWrite} bei der Aufteilung und lässt deine anderen Macs frei."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# weiterer Split} other{# weitere Splits}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "~{value} Tok/s gesamt bei {concurrency} gleichzeitig"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} allein fasst dieses Modell. Über deine Macs aufgeteilt schreibt es ~{splitWrite} tok/s statt ~{singleWrite} dort und liest Prompts {ratio}× schneller (~{splitRead} vs. ~{singleRead} tok/s) — lohnt sich nur bei langen Prompts und kurzen Antworten."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} allein fasst dieses Modell. Über deine Macs aufgeteilt schreibt es ~{splitWrite} tok/s statt ~{singleWrite} dort und liest Prompts ebenfalls langsamer (~{splitRead} vs. ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} allein fasst dieses Modell. Über deine Macs aufgeteilt schreibt es ~{splitWrite} tok/s statt ~{singleWrite} dort."
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} Tok/s schreiben"

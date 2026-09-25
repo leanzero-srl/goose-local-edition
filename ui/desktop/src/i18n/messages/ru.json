@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Без плана нет оценки скорости — но любой способ всё равно можно запустить."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Помещается на этот один Mac: пишет ~{singleWrite} tok/s против ~{splitWrite} у разделения и оставляет другие Mac свободными."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{Ещё # разделение} few{Ещё # разделения} many{Ещё # разделений} other{Ещё # разделения}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "~{value} ток/с всего при {concurrency} одновременно"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} в одиночку вмещает эту модель. Разделённая между вашими Mac, она пишет ~{splitWrite} tok/s против ~{singleWrite} там и читает промпты в {ratio}× быстрее (~{splitRead} против ~{singleRead} tok/s) — это окупается только при длинных промптах и коротких ответах."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} в одиночку вмещает эту модель. Разделённая между вашими Mac, она пишет ~{splitWrite} tok/s против ~{singleWrite} там и читает промпты тоже медленнее (~{splitRead} против ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} в одиночку вмещает эту модель. Разделённая между вашими Mac, она пишет ~{splitWrite} tok/s против ~{singleWrite} там."
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} ток/с на запись"

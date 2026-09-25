@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Không có kế hoạch thì không có con số tốc độ — nhưng vẫn có thể khởi chạy mọi cách."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Vừa trên một máy Mac này: viết ~{singleWrite} tok/s so với ~{splitWrite} của bản chia, và để trống các máy Mac khác."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# cách chia khác} other{# cách chia khác}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "Tổng ~{value} tok/s với {concurrency} cùng lúc"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "Riêng {name} đã chứa được mô hình này. Chia trên các máy Mac, nó viết ~{splitWrite} tok/s so với ~{singleWrite} ở đó, và đọc prompt nhanh hơn {ratio}× (~{splitRead} so với ~{singleRead} tok/s) — chỉ đáng khi prompt dài và câu trả lời ngắn."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "Riêng {name} đã chứa được mô hình này. Chia trên các máy Mac, nó viết ~{splitWrite} tok/s so với ~{singleWrite} ở đó, và đọc prompt cũng chậm hơn (~{splitRead} so với ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "Riêng {name} đã chứa được mô hình này. Chia trên các máy Mac, nó viết ~{splitWrite} tok/s so với ~{singleWrite} ở đó."
   },
   "placementCard.writes": {
     "defaultMessage": "ghi ~{value} tok/s"

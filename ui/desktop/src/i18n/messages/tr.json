@@ -5180,6 +5180,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Plan olmadan hız rakamı yok — yine de her yol başlatılabilir."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Bu tek Mac’e sığar: bölmenin ~{splitWrite} değerine karşı ~{singleWrite} tok/s yazar ve diğer Mac’lerinizi boş bırakır."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# diğer bölme} other{# diğer bölme}}"
   },
@@ -5296,6 +5299,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "Aynı anda {concurrency} ile toplam ~{value} tok/sn"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} bu modeli tek başına taşır. Mac’lerinize bölündüğünde ~{singleWrite} yerine ~{splitWrite} tok/s yazar ve istemleri {ratio}× daha hızlı okur (~{splitRead} ile ~{singleRead} tok/s) — yalnızca istemler uzun, yanıtlar kısa olduğunda değer."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} bu modeli tek başına taşır. Mac’lerinize bölündüğünde ~{singleWrite} yerine ~{splitWrite} tok/s yazar ve istemleri de daha yavaş okur (~{splitRead} ile ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} bu modeli tek başına taşır. Mac’lerinize bölündüğünde ~{singleWrite} yerine ~{splitWrite} tok/s yazar."
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/sn yazma"

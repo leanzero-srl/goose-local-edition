@@ -5189,6 +5189,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Without a plan there is no speed figure — every way can still be started."
   },
+  "placementCard.oneMacPreferred": {
+    "defaultMessage": "Fits on this one Mac: it writes ~{singleWrite} tok/s against the split’s ~{splitWrite}, and leaves your other Macs free."
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# other split} other{# other splits}}"
   },
@@ -5305,6 +5308,15 @@
   },
   "placementCard.total": {
     "defaultMessage": "~{value} tok/s total at {concurrency} at once"
+  },
+  "placementCard.tradeOffReadsFaster": {
+    "defaultMessage": "{name} alone fits this model. Split across your Macs it writes ~{splitWrite} tok/s against ~{singleWrite} there, and reads prompts {ratio}× faster (~{splitRead} vs ~{singleRead} tok/s) — worth it only when prompts are long and replies short."
+  },
+  "placementCard.tradeOffReadsSlower": {
+    "defaultMessage": "{name} alone fits this model. Split across your Macs it writes ~{splitWrite} tok/s against ~{singleWrite} there, and reads prompts slower too (~{splitRead} vs ~{singleRead} tok/s)."
+  },
+  "placementCard.tradeOffWritesOnly": {
+    "defaultMessage": "{name} alone fits this model. Split across your Macs it writes ~{splitWrite} tok/s against ~{singleWrite} there."
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/s writing"
