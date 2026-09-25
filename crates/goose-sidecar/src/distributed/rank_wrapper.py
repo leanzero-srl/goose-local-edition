@@ -43,6 +43,12 @@
 #   requester's spec (`prompt_cache_bytes` alone) runs its own wrapper's policy here unchanged:
 #   that one number as the flag, mlx_lm's default count, no max_bytes — so both ranks still evict
 #   alike.
+# - the prefill's memory (Q-104, rank_prefill.py): a launch whose spec carries `prefill` sizes
+#   every prefill step's chunk to the plan's workspace (the attention scores of a head_dim-256
+#   layer exist whole: rows × heads × chunk × width), moves a batch whose every row finished its
+#   prompt into generation without mlx_lm's deep copy of the whole padded KV, charges the live
+#   batch at its PROJECTED padded KV when the prompt cache yields room, and rank 0 holds a request
+#   the batch it would join cannot fit inside the plan's KV charge until the batch drains enough.
 group = mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -114,7 +120,9 @@ import traceback  # noqa: E402
 RANK_FATAL_EXIT = 70
 
 import mlx_lm  # noqa: E402
+import mlx_lm.generate as mlx_generate  # noqa: E402
 import mlx_lm.server as server  # noqa: E402
+from collections import deque  # noqa: E402
 
 for owner, name in (
     (server, "run"),
@@ -139,6 +147,26 @@ for owner, name in (
         raise SystemExit(
             f"goose rank wrapper: mlx_lm {mlx_lm.__version__} has no {getattr(owner, '__name__', owner)}.{name}; "
             "the wrapper was written against mlx_lm 0.31.3"
+        )
+
+prefill = spec.get("prefill")
+if prefill is not None:
+    for owner, name in (
+        (mlx_generate.PromptProcessingBatch, "prompt"),
+        (mlx_generate.PromptProcessingBatch, "split"),
+        (mlx_generate.PromptProcessingBatch, "filter"),
+        (server.BatchGenerator, "next"),
+        (BatchKVCache, "step"),
+    ):
+        if not hasattr(owner, name):
+            raise SystemExit(
+                f"goose rank wrapper: mlx_lm {mlx_lm.__version__} has no {owner.__name__}.{name}; "
+                "the prefill plan was written against mlx_lm 0.31.3"
+            )
+    if "prompt_cache_limit_bytes" not in spec:
+        raise SystemExit(
+            "goose rank wrapper: the spec carries a prefill plan but no prompt_cache_limit_bytes "
+            "(the KV charge its admission is measured against)"
         )
 
 served = spec["served_id"]
@@ -228,6 +256,8 @@ def compact(prompt_cache):
 # The BatchGenerator mlx_lm's generation loop is serving (it makes at most one at a time): its
 # live KV is what the prompt cache shares the plan's KV charge with between admissions.
 live_batch = []
+# The bounded prompt cache mlx_lm's `run` built (one per process).
+prompt_caches = []
 
 
 class TrackedBatchGenerator(server.BatchGenerator):
@@ -240,8 +270,58 @@ class TrackedBatchGenerator(server.BatchGenerator):
             live_batch.clear()
         super().close()
 
+    @property
+    def prompt_cache_nbytes(self):
+        # What mlx_lm's admission trim (server.py:795-798) and the live bound hold the prompt cache
+        # beside: with a prefill plan, the batch's projected padded KV (rank_prefill.py) when it
+        # exceeds what its caches hold now — the rows still to be read grow into it.
+        held = super().prompt_cache_nbytes
+        if prefill is None:
+            return held
+        return max(held, batch_kv_charge(prefill, *batch_shape(self)))
+
+    def next(self):
+        responses = super().next()
+        # Generation grows every row one token a step, past what the last admission charged: the
+        # cache yields before the batch outgrows the plan's KV charge. Every rank holds the same
+        # batch and the same cache, so every rank evicts alike.
+        if prefill is not None and prompt_caches:
+            room = prompt_cache_limit - self.prompt_cache_nbytes
+            if prompt_caches[0].nbytes > room:
+                prompt_caches[0].trim_to(n_bytes=room)
+        return responses
+
 
 server.BatchGenerator = TrackedBatchGenerator
+
+if prefill is not None:
+    upstream_prompt = mlx_generate.PromptProcessingBatch.prompt
+    upstream_split = mlx_generate.PromptProcessingBatch.split
+    overruns = {"reported": False}
+
+    def prompt(self, tokens):
+        # One step of the prompt batch: `tokens` holds each row's next slice (at most mlx_lm's
+        # step). Its chunk is what the plan's workspace affords this many rows at the width the
+        # slice reaches; every rank computes it from the same batch, so the collectives pair.
+        if tokens:
+            rows = len(tokens)
+            width = cache_width(self.prompt_cache) + max(len(t) for t in tokens)
+            chunk = prefill_chunk(prefill, rows, width, BatchKVCache.step)
+            over = chunk_overruns(prefill, rows, width, chunk)
+            if over and not overruns["reported"]:
+                overruns["reported"] = True
+                emit(
+                    "RANK_PREFILL_OVER",
+                    {"rows": rows, "width": width, "chunk": chunk, "over_bytes": over},
+                )
+            self.prefill_step_size = chunk
+        return upstream_prompt(self, tokens)
+
+    def split(self, indices):
+        return moving_split(self, indices, upstream_split)
+
+    mlx_generate.PromptProcessingBatch.prompt = prompt
+    mlx_generate.PromptProcessingBatch.split = split
 
 if "prompt_cache_limit_bytes" in spec:
     prompt_cache_limit = int(spec["prompt_cache_limit_bytes"])
@@ -262,6 +342,7 @@ if "prompt_cache_limit_bytes" in spec:
     class BoundedPromptCache(server.LRUPromptCache):
         def __init__(self, max_size):
             super().__init__(max_size, prompt_cache_limit)
+            prompt_caches[:] = [self]
 
         def insert_cache(self, model, tokens, prompt_cache, *, cache_type="assistant"):
             compact(prompt_cache)
@@ -314,10 +395,64 @@ server.ResponseGenerator._generate = _generate
 original_next = server.ResponseGenerator._next_request
 
 
+# Rank 0's requests waiting for room in the batch (settled: tokenized, budgeted), oldest first.
+held = deque()
+
+
+def room_for(prompt_tokens):
+    batch = live_batch[0] if live_batch else None
+    rows, width = batch_shape(batch) if batch is not None else (0, 0)
+    return admits(prefill, prompt_cache_limit, rows, width, prompt_tokens)
+
+
+def rank0_request(self, timeout):
+    """The request rank 0 shares now, or None: the oldest held one once the batch has room for
+    it, else the next arrival — held instead when the batch it would join cannot fit it (behind
+    any request already held, so arrivals keep their order)."""
+    if held and room_for(held[0][1]):
+        request, tokens = held.popleft()
+        emit("RANK_ADMISSION", {"released_tokens": tokens, "still_held": len(held)})
+        return request
+    try:
+        if timeout is None or held:
+            request = self.requests.get_nowait()
+        else:
+            request = self.requests.get(timeout=timeout)
+    except QueueEmpty:
+        return None
+    request, tokens = settle(self, request)
+    if request is None:
+        return None
+    if not held and room_for(tokens):
+        return request
+    held.append((request, tokens))
+    rows, width = batch_shape(live_batch[0]) if live_batch else (0, 0)
+    emit(
+        "RANK_ADMISSION",
+        {
+            "held_tokens": tokens,
+            "held": len(held),
+            "rows": rows,
+            "width": width,
+            "charge": batch_kv_charge(prefill, rows + 1, max(width, tokens)),
+            "limit": prompt_cache_limit,
+        },
+    )
+    return None
+
+
 def _next_request(self, timeout=None):
     # `timeout` is None exactly while a batch runs (mlx_lm's `_generate`), and every rank's loop
-    # state is the same, so every rank takes the same branch here.
-    if doorbell is None or timeout is None:
+    # state is the same, so every rank takes the same branch here. With a prefill plan rank 0
+    # decides which request is shared (rank0_request); the workers receive exactly what it shares.
+    if prefill is not None and group.rank() == 0:
+        request = rank0_request(self, timeout)
+        if doorbell is None or timeout is None:
+            request = original_share_request(self, request)
+        elif request is not None:
+            doorbell.ring()
+            request = original_share_request(self, request)
+    elif doorbell is None or timeout is None:
         request = original_next(self, timeout)
     elif group.rank() == 0:
         try:
@@ -402,25 +537,30 @@ server.ResponseGenerator.generate = generate
 original_share_request = server.ResponseGenerator._share_request
 
 
+def settle(self, request):
+    """(request, prompt tokens), or (None, 0) for a request answered on its own queue.
+
+    Rank 0's generation thread, the model loaded, before the request reaches the other ranks: the
+    prompt is counted with mlx_lm's own _tokenize on a COPY (_tokenize rewrites messages in place
+    — tool-call arguments become dicts — and a second pass over the same objects would fail), and
+    the budget replaces the client's absence (None, kept by validate_model_parameters below). A
+    request that cannot be counted or has no room is answered on its own queue and never shared,
+    as mlx_lm answers a tokenization failure."""
+    rqueue, completion, args = request
+    try:
+        prompt = original_tokenize(
+            self, self.model_provider.tokenizer, copy.deepcopy(completion), args
+        )[0]
+        args.max_tokens = generation_budget(spec["context_window"], len(prompt), args.max_tokens)
+    except Exception as refusal:
+        rqueue.put(refusal)
+        return None, 0
+    return request, len(prompt)
+
+
 def _share_request(self, request):
-    # Rank 0's generation thread, the model loaded, before the request reaches the other ranks: the
-    # prompt is counted with mlx_lm's own _tokenize on a COPY (_tokenize rewrites messages in place
-    # — tool-call arguments become dicts — and a second pass over the same objects would fail), and
-    # the budget replaces the client's absence (None, kept by validate_model_parameters below). A
-    # request that cannot be counted or has no room is answered on its own queue and never shared,
-    # as mlx_lm answers a tokenization failure.
     if request is not None and group.rank() == 0:
-        rqueue, completion, args = request
-        try:
-            prompt = original_tokenize(
-                self, self.model_provider.tokenizer, copy.deepcopy(completion), args
-            )[0]
-            args.max_tokens = generation_budget(
-                spec["context_window"], len(prompt), args.max_tokens
-            )
-        except Exception as refusal:
-            rqueue.put(refusal)
-            request = None
+        request = settle(self, request)[0]
     return original_share_request(self, request)
 
 
@@ -570,5 +710,6 @@ sys.argv = [
     "--port",
     str(spec["port"]),
     *prompt_cache_flags,
+    *(["--prefill-step-size", str(int(prefill["step"]))] if prefill is not None else []),
 ]
 server.main()

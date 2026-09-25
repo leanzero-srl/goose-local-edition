@@ -57,7 +57,11 @@ pub use supervisor::{
 pub use crate::fit::{AVAILABLE_MARGIN_RATIO, DERIVED_CONTEXT_MARGIN_RATIO};
 // measured: TENSOR RUNNER ONLY — 27B tensor bench peak 19.9 GB (18.53 GiB) / 17.07 GiB planned at
 // 2,304 tokens = 1.086 (STEP1b); the planned slice is multiplied by this before it is compared
-// with a node's budget. The pipeline runner applies NO multiplier: the Flash soak's peaks were
+// with a node's budget. What it covers since Q-104: a prefill chunk's transients OTHER than its
+// attention scores (those grow with the context and are the plan's own workspace term,
+// `TensorModelFacts::prefill_workspace_bytes`) — measured 0.28-0.59 GB for one row at chunks of
+// 512-2,048 and 1.22 GB for five rows at 2,048 (27B layers, 2 localhost ranks, 2026-09-26),
+// inside the 1.8+ GB this ratio grants any 27B plan. The pipeline runner applies NO multiplier: the Flash soak's peaks were
 // 1.055 / 1.092 × the fork's OLD plan (0.36 GiB modeled workspace), but the fork's current plan
 // for the same shape (split 20, context 8,192, batch 2 — the soak ran 130 two-request batches;
 // `plan --json`, 272cb0643) carries MacBook 61.50 / workhorse 42.66 GiB against measured peaks of
@@ -73,6 +77,18 @@ pub const PIPELINE_DEFAULT_SLOTS: u32 = 2;
 pub const HANG_MEDIAN_MULTIPLE: f64 = 10.0;
 // ratio: the soak's rule held its verdict until 3 samples of the measure existed.
 pub const HANG_MIN_SAMPLES: usize = 3;
+// measured: TENSOR RUNNER — mlx_lm 0.31.3's own prefill chunk (`--prefill-step-size` default,
+// server.py:1866; BatchGenerator's `prefill_step_size`), the largest chunk the plan grants. The
+// launch hands it to mlx_lm explicitly, so the engine runs the chunk the plan charged whatever
+// its default becomes; the rank shrinks it per step to the plan's workspace (rank_prefill.py).
+pub const TENSOR_PREFILL_STEP: u64 = 2048;
+// measured: TENSOR RUNNER — the peak of mlx_lm 0.31.3's batch cache operations over the batch's
+// padded KV (rows × the longest row's width × KV bytes per token, plus each row's recurrent
+// state), at the 27B's rank geometry (16 full-attention layers × 2 KV heads × 256; 2026-09-26,
+// Q-104): merge 1.49-1.64×, extend 1.55-1.96×, a partial split 2.13-2.16× (a split that moves
+// every row copies nothing in the wrapper; mlx_lm's own deep-copied it, 2.29×). A lone row costs
+// its KV once. Admission holds a batch's padded KV × this inside the plan's KV charge.
+pub const BATCH_KV_TRANSIENT_RATIO: f64 = 2.2;
 // ratio: policy — preflight charges the prompt cache one full allowed context's worth of KV per
 // rank on top of the live request's; the launch hands mlx_lm the sum
 // (`RankPlan::prompt_cache_limit_bytes`): each admission trims cached + live to it, and the cache

@@ -10,8 +10,9 @@
 //! The program is embedded here and passed base64 on the command line, so a node needs nothing
 //! installed beyond its interpreter: `rank_env.py` (the backend env, `emit`, the memory reporter —
 //! every rank), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
-//! then the runner's program — `rank_budget.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor
-//! split, under `NodeConfig::python`; the budget is what an absent max_tokens generates) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
+//! then the runner's program — `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
+//! `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
+//! what an absent max_tokens generates, the prefill modules what a step and a batch may hold) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
 //! layer split, under `NodeConfig::pipeline_python`).
 
 use std::collections::VecDeque;
@@ -26,7 +27,7 @@ use tokio::process::{Child, Command};
 
 use super::config::{Backend, DistributedConfig, NodeConfig};
 use super::exec::{sh_quote, SSH_OPTIONS};
-use super::plan::RankPlan;
+use super::plan::{RankPlan, TensorPrefill};
 
 /// The literal every goose rank carries on its command line, so `ps` can name a rank a previous
 /// goosed left behind (and `stop` can reclaim it per-pid).
@@ -43,6 +44,8 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_env.py"),
     include_str!("rank_live.py"),
     include_str!("rank_budget.py"),
+    include_str!("rank_prefill.py"),
+    include_str!("rank_batch.py"),
     include_str!("rank_wrapper.py")
 );
 const PIPELINE_PROGRAM: &str = concat!(
@@ -73,8 +76,15 @@ pub enum RankProgram {
     /// cache evicts, and every rank must evict alike, so a peer whose wrapper cannot bound cached +
     /// live at each insert must refuse the rank rather than join it. `mlxLmServerDoorbell` (a
     /// Q-66..Q-73 requester) still reads, with the bound off: that requester's policy.
+    ///
+    /// Tagged `mlxLmServerPrefill` since Q-104: `prefill` sizes every prefill step's chunk from
+    /// the batch it runs (the chunk a step takes must agree across ranks, or the collectives no
+    /// longer pair up) and holds a request rank 0 cannot fit beside the live batch, so a peer
+    /// whose wrapper chunks at mlx_lm's fixed step must refuse the rank. `mlxLmServerBounded` (a
+    /// Q-79 requester) still reads, with `prefill` absent: upstream chunking, no projection.
     #[serde(
-        rename = "mlxLmServerBounded",
+        rename = "mlxLmServerPrefill",
+        alias = "mlxLmServerBounded",
         alias = "mlxLmServerDoorbell",
         alias = "mlxLmServer"
     )]
@@ -105,6 +115,12 @@ pub enum RankProgram {
         /// insert, not only at admission.
         #[serde(default)]
         prompt_cache_live_bound: bool,
+        /// The plan's prefill figures (Q-104): `--prefill-step-size`, the workspace every step
+        /// stays inside, and the per-token costs rank 0 projects a batch's KV with before it
+        /// admits a request. Absent in an older requester's spec: upstream chunking, no
+        /// projection.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prefill: Option<TensorPrefill>,
     },
     /// The fork's `pipeline_qwen4_serve.serve` under `pipeline_rank.py` (layer split): the exact
     /// `pipeline_qwen4 serve` arguments, parsed on the rank by the fork's own parser.
@@ -147,27 +163,68 @@ pub struct RankSpec {
 /// LRU prompt cache over the same requests, and a rank that evicts differently reuses a different
 /// prefix — its prefill then runs a different number of steps than its peers' and the collectives
 /// no longer pair up. [`TensorLaunch::for_ranks`] refuses plans whose bounds differ.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TensorLaunch {
     pub planned_bytes: u64,
     pub prompt_cache_limit_bytes: u64,
     pub prompt_cache_entries: u64,
     /// Per rank: it bounds only this process's free buffers, nothing a peer must mirror.
     pub mlx_cache_limit_bytes: u64,
+    /// The same on every rank: the smallest workspace any rank's plan affords.
+    pub prefill: TensorPrefill,
 }
 
 impl TensorLaunch {
-    pub fn from_plan(plan: &RankPlan) -> Self {
-        TensorLaunch {
+    pub fn from_plan(plan: &RankPlan) -> Result<Self> {
+        Ok(TensorLaunch {
             planned_bytes: plan.planned_bytes,
             prompt_cache_limit_bytes: plan.prompt_cache_limit_bytes(),
             prompt_cache_entries: plan.prompt_cache_entries,
             mlx_cache_limit_bytes: plan.mlx_cache_limit_bytes(),
-        }
+            prefill: plan.prefill.context(
+                "the plan carries no prefill figures (a plan made before Q-104): run preflight again",
+            )?,
+        })
     }
 
+    /// Every rank's launch figures. The prefill figures become one set: the smallest workspace
+    /// any rank's plan affords (inside every rank's plan), with the per-token costs every rank
+    /// shares — plans of different models cannot be launched together.
     pub fn for_ranks(plans: &[&RankPlan]) -> Result<Vec<Self>> {
-        let launches: Vec<Self> = plans.iter().map(|plan| Self::from_plan(plan)).collect();
+        let mut launches = plans
+            .iter()
+            .map(|plan| Self::from_plan(plan))
+            .collect::<Result<Vec<Self>>>()?;
+        if let Some(first) = launches.first().map(|l| l.prefill) {
+            let costs = |p: &TensorPrefill| {
+                (
+                    p.step,
+                    p.pair_bytes,
+                    p.kv_bytes_per_token,
+                    p.sequence_state_bytes,
+                )
+            };
+            if let Some((rank, other)) = launches
+                .iter()
+                .enumerate()
+                .find(|(_, launch)| costs(&launch.prefill) != costs(&first))
+            {
+                bail!(
+                    "the ranks' prefill costs differ (rank 0: {:?}, rank {rank}: {:?}): every \
+                     tensor rank must chunk and admit identically",
+                    costs(&first),
+                    costs(&other.prefill)
+                );
+            }
+            let workspace = launches
+                .iter()
+                .map(|l| l.prefill.workspace_bytes)
+                .min()
+                .unwrap_or(first.workspace_bytes);
+            for launch in &mut launches {
+                launch.prefill.workspace_bytes = workspace;
+            }
+        }
         let bounds = |launch: &Self| (launch.prompt_cache_limit_bytes, launch.prompt_cache_entries);
         if let Some(first) = launches.first() {
             if let Some((rank, other)) = launches
@@ -208,6 +265,7 @@ pub fn rank_specs(
             doorbell: true,
             mlx_cache_limit_bytes: Some(launch.mlx_cache_limit_bytes),
             prompt_cache_live_bound: true,
+            prefill: Some(launch.prefill),
         }
     })
 }
@@ -217,13 +275,15 @@ pub fn rank_specs(
 /// (`--slots`: the fork re-plans at load for that many full-context sequences and admits requests
 /// by that KV budget; `--max-batch` = the same count, the rows proven per batch), and the split
 /// preflight approved (`--split` = ranks 1..N-1's starts), so the fork loads exactly that split
-/// instead of re-balancing on its own load-time figures.
+/// instead of re-balancing on its own load-time figures, and the prefill chunk whose attention
+/// scores preflight fitted beside the fork's plan (`--prefill-step`, `RankPlan::prefill_step`).
 pub fn pipeline_serve_args(
     config: &DistributedConfig,
     node: &NodeConfig,
     served_id: &str,
     context: u64,
     split: &str,
+    prefill_step: u64,
 ) -> Vec<String> {
     [
         "--model",
@@ -242,6 +302,8 @@ pub fn pipeline_serve_args(
         &config.slots().to_string(),
         "--split",
         split,
+        "--prefill-step",
+        &prefill_step.to_string(),
     ]
     .iter()
     .map(|a| a.to_string())
@@ -254,11 +316,12 @@ pub fn pipeline_rank_specs(
     served_id: &str,
     context: u64,
     split: &str,
+    prefill_step: u64,
     memory_report_seconds: f64,
 ) -> Vec<RankSpec> {
     base_specs(config, served_id, memory_report_seconds, |_, node| {
         RankProgram::PipelineServe {
-            serve_args: pipeline_serve_args(config, node, served_id, context, split),
+            serve_args: pipeline_serve_args(config, node, served_id, context, split, prefill_step),
         }
     })
 }
@@ -546,12 +609,26 @@ mod tests {
     use super::*;
     use crate::distributed::config::tests::two_mac_config;
 
+    /// The 27B's prefill figures on 2 ranks at E2E #2's 262,144-token plan (plan.rs's fixture):
+    /// one row's 2,048-token chunk at the full context.
+    pub(crate) fn e2e_prefill() -> TensorPrefill {
+        TensorPrefill {
+            step: 2_048,
+            workspace_bytes: 2_048 * 262_144 * 25,
+            pair_bytes: 25,
+            kv_bytes_per_token: 32_768,
+            sequence_state_bytes: 76_972_032,
+            batch_transient_ratio: crate::distributed::BATCH_KV_TRANSIENT_RATIO,
+        }
+    }
+
     fn launch(planned_bytes: u64, prompt_cache_limit_bytes: u64) -> TensorLaunch {
         TensorLaunch {
             planned_bytes,
             prompt_cache_limit_bytes,
             prompt_cache_entries: 3,
             mlx_cache_limit_bytes: planned_bytes / 10,
+            prefill: e2e_prefill(),
         }
     }
 
@@ -582,6 +659,7 @@ mod tests {
                 doorbell: true,
                 mlx_cache_limit_bytes: Some(2),
                 prompt_cache_live_bound: true,
+                prefill: Some(_),
             }
         ));
         assert!(specs[0].ring_hosts.is_none());
@@ -720,7 +798,8 @@ mod tests {
             crate::distributed::plan::tests::FLASH_PLAN_32K,
         )
         .unwrap();
-        let specs = pipeline_rank_specs(&config, "node-alias", 32_768, &plan.split_arg(), 2.0);
+        let specs =
+            pipeline_rank_specs(&config, "node-alias", 32_768, &plan.split_arg(), 2_048, 2.0);
         for (rank, spec) in specs.iter().enumerate() {
             let RankProgram::PipelineServe { serve_args } = &spec.program else {
                 panic!("{spec:?}");
@@ -744,6 +823,8 @@ mod tests {
                     "2",
                     "--split",
                     "19",
+                    "--prefill-step",
+                    "2048",
                 ]
             );
             assert_eq!(
@@ -771,7 +852,7 @@ mod tests {
         let mut four = config.clone();
         four.slots = Some(4);
         let RankProgram::PipelineServe { serve_args } =
-            &pipeline_rank_specs(&four, "node-alias", 8_192, "19", 2.0)[0].program
+            &pipeline_rank_specs(&four, "node-alias", 8_192, "19", 2_048, 2.0)[0].program
         else {
             unreachable!()
         };
@@ -856,7 +937,8 @@ mod tests {
         let mut config = pipeline_config();
         config.slots = Some(3);
         config.nodes[1].pipeline_python = Some("/usr/bin/python3".into());
-        let mut spec = pipeline_rank_specs(&config, "node-alias", 32_768, "19", 0.05).remove(1);
+        let mut spec =
+            pipeline_rank_specs(&config, "node-alias", 32_768, "19", 2_048, 0.05).remove(1);
         spec.memory_report_seconds = 0.05;
         let out = tokio::process::Command::new(spec.interpreter(&config.nodes[1]).unwrap())
             .args(python_args(&spec).unwrap())
@@ -899,7 +981,10 @@ mod tests {
         );
         assert_eq!(ready["max_batch"], 3);
         assert_eq!(ready["split"], "19");
-        assert_eq!(ready["prefill_step"], serde_json::Value::Null);
+        assert_eq!(
+            ready["prefill_step"], 2_048,
+            "the chunk preflight fitted the attention scores to, not the fork's default"
+        );
         assert_eq!(ready["rank"], 1);
         assert_eq!(ready["coordinator"], "192.168.0.1:32323");
         assert_eq!(
@@ -1003,6 +1088,161 @@ print("ok")
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
+    /// rank_prefill.py under a real interpreter, on E2E #2's plan (the 27B over 2 ranks at
+    /// 262,144 tokens: KV charge 17,333,813,248 B, workspace one row's 2,048-token chunk) and
+    /// Q-104's repro (turn 6: a ~51k-token turn with four summaries raised a rank 35 → 44.8 GB in
+    /// one second — five rows padded to the turn's width, their scores at once).
+    #[test]
+    fn the_prefill_plan_sizes_every_step_and_holds_what_the_batch_cannot_fit() {
+        let checks = r#"
+p = {"step": 2048, "workspace_bytes": 2048 * 262144 * 25, "pair_bytes": 25,
+     "kv_bytes_per_token": 32768, "sequence_state_bytes": 76972032,
+     "batch_transient_ratio": 2.2}
+limit = 17333813248
+assert prefill_chunk(p, 1, 262144, 256) == 2048, "the plan's own chunk at the full window"
+assert prefill_chunk(p, 5, 51200, 256) == 2048
+assert prefill_chunk(p, 5, 100000, 256) == 1024, "wider batches take smaller chunks"
+assert prefill_chunk(p, 8, 262144, 256) == 256
+assert prefill_chunk(p, 40, 262144, 256) == 51, "under one KV step: whole tokens, not zero"
+for rows, width in ((1, 262144), (5, 51200), (5, 100000), (8, 262144), (40, 262144)):
+    chunk = prefill_chunk(p, rows, width, 256)
+    assert chunk_overruns(p, rows, width, chunk) == 0, (rows, width, chunk)
+assert chunk_overruns(p, 1, 262144, 4096) == 2048 * 262144 * 25, "past the workspace: named"
+assert admits(p, limit, 0, 0, 262143), "an idle engine takes a full-window prompt"
+assert batch_kv_charge(p, 1, 262144) == 262144 * 32768 + 76972032, "a lone row: its KV once"
+# Q-104's turn 6: the ~51k-token turn joins four live summaries — five rows padded to 51,200:
+# 2.2 × 5 × 1.755 GB = 19.3 GB > 17.33. Four rows (13.8 GB... 15.4 GB) still fit.
+assert not admits(p, limit, 4, 72, 51200)
+assert admits(p, limit, 3, 72, 51200)
+assert batch_kv_charge(p, 5, 51200) > limit >= batch_kv_charge(p, 4, 51200)
+# E2E #2's 22:40:48 burst (the 36,027-token turn and four summaries): fits, 13.8 GB of 17.33.
+assert admits(p, limit, 4, 36027, 300)
+print("ok")
+"#;
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_prefill.py")))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    /// rank_batch.py against the REAL mlx_lm 0.31.3 (goose's provisioned tensor venv, when this
+    /// Mac has one): the split that moves every row leaves exactly what upstream's deep copy
+    /// leaves — uids, tokens, samplers, caches, offsets, the shared left padding dropped — while
+    /// holding the very cache objects; a partial split is upstream's; and a BatchGenerator's shape
+    /// counts a queued row at its cached prefix plus its prompt.
+    #[test]
+    fn the_moving_split_leaves_what_mlx_lms_split_leaves() {
+        let python = dirs::home_dir()
+            .unwrap()
+            .join(".goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python");
+        if !python.exists() {
+            eprintln!("skipped: {} absent", python.display());
+            return;
+        }
+        let checks = r#"
+import mlx.core as mx
+
+# On the CPU: the cache operations are what is proven here, and a test never waits on the GPU.
+mx.set_default_device(mx.cpu)
+from mlx_lm.generate import BatchGenerator, PromptProcessingBatch
+from mlx_lm.models.cache import BatchKVCache
+
+def row(width, seed):
+    mx.random.seed(seed)
+    cache = []
+    for layer in range(4):
+        if layer % 2:
+            c = KVCache()
+            c.keys = mx.random.normal((1, 2, width, 8)).astype(mx.bfloat16)
+            c.values = mx.random.normal((1, 2, width, 8)).astype(mx.bfloat16)
+            c.offset = width
+        else:
+            c = ArraysCache(2)
+            c[0] = mx.random.normal((1, 3, 16))
+            c[1] = mx.random.normal((1, 2, 4, 4))
+        cache.append(c)
+    return cache
+
+def batch(widths, seed):
+    return PromptProcessingBatch(None, list(range(len(widths))), [row(w, seed + i) for i, w in enumerate(widths)],
+                                 tokens=[[7] * w for w in widths], max_tokens=[5] * len(widths))
+
+def arrays(caches):
+    out = []
+    for c in caches:
+        state = c.state if isinstance(c.state, (list, tuple)) else [c.state]
+        out += [x for x in state if isinstance(x, mx.array)]
+        if isinstance(c, BatchKVCache):
+            out += [c.offset, c.left_padding, mx.array(c._idx)]
+    return out
+
+def same(a, b):
+    fields = ("uids", "tokens", "samplers", "logits_processors", "max_tokens")
+    assert all(getattr(a, f) == getattr(b, f) for f in fields), [(f, getattr(a, f), getattr(b, f)) for f in fields]
+    xs, ys = arrays(a.prompt_cache), arrays(b.prompt_cache)
+    assert len(xs) == len(ys) and all(x.shape == y.shape and mx.array_equal(x, y).item() for x, y in zip(xs, ys))
+
+for widths, leave in (([64], [0]), ([64, 8, 8], [0, 1, 2]), ([64, 32, 8], [1]), ([64, 32, 8], [0, 2])):
+    up, ours = batch(widths, 3), batch(widths, 3)
+    held = [id(c) for c in ours.prompt_cache]
+    up_left, ours_left = PromptProcessingBatch.split(up, leave), moving_split(ours, leave, PromptProcessingBatch.split)
+    same(up, ours)
+    same(up_left, ours_left)
+    if len(leave) == len(widths):
+        assert [id(c) for c in ours_left.prompt_cache] == held, "every row left: the caches moved"
+        assert ours.prompt_cache == [] and ours.uids == []
+
+# Rows sharing left padding (the shift upstream's filter makes), then every row leaves.
+up, ours = batch([64, 40], 5), batch([64, 40], 5)
+for b in (up, ours):
+    for c in b.prompt_cache:
+        if isinstance(c, BatchKVCache):
+            c.keys = mx.pad(c.keys, [(0, 0), (0, 0), (3, 0), (0, 0)])
+            c.values = mx.pad(c.values, [(0, 0), (0, 0), (3, 0), (0, 0)])
+            c.left_padding = c.left_padding + 3
+            c._idx += 3
+same(PromptProcessingBatch.split(up, [0, 1]), moving_split(ours, [0, 1], PromptProcessingBatch.split))
+
+# BatchGenerator's constructor reads Metal's working set; its queue is what is read here, filled
+# by its own insert_segments.
+from collections import deque
+from mlx_lm.generate import GenerationBatch, SequenceStateMachine
+generator = BatchGenerator.__new__(BatchGenerator)
+generator._old_wired_limit = None
+generator.max_tokens, generator.logits_processors, generator._uid_count = 128, [], 0
+generator._default_state_machine = SequenceStateMachine({}, initial="normal")
+generator._unprocessed_sequences, generator._currently_processing = deque(), []
+generator._prompt_batch = PromptProcessingBatch.empty(None, None)
+generator._generation_batch = GenerationBatch.empty(None, None)
+generator.insert_segments(segments=[[[1] * 100]], caches=[row(64, 9)], all_tokens=[[1] * 64], max_tokens=[5])
+generator.insert_segments(segments=[[[1] * 10]], caches=[row(8, 11)], all_tokens=[[1] * 8], max_tokens=[5])
+assert batch_shape(generator) == (2, 164), batch_shape(generator)
+print("ok")
+"#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!(
+                "{}{}{checks}",
+                include_str!("rank_prefill.py"),
+                include_str!("rank_batch.py")
+            ))
+            .output()
+            .expect("the tensor venv's python runs");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
     /// The tensor program a rank receives carries the budget ahead of the wrapper that calls it,
     /// and the spec hands it the launch's window under the key the wrapper reads
     /// (`spec["context_window"]`).
@@ -1025,6 +1265,8 @@ print("ok")
                 include_str!("rank_env.py"),
                 include_str!("rank_live.py"),
                 include_str!("rank_budget.py"),
+                include_str!("rank_prefill.py"),
+                include_str!("rank_batch.py"),
                 include_str!("rank_wrapper.py")
             )
         );
@@ -1048,9 +1290,47 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerBounded");
+        assert_eq!(json["program"], "mlxLmServerPrefill");
         assert_eq!(json["doorbell"], true);
         assert_eq!(json["prompt_cache_live_bound"], true);
+        assert_eq!(json["prefill"]["step"], 2_048);
+        assert_eq!(json["prefill"]["workspace_bytes"], 2_048u64 * 262_144 * 25);
+
+        // A Q-79 requester's spec (the bounded tag, no prefill plan) runs upstream chunking here.
+        let mut bounded = json.clone();
+        bounded["program"] = "mlxLmServerBounded".into();
+        bounded.as_object_mut().unwrap().remove("prefill");
+        let read: RankSpec = serde_json::from_value(bounded).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                prompt_cache_live_bound: true,
+                prefill: None,
+                ..
+            }
+        ));
+
+        // A Q-79 peer's goosed (its enum knows the bounded tag, not the prefill one) refuses
+        // this spec: its wrapper would chunk at mlx_lm's fixed step while this Mac's shrinks it.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum BoundedProgram {
+            #[serde(
+                rename = "mlxLmServerBounded",
+                alias = "mlxLmServerDoorbell",
+                alias = "mlxLmServer"
+            )]
+            MlxLmServer {
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused = serde_json::from_value::<BoundedProgram>(json.clone()).unwrap_err();
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
 
         // A Q-66..Q-73 requester's spec (the doorbell tag, no live bound, no MLX cache figure)
         // runs that requester's own eviction policy here.
@@ -1173,6 +1453,24 @@ print("ok")
         )
         .unwrap();
         std::fs::write(site.join("mlx_lm/__init__.py"), "__version__ = '0.31.3'\n").unwrap();
+        std::fs::create_dir_all(site.join("mlx_lm/models")).unwrap();
+        std::fs::write(site.join("mlx_lm/models/__init__.py"), "").unwrap();
+        std::fs::write(
+            site.join("mlx_lm/models/cache.py"),
+            "class KVCache: pass\n\
+             class ArraysCache: pass\n\
+             class BatchKVCache:\n\
+             \x20   step = 256\n",
+        )
+        .unwrap();
+        std::fs::write(
+            site.join("mlx_lm/generate.py"),
+            "class PromptProcessingBatch:\n\
+             \x20   def prompt(self, tokens): pass\n\
+             \x20   def split(self, indices): pass\n\
+             \x20   def filter(self, keep): pass\n",
+        )
+        .unwrap();
         std::fs::write(
             site.join("mlx_lm/server.py"),
             "import argparse, json, os, sys\n\
@@ -1181,9 +1479,15 @@ print("ok")
              \x20       self.max_size, self.max_bytes, self.trims = max_size, max_bytes, []\n\
              \x20   def insert_cache(self, model, tokens, prompt_cache, *, cache_type='assistant'): pass\n\
              \x20   def trim_to(self, *, n_sequences=None, n_bytes=None): self.trims.append(n_bytes)\n\
+             class _Rows(list):\n\
+             \x20   prompt_cache = []\n\
              class BatchGenerator:\n\
              \x20   prompt_cache_nbytes = 7\n\
+             \x20   def __init__(self):\n\
+             \x20       self._generation_batch, self._prompt_batch = _Rows(), _Rows()\n\
+             \x20       self._unprocessed_sequences, self._currently_processing = [], []\n\
              \x20   def close(self): pass\n\
+             \x20   def next(self): return [], []\n\
              class ResponseGenerator:\n\
              \x20   def _next_request(self, timeout=None): pass\n\
              \x20   def generate(self, request, args, progress_callback=None): pass\n\
@@ -1212,6 +1516,7 @@ print("ok")
              \x20   p.add_argument('--model'); p.add_argument('--host'); p.add_argument('--port', type=int)\n\
              \x20   p.add_argument('--prompt-cache-size', type=int, default=10)\n\
              \x20   p.add_argument('--prompt-cache-bytes', type=int)\n\
+             \x20   p.add_argument('--prefill-step-size', type=int)\n\
              \x20   args = p.parse_args()\n\
              \x20   run(args.host, args.port, ModelProvider(args))\n",
         )
@@ -1265,6 +1570,7 @@ print("ok")
             prompt_cache_limit_bytes: 9_431_744_512,
             prompt_cache_entries: 110,
             mlx_cache_limit_bytes: 2_745_621_658,
+            prefill: e2e_prefill(),
         };
         let spec = rank_specs(&config, "node-alias", &[e2e, e2e], 141_568, 2.0).remove(1);
         let served = boot_against_stand_ins(spec, false).await;
@@ -1278,6 +1584,11 @@ print("ok")
             "an insert beside a live batch keeps cached + live inside the plan's KV charge"
         );
         assert_eq!(flag(&served, "--prompt-cache-size").as_deref(), Some("110"));
+        assert_eq!(
+            flag(&served, "--prefill-step-size").as_deref(),
+            Some("2048"),
+            "mlx_lm runs the chunk the plan charged, whatever its own default becomes"
+        );
         assert_eq!(
             flag(&served, "--prompt-cache-bytes").as_deref(),
             Some("9431744512")
@@ -1312,6 +1623,7 @@ print("ok")
             prompt_cache_bytes,
             mlx_cache_limit_bytes,
             prompt_cache_live_bound,
+            prefill,
             ..
         } = &mut spec.program
         {
@@ -1320,8 +1632,14 @@ print("ok")
             *prompt_cache_bytes = Some(4_715_872_256);
             *mlx_cache_limit_bytes = None;
             *prompt_cache_live_bound = false;
+            *prefill = None;
         }
         let served = boot_against_stand_ins(spec, false).await;
+        assert_eq!(
+            flag(&served, "--prefill-step-size"),
+            None,
+            "that requester chunks at mlx_lm's own step, so this rank does too"
+        );
         assert_eq!(
             served["caps"]["cache_limit"], 99,
             "that requester's rule: the ceiling (100) less the planned bytes (1)"

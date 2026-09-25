@@ -14,8 +14,10 @@ mod imp {
     use goose_sidecar::distributed::link_control::{
         self, DiscoverRequest, ExecAnswer, LinkCallError, LinkOp,
     };
-    use goose_sidecar::distributed::plan::{self as dplan};
-    use goose_sidecar::distributed::preflight::{loaded_files, run_fork_planner, NodeFigures};
+    use goose_sidecar::distributed::plan::{self as dplan, read_pipeline_attention, KV_CACHE_STEP};
+    use goose_sidecar::distributed::preflight::{
+        fit_prefill_chunk, loaded_files, run_fork_planner, NodeFigures,
+    };
     use goose_sidecar::distributed::probe::parse_gpu_ceiling;
     use goose_sidecar::distributed::{
         DistributedConfig, NodeExec, Runner, SystemExec, PIPELINE_DEFAULT_SLOTS,
@@ -500,24 +502,57 @@ mod imp {
             }
         }
         let exec: Arc<dyn NodeExec> = Arc::new(SystemExec);
-        let mut plan = match run_fork_planner(&config, &exec, &python, &figures, context).await {
-            Ok(p) => p,
-            Err(e) => return Some(Err(format!("{e:#}"))),
-        };
+        let mut plan =
+            match run_fork_planner(&config, &exec, &python, &figures, context, None).await {
+                Ok(p) => p,
+                Err(e) => return Some(Err(format!("{e:#}"))),
+            };
         if context.is_none() {
             let mut tried = std::collections::BTreeSet::from([plan.context]);
             while let Some(ceiling) = plan
                 .max_context
                 .filter(|c| (*c > plan.context || !plan.fits) && tried.insert(*c))
             {
-                plan = match run_fork_planner(&config, &exec, &python, &figures, Some(ceiling))
-                    .await
-                {
-                    Ok(p) => p,
-                    Err(e) => return Some(Err(format!("{e:#}"))),
-                };
+                plan =
+                    match run_fork_planner(&config, &exec, &python, &figures, Some(ceiling), None)
+                        .await
+                    {
+                        Ok(p) => p,
+                        Err(e) => return Some(Err(format!("{e:#}"))),
+                    };
             }
         }
+        // The prefill's attention scores the fork's workspace leaves out, fitted the way preflight
+        // fits them (a derived context the smallest chunk cannot fit is lowered).
+        let attention = match read_pipeline_attention(local_dir) {
+            Ok(a) => a,
+            Err(e) => return Some(Err(format!("{e:#}"))),
+        };
+        let (plan, chunk, _) = match fit_prefill_chunk(
+            &config,
+            &exec,
+            &python,
+            &figures,
+            &attention,
+            plan,
+            context.is_none(),
+        )
+        .await
+        {
+            Ok(fitted) => fitted,
+            Err(e) => return Some(Err(format!("{e:#}"))),
+        };
+        let charged = if chunk > 0 { chunk } else { KV_CACHE_STEP };
+        let slots = u64::from(plan.slots);
+        let stages: Vec<(u64, u64)> = plan
+            .stages
+            .iter()
+            .map(|s| {
+                let scores = attention.scores_bytes(s, slots, charged, plan.context);
+                (s.total_bytes + scores, s.budget_bytes)
+            })
+            .collect();
+        let fits = plan.fits && chunk > 0 && stages.iter().all(|(need, budget)| need <= budget);
         let layers: f64 = plan
             .stages
             .iter()
@@ -525,13 +560,9 @@ mod imp {
             .sum::<f64>()
             .max(1.0);
         Some(Ok(PipelineFitInput {
-            fits: plan.fits,
-            context: plan.fits.then_some(plan.context),
-            stages: plan
-                .stages
-                .iter()
-                .map(|s| (s.total_bytes, s.budget_bytes))
-                .collect(),
+            fits,
+            context: fits.then_some(plan.context),
+            stages,
             layer_shares: plan
                 .stages
                 .iter()

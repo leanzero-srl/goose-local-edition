@@ -1117,16 +1117,20 @@ pub async fn run_preflight(
                 ),
                 None => format!(
                     "{measured}; budget {} = min(available − RAM × {:.2}, GPU ceiling {}); \
-                     planned {} (weights {} + state {} + workspace {} + prompt cache {}) × {:.2} = {}",
+                     planned {} (weights {} + state {} + prompt cache {}) × {:.2} + prefill \
+                     workspace {} = {}",
                     gib(plan.budget_bytes),
                     super::AVAILABLE_MARGIN_RATIO,
-                    answer.ceiling.map(gib).unwrap_or_else(|| "unread".to_string()),
+                    answer
+                        .ceiling
+                        .map(gib)
+                        .unwrap_or_else(|| "unread".to_string()),
                     gib(plan.planned_bytes),
                     gib(plan.weights_bytes),
                     gib(plan.state_bytes),
-                    gib(plan.workspace_bytes),
                     gib(plan.prompt_cache_bytes),
                     super::RUNTIME_OVERHEAD_RATIO,
+                    gib(plan.workspace_bytes),
                     gib(plan.with_overhead_bytes),
                 ),
             };
@@ -1290,28 +1294,46 @@ fn plan_tensor(
         }
     };
     report.context_limit = Some(context);
-    for (rank, figures) in budgets.iter().enumerate() {
-        plans[rank] = Some(facts.rank_plan(ranks, rank as u64, context.max(1), figures.budget));
+    let own: Vec<RankPlan> = budgets
+        .iter()
+        .enumerate()
+        .map(|(rank, figures)| facts.rank_plan(ranks, rank as u64, context.max(1), figures.budget))
+        .collect();
+    let workspace = own.iter().map(|p| p.workspace_bytes).min().unwrap_or(0);
+    for (rank, plan) in own.into_iter().enumerate() {
+        plans[rank] = Some(plan.sharing_workspace(workspace));
     }
+    let chunk = plans
+        .iter()
+        .flatten()
+        .find_map(|p| p.full_context_chunk(context.max(1)))
+        .unwrap_or(0);
     report.checks.push(Check::pass(
         "plan",
         format!(
             "tensor split over {ranks} ranks: {} per rank weights ({} sharded / {ranks} + {} embed+lm_head whole), \
-             KV {} per token per rank, context {context} ({}), largest that fits {ceiling}",
+             KV {} per token per rank, context {context} ({}), largest that fits {ceiling}; \
+             prefill workspace {} per rank = one row's {chunk}-token chunk at the full context \
+             ({} B per chunk × context token: {} query heads per rank × {} B scores + the mask; \
+             wider batches take smaller chunks)",
             gib(facts.weights_per_rank(ranks)),
             gib(facts.sharded_bytes),
             gib(facts.replicated_bytes),
             facts.kv_bytes_per_token(ranks),
             report.context_source.as_deref().unwrap_or_default(),
+            gib(workspace),
+            facts.prefill_pair_bytes(ranks),
+            facts.attention_heads / ranks,
+            facts.act_bytes,
         ),
     ));
 }
 
 /// One pipeline rank's plan line: its layers and the fork's bytes against the fork's budget, with
 /// the available figure and GPU ceiling the fork built that budget from.
-fn pipeline_stage_line(stage: &PipelineStage, ratios: &PipelineRatios) -> String {
+fn pipeline_stage_line(stage: &PipelineStage, plan: &RankPlan, ratios: &PipelineRatios) -> String {
     stage_line(
-        &stage.rank_plan(),
+        plan,
         ratios,
         stage.available_bytes,
         Some(stage.ceiling_bytes),
@@ -1326,7 +1348,7 @@ fn stage_line(
 ) -> String {
     format!(
         "layers [{}, {}): weights {} + state {} + workspace {} = {} of budget {} = \
-         min(available {} − RAM × {:.2}, GPU ceiling {}) (the fork's plan, {:.0}%) → {}",
+         min(available {} − RAM × {:.2}, GPU ceiling {}) (the fork's plan with the prefill's attention scores, {:.0}%) → {}",
         plan.layer_start,
         plan.layer_end,
         gib(plan.weights_bytes),
@@ -1351,6 +1373,7 @@ pub async fn run_fork_planner(
     python: &str,
     budgets: &[NodeFigures],
     context: Option<u64>,
+    prefill_step: Option<u64>,
 ) -> Result<PipelinePlan> {
     let rank0 = &config.nodes[0];
     let nodes: Vec<String> = config
@@ -1377,6 +1400,9 @@ pub async fn run_fork_planner(
     script.push_str(&format!(" --batch {}", config.slots()));
     if let Some(context) = context {
         script.push_str(&format!(" --context {context}"));
+    }
+    if let Some(step) = prefill_step {
+        script.push_str(&format!(" --prefill-step {step}"));
     }
     let out = exec.run(None, &script).await?;
     let failed = || {
@@ -1405,7 +1431,53 @@ pub async fn run_fork_planner(
         out.status,
         plan.fits
     );
+    if let Some(step) = prefill_step {
+        anyhow::ensure!(
+            plan.prefill_step == step,
+            "asked the fork planner for a {step}-token prefill chunk, it planned {}",
+            plan.prefill_step
+        );
+    }
     Ok(plan)
+}
+
+/// The fork's plan and the prefill chunk its attention scores fit (`PipelineAttention`, which
+/// the fork's workspace model leaves out): the largest chunk whose scores fit every stage's room
+/// above the fork's total. A `derived` context the smallest chunk cannot fit is lowered to the
+/// context it can (the fork's bytes shrink with it, so each step has at least the room it was
+/// computed on — the walk ends on progress, never on a count); a requested one comes back with
+/// chunk 0 for the caller to refuse. A chunk below the fork's own is planned again at it, so the
+/// fork's workspace, the plan every rank re-runs at load and the serve all read that chunk.
+/// Returns (plan, chunk, whether the context was lowered). Preflight and the placement advisor
+/// both fit through here.
+pub async fn fit_prefill_chunk(
+    config: &DistributedConfig,
+    exec: &Arc<dyn NodeExec>,
+    python: &str,
+    budgets: &[NodeFigures],
+    attention: &plan::PipelineAttention,
+    mut planned: PipelinePlan,
+    derived: bool,
+) -> Result<(PipelinePlan, u64, bool)> {
+    let mut chunk = attention.chunk(&planned, planned.prefill_step);
+    let mut lowered = false;
+    if derived {
+        let mut tried = std::collections::BTreeSet::from([planned.context]);
+        while chunk == 0 && planned.fits {
+            let ceiling = attention.context_ceiling(&planned);
+            if ceiling == 0 || !tried.insert(ceiling) {
+                break;
+            }
+            planned = run_fork_planner(config, exec, python, budgets, Some(ceiling), None).await?;
+            chunk = attention.chunk(&planned, planned.prefill_step);
+            lowered = true;
+        }
+    }
+    if planned.fits && chunk > 0 && chunk < planned.prefill_step {
+        let context = Some(planned.context);
+        planned = run_fork_planner(config, exec, python, budgets, context, Some(chunk)).await?;
+    }
+    Ok((planned, chunk, lowered))
 }
 
 /// The qwen4_exp plan, read from the fork. A requested context is planned as asked. A derived one
@@ -1422,6 +1494,13 @@ async fn plan_pipeline(
     plans: &mut [Option<RankPlan>],
 ) -> Option<PipelineRatios> {
     let python = config.nodes[0].pipeline_python.as_deref()?;
+    let attention = match plan::read_pipeline_attention(Path::new(&config.nodes[0].model_dir)) {
+        Ok(attention) => attention,
+        Err(e) => {
+            report.checks.push(Check::fail("plan", format!("{e:#}")));
+            return None;
+        }
+    };
     report.context_source = Some(
         if config.context.is_some() {
             "requested"
@@ -1431,7 +1510,7 @@ async fn plan_pipeline(
         .to_string(),
     );
     let planned = if let Some(context) = config.context {
-        match run_fork_planner(config, exec, python, budgets, Some(context)).await {
+        match run_fork_planner(config, exec, python, budgets, Some(context), None).await {
             Ok(plan) => plan,
             Err(e) => {
                 report.checks.push(Check::fail("plan", format!("{e:#}")));
@@ -1453,7 +1532,7 @@ async fn plan_pipeline(
                 )
             })
             .collect();
-        let mut derived = match run_fork_planner(config, exec, python, &margin, None).await {
+        let mut derived = match run_fork_planner(config, exec, python, &margin, None, None).await {
             Ok(plan) => plan,
             Err(e) => {
                 report.checks.push(Check::fail("plan", format!("{e:#}")));
@@ -1465,18 +1544,20 @@ async fn plan_pipeline(
             .max_context
             .filter(|c| (*c > derived.context || !derived.fits) && tried.insert(*c))
         {
-            derived = match run_fork_planner(config, exec, python, &margin, Some(ceiling)).await {
-                Ok(plan) => plan,
-                Err(e) => {
-                    report.checks.push(Check::fail("plan", format!("{e:#}")));
-                    return None;
-                }
-            };
+            derived =
+                match run_fork_planner(config, exec, python, &margin, Some(ceiling), None).await {
+                    Ok(plan) => plan,
+                    Err(e) => {
+                        report.checks.push(Check::fail("plan", format!("{e:#}")));
+                        return None;
+                    }
+                };
         }
         if !derived.fits {
             derived
         } else {
-            match run_fork_planner(config, exec, python, budgets, Some(derived.context)).await {
+            match run_fork_planner(config, exec, python, budgets, Some(derived.context), None).await
+            {
                 Ok(plan) => plan,
                 Err(e) => {
                     report.checks.push(Check::fail("plan", format!("{e:#}")));
@@ -1485,8 +1566,34 @@ async fn plan_pipeline(
             }
         }
     };
+    let fork_ceiling = planned.max_context;
+    let derived = config.context.is_none();
+    let (planned, chunk, lowered) = match fit_prefill_chunk(
+        config, exec, python, budgets, &attention, planned, derived,
+    )
+    .await
+    {
+        Ok(fitted) => fitted,
+        Err(e) => {
+            report.checks.push(Check::fail("plan", format!("{e:#}")));
+            return None;
+        }
+    };
+    let charged = if chunk > 0 {
+        chunk
+    } else {
+        plan::KV_CACHE_STEP
+    };
     report.context_limit = Some(planned.context);
-    report.max_context_fits = planned.max_context;
+    // The fork's ceiling knows nothing of the scores: where they bound the context, the report
+    // says the context they allow instead.
+    report.max_context_fits = if chunk == 0 {
+        Some(attention.context_ceiling(&planned))
+    } else if lowered {
+        fork_ceiling.map(|fork| fork.min(planned.context))
+    } else {
+        planned.max_context
+    };
     if planned.stages.len() != config.size() {
         report.checks.push(Check::fail(
             "plan",
@@ -1510,26 +1617,43 @@ async fn plan_pipeline(
         return None;
     }
     report.slots = Some(planned.slots);
-    let lines: Vec<String> = planned
+    let slots = u64::from(planned.slots);
+    let stage_plans: Vec<RankPlan> = planned
         .stages
         .iter()
         .map(|stage| {
-            let rank_plan = stage.rank_plan();
+            let scores = attention.scores_bytes(stage, slots, charged, planned.context);
+            stage.rank_plan_with_scores(scores, charged)
+        })
+        .collect();
+    let lines: Vec<String> = planned
+        .stages
+        .iter()
+        .zip(&stage_plans)
+        .map(|(stage, rank_plan)| {
             let line = format!(
                 "rank {} ({}) {}",
                 stage.rank,
                 config.nodes[stage.rank as usize].name,
-                pipeline_stage_line(stage, &planned.ratios)
+                pipeline_stage_line(stage, rank_plan, &planned.ratios)
             );
-            plans[stage.rank as usize] = Some(rank_plan);
+            plans[stage.rank as usize] = Some(rank_plan.clone());
             line
         })
         .collect();
+    let widest = planned
+        .stages
+        .iter()
+        .map(|stage| attention.scores_bytes(stage, slots, charged, planned.context))
+        .max()
+        .unwrap_or(0);
     let head = format!(
         "pipeline split (fork planner {}), context {} ({}), batch {slots} = {slots} full-context \
          slots (each rank's state and workspace are planned for {slots} sequences of the whole \
          context, so the context already accounts for the batch width), largest context this \
-         split fits {}: {}",
+         split fits {}; prefill chunk {charged} tokens (the fork's own {}), whose attention \
+         scores — {} on the widest stage, {} query heads × chunk × context × {} B per row, not in \
+         the fork's workspace model — are in each stage's workspace below: {}",
         &PIPELINE_FORK_COMMIT[..9],
         planned.context,
         report.context_source.as_deref().unwrap_or_default(),
@@ -1537,10 +1661,26 @@ async fn plan_pipeline(
             .max_context
             .map(|c| c.to_string())
             .unwrap_or_else(|| "none".to_string()),
+        planned.prefill_step,
+        gib(widest),
+        attention.attention_heads,
+        attention.act_bytes,
         lines.join("; "),
         slots = planned.slots,
     );
-    if planned.fits {
+    let scores_fit = chunk > 0 && stage_plans.iter().all(|p| p.fits);
+    if planned.fits && !scores_fit {
+        report.checks.push(Check::fail(
+            "plan",
+            format!(
+                "{head} — the prefill's attention scores do not fit: even a {charged}-token chunk \
+                 needs {} on a stage beside the fork's plan; the largest context whose scores \
+                 fit is {}",
+                gib(widest),
+                attention.context_ceiling(&planned)
+            ),
+        ));
+    } else if planned.fits {
         report.pipeline_starts = Some(planned.starts.clone());
         report.checks.push(Check::pass("plan", head));
     } else {
@@ -1721,11 +1861,21 @@ pub(crate) mod tests {
         ) -> crate::distributed::exec::BoxFuture<'a, Result<ExecOutput>> {
             assert!(host.is_none(), "the planner runs on this Mac");
             self.seen.lock().unwrap().push(script.to_string());
-            let context = script
-                .split(" --context ")
-                .nth(1)
-                .map(|c| c.trim().parse().unwrap());
-            let out = (self.answer)(context);
+            let flag = |name: &str| {
+                script
+                    .split(name)
+                    .nth(1)
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .map(|value| value.parse::<u64>().unwrap())
+            };
+            let mut out = (self.answer)(flag(" --context "));
+            if let Some(step) = flag(" --prefill-step ") {
+                out.stdout = out.stdout.replacen(
+                    "\"prefill_step\": 2048",
+                    &format!("\"prefill_step\": {step}"),
+                    1,
+                );
+            }
             Box::pin(async move { Ok(out) })
         }
     }
@@ -1746,12 +1896,16 @@ pub(crate) mod tests {
         }
     }
 
-    fn pipeline_config() -> DistributedConfig {
+    /// The two-Mac config on the pipeline runner, rank 0's model dir holding the Flash
+    /// attention layout (keep the dir alive for the test).
+    fn pipeline_config() -> (DistributedConfig, tempfile::TempDir) {
         let mut config = two_mac_config();
         for node in &mut config.nodes {
             node.pipeline_python = Some("/fork/bin/python".to_string());
         }
-        config
+        let dir = plan::tests::flash_attention_dir();
+        config.nodes[0].model_dir = dir.path().display().to_string();
+        (config, dir)
     }
 
     fn budgets() -> Vec<NodeFigures> {
@@ -1775,7 +1929,7 @@ pub(crate) mod tests {
                 other => panic!("unexpected context {other:?}"),
             },
         });
-        let config = pipeline_config();
+        let (config, _dir) = pipeline_config();
         let mut report = empty_report(&config);
         let mut plans = vec![None; 2];
         let ratios = plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
@@ -1812,7 +1966,7 @@ pub(crate) mod tests {
             },
         });
         let exec: Arc<dyn NodeExec> = planner.clone();
-        let config = pipeline_config();
+        let (config, _dir) = pipeline_config();
         let mut report = empty_report(&config);
         let mut plans = vec![None; 2];
         plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
@@ -1821,17 +1975,110 @@ pub(crate) mod tests {
         // the GPU ceilings go through unchanged.
         let margin = "--node 'MacBook-Pro:128.0000:87.4400:107.5200' --node 'workhorse:96.0000:65.0800:77.7600'";
         let real = "--node 'MacBook-Pro:128.0000:90.0000:107.5200' --node 'workhorse:96.0000:67.0000:77.7600'";
-        let (last, walk) = seen.split_last().unwrap();
-        assert_eq!(walk.len(), 3, "{seen:?}");
+        let (walk, real_plans) = seen.split_at(3);
         assert!(
             walk.iter().all(|script| script.contains(margin)),
             "{seen:?}"
         );
+        // Then the chosen context on the real figures, and — the fork's plan leaving rank 1
+        // 13.93 GB (62.35 budget − 48.42 total) where 24 heads × 2 B × 2 slots × 73,216 context
+        // cost 7.03 MB per chunk token → 1,981 → 1,792 tokens — once more at that chunk.
+        assert_eq!(real_plans.len(), 2, "{seen:?}");
         assert!(
-            last.contains(real) && last.ends_with("--context 73216"),
-            "{last}"
+            real_plans[0].contains(real) && real_plans[0].ends_with("--context 73216"),
+            "{seen:?}"
+        );
+        assert!(
+            real_plans[1].contains(real)
+                && real_plans[1].ends_with("--context 73216 --prefill-step 1792"),
+            "{seen:?}"
         );
         assert_eq!(report.context_limit, Some(73_216));
+        assert!(plans.iter().flatten().all(|p| p.prefill_step == 1_792));
+    }
+
+    /// The 32k answer at `context`, rank 1's budget cut to 49,000,000,000 B: 575,512,864 B above
+    /// the fork's total — room for 23,417 context tokens of one KV step's scores (2 slots × 24
+    /// heads × 2 B × 256).
+    fn squeezed_answer(context: u64) -> ExecOutput {
+        let mut out = flash_answer(context, 262_144, true);
+        out.stdout = out.stdout.replacen(
+            "\"budget_bytes\": 62354335204",
+            "\"budget_bytes\": 49000000000",
+            1,
+        );
+        out
+    }
+
+    /// Flash at the model's whole window, derived: the fork says the split fits 262,144 tokens,
+    /// but its plan leaves rank 1 room for the scores of no KV-step chunk there. The context is
+    /// lowered to the one the smallest chunk fits, and that chunk is planned and served.
+    #[tokio::test]
+    async fn a_derived_pipeline_context_the_scores_cannot_fit_is_lowered_to_one_they_can() {
+        let planner = Arc::new(ScriptedPlanner {
+            seen: Default::default(),
+            answer: |context| match context {
+                None | Some(262_144) => squeezed_answer(262_144),
+                Some(23_296) => squeezed_answer(23_296),
+                other => panic!("unexpected context {other:?}"),
+            },
+        });
+        let exec: Arc<dyn NodeExec> = planner.clone();
+        let (config, _dir) = pipeline_config();
+        let mut report = empty_report(&config);
+        let mut plans = vec![None; 2];
+        plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
+        let check = &report.checks[0];
+        assert_eq!(check.verdict, CheckVerdict::Pass, "{}", check.message);
+        assert_eq!(report.context_limit, Some(23_296));
+        assert_eq!(report.max_context_fits, Some(23_296));
+        // 575,512,864 / (2 × 24 × 2 × 23,296) = 257 → one KV step.
+        assert!(plans.iter().flatten().all(|p| p.prefill_step == 256));
+        let seen = planner.seen.lock().unwrap();
+        assert!(
+            seen.last()
+                .unwrap()
+                .ends_with("--context 23296 --prefill-step 256"),
+            "{seen:?}"
+        );
+        let rank1 = plans[1].as_ref().unwrap();
+        assert_eq!(
+            rank1.workspace_bytes,
+            4_515_057_664 + 2 * 24 * 2 * 256 * 23_296
+        );
+        assert!(rank1.fits);
+        assert!(
+            check.message.contains("prefill chunk 256 tokens"),
+            "{}",
+            check.message
+        );
+    }
+
+    /// The same squeeze on a REQUESTED 262,144 tokens: refused, naming the context that fits.
+    #[tokio::test]
+    async fn a_requested_context_whose_prefill_scores_do_not_fit_is_refused_with_the_ceiling() {
+        let exec: Arc<dyn NodeExec> = Arc::new(ScriptedPlanner {
+            seen: Default::default(),
+            answer: |_| squeezed_answer(262_144),
+        });
+        let (mut config, _dir) = pipeline_config();
+        config.context = Some(262_144);
+        let mut report = empty_report(&config);
+        let mut plans = vec![None; 2];
+        plan_pipeline(&config, &exec, &budgets(), &mut report, &mut plans).await;
+        let check = &report.checks[0];
+        assert_eq!(check.verdict, CheckVerdict::Fail, "{}", check.message);
+        assert!(
+            check.message.contains("attention scores do not fit")
+                && check
+                    .message
+                    .contains("the largest context whose scores fit is 23296"),
+            "{}",
+            check.message
+        );
+        assert_eq!(report.max_context_fits, Some(23_296));
+        assert_eq!(report.pipeline_starts, None);
+        assert!(!plans[1].as_ref().unwrap().fits);
     }
 
     #[tokio::test]
@@ -1841,7 +2088,7 @@ pub(crate) mod tests {
             answer: |_| flash_answer(32_768, 73_216, true),
         });
         let exec: Arc<dyn NodeExec> = planner.clone();
-        let mut config = pipeline_config();
+        let (mut config, _dir) = pipeline_config();
         config.context = Some(32_768);
         let mut report = empty_report(&config);
         let mut plans = vec![None; 2];
@@ -1850,10 +2097,12 @@ pub(crate) mod tests {
         assert_eq!(seen.len(), 1, "a requested context is planned once");
         assert_eq!(
             seen[0],
-            "'/fork/bin/python' -m rapid_mlx.distributed.pipeline_qwen4 plan --json --model \
-             '/Users/me/.goose/models/Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx' \
-             --node 'MacBook-Pro:128.0000:90.0000:107.5200' --node \
-             'workhorse:96.0000:67.0000:77.7600' --batch 2 --context 32768"
+            format!(
+                "'/fork/bin/python' -m rapid_mlx.distributed.pipeline_qwen4 plan --json --model \
+                 '{}' --node 'MacBook-Pro:128.0000:90.0000:107.5200' --node \
+                 'workhorse:96.0000:67.0000:77.7600' --batch 2 --context 32768",
+                config.nodes[0].model_dir
+            )
         );
         assert_eq!(report.context_source.as_deref(), Some("requested"));
         assert_eq!(report.pipeline_starts, Some(vec![0, 19]));
@@ -1866,7 +2115,7 @@ pub(crate) mod tests {
             answer: |_| flash_answer(32_768, 73_216, true),
         });
         let exec: Arc<dyn NodeExec> = planner.clone();
-        let mut config = pipeline_config();
+        let (mut config, _dir) = pipeline_config();
         config.context = Some(32_768);
         let mut report = empty_report(&config);
         let mut plans = vec![None; 2];
@@ -1917,7 +2166,7 @@ pub(crate) mod tests {
                 out
             },
         });
-        let mut config = pipeline_config();
+        let (mut config, _dir) = pipeline_config();
         config.context = Some(32_768);
         let mut report = empty_report(&config);
         let mut plans = vec![None; 2];
