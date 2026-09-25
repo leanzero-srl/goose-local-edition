@@ -43,11 +43,20 @@ export interface RestoreDeps {
   wait(): Promise<void>;
 }
 
-/** Why a restore did not bring the thing back — the parts the line puts in words. */
+/**
+ * Why a restore did not bring the thing back — the parts the line puts in words. `said.detail`:
+ * what stands behind goose's words (pids, command lines), shown only behind Details.
+ */
 export type RestoreReason =
   | { code: 'linkDown'; detail: string }
   | { code: 'stoppedEarly' }
-  | { code: 'said'; text: string };
+  | { code: 'said'; text: string; detail?: string };
+
+/**
+ * The restore is under way; `waitingOn` names the Mac where the previous split is still shutting
+ * down (the start said `previousSplitShuttingDown`), which the line says instead of "Restoring…".
+ */
+export type OnRestoring = (what: RestoreWhat, waitingOn?: string) => void;
 
 /**
  * A route that could not reach the peer because LeanZero Link is still coming up: another try
@@ -129,7 +138,41 @@ async function restoreRemote(deps: RestoreDeps, peer: string, modelId: string): 
   }
 }
 
-async function restoreSplit(deps: RestoreDeps, modelId: string): Promise<Outcome> {
+/**
+ * The start's answer once goose's OWN previous split is gone. After an update the old goosed's
+ * ranks can still be exiting when the new one starts (Q-77): the start then refuses with
+ * `previousSplitShuttingDown` (it signals nothing it did not prove orphaned) and the line says so
+ * while the start is asked again each poll. The wait ends on progress — their pids gone, or goose
+ * reclaiming a proven orphan — never on a count; it also ends the moment the owner's record no
+ * longer asks for this split (a Stop meanwhile).
+ */
+async function startPastPreviousSplit(
+  deps: RestoreDeps,
+  intent: MlxServingIntent,
+  what: RestoreWhat,
+  onRestoring: OnRestoring
+): Promise<MlxDistributedStartResponse | null> {
+  for (;;) {
+    const response = await deps.distributedStart();
+    const node = response.refusal?.node;
+    if (response.started || response.refusal?.code !== 'previousSplitShuttingDown' || !node) {
+      return response;
+    }
+    onRestoring(what, node);
+    await deps.wait();
+    const now = await deps.readIntent();
+    if (now.error || !sameIntent(now.intent, intent)) return null;
+    onRestoring(what);
+  }
+}
+
+async function restoreSplit(
+  deps: RestoreDeps,
+  intent: MlxServingIntent,
+  what: RestoreWhat,
+  onRestoring: OnRestoring
+): Promise<Outcome> {
+  const modelId = what.modelId;
   // The split's other Macs are reached over LeanZero Link when it is set up that way; a start
   // before the launch reconnect settles would be refused for no reason of its own.
   const link = await deps.linkState();
@@ -137,8 +180,18 @@ async function restoreSplit(deps: RestoreDeps, modelId: string): Promise<Outcome
     const down = await linkConnected(deps);
     if (down) return { served: false, reason: { code: 'linkDown', detail: down } };
   }
-  const response = await deps.distributedStart();
-  if (!response.started) return said(response.refusal?.message ?? 'refused');
+  const response = await startPastPreviousSplit(deps, intent, what, onRestoring);
+  if (!response) return { served: false, reason: { code: 'stoppedEarly' } };
+  if (!response.started) {
+    return {
+      served: false,
+      reason: {
+        code: 'said',
+        text: response.refusal?.message ?? 'refused',
+        ...(response.refusal?.detail ? { detail: response.refusal.detail } : {}),
+      },
+    };
+  }
   for (;;) {
     const status = await deps.distributedStatus();
     if (!status) return { served: false, reason: { code: 'stoppedEarly' } };
@@ -187,7 +240,7 @@ export type RestoreResult =
  */
 export async function restoreServing(
   deps: RestoreDeps,
-  onRestoring: (what: RestoreWhat) => void
+  onRestoring: OnRestoring
 ): Promise<RestoreResult> {
   const read = await deps.readIntent();
   if (read.error)
@@ -214,7 +267,7 @@ export async function restoreServing(
         ? await restoreSingle(deps, what.modelId)
         : what.kind === 'remoteSingle'
           ? await restoreRemote(deps, intent.peer ?? '', what.modelId)
-          : await restoreSplit(deps, what.modelId);
+          : await restoreSplit(deps, intent, what, onRestoring);
   } catch (error) {
     outcome = said(error instanceof Error ? error.message : String(error));
   }
@@ -230,7 +283,7 @@ export async function restoreServing(
 
 export type RestoreLine =
   | { phase: 'idle' }
-  | { phase: 'restoring'; what: RestoreWhat }
+  | { phase: 'restoring'; what: RestoreWhat; waitingOn?: string }
   /** `what` null = the record itself could not be read. */
   | { phase: 'failed'; what: RestoreWhat | null; reason: RestoreReason };
 
@@ -263,7 +316,12 @@ export function toRestoreReport(line: RestoreLine): MlxRestoreReport | null {
     kind: line.what?.kind ?? null,
     modelId: line.what?.modelId ?? null,
     peerName: line.what?.peerName ?? null,
-    reason: line.phase === 'failed' ? reasonText(line.reason) : null,
+    reason:
+      line.phase === 'failed'
+        ? reasonText(line.reason)
+        : line.waitingOn
+          ? `The previous split is still shutting down on ${line.waitingOn} — goose restores it when that finishes`
+          : null,
   };
 }
 
@@ -317,7 +375,11 @@ export function settleRestoreLine(serving: {
 export function runRestore(deps: RestoreDeps): Promise<void> {
   if (running) return running;
   lastDeps = deps;
-  running = restoreServing(deps, (what) => publishRestoreLine({ phase: 'restoring', what }))
+  running = restoreServing(deps, (what, waitingOn) =>
+    publishRestoreLine(
+      waitingOn ? { phase: 'restoring', what, waitingOn } : { phase: 'restoring', what }
+    )
+  )
     .then((result) => publishRestoreLine(result))
     .catch((error: unknown) =>
       publishRestoreLine({

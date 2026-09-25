@@ -3,7 +3,7 @@
 # Embedded in goose-sidecar (distributed/launch.rs), concatenated IN FRONT of the rank's program
 # (rank_wrapper.py for mlx_lm.server tensor ranks, pipeline_rank.py for the fork's pipeline
 # ranks), and run as
-#   python -c 'import base64,sys;exec(base64.b64decode(sys.argv[1]))' <program b64> <spec b64> goose-distributed-rank
+#   python -c 'import base64,sys;exec(base64.b64decode(sys.argv[1]))' <program b64> <spec b64> goose-distributed-rank [goose-distributed-owner=<token>]
 # so nothing is installed on a node. What every rank gets, and why:
 # - the distributed env mlx.launch would have written (MLX_RANK, MLX_IBV_DEVICES /
 #   MLX_JACCL_COORDINATOR or MLX_HOSTFILE — ONE backend's, never both: MLX's init("any") tries

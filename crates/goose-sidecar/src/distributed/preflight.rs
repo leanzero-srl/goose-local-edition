@@ -92,6 +92,15 @@ pub struct NodePreflight {
     /// The node's biggest apps by resident memory (what the owner could close), largest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub top_apps: Vec<probe::AppMemory>,
+    /// THIS install's goose ranks still on the node (their command line carries the owner token
+    /// the preflight was given): a previous launch's, shutting down or orphaned. Never counted
+    /// as foreign; the start waits for them or reclaims them (`previousSplit` names them).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub leftovers: Vec<probe::GooseRankProcess>,
+    /// Distributed MLX processes this install did not launch (`pid N \`command\``): what a
+    /// `foreignEngines` FAIL names, for the start's `foreignSplit` refusal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub foreign_splits: Vec<String>,
 }
 
 /// One node's measured memory figures and the budget the rule builds from them.
@@ -223,6 +232,9 @@ pub(crate) fn node_probe_script(
     add("echo; echo @@vm; /usr/bin/vm_stat".into());
     add("echo; echo @@sysctl; /usr/sbin/sysctl -n hw.memsize kern.memorystatus_vm_pressure_level net.inet.ip.portrange.first".into());
     add("echo; echo @@ps; /bin/ps -axo pid=,command=".into());
+    // Its own section, never a column added to @@ps: a requester reads a Link peer's answer, and
+    // an older peer's `ps` rows must keep parsing.
+    add("echo; echo @@psppid; /bin/ps -axo pid=,ppid=".into());
     add(format!(
         "echo; echo @@ifconfig; /sbin/ifconfig {} 2>&1",
         sh_quote(&node.tb_interface)
@@ -431,13 +443,18 @@ struct NodeAnswer {
     needs_repair: bool,
     services_text: Option<String>,
     pings: Vec<PingLine>,
+    leftovers: Vec<probe::GooseRankProcess>,
+    foreign_splits: Vec<String>,
 }
 
+/// `owner`: this install's owner token (`launch::OWNER_ARG_PREFIX`); a goose rank carrying it is
+/// a leftover of this install, any other MLX process is foreign.
 fn read_answer(
     config: &DistributedConfig,
     runner: Option<Runner>,
     rank: usize,
     output: Result<ExecOutput>,
+    owner: Option<&str>,
 ) -> NodeAnswer {
     let node = &config.nodes[rank];
     let mut answer = NodeAnswer {
@@ -453,6 +470,8 @@ fn read_answer(
         needs_repair: false,
         services_text: None,
         pings: Vec::new(),
+        leftovers: Vec::new(),
+        foreign_splits: Vec::new(),
     };
     let output = match output {
         Ok(output) if output.ssh_failed() => {
@@ -536,11 +555,23 @@ fn read_answer(
         .into_iter()
         .collect();
     match probe::section(&sections, "ps") {
-        Ok(text) => answer
-            .checks
-            .push(foreign_engines_check(&probe::classify_foreign_engines(
-                text, &own_pid,
-            ))),
+        Ok(text) => {
+            // A peer on an older goose answers no `psppid`: every parent is then unknown, and an
+            // unknown parent is never taken for an orphan.
+            let parents = sections.get("psppid").map(|t| probe::parse_parents(t));
+            answer.leftovers = probe::goose_rank_processes(text, parents.as_ref(), &own_pid)
+                .into_iter()
+                .filter(|r| owner.is_some() && r.owner.as_deref() == owner)
+                .collect();
+            let mut not_foreign = own_pid.clone();
+            not_foreign.extend(answer.leftovers.iter().map(|r| r.pid));
+            let foreign = probe::classify_foreign_engines(text, &not_foreign);
+            answer.foreign_splits = foreign_rows(&foreign, probe::ForeignKind::Distributed);
+            answer.checks.push(foreign_engines_check(&foreign));
+            if !answer.leftovers.is_empty() {
+                answer.checks.push(previous_split_check(&answer.leftovers));
+            }
+        }
         Err(e) => answer
             .checks
             .push(Check::fail("foreignEngines", format!("{e:#}"))),
@@ -691,21 +722,42 @@ fn read_answer(
     answer
 }
 
-/// A foreign DISTRIBUTED process (mlx.launch, the fork's pipeline, a goose rank another goosed
-/// left) holds a coordinator port or an RDMA queue pair: FAIL. A foreign SINGLE server (the
+fn foreign_rows(
+    foreign: &[(u32, String, probe::ForeignKind)],
+    kind: probe::ForeignKind,
+) -> Vec<String> {
+    foreign
+        .iter()
+        .filter(|(_, _, k)| *k == kind)
+        .map(|(pid, cmd, _)| format!("pid {pid} `{cmd}`"))
+        .collect()
+}
+
+/// This install's own leftover ranks: FAIL while they run (they hold the ports and the queue
+/// pairs this launch needs), each named with what will end it — an orphan (its goose is gone)
+/// only a reclaim, a rank under a live parent that parent's own shutdown.
+fn previous_split_check(leftovers: &[probe::GooseRankProcess]) -> Check {
+    let each: Vec<String> = leftovers
+        .iter()
+        .map(probe::GooseRankProcess::describe)
+        .collect();
+    Check::fail(
+        "previousSplit",
+        format!(
+            "goose's previous split still runs here: {}",
+            each.join("; ")
+        ),
+    )
+}
+
+/// A foreign DISTRIBUTED process (mlx.launch, the fork's pipeline, a goose rank this install did
+/// not launch) holds a coordinator port or an RDMA queue pair: FAIL. A foreign SINGLE server (the
 /// owner's `rapid-mlx serve` on its own port) is an independent engine: its resident memory is
 /// already out of the `available` figure the memory check plans against, so it is a WARN naming
 /// the pid and the cost it does carry (GPU contention: decode on this node slows while it works).
 fn foreign_engines_check(foreign: &[(u32, String, probe::ForeignKind)]) -> Check {
-    let list = |kind: probe::ForeignKind| {
-        foreign
-            .iter()
-            .filter(|(_, _, k)| *k == kind)
-            .map(|(pid, cmd, _)| format!("pid {pid} `{cmd}`"))
-            .collect::<Vec<_>>()
-    };
-    let distributed = list(probe::ForeignKind::Distributed);
-    let single = list(probe::ForeignKind::SingleServer);
+    let distributed = foreign_rows(foreign, probe::ForeignKind::Distributed);
+    let single = foreign_rows(foreign, probe::ForeignKind::SingleServer);
     if !distributed.is_empty() {
         return Check::fail(
             "foreignEngines",
@@ -834,10 +886,13 @@ pub fn loaded_files(files: &BTreeMap<String, u64>) -> BTreeMap<String, u64> {
         .collect()
 }
 
+/// `owner`: this install's owner token — the goose ranks carrying it are reported as the node's
+/// `leftovers`, never as foreign engines. `None` = no rank is provably this install's.
 pub async fn run_preflight(
     config: &DistributedConfig,
     exec: Arc<dyn NodeExec>,
     repair_link: bool,
+    owner: Option<&str>,
 ) -> Result<PreflightReport> {
     config.validate()?;
     let mut report = PreflightReport {
@@ -888,7 +943,7 @@ pub async fn run_preflight(
     let mut answers: Vec<NodeAnswer> = answers
         .into_iter()
         .enumerate()
-        .map(|(rank, output)| read_answer(config, runner, rank, output))
+        .map(|(rank, output)| read_answer(config, runner, rank, output, owner))
         .collect();
 
     for (rank, answer) in answers.iter_mut().enumerate() {
@@ -1122,6 +1177,8 @@ pub async fn run_preflight(
             ceiling_bytes: answer.ceiling,
             wired_limit_mb: answer.wired_limit_mb,
             top_apps: answer.top_apps,
+            leftovers: answer.leftovers,
+            foreign_splits: answer.foreign_splits,
         });
     }
     report.ok = report.failures().is_empty() && report.nodes.iter().all(|n| n.plan.is_some());
@@ -1553,7 +1610,7 @@ async fn repair_node(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::distributed::config::tests::two_mac_config;
 
@@ -1931,5 +1988,109 @@ mod tests {
         let rank1 = node_probe_script(&config, Some(Runner::MlxLmTensor), 1);
         assert!(!rank1.contains("@@listen"));
         assert!(rank1.contains("'192.168.0.1'"), "rank 1 pings rank 0");
+        assert!(
+            rank0.contains("@@psppid; /bin/ps -axo pid=,ppid=")
+                && rank0.contains("@@ps; /bin/ps -axo pid=,command="),
+            "the parents ride their own section; @@ps keeps the rows an older requester parses"
+        );
+    }
+
+    /// One node's probe answer carrying `ps` rows (and, when `parents` is given, the `psppid`
+    /// section a current goose answers).
+    pub(crate) fn probe_answer(ps: &str, parents: Option<&str>) -> ExecOutput {
+        let parents = parents
+            .map(|p| format!("@@psppid\n{p}\n"))
+            .unwrap_or_default();
+        ExecOutput {
+            status: Some(0),
+            stdout: format!("@@self\n7\n@@ps\n{ps}\n{parents}@@end\n"),
+            stderr: String::new(),
+        }
+    }
+
+    pub(crate) fn rank_row(pid: u32, owner: Option<&str>) -> String {
+        let owner = owner
+            .map(|o| format!(" {}{o}", super::super::launch::OWNER_ARG_PREFIX))
+            .unwrap_or_default();
+        format!(
+            "{pid} /x/bin/python -c import base64,sys;exec(base64.b64decode(sys.argv[1])) {} {}{owner}",
+            "QUFB".repeat(80),
+            super::super::launch::RANK_MARKER
+        )
+    }
+
+    fn check<'a>(answer: &'a NodeAnswer, id: &str) -> Option<&'a Check> {
+        answer.checks.iter().find(|c| c.id == id)
+    }
+
+    /// The owner token decides, on the node's own answer: this install's rank is a leftover
+    /// (`previousSplit`, never foreign), a rank carrying no token — Q-77's pid 9425 — or another
+    /// install's is a foreign split, and with no token of our own nothing is ours.
+    #[test]
+    fn a_rank_carrying_this_installs_token_is_a_leftover_and_any_other_is_foreign() {
+        let config = two_mac_config();
+        let ps = format!(
+            "{}\n{}\n{}",
+            rank_row(301, Some("mine")),
+            rank_row(9425, None),
+            rank_row(303, Some("theirs"))
+        );
+        let answer = read_answer(
+            &config,
+            None,
+            0,
+            Ok(probe_answer(&ps, Some("301 1\n9425 1\n303 1"))),
+            Some("mine"),
+        );
+        let leftovers: Vec<(u32, Option<u32>)> =
+            answer.leftovers.iter().map(|r| (r.pid, r.ppid)).collect();
+        assert_eq!(leftovers, vec![(301, Some(1))]);
+        let previous = check(&answer, "previousSplit").unwrap();
+        assert_eq!(previous.verdict, CheckVerdict::Fail);
+        assert!(
+            previous.message.contains("pid 301 (orphaned"),
+            "{}",
+            previous.message
+        );
+        let foreign = check(&answer, "foreignEngines").unwrap();
+        assert_eq!(foreign.verdict, CheckVerdict::Fail);
+        assert!(
+            !foreign.message.contains("pid 301 ")
+                && foreign.message.contains("pid 9425 ")
+                && foreign.message.contains("pid 303 "),
+            "{}",
+            foreign.message
+        );
+        assert_eq!(answer.foreign_splits.len(), 2);
+
+        let only_mine = read_answer(
+            &config,
+            None,
+            0,
+            Ok(probe_answer(&rank_row(301, Some("mine")), None)),
+            Some("mine"),
+        );
+        assert_eq!(
+            check(&only_mine, "foreignEngines").unwrap().verdict,
+            CheckVerdict::Pass
+        );
+        assert_eq!(
+            only_mine.leftovers[0].ppid, None,
+            "an older peer names no parent"
+        );
+        assert!(only_mine.foreign_splits.is_empty());
+
+        let tokenless = read_answer(
+            &config,
+            None,
+            0,
+            Ok(probe_answer(&rank_row(301, Some("mine")), None)),
+            None,
+        );
+        assert!(tokenless.leftovers.is_empty() && check(&tokenless, "previousSplit").is_none());
+        assert_eq!(
+            check(&tokenless, "foreignEngines").unwrap().verdict,
+            CheckVerdict::Fail
+        );
     }
 }

@@ -3788,12 +3788,22 @@ pub struct MlxEngineDistributedPreflightResponse {
 }
 
 /// Why a start was refused. `code`: "singleEngineMounted" (unmount the single engine, then start
-/// again — the UI's "unmount and continue") | "alreadyRunning" | "preflightFailed".
+/// again — the UI's "unmount and continue") | "alreadyRunning" | "preflightFailed" |
+/// "previousSplitShuttingDown" (this install's previous split still runs on `node` under a live
+/// parent; nothing was signalled — a start once its pids are gone goes through) | "foreignSplit"
+/// (a distributed MLX process this install did not launch runs on `node`; stop it first) |
+/// "hostingRank" | "ownedByAnotherWindow".
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxDistributedRefusalDto {
     pub code: String,
     pub message: String,
+    /// The Mac the refusal is about, by its configured name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
+    /// What stands behind the message — pids and command lines — for a Details disclosure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// Preflight (repairing the TB link when a JACCL check fails), then launch under supervision.

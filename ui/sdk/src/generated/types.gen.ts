@@ -4127,11 +4127,23 @@ export type MlxEngineDistributedStartResponse_unstable = {
 
 /**
  * Why a start was refused. `code`: "singleEngineMounted" (unmount the single engine, then start
- * again — the UI's "unmount and continue") | "alreadyRunning" | "preflightFailed".
+ * again — the UI's "unmount and continue") | "alreadyRunning" | "preflightFailed" |
+ * "previousSplitShuttingDown" (this install's previous split still runs on `node` under a live
+ * parent; nothing was signalled — a start once its pids are gone goes through) | "foreignSplit"
+ * (a distributed MLX process this install did not launch runs on `node`; stop it first) |
+ * "hostingRank" | "ownedByAnotherWindow".
  */
 export type MlxDistributedRefusalDto = {
     code: string;
     message: string;
+    /**
+     * The Mac the refusal is about, by its configured name.
+     */
+    node?: string | null;
+    /**
+     * What stands behind the message — pids and command lines — for a Details disclosure.
+     */
+    detail?: string | null;
 };
 
 /**

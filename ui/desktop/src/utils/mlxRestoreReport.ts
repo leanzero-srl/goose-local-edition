@@ -10,7 +10,10 @@ export interface MlxRestoreReport {
   modelId: string | null;
   /** The linked Mac a remote single runs on, by its one name. */
   peerName: string | null;
-  /** Why it could not be restored, in goose's words. */
+  /**
+   * Why it could not be restored, in goose's words; while restoring, what the restore waits on
+   * (the previous split still shutting down), else null.
+   */
   reason: string | null;
 }
 
@@ -38,7 +41,7 @@ function where(report: MlxRestoreReport): string {
 
 /** The tray's line: what is coming back and where, or why it did not. */
 export function restoreTrayLine(report: MlxRestoreReport): string {
-  if (report.phase === 'restoring') return `Restoring ${where(report)}…`;
+  if (report.phase === 'restoring') return report.reason ?? `Restoring ${where(report)}…`;
   if (report.kind == null) {
     return `Could not read what served before the relaunch: ${report.reason ?? 'no reason given'}`;
   }

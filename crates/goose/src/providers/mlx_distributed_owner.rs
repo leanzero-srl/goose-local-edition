@@ -17,6 +17,48 @@ use serde::{Deserialize, Serialize};
 use crate::config::paths::Paths;
 
 const RECORD_FILE: &str = "mlx-distributed-owner.json";
+const INSTALL_TOKEN_FILE: &str = "mlx-distributed-owner-token";
+
+/// This install's owner token for its distributed ranks (goose-sidecar `RankSpec::owner`, written
+/// on every rank's command line). Created once under the state dir and read back by every later
+/// goosed of this install — the record above is withdrawn at exit, the token is not — so a rank
+/// a previous goosed left behind is provably this install's own (Q-77), and any other rank is not.
+pub fn install_token() -> Result<String> {
+    install_token_at(&Paths::in_state_dir(INSTALL_TOKEN_FILE))
+}
+
+pub(crate) fn install_token_at(path: &Path) -> Result<String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    }
+    let fresh: String = rand::random::<[u8; 16]>()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    // create_new: two windows' goosed starting together both read the ONE token that won.
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => {
+            use std::io::Write;
+            file.write_all(fresh.as_bytes())
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e).with_context(|| format!("creating {}", path.display())),
+    }
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let token = text.trim();
+    anyhow::ensure!(
+        !token.is_empty() && token.chars().all(|c| c.is_ascii_hexdigit()),
+        "{} holds no owner token ({text:?}); goose cannot prove any distributed rank is its own",
+        path.display()
+    );
+    Ok(token.to_string())
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublishedEngine {
@@ -168,6 +210,19 @@ mod tests {
         assert!(path.exists());
         assert!(withdraw_at(&path, 10).unwrap());
         assert_eq!(read_at(&path, 10, |_| true), OwnerRecord::Absent);
+    }
+
+    #[test]
+    fn the_install_token_is_made_once_and_read_back_by_every_later_goosed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state").join(INSTALL_TOKEN_FILE);
+        let first = install_token_at(&path).unwrap();
+        assert_eq!(first.len(), 32);
+        assert_eq!(install_token_at(&path).unwrap(), first);
+
+        std::fs::write(&path, "not a token\n").unwrap();
+        let err = install_token_at(&path).unwrap_err().to_string();
+        assert!(err.contains("holds no owner token"), "{err}");
     }
 
     #[test]

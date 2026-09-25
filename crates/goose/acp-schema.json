@@ -10287,13 +10287,27 @@
         },
         "message": {
           "type": "string"
+        },
+        "node": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The Mac the refusal is about, by its configured name."
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What stands behind the message — pids and command lines — for a Details disclosure."
         }
       },
       "required": [
         "code",
         "message"
       ],
-      "description": "Why a start was refused. `code`: \"singleEngineMounted\" (unmount the single engine, then start\nagain — the UI's \"unmount and continue\") | \"alreadyRunning\" | \"preflightFailed\"."
+      "description": "Why a start was refused. `code`: \"singleEngineMounted\" (unmount the single engine, then start\nagain — the UI's \"unmount and continue\") | \"alreadyRunning\" | \"preflightFailed\" |\n\"previousSplitShuttingDown\" (this install's previous split still runs on `node` under a live\nparent; nothing was signalled — a start once its pids are gone goes through) | \"foreignSplit\"\n(a distributed MLX process this install did not launch runs on `node`; stop it first) |\n\"hostingRank\" | \"ownedByAnotherWindow\"."
     },
     "MlxEngineDistributedStopRequest_unstable": {
       "type": "object",

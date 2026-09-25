@@ -273,21 +273,35 @@ pub fn foreign_engine_processes(text: &str, own: &[u32]) -> Vec<(u32, String)> {
         .collect()
 }
 
+/// A `ps` row's pid and command line (whole — a rank's marker sits after tens of KB of base64).
+fn ps_rows(text: &str) -> impl Iterator<Item = (u32, &str)> {
+    text.lines().filter_map(|line| {
+        let (pid, command) = line.trim().split_once(char::is_whitespace)?;
+        Some((pid.parse().ok()?, command.trim()))
+    })
+}
+
+/// argv[0]'s file name, lowercased.
+fn argv0_name(command: &str) -> Option<String> {
+    command
+        .split_whitespace()
+        .next()
+        .and_then(|argv0| argv0.rsplit('/').next())
+        .map(str::to_ascii_lowercase)
+}
+
+/// What a row shows, cut for display (the full line is a program's base64).
+fn shown(command: &str) -> String {
+    command.chars().take(160).collect()
+}
+
 /// [`foreign_engine_processes`] with each row's [`ForeignKind`].
 pub fn classify_foreign_engines(text: &str, own: &[u32]) -> Vec<(u32, String, ForeignKind)> {
     const DISTRIBUTED: [&str; 3] = ["mlx.launch", "pipeline_qwen4", super::launch::RANK_MARKER];
     const SINGLE: [&str; 3] = ["mlx_lm.server", "mlx_lm/server", "rapid-mlx serve"];
-    text.lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            let (pid, command) = line.split_once(char::is_whitespace)?;
-            let pid: u32 = pid.parse().ok()?;
-            let command = command.trim();
-            let interpreter = command
-                .split_whitespace()
-                .next()
-                .and_then(|argv0| argv0.rsplit('/').next())
-                .is_some_and(|name| name.to_ascii_lowercase().starts_with("python"));
+    ps_rows(text)
+        .filter_map(|(pid, command)| {
+            let interpreter = argv0_name(command).is_some_and(|name| name.starts_with("python"));
             if !interpreter || own.contains(&pid) {
                 return None;
             }
@@ -298,7 +312,93 @@ pub fn classify_foreign_engines(text: &str, own: &[u32]) -> Vec<(u32, String, Fo
             } else {
                 return None;
             };
-            Some((pid, command.chars().take(160).collect(), kind))
+            Some((pid, shown(command), kind))
+        })
+        .collect()
+}
+
+/// A goose rank as a node's `ps` shows it: the interpreter running one, or the ssh client on the
+/// requester that carries one to a peer (that client's session is what keeps the peer's rank
+/// alive, so a carrier a dead goose left is part of its leftover).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GooseRankProcess {
+    pub pid: u32,
+    /// Its parent, from the node's `pid ppid` listing; `None` = the node did not answer one (a
+    /// peer on an older goose). 1 = the goose that launched it is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ppid: Option<u32>,
+    /// The owner token on its command line (`launch::OWNER_ARG_PREFIX`); `None` = none written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub carrier: bool,
+    /// The command line, cut for display.
+    pub command: String,
+}
+
+impl GooseRankProcess {
+    /// Its launcher is gone: nothing will ever stop it but a reclaim.
+    pub fn orphaned(&self) -> bool {
+        self.ppid == Some(1)
+    }
+
+    /// One line: what it is, what will end it, its command line.
+    pub fn describe(&self) -> String {
+        let what = if self.carrier {
+            "the ssh session carrying a peer's rank"
+        } else {
+            "rank"
+        };
+        let state = match self.ppid {
+            Some(1) => "orphaned: the goose that launched it is gone".to_string(),
+            Some(parent) => format!("its parent pid {parent} still runs: shutting down"),
+            None => "this node's goose reports no parent for it".to_string(),
+        };
+        format!("{what} pid {} ({state}) `{}`", self.pid, self.command)
+    }
+}
+
+/// `ps -axo pid=,ppid=` as pid → parent.
+pub fn parse_parents(text: &str) -> BTreeMap<u32, u32> {
+    text.lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+        })
+        .collect()
+}
+
+/// Every goose rank on a node's `ps -axo pid=,command=` — judged on the WHOLE command line (the
+/// marker and the owner token follow the program's base64). A rank's argv[0] is its interpreter;
+/// a carrier's is `ssh` with the remote script (the rank's quoted argv) as its argument. A shell
+/// or a `pgrep` that merely mentions the marker is neither. `own` pids are left out.
+pub fn goose_rank_processes(
+    text: &str,
+    parents: Option<&BTreeMap<u32, u32>>,
+    own: &[u32],
+) -> Vec<GooseRankProcess> {
+    ps_rows(text)
+        .filter(|(pid, command)| !own.contains(pid) && command.contains(super::launch::RANK_MARKER))
+        .filter_map(|(pid, command)| {
+            let name = argv0_name(command)?;
+            let carrier = match name.as_str() {
+                "ssh" => true,
+                n if n.starts_with("python") => false,
+                _ => return None,
+            };
+            let owner = command
+                .split_whitespace()
+                .map(|arg| arg.trim_matches(|c| c == '\'' || c == '"'))
+                .find_map(|arg| arg.strip_prefix(super::launch::OWNER_ARG_PREFIX))
+                .map(str::to_string);
+            Some(GooseRankProcess {
+                pid,
+                ppid: parents.and_then(|p| p.get(&pid).copied()),
+                owner,
+                carrier,
+                command: shown(command),
+            })
         })
         .collect()
 }
@@ -574,6 +674,50 @@ Pages occupied by compressor:                 649325.
                 (104, ForeignKind::Distributed)
             ]
         );
+    }
+
+    /// Q-77's shapes. A real rank's marker and owner token sit after the program's base64, far
+    /// past the 160 characters a displayed row keeps — the whole line is what is judged. pid 9425
+    /// was `/usr/bin/python3` (ps names it by Xcode's Python.app, measured) running the boot line
+    /// with the marker and NO owner token: a goose rank, but never provably this install's.
+    #[test]
+    fn goose_ranks_are_read_whole_with_their_owner_carrier_and_parent() {
+        let b64 = "QUFB".repeat(100);
+        let marker = super::super::launch::RANK_MARKER;
+        let owner = format!("{}0123abcd", super::super::launch::OWNER_ARG_PREFIX);
+        let ps = format!(
+            "  201 /Users/me/.goose/distributed/mlx-py3.12/bin/python -c import base64,sys;exec(base64.b64decode(sys.argv[1])) {b64} {b64} {marker} {owner}
+ 9425 /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python -c import base64,sys;exec(base64.b64decode(sys.argv[1])) {b64} {b64} {marker}
+  203 /usr/bin/ssh -tt -o BatchMode=yes studio echo GOOSE_RANK_PID=$$; exec '/x/python' '-c' '{b64}' '{marker}' '{owner}'
+  204 /bin/zsh -c pgrep -f {marker}
+  205 /usr/bin/python3 -m http.server
+"
+        );
+        let parents = parse_parents("  201 1\n 9425 88\n  203 4242\n");
+        let ranks = goose_rank_processes(&ps, Some(&parents), &[]);
+        let rows: Vec<(u32, Option<u32>, Option<&str>, bool)> = ranks
+            .iter()
+            .map(|r| (r.pid, r.ppid, r.owner.as_deref(), r.carrier))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (201, Some(1), Some("0123abcd"), false),
+                (9425, Some(88), None, false),
+                (203, Some(4242), Some("0123abcd"), true),
+            ]
+        );
+        assert!(ranks[0].orphaned() && !ranks[1].orphaned());
+        assert!(ranks.iter().all(|r| r.command.chars().count() <= 160));
+        assert!(ranks[0].describe().contains("pid 201 (orphaned"));
+        assert!(ranks[2]
+            .describe()
+            .starts_with("the ssh session carrying a peer's rank pid 203 (its parent pid 4242"));
+
+        let unanswered = goose_rank_processes(&ps, None, &[201]);
+        assert_eq!(unanswered.len(), 2, "own pids are left out");
+        assert!(unanswered.iter().all(|r| r.ppid.is_none() && !r.orphaned()));
+        assert!(unanswered[0].describe().contains("reports no parent"));
     }
 
     #[test]

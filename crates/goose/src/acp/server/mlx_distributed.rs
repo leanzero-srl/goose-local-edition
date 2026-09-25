@@ -38,6 +38,19 @@ fn gib(bytes: u64) -> f64 {
     bytes as f64 / GIB as f64
 }
 
+/// The distributed manager, told this install's owner token first: every rank it launches carries
+/// the token, and only a rank carrying it is ever waited for, reclaimed or swept as this
+/// install's own (Q-77).
+fn owned_manager() -> Result<&'static distributed::DistributedManager, agent_client_protocol::Error>
+{
+    let manager = distributed::global_manager();
+    manager.set_owner(
+        owner_record::install_token()
+            .internal_err_ctx("reading this install's distributed owner token")?,
+    );
+    Ok(manager)
+}
+
 fn config_from_dto(dto: MlxDistributedConfigDto) -> anyhow::Result<DistributedConfig> {
     let backend = match dto.backend.as_str() {
         "jaccl" => Backend::Jaccl,
@@ -641,7 +654,7 @@ impl GooseAcpAgent {
     ) -> Result<MlxEngineDistributedPreflightResponse, agent_client_protocol::Error> {
         link::ensure_link_transport();
         let config = resolve_config(req.config)?;
-        let report = distributed::global_manager()
+        let report = owned_manager()?
             .preflight(&config, req.repair_link)
             .await
             .invalid_params_err()?;
@@ -662,6 +675,7 @@ impl GooseAcpAgent {
                 refusal: Some(MlxDistributedRefusalDto {
                     code: "hostingRank".to_string(),
                     message: refusal,
+                    ..Default::default()
                 }),
                 preflight: None,
             });
@@ -675,6 +689,7 @@ impl GooseAcpAgent {
                         "{}; start and stop it from that window",
                         owned_elsewhere(&engine)
                     ),
+                    ..Default::default()
                 }),
                 preflight: None,
             });
@@ -701,7 +716,7 @@ impl GooseAcpAgent {
             backend: config.backend.as_str().to_string(),
             node_names: config.nodes.iter().map(|n| n.name.clone()).collect(),
         };
-        let outcome = distributed::global_manager()
+        let outcome = owned_manager()?
             .start(config, served)
             .await
             .invalid_params_err()?;
@@ -725,11 +740,15 @@ impl GooseAcpAgent {
                 code,
                 message,
                 preflight,
+                node,
+                detail,
             } => MlxEngineDistributedStartResponse {
                 started: false,
                 refusal: Some(MlxDistributedRefusalDto {
                     code: code.as_str().to_string(),
                     message,
+                    node,
+                    detail,
                 }),
                 preflight: preflight.map(preflight_to_dto),
             },
@@ -741,10 +760,10 @@ impl GooseAcpAgent {
         _req: MlxEngineDistributedStopRequest,
     ) -> Result<MlxEngineDistributedStopResponse, agent_client_protocol::Error> {
         link::ensure_link_transport();
-        let manager = distributed::global_manager();
+        let manager = owned_manager()?;
         if !manager.owns_the_mac() {
-            // Without a run of its own, stop sweeps the configured nodes for goose ranks by marker
-            // — which would kill another window's live run. Only its owner stops it.
+            // Without a run of its own, stop sweeps the configured nodes for this install's ranks
+            // (by owner token) — which would kill another window's live run. Only its owner stops it.
             if let OwnerRecord::Other(engine) = owner_record::read() {
                 return Err(agent_client_protocol::Error::invalid_params().data(format!(
                     "{OWNED_BY_ANOTHER_WINDOW}: {}; stop it from that window",
