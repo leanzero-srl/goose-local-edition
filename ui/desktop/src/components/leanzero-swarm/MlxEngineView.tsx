@@ -121,11 +121,12 @@ import { modeSummary, ownsTheMac } from './mlxDistributed';
 import { formatMlxMode, formatRemoteMode } from './mlxModeLabel';
 import {
   latestMlxRemoteSingleStatus,
-  mlxRemoteSingleStop,
   subscribeMlxRemoteSingleStatus,
   type MlxRemoteSingleStatus,
 } from '../../acp/mlx-remote-single';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
+import { PeerHeldLine } from './PeerHeldLine';
+import { dropRoute } from './routeSwitch';
 import { routeServesChat } from '../chatServedBy/chatServedBy';
 import { PlacementBadge, PlacementCard, badgesOf, usePlacementPlans } from './PlacementCard';
 import type { PlacementBadge as PlacementBadgeDto } from '../../acp/mlx-placement';
@@ -954,6 +955,7 @@ function EngineSection(props: EngineSectionProps) {
           testId="mlx-mount-failed"
         />
       )}
+      <PeerHeldLine />
       {remoteStopError && (
         <ToneBanner
           tone="err"
@@ -2662,8 +2664,9 @@ function MlxEngineViewBody() {
       setEngineBusy(true);
       setRemoteStopError(null);
       try {
-        const { unmountError } = await mlxRemoteSingleStop(false);
-        if (unmountError) setRemoteStopError(unmountError);
+        // The route goes here at once when its Mac is not answering; that Mac keeping its model
+        // is the quiet PeerHeldLine, never this banner (routeSwitch.ts).
+        await dropRoute().routeGone;
       } catch (error) {
         setRemoteStopError(mlxErrorMessage(error, intl.formatMessage(i18n.stopRemoteFailed)));
       } finally {

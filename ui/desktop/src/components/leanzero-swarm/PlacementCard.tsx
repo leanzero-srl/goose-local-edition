@@ -44,7 +44,6 @@ import {
   latestMlxRemoteSingleStatus,
   mlxRemoteSingleStart,
   mlxRemoteSingleStatus,
-  mlxRemoteSingleStop,
   subscribeMlxRemoteSingleStatus,
 } from '../../acp/mlx-remote-single';
 import { mlxErrorMessage } from './mlxErrorMessage';
@@ -59,8 +58,7 @@ import { MLX_STATUS_POLL_MS } from './mlxLiveStats';
 import { touchLocalNetwork } from './LocalNetworkNotice';
 import { distributedStateWord } from './mlxModeLabel';
 import { remotePhase, runPhase, singlePhase } from './mlxPhase';
-import { PeerHeldLine } from './PeerHeldLine';
-import { dropRouteForSwitch } from './routeSwitch';
+import { dropRoute } from './routeSwitch';
 import { formatGb } from './primitives';
 import { macForPlacementNode, minutesAt, peerRefuses, SELF_KEY, type Mac } from './macs';
 import { WithMacs, copyKey, copyRunning, useMacs } from './useMacs';
@@ -787,7 +785,7 @@ function PlacementCardBody({
    * unmount and the peer's unmount both return after the engine process exits; the split is
    * followed until it no longer owns the Mac — bounded by its own state, never a clock. A route
    * is withdrawn on this Mac (routeSwitch.ts): a linked Mac that is not answering, or keeps its
-   * model, is a quiet line (PeerHeldLine), never a switch that cannot go on. Throws only when the
+   * model, is a quiet line (PeerHeldLine, in the Engine view), never a switch that cannot go on. Throws only when the
    * current way could not be stopped at all.
    */
   const stopForSwitch = async (way: Way): Promise<void> => {
@@ -796,7 +794,7 @@ function PlacementCardBody({
       return;
     }
     if (way.kind === 'peer') {
-      await dropRouteForSwitch().routeGone;
+      await dropRoute().routeGone;
       return;
     }
     let status = (await mlxDistributedStop()).status;
@@ -870,7 +868,8 @@ function PlacementCardBody({
     }
     setBusy(`stop:${way.key}`);
     try {
-      await mlxRemoteSingleStop(false);
+      // Withdrawn here at once when its Mac is not answering; a kept model is PeerHeldLine's.
+      await dropRoute().routeGone;
     } catch (e) {
       setNotice({ tone: 'err', text: mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed)) });
     } finally {
@@ -1225,7 +1224,6 @@ function PlacementCardBody({
         <ToneBanner tone="err" label={intl.formatMessage(i18n.planFailed)} text={plan.error} />
       )}
       {(error || plan?.error) && <p className={TYPE.meta}>{intl.formatMessage(i18n.noPlanWays)}</p>}
-      <PeerHeldLine />
       {notice && (
         <ToneBanner tone={notice.tone} label={intl.formatMessage(i18n.title)} text={notice.text} />
       )}

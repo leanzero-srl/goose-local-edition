@@ -11,7 +11,7 @@ import type { PlacementPlan } from '../../acp/mlx-placement';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import type { NodesResponse } from '../../acp/leanzero-link';
 import DISCOVERY from './mlxDistributedDiscovery.fixture.json';
-import { dismissPeerHeld } from './routeSwitch';
+import { dismissPeerHeld, latestPeerHeld } from './routeSwitch';
 
 const mockPlan = vi.fn();
 const mockMeasure = vi.fn();
@@ -506,7 +506,27 @@ describe('Run it on the real 27B plan', () => {
     await waitFor(() => expect(order).toEqual(['drop route (keepMounted true)', 'mount here']));
     expect(mockUnmount).toHaveBeenCalledWith('wh');
     expect(screen.queryByText(/Nothing started/)).toBeNull();
-    expect(await screen.findByTestId('peer-held')).toBeInTheDocument();
+    // The quiet line is the Engine view's (PeerHeldLine); the card publishes the fact.
+    expect(latestPeerHeld()).toMatchObject({ phase: 'asking', peerNodeId: 'wh' });
+  });
+
+  it('Stop on a route whose Mac is NOT answering drops it here at once — no error, the button free again', async () => {
+    mockPlan.mockResolvedValue(answer(localFits));
+    remoteLatest = { state: 'reconnecting', peer: 'wh', modelId: MODEL };
+    mockRemoteStop.mockResolvedValue({
+      unmounted: false,
+      unmountError: null,
+      status: { state: 'off' },
+    });
+    mockUnmount.mockReturnValue(new Promise(() => undefined));
+    renderCard();
+    const stop = await screen.findByTestId('placement-stop-peer');
+    await userEvent.click(stop);
+    await waitFor(() => expect(mockRemoteStop).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(mockUnmount).toHaveBeenCalledWith('wh'));
+    await waitFor(() => expect(stop).toBeEnabled());
+    expect(screen.queryByText(/Could not|failed/i)).toBeNull();
+    expect(latestPeerHeld()).toMatchObject({ phase: 'asking', peerNodeId: 'wh' });
   });
 
   it('a reachable Studio that keeps its model does not block the switch: the kept model is a quiet line', async () => {
@@ -524,7 +544,9 @@ describe('Run it on the real 27B plan', () => {
     await userEvent.click(await screen.findByTestId('placement-run-local'));
     await waitFor(() => expect(onMountHere).toHaveBeenCalledTimes(1));
     expect(mockRemoteStop).toHaveBeenCalledWith(false);
-    expect((await screen.findByTestId('peer-held')).getAttribute('data-phase')).toBe('held');
+    await waitFor(() =>
+      expect(latestPeerHeld()).toMatchObject({ phase: 'held', peerNodeId: 'wh' })
+    );
   });
 
   it('the "Starting" notice ends once the way it started serves (Q-36)', async () => {

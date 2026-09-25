@@ -40,12 +40,15 @@ vi.mock('../acp/mlx-distributed', async () => ({
 }));
 
 const remoteStop = vi.fn();
+const trayRoute = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
 vi.mock('../acp/mlx-remote-single', async (importActual) => ({
   ...(await importActual<typeof import('../acp/mlx-remote-single')>()),
+  latestMlxRemoteSingleStatus: () => trayRoute.current,
   mlxRemoteSingleStop: (...a: unknown[]) => remoteStop(...a),
 }));
 
 import { renderHook, waitFor } from '@testing-library/react';
+import { dismissPeerHeld, latestPeerHeld } from '../components/leanzero-swarm/routeSwitch';
 import {
   DistributedStopNotVerified,
   runMlxTrayAction,
@@ -53,7 +56,14 @@ import {
 } from './useMlxTrayActions';
 
 describe('runMlxTrayAction — the tray’s Stop for a route to another Mac', () => {
-  beforeEach(() => remoteStop.mockReset());
+  beforeEach(() => {
+    remoteStop.mockReset();
+    trayRoute.current = {
+      state: 'ready',
+      peer: 'worksmacstudio-lan-6a972f',
+      peerComputerName: "Work's Mac Studio",
+    };
+  });
 
   it('withdraws the route and unmounts the model there — the same call Run it’s Stop makes', async () => {
     remoteStop.mockResolvedValue({ unmounted: true, status: { state: 'off' } });
@@ -61,15 +71,33 @@ describe('runMlxTrayAction — the tray’s Stop for a route to another Mac', ()
     expect(remoteStop).toHaveBeenCalledWith(false);
   });
 
-  it('a peer left mounted is said, not swallowed', async () => {
+  it('a peer left mounted is a quiet held line, never a thrown toast — the route is gone either way', async () => {
     remoteStop.mockResolvedValue({
       unmounted: false,
       unmountError: "Work's Mac Studio's engine was left mounted: peer unreachable",
       status: { state: 'off' },
     });
-    await expect(runMlxTrayAction('stop-remote')).rejects.toThrow(
-      "Work's Mac Studio's engine was left mounted: peer unreachable"
-    );
+    await expect(runMlxTrayAction('stop-remote')).resolves.toBeUndefined();
+    expect(latestPeerHeld()).toMatchObject({
+      phase: 'held',
+      detail: "Work's Mac Studio's engine was left mounted: peer unreachable",
+    });
+    dismissPeerHeld();
+  });
+
+  it('a route whose Mac is NOT answering: the tray’s Stop returns once the route is gone here — never waits on that Mac', async () => {
+    trayRoute.current = { ...trayRoute.current, state: 'reconnecting' };
+    remoteStop.mockResolvedValue({
+      unmounted: false,
+      unmountError: null,
+      status: { state: 'off' },
+    });
+    unmount.mockReset().mockReturnValue(new Promise(() => undefined));
+    await expect(runMlxTrayAction('stop-remote')).resolves.toBeUndefined();
+    expect(remoteStop).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(unmount).toHaveBeenCalledWith('worksmacstudio-lan-6a972f'));
+    expect(latestPeerHeld()).toMatchObject({ phase: 'asking' });
+    dismissPeerHeld();
   });
 });
 

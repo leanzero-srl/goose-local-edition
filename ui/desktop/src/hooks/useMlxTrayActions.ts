@@ -14,7 +14,7 @@ import {
   mlxDistributedStop,
   subscribeMlxDistributedStatus,
 } from '../acp/mlx-distributed';
-import { mlxRemoteSingleStop } from '../acp/mlx-remote-single';
+import { dropRoute } from '../components/leanzero-swarm/routeSwitch';
 import { MLX_STATUS_POLL_MS } from '../components/leanzero-swarm/mlxLiveStats';
 import { useFeatures } from '../contexts/FeaturesContext';
 import { useMlxRemoteReporter } from './useMlxRemoteReporter';
@@ -71,10 +71,9 @@ export class DistributedStopNotVerified extends Error {
  */
 export async function runMlxTrayAction(action: MlxTrayRendererAction): Promise<void> {
   if (action === 'stop-remote') {
-    // The route's Stop in Run it: the route withdrawn and the peer's engine unmounted. A peer that
-    // could not be reached keeps its model, and goose says so.
-    const { unmountError } = await mlxRemoteSingleStop(false);
-    if (unmountError) throw new Error(unmountError);
+    // The route's Stop in Run it (routeSwitch.ts, the one path): withdrawn on this Mac, at once when
+    // its Mac is not answering; a peer that keeps its model is the quiet PeerHeldLine, not a toast.
+    await dropRoute().routeGone;
     return;
   }
   if (action === 'stop-distributed') {

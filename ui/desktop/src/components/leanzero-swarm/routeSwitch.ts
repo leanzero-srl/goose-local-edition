@@ -7,13 +7,15 @@ import {
 import { routePeerName } from './macs';
 
 /**
- * Moving chat OFF a route — the ONE path both switches take (the composer's "Run on this Mac
- * instead" and Run it's switch, PlacementCard `stopForSwitch`).
+ * Moving chat OFF a route — the ONE path every switch and Stop takes: the composer's "Run on this
+ * Mac instead", Run it's switch (PlacementCard `stopForSwitch`) and Stop (`stop`), the Engine
+ * view's Stop serving (`onStopRemote`) and the menu-bar tray's Stop (useMlxTrayActions
+ * `stop-remote`, run in the renderer on main's behalf).
  *
  * The route is a record on THIS Mac: withdrawing it never needs the linked Mac. Freeing that Mac's
  * engine does, and a switch must never wait on — or fail because of — a Mac that is not answering
  * (the recovery recordings: the Studio gone for ~10 s; the old switch either hung on the peer's
- * unmount or ended "switch failed" with the route already gone). So:
+ * unmount or ended "switch failed" with the route already gone; a Stop spun on it). So:
  *  - reachable: the route's Stop as before (withdraw + unmount there, answered in one call);
  *  - not answering (route `reconnecting`, or the last route read failed): withdraw only, then ask
  *    that Mac to free its engine in the background.
@@ -65,7 +67,7 @@ export interface RouteDrop {
   settled: Promise<void>;
 }
 
-export function dropRouteForSwitch(peerUnreachable: boolean = routeUnreachable()): RouteDrop {
+export function dropRoute(peerUnreachable: boolean = routeUnreachable()): RouteDrop {
   const route = latestMlxRemoteSingleStatus();
   const peerNodeId = route?.peer ?? null;
   const peerName = route ? routePeerName(route) : '';

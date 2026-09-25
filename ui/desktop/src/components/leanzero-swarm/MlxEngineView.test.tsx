@@ -896,6 +896,29 @@ describe('MlxEngineView state tile instrument', () => {
     unmount();
   });
 
+  it('Stop on a route whose Mac is NOT answering: the route goes here at once, that Mac is asked in the background, a quiet line — no error, no spinner', async () => {
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    mockRemoteStop.mockImplementation(async () => {
+      remoteStore.publish({ state: 'off' });
+      return { unmounted: false, unmountError: null, status: { state: 'off' } };
+    });
+    // The Studio never answers the request to free its engine.
+    mockUnmount.mockReturnValue(new Promise(() => undefined));
+    remoteStore.publish({ ...ROUTE, state: 'reconnecting' });
+    const user = userEvent.setup();
+    const { unmount } = render(<MlxEngineView />);
+    await user.click(await screen.findByTestId('mlx-remote-stop'));
+    expect(mockRemoteStop).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(mockUnmount).toHaveBeenCalledWith(ROUTE.peer));
+    const held = await screen.findByTestId('peer-held');
+    expect(held.textContent).toContain(
+      "Work's Mac Studio still holds the model — goose asked it to free it"
+    );
+    expect(screen.queryByTestId('mlx-remote-stop-failed')).toBeNull();
+    await user.click(screen.getByTestId('peer-held-dismiss'));
+    unmount();
+  });
+
   it('the Models and Sampling tabs’ badge says what serves chat — the route, from the tile’s own source', async () => {
     bridge.mlxLiveStatus = vi.fn(async (baseUrl: string) => ({
       ok: true,

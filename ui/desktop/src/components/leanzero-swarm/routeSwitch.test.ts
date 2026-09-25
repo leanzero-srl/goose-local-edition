@@ -14,7 +14,7 @@ vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineUnmount: (...a: unknown[]) => mockUnmount(...a),
 }));
 
-const { dismissPeerHeld, dropRouteForSwitch, latestPeerHeld, routeUnreachable } =
+const { dismissPeerHeld, dropRoute, latestPeerHeld, routeUnreachable } =
   await import('./routeSwitch');
 
 const STUDIO: MlxRemoteSingleStatus = {
@@ -32,13 +32,13 @@ beforeEach(() => {
   mockStop.mockResolvedValue({ unmounted: false, unmountError: null, status: { state: 'off' } });
 });
 
-describe('dropRouteForSwitch — the one way chat leaves a route', () => {
+describe('dropRoute — the one way chat leaves a route', () => {
   it('a Mac that is not answering: the route goes on THIS Mac at once; the switch never waits on that Mac', async () => {
     route = { ...STUDIO, state: 'reconnecting' };
     expect(routeUnreachable()).toBe(true);
     let answer: (v?: unknown) => void = () => undefined;
     mockUnmount.mockReturnValue(new Promise((r) => (answer = r)));
-    const drop = dropRouteForSwitch();
+    const drop = dropRoute();
     await drop.routeGone;
     expect(mockStop).toHaveBeenCalledWith(true);
     await vi.waitFor(() =>
@@ -58,7 +58,7 @@ describe('dropRouteForSwitch — the one way chat leaves a route', () => {
     readError = 'remoteSingleStatus: no answer';
     expect(routeUnreachable()).toBe(true);
     mockUnmount.mockRejectedValue(new Error('not connected to the mesh'));
-    const drop = dropRouteForSwitch();
+    const drop = dropRoute();
     await expect(drop.routeGone).resolves.toBeUndefined();
     await drop.settled;
     expect(latestPeerHeld()).toMatchObject({ phase: 'held', detail: 'not connected to the mesh' });
@@ -70,7 +70,7 @@ describe('dropRouteForSwitch — the one way chat leaves a route', () => {
       unmountError: "Work's Mac Studio's engine was left mounted: timeout",
       status: { state: 'off' },
     });
-    const drop = dropRouteForSwitch();
+    const drop = dropRoute();
     await expect(drop.routeGone).resolves.toBeUndefined();
     expect(mockStop).toHaveBeenCalledWith(false);
     expect(mockUnmount).not.toHaveBeenCalled();
@@ -79,7 +79,7 @@ describe('dropRouteForSwitch — the one way chat leaves a route', () => {
 
   it('only a route that could not be withdrawn (another window owns it) is an error', async () => {
     mockStop.mockRejectedValue(new Error('remoteSingleActive: another goose window'));
-    const drop = dropRouteForSwitch(true);
+    const drop = dropRoute(true);
     await expect(drop.routeGone).rejects.toThrow('remoteSingleActive');
     await drop.settled;
     expect(mockUnmount).not.toHaveBeenCalled();

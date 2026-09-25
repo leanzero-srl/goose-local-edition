@@ -4,7 +4,7 @@ import { Hourglass, Laptop, Loader2, Network, ServerOff, Settings2 } from 'lucid
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import { errorMessage } from '../../utils/conversionUtils';
 import { PeerHeldLine } from '../leanzero-swarm/PeerHeldLine';
-import { dropRouteForSwitch } from '../leanzero-swarm/routeSwitch';
+import { dropRoute } from '../leanzero-swarm/routeSwitch';
 import { routePeerName } from '../leanzero-swarm/macs';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { compactTokens } from '../leanzero-swarm/mlxLiveStats';
@@ -141,7 +141,7 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
       setSwitching(true);
       setSwitchError(null);
       try {
-        const dropped = dropRouteForSwitch(true);
+        const dropped = dropRoute(true);
         // The route record goes first inside the call; the peer is only asked afterwards.
         await dropped.routeGone;
         if (instead.mount) await mount(STRIP_MOUNT_KEY, instead.mount);
