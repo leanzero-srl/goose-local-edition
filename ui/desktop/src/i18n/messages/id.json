@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "Baris yang tidak terbaca di penyimpanan pengukuran"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "Tidak ada yang dimulai: {model} tidak dapat dihentikan di tempat ia berjalan sekarang ({where}): {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "Menghentikan {model} di tempat ia berjalan sekarang ({where}) agar cara ini mendapatkan memorinya…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "pembagian tensor · {link}"
   },

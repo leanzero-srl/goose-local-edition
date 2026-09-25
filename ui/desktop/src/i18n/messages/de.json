@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "Unlesbare Zeilen im Messspeicher"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "Nichts gestartet: {model} konnte dort, wo es gerade läuft ({where}), nicht gestoppt werden: {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "{model} wird dort gestoppt, wo es gerade läuft ({where}), damit dieser Weg seinen Speicher bekommt…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "Tensor-Split · {link}"
   },

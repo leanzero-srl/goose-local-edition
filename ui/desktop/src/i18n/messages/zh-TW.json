@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "測量儲存中有無法讀取的行"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "未啟動任何內容：無法在目前執行位置（{where}）停止 {model}：{reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "正在停止目前執行位置（{where}）上的 {model}，讓此方式取得其記憶體…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "張量分割 · {link}"
   },

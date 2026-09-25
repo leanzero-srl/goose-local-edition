@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "측정 저장소에 읽을 수 없는 줄이 있음"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "시작된 것이 없습니다: 지금 실행 중인 곳({where})에서 {model}을(를) 중지할 수 없습니다: {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "이 방식이 메모리를 쓸 수 있도록 지금 실행 중인 곳({where})에서 {model}을(를) 중지하는 중…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "텐서 분할 · {link}"
   },

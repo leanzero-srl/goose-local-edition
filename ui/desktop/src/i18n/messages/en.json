@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "Unreadable lines in the measurement store"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "Nothing started: {model} could not be stopped where it runs now ({where}): {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "Stopping {model} where it runs now ({where}) so this way gets its memory…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "tensor split · {link}"
   },

@@ -121,6 +121,33 @@ async fn relay_get(base_url: &str, path: &str) -> RelayAnswer {
     }
 }
 
+/// The Metal memory a linked Mac's engine holds, from its own `/v1/status` through the relay:
+/// `metal.active_memory_gb + metal.cache_memory_gb` — what that Mac gets back when the engine
+/// exits (both are the process's buffers). Rapid-MLX reports them in decimal GB
+/// (`mx.get_active_memory() / 1e9`, scheduler.rs `metal_active_memory_gb`).
+pub(super) async fn peer_engine_held_bytes(base_url: &str) -> Result<u64, String> {
+    match relay_get(base_url, "v1/status").await {
+        RelayAnswer::Ok(body) => metal_held_bytes(&body),
+        RelayAnswer::Status { code, body } => Err(format!("{code}: {body}")),
+        RelayAnswer::NoAnswer(why) => Err(why),
+    }
+}
+
+fn metal_held_bytes(body: &str) -> Result<u64, String> {
+    let status: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| format!("the engine's status is not JSON ({e})"))?;
+    let metal = status
+        .get("metal")
+        .ok_or("the engine's status carries no `metal` block")?;
+    let gb = |key: &str| {
+        metal
+            .get(key)
+            .and_then(serde_json::Value::as_f64)
+            .ok_or_else(|| format!("the engine's status carries no metal.{key}"))
+    };
+    Ok(((gb("active_memory_gb")? + gb("cache_memory_gb")?) * 1e9) as u64)
+}
+
 /// The peer's answer to "may I route chat to you?" read BEFORE a model is loaded there — so a
 /// peer whose owner has not opted in costs no mount. `None` = go ahead (its engine may simply not
 /// be mounted yet: the proxy's `502 engineUnreachable`).
@@ -632,6 +659,19 @@ fn distributed_owner() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_peer_engine_holds_its_active_and_cached_metal_memory() {
+        // Work's Mac Studio's 27B, idle after chat, 2026-09-25.
+        let body = r#"{"status":"idle","metal":{"active_memory_gb":40.17,"peak_memory_gb":54.21,"cache_memory_gb":13.02}}"#;
+        assert_eq!(metal_held_bytes(body), Ok(53_190_000_000));
+        assert!(metal_held_bytes(r#"{"status":"idle"}"#)
+            .unwrap_err()
+            .contains("no `metal` block"));
+        assert!(metal_held_bytes(r#"{"metal":{"active_memory_gb":1.0}}"#)
+            .unwrap_err()
+            .contains("metal.cache_memory_gb"));
+    }
 
     #[test]
     fn the_engine_address_is_the_configured_port_on_loopback_or_a_named_absence() {

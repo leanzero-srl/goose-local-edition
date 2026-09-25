@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "Có dòng không đọc được trong kho đo đạc"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "Chưa khởi động gì: không thể dừng {model} ở nơi nó đang chạy ({where}): {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "Đang dừng {model} ở nơi nó đang chạy ({where}) để cách này có bộ nhớ của nó…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "chia tensor · {link}"
   },

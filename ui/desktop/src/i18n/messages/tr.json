@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "Ölçüm deposunda okunamayan satırlar"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "Hiçbir şey başlatılmadı: {model} şu an çalıştığı yerde ({where}) durdurulamadı: {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "Bu yol belleğini alsın diye {model} şu an çalıştığı yerde ({where}) durduruluyor…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "tensör bölmesi · {link}"
   },

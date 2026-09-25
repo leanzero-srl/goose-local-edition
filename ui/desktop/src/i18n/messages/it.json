@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "Righe illeggibili nell’archivio delle misure"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "Non è partito nulla: impossibile arrestare {model} dove è in esecuzione ora ({where}): {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "Arresto di {model} dove è in esecuzione ora ({where}) perché questa opzione ne ottenga la memoria…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "suddivisione dei tensori · {link}"
   },

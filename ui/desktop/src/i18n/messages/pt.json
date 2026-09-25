@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "Linhas ilegíveis no armazenamento de medições"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "Nada foi iniciado: não foi possível parar {model} onde ele roda agora ({where}): {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "Parando {model} onde ele roda agora ({where}) para que esta opção receba a memória…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "divisão de tensores · {link}"
   },

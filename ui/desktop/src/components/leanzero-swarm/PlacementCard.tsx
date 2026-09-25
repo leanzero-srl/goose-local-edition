@@ -31,7 +31,7 @@ import {
   type PlacementPlan,
   type SpeedFigure,
 } from '../../acp/mlx-placement';
-import type { MlxEngineStatus } from '../../acp/mlx-engine';
+import { mlxEngineUnmount, type MlxEngineStatus } from '../../acp/mlx-engine';
 import {
   mlxDistributedDiscover,
   mlxDistributedProvision,
@@ -186,6 +186,15 @@ const i18n = defineMessages({
     defaultMessage: 'fits only at {tokens} context',
   },
   started: { id: 'placementCard.started', defaultMessage: 'Starting — this card follows it.' },
+  switching: {
+    id: 'placementCard.switching',
+    defaultMessage: 'Stopping {model} where it runs now ({where}) so this way gets its memory…',
+  },
+  switchStopFailed: {
+    id: 'placementCard.switchStopFailed',
+    defaultMessage:
+      'Nothing started: {model} could not be stopped where it runs now ({where}): {reason}',
+  },
   measuredResult: {
     id: 'placementCard.measuredResult',
     defaultMessage: 'Measured: {decode} tok/s writing, {prefill} tok/s reading',
@@ -713,14 +722,66 @@ function PlacementCardBody({
     [modelId, onMountHere, refused, savedSplit, startSplitFor]
   );
 
+  /**
+   * Stop a way of this model and return once it has let go of its memory: the single engine's
+   * unmount and the peer's unmount both return after the engine process exits; the split is
+   * followed until it no longer owns the Mac — bounded by its own state, never a clock.
+   * The failure text, or null.
+   */
+  const stopForSwitch = async (way: Way): Promise<string | null> => {
+    if (way.kind === 'local') {
+      await mlxEngineUnmount();
+      return null;
+    }
+    if (way.kind === 'peer') {
+      const response = await mlxRemoteSingleStop(false);
+      return response.unmountError ?? null;
+    }
+    let status = (await mlxDistributedStop()).status;
+    while (ownsTheMac(status) && status.state !== 'failed') {
+      await sleep(MLX_STATUS_POLL_MS);
+      status = await mlxDistributedStatus();
+    }
+    return null;
+  };
+
+  /**
+   * Run is a SWITCH: the model runs one way at a time — chat follows one engine, and the plan
+   * credits the running way's memory to the others. Starting a second copy beside the first left
+   * it idle and held its memory (3.0.29: Run across both Macs read "short 5.2 GB on Work's Mac
+   * Studio" while the Studio's own copy held 53 GB).
+   */
   const run = async (way: Way) => {
     setNotice(null);
-    if (way.kind === 'local') {
+    const current = ways.find((w) => {
+      if (w.key === way.key) return false;
+      const live = wayLive(w, modelId, single, distributed);
+      return live != null && live.state !== 'failed';
+    });
+    if (!current && way.kind === 'local') {
       onMountHere();
       return;
     }
     setBusy(`run:${way.key}`);
     try {
+      if (current) {
+        const model = modelId.split('/').pop() || modelId;
+        const where = title(current);
+        setNotice({ tone: 'accent', text: intl.formatMessage(i18n.switching, { model, where }) });
+        const failed = await stopForSwitch(current);
+        if (failed) {
+          setNotice({
+            tone: 'err',
+            text: intl.formatMessage(i18n.switchStopFailed, { model, where, reason: failed }),
+          });
+          return;
+        }
+        if (way.kind === 'local') {
+          onMountHere();
+          setNotice({ tone: 'accent', text: intl.formatMessage(i18n.started) });
+          return;
+        }
+      }
       const refusal = await startWay(way);
       setNotice(
         refusal == null

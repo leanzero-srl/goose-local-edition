@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "माप भंडार में न पढ़ी जा सकने वाली पंक्तियाँ"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "कुछ भी शुरू नहीं हुआ: {model} को वहाँ नहीं रोका जा सका जहाँ यह अभी चल रहा है ({where}): {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "{model} को वहाँ रोका जा रहा है जहाँ यह अभी चल रहा है ({where}) ताकि इस तरीके को उसकी मेमोरी मिले…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "टेंसर विभाजन · {link}"
   },

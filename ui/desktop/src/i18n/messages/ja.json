@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "測定ストアに読み取れない行があります"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "何も開始されませんでした: 現在実行中の場所 ({where}) で {model} を停止できませんでした: {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "このやり方がメモリを使えるよう、現在実行中の場所 ({where}) で {model} を停止しています…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "テンソル分割 · {link}"
   },

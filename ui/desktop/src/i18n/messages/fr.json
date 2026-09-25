@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "Lignes illisibles dans le stockage des mesures"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "Rien n’a démarré : {model} n’a pas pu être arrêté là où il tourne actuellement ({where}) : {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "Arrêt de {model} là où il tourne actuellement ({where}) pour que cette option récupère sa mémoire…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "répartition des tenseurs · {link}"
   },

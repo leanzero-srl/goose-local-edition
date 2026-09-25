@@ -5117,6 +5117,12 @@
   "placementCard.storeErrors": {
     "defaultMessage": "Нечитаемые строки в хранилище измерений"
   },
+  "placementCard.switchStopFailed": {
+    "defaultMessage": "Ничего не запущено: не удалось остановить {model} там, где она работает сейчас ({where}): {reason}"
+  },
+  "placementCard.switching": {
+    "defaultMessage": "Останавливаю {model} там, где она работает сейчас ({where}), чтобы этот вариант получил её память…"
+  },
   "placementCard.tensorKind": {
     "defaultMessage": "тензорное разделение · {link}"
   },

@@ -55,7 +55,9 @@ vi.mock('../../acp/leanzero-link', async (importActual) => ({
   leanzeroLinkNodes: (...a: unknown[]) => mockNodes(...a),
 }));
 const mockModelsList = vi.fn();
+const mockUnmount = vi.fn();
 vi.mock('../../acp/mlx-engine', () => ({
+  mlxEngineUnmount: (...a: unknown[]) => mockUnmount(...a),
   mlxEngineStatus: vi.fn(async () => ({
     state: 'stopped',
     restartRequired: false,
@@ -458,6 +460,59 @@ describe('Run it on the real 27B plan', () => {
     const { onMountHere } = renderCard();
     await userEvent.click(await screen.findByTestId('placement-run-local'));
     expect(onMountHere).toHaveBeenCalledTimes(1);
+  });
+
+  /** The 27B on the Studio as a live remote single, the plan crediting its memory to the rest. */
+  const localFits: PlacementPlan = {
+    ...PLAN_LINK,
+    candidates: (PLAN_LINK.candidates ?? []).map((c) =>
+      c.id === 'single:local' ? { ...c, fit: { ...c.fit, status: 'fits' } } : c
+    ),
+  };
+
+  it('Run is a switch: Run on this Mac stops the Studio’s copy first, then mounts here', async () => {
+    mockPlan.mockResolvedValue(answer(localFits));
+    remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
+    const order: string[] = [];
+    mockRemoteStop.mockImplementation(async () => {
+      order.push('stop studio');
+      return { unmounted: true, unmountError: null, status: { state: 'off' } };
+    });
+    const { onMountHere } = renderCard();
+    onMountHere.mockImplementation(() => order.push('mount here'));
+    await userEvent.click(await screen.findByTestId('placement-run-local'));
+    await waitFor(() => expect(order).toEqual(['stop studio', 'mount here']));
+    expect(mockRemoteStop).toHaveBeenCalledWith(false);
+  });
+
+  it('Run on the Studio while this Mac runs the model unmounts here first, then starts there', async () => {
+    mockPlan.mockResolvedValue(answer(localFits));
+    const order: string[] = [];
+    mockUnmount.mockImplementation(async () => void order.push('unmount here'));
+    mockRemoteStart.mockImplementation(async () => {
+      order.push('start studio');
+      return { started: true, status: { state: 'mounting' } };
+    });
+    renderCard({ single: { state: 'running', modelId: MODEL } as MlxEngineStatus });
+    const peer = await screen.findByTestId('placement-way-peer');
+    await userEvent.click(await within(peer).findByTestId('placement-run-peer'));
+    await waitFor(() => expect(order).toEqual(['unmount here', 'start studio']));
+  });
+
+  it('a copy that cannot be stopped starts nothing, and says why', async () => {
+    mockPlan.mockResolvedValue(answer(localFits));
+    remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
+    mockRemoteStop.mockResolvedValue({
+      unmounted: false,
+      unmountError: "Work's Mac Studio's engine was left mounted: peer did not answer",
+      status: { state: 'off' },
+    });
+    const { onMountHere } = renderCard();
+    await userEvent.click(await screen.findByTestId('placement-run-local'));
+    expect(
+      await screen.findByText(/Nothing started: Qwen3.8-27B-Atlassian-Q8-mlx could not be stopped/)
+    ).toBeInTheDocument();
+    expect(onMountHere).not.toHaveBeenCalled();
   });
 
   it('with no plan, every way can still be started — the failure is named, this Mac leads', async () => {

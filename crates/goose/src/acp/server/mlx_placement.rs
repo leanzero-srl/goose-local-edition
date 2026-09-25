@@ -519,6 +519,10 @@ mod imp {
         pub running: Vec<(String, String, Option<u64>)>,
         /// The single engine's resident bytes when a model is mounted here, and whose.
         pub single_footprint: Option<(String, u64)>,
+        /// The Metal memory the engine on the linked Mac serving this Mac's chat holds:
+        /// (its placement node id, model id, bytes). Every other placement of that model on that
+        /// Mac gets it back, because Run switches rather than adds a copy.
+        pub peer_footprint: Option<(String, String, u64)>,
         pub notes: Vec<String>,
     }
 
@@ -526,6 +530,7 @@ mod imp {
         let mut out = Serving {
             running: Vec::new(),
             single_footprint: None,
+            peer_footprint: None,
             notes: Vec::new(),
         };
         let single = global_manager().status().await;
@@ -569,11 +574,20 @@ mod imp {
             }
         }
         if let Some(route) = crate::providers::mlx_remote::read().live() {
-            out.running.push((
-                route.model_id,
-                PlacementKey::single(&format!("link:{}", route.peer)).id(),
-                None,
-            ));
+            let node = format!("link:{}", route.peer);
+            match super::super::mlx_remote_single::peer_engine_held_bytes(&route.base_url).await {
+                Ok(bytes) => {
+                    out.peer_footprint = Some((node.clone(), route.model_id.clone(), bytes))
+                }
+                Err(e) => out.notes.push(format!(
+                    "{} is served from {} but its memory could not be read ({e}); that Mac's \
+                     figures do not count it as free for other placements",
+                    route.model_id,
+                    route.peer_name()
+                )),
+            }
+            out.running
+                .push((route.model_id, PlacementKey::single(&node).id(), None));
         }
         out
     }
@@ -648,6 +662,19 @@ mod imp {
                 peer_dirs.push(peer_model_dir(&m.models, &dir, &local_files));
             }
             nodes.push(input);
+        }
+        // The linked Mac's copy of THIS model is what Run replaces there (a switch, never a second
+        // copy), so every placement of it — the fork planner's included — sees that memory free.
+        if let Some((node_id, model, bytes)) = &ctx.serving.peer_footprint {
+            if model == model_id {
+                if let Some(Ok(memory)) = nodes
+                    .iter_mut()
+                    .find(|n| &n.id == node_id)
+                    .map(|n| n.memory.as_mut())
+                {
+                    memory.available_bytes += bytes;
+                }
+            }
         }
         let runner = Runner::for_model_type(&facts.model_type).ok();
         let tensor = (runner == Some(Runner::MlxLmTensor))
@@ -735,6 +762,15 @@ mod imp {
                 dto.notes.push(format!(
                     "{mounted} is mounted here: its {:.1} GiB count as free on this Mac, because \
                      [Use this] replaces it",
+                    *bytes as f64 / goose_sidecar::GIB as f64
+                ));
+            }
+        }
+        if let Some((_, served, bytes)) = &ctx.serving.peer_footprint {
+            if served == model_id {
+                dto.notes.push(format!(
+                    "{served} runs on a linked Mac now: its {:.1} GiB there count as free for this \
+                     model's other placements, because Run moves it rather than adding a copy",
                     *bytes as f64 / goose_sidecar::GIB as f64
                 ));
             }
