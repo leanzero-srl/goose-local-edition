@@ -4,7 +4,7 @@
 // the Studio once the answer is being written, then samples the chat screen every second for 60 s:
 // the readiness bar, the model chip, the tail of the transcript, and main's engine snapshot (the tray).
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
-import { execSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { writeFileSync, appendFileSync } from 'node:fs';
 const [dir, mode] = process.argv.slice(2);
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
@@ -42,8 +42,12 @@ while ((Date.now() - t0) / 1000 < 240) {
   if (!broke && /Writing/.test(s.chip) && (Date.now() - t0) > 8000) {
     broke = Date.now();
     event = mode;
-    if (mode === 'kill-link') execSync(`ssh workhorse 'kill $(pgrep -f "Goose Swarm.app/Contents/Resources/bin/tailscaled" | head -1)'`);
-    else execSync(`ssh workhorse 'osascript -e "quit app \\"Goose Swarm\\""; sleep 3; open -a "/Applications/Goose Swarm.app"'`);
+    // Fire and keep sampling: execSync froze the sampler ~4.5 s through the relaunch (osascript quit + sleep 3),
+    // so the first seconds after the break — the ones this harness exists to see — had no rows (3.0.37/3.0.38).
+    const cmd = mode === 'kill-link'
+      ? `ssh workhorse 'kill $(pgrep -f "Goose Swarm.app/Contents/Resources/bin/tailscaled" | head -1)'`
+      : `ssh workhorse 'osascript -e "quit app \\"Goose Swarm\\""; sleep 3; open -a "/Applications/Goose Swarm.app"'`;
+    spawn('/bin/sh', ['-c', cmd], { stdio: 'ignore' });
   }
   appendFileSync(out, [t, event, s.bar, s.chip, s.tail, s.tray].join('\t') + '\n');
   if (broke && i % 2 === 0) await p.screenshot({ path: `${dir}/s-${String(i).padStart(3, '0')}.png` });
