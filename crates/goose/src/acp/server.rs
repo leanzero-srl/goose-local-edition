@@ -1996,19 +1996,20 @@ fn forming_progress_text(
     if progress.tool_calls == 0 {
         return None;
     }
-    let chars = |n: usize| {
-        if n < 1000 {
-            format!("{n} chars")
-        } else {
-            format!("{:.1}k chars", n as f64 / 1000.0)
-        }
+    let chars = |n: usize| match n {
+        1 => "1 char".to_string(),
+        n if n < 1000 => format!("{n} chars"),
+        n => format!("{:.1}k chars", n as f64 / 1000.0),
     };
     let calls = if progress.tool_calls == 1 {
         "1 tool call".to_string()
     } else {
         format!("{} tool calls", progress.tool_calls)
     };
-    let mut parts = vec![format!("{} of arguments", chars(progress.argument_chars))];
+    let mut parts = Vec::new();
+    if progress.argument_chars > 0 {
+        parts.push(format!("{} of arguments", chars(progress.argument_chars)));
+    }
     if progress.reasoning_chars > 0 {
         parts.push(format!("{} of reasoning", chars(progress.reasoning_chars)));
     }
@@ -2017,6 +2018,9 @@ fn forming_progress_text(
             "{} of text not shown in the chat",
             chars(progress.unplaced_text_chars)
         ));
+    }
+    if parts.is_empty() {
+        return Some(format!("goose is writing {calls}"));
     }
     Some(format!("goose is writing {calls} — {}", parts.join(", ")))
 }
@@ -3170,6 +3174,24 @@ mod tests {
             })
             .as_deref(),
             Some("goose is writing 1 tool call — 40 chars of arguments")
+        );
+        // Q-100: the first chunk of a call's arguments read "1 chars of arguments".
+        assert_eq!(
+            forming_progress_text(&FormingProgress {
+                tool_calls: 1,
+                argument_chars: 1,
+                ..Default::default()
+            })
+            .as_deref(),
+            Some("goose is writing 1 tool call — 1 char of arguments")
+        );
+        assert_eq!(
+            forming_progress_text(&FormingProgress {
+                tool_calls: 2,
+                ..Default::default()
+            })
+            .as_deref(),
+            Some("goose is writing 2 tool calls")
         );
         assert_eq!(
             forming_progress_text(&FormingProgress {

@@ -7478,6 +7478,9 @@
   "themeSelector.theme": {
     "defaultMessage": "Thème"
   },
+  "thinkingContent.label": {
+    "defaultMessage": "Réflexion"
+  },
   "toolApprovalButtons.allowOnce": {
     "defaultMessage": "Autoriser une fois"
   },

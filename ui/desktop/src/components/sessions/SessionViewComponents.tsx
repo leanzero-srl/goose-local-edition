@@ -152,7 +152,7 @@ export const SessionMessages: React.FC<SessionMessagesProps> = ({
                       <div className="flex flex-col w-full">
                         {/* Thinking content */}
                         {thinkingContent && (
-                          <div className="mb-2 text-sm text-gray-400 italic">
+                          <div className="mb-2 text-sm text-lz-ink-2">
                             <MarkdownContent content={thinkingContent} />
                           </div>
                         )}

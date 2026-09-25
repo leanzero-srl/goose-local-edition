@@ -205,15 +205,13 @@ describe('a rendered block paints every run from inside itself, in both themes',
   });
 });
 
-describe('code is never italic, even inside the italic Thinking section', () => {
+describe('code is never italic, inside the Thinking section too', () => {
   it('the block under ThinkingContent sets an upright face on pre, code and every token', async () => {
     setDocumentTheme('light');
     const { container } = render(<ThinkingContent content={PYTHON} isExpanded />, {
       wrapper: IntlTestWrapper,
     });
-    const { root, pre, code } = await renderedBlock(container);
-    // the premise: the block really sits inside the italic wrapper
-    expect(root.closest('.italic')).not.toBeNull();
+    const { pre, code } = await renderedBlock(container);
     expect(pre.style.fontStyle).toBe('normal');
     expect(code.style.fontStyle).toBe('normal');
     const italicTokens = Array.from(code.querySelectorAll<HTMLElement>('span')).filter(

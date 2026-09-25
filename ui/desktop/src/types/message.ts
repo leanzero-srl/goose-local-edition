@@ -316,7 +316,10 @@ export function getThinkingContent(message: Message): string | null {
     }
   }
 
-  return parts.length > 0 ? parts.join('') : null;
+  // A reasoning channel that carried only whitespace (a thinking block the model opened and
+  // closed at once) has nothing to open: no "Thinking" row for it (Q-100).
+  const joined = parts.join('');
+  return joined.trim() ? joined : null;
 }
 
 export function getToolRequests(message: Message): (ToolRequest & { type: 'toolRequest' })[] {
