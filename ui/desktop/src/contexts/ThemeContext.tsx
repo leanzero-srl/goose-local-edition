@@ -189,3 +189,13 @@ export function useTheme(): ThemeContextValue {
   }
   return context;
 }
+
+/**
+ * The resolved theme for a component that also renders outside the provider (unit renders): the
+ * provider's answer when there is one, else the class the provider paints on <html>.
+ */
+export function useResolvedTheme(): ResolvedTheme {
+  const context = useContext(ThemeContext);
+  if (context) return context.resolvedTheme;
+  return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+}

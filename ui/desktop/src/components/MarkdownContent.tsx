@@ -6,25 +6,8 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-// Improved oneDark theme for better comment contrast and readability
-const customOneDarkTheme = {
-  ...oneDark,
-  'code[class*="language-"]': {
-    ...oneDark['code[class*="language-"]'],
-    color: '#e6e6e6',
-    fontSize: '14px',
-  },
-  'pre[class*="language-"]': {
-    ...oneDark['pre[class*="language-"]'],
-    color: '#e6e6e6',
-    fontSize: '14px',
-  },
-  comment: { ...oneDark.comment, color: '#a0a0a0', fontStyle: 'italic' },
-  prolog: { ...oneDark.prolog, color: '#a0a0a0' },
-  doctype: { ...oneDark.doctype, color: '#a0a0a0' },
-  cdata: { ...oneDark.cdata, color: '#a0a0a0' },
-};
+import { CODE_THEMES } from './codeThemes';
+import { useResolvedTheme } from '../contexts/ThemeContext';
 
 import { Check, Copy } from './icons';
 import { wrapHTMLInCodeBlock } from '../utils/htmlSecurity';
@@ -110,47 +93,40 @@ const CodeBlock = memo(function CodeBlock({
     };
   }, []);
 
-  // Memoize the SyntaxHighlighter component to prevent re-rendering
-  // Only re-render if language or children change
+  const theme = useResolvedTheme();
   const memoizedSyntaxHighlighter = useMemo(() => {
-    // For very large code blocks, consider truncating or lazy loading
-    const isLargeCodeBlock = children.length > 10000; // 10KB threshold
-
-    if (isLargeCodeBlock) {
-      console.log(`Large code block detected (${children.length} chars), consider optimization`);
-    }
-
+    const style = CODE_THEMES[theme];
+    // codeTagProps REPLACES the theme's <code> style inside react-syntax-highlighter, so the theme's
+    // colour and upright face are carried here explicitly: a <code> without its own colour lets the
+    // surrounding prose/thinking colour reach every untokenised run (codeThemes.ts).
     return (
       <SyntaxHighlighter
-        style={customOneDarkTheme}
+        style={style}
         language={language}
         PreTag="div"
-        customStyle={{
-          margin: 0,
-          width: '100%',
-          maxWidth: '100%',
-        }}
+        customStyle={{ width: '100%', maxWidth: '100%' }}
         codeTagProps={{
+          className: `language-${language}`,
           style: {
+            ...style['code[class*="language-"]'],
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-all',
             overflowWrap: 'break-word',
-            fontFamily: 'var(--font-mono)',
-            fontSize: '14px',
           },
         }}
-        // Performance optimizations for SyntaxHighlighter
-        showLineNumbers={false} // Disable line numbers for better performance
-        wrapLines={false} // Disable line wrapping for better performance
-        lineProps={undefined} // Don't add extra props to each line
+        showLineNumbers={false}
+        wrapLines={false}
+        lineProps={undefined}
       >
         {children}
       </SyntaxHighlighter>
     );
-  }, [language, children]);
+  }, [language, children, theme]);
 
+  // not-prose: Typography's `code` rules (its colour, weight 600 and the backtick ::before/::after)
+  // exclude a not-prose subtree — without it they styled the highlighter's own <code>.
   return (
-    <div className="relative w-full">
+    <div className="not-prose relative w-full" data-code-block={theme}>
       <button
         type="button"
         onClick={handleCopy}
