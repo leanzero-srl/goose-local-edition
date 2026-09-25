@@ -35,3 +35,11 @@ for host in macbook studio; do
   if [ $host = macbook ]; then l=$(zsh -c "$cmd"); else l=$(ssh workhorse "zsh -c $(printf %q "$cmd")"); fi
   echo "== $host model ports held: ${l:-none}"
 done
+# Disk: agents' worktrees each carry their own cargo target (4–29 GB); on 2026-09-25 they filled the disk to
+# 378 MB free mid-loop. Report free space on both Macs and every worktree whose branch is already merged.
+echo "== macbook free: $(df -h / | awk 'NR==2 {print $4}') · studio free: $(ssh workhorse "df -h / | awk 'NR==2 {print \$4}'")"
+repo=/Users/mihaiperdum/Projects/goose
+for b in $(git -C $repo branch --merged main | tr -d ' +*' | grep '^worktree-agent-'); do
+  w=$repo/.claude/worktrees/${b#worktree-}
+  [ -d "$w" ] && [ -z "$(git -C "$w" status --porcelain 2>/dev/null)" ] && [ "$(git -C $repo rev-list --count main..$b)" = 0 ] && echo "   merged worktree (removable once its agent has finished): $w ($(du -sh "$w" 2>/dev/null | cut -f1))"
+done
