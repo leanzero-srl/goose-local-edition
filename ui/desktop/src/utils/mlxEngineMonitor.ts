@@ -100,6 +100,26 @@ export interface MlxEngineMonitorDeps {
   intervalMs: number;
 }
 
+/** The IPC channel main pushes every snapshot on, the moment it lands. */
+export const MLX_ENGINE_SNAPSHOT_CHANNEL = 'mlx-engine-snapshot';
+
+const SNAPSHOT_ENGINES = new Set(['single', 'distributed', 'remote']);
+const SNAPSHOT_MODES = new Set(['unknown', 'off', 'mounting', 'running', 'failed', 'reconnecting']);
+
+/** A pushed payload is a snapshot only if its engine and mode are ones main produces. */
+export function isMlxEngineSnapshot(value: unknown): value is MlxEngineSnapshot {
+  if (value == null || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.engine === 'string' &&
+    SNAPSHOT_ENGINES.has(v.engine) &&
+    typeof v.mode === 'string' &&
+    SNAPSHOT_MODES.has(v.mode) &&
+    typeof v.rates === 'object' &&
+    v.rates != null
+  );
+}
+
 export const INITIAL_SNAPSHOT: MlxEngineSnapshot = {
   engine: 'single',
   mode: 'unknown',

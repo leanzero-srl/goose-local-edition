@@ -4,9 +4,14 @@ import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import {
   latestMlxRemoteSingleReadError,
   latestMlxRemoteSingleStatus,
+  mlxRemoteSingleStatus,
   subscribeMlxRemoteSingleStatus,
 } from '../../acp/mlx-remote-single';
-import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
+import {
+  MLX_ENGINE_SNAPSHOT_CHANNEL,
+  isMlxEngineSnapshot,
+  type MlxEngineSnapshot,
+} from '../../utils/mlxEngineMonitor';
 import { defineMessages, useIntl } from '../../i18n';
 import { MLX_STATUS_POLL_MS } from '../leanzero-swarm/mlxLiveStats';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
@@ -49,9 +54,23 @@ function useMainEngineSnapshot(enabled: boolean): MlxEngineSnapshot | null {
     };
     void read();
     const timer = setInterval(() => void read(), MLX_STATUS_POLL_MS);
+    // main pushes each read as it lands (Q-59); the poll stays for a main without the push.
+    const electron = (
+      window as unknown as {
+        electron?: {
+          on?: (channel: string, fn: (event: unknown, ...args: unknown[]) => void) => void;
+          off?: (channel: string, fn: (event: unknown, ...args: unknown[]) => void) => void;
+        };
+      }
+    ).electron;
+    const onPush = (_event: unknown, ...args: unknown[]) => {
+      if (alive && isMlxEngineSnapshot(args[0])) setSnapshot(args[0]);
+    };
+    electron?.on?.(MLX_ENGINE_SNAPSHOT_CHANNEL, onPush);
     return () => {
       alive = false;
       clearInterval(timer);
+      electron?.off?.(MLX_ENGINE_SNAPSHOT_CHANNEL, onPush);
     };
   }, [enabled]);
   return snapshot;
@@ -63,6 +82,8 @@ export interface ChatServing {
   single: MlxEngineStatus | null;
   /** The provider rides an MLX engine this renderer reads (`swarm`, `omlx`). */
   armed: boolean;
+  /** This chat has a turn in flight (what the bar's words about "this answer" hang on). */
+  turnInFlight: boolean;
 }
 
 /**
@@ -104,6 +125,14 @@ export function useChatServedBy(
   );
   const main = useMainEngineSnapshot(armed);
 
+  // The Mac answers main again while the route's last word is still "reconnecting" (or its last
+  // read failed): read the route now, so the bar clears with main's read instead of the next poll.
+  const mainBack = main?.engine === 'remote' && main.mode === 'running';
+  const routeStale = remote?.state === 'reconnecting' || remoteReadError != null;
+  useEffect(() => {
+    if (mainBack && routeStale) mlxRemoteSingleStatus().catch(() => undefined);
+  }, [mainBack, routeStale]);
+
   const thisMac = intl.formatMessage(i18n.thisMac);
   const engineLabel = intl.formatMessage(i18n.mlxEngine);
   const served = useMemo(
@@ -135,5 +164,5 @@ export function useChatServedBy(
       engineLabel,
     ]
   );
-  return { served, single: status, armed };
+  return { served, single: status, armed, turnInFlight };
 }

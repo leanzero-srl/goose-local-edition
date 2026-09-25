@@ -14,6 +14,7 @@ import {
 } from '../leanzero-swarm/mlxLiveStatus.fixtures';
 import {
   deriveChatServedBy,
+  leaveCause,
   mlxEngineServing,
   reconnectingMac,
   servedReady,
@@ -152,6 +153,8 @@ describe('deriveChatServedBy — the six moments', () => {
       phase: 'idle',
       activity: 'idle',
       busyWithOthers: null,
+      turnRequest: null,
+      readTps: null,
       readiness: { kind: 'ready' },
     });
     expect(servedReady(served)).toBe(true);
@@ -171,6 +174,8 @@ describe('deriveChatServedBy — the six moments', () => {
       phase: 'writing',
       activity: 'generating',
       busyWithOthers: null,
+      turnRequest: null,
+      readTps: null,
       readiness: { kind: 'remote', status: ROUTE },
     });
     expect(servedReady(served)).toBe(true);
@@ -191,7 +196,10 @@ describe('deriveChatServedBy — the six moments', () => {
       phase: 'loading',
       activity: null,
       busyWithOthers: null,
-      readiness: { kind: 'remote', status: mounting },
+      turnRequest: null,
+      readTps: null,
+      // While it loads there, this Mac's own Mount stays one click away (Q-57).
+      readiness: { kind: 'remote', status: mounting, instead: { kind: 'switch', mount: HF } },
     });
     expect(servedReady(served)).toBe(false);
   });
@@ -208,6 +216,8 @@ describe('deriveChatServedBy — the six moments', () => {
       phase: 'idle',
       activity: null,
       busyWithOthers: null,
+      turnRequest: null,
+      readTps: null,
       readiness: { kind: 'ready' },
     });
   });
@@ -224,6 +234,8 @@ describe('deriveChatServedBy — the six moments', () => {
       phase: 'idle',
       activity: null,
       busyWithOthers: null,
+      turnRequest: null,
+      readTps: null,
       readiness: { kind: 'ready' },
     });
     const notAnswering = deriveChatServedBy(
@@ -247,6 +259,8 @@ describe('deriveChatServedBy — the six moments', () => {
       phase: 'unloaded',
       activity: null,
       busyWithOthers: null,
+      turnRequest: null,
+      readTps: null,
       readiness: {
         kind: 'unmounted',
         nodes: ['mihai-mlx'],
@@ -471,6 +485,7 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
       kind: 'reconnecting',
       status: { ...ROUTE, state: 'reconnecting', lastError: 'Link peer refused' },
       why: 'Link peer refused',
+      cause: null,
       instead: { kind: 'switch', mount: HF },
     });
   });
@@ -538,5 +553,101 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
     expect(none.readiness).toMatchObject({ kind: 'reconnecting', instead: { kind: 'none' } });
     const omlx = deriveChatServedBy(inputs({ provider: 'omlx', remote: reconnecting }));
     expect(omlx.readiness).toMatchObject({ instead: { kind: 'switch', mount: HF } });
+  });
+});
+
+describe('THIS turn on the engine (Q-13) and the Mac that said it is leaving (Q-54)', () => {
+  const mine = {
+    key: 'chat:s-mine',
+    kind: 'chat' as const,
+    sessionId: 's-mine',
+    sessionName: 'story',
+    count: 1,
+  };
+  const reviewer = {
+    key: 'session:row-7',
+    kind: 'session' as const,
+    sessionId: null,
+    sessionName: null,
+    sessionType: null,
+    count: 1,
+  };
+  const withRates = (snap: MlxEngineSnapshot): MlxEngineSnapshot => ({
+    ...snap,
+    rates: {
+      uptimeS: 900,
+      runs: new Map([
+        ['a', { decodeTps: 19.9, prefillTps: 300 }],
+        ['b', { decodeTps: 20.1, prefillTps: 318 }],
+        ['c', { decodeTps: null, prefillTps: 340 }],
+      ]),
+    },
+  });
+
+  it('the Studio reading this chat’s 32k prompt is the turn’s request, with the engine’s measured read rate', () => {
+    const served = deriveChatServedBy(
+      inputs({
+        remote: ROUTE,
+        turnInFlight: true,
+        main: withRates(
+          snapshot('remote', PREFILL_STATUS, {
+            clients: [mine, reviewer],
+            unattributed: 0,
+            swarmRuns: [],
+            error: null,
+          })
+        ),
+      })
+    );
+    expect(served.turnRequest).toMatchObject({ phase: 'prefill', promptTokens: 32277 });
+    expect(served.readTps).toBe(318);
+  });
+
+  it('with another client on the engine, which request is ours cannot be proven — nothing is claimed', () => {
+    const theirs = { ...mine, key: 'chat:s-other', sessionId: 's-other' };
+    const served = deriveChatServedBy(
+      inputs({
+        remote: ROUTE,
+        turnInFlight: true,
+        main: snapshot('remote', PREFILL_STATUS, {
+          clients: [mine, theirs],
+          unattributed: 0,
+          swarmRuns: [],
+          error: null,
+        }),
+      })
+    );
+    expect(served.turnRequest).toBeNull();
+    // No turn in flight, no claim either.
+    expect(
+      deriveChatServedBy(
+        inputs({
+          remote: ROUTE,
+          main: snapshot('remote', PREFILL_STATUS, {
+            clients: [mine],
+            unattributed: 0,
+            swarmRuns: [],
+            error: null,
+          }),
+        })
+      ).turnRequest
+    ).toBeNull();
+  });
+
+  it('the route’s reason in fdc737969’s words names the cause; any other reason names none', () => {
+    const quit = deriveChatServedBy(
+      inputs({
+        remote: {
+          ...ROUTE,
+          state: 'reconnecting',
+          lastError:
+            "Work's Mac Studio does not answer over LeanZero Link right now: Work's Mac Studio quit goose",
+        },
+      })
+    );
+    expect(quit.readiness).toMatchObject({ kind: 'reconnecting', cause: 'quit' });
+    expect(leaveCause("Work's Mac Studio is restarting goose")).toBe('restart');
+    expect(leaveCause('timeout: no answer within 1500 ms')).toBeNull();
+    expect(leaveCause(null)).toBeNull();
   });
 });

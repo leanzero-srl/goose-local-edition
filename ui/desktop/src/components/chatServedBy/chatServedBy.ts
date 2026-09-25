@@ -9,8 +9,10 @@ import { routePeerName } from '../leanzero-swarm/macs';
 import { activityPhase, remotePhase, runPhase, singlePhase } from '../leanzero-swarm/mlxPhase';
 import {
   MLX_STATUS_POLL_MS,
+  bookSpreads,
   mlxActivity,
   type MlxActivity,
+  type MlxLiveRequest,
   type MlxLiveStats,
 } from '../leanzero-swarm/mlxLiveStats';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
@@ -80,15 +82,36 @@ export type ComposerReadiness =
   | { kind: 'no-nodes' }
   | { kind: 'unmounted'; nodes: string[]; target: MountTarget; fact: EngineFact }
   | { kind: 'distributed'; nodes: string[]; status: MlxDistributedStatus; wanted: string | null }
-  | { kind: 'remote'; status: MlxRemoteSingleStatus }
+  | {
+      kind: 'remote';
+      status: MlxRemoteSingleStatus;
+      /** While the route LOADS there, what "Run on this Mac instead" does (Q-57); else absent. */
+      instead?: RunHere;
+    }
   | {
       kind: 'reconnecting';
       status: MlxRemoteSingleStatus;
       /** The failed read's own words (the route's, the renderer's or main's); null = none given. */
       why: string | null;
+      /** The Mac said it is going away on purpose (fdc737969): this answer is gone (Q-54). */
+      cause: LeaveCause | null;
       /** What "Run on this Mac instead" does — this Mac's readiness with the route set aside. */
       instead: RunHere;
     };
+
+/**
+ * A linked Mac that said it is going away on purpose — Link's `LeaveReason::describe()` words
+ * ("Work's Mac Studio quit goose", "… is restarting goose"), carried in the route's reason and in
+ * the relay's drop error. The engine goes with the app (Q-34), so an answer in flight is gone.
+ */
+export type LeaveCause = 'quit' | 'restart';
+
+export function leaveCause(text: string | null | undefined): LeaveCause | null {
+  if (!text) return null;
+  if (/\bis restarting goose\b/.test(text)) return 'restart';
+  if (/\bquit goose\b/.test(text)) return 'quit';
+  return null;
+}
 
 /**
  * Chat back on this Mac while the route's Mac does not answer: drop the route, then mount `mount`
@@ -310,6 +333,13 @@ export interface ChatServedBy extends MlxEngineServing {
   /** What it is doing, from main's live read of THAT engine; null when main has none. */
   activity: MlxActivity | null;
   busyWithOthers: ChatBusy | null;
+  /**
+   * THIS chat's turn on that engine, from main's live read (`turnRequest`); null when no turn is
+   * in flight or it cannot be told apart from someone else's.
+   */
+  turnRequest: MlxLiveRequest | null;
+  /** The engine's measured prompt-reading rate (median of its runs, tok/s); null = none measured. */
+  readTps: number | null;
   /** Can the active provider answer — the readiness bar's actions hang off it. */
   readiness: ComposerReadiness;
 }
@@ -372,6 +402,38 @@ function gooseBackground(client: MlxServing['clients'][number]): boolean {
 function holdsARequestWaiting(stats: MlxLiveStats): boolean {
   return stats.requests.some(
     (r) => r.status === 'waiting' && (r.elapsedS == null || r.elapsedS * 1000 >= MLX_STATUS_POLL_MS)
+  );
+}
+
+/**
+ * THIS chat's request on the engine while its turn is in flight. Rapid-MLX lists requests by an
+ * internal id, so it is told apart only by what goose attributes: this chat's lease (or, for the
+ * omlx provider, the unattributed request of our own turn) with NO other client on the engine —
+ * with someone else there, which request is ours cannot be proven and nothing is claimed. goose's
+ * own background calls may run beside the turn (the reviewer, a title); the turn carries the whole
+ * conversation, so its prompt is the largest of the running requests.
+ */
+function turnRequestOf(
+  main: MlxEngineSnapshot,
+  stats: MlxLiveStats,
+  sessionId: string | null,
+  turnInFlight: boolean
+): MlxLiveRequest | null {
+  if (!turnInFlight) return null;
+  const serving = main.serving;
+  if (!serving || serving.error) return null;
+  let own = 0;
+  for (const client of serving.clients) {
+    const mine = client.kind !== 'external' && sessionId != null && client.sessionId === sessionId;
+    if (mine) own += client.count;
+    else if (!gooseBackground(client)) return null;
+  }
+  if (own === 0 && serving.unattributed === 0) return null;
+  if (own > 0 && serving.unattributed > 0) return null;
+  const running = stats.requests.filter((r) => r.status !== 'waiting');
+  return running.reduce<MlxLiveRequest | null>(
+    (best, r) => (best == null || (r.promptTokens ?? 0) > (best.promptTokens ?? 0) ? r : best),
+    null
   );
 }
 
@@ -441,6 +503,8 @@ const NOT_MLX: ChatServedBy = {
   phase: null,
   activity: null,
   busyWithOthers: null,
+  turnRequest: null,
+  readTps: null,
   readiness: UNKNOWN,
 };
 
@@ -468,8 +532,11 @@ export function deriveChatServedBy(inputs: ChatServedInputs): ChatServedBy {
         kind: 'reconnecting',
         status: readiness.status,
         why: lost.why,
+        cause: leaveCause(lost.why),
         instead: runHere(readinessVia(null)),
       };
+    } else if (readiness.status.state === 'mounting') {
+      readiness = { ...readiness, instead: runHere(readinessVia(null)) };
     }
   }
 
@@ -501,6 +568,8 @@ export function deriveChatServedBy(inputs: ChatServedInputs): ChatServedBy {
       phase: named ? phaseOf(NO_ENGINE, inputs, null) : null,
       activity: null,
       busyWithOthers: null,
+      turnRequest: null,
+      readTps: null,
       readiness,
     };
   }
@@ -515,6 +584,8 @@ export function deriveChatServedBy(inputs: ChatServedInputs): ChatServedBy {
       stats && activity && main
         ? busyWith(main, stats, activity, sessionId, inputs.turnInFlight)
         : null,
+    turnRequest: stats && main ? turnRequestOf(main, stats, sessionId, inputs.turnInFlight) : null,
+    readTps: stats && main ? (bookSpreads(main.rates).reading?.median ?? null) : null,
     readiness,
   };
 }

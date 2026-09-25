@@ -461,6 +461,50 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
     );
   });
 
+  it('Q-59: main’s PUSHED read clears the bar the moment the Mac answers — no wait for the next poll', async () => {
+    const handlers: Record<string, (event: unknown, ...args: unknown[]) => void> = {};
+    const lost: MlxEngineSnapshot = {
+      engine: 'remote',
+      mode: 'reconnecting',
+      modelId: null,
+      baseUrl: ROUTE.baseUrl,
+      stats: null,
+      statusDetail: 'timeout: no answer within 1500 ms',
+      rates: EMPTY_BOOK,
+      serving: null,
+      failedError: null,
+    };
+    (window as unknown as { electron: unknown }).electron = {
+      mlxEngineActivity: async () => lost,
+      on: (channel: string, fn: (event: unknown, ...args: unknown[]) => void) => {
+        handlers[channel] = fn;
+      },
+      off: () => undefined,
+    };
+    mockExtMethod.mockResolvedValue({ status: { ...ROUTE, state: 'ready' } });
+    await mlxRemoteSingleStatus();
+    wrap('swarm', 's-mine');
+    expect(await screen.findByTestId('composer-readiness')).toHaveAttribute(
+      'data-readiness',
+      'reconnecting'
+    );
+    const idle = parseMlxLiveStatus(PREFILL_STATUS);
+    if (!idle.ok) throw new Error(idle.detail);
+    act(() =>
+      handlers['mlx-engine-snapshot']?.(null, {
+        ...lost,
+        mode: 'running',
+        stats: idle.stats,
+        statusDetail: null,
+        serving: { clients: [], unattributed: 0, swarmRuns: [], error: null },
+      })
+    );
+    // Well inside one poll interval (2 s): only the push can have done it.
+    await waitFor(() => expect(screen.queryByTestId('composer-readiness')).toBeNull(), {
+      timeout: 500,
+    });
+  });
+
   it('"Run on this Mac instead" drops the route on THIS Mac and mounts here at once — never waiting on the Mac that is not answering', async () => {
     const calls: string[] = [];
     mockExtMethod.mockImplementation(async (method: string, params: unknown) => {

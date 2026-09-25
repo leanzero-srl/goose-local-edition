@@ -335,6 +335,8 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     phase: 'idle',
     activity: 'idle',
     busyWithOthers: null,
+    turnRequest: null,
+    readTps: null,
     readiness: { kind: 'ready' },
   };
   const renderChip = (served: ChatServedBy | null, setView = vi.fn()) =>

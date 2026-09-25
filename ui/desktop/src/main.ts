@@ -144,6 +144,7 @@ import {
 import { PHASE_HEX, type EnginePhase } from './components/lz/tokens';
 import { phaseDotBitmap } from './utils/phaseDot';
 import { isMlxRemoteReport, remoteLiveBase, type MlxRemoteReport } from './utils/mlxRemoteReport';
+import { MLX_ENGINE_SNAPSHOT_CHANNEL } from './utils/mlxEngineMonitor';
 import { isMlxRestoreReport, type MlxRestoreReport } from './utils/mlxRestoreReport';
 import {
   isLinkTrayReport,
@@ -2129,7 +2130,14 @@ const mlxMonitor = new MlxEngineMonitor({
   // A route serving this Mac's chat from a linked Mac: its engine, through goosed's loopback relay.
   remoteRoute: () => mlxRemote,
   swarmRuns: mlxSwarmRuns,
-  onSnapshot: (snapshot) => renderMlxTray(snapshot),
+  onSnapshot: (snapshot) => {
+    renderMlxTray(snapshot);
+    // Pushed as it lands: the composer's bar follows main's read at once instead of at its next
+    // poll (Q-59: it lingered ~2 s after the Mac answered again).
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(MLX_ENGINE_SNAPSHOT_CHANNEL, snapshot);
+    }
+  },
   schedule: (fn, ms) => {
     const timer = setTimeout(fn, ms);
     return () => clearTimeout(timer);
