@@ -7,7 +7,7 @@ import { routePeerName } from '../components/leanzero-swarm/macs';
  * `null` = no route (chat stays on this Mac's own engine).
  */
 export interface MlxRemoteReport {
-  /** "mounting" | "ready" | "failed". */
+  /** "mounting" | "ready" | "reconnecting" | "failed". */
   state: string;
   /** The Mac chat is served from, named the one way (`routePeerName`). */
   peerName: string;
@@ -51,9 +51,14 @@ export function isMlxRemoteReport(value: unknown): value is MlxRemoteReport | nu
   );
 }
 
-/** The base main's loop reads while the route serves; null while it mounts, failed or has none. */
-export function remoteLiveBase(report: MlxRemoteReport | null): string | null {
-  return report?.state === 'ready' ? report.baseUrl : null;
+/**
+ * The base main's loop reads while the route serves — and while its Mac does not answer, so the
+ * read that finds it back is the loop's own; null while it mounts, failed or has none.
+ */
+export function remoteLiveBase(
+  report: Pick<MlxRemoteReport, 'state' | 'baseUrl'> | null
+): string | null {
+  return report?.state === 'ready' || report?.state === 'reconnecting' ? report.baseUrl : null;
 }
 
 /** "Serving from <peer>" — the one phrase every surface uses for a remote route. */

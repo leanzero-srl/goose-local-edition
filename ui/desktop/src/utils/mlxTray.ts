@@ -97,6 +97,8 @@ export function snapshotPhase(snapshot: MlxEngineSnapshot): EnginePhase | null {
       return 'loading';
     case 'failed':
       return 'failed';
+    case 'reconnecting':
+      return 'loading';
     case 'running':
       return snapshot.stats ? activityPhase(mlxActivity(snapshot.stats)) : 'idle';
   }
@@ -142,11 +144,28 @@ function remoteLive(
 }
 
 /**
+ * The route is published and its Mac does not answer: the route says so (`reconnecting`), or
+ * main's own read of its engine through the relay failed. Chat still goes there — nothing on THIS
+ * Mac is read or offered as if it served (Q-48).
+ */
+function remoteReconnecting(snapshot: MlxEngineSnapshot, report: MlxRemoteReport): boolean {
+  return (
+    report.state === 'reconnecting' ||
+    (report.state === 'ready' && snapshot.engine === 'remote' && snapshot.mode === 'reconnecting')
+  );
+}
+
+/**
  * The title names the Mac that serves chat — its one name (`routePeerName`, carried as
  * `peerName`) — never "Remote", which said a route exists without saying where (Q-27).
  */
-function remoteTrayTitle(report: MlxRemoteReport, live: MlxEngineSnapshot | null): string {
+function remoteTrayTitle(
+  report: MlxRemoteReport,
+  live: MlxEngineSnapshot | null,
+  reconnecting: boolean
+): string {
   const mac = report.peerName;
+  if (reconnecting) return `Reconnecting to ${mac}`;
   if (report.state === 'ready') return live ? `${mac} · ${mlxTrayTitle(live)}` : mac;
   return report.state === 'failed' ? `${mac} · failed` : `${mac} · ${report.state}`;
 }
@@ -158,9 +177,26 @@ function remoteModel(
   canAct: boolean
 ): MlxTrayModel {
   const live = remoteLive(snapshot, remote);
-  const phase = remotePhase(remote.state, live?.stats ? mlxActivity(live.stats) : null);
-  const items: MlxTrayItem[] = [{ type: 'info', label: clip(remoteTrayLine(remote)), phase }];
-  if (live) {
+  const reconnecting = remoteReconnecting(snapshot, remote);
+  const phase = reconnecting
+    ? 'loading'
+    : remotePhase(remote.state, live?.stats ? mlxActivity(live.stats) : null);
+  const items: MlxTrayItem[] = [
+    {
+      type: 'info',
+      label: clip(
+        reconnecting
+          ? `Lost contact with ${remote.peerName} — reconnecting…`
+          : remoteTrayLine(remote)
+      ),
+      phase,
+    },
+  ];
+  if (reconnecting) {
+    if (snapshot.engine === 'remote' && snapshot.statusDetail) {
+      items.push({ type: 'info', label: clip(`Last read: ${snapshot.statusDetail}`) });
+    }
+  } else if (live) {
     items.push(...runningItems(live));
   } else if (remote.state === 'ready' && snapshot.engine === 'remote' && snapshot.statusDetail) {
     items.push({
@@ -179,7 +215,7 @@ function remoteModel(
       enabled: canAct,
     }
   );
-  return { title: remoteTrayTitle(remote, live), phase, items };
+  return { title: remoteTrayTitle(remote, live, reconnecting), phase, items };
 }
 
 /**
@@ -215,6 +251,8 @@ export function mlxTrayTitle(snapshot: MlxEngineSnapshot): string {
       return 'Mounting';
     case 'failed':
       return 'MLX failed';
+    case 'reconnecting':
+      return 'Reconnecting';
     case 'running':
       break;
   }
@@ -248,6 +286,8 @@ function headline(snapshot: MlxEngineSnapshot): string {
       return 'LeanZero MLX: mounting';
     case 'failed':
       return 'LeanZero MLX: failed';
+    case 'reconnecting':
+      return 'LeanZero MLX: reconnecting';
     case 'running':
       break;
   }

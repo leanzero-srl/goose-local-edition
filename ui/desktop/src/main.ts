@@ -2127,7 +2127,7 @@ const mlxMonitor = new MlxEngineMonitor({
       ? distributedLiveBase(mlxDistributed.report)
       : null,
   // A route serving this Mac's chat from a linked Mac: its engine, through goosed's loopback relay.
-  remoteBaseUrl: () => remoteLiveBase(mlxRemote),
+  remoteRoute: () => mlxRemote,
   swarmRuns: mlxSwarmRuns,
   onSnapshot: (snapshot) => renderMlxTray(snapshot),
   schedule: (fn, ms) => {
@@ -2343,11 +2343,14 @@ ipcMain.on('mlx-restore-report', (_event, report: unknown) => {
 });
 ipcMain.on('mlx-remote-report', (_event, report: unknown) => {
   if (!isMlxRemoteReport(report)) return;
-  const wasLive = remoteLiveBase(mlxRemote);
+  const was = mlxRemote;
   mlxRemote = report;
   renderMlxTray(mlxMonitor.current());
-  // The loop reads the peer's engine while the route serves, and this Mac's own once it ends.
-  if (remoteLiveBase(report) || wasLive) mlxMonitor.wake();
+  // The loop reads the peer's engine while the route serves, says what the route is while it does
+  // not, and reads this Mac's own once it ends.
+  if (remoteLiveBase(report) || remoteLiveBase(was) || report?.state !== was?.state) {
+    mlxMonitor.wake();
+  }
 });
 ipcMain.on('mlx-distributed-report', (_event, report: unknown) => {
   if (!isMlxDistributedReport(report)) return;

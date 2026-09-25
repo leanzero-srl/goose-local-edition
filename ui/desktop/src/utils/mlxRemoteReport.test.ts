@@ -75,9 +75,10 @@ describe('the remote-single report main receives', () => {
     expect(remoteLiveBase(older)).toBeNull();
   });
 
-  it('main reads the relay only while the route serves', () => {
+  it('main reads the relay while the route serves — and while its Mac does not answer', () => {
     const report = toMlxRemoteReport(READY)!;
     expect(remoteLiveBase(report)).toBe(RELAY);
+    expect(remoteLiveBase({ ...report, state: 'reconnecting' })).toBe(RELAY);
     expect(remoteLiveBase({ ...report, state: 'mounting' })).toBeNull();
     expect(remoteLiveBase({ ...report, state: 'failed' })).toBeNull();
     expect(remoteLiveBase(null)).toBeNull();
@@ -162,5 +163,44 @@ describe('the tray while chat is served from a linked Mac', () => {
       'Rates unavailable over LeanZero Link: timeout: no answer within 1500 ms'
     );
     expect(labels(model).some((l) => /tok\/s/.test(l))).toBe(false);
+  });
+
+  it('LOST CONTACT (Q-47/Q-48): the title says it is reconnecting to that Mac, amber, the read’s words, and Stop stays', () => {
+    // recovery-kill-link 11.6 s: the route still says ready, main's relay read timed out.
+    const report = toMlxRemoteReport(READY)!;
+    const model = buildMlxTrayModel(
+      {
+        ...INITIAL_SNAPSHOT,
+        engine: 'remote',
+        mode: 'reconnecting',
+        statusDetail: 'timeout: no answer within 1500 ms',
+      },
+      options(report)
+    );
+    expect(model.title).toBe("Reconnecting to Work's Mac Studio");
+    expect(model.phase).toBe('loading');
+    expect(model.items[0]).toMatchObject({
+      label: "Lost contact with Work's Mac Studio — reconnecting…",
+      phase: 'loading',
+    });
+    expect(labels(model)).toContain('Last read: timeout: no answer within 1500 ms');
+    expect(model.items.some((i) => i.type === 'action' && i.action === 'stop-remote')).toBe(true);
+    expect(model.items.some((i) => i.type === 'action' && i.action === 'mount')).toBe(false);
+
+    // The route itself says so (the backend's `reconnecting`), whatever main last read.
+    const said = toMlxRemoteReport({ ...READY, state: 'reconnecting' })!;
+    const fromRoute = buildMlxTrayModel(INITIAL_SNAPSHOT, options(said));
+    expect(fromRoute.title).toBe("Reconnecting to Work's Mac Studio");
+    expect(fromRoute.phase).toBe('loading');
+  });
+
+  it('`failed` stays red and means the peer answered that its engine failed — never "reconnecting"', () => {
+    const failed = toMlxRemoteReport({ ...READY, state: 'failed', lastError: 'exit 137' })!;
+    const f = buildMlxTrayModel(
+      { ...INITIAL_SNAPSHOT, engine: 'remote', mode: 'failed' },
+      options(failed)
+    );
+    expect(f.title).toBe("Work's Mac Studio · failed");
+    expect(f.phase).toBe('failed');
   });
 });

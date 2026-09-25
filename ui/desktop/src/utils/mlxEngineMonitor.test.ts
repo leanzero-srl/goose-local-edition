@@ -22,7 +22,8 @@ function harness(opts: {
   serving?: () => MlxServingRead;
   configBaseUrl?: string | null;
   distributedBaseUrl?: () => string | null;
-  remoteBaseUrl?: () => string | null;
+  /** A published route; a bare string is a READY route on that relay. */
+  remoteRoute?: () => { state: string; baseUrl: string | null } | string | null;
 }) {
   const snapshots: MlxEngineSnapshot[] = [];
   const scheduled: Array<() => void> = [];
@@ -33,7 +34,10 @@ function harness(opts: {
     readServing,
     configBaseUrl: () => (opts.configBaseUrl === undefined ? BASE : opts.configBaseUrl),
     distributedBaseUrl: () => opts.distributedBaseUrl?.() ?? null,
-    remoteBaseUrl: () => opts.remoteBaseUrl?.() ?? null,
+    remoteRoute: () => {
+      const route = opts.remoteRoute?.() ?? null;
+      return typeof route === 'string' ? { state: 'ready', baseUrl: route } : route;
+    },
     swarmRuns: () => ['bench-r9'],
     onSnapshot: (s) => snapshots.push(s),
     schedule: (fn) => {
@@ -265,7 +269,7 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
   it("reads the peer engine's /v1/status on the relay, tags it remote, and keeps its own rates", async () => {
     let relay: string | null = null;
     const bodies: Record<string, unknown> = { [BASE]: IDLE_STATUS, [RELAY]: GENERATING_STATUS };
-    const h = harness({ status: () => answered(null), remoteBaseUrl: () => relay });
+    const h = harness({ status: () => answered(null), remoteRoute: () => relay });
     h.readStatus.mockImplementation(async (url: string) => answered(bodies[url]));
     await h.monitor.tick();
     expect(h.monitor.current().engine).toBe('single');
@@ -289,14 +293,16 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
     const h = harness({
       status: () => answered(IDLE_STATUS),
       distributedBaseUrl: () => 'http://127.0.0.1:8091',
-      remoteBaseUrl: () => RELAY,
+      remoteRoute: () => RELAY,
     });
     await h.monitor.tick();
     expect(h.readStatus).toHaveBeenCalledWith('http://127.0.0.1:8091');
     expect(h.monitor.current().engine).toBe('distributed');
   });
 
-  it('a relay read that times out drops the last figures — never an old number over Link', async () => {
+  it('a relay read that times out is LOST CONTACT: no old figures, the reason named, and the loop keeps looking (Q-47)', async () => {
+    // recovery-kill-link, 11.6 s: "timeout: no answer within 1500 ms" — the mode used to hold
+    // `running`, so the screen had nothing to say while main already knew.
     const timeout: MlxLiveStatusResult = {
       ok: false,
       url: RELAY,
@@ -304,25 +310,65 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
       detail: 'no answer within 1500 ms',
     };
     let answer: MlxLiveStatusResult = answered(GENERATING_STATUS);
-    const h = harness({ status: () => answer, remoteBaseUrl: () => RELAY });
+    const h = harness({ status: () => answer, remoteRoute: () => RELAY });
     await h.monitor.tick();
     expect(h.monitor.current().stats).not.toBeNull();
     answer = timeout;
+    h.scheduled.length = 0;
     await h.monitor.tick();
     expect(h.monitor.current()).toMatchObject({
       engine: 'remote',
-      mode: 'running',
+      mode: 'reconnecting',
       stats: null,
       statusDetail: 'timeout: no answer within 1500 ms',
     });
+    expect(h.scheduled).toHaveLength(1);
+    answer = answered(GENERATING_STATUS);
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'running' });
   });
 
-  it('a relay that stops answering is UNKNOWN with the reason, never the local engine', async () => {
-    const h = harness({ status: () => refused, remoteBaseUrl: () => RELAY });
+  it('a relay that refuses, or answers 502, is reconnecting — never the local engine', async () => {
+    const h = harness({ status: () => refused, remoteRoute: () => RELAY });
     await h.monitor.tick();
-    expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'unknown' });
+    expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'reconnecting' });
     expect(h.readStatus).toHaveBeenCalledTimes(1);
     expect(h.readStatus).toHaveBeenCalledWith(RELAY);
+    // recovery-relaunch-peer, 18.9 s: "http: engine returned 502".
+    const bad: MlxLiveStatusResult = {
+      ok: false,
+      url: RELAY,
+      error: 'http',
+      detail: 'engine returned 502',
+    };
+    const h2 = harness({ status: () => bad, remoteRoute: () => RELAY });
+    await h2.monitor.tick();
+    expect(h2.monitor.current()).toMatchObject({
+      engine: 'remote',
+      mode: 'reconnecting',
+      statusDetail: 'http: engine returned 502',
+    });
+  });
+
+  it('a route MOUNTING or FAILED there is the route’s state — this Mac’s engine is never read (relaunch, 19.9 s)', async () => {
+    // The recording: the route went `mounting` while the Studio relaunched, and main read THIS
+    // Mac's port — "single/off unreachable: net::ERR_CONNECTION_REFUSED" — for 11 seconds.
+    let route: { state: string; baseUrl: string | null } = { state: 'mounting', baseUrl: RELAY };
+    const h = harness({ status: () => refused, remoteRoute: () => route });
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'mounting' });
+    expect(h.readStatus).not.toHaveBeenCalled();
+    route = { state: 'failed', baseUrl: RELAY };
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'failed' });
+    route = { state: 'reconnecting', baseUrl: RELAY };
+    await h.monitor.tick();
+    expect(h.readStatus).toHaveBeenCalledWith(RELAY);
+    expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'reconnecting' });
+    route = { state: 'reconnecting', baseUrl: null };
+    await h.monitor.tick();
+    expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'reconnecting' });
+    expect(h.readStatus).toHaveBeenCalledTimes(1);
   });
 });
 

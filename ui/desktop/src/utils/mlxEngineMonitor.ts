@@ -7,6 +7,7 @@ import {
   type MlxLiveStats,
 } from '../components/leanzero-swarm/mlxLiveStats';
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
+import { remoteLiveBase } from './mlxRemoteReport';
 import {
   attributeServing,
   servingRowsForEngine,
@@ -29,9 +30,15 @@ import {
  * unless goose last said it is mounting (the port opens only at the end of a mount) or failed.
  * A timeout is NOT the engine gone — a busy engine can be slow to answer — so the mode holds and
  * the reason is carried; a body that is not Rapid-MLX's makes the mode `unknown`, never `running`.
+ *
+ * A ROUTE to a linked Mac is read as that Mac's engine for as long as the route is published, in
+ * every state: `reconnecting` while the relay read fails (or the route itself says so) — never a
+ * fall back to reading THIS Mac's engine, which serves nothing while the route stands (Q-48: the
+ * relaunch recording's tray read "single/off unreachable" at 19.9 s while chat still went to the
+ * Studio).
  */
 
-export type MlxEngineMode = 'unknown' | 'off' | 'mounting' | 'running' | 'failed';
+export type MlxEngineMode = 'unknown' | 'off' | 'mounting' | 'running' | 'failed' | 'reconnecting';
 
 /** What a renderer's ACP `mlxEngine/status` read said (the supervising goose's own word). */
 export interface MlxEngineReport {
@@ -82,8 +89,11 @@ export interface MlxEngineMonitorDeps {
   configBaseUrl(): string | null;
   /** Rank 0's base while the distributed run owns this Mac and is up (`distributedLiveBase`). */
   distributedBaseUrl(): string | null;
-  /** The relay to the peer's engine while a remote single serves this Mac's chat (`remoteLiveBase`). */
-  remoteBaseUrl(): string | null;
+  /**
+   * The route to a linked Mac's engine while one is published (a remote single serves this Mac's
+   * chat): its state and goosed's relay to it; null = no route, chat stays on this Mac.
+   */
+  remoteRoute(): { state: string; baseUrl: string | null } | null;
   swarmRuns(): string[];
   onSnapshot(snapshot: MlxEngineSnapshot): void;
   schedule(fn: () => void, ms: number): () => void;
@@ -164,7 +174,7 @@ export class MlxEngineMonitor {
     const next = await this.read();
     this.snapshot = next;
     this.deps.onSnapshot(next);
-    if (next.mode === 'running' || next.mode === 'mounting') {
+    if (next.mode === 'running' || next.mode === 'mounting' || next.mode === 'reconnecting') {
       this.cancelNext = this.deps.schedule(() => {
         this.cancelNext = null;
         this.wake();
@@ -180,9 +190,25 @@ export class MlxEngineMonitor {
   private async read(): Promise<MlxEngineSnapshot> {
     const distributedBase = this.deps.distributedBaseUrl();
     if (distributedBase) return this.readRouted('distributed', distributedBase);
-    const remoteBase = this.deps.remoteBaseUrl();
-    if (remoteBase) return this.readRouted('remote', remoteBase);
+    const route = this.deps.remoteRoute();
+    if (route) {
+      const base = remoteLiveBase(route);
+      return base ? this.readRouted('remote', base) : this.routeUnread(route.state);
+    }
     return { ...(await this.readSingle()), engine: 'single' };
+  }
+
+  /** A route with nothing to read yet (mounting there, failed there, or no relay handed over). */
+  private routeUnread(state: string): MlxEngineSnapshot {
+    const mode: MlxEngineMode =
+      state === 'mounting' || state === 'failed' || state === 'reconnecting' ? state : 'unknown';
+    return {
+      ...INITIAL_SNAPSHOT,
+      engine: 'remote',
+      mode,
+      statusDetail: mode === 'unknown' ? `the route is ${state} and names no relay to read` : null,
+      rates: this.snapshot.engine === 'remote' ? this.snapshot.rates : EMPTY_BOOK,
+    };
   }
 
   /**
@@ -199,12 +225,18 @@ export class MlxEngineMonitor {
     const result = await this.deps.readStatus(baseUrl);
     if (!result.ok) {
       // A split's rank 0 on this Mac that is slow keeps its last read; a linked Mac's engine read
-      // over Link never does — a timeout there is a named "rates unavailable", not an old number.
+      // over Link never does — any failed read there (timeout, refused, the relay's 502) is lost
+      // contact, named, and the loop keeps reading until the Mac answers again.
       const hold = result.error === 'timeout' && engine === 'distributed';
       return {
         ...INITIAL_SNAPSHOT,
         engine,
-        mode: result.error === 'timeout' && held ? held.mode : 'unknown',
+        mode:
+          engine === 'remote'
+            ? 'reconnecting'
+            : result.error === 'timeout' && held
+              ? held.mode
+              : 'unknown',
         baseUrl,
         stats: hold ? (held?.stats ?? null) : null,
         statusDetail: `${result.error}: ${result.detail}`,
