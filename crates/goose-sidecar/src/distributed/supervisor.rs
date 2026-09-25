@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 use super::compaction::{self, CompactionRefusal, NodeCompaction};
 use super::config::{Backend, DistributedConfig, Runner};
 use super::exec::{NodeExec, SystemExec};
-use super::launch::{self, RankMemory, RankPhase, RankProcess, RANK_MARKER};
+use super::launch::{self, RankMemory, RankPhase, RankProcess};
 use super::link_control::{self, ControlEvent, LinkRoutedExec};
 use super::local_network;
 use super::node_op::{NodeOp, Signal};
@@ -134,6 +134,9 @@ pub enum EventKind {
     StopRequested,
     Stopped,
     OrphanReclaimed,
+    /// A start or restart found this install's previous ranks still shutting down under a live
+    /// parent; the message names the pids and what will end them.
+    PreviousSplitWaiting,
     /// The LeanZero Link control session to a Link node stopped answering. The ranks are not
     /// stopped by it: the message says whether the data plane (rank 0's step counter) still moves.
     LinkControlLost,
@@ -171,6 +174,7 @@ impl EventKind {
             EventKind::StopRequested => "stopRequested",
             EventKind::Stopped => "stopped",
             EventKind::OrphanReclaimed => "orphanReclaimed",
+            EventKind::PreviousSplitWaiting => "previousSplitWaiting",
             EventKind::LinkControlLost => "linkControlLost",
             EventKind::LinkControlRestored => "linkControlRestored",
             EventKind::LocalNetworkBlocked => "localNetworkBlocked",
@@ -327,6 +331,12 @@ pub enum RefusalCode {
     SingleEngineMounted,
     AlreadyRunning,
     PreflightFailed,
+    /// THIS install's previous split still runs on `node` under a live parent (its goose is
+    /// stopping it, or a peer's lease will): nothing is signalled; a start once its pids are gone
+    /// goes through. Orphans never reach this — they are reclaimed per pid.
+    PreviousSplitShuttingDown,
+    /// A distributed MLX process this install did not launch runs on `node`; `detail` names it.
+    ForeignSplit,
 }
 
 impl RefusalCode {
@@ -335,6 +345,8 @@ impl RefusalCode {
             RefusalCode::SingleEngineMounted => "singleEngineMounted",
             RefusalCode::AlreadyRunning => "alreadyRunning",
             RefusalCode::PreflightFailed => "preflightFailed",
+            RefusalCode::PreviousSplitShuttingDown => "previousSplitShuttingDown",
+            RefusalCode::ForeignSplit => "foreignSplit",
         }
     }
 }
@@ -348,6 +360,10 @@ pub enum StartOutcome {
         code: RefusalCode,
         message: String,
         preflight: Option<PreflightReport>,
+        /// The Mac the refusal is about, by its configured name.
+        node: Option<String>,
+        /// What stands behind the message — pids and command lines — for a Details disclosure.
+        detail: Option<String>,
     },
 }
 
@@ -672,7 +688,7 @@ pub(crate) async fn stop_ranks(
                 "rank {} ({}): the peer never reported its pid; its ssh session is ended below and the node is swept for goose ranks",
                 rank.rank, rank.node
             ));
-            let swept = reclaim_marked_ranks(exec, host, &rank.node).await;
+            let swept = reclaim_marked_ranks(exec, host, &rank.node, rank.owner.as_deref()).await;
             report.verified &= swept.1;
             report.steps.extend(swept.0);
             continue;
@@ -777,12 +793,15 @@ pub(crate) async fn stop_ranks(
     report
 }
 
-/// Every goose rank (by its command-line marker) on a node: SIGTERM, grace, SIGKILL — per pid.
-/// The reclaim for ranks a previous goosed left behind (supervision state is in memory only).
+/// Every goose rank on a node that carries `owner` (this install's token): SIGTERM, grace,
+/// SIGKILL — per pid. The reclaim for ranks a previous goosed left behind (supervision state is
+/// in memory only). The marker alone never licenses a signal: a cargo test's stand-in rank and
+/// another install's live split carry it too. No owner = nothing provable = nothing signalled.
 async fn reclaim_marked_ranks(
     exec: &dyn NodeExec,
     host: Option<&str>,
     node: &str,
+    owner: Option<&str>,
 ) -> (Vec<String>, bool) {
     let listing = match exec.run_op(host, &NodeOp::ProcessList).await {
         Ok(out) if out.success() => out.stdout,
@@ -813,10 +832,21 @@ async fn reclaim_marked_ranks(
         }
         Err(e) => return (vec![format!("{node}: {e:#}")], false),
     };
-    let marked: Vec<u32> = probe::foreign_engine_processes(&listing, &[])
+    let Some(owner) = owner else {
+        return (
+            vec![format!(
+                "{node}: this goose launched its ranks with no owner token, so no rank here is \
+                 provably its own; nothing signalled"
+            )],
+            false,
+        );
+    };
+    // Judged on the WHOLE command line: the marker and the token follow the program's base64,
+    // far past the 160 characters a displayed row keeps.
+    let marked: Vec<u32> = probe::goose_rank_processes(&listing, None, &[])
         .into_iter()
-        .filter(|(_, cmd)| cmd.contains(RANK_MARKER))
-        .map(|(pid, _)| pid)
+        .filter(|r| r.owner.as_deref() == Some(owner))
+        .map(|r| r.pid)
         .collect();
     let mut steps = Vec::new();
     let mut verified = true;
@@ -857,6 +887,8 @@ struct RunContext {
     config: DistributedConfig,
     served_id: String,
     runner: Runner,
+    /// This install's owner token, written on every rank this run launches.
+    owner: Option<String>,
 }
 
 impl RunContext {
@@ -1564,6 +1596,7 @@ fn launch_specs(
     };
     for (spec, node) in specs.iter_mut().zip(&preflight.nodes) {
         spec.planned_weight_bytes = node.plan.as_ref().map(|p| p.weights_bytes);
+        spec.owner = ctx.owner.clone();
     }
     Ok(specs)
 }
@@ -1793,7 +1826,13 @@ async fn supervise(
                 }
                 backoff = (backoff * 2).min(parity.backoff_cap);
                 ctx.update(|s| s.status.state = RunState::Preflight);
-                match preflight_making_room(&ctx.config, &ctx.exec, &ctx.shared, true).await {
+                let Some(restart_preflight) =
+                    preflight_past_own_leftovers(&ctx, &mut stop_rx).await
+                else {
+                    ctx.update(|s| s.status.state = RunState::Stopped);
+                    return report;
+                };
+                match restart_preflight {
                     Ok(report) if report.ok => {
                         for repair in &report.repairs {
                             ctx.event(EventKind::LinkRepaired, None, repair.clone());
@@ -1825,9 +1864,11 @@ async fn supervise(
 }
 
 /// The ranks a failed preflight found SHORT (their plan exceeds their budget) whose owner left
-/// "Free memory automatically" on. None when the preflight passed.
+/// "Free memory automatically" on. None when the preflight passed, and none while this install's
+/// previous ranks still run anywhere: their exit (or reclaim) frees what they hold, and
+/// compaction beside a loaded model is refused anyway.
 fn nodes_to_compact(config: &DistributedConfig, report: &PreflightReport) -> Vec<usize> {
-    if report.ok {
+    if report.ok || report.nodes.iter().any(|n| !n.leftovers.is_empty()) {
         return Vec::new();
     }
     report
@@ -1853,8 +1894,9 @@ async fn preflight_making_room(
     exec: &Arc<dyn NodeExec>,
     shared: &Arc<StdMutex<Shared>>,
     repair_link: bool,
+    owner: Option<&str>,
 ) -> Result<PreflightReport> {
-    let first = preflight::run_preflight(config, Arc::clone(exec), repair_link).await?;
+    let first = preflight::run_preflight(config, Arc::clone(exec), repair_link, owner).await?;
     let short: Vec<_> = nodes_to_compact(config, &first)
         .into_iter()
         .map(|rank| &config.nodes[rank])
@@ -1878,17 +1920,126 @@ async fn preflight_making_room(
     if !ran {
         return Ok(first);
     }
-    let mut second = preflight::run_preflight(config, Arc::clone(exec), repair_link).await?;
+    let mut second = preflight::run_preflight(config, Arc::clone(exec), repair_link, owner).await?;
     let mut repairs = first.repairs;
     repairs.append(&mut second.repairs);
     second.repairs = repairs;
     Ok(second)
 }
 
+/// What a preflight's `leftovers` (this install's previous ranks, proven by the owner token)
+/// came to.
+#[derive(Debug, Default)]
+struct SettledLeftovers {
+    /// Orphans (their goose is gone): SIGTERM, grace, SIGKILL to each pid alone, observed gone.
+    reclaimed: Vec<String>,
+    /// (the Mac, what runs there): under a live parent — the goose stopping it, a peer's goose
+    /// whose lease ends it, an ssh session the peer's rank dies with — or a parent the node could
+    /// not name, or an orphan whose reclaim did not verify. Nothing more is signalled.
+    waiting: Vec<(String, String)>,
+}
+
+impl SettledLeftovers {
+    fn clear(&self) -> bool {
+        self.reclaimed.is_empty() && self.waiting.is_empty()
+    }
+
+    fn waiting_detail(&self) -> String {
+        self.waiting
+            .iter()
+            .map(|(node, what)| format!("{node}: {what}"))
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+}
+
+async fn settle_leftovers(
+    exec: &dyn NodeExec,
+    config: &DistributedConfig,
+    report: &PreflightReport,
+) -> SettledLeftovers {
+    let mut settled = SettledLeftovers::default();
+    for node in &report.nodes {
+        let host = config.nodes.get(node.rank).and_then(|n| n.host());
+        for leftover in &node.leftovers {
+            if !leftover.orphaned() {
+                settled
+                    .waiting
+                    .push((node.name.clone(), leftover.describe()));
+                continue;
+            }
+            let (line, gone) = reclaim_rank_pid(exec, host, &node.name, leftover.pid).await;
+            let line = format!("{line} (orphaned by the previous goose)");
+            if gone {
+                settled.reclaimed.push(line);
+            } else {
+                settled.waiting.push((node.name.clone(), line));
+            }
+        }
+    }
+    settled
+}
+
+/// A restart's preflight past this run's own ranks that are still leaving: orphans are reclaimed
+/// per pid, and ranks under a live parent are waited for one poll at a time — the wait ends when
+/// their pids are gone (progress), never on a clock; `None` = a stop arrived meanwhile.
+async fn preflight_past_own_leftovers(
+    ctx: &RunContext,
+    stop_rx: &mut watch::Receiver<bool>,
+) -> Option<Result<PreflightReport>> {
+    let mut announced = false;
+    loop {
+        let report = match preflight_making_room(
+            &ctx.config,
+            &ctx.exec,
+            &ctx.shared,
+            true,
+            ctx.owner.as_deref(),
+        )
+        .await
+        {
+            Ok(report) => report,
+            Err(e) => return Some(Err(e)),
+        };
+        let settled = settle_leftovers(ctx.exec.as_ref(), &ctx.config, &report).await;
+        if settled.clear() {
+            return Some(Ok(report));
+        }
+        if !settled.reclaimed.is_empty() {
+            ctx.event(
+                EventKind::OrphanReclaimed,
+                None,
+                settled.reclaimed.join("; "),
+            );
+        }
+        if let Some((node, _)) = settled.waiting.first() {
+            if !announced {
+                announced = true;
+                ctx.event(
+                    EventKind::PreviousSplitWaiting,
+                    Some(node),
+                    format!(
+                        "the restart waits for the previous ranks to exit: {}",
+                        settled.waiting_detail()
+                    ),
+                );
+            }
+            tokio::select! {
+                _ = stop_rx.changed() => return None,
+                _ = tokio::time::sleep(POLL_INTERVAL) => {}
+            }
+        }
+    }
+}
+
 pub struct DistributedManager {
     shared: Arc<StdMutex<Shared>>,
     exec: Arc<dyn NodeExec>,
     control: tokio::sync::Mutex<()>,
+    /// This install's owner token (`set_owner`): written on every rank it launches, and the ONLY
+    /// proof a rank found later is its own leftover. `None` = none given: no rank is provably
+    /// this install's, so none is waited for, reclaimed or swept as its own.
+    owner: StdMutex<Option<String>>,
 }
 
 impl Default for DistributedManager {
@@ -1907,7 +2058,18 @@ impl DistributedManager {
             })),
             exec,
             control: tokio::sync::Mutex::new(()),
+            owner: StdMutex::new(None),
         }
+    }
+
+    /// The install's owner token — the caller persists it across launches (goose's state dir),
+    /// so a rank a previous goosed of this install left behind carries the same token.
+    pub fn set_owner(&self, owner: String) {
+        *self.owner.lock().unwrap() = Some(owner);
+    }
+
+    fn owner(&self) -> Option<String> {
+        self.owner.lock().unwrap().clone()
     }
 
     pub fn status(&self) -> DistributedStatus {
@@ -1936,7 +2098,15 @@ impl DistributedManager {
         config: &DistributedConfig,
         repair_link: bool,
     ) -> Result<PreflightReport> {
-        let report = preflight_making_room(config, &self.exec, &self.shared, repair_link).await?;
+        let owner = self.owner();
+        let report = preflight_making_room(
+            config,
+            &self.exec,
+            &self.shared,
+            repair_link,
+            owner.as_deref(),
+        )
+        .await?;
         let mut shared = self.shared.lock().unwrap();
         for repair in &report.repairs {
             shared.event(EventKind::LinkRepaired, None, repair.clone());
@@ -1978,6 +2148,8 @@ impl DistributedManager {
                         shared.status.state.as_str()
                     ),
                     preflight: None,
+                    node: None,
+                    detail: None,
                 });
             }
         }
@@ -1990,6 +2162,8 @@ impl DistributedManager {
                     single_model.unwrap_or("<model not reported>")
                 ),
                 preflight: None,
+                node: None,
+                detail: None,
             });
         }
         {
@@ -2004,13 +2178,41 @@ impl DistributedManager {
             shared.status.served_model_id = Some(served_id.clone());
             shared.event(EventKind::Preflight, None, "preflight before launch");
         }
-        let report = match preflight_making_room(&config, &self.exec, &self.shared, true).await {
-            Ok(report) => report,
-            Err(e) => {
-                let mut shared = self.shared.lock().unwrap();
-                shared.status.state = RunState::Stopped;
-                shared.status.last_error = Some(format!("{e:#}"));
-                return Err(e);
+        let owner = self.owner();
+        // This install's previous ranks first: an orphan is reclaimed per pid and the preflight
+        // runs again over the freed node; one still under a live parent is a refusal the caller
+        // retries — a start never signals a rank some goose is still stopping.
+        let (report, waiting) = loop {
+            let report = match preflight_making_room(
+                &config,
+                &self.exec,
+                &self.shared,
+                true,
+                owner.as_deref(),
+            )
+            .await
+            {
+                Ok(report) => report,
+                Err(e) => {
+                    let mut shared = self.shared.lock().unwrap();
+                    shared.status.state = RunState::Stopped;
+                    shared.status.last_error = Some(format!("{e:#}"));
+                    return Err(e);
+                }
+            };
+            let settled = settle_leftovers(self.exec.as_ref(), &config, &report).await;
+            if !settled.reclaimed.is_empty() {
+                self.shared.lock().unwrap().event(
+                    EventKind::OrphanReclaimed,
+                    None,
+                    settled.reclaimed.join("; "),
+                );
+            }
+            if !settled.waiting.is_empty() {
+                break (report, Some(settled));
+            }
+            if settled.clear() {
+                break (report, None);
             }
         };
         let mut shared = self.shared.lock().unwrap();
@@ -2019,19 +2221,54 @@ impl DistributedManager {
         }
         shared.status.last_preflight = Some(report.clone());
         shared.status.runner = report.runner;
-        if !report.ok {
-            let message = report.failures().join("; ");
+        if let Some(settled) = waiting {
+            let node = settled.waiting[0].0.clone();
+            let detail = settled.waiting_detail();
             shared.status.state = RunState::Stopped;
-            shared.status.last_error = Some(format!("preflight refused the start: {message}"));
+            shared.status.last_error = Some(format!(
+                "the previous split is still shutting down: {detail}"
+            ));
+            shared.event(EventKind::PreviousSplitWaiting, Some(&node), detail.clone());
+            return Ok(StartOutcome::Refused {
+                code: RefusalCode::PreviousSplitShuttingDown,
+                message: format!(
+                    "The previous split is still shutting down on {node} — start it again when \
+                     that finishes"
+                ),
+                preflight: Some(report),
+                node: Some(node),
+                detail: Some(detail),
+            });
+        }
+        if !report.ok {
+            let failures = report.failures().join("; ");
+            shared.status.state = RunState::Stopped;
+            shared.status.last_error = Some(format!("preflight refused the start: {failures}"));
             shared.event(
                 EventKind::StartFailed,
                 None,
-                format!("preflight: {message}"),
+                format!("preflight: {failures}"),
             );
-            return Ok(StartOutcome::Refused {
-                code: RefusalCode::PreflightFailed,
-                message,
-                preflight: Some(report),
+            let foreign = report.nodes.iter().find(|n| !n.foreign_splits.is_empty());
+            return Ok(match foreign {
+                Some(node) => StartOutcome::Refused {
+                    code: RefusalCode::ForeignSplit,
+                    message: format!(
+                        "Another MLX split (not goose's) is running on {} — stop it to start this \
+                         one",
+                        node.name
+                    ),
+                    node: Some(node.name.clone()),
+                    detail: Some(node.foreign_splits.join("; ")),
+                    preflight: Some(report),
+                },
+                None => StartOutcome::Refused {
+                    code: RefusalCode::PreflightFailed,
+                    message: failures,
+                    preflight: Some(report),
+                    node: None,
+                    detail: None,
+                },
             });
         }
         let Some(runner) = report.runner else {
@@ -2041,6 +2278,8 @@ impl DistributedManager {
                 code: RefusalCode::PreflightFailed,
                 message: "the preflight named no runner".to_string(),
                 preflight: Some(report),
+                node: None,
+                detail: None,
             });
         };
         shared.status.base_url = Some(config.base_url());
@@ -2104,6 +2343,7 @@ impl DistributedManager {
             config,
             served_id,
             runner,
+            owner,
         };
         shared.stop_tx = Some(stop_tx);
         shared.task = Some(tokio::spawn(supervise(ctx, report.clone(), stop_rx)));
@@ -2111,7 +2351,8 @@ impl DistributedManager {
     }
 
     /// Stop the run and return the verified stop report. With no run supervised, the configured
-    /// nodes are swept for goose ranks a previous goosed left behind (per pid, by marker).
+    /// nodes are swept for this install's ranks a previous goosed left behind (per pid, by the
+    /// owner token — never the bare marker).
     pub async fn stop(&self) -> StopReport {
         let _control = self.control.lock().await;
         let (stop_tx, task, config) = {
@@ -2146,9 +2387,15 @@ impl DistributedManager {
             steps: Vec::new(),
             verified: true,
         };
+        let owner = self.owner();
         for node in &config.nodes {
-            let (steps, verified) =
-                reclaim_marked_ranks(self.exec.as_ref(), node.host(), &node.name).await;
+            let (steps, verified) = reclaim_marked_ranks(
+                self.exec.as_ref(),
+                node.host(),
+                &node.name,
+                owner.as_deref(),
+            )
+            .await;
             report.verified &= verified;
             report.steps.extend(steps);
         }
@@ -2286,6 +2533,8 @@ mod tests {
             wired_limit_mb: None,
             short_bytes,
             top_apps: Vec::new(),
+            leftovers: Vec::new(),
+            foreign_splits: Vec::new(),
         }
     }
 
@@ -2509,8 +2758,12 @@ mod tests {
                 pid,
                 ..Default::default()
             })),
+            owner: Some(OWNER.to_string()),
         }
     }
+
+    /// The install token the tests' ranks and leftovers carry.
+    const OWNER: &str = "0123456789abcdef";
 
     fn sleeper(script: &str) -> tokio::process::Child {
         tokio::process::Command::new("/bin/sh")
@@ -2635,7 +2888,8 @@ mod tests {
             "{report:?}"
         );
 
-        let (steps, verified) = reclaim_marked_ranks(&exec, Some("peer"), "node1").await;
+        let (steps, verified) =
+            reclaim_marked_ranks(&exec, Some("peer"), "node1", Some(OWNER)).await;
         assert!(!verified);
         assert!(steps[0].contains("nothing signalled"), "{steps:?}");
 
@@ -2865,6 +3119,7 @@ mod tests {
                 code,
                 message,
                 preflight,
+                ..
             } => {
                 assert_eq!(code, RefusalCode::SingleEngineMounted);
                 assert!(
@@ -2878,5 +3133,298 @@ mod tests {
         assert_eq!(manager.status().state, RunState::Stopped);
         assert_eq!(manager.status().mode(), "single");
         assert!(manager.active_base_url().is_none());
+    }
+
+    /// Two nodes' `ps` as data: every probe answers the rows still alive, `ps -p` answers from
+    /// the same rows, and a `/bin/kill` is recorded and ends that pid — no process is touched.
+    struct Nodes {
+        rows: StdMutex<Vec<PsRow>>,
+        scripts: StdMutex<Vec<String>>,
+    }
+
+    /// (host, pid, ppid, row) — host `None` = the MacBook Pro.
+    type PsRow = (Option<String>, u32, u32, String);
+
+    impl Nodes {
+        fn new(rows: Vec<(Option<&str>, u32, u32, String)>) -> Arc<Self> {
+            Arc::new(Self {
+                rows: StdMutex::new(
+                    rows.into_iter()
+                        .map(|(h, pid, ppid, row)| (h.map(str::to_string), pid, ppid, row))
+                        .collect(),
+                ),
+                scripts: StdMutex::new(Vec::new()),
+            })
+        }
+
+        fn kills(&self) -> Vec<String> {
+            self.scripts
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|s| s.contains("kill"))
+                .cloned()
+                .collect()
+        }
+    }
+
+    impl NodeExec for Nodes {
+        fn run<'a>(
+            &'a self,
+            host: Option<&'a str>,
+            script: &'a str,
+        ) -> BoxFuture<'a, Result<ExecOutput>> {
+            self.scripts.lock().unwrap().push(script.to_string());
+            let mut rows = self.rows.lock().unwrap();
+            let here = |h: &Option<String>| h.as_deref() == host;
+            let out = |status, stdout: String| ExecOutput {
+                status: Some(status),
+                stdout,
+                stderr: String::new(),
+            };
+            let answer = if script.contains("@@psppid") {
+                let ps: Vec<&str> = rows
+                    .iter()
+                    .filter(|r| here(&r.0))
+                    .map(|r| r.3.as_str())
+                    .collect();
+                let parents: Vec<String> = rows
+                    .iter()
+                    .filter(|r| here(&r.0))
+                    .map(|r| format!("{} {}", r.1, r.2))
+                    .collect();
+                preflight::tests::probe_answer(&ps.join("\n"), Some(&parents.join("\n")))
+            } else if let Some(pid) = script
+                .strip_prefix("/bin/kill -")
+                .and_then(|rest| rest.split_whitespace().nth(1))
+            {
+                let pid: u32 = pid.parse().unwrap();
+                rows.retain(|r| !(here(&r.0) && r.1 == pid));
+                out(0, String::new())
+            } else if let Some(pid) = script.strip_prefix("/bin/ps -o pid=,stat=,time= -p ") {
+                let pid: u32 = pid.trim().parse().unwrap();
+                match rows.iter().any(|r| here(&r.0) && r.1 == pid) {
+                    true => out(0, format!("{pid} S 0:00.10\n")),
+                    false => out(1, String::new()),
+                }
+            } else {
+                out(1, String::new())
+            };
+            Box::pin(async move { Ok(answer) })
+        }
+    }
+
+    async fn start_on(nodes: &Arc<Nodes>) -> (DistributedManager, StartOutcome) {
+        let manager = DistributedManager::new(Arc::clone(nodes) as Arc<dyn NodeExec>);
+        manager.set_owner(OWNER.to_string());
+        let outcome = manager
+            .start_with_single_state(two_mac_config(), "node-alias".to_string(), "stopped", None)
+            .await
+            .unwrap();
+        (manager, outcome)
+    }
+
+    fn events(manager: &DistributedManager, kind: EventKind) -> Vec<String> {
+        manager
+            .status()
+            .events
+            .iter()
+            .filter(|e| e.kind == kind)
+            .map(|e| e.message.clone())
+            .collect()
+    }
+
+    /// Q-77, the waiting branch: this install's previous rank still runs under a live parent
+    /// (the goose stopping it, a peer's lease) — the start is refused by name, with the Mac and
+    /// the pid behind Details, and NOTHING is signalled.
+    #[tokio::test]
+    async fn a_start_waits_for_its_own_previous_rank_under_a_live_parent_and_signals_nothing() {
+        let nodes = Nodes::new(vec![(
+            None,
+            9425,
+            4242,
+            preflight::tests::rank_row(9425, Some(OWNER)),
+        )]);
+        let (manager, outcome) = start_on(&nodes).await;
+        let StartOutcome::Refused {
+            code,
+            message,
+            node,
+            detail,
+            ..
+        } = outcome
+        else {
+            panic!("{outcome:?}")
+        };
+        assert_eq!(code, RefusalCode::PreviousSplitShuttingDown);
+        assert_eq!(node.as_deref(), Some("MacBook Pro"));
+        assert_eq!(
+            message,
+            "The previous split is still shutting down on MacBook Pro — start it again when that \
+             finishes"
+        );
+        let detail = detail.unwrap();
+        assert!(
+            detail.contains("pid 9425 (its parent pid 4242 still runs: shutting down)"),
+            "{detail}"
+        );
+        assert!(nodes.kills().is_empty(), "{:?}", nodes.kills());
+        assert_eq!(manager.status().state, RunState::Stopped);
+        assert_eq!(events(&manager, EventKind::PreviousSplitWaiting).len(), 1);
+    }
+
+    /// The reclaim branch: an ORPHAN of this install (PPID 1 — its goose is gone) is reclaimed
+    /// per pid, said so in an event, and the preflight runs again over the freed node — the start
+    /// is then judged on everything else (here: this test config has no model to plan).
+    #[tokio::test]
+    async fn a_start_reclaims_its_own_orphan_per_pid_and_preflights_again() {
+        let nodes = Nodes::new(vec![
+            (None, 301, 1, preflight::tests::rank_row(301, Some(OWNER))),
+            (
+                Some("workhorse"),
+                302,
+                1,
+                preflight::tests::rank_row(302, Some(OWNER)),
+            ),
+        ]);
+        let (manager, outcome) = start_on(&nodes).await;
+        let StartOutcome::Refused { code, .. } = outcome else {
+            panic!("{outcome:?}")
+        };
+        assert_eq!(code, RefusalCode::PreflightFailed, "no leftover is left");
+        assert_eq!(
+            nodes.kills(),
+            vec![
+                "/bin/kill -TERM 301".to_string(),
+                "/bin/kill -TERM 302".to_string()
+            ],
+            "one SIGTERM per pid, gone after it — never a group, never SIGKILL"
+        );
+        let reclaimed = events(&manager, EventKind::OrphanReclaimed).join("; ");
+        assert!(
+            reclaimed.contains("MacBook Pro: goose rank pid 301 → SIGTERM (sent) → gone")
+                && reclaimed.contains("workhorse: goose rank pid 302")
+                && reclaimed.contains("orphaned by the previous goose"),
+            "{reclaimed}"
+        );
+        assert!(events(&manager, EventKind::PreviousSplitWaiting).is_empty());
+    }
+
+    /// The foreign branch — Q-77's pid 9425 as it really was: the boot line and the marker but no
+    /// owner token (a stand-in rank another process launched). Never waited for, never reclaimed:
+    /// a refusal in words the owner can act on, the pid behind Details.
+    #[tokio::test]
+    async fn a_rank_without_this_installs_token_is_a_foreign_split_refusal() {
+        let nodes = Nodes::new(vec![(
+            None,
+            9425,
+            1,
+            preflight::tests::rank_row(9425, None),
+        )]);
+        let (_manager, outcome) = start_on(&nodes).await;
+        let StartOutcome::Refused {
+            code,
+            message,
+            node,
+            detail,
+            ..
+        } = outcome
+        else {
+            panic!("{outcome:?}")
+        };
+        assert_eq!(code, RefusalCode::ForeignSplit);
+        assert_eq!(node.as_deref(), Some("MacBook Pro"));
+        assert_eq!(
+            message,
+            "Another MLX split (not goose's) is running on MacBook Pro — stop it to start this one"
+        );
+        assert!(detail
+            .unwrap()
+            .starts_with("pid 9425 `/x/bin/python -c import base64"));
+        assert!(nodes.kills().is_empty());
+    }
+
+    /// The no-run Stop sweep signals only ranks carrying this install's token — judged on the
+    /// WHOLE command line (the marker sits past the 160 characters a row keeps, which is why the
+    /// sweep never matched a real rank before) — and with no token of its own it signals nothing.
+    #[tokio::test]
+    async fn the_stop_sweep_signals_only_this_installs_ranks() {
+        let nodes = Nodes::new(vec![
+            (None, 301, 1, preflight::tests::rank_row(301, Some(OWNER))),
+            (None, 9425, 1, preflight::tests::rank_row(9425, None)),
+            (
+                None,
+                303,
+                1,
+                preflight::tests::rank_row(303, Some("another")),
+            ),
+        ]);
+        // ProcessList is `ps -axo pid=,command=`: answer it from the same rows.
+        struct Listing(Arc<Nodes>);
+        impl NodeExec for Listing {
+            fn run<'a>(
+                &'a self,
+                host: Option<&'a str>,
+                script: &'a str,
+            ) -> BoxFuture<'a, Result<ExecOutput>> {
+                if script == crate::distributed::node_op::PROCESS_LIST_SCRIPT {
+                    let rows: Vec<String> = self
+                        .0
+                        .rows
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .map(|r| r.3.clone())
+                        .collect();
+                    return Box::pin(async move {
+                        Ok(ExecOutput {
+                            status: Some(0),
+                            stdout: rows.join("\n"),
+                            stderr: String::new(),
+                        })
+                    });
+                }
+                self.0.run(host, script)
+            }
+        }
+        let exec = Listing(Arc::clone(&nodes));
+        let (steps, verified) = reclaim_marked_ranks(&exec, None, "node0", Some(OWNER)).await;
+        assert!(verified, "{steps:?}");
+        assert_eq!(nodes.kills(), vec!["/bin/kill -TERM 301".to_string()]);
+
+        let (steps, verified) = reclaim_marked_ranks(&exec, None, "node0", None).await;
+        assert!(!verified);
+        assert!(steps[0].contains("nothing signalled"), "{steps:?}");
+        assert_eq!(nodes.kills().len(), 1);
+    }
+
+    #[test]
+    fn a_node_holding_a_leftover_is_never_compacted() {
+        let mut config = two_mac_config();
+        config.nodes[0].free_memory_automatically = true;
+        let mut short = node_preflight(0, Some(GIB));
+        short.leftovers = vec![probe::GooseRankProcess {
+            pid: 301,
+            ppid: Some(4242),
+            owner: Some(OWNER.to_string()),
+            carrier: false,
+            command: "python".to_string(),
+        }];
+        let report = PreflightReport {
+            ok: false,
+            ran_at_ms: 0,
+            backend: config.backend,
+            runner: None,
+            model_type: None,
+            context_limit: None,
+            context_source: None,
+            max_context_fits: None,
+            pipeline_starts: None,
+            slots: None,
+            checks: Vec::new(),
+            nodes: vec![short],
+            repairs: Vec::new(),
+        };
+        assert!(nodes_to_compact(&config, &report).is_empty());
     }
 }

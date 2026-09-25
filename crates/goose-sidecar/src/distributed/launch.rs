@@ -32,6 +32,13 @@ use super::plan::RankPlan;
 /// goosed left behind (and `stop` can reclaim it per-pid).
 pub const RANK_MARKER: &str = "goose-distributed-rank";
 
+/// The argument after the marker that names WHICH goose launched the rank: this install's owner
+/// token (`RankSpec::owner`). The marker alone says "a goose rank" — a cargo test's stand-in rank
+/// carries it too (Q-77: pid 9425 was `/usr/bin/python3` running the boot line, not the split's
+/// py3.12 rank) — so only this token proves a leftover is this install's own, one preflight may
+/// wait for or reclaim; any other rank stays a refusal.
+pub const OWNER_ARG_PREFIX: &str = "goose-distributed-owner=";
+
 const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_env.py"),
     include_str!("rank_live.py"),
@@ -106,6 +113,12 @@ pub struct RankSpec {
     /// MLX active bytes it is the load's progress — on this Mac and on a Link peer hosting it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planned_weight_bytes: Option<u64>,
+    /// The launching install's owner token, written on the rank's command line after the marker
+    /// (`OWNER_ARG_PREFIX`). A Link peer launches the requester's spec as given, so a hosted rank
+    /// carries the REQUESTER's token. `None` = a goose that set none (an older goose, a test)
+    /// launched it: its leftovers are never provably this install's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
     #[serde(flatten)]
     pub program: RankProgram,
 }
@@ -276,6 +289,7 @@ fn base_specs(
             port: config.port,
             memory_report_seconds,
             planned_weight_bytes: None,
+            owner: None,
             program: program(rank, node),
         })
         .collect()
@@ -306,16 +320,21 @@ impl RankSpec {
     }
 }
 
-/// The interpreter's arguments: the boot one-liner, the program, the spec, the marker.
+/// The interpreter's arguments: the boot one-liner, the program, the spec, the marker, and the
+/// owner token when the spec carries one (the rank programs read argv[1] and argv[2] only).
 pub fn python_args(spec: &RankSpec) -> Result<Vec<String>> {
     let b64 = base64::engine::general_purpose::STANDARD;
-    Ok(vec![
+    let mut args = vec![
         "-c".to_string(),
         BOOT.to_string(),
         b64.encode(spec.program_source()),
         b64.encode(serde_json::to_vec(spec)?),
         RANK_MARKER.to_string(),
-    ])
+    ];
+    if let Some(owner) = &spec.owner {
+        args.push(format!("{OWNER_ARG_PREFIX}{owner}"));
+    }
+    Ok(args)
 }
 
 /// The peer-side command: print the shell's pid (which `exec` hands to the interpreter unchanged)
@@ -421,6 +440,9 @@ pub struct RankProcess {
     /// The rank itself on this Mac; on a peer, the local ssh client carrying it.
     pub child: Child,
     pub live: Arc<StdMutex<RankLive>>,
+    /// The owner token the rank was launched with (`RankSpec::owner`): a stop that must sweep a
+    /// node for this rank signals only ranks carrying it.
+    pub owner: Option<String>,
 }
 
 impl RankProcess {
@@ -492,6 +514,7 @@ pub fn spawn_rank(node: &NodeConfig, spec: &RankSpec) -> Result<RankProcess> {
         host: node.ssh.clone(),
         child,
         live,
+        owner: spec.owner.clone(),
     })
 }
 
@@ -584,6 +607,52 @@ mod tests {
             .unwrap();
         let back: RankSpec = serde_json::from_slice(&decoded).unwrap();
         assert_eq!(&back, spec);
+    }
+
+    /// The owner token rides after the marker — on this Mac's rank and inside the ssh carrier's
+    /// remote script alike — and `ps` reads it back from both; a spec without one (an older
+    /// requester's) still reads, and writes no token.
+    #[test]
+    fn the_owner_token_follows_the_marker_and_ps_reads_it_back() {
+        let config = two_mac_config();
+        let mut spec = rank_specs(
+            &config,
+            "node-alias",
+            &[launch(1, 1), launch(1, 1)],
+            8_192,
+            2.0,
+        )
+        .remove(1);
+        let bare = python_args(&spec).unwrap();
+        assert_eq!(bare.last().map(String::as_str), Some(RANK_MARKER));
+
+        spec.owner = Some("0123abcd".to_string());
+        let args = python_args(&spec).unwrap();
+        assert_eq!(args[args.len() - 2], RANK_MARKER);
+        assert_eq!(args[args.len() - 1], format!("{OWNER_ARG_PREFIX}0123abcd"));
+        let local = format!("11 {} {}", config.nodes[1].python, args.join(" "));
+        let carrier = format!(
+            "12 /usr/bin/ssh -tt workhorse {}",
+            remote_script(&config.nodes[1].python, &args)
+        );
+        let ranks = crate::distributed::probe::goose_rank_processes(
+            &format!("{local}\n{carrier}\n"),
+            None,
+            &[],
+        );
+        let read: Vec<(u32, Option<&str>, bool)> = ranks
+            .iter()
+            .map(|r| (r.pid, r.owner.as_deref(), r.carrier))
+            .collect();
+        assert_eq!(
+            read,
+            vec![(11, Some("0123abcd"), false), (12, Some("0123abcd"), true)]
+        );
+
+        let mut older = serde_json::to_value(&spec).unwrap();
+        older.as_object_mut().unwrap().remove("owner");
+        let back: RankSpec = serde_json::from_value(older).unwrap();
+        assert_eq!(back.owner, None);
     }
 
     #[tokio::test]

@@ -1042,6 +1042,7 @@ async fn live_flash_at_the_ceiling_rule_after_compaction() {
             code,
             message,
             preflight,
+            ..
         } => {
             for e in &manager.status().events {
                 println!("event {:?} {:?}: {}", e.kind, e.node, e.message);

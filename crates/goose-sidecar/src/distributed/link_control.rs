@@ -689,6 +689,7 @@ pub async fn adopt_link_rank(
         host: Some(host),
         child,
         live,
+        owner: spec.owner.clone(),
     })
 }
 

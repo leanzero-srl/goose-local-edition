@@ -4314,11 +4314,23 @@ export const zMlxEngineDistributedStartRequest_unstable = z.object({
 
 /**
  * Why a start was refused. `code`: "singleEngineMounted" (unmount the single engine, then start
- * again — the UI's "unmount and continue") | "alreadyRunning" | "preflightFailed".
+ * again — the UI's "unmount and continue") | "alreadyRunning" | "preflightFailed" |
+ * "previousSplitShuttingDown" (this install's previous split still runs on `node` under a live
+ * parent; nothing was signalled — a start once its pids are gone goes through) | "foreignSplit"
+ * (a distributed MLX process this install did not launch runs on `node`; stop it first) |
+ * "hostingRank" | "ownedByAnotherWindow".
  */
 export const zMlxDistributedRefusalDto = z.object({
     code: z.string(),
-    message: z.string()
+    message: z.string(),
+    node: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    detail: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
 });
 
 export const zMlxEngineDistributedStartResponse_unstable = z.object({
