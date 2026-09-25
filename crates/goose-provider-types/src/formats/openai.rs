@@ -671,12 +671,13 @@ fn locate_turn_context(messages: &[Message]) -> Option<(usize, usize)> {
     Some((mi, bi))
 }
 
-/// The exact trailing text of `payload`'s last user message that `append_turn_context_tail` wrote
-/// for `messages`: `"\n" + block` when the block was merged into that message's own text, the block
-/// itself when it rides as its own message. `None` when no block was moved to the tail, or when it
-/// landed as an array content part (no string suffix to name). A server that caches a
-/// non-trimmable (hybrid) prompt can take its boundary snapshot BEFORE this text — the next request
-/// drops it — so this is what goose names as the request's volatile tail.
+/// The exact trailing text of `payload`'s last user or tool message that the tail append wrote for
+/// `messages`: `"\n" + block` when the block was merged into that message's own text (the user's
+/// words, or the tool results it joined), the block itself when it rides as its own message.
+/// `None` when no block was moved to the tail, or when it landed as an array content part (no
+/// string suffix to name). A server that caches a non-trimmable (hybrid) prompt can take its
+/// boundary snapshot BEFORE this text — the next request drops it — so this is what goose names as
+/// the request's volatile tail.
 pub fn turn_context_tail_suffix(messages: &[Message], payload: &Value) -> Option<String> {
     let (mi, bi) = locate_turn_context(messages)?;
     let MessageContent::Text(block) = &messages[mi].content[bi] else {
@@ -687,7 +688,7 @@ pub fn turn_context_tail_suffix(messages: &[Message], payload: &Value) -> Option
         .as_array()?
         .iter()
         .rev()
-        .find(|m| m["role"] == json!("user"))?
+        .find(|m| m["role"] == json!("user") || m["role"] == json!("tool"))?
         .get("content")?
         .as_str()?;
     if content == block.text {
@@ -5639,6 +5640,25 @@ mod cache_prefix_stability_tests {
             },
         );
         assert_eq!(human_hosted, before, "only a tool-hosted block joins");
+
+        let joined_request = create_request_with_options(
+            &ModelConfig::new("qwen"),
+            "system",
+            &tool_tail(true, &tc),
+            &[],
+            &ImageFormat::OpenAi,
+            false,
+            OpenAiFormatOptions {
+                preserve_thinking_context: true,
+                turn_context_joins_tool_results: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            turn_context_tail_suffix(&tool_tail(true, &tc), &joined_request),
+            Some(format!("\n{tc}")),
+            "the joined block is named as the tool message's suffix"
+        );
     }
 
     #[test]

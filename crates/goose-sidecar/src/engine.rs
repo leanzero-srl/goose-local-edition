@@ -56,6 +56,12 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.6 = lz.5 + the transient tail may end the last TOOL message (fork
+/// lz/transient-tail-on-tool, declared as `rapid_mlx_transient_tail_on_tool`): goose appends its
+/// turn-context block to the tool results a request ends on instead of posting it as a user turn of
+/// its own, which chat templates render as a new user message ("The user hasn't sent a new message
+/// — this is just a turn-context update", Q-94); lz.5 ignored a tail there and snapshotted its
+/// hybrid cache after the block, so goose kept the old shape on it.
 /// v0.14.3-lz.5 = lz.4 + a request with no `max_tokens` generates until the model stops or the
 /// context window is full (fork lz/unset-max-tokens): goose sends none on purpose, and lz.4 filled
 /// it with the serve default 32768 — a hidden cap on every answer that also refused any prompt
@@ -78,7 +84,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.5",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.6",
     "rapid-mlx",
 ];
 
@@ -127,6 +133,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.4",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.5",
         "rapid-mlx",
     ],
 ];
@@ -1564,7 +1576,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.5",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.6",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -1900,7 +1912,7 @@ mod tests {
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.5",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.6",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
