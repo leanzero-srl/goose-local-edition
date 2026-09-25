@@ -742,6 +742,10 @@ async fn reclaim_port(port: u16) {
         }
     };
     if pids.is_empty() {
+        tracing::warn!(
+            port,
+            "reclaim: the port answered but lsof names no listener now; nothing signalled"
+        );
         return;
     }
     #[cfg(unix)]
