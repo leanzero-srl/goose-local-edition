@@ -1,12 +1,5 @@
 import { AppEvents } from '../constants/events';
-import React, {
-  useRef,
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-  useSyncExternalStore,
-} from 'react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { ArrowUp, Bug, ScrollText, Settings2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/Tooltip';
 import { Button } from './ui/button';
@@ -42,14 +35,9 @@ import { UserInput, ImageData } from '../types/message';
 import { compressImageDataUrl } from '../utils/conversionUtils';
 import { fetchCanonicalModelInfo } from '../utils/canonical';
 import { fetchSwarmPoolContextLimit } from './swarm/swarmContextLimit';
-import {
-  latestMlxRemoteSingleStatus,
-  subscribeMlxRemoteSingleStatus,
-} from '../acp/mlx-remote-single';
-import { latestMlxDistributedStatus, subscribeMlxDistributedStatus } from '../acp/mlx-distributed';
-import { mlxEngineStatus } from '../acp/mlx-engine';
 import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
 import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
+import { useChatServedBy } from './chatServedBy/useChatServedBy';
 import { PersonaChooser } from './swarm/PersonaChooser';
 import { usePersona } from './swarm/usePersona';
 import AgentSetupWizard from './swarm/AgentSetupWizard';
@@ -333,6 +321,10 @@ export default function ChatInput({
   const effectiveModel = modelOverride?.model ?? sessionModel ?? configModel;
   const effectiveProvider = modelOverride?.provider ?? sessionProvider ?? configProvider;
   const isSwarmProvider = effectiveProvider === 'swarm';
+  // Where chat goes — ONE derivation for the chip, the readiness bar and the counter's MLX window.
+  const chatServing = useChatServedBy(effectiveProvider, sessionId, isLoading);
+  const servedRef = useRef(chatServing.served);
+  servedRef.current = chatServing.served;
   const { persona, setPersona } = usePersona();
   const [agentWizardOpen, setAgentWizardOpen] = useState(false);
 
@@ -645,20 +637,14 @@ export default function ChatInput({
         return;
       }
 
-      // Leanzero MLX engine: same rule as swarm — the running engine reports the context
-      // window the model actually mounted with (per-model profile), so prefer that fact
-      // over the generic fallback. Engine stopped/unreachable falls through to the chain.
+      // Leanzero MLX engine: same rule as swarm — the engine that serves chat (this Mac's, a
+      // linked Mac's through the route, or the split) reports the window its model mounted with.
+      // No window reported yet shows NO limit — never the generic default: a route to the Studio
+      // used to ask only this Mac's stopped engine and fall to 128k (Q-18).
       if (provider === MLX_PROVIDER_ID) {
-        try {
-          const engine = await mlxEngineStatus();
-          if (engine.state === 'running' && engine.contextWindow != null) {
-            setTokenLimit(engine.contextWindow);
-            setIsTokenLimitLoaded(true);
-            return;
-          }
-        } catch {
-          // engine status unavailable — fall through to the normal limit chain
-        }
+        setTokenLimit(servedRef.current.contextWindow ?? 0);
+        setIsTokenLimitLoaded(true);
+        return;
       }
 
       // Priority 1: Check predefined models from environment
@@ -703,20 +689,15 @@ export default function ChatInput({
 
   // Initial load and refresh when model changes (effective model includes overrides,
   // config model is the fallback for Hub/no-session contexts)
-  // Where swarm chat is served moves the window (this Mac, a linked Mac, the split): the limit is
-  // read again when the route or the split changes, not only when the model does.
-  const remoteRoute = useSyncExternalStore(
-    subscribeMlxRemoteSingleStatus,
-    latestMlxRemoteSingleStatus
-  );
-  const splitNow = useSyncExternalStore(subscribeMlxDistributedStatus, latestMlxDistributedStatus);
+  // Where chat is served moves the window (this Mac, a linked Mac, the split): the limit is read
+  // again when the serving engine, its model or its window changes, not only when the model does.
+  const served = chatServing.served;
   const servedAt = [
-    remoteRoute?.state,
-    remoteRoute?.peer,
-    remoteRoute?.contextWindow,
-    splitNow?.mode,
-    splitNow?.state,
-    splitNow?.contextLimit,
+    served.engine,
+    served.peerNodeId,
+    served.model,
+    served.readiness.kind,
+    served.contextWindow,
   ].join('|');
   useEffect(() => {
     loadProviderDetails();
@@ -1562,7 +1543,7 @@ export default function ChatInput({
         style={{ display: 'none' }}
         accept="*/*"
       />
-      <ComposerReadinessStrip provider={effectiveProvider} />
+      <ComposerReadinessStrip serving={chatServing} />
       {/* Message Queue Display */}
       {queuedMessages.length > 0 && (
         <MessageQueue
@@ -1756,6 +1737,7 @@ export default function ChatInput({
               latestInference={latestInference}
               onModelChanged={setModelOverride}
               sessionLoaded={sessionLoaded}
+              served={chatServing.served}
             />
           </Chip>
         </Tooltip>

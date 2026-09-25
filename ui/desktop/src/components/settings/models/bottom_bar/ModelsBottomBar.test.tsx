@@ -4,6 +4,8 @@ import ModelsBottomBar from './ModelsBottomBar';
 import { IntlTestWrapper } from '../../../../i18n/test-utils';
 import type { MlxEngineStatus } from '../../../../acp/mlx-engine';
 import { assertStudioClean } from '../../../lz/assertStudioClean';
+import userEvent from '@testing-library/user-event';
+import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
 
 const renderWithIntl = (ui: React.ReactElement, options?: RenderOptions) =>
   render(ui, { wrapper: IntlTestWrapper, ...options });
@@ -65,7 +67,19 @@ vi.mock('../../../ui/dropdown-menu', () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuItem: ({
+    children,
+    onClick,
+    'data-testid': testId,
+  }: {
+    children: React.ReactNode;
+    onClick?: () => void;
+    'data-testid'?: string;
+  }) => (
+    <div role="menuitem" data-testid={testId} onClick={onClick}>
+      {children}
+    </div>
+  ),
 }));
 
 vi.mock('../../localInference/ModelSettingsPanel', () => ({
@@ -302,5 +316,113 @@ describe('ModelsBottomBar (Studio)', () => {
     expect(container.querySelector('.text-xs')).toBeNull();
     expect(container.innerHTML).not.toContain('text-text-primary/70');
     assertStudioClean(container);
+  });
+});
+
+/**
+ * Q-5 / Q-12: the chip named the provider id ("swarm") and its menu dead-ended in a provider picker
+ * that never named the 27B or the Mac it runs on. It now reads the one derivation of where chat goes.
+ */
+describe('ModelsBottomBar — the chip names what serves chat', () => {
+  const HF = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';
+  const STUDIO: ChatServedBy = {
+    engine: 'remote',
+    model: HF,
+    where: ["Work's Mac Studio"],
+    peerNodeId: 'worksmacstudio-lan-9c1e2a',
+    foreign: false,
+    contextWindow: 262144,
+    phase: 'idle',
+    activity: 'idle',
+    busyWithOthers: null,
+    readiness: { kind: 'ready' },
+  };
+  const renderChip = (served: ChatServedBy | null, setView = vi.fn()) =>
+    renderWithIntl(
+      <ModelsBottomBar
+        sessionId="session-123"
+        dropdownRef={createDropdownRef()}
+        setView={setView}
+        sessionModel="swarm"
+        sessionProvider="swarm"
+        onModelChanged={mockOnModelChanged}
+        sessionLoaded={true}
+        served={served}
+      />
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCurrentModel = 'config-model';
+    mockCurrentProvider = 'config-provider';
+  });
+
+  it('a route to the Studio: "<model> · Work\'s Mac Studio" with the phase dot — never "swarm"', () => {
+    const { container } = renderChip(STUDIO);
+    const chip = screen.getByTestId('model-chip-served');
+    expect(chip).toHaveTextContent("Qwen3.8-27B-Atlassian-Q8-mlx · Work's Mac Studio");
+    expect(chip).toHaveAttribute('title', HF);
+    expect(chip).toHaveAttribute('data-engine', 'remote');
+    expect(screen.queryByText('swarm')).toBeNull();
+    const dots = screen.getAllByTestId('lz-status-dot');
+    expect(dots[0]).toHaveAttribute('data-phase', 'idle');
+    expect(dots[0]).toHaveAttribute('aria-label', 'Idle');
+    assertStudioClean(container);
+  });
+
+  it('the menu names the model, where and what it is doing, its window — and Open Engine changes model or Mac', async () => {
+    const setView = vi.fn();
+    renderChip({ ...STUDIO, phase: 'writing', activity: 'generating' }, setView);
+    const head = screen.getByTestId('model-menu-served');
+    expect(head).toHaveTextContent('Qwen3.8-27B-Atlassian-Q8-mlx');
+    expect(head).toHaveTextContent("Writing on Work's Mac Studio");
+    expect(head).toHaveTextContent('262,144-token context');
+    const open = screen.getByTestId('model-menu-open-engine');
+    expect(open).toHaveTextContent('Open Engine');
+    expect(open).toHaveTextContent('Change the model or the Mac it runs on');
+    await userEvent.setup().click(open);
+    expect(setView).toHaveBeenCalledWith('mlxEngine');
+    // The provider switch stays for anyone leaving for a cloud provider.
+    expect(screen.getByText('Change Provider')).toBeInTheDocument();
+  });
+
+  it('the split names both Macs; another window’s run says so', () => {
+    renderChip({
+      ...STUDIO,
+      engine: 'split',
+      where: ['Mihai Macbook', 'Work’s Mac Studio'],
+      foreign: true,
+      peerNodeId: null,
+    });
+    expect(screen.getByTestId('model-chip-served')).toHaveTextContent(
+      'Qwen3.8-27B-Atlassian-Q8-mlx · Mihai Macbook and Work’s Mac Studio'
+    );
+    expect(screen.getByTestId('model-menu-served')).toHaveTextContent('run by another window');
+  });
+
+  it('nothing runs: the model a Mount would bring, "not running", the unloaded dot — and Open Engine', () => {
+    renderChip({
+      ...STUDIO,
+      engine: 'none',
+      where: ['This Mac'],
+      peerNodeId: null,
+      contextWindow: null,
+      phase: 'unloaded',
+      activity: null,
+    });
+    expect(screen.getByTestId('model-chip-served')).toHaveTextContent(
+      'Qwen3.8-27B-Atlassian-Q8-mlx · not running'
+    );
+    expect(screen.getByTestId('model-menu-served')).toHaveTextContent(
+      'Not running — start it from the Engine'
+    );
+    expect(screen.getByTestId('model-menu-open-engine')).toBeInTheDocument();
+  });
+
+  it('a cloud provider (nothing served): the chip is the provider’s own label, no Open Engine', () => {
+    renderChip(null);
+    expect(screen.queryByTestId('model-chip-served')).toBeNull();
+    expect(screen.queryByTestId('model-menu-open-engine')).toBeNull();
+    expect(screen.getByText('swarm')).toBeInTheDocument();
   });
 });

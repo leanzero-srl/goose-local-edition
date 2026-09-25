@@ -1,0 +1,372 @@
+import { describe, expect, it } from 'vitest';
+import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
+import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
+import type { MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
+import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
+import type { SwarmDeviceRow } from '../settings/swarm/golden';
+import type { MountLookup } from '../noNodeNotice/mlxMount';
+import { FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
+import { EMPTY_BOOK, parseMlxLiveStatus } from '../leanzero-swarm/mlxLiveStats';
+import {
+  GENERATING_STATUS,
+  IDLE_STATUS,
+  PREFILL_STATUS,
+} from '../leanzero-swarm/mlxLiveStatus.fixtures';
+import {
+  deriveChatServedBy,
+  mlxEngineServing,
+  servedReady,
+  type ChatServedInputs,
+} from './chatServedBy';
+
+/**
+ * One derivation, six moments (the frame's proof plan) — every chat surface reads the object this
+ * returns, so each moment is pinned as the WHOLE object a surface would see.
+ */
+
+const HF = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';
+const ALIAS = 'mihai-qwen3.8-27b-atlassian-q8-mlx';
+const SETTINGS: MlxEngineSettings = {
+  modelId: HF,
+  servedModelName: ALIAS,
+  modelsDir: '/models',
+  port: 8090,
+  spawnCommand: [],
+  modelProfiles: {},
+};
+const MLX_NODE: SwarmDeviceRow = {
+  id: 'mihai-mlx',
+  model_id: ALIAS,
+  weight: 2,
+  enabled: true,
+  engine: 'mlx-sidecar',
+};
+const POOL: MountLookup = { state: 'ready', devices: [MLX_NODE], settings: SETTINGS };
+const STOPPED: MlxEngineStatus = {
+  state: 'stopped',
+  restartRequired: false,
+  availableMemoryGb: 63.9,
+  totalMemoryGb: 128,
+};
+const RUNNING: MlxEngineStatus = {
+  ...STOPPED,
+  state: 'running',
+  modelId: HF,
+  servedModelId: ALIAS,
+  contextWindow: 262144,
+};
+/** Round 1: the 27B served from the Studio over Link, this Mac's engine unmounted. */
+const ROUTE: MlxRemoteSingleStatus = {
+  state: 'ready',
+  peer: 'worksmacstudio-lan-9c1e2a',
+  peerHostname: 'WorksMacStudio.lan',
+  peerComputerName: "Work's Mac Studio",
+  baseUrl: 'http://127.0.0.1:61001/relay/cafe',
+  modelId: HF,
+  servedModelId: ALIAS,
+  contextWindow: 262144,
+};
+const SPLIT: MlxDistributedStatus = {
+  ...FLASH_READY,
+  nodes: FLASH_READY.nodes.map((n, i) => ({
+    ...n,
+    name: i === 0 ? 'Mihai Macbook' : 'Work’s Mac Studio',
+  })),
+  modelId: HF,
+  servedModelId: ALIAS,
+  contextLimit: 65536,
+};
+const OTHER_WINDOW: MlxDistributedStatus = {
+  mode: 'single',
+  state: 'stopped',
+  admissionOpen: true,
+  nodes: [],
+  events: [],
+  restarts: 0,
+  owner: {
+    state: 'answering',
+    pid: 4242,
+    baseUrl: 'http://127.0.0.1:8191',
+    servedModelId: ALIAS,
+    modelId: HF,
+    backend: 'jaccl',
+    nodeNames: ['Mihai Macbook', 'Work’s Mac Studio'],
+  },
+};
+
+function snapshot(
+  engine: MlxEngineSnapshot['engine'],
+  body: unknown,
+  serving: MlxEngineSnapshot['serving'] = null
+): MlxEngineSnapshot {
+  const read = parseMlxLiveStatus(body);
+  if (!read.ok) throw new Error(read.detail);
+  return {
+    engine,
+    mode: 'running',
+    modelId: HF,
+    baseUrl: null,
+    stats: read.stats,
+    statusDetail: null,
+    rates: EMPTY_BOOK,
+    serving,
+    failedError: null,
+  };
+}
+
+const inputs = (over: Partial<ChatServedInputs>): ChatServedInputs => ({
+  provider: 'swarm',
+  lookup: POOL,
+  single: STOPPED,
+  distributed: null,
+  remote: null,
+  main: null,
+  sessionId: 's-mine',
+  turnInFlight: false,
+  thisMac: 'This Mac',
+  engineLabel: 'LeanZero MLX',
+  ...over,
+});
+
+describe('deriveChatServedBy — the six moments', () => {
+  it('THIS MAC running, idle: its model, "This Mac", idle grey, its window, nobody else', () => {
+    const served = deriveChatServedBy(
+      inputs({ single: RUNNING, main: snapshot('single', IDLE_STATUS) })
+    );
+    expect(served).toEqual({
+      engine: 'single',
+      model: HF,
+      where: ['This Mac'],
+      peerNodeId: null,
+      foreign: false,
+      contextWindow: 262144,
+      phase: 'idle',
+      activity: 'idle',
+      busyWithOthers: null,
+      readiness: { kind: 'ready' },
+    });
+    expect(servedReady(served)).toBe(true);
+  });
+
+  it('a ROUTE to the Studio, ready and writing: the Studio by its owner’s name, never "unmounted" from this Mac’s stopped engine (Q-4)', () => {
+    const served = deriveChatServedBy(
+      inputs({ remote: ROUTE, main: snapshot('remote', GENERATING_STATUS) })
+    );
+    expect(served).toEqual({
+      engine: 'remote',
+      model: HF,
+      where: ["Work's Mac Studio"],
+      peerNodeId: 'worksmacstudio-lan-9c1e2a',
+      foreign: false,
+      contextWindow: 262144,
+      phase: 'writing',
+      activity: 'generating',
+      busyWithOthers: null,
+      readiness: { kind: 'remote', status: ROUTE },
+    });
+    expect(servedReady(served)).toBe(true);
+  });
+
+  it('a route MOUNTING there: amber, no window yet, not ready — and main’s read of another engine is not borrowed', () => {
+    const mounting = { ...ROUTE, state: 'mounting', contextWindow: null };
+    const served = deriveChatServedBy(
+      inputs({ remote: mounting, main: snapshot('single', GENERATING_STATUS) })
+    );
+    expect(served).toEqual({
+      engine: 'remote',
+      model: HF,
+      where: ["Work's Mac Studio"],
+      peerNodeId: 'worksmacstudio-lan-9c1e2a',
+      foreign: false,
+      contextWindow: null,
+      phase: 'loading',
+      activity: null,
+      busyWithOthers: null,
+      readiness: { kind: 'remote', status: mounting },
+    });
+    expect(servedReady(served)).toBe(false);
+  });
+
+  it('the SPLIT up (this window’s run): both Macs by name, its limit, ready', () => {
+    const served = deriveChatServedBy(inputs({ distributed: SPLIT }));
+    expect(served).toEqual({
+      engine: 'split',
+      model: HF,
+      where: ['Mihai Macbook', 'Work’s Mac Studio'],
+      peerNodeId: null,
+      foreign: false,
+      contextWindow: 65536,
+      phase: 'idle',
+      activity: null,
+      busyWithOthers: null,
+      readiness: { kind: 'ready' },
+    });
+  });
+
+  it('a split owned by ANOTHER WINDOW: named as its run, answering is all this window can say', () => {
+    const served = deriveChatServedBy(inputs({ distributed: OTHER_WINDOW }));
+    expect(served).toEqual({
+      engine: 'split',
+      model: HF,
+      where: ['Mihai Macbook', 'Work’s Mac Studio'],
+      peerNodeId: null,
+      foreign: true,
+      contextWindow: null,
+      phase: 'idle',
+      activity: null,
+      busyWithOthers: null,
+      readiness: { kind: 'ready' },
+    });
+    const notAnswering = deriveChatServedBy(
+      inputs({
+        distributed: { ...OTHER_WINDOW, owner: { ...OTHER_WINDOW.owner!, state: 'notAnswering' } },
+      })
+    );
+    expect(notAnswering.phase).toBeNull();
+    expect(notAnswering.readiness.kind).toBe('distributed');
+  });
+
+  it('NOTHING runs: no engine, but the model a Mount would bring is named on this Mac, unloaded', () => {
+    const served = deriveChatServedBy(inputs({}));
+    expect(served).toEqual({
+      engine: 'none',
+      model: HF,
+      where: ['This Mac'],
+      peerNodeId: null,
+      foreign: false,
+      contextWindow: null,
+      phase: 'unloaded',
+      activity: null,
+      busyWithOthers: null,
+      readiness: {
+        kind: 'unmounted',
+        nodes: ['mihai-mlx'],
+        target: { kind: 'ok', modelId: HF, servedId: ALIAS },
+        fact: 'down',
+      },
+    });
+    expect(servedReady(served)).toBe(false);
+  });
+});
+
+describe('deriveChatServedBy — busy with others (Q-17)', () => {
+  it('round 1, 08:42: the Studio reads another client’s 39k prompt — busy, reading, never "ready" alone', () => {
+    const served = deriveChatServedBy(
+      inputs({
+        remote: ROUTE,
+        main: snapshot('remote', PREFILL_STATUS, {
+          clients: [],
+          unattributed: 1,
+          swarmRuns: [],
+          error: null,
+        }),
+      })
+    );
+    expect(served.phase).toBe('reading');
+    expect(served.busyWithOthers).toEqual({
+      requests: 1,
+      readingTokens: PREFILL_STATUS.requests[0].prompt_tokens,
+    });
+  });
+
+  it('this chat’s own turn is not "others"; another chat’s and an external client’s are', () => {
+    const mine = {
+      key: 'c1',
+      kind: 'chat' as const,
+      sessionId: 's-mine',
+      sessionName: 'a',
+      count: 1,
+    };
+    const theirs = {
+      key: 'c2',
+      kind: 'chat' as const,
+      sessionId: 's-other',
+      sessionName: 'b',
+      count: 1,
+    };
+    const ext = { key: 'e', kind: 'external' as const, model: ALIAS, count: 2 };
+    const serving = (clients: NonNullable<MlxEngineSnapshot['serving']>['clients']) =>
+      deriveChatServedBy(
+        inputs({
+          single: RUNNING,
+          main: snapshot('single', GENERATING_STATUS, {
+            clients,
+            unattributed: 0,
+            swarmRuns: [],
+            error: null,
+          }),
+        })
+      ).busyWithOthers;
+    expect(serving([mine])).toBeNull();
+    // Only the reading prompt of someone else is named; this engine is writing, so none is.
+    expect(serving([mine, theirs, ext])).toEqual({ requests: 3, readingTokens: null });
+  });
+
+  it('while this chat’s turn runs, an unattributed request may be ours (the omlx provider) — never called someone else’s', () => {
+    const main = snapshot('single', GENERATING_STATUS, {
+      clients: [],
+      unattributed: 1,
+      swarmRuns: [],
+      error: null,
+    });
+    expect(
+      deriveChatServedBy(inputs({ single: RUNNING, main, turnInFlight: true })).busyWithOthers
+    ).toBeNull();
+    expect(
+      deriveChatServedBy(inputs({ single: RUNNING, main, turnInFlight: false })).busyWithOthers
+    ).toEqual({ requests: 1, readingTokens: null });
+  });
+
+  it('an idle engine, or a "who" goose could not read, claims nobody', () => {
+    const idle = snapshot('single', IDLE_STATUS, {
+      clients: [],
+      unattributed: 1,
+      swarmRuns: [],
+      error: null,
+    });
+    expect(deriveChatServedBy(inputs({ single: RUNNING, main: idle })).busyWithOthers).toBeNull();
+    const unknownWho = snapshot('single', GENERATING_STATUS, {
+      clients: [],
+      unattributed: 0,
+      swarmRuns: [],
+      error: 'in-flight list unreadable',
+    });
+    expect(
+      deriveChatServedBy(inputs({ single: RUNNING, main: unknownWho })).busyWithOthers
+    ).toBeNull();
+  });
+});
+
+describe('deriveChatServedBy — what it refuses to name', () => {
+  it('a cloud provider: nothing, and readiness unknown', () => {
+    const served = deriveChatServedBy(inputs({ provider: 'anthropic', single: RUNNING }));
+    expect(served.engine).toBe('none');
+    expect(served.model).toBeNull();
+    expect(served.readiness).toEqual({ kind: 'unknown' });
+  });
+
+  it('a swarm pool with an LM Studio node: no one engine is named — unless the route serves', () => {
+    const mixed: MountLookup = {
+      ...POOL,
+      devices: [MLX_NODE, { id: 'studio-lm', model_id: 'qwen', weight: 1, enabled: true }],
+    };
+    expect(deriveChatServedBy(inputs({ lookup: mixed, single: RUNNING })).engine).toBe('none');
+    expect(deriveChatServedBy(inputs({ lookup: mixed, single: RUNNING })).model).toBeNull();
+    expect(deriveChatServedBy(inputs({ lookup: mixed, remote: ROUTE })).engine).toBe('remote');
+  });
+
+  it('the omlx provider rides the same rule', () => {
+    const served = deriveChatServedBy(inputs({ provider: 'omlx', remote: ROUTE }));
+    expect(served.engine).toBe('remote');
+    expect(served.where).toEqual(["Work's Mac Studio"]);
+  });
+});
+
+describe('mlxEngineServing — the ONE order (split, route, another window’s split, this Mac)', () => {
+  it('this window’s split wins over a route read at the same time (the backend refuses both)', () => {
+    expect(mlxEngineServing(RUNNING, SPLIT, ROUTE, 'This Mac').engine).toBe('split');
+    expect(mlxEngineServing(RUNNING, OTHER_WINDOW, ROUTE, 'This Mac').engine).toBe('remote');
+    expect(mlxEngineServing(RUNNING, null, { state: 'off' }, 'This Mac').engine).toBe('single');
+    expect(mlxEngineServing(STOPPED, null, null, 'This Mac').engine).toBe('none');
+  });
+});
