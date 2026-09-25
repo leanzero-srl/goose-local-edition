@@ -592,7 +592,11 @@ function PlacementCardBody({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ tone: NoticeTone; text: string } | null>(null);
+  // `follows`: the way a "Starting — this card follows it." notice speaks for; it ends when that way
+  // serves or fails (it stayed 25 min after a switch — Q-36).
+  const [notice, setNotice] = useState<{ tone: NoticeTone; text: string; follows?: string } | null>(
+    null
+  );
   const [othersOpen, setOthersOpen] = useState(false);
   const [detailsOpen, setDetailsOpenState] = useState(splitDetailsOpenAtFirst);
   const setDetailsOpen = useCallback((open: boolean) => {
@@ -634,6 +638,9 @@ function PlacementCardBody({
   // read" while the Studio's engine loaded stayed under Run it after it served — 3.0.31). The plan
   // is asked again whenever that changes; the notice stays, since a start's failure moves the state
   // too.
+  // A Mac coming back on LeanZero Link, or the route's failure changing its words, changes what the
+  // plan can say: after a Link outage the Studio row kept "unreachable over LeanZero Link" and no Run
+  // minutes after Link was back (Q-35, R3 2026-09-25).
   const remoteNow = latestMlxRemoteSingleStatus();
   const servingKey = [
     single?.state,
@@ -643,7 +650,34 @@ function PlacementCardBody({
     remoteNow?.state,
     remoteNow?.peer,
     remoteNow?.modelId,
+    remoteNow?.lastError,
   ].join('|');
+  // A Mac this card already knew coming back ONLINE on LeanZero Link re-plans too (not the roster's
+  // first arrival — the plan was just asked for it).
+  const onlineBefore = useRef<Map<string, boolean> | null>(null);
+  useEffect(() => {
+    const now = new Map(macs.macs.map((m) => [m.key, m.online] as const));
+    const before = onlineBefore.current;
+    onlineBefore.current = now;
+    if (before && [...now].some(([key, online]) => online && before.get(key) === false)) {
+      void load();
+    }
+  }, [macs.macs, load]);
+  useEffect(() => {
+    if (!notice?.follows) return;
+    const way = waysOf(plan, macs.macs, distributedCapability).ways.find(
+      (w) => w.key === notice.follows
+    );
+    const live = way ? wayLive(way, modelId, single, distributed) : null;
+    if (
+      live &&
+      live.state !== 'mounting' &&
+      live.state !== 'starting' &&
+      live.state !== 'preflight'
+    ) {
+      setNotice(null);
+    }
+  }, [notice, plan, macs.macs, distributedCapability, modelId, single, distributed, servingKey]);
   const plannedFor = useRef(servingKey);
   useEffect(() => {
     if (plannedFor.current === servingKey) return;
@@ -799,14 +833,14 @@ function PlacementCardBody({
         }
         if (way.kind === 'local') {
           onMountHere();
-          setNotice({ tone: 'accent', text: intl.formatMessage(i18n.started) });
+          setNotice({ tone: 'accent', text: intl.formatMessage(i18n.started), follows: way.key });
           return;
         }
       }
       const refusal = await startWay(way);
       setNotice(
         refusal == null
-          ? { tone: 'accent', text: intl.formatMessage(i18n.started) }
+          ? { tone: 'accent', text: intl.formatMessage(i18n.started), follows: way.key }
           : { tone: 'err', text: way.mac ? macs.describeError(way.mac, refusal) : refusal }
       );
     } catch (e) {
@@ -902,7 +936,7 @@ function PlacementCardBody({
         .then((refusal) =>
           setNotice(
             refusal == null
-              ? { tone: 'accent', text: intl.formatMessage(i18n.started) }
+              ? { tone: 'accent', text: intl.formatMessage(i18n.started), follows: way.key }
               : { tone: 'err', text: macs.describeError(to, refusal) }
           )
         )

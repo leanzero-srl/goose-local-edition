@@ -1147,8 +1147,12 @@ function RemoteInstrument({
       )}
       {remote.state === 'mounting' && (
         <div className="flex flex-col gap-2">
-          <span className={cx(LINE, WEIGHT.semibold)}>
-            {intl.formatMessage(i18n.remoteLoading, { peer })}
+          {/* goosed re-mounting the route's model on a peer that came back without its engine
+              (Q-34) says so in its own words: "Restoring <model> on <Mac>…". */}
+          <span data-testid="mlx-remote-loading" className={cx(LINE, WEIGHT.semibold)}>
+            {remote.restore?.phase === 'restoring'
+              ? remote.restore.message
+              : intl.formatMessage(i18n.remoteLoading, { peer })}
           </span>
           <IndeterminateBar label={intl.formatMessage(i18n.remoteLoading, { peer })} />
         </div>

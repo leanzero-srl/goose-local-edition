@@ -486,6 +486,44 @@ describe('Run it on the real 27B plan', () => {
     expect(mockRemoteStop).toHaveBeenCalledWith(false);
   });
 
+  it('the "Starting" notice ends once the way it started serves (Q-36)', async () => {
+    mockPlan.mockResolvedValue(answer(localFits));
+    remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
+    mockRemoteStop.mockResolvedValue({
+      unmounted: true,
+      unmountError: null,
+      status: { state: 'off' },
+    });
+    let setSingle: (s: MlxEngineStatus) => void = () => undefined;
+    function Harness() {
+      const [single, set] = useState<MlxEngineStatus | null>(null);
+      setSingle = set;
+      return (
+        <PlacementCard
+          modelId={MODEL}
+          single={single}
+          distributed={null}
+          onMountHere={() => undefined}
+          onStopHere={() => undefined}
+          mountBusy={false}
+          distributedCapability
+        />
+      );
+    }
+    render(
+      <IntlTestWrapper>
+        <Harness />
+      </IntlTestWrapper>
+    );
+    await userEvent.click(await screen.findByTestId('placement-run-local'));
+    expect(await screen.findByText('Starting — this card follows it.')).toBeInTheDocument();
+    remoteLatest = null;
+    act(() => setSingle({ state: 'mounting', modelId: MODEL } as MlxEngineStatus));
+    expect(screen.getByText('Starting — this card follows it.')).toBeInTheDocument();
+    act(() => setSingle({ state: 'running', modelId: MODEL } as MlxEngineStatus));
+    await waitFor(() => expect(screen.queryByText('Starting — this card follows it.')).toBeNull());
+  });
+
   it('Run on the Studio while this Mac runs the model unmounts here first, then starts there', async () => {
     mockPlan.mockResolvedValue(answer(localFits));
     const order: string[] = [];

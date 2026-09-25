@@ -646,6 +646,24 @@ describe('MlxStateTile — a remote single IS the tile while it serves this Mac�
     expect(screen.getByTestId('mlx-state-badge')).toHaveAttribute('data-phase', 'idle');
   });
 
+  it('goose restoring the model on a peer that came back without it says so (Q-34)', () => {
+    tile({
+      state: 'stopped',
+      remote: {
+        ...ROUTE,
+        state: 'mounting',
+        restore: {
+          phase: 'restoring',
+          message: "Restoring Qwen3.8-27B-Atlassian-Q8-mlx on Work's Mac Studio…",
+        },
+      },
+    });
+    expect(screen.getByTestId('mlx-remote-loading')).toHaveTextContent(
+      "Restoring Qwen3.8-27B-Atlassian-Q8-mlx on Work's Mac Studio…"
+    );
+    expect(screen.getByTestId('mlx-state-badge')).toHaveAttribute('data-phase', 'loading');
+  });
+
   it('mounting there is amber with where it loads; failed is red with the peer’s own words', () => {
     const { unmount } = tile({ state: 'stopped', remote: { ...ROUTE, state: 'mounting' } });
     const t = screen.getByTestId('mlx-state-badge');
