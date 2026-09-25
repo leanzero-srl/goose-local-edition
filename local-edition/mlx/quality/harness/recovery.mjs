@@ -12,7 +12,11 @@ const p = b.contexts()[0].pages().find((x) => x.url().includes('index.html'));
 await p.goto(p.url().split('#')[0] + '#/'); await p.waitForTimeout(2500);
 await p.getByRole('button', { name: /^New session in / }).click(); await p.waitForTimeout(4000);
 const input = p.locator('[data-testid=chat-input]:visible').first();
-await input.click(); await input.fill('Write a 300-word story about a lighthouse keeper. No tools.');
+// A fresh subject every run: with the same prompt, recall surfaced the earlier runs and the model answered
+// "you asked this four times" in 6 s — the break then hit no answer in flight (3.0.37 relaunch run).
+const subjects = ['a clockmaker in Prague', 'a ferry pilot in Lofoten', 'a beekeeper in Crete', 'a night-shift baker in Lyon', 'a glass blower in Murano', 'a tram driver in Lisbon', 'a cartographer in Tromsø', 'a violin maker in Cremona'];
+const subject = subjects[Math.floor(Math.random() * subjects.length)];
+await input.click(); await input.fill(`Write a 400-word story about ${subject}, run ${Date.now()}. No tools, no preamble.`);
 await p.keyboard.press('Enter');
 const t0 = Date.now(); const out = `${dir}/timeline.tsv`;
 writeFileSync(out, 't_s\tevent\tbar\tchip\ttranscript_tail\ttray\n');
