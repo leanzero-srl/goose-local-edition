@@ -488,6 +488,9 @@ pub struct SkillHit<'a> {
     /// The request's TOPIC word — its rarest term across the catalogue among those some skill
     /// carries (ties count every tied term) — reaches one of this skill's own name words.
     pub topic_in_name: bool,
+    /// The skill's BODY carries every request term — read only for a skill one own name word
+    /// reaches that neither holds the topic nor half the request.
+    pub body_carries_request: bool,
     /// Two request words said together in the skill's name, keywords or description
     /// (`goose_memory_store::said_together`) — the description path's aboutness.
     pub together: bool,
@@ -620,9 +623,24 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
             // 14 wrong → 18, 7 wrong, the two right ones above lost; the model still has the whole
             // catalogue in its instructions and `load_skill`.
             // Two own name WORDS name it outright ("frontend" + "design", "jaccl" + "cluster").
+            //
+            // Or the skill's BODY carries the whole request — the memory law's whole-request body,
+            // anchored here by the own name word (VA-189 (2)): "Is swarm resume still broken?" —
+            // resume and still are in no description, broken in one, so the topic is "broken" —
+            // is 4/4 in `goose-swarm-campaign`'s body, and the e2e/vendor-port request 9/9; every
+            // wrong one-word name on both probe sets carries less (import-memory 11/19, the
+            // migration-scripts skill 8/11 on a bash-script request, knob-turning 5/7,
+            // goose-benchmark-iteration 7/9 and 2/4, frontend-design 3/5, app-testing ≤ 6/13).
+            // Not "said together": the campaign body writes "swarm" and "resume" apart.
+            let covers_half = matched_terms * 2 >= terms.len();
+            let body_carries_request = own_name_terms == 1
+                && rare_terms >= 1
+                && !topic_in_name
+                && !covers_half
+                && body_carries(&skill.content, terms);
             let about = match own_name_terms {
-                0 => rare_terms >= 2 && matched_terms * 2 >= terms.len() && together,
-                1 => rare_terms >= 1 && (topic_in_name || matched_terms * 2 >= terms.len()),
+                0 => rare_terms >= 2 && covers_half && together,
+                1 => rare_terms >= 1 && (topic_in_name || covers_half || body_carries_request),
                 _ => rare_terms >= 1,
             };
             Some(SkillHit {
@@ -633,6 +651,7 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
                 own_name_terms,
                 name_words: name_words.len(),
                 topic_in_name,
+                body_carries_request,
                 together,
                 about,
                 skill,
@@ -646,6 +665,12 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
             .then_with(|| a.skill.name.cmp(&b.skill.name))
     });
     hits
+}
+
+/// Whether a skill body carries every request term, by the store's whole-word rule.
+fn body_carries(body: &str, terms: &[String]) -> bool {
+    let tokens = tokenize(body);
+    terms.iter().all(|term| term_occurrences(term, &tokens) > 0)
 }
 
 /// Skills the request is about, by the same rule as memories: the hits that are ABOUT it, scoring
@@ -2002,6 +2027,7 @@ mod tests {
             own_name_terms,
             name_words,
             topic_in_name: false,
+            body_carries_request: false,
             together: false,
             about: true,
             skill,
@@ -2173,6 +2199,44 @@ mod tests {
         assert_eq!(
             (import.name_terms, import.name_words, import.own_name_terms),
             (2, 1, 1)
+        );
+    }
+
+    /// VA-189 (2): one own name word plus a body carrying the whole request names the skill.
+    #[test]
+    fn one_own_name_word_names_a_skill_whose_body_carries_the_whole_request() {
+        let mut campaign = skill(
+            "goose-swarm-campaign",
+            "Run a goose swarm build end to end and hold the vigil.",
+        );
+        campaign.content =
+            "Resume: a killed run continues with --resume; it is not broken, it still works."
+                .to_string();
+        let mut frontend = skill("frontend-design", "Distinctive frontend interfaces.");
+        frontend.content = "Design the page before the doc.".to_string();
+        let skills = vec![
+            campaign,
+            frontend,
+            skill(
+                "migration-scripts",
+                "Scripts that export issues; fix the broken links.",
+            ),
+            skill("goose-clean", "Reclaim disk in the goose checkout."),
+        ];
+        let names = |request: &str| -> Vec<String> {
+            relevant_skills(&skills, &query_terms(request))
+                .into_iter()
+                .map(|s| s.name.clone())
+                .collect()
+        };
+        assert_eq!(
+            names("Is swarm resume still broken?"),
+            vec!["goose-swarm-campaign"],
+            "the topic is 'broken' (one other description); the body says every word"
+        );
+        assert!(
+            names("Should I write a design doc before implementing the fix?").is_empty(),
+            "the body says design and doc, not write, implementing or fix"
         );
     }
 
