@@ -1,51 +1,53 @@
 # One request per line: the kind of thing a user types. Read what each one recalls.
-What is the e2e probe token for this machine, and which port does the swarm bench vendor answer on?
-How do I search Jira issues with JQL over the Jira Cloud REST API?
-Fix the failing test in the scheduler.
-Write a blog post about local models.
-Can you list the files in this directory?
-How do I connect to the workhorse over SSH?
-Deploy the Forge app to production.
-What was said about hard-coded values?
+# Labels (VA-189, 2026-09-25, the 62-skill catalogue): after ' ||| ', the skills that SHOULD be suggested, judged
+# by the words of each description; empty = none. A request with no past= label should name no past session.
+What is the e2e probe token for this machine, and which port does the swarm bench vendor answer on? ||| goose-swarm-campaign
+How do I search Jira issues with JQL over the Jira Cloud REST API? ||| jira-api-skill
+Fix the failing test in the scheduler. ||| 
+Write a blog post about local models. ||| leanzero-tutorial, leanzero-newsroom
+Can you list the files in this directory? ||| 
+How do I connect to the workhorse over SSH? ||| 
+Deploy the Forge app to production. ||| 
+What was said about hard-coded values? ||| 
 # goose-project requests (judged against the project-local store of goose-written notes)
-What is the golden engine score and which commit is it?
-How do I start a benchmark run properly?
-Why must I never use killpg to reap the app servers?
-Which git identity do goose commits use?
-What are the LM Studio node names and why are the identifiers load-bearing?
+What is the golden engine score and which commit is it? ||| 
+How do I start a benchmark run properly? ||| goose-swarm-campaign
+Why must I never use killpg to reap the app servers? ||| 
+Which git identity do goose commits use? ||| 
+What are the LM Studio node names and why are the identifiers load-bearing? ||| goose-swarm-campaign
 # tick 6 of the memory vigil (2026-09-06): requests a user asks WITHOUT the note's name; each has a
 # local note about it (swarm-resume-works-now, workhorse-shell-gotchas, macos-notarization-setup,
 # uncapped-runs-judge-decides, goose-mcp-tests-need-goose-crate, implement-dont-document).
-Is swarm resume still broken?
-The grep on the workhorse errors on a backslash-b inside a group — why?
-How do I release a notarized build of the desktop app?
-Can I add a two-hour wall-clock cap so a benchmark run stops on its own?
-Why won't cargo test -p goose-mcp build on its own?
-Should I write a design doc before implementing the fix?
+Is swarm resume still broken? ||| goose-swarm-campaign
+The grep on the workhorse errors on a backslash-b inside a group — why? ||| 
+How do I release a notarized build of the desktop app? ||| 
+Can I add a two-hour wall-clock cap so a benchmark run stops on its own? ||| 
+Why won't cargo test -p goose-mcp build on its own? ||| goose-feature-dev
+Should I write a design doc before implementing the fix? ||| goose-doc-guide
 # tick 8 (2026-09-06): six more unnamed requests — keyring-off-in-config, plans-overview-before-after-first,
 # desktop-must-ignore-stray-shortcuts, no-security-hygiene-nagging, fallbacks-hide-evidence, and one with NO
 # note in either store (the workhorse sync lives in CLAUDE.md) so a miss is visible.
-Where do provider secrets come from now that the keychain is turned off?
-How should I open a plan when I present it?
-The desktop opened a second window when I pressed Cmd+Shift+N during a run.
-Should I remind him to rotate the API key I was just given?
-Is it fine to fall back to an empty ledger when the file is missing?
-How do I push my Projects folder to the workhorse from the MacBook?
+Where do provider secrets come from now that the keychain is turned off? ||| 
+How should I open a plan when I present it? ||| 
+The desktop opened a second window when I pressed Cmd+Shift+N during a run. ||| 
+Should I remind him to rotate the API key I was just given? ||| 
+Is it fine to fall back to an empty ledger when the file is missing? ||| 
+How do I push my Projects folder to the workhorse from the MacBook? ||| machine-sync
 # tick 10 (2026-09-06): the `together` rule's known limit (a function word between two request words),
 # global notes asked plainly, and two skill-shaped requests.
-Deploy the app to the sandbox first, then production.
-Why did the r2 run die in the middle of INTEGRATE?
-Which node should carry the strongest model, the supervision one?
-What is the rule about mentioning our apps in community replies?
-Can the Claude Code harness run the desk loops on its own?
-Draft the weekly write-up for the developer community.
+Deploy the app to the sandbox first, then production. ||| 
+Why did the r2 run die in the middle of INTEGRATE? ||| 
+Which node should carry the strongest model, the supervision one? ||| 
+What is the rule about mentioning our apps in community replies? ||| atlassian-community-leanzero
+Can the Claude Code harness run the desk loops on its own? ||| 
+Draft the weekly write-up for the developer community. ||| atlassian-devcommunity-leanzero, atlassian-community-leanzero, leanzero-tutorial
 # tick 11 (2026-09-06): the sandbox-then-production shape VA-187 (2) waits on — four requests a consultant
 # asks before touching a client's live system (ask-before-client-prod-config, demo-sandbox-is-the-testbed).
-Can I change the workflow scheme on the client's production Jira myself, or ask first?
-Add the new custom field on the customer's live instance today.
-Bulk-transition those 159 tickets on prod to Done.
-Is it fine to exercise the Apply write path against demo-sandbox?
+Can I change the workflow scheme on the client's production Jira myself, or ask first? ||| 
+Add the new custom field on the customer's live instance today. ||| 
+Bulk-transition those 159 tickets on prod to Done. ||| 
+Is it fine to exercise the Apply write path against demo-sandbox? ||| 
 # tick 12 (2026-09-06): the identifier said in a BODY (VA-187 (2)) — a true hit (evolve-goose-test-loop says
 # "12 scheduler_mock tests") and the date-fragment hazard ("30" is the day of every "2026-07-30" note).
-How many of the 12 scheduler_mock tests fail?
-Does the 30-day session token idle out?
+How many of the 12 scheduler_mock tests fail? ||| 
+Does the 30-day session token idle out? ||| 

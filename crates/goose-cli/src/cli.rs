@@ -1024,6 +1024,10 @@ enum Command {
         /// The request text, as the user would type it
         #[arg(value_name = "TEXT")]
         text: String,
+        /// Replay the past-session pick as it was when this session began: the session itself
+        /// excluded, and only history written before it searched
+        #[arg(long, value_name = "SESSION_ID")]
+        session: Option<String>,
     },
 
     /// Manage plugins
@@ -2513,7 +2517,9 @@ pub async fn cli() -> anyhow::Result<()> {
             ImportCommand::ClaudeCode(args) => crate::commands::import::run_claude_code(args).await,
         },
         Some(Command::Skills { command }) => handle_skills_subcommand(command).await,
-        Some(Command::Recall { text }) => crate::commands::recall::run(&text),
+        Some(Command::Recall { text, session }) => {
+            crate::commands::recall::run(&text, session.as_deref()).await
+        }
         Some(Command::Plugin { command }) => handle_plugin_subcommand(command),
         Some(Command::Term { command }) => handle_term_subcommand(command).await,
         #[cfg(feature = "tui")]

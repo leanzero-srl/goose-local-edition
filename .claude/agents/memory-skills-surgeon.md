@@ -313,6 +313,31 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   in the description ("sandbox" is as rare as "deploy" in the catalogue, 2 of 30 each — alterdomus keeps
   it); a named skill above the description path (kills jira-api-skill and leanzero-tutorial); strict
   adjacency (loses goose-swarm-campaign on the benchmark request).
+- THE DESKTOP CHAT (VA-189, 2026-09-25, session 20260925_30, 62 skills): recall reads the request's INTENT
+  words — `intent_text` drops a path's directories and a URL, keeps a file's stem ("…/tests/test_core.py" →
+  test_core); a request without a location searches exactly as before. "Add pytest tests in
+  /Users/mihaiperdum/goose-builds/quality/R1-smoke/…" searched goose + quality and LOADED
+  `goose-mlx-quality-loop` two turns running (the model: "The loaded skill is irrelevant … a name-collision").
+  ONE own name word names a skill only as the request's TOPIC word (`SkillHit::topic_in_name`, rarest
+  catalogue term) or with half the request; own words count by NAME WORD (`name_words`: memo + memory → one).
+  `autoload_pick` needs two name WORDS, one of them OWN. A skill with a `load_skill` call in the session's
+  history (`loaded_skills`) is neither suggested nor loaded again. PAST SESSIONS (`PastReading::covers`):
+  every request term in one message with two said together, or the session's TITLE (sessions.name —
+  chat_history_search read the always-empty legacy `description`) wholly made of request words (≥2) with
+  more than half the request in the message; never a session that was the SAME ASK (a user message saying
+  nothing the request does not); the quoted headline must carry a request word (a 54,905-char pasted spec
+  carries everything). The history search bounds dates with datetime() (text compare let same-day later rows
+  through) and keeps the best-covered rows under its limit. Measured, both probe sets from $HOME
+  (queries-desktop.txt 24, queries.txt 37, labelled): skills desktop 11/21 → 11/12 precision, recall 11/12
+  both; corpus 13/27 → 11/18, recall 13/14 → 11/14 (lost: goose-swarm-campaign on "Is swarm resume still
+  broken?" — topic "broken" is one word in the migration-scripts skill, the VA-186 accident — and on the
+  e2e/vendor-port request); past sessions desktop 5 wrong / 1 of 2 facts → 0 / 2 of 2, corpus 9 wrong → 1
+  ("list the files" → an earlier "List the files in the working directory. Then…"). Live (haiku-4.5,
+  --no-session, $HOME): the case prompt `skills:0 suggested:[]`, no load; the lighthouse story (asked in
+  five chats) named no past session and the model wrote 297 words with no "you asked this before".
+  MCP/extensions have NO per-request selection: every enabled extension's tools ride every call (the case:
+  79 tools, 105,747 chars of schemas — leanzerodocuments 49,963, playwright 19,305 — and a 40,689-char skill
+  listing in a 92,054-char system prompt on a 128k local model) — filed as its own action.
 - The measurement corpus: `~/.config/goose/memory` (imported Claude notes, wrong for judging aboutness)
   PLUS the project-local `.goose/memory` of this repo (the 62 goose-project notes) — judge recall on the
   goose requests in queries.txt against the local store.
@@ -331,7 +356,7 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
 - `ledger` (`platform_extensions/ledger.rs`): `.goose/ledger.md`, one dated line per entry
   (`- <when> [kind] text`, kinds finding/decision/tried/fact); `ledger_append`, `ledger_read`;
   `<ledger>` moim part = newest TAIL_ENTRIES. It is chronology; memory is facts.
-- recall's extras: `autoload_pick` (two name terms + body ≤ AUTOLOAD_WINDOW_SHARE of the context
+- recall's extras: `autoload_pick` (two name words, one its own, + body ≤ AUTOLOAD_WINDOW_SHARE of the context
   window in chars), `is_correction` (markers/phrases in the first REACTION_WINDOW tokens),
   `open_question` (the assistant's last line asks) → `<loaded-skill>`, `<correction>`, `<answered>`
   sections and the recall line. Detectors are pure and tested; the model writes the memory.
