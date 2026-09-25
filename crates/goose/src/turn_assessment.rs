@@ -176,7 +176,8 @@ pub fn assessment_system_prompt() -> String {
      (the user was frustrated, corrected the same mistake again, refused the result)? You judge \
      the user's tone from their words as a whole — a terse reply is not an angry one.\n\
      Then decide whether there is ONE durable, reusable lesson worth remembering across sessions: a \
-     fact about this project or environment, a preference, a correction and its reason. Not the \
+     fact about this project or environment, a preference, a correction (with its reason only when \
+     the user gave one — never a reason you inferred). Not the \
      task itself, not a one-off, nothing already in the nearest memories (if one covers it, worth \
      is false).\n\
      Answer with ONLY a JSON object, no prose: {\"worth\": true|false, \"polarity\": \

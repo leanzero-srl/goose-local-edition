@@ -56,7 +56,8 @@ pub struct RememberMemoryParams {
     /// The category to store the memory in
     pub category: String,
     /// The data to remember. Its FIRST LINE is the headline shown in the memory index — make it one
-    /// specific sentence; details go on the following lines.
+    /// specific sentence; details go on the following lines. Only what the user said or what you
+    /// verified: no reason the user did not give.
     pub data: String,
     /// Tags; put the kind first: user, feedback, project or reference
     #[serde(default)]
@@ -181,8 +182,8 @@ impl MemoryServer {
              CALL remember_memory (do NOT ask the user first) the moment you learn any of these:
              - a durable USER PREFERENCE or taste (how they like things done; tools, styles, or conventions
                they favor or reject)
-             - a CORRECTION the user makes ("no, actually…", "don't do X", "always Y") — capture the rule
-               and the reason behind it
+             - a CORRECTION the user makes ("no, actually…", "don't do X", "always Y") — capture the rule,
+               and its reason only when the user gave one
              - a stable PROJECT or ENVIRONMENT fact (paths, hosts, where credentials live, build/run/test
                commands, naming conventions)
              - a recurring COMMAND or workflow you had to figure out and would want again next time
@@ -190,7 +191,9 @@ impl MemoryServer {
              user-wide). Write the data so its FIRST LINE is one specific sentence — that line is the
              headline the index shows — and put the kind first among the tags: user, feedback, project or
              reference. Saving data whose first line matches an existing memory's headline UPDATES that
-             memory in place, so restate the headline when you correct a fact. Do NOT store secrets/tokens
+             memory in place, so restate the headline when you correct a fact. Store what the user SAID: a
+             reason, a context or a who-asked-for-it the user did not state is your guess, and a saved guess
+             is read back next session as the user's word — leave it out. Do NOT store secrets/tokens
              verbatim, transient chatter, or anything already obvious from the code or repo.
 
              HOW TO READ IT: below is the INDEX of every saved memory — one line per entry, in the form
@@ -415,7 +418,8 @@ impl MemoryServer {
                        PROACTIVELY (without asking first) the moment you learn a durable user preference, a \
                        correction the user made, a stable project/environment fact (paths, hosts, build/run \
                        commands, conventions), or a recurring command/workflow. The data's first line is the \
-                       headline the index shows: one specific sentence. Re-saving with the same headline \
+                       headline the index shows: one specific sentence. Store the user's own rule; add a \
+                       reason only when the user gave one, never one you inferred. Re-saving with the same headline \
                        updates that memory. Pick a category, tags (kind first: user/feedback/project/reference) \
                        and scope. Do not store secrets verbatim or transient chatter."
     )]
@@ -1243,6 +1247,36 @@ mod tests {
             "{instructions}"
         );
         assert!(instructions.contains("search_memories(query)"));
+    }
+
+    /// Q-92: E2E #2b saved "British spelling is the client's own convention" and "the receiving team
+    /// often has restricted tooling" — reasons the user never gave — because the instructions said
+    /// "capture the rule and the reason behind it". The words now ask for the user's rule and a
+    /// reason only when the user gave one, in the instructions and the tool description alike.
+    #[test]
+    fn the_memory_words_never_ask_for_a_reason_the_user_did_not_give() {
+        let temp_dir = tempdir().unwrap();
+        let server = MemoryServer::with_global_dir(temp_dir.path().join("global"));
+        let instructions = server.get_instructions();
+        assert!(
+            !instructions.contains("the reason behind it"),
+            "{instructions}"
+        );
+        assert!(instructions.contains("its reason only when the user gave one"));
+        assert!(
+            instructions.contains("a saved guess\nis read back next session as the user's word")
+        );
+        let description = MemoryServer::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "remember_memory")
+            .and_then(|tool| tool.description)
+            .unwrap();
+        assert!(
+            description
+                .contains("add a reason only when the user gave one, never one you inferred"),
+            "{description}"
+        );
     }
 
     #[test]
