@@ -455,6 +455,8 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         stopped_by: None,
         serving_intent: None,
         serving_intent_error: None,
+        machine_load: status.machine_load.map(machine_load_to_dto),
+        machine_load_error: status.machine_load_error,
     }
 }
 
@@ -479,6 +481,7 @@ pub(super) fn fit_to_dto(model_id: &str, fit: &FitVerdict) -> MlxMountFitDto {
         available_bytes: fit.facts.available_bytes,
         total_bytes: fit.facts.total_bytes,
         ceiling_bytes: fit.facts.ceiling_bytes,
+        other_engines_bytes: fit.facts.other_engines_bytes,
         margin_bytes: fit.facts.margin_bytes(),
         margin_ratio: AVAILABLE_MARGIN_RATIO,
         short_bytes: fit.short_bytes(),
@@ -588,7 +591,24 @@ async fn core_mount(
 ) -> Result<MlxEngineMountResponse, agent_client_protocol::Error> {
     super::mlx_distributed::refuse_single_mount_while_distributed().await?;
     let manager = synced_manager()?;
-    match manager.mount(&req.model_id).await {
+    mount_response(manager.mount(&req.model_id).await).await
+}
+
+/// `core_mount` for `mlxEngine/mountAfterLoad`: another load holding this Mac is waited for.
+async fn core_mount_after_load(
+    req: MlxEngineMountAfterLoadRequest,
+) -> Result<MlxEngineMountResponse, agent_client_protocol::Error> {
+    super::mlx_distributed::refuse_single_mount_while_distributed().await?;
+    let manager = synced_manager()?;
+    mount_response(manager.mount_after_load(&req.model_id).await).await
+}
+
+/// A refused load (another load holds the Mac, `LoadInProgress`) is an error carrying its words —
+/// the holder and "wait or stop it" — like every non-gate failure.
+async fn mount_response(
+    mounted: anyhow::Result<()>,
+) -> Result<MlxEngineMountResponse, agent_client_protocol::Error> {
+    match mounted {
         Ok(()) => {
             *ENGINE_STOPPED_BY.lock().unwrap_or_else(|e| e.into_inner()) = None;
             Ok(MlxEngineMountResponse { refusal: None })
@@ -622,7 +642,49 @@ async fn mount_refusal(refused: &MountRefused) -> MlxMountRefusalDto {
         alternative,
         badge,
         alternative_error,
+        other_engines: refused
+            .other_engines
+            .iter()
+            .map(other_engine_to_dto)
+            .collect(),
     }
+}
+
+fn other_engine_to_dto(engine: &goose_sidecar::machine::OtherEngine) -> MlxOtherEngineDto {
+    MlxOtherEngineDto {
+        pid: engine.pid,
+        started_at: engine.started_at,
+        kind: engine.kind.clone(),
+        command: engine.command.clone(),
+        port: engine.port,
+        resident_bytes: engine.resident_bytes,
+    }
+}
+
+fn machine_load_to_dto(holder: goose_sidecar::machine::LoadHolder) -> MlxMachineLoadDto {
+    MlxMachineLoadDto {
+        pid: holder.pid,
+        started_at: holder.started_at,
+        since: holder.since,
+        what: holder.what,
+        port: holder.port,
+        group: holder.group,
+    }
+}
+
+async fn core_stop_other_engine(
+    req: MlxEngineStopOtherEngineRequest,
+) -> Result<MlxEngineStopOtherEngineResponse, agent_client_protocol::Error> {
+    let port = synced_manager()?.settings().port;
+    let report = goose_sidecar::machine::stop_other_engine(req.pid, req.started_at, port)
+        .await
+        .invalid_params_err()?;
+    Ok(MlxEngineStopOtherEngineResponse {
+        pid: report.pid,
+        signal: report.signal,
+        resident_bytes: report.resident_bytes,
+        message: report.message,
+    })
 }
 
 /// Recorded BEFORE the engine goes, so no status read ever sees it stopped without its stopper.
@@ -933,6 +995,26 @@ impl GooseAcpAgent {
             remember_serving(ServingIntent::Single { model_id });
         }
         Ok(response)
+    }
+
+    /// Local only: a Mac's load lock is that Mac's.
+    pub(super) async fn on_mlx_engine_mount_after_load(
+        &self,
+        req: MlxEngineMountAfterLoadRequest,
+    ) -> Result<MlxEngineMountResponse, agent_client_protocol::Error> {
+        let model_id = req.model_id.clone();
+        let response = core_mount_after_load(req).await?;
+        if response.refusal.is_none() {
+            remember_serving(ServingIntent::Single { model_id });
+        }
+        Ok(response)
+    }
+
+    pub(super) async fn on_mlx_engine_stop_other_engine(
+        &self,
+        req: MlxEngineStopOtherEngineRequest,
+    ) -> Result<MlxEngineStopOtherEngineResponse, agent_client_protocol::Error> {
+        core_stop_other_engine(req).await
     }
 
     pub(super) async fn on_mlx_engine_unmount(

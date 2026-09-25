@@ -3624,7 +3624,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|s| s.contains("kill"))
+                .filter(|s| s.starts_with("/bin/kill"))
                 .cloned()
                 .collect()
         }

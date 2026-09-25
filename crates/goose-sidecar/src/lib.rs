@@ -34,6 +34,7 @@ pub mod engine;
 pub mod fit;
 pub mod hf;
 pub mod kv_cache;
+pub mod machine;
 mod memory;
 mod model_parsers;
 #[cfg(unix)]
