@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "Contexte de {tokens} jetons"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "{tokens} de contexte sur cette répartition — dimensionné selon la mémoire libre au démarrage ; redémarrez-la pour l’agrandir"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Arrêté — démarrez-le depuis le moteur"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "Vérification de {nodes} pour {model}…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Son contexte de {tokens} a été dimensionné selon la mémoire libre au démarrage et reste ainsi tant qu’il tourne — redémarrez-le avec plus de mémoire libre pour l’agrandir."
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} n’est pas encore sur {nodes} — copiez-le, puis Exécuter."

@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens}-टोकन संदर्भ"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "इस बँटवारे पर {tokens} संदर्भ — शुरू होते समय खाली मेमोरी से तय हुआ; बढ़ाने के लिए इसे रीस्टार्ट करें"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "नहीं चल रहा — इसे इंजन से शुरू करें"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "{model} के लिए {nodes} की जाँच हो रही है…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "इसका {tokens} संदर्भ शुरू होते समय खाली मेमोरी से तय हुआ और चलते रहने तक वही रहता है — बढ़ाने के लिए ज़्यादा खाली मेमोरी के साथ रीस्टार्ट करें।"
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} अभी {nodes} पर नहीं है — इसे वहाँ कॉपी करें, फिर Run करें।"

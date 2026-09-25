@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens} トークンのコンテキスト"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "この分割のコンテキストは {tokens} — 起動時の空きメモリで決まりました。広げるには再起動してください"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "停止中 — エンジンから起動してください"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "{model} のために {nodes} を確認中…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "コンテキスト {tokens} は起動時の空きメモリで決まり、実行中はそのままです。広げるには空きメモリを増やして再起動してください。"
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} はまだ {nodes} にありません — コピーしてから実行してください。"

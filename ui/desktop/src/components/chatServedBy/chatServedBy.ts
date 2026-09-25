@@ -6,7 +6,7 @@ import type { MlxServing } from '../../utils/mlxServing';
 import { leaveCause, type LeaveCause } from '../../utils/leaveCause';
 import { routeContactLost } from '../../utils/routeContact';
 import type { EnginePhase } from '../lz/tokens';
-import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
+import { ownsTheMac, splitContextFromFreeMemory } from '../leanzero-swarm/mlxDistributed';
 import { routePeerName } from '../leanzero-swarm/macs';
 import { activityPhase, remotePhase, runPhase, singlePhase } from '../leanzero-swarm/mlxPhase';
 import {
@@ -237,6 +237,8 @@ export interface MlxEngineServing {
   foreign: boolean;
   /** The window it reports while it answers — never a default. */
   contextWindow: number | null;
+  /** The split's window was sized from the memory free at its start (Q-71); absent = not a split. */
+  contextFromFreeMemory?: boolean;
 }
 
 const NO_ENGINE: MlxEngineServing = {
@@ -269,6 +271,7 @@ export function mlxEngineServing(
       peerNodeId: null,
       foreign: false,
       contextWindow: up ? (distributed.contextLimit ?? null) : null,
+      contextFromFreeMemory: splitContextFromFreeMemory(distributed),
     };
   }
   if (routeServesChat(remote, distributed)) {

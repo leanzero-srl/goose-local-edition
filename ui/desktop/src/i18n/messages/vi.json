@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "Ngữ cảnh {tokens} token"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "Ngữ cảnh {tokens} trên bản chia này — tính theo bộ nhớ trống lúc khởi động; khởi động lại để tăng"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Không chạy — khởi động từ Engine"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "Đang kiểm tra {nodes} cho {model}…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Ngữ cảnh {tokens} được tính theo bộ nhớ trống lúc khởi động và giữ nguyên khi đang chạy — khởi động lại khi có nhiều bộ nhớ trống hơn để tăng."
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} chưa có trên {nodes} — hãy sao chép sang đó, rồi Chạy."

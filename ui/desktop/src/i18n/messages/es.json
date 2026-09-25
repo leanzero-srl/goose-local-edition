@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "Contexto de {tokens} tokens"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "{tokens} de contexto en esta división: se calculó con la memoria libre al arrancar; reiníciala para ampliarlo"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Sin ejecutar — inícialo desde el motor"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "Comprobando {nodes} para {model}…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Su contexto de {tokens} se calculó con la memoria libre al arrancar y no cambia mientras funciona; reinícialo con más memoria libre para ampliarlo."
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} aún no está en {nodes}: cópialo allí y luego Ejecutar."

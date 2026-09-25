@@ -4670,6 +4670,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens}-token context"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "{tokens} context on this split — sized from the memory free when it started; restart it to grow"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Not running — start it from the Engine"
   },
@@ -5248,6 +5251,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "Checking {nodes} for {model}…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Its {tokens} context was sized from the memory free when it started, and stays that size while it runs — restart it with more memory free to grow it."
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} is not on {nodes} yet — copy it there, then Run."

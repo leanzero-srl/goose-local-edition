@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens} 詞元上下文"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "此拆分的上下文為 {tokens}——按啟動時的可用記憶體決定；重新啟動即可加大"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "未執行 — 請在引擎中啟動"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "正在為 {model} 檢查 {nodes}…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "它的 {tokens} 上下文按啟動時的可用記憶體決定，執行期間維持不變——在可用記憶體更多時重新啟動即可加大。"
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} 尚不在 {nodes} 上——先複製過去，再執行。"

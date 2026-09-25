@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens}-Token-Kontext"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "{tokens} Kontext auf dieser Aufteilung — beim Start aus dem freien Speicher bemessen; zum Vergrößern neu starten"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Läuft nicht — starte es in der Engine"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "{nodes} werden für {model} geprüft…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Sein Kontext von {tokens} wurde beim Start aus dem freien Speicher bemessen und bleibt so groß, solange es läuft — mit mehr freiem Speicher neu starten, um ihn zu vergrößern."
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} ist noch nicht auf {nodes} — kopiere es dorthin, dann Ausführen."

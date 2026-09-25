@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "Contesto da {tokens} token"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "{tokens} di contesto su questa suddivisione: dimensionato sulla memoria libera all’avvio; riavviala per aumentarlo"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Non in esecuzione — avvialo dal motore"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "Verifica di {nodes} per {model}…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Il suo contesto di {tokens} è stato dimensionato sulla memoria libera all’avvio e resta tale finché è in esecuzione: riavvialo con più memoria libera per aumentarlo."
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} non è ancora su {nodes}: copialo lì, poi Esegui."

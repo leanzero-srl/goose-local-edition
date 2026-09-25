@@ -50,6 +50,7 @@ import { mlxErrorMessage } from './mlxErrorMessage';
 import {
   cleanConfig,
   ownsTheMac,
+  splitContextFromFreeMemory,
   splitConfigFor,
   splitPlan,
   type SplitBlocker,
@@ -184,6 +185,11 @@ const i18n = defineMessages({
   smallerContext: {
     id: 'placementCard.smallerContext',
     defaultMessage: 'fits only at {tokens} context',
+  },
+  splitContextFixed: {
+    id: 'placementCard.splitContextFixed',
+    defaultMessage:
+      'Its {tokens} context was sized from the memory free when it started, and stays that size while it runs — restart it with more memory free to grow it.',
   },
   started: { id: 'placementCard.started', defaultMessage: 'Starting — this card follows it.' },
   switching: {
@@ -1092,6 +1098,16 @@ function PlacementCardBody({
             {why}
           </p>
         )}
+        {way.kind === 'split' &&
+          running &&
+          distributed?.contextLimit != null &&
+          splitContextFromFreeMemory(distributed) && (
+            <p data-testid="placement-split-context" className={cx('break-words', TYPE.meta)}>
+              {intl.formatMessage(i18n.splitContextFixed, {
+                tokens: distributed.contextLimit.toLocaleString(),
+              })}
+            </p>
+          )}
         <div className="flex flex-wrap items-center gap-2">
           {startable && (
             <Button

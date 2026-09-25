@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "Контекст {tokens} токенов"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "Контекст {tokens} на этом разделении — рассчитан по свободной памяти при запуске; перезапустите, чтобы увеличить"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Не запущена — запустите её в движке"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "Проверка {nodes} для {model}…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Его контекст {tokens} рассчитан по свободной памяти при запуске и не меняется, пока он работает, — перезапустите при большем объёме свободной памяти, чтобы увеличить."
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} ещё нет на {nodes} — скопируйте его туда, затем Запуск."

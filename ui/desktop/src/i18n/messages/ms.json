@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "Konteks {tokens} token"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "Konteks {tokens} pada pembahagian ini — diukur daripada memori bebas semasa bermula; mulakan semula untuk membesarkannya"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Tidak berjalan — mulakannya dari Enjin"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "Menyemak {nodes} untuk {model}…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "Konteks {tokens}-nya diukur daripada memori bebas semasa bermula dan kekal begitu selagi berjalan — mulakan semula dengan lebih banyak memori bebas untuk membesarkannya."
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} belum ada pada {nodes} — salin ke sana, kemudian Jalankan."

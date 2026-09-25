@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens} tokenlik bağlam"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "Bu bölmede {tokens} bağlam — başlarken boş belleğe göre boyutlandı; büyütmek için yeniden başlatın"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Çalışmıyor — Motor’dan başlatın"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "{model} için {nodes} denetleniyor…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "{tokens} bağlamı başlarken boş belleğe göre boyutlandı ve çalıştığı sürece öyle kalır — büyütmek için daha fazla boş bellekle yeniden başlatın."
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} henüz {nodes} üzerinde değil — oraya kopyalayın, sonra Çalıştır."

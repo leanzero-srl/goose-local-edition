@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens} 词元上下文"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "此拆分的上下文为 {tokens}——按启动时的空闲内存确定；重启即可增大"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "未运行 — 请在引擎中启动"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "正在为 {model} 检查 {nodes}…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "它的 {tokens} 上下文按启动时的空闲内存确定，运行期间保持不变——在空闲内存更多时重启即可增大。"
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model} 尚不在 {nodes} 上——先复制过去，再运行。"

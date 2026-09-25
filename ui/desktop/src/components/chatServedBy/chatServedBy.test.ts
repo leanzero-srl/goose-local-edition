@@ -213,6 +213,7 @@ describe('deriveChatServedBy — the six moments', () => {
       peerNodeId: null,
       foreign: false,
       contextWindow: 65536,
+      contextFromFreeMemory: false,
       phase: 'idle',
       activity: null,
       busyWithOthers: null,

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { MlxDistributedDiscovery } from '../../acp/mlx-distributed';
-import { cleanConfig, splitConfigFor, splitPlan } from './mlxDistributed';
+import {
+  cleanConfig,
+  splitConfigFor,
+  splitContextFromFreeMemory,
+  splitPlan,
+} from './mlxDistributed';
+import { FLASH_PREFLIGHT_OK, FLASH_READY } from './mlxDistributed.fixtures';
 import DISCOVERY from './mlxDistributedDiscovery.fixture.json';
 
 const QWEN = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';
@@ -115,5 +121,41 @@ describe('splitPlan — only a genuinely missing piece stops the start, by Mac',
         items: [{ node: 'Work’s Mac Studio', field: 'tbIp', reason: 'no IPv4 on en3' }],
       },
     });
+  });
+});
+
+/**
+ * Q-71: the split reported context_window 141,568 where 3.0.39 had 262,144 — the preflight derived it
+ * from the memory free at the start (a test engine held ~30 GB). Fixed for the run's life; a restart
+ * with memory free grows it. Only a DERIVED window of THIS run says so.
+ */
+describe('splitContextFromFreeMemory', () => {
+  const derived = {
+    ...FLASH_READY,
+    contextLimit: 141568,
+    lastPreflight: { ...FLASH_PREFLIGHT_OK, contextLimit: 141568, contextSource: 'derived' },
+  };
+
+  it('a running split whose window the start derived from free memory', () => {
+    expect(splitContextFromFreeMemory(derived)).toBe(true);
+    expect(splitContextFromFreeMemory({ ...derived, state: 'serving' })).toBe(true);
+  });
+
+  it('a requested window, a stopped split, or a preflight that sized another window: no claim', () => {
+    expect(
+      splitContextFromFreeMemory({
+        ...derived,
+        lastPreflight: { ...derived.lastPreflight, contextSource: 'requested' },
+      })
+    ).toBe(false);
+    expect(splitContextFromFreeMemory({ ...derived, state: 'stopped' })).toBe(false);
+    expect(
+      splitContextFromFreeMemory({
+        ...derived,
+        lastPreflight: { ...derived.lastPreflight, contextLimit: 262144 },
+      })
+    ).toBe(false);
+    expect(splitContextFromFreeMemory({ ...derived, lastPreflight: undefined })).toBe(false);
+    expect(splitContextFromFreeMemory(null)).toBe(false);
   });
 });

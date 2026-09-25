@@ -411,6 +411,25 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     expect(screen.getByTestId('model-menu-served')).toHaveTextContent('run by another window');
   });
 
+  it('Q-71: a split whose window was sized from free memory says so, and how to grow it', () => {
+    renderChip({
+      ...STUDIO,
+      engine: 'split',
+      where: ['Mihai Macbook', 'Work’s Mac Studio'],
+      peerNodeId: null,
+      contextWindow: 141568,
+      contextFromFreeMemory: true,
+    });
+    expect(screen.getByTestId('model-menu-context')).toHaveTextContent(
+      '142k context on this split — sized from the memory free when it started; restart it to grow'
+    );
+  });
+
+  it('a route’s window is the model’s: the plain token count', () => {
+    renderChip(STUDIO);
+    expect(screen.getByTestId('model-menu-context')).toHaveTextContent('262,144-token context');
+  });
+
   it('nothing runs: the model a Mount would bring, "not running", the unloaded dot — and Open Engine', () => {
     renderChip({
       ...STUDIO,

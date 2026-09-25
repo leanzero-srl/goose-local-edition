@@ -34,6 +34,7 @@ import { defineMessages, useIntl } from '../../../../i18n';
 import type { Message } from '../../../../types/message';
 import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
 import { shortModelName } from '../../../noNodeNotice/mlxMount';
+import { compactTokens } from '../../../leanzero-swarm/mlxLiveStats';
 
 const i18n = defineMessages({
   selectModel: {
@@ -111,6 +112,11 @@ const i18n = defineMessages({
   servedContext: {
     id: 'modelsBottomBar.servedContext',
     defaultMessage: '{tokens}-token context',
+  },
+  servedContextSplit: {
+    id: 'modelsBottomBar.servedContextSplit',
+    defaultMessage:
+      '{tokens} context on this split — sized from the memory free when it started; restart it to grow',
   },
   openEngine: {
     id: 'modelsBottomBar.openEngine',
@@ -369,10 +375,14 @@ export default function ModelsBottomBar({
                   : intl.formatMessage(i18n.servedNotRunning)}
               </p>
               {served.contextWindow != null && (
-                <p className={cx(TYPE.meta, TNUM)}>
-                  {intl.formatMessage(i18n.servedContext, {
-                    tokens: served.contextWindow.toLocaleString(),
-                  })}
+                <p data-testid="model-menu-context" className={cx(TYPE.meta, TNUM)}>
+                  {served.contextFromFreeMemory
+                    ? intl.formatMessage(i18n.servedContextSplit, {
+                        tokens: compactTokens(served.contextWindow),
+                      })
+                    : intl.formatMessage(i18n.servedContext, {
+                        tokens: served.contextWindow.toLocaleString(),
+                      })}
                 </p>
               )}
             </div>

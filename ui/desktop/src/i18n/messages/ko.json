@@ -4661,6 +4661,9 @@
   "modelsBottomBar.servedContext": {
     "defaultMessage": "{tokens}토큰 컨텍스트"
   },
+  "modelsBottomBar.servedContextSplit": {
+    "defaultMessage": "이 분할의 컨텍스트 {tokens} — 시작할 때 남은 메모리로 정해졌습니다. 늘리려면 다시 시작하세요"
+  },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "실행 중 아님 — 엔진에서 시작하세요"
   },
@@ -5239,6 +5242,9 @@
   },
   "placementCard.splitChecking": {
     "defaultMessage": "{model}을(를) 위해 {nodes} 확인 중…"
+  },
+  "placementCard.splitContextFixed": {
+    "defaultMessage": "컨텍스트 {tokens}는 시작할 때 남은 메모리로 정해졌고 실행 중에는 그대로입니다. 늘리려면 메모리를 더 비운 뒤 다시 시작하세요."
   },
   "placementCard.splitModelMissing": {
     "defaultMessage": "{model}이(가) 아직 {nodes}에 없습니다 — 복사한 뒤 실행하세요."

@@ -850,6 +850,28 @@ describe('Run it follows the engine it started, in the engine-phase palette', ()
     expect(
       within(screen.getByTestId('placement-way-split')).getByTestId('placement-live')
     ).toHaveAttribute('data-phase', 'writing');
+    // No preflight says how its window was sized: no claim about it.
+    expect(screen.queryByTestId('placement-split-context')).toBeNull();
+    // Q-71: a window the start derived from free memory is fixed for the run; the row says so.
+    rerender(
+      <IntlTestWrapper>
+        <PlacementCard
+          {...props}
+          distributed={
+            {
+              ...starting,
+              state: 'serving',
+              inflight: 1,
+              contextLimit: 141568,
+              lastPreflight: { contextLimit: 141568, contextSource: 'derived' },
+            } as unknown as MlxDistributedStatus
+          }
+        />
+      </IntlTestWrapper>
+    );
+    expect(screen.getByTestId('placement-split-context')).toHaveTextContent(
+      'Its 141,568 context was sized from the memory free when it started, and stays that size while it runs — restart it with more memory free to grow it.'
+    );
     // The Studio's single engine is not what runs: no live chip on it.
     expect(
       within(screen.getByTestId('placement-way-peer')).queryByTestId('placement-live')
