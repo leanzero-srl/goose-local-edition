@@ -2164,6 +2164,7 @@ impl Agent {
                     turns_taken,
                     max_turns,
                     measured_context,
+                    !self.is_swarm_worker(),
                 ).await;
                 // VA-107: the not-reported arm is LOUD to the caller — the swarm turns this notice
                 // into one `usage_unavailable{task, attempt, turn}` event per lane.
@@ -2183,7 +2184,12 @@ impl Agent {
                     .messages()
                     .iter()
                     .rev()
-                    .find(|m| m.is_agent_visible() && crate::conversation::effective_role(m) == "user")
+                    .find(|m| {
+                        m.is_agent_visible()
+                            && m.content.iter().any(|c| {
+                                matches!(c, MessageContent::Text(t) if crate::conversation::is_turn_context_text(&t.text))
+                            })
+                    })
                     .and_then(|m| {
                         m.content.iter().find_map(|c| match c {
                             MessageContent::Text(t) => super::platform_extensions::recall::recall_line_of(&t.text),

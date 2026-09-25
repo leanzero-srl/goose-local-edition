@@ -946,6 +946,7 @@ impl Provider for OpenAiProvider {
                 Ok(super::base::stream_from_single_message(message, usage))
             }
         } else {
+            let transient_tail = self.accepts_transient_tail(&model_config.model_name).await;
             let payload = create_request_with_options(
                 model_config,
                 system,
@@ -955,11 +956,12 @@ impl Provider for OpenAiProvider {
                 self.supports_streaming,
                 OpenAiFormatOptions {
                     preserve_thinking_context: self.preserve_thinking_context,
+                    turn_context_joins_tool_results: !transient_tail,
                 },
             )?;
             let mut payload = self.sanitize_request_for_compat(payload);
             self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
-            if self.accepts_transient_tail(&model_config.model_name).await {
+            if transient_tail {
                 if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
                     payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
                 }
@@ -1172,10 +1174,26 @@ mod tests {
         }
     }
 
+    const TEST_TURN_CONTEXT: &str =
+        "<turn-context>\n<current-time>2026-09-23 14:07:00</current-time>\n\
+                  <working-directory>/w</working-directory>\n</turn-context>";
+
     async fn post_bodies_through(
         name: &str,
         request_extensions: serde_json::Value,
     ) -> (Vec<serde_json::Value>, usize, String) {
+        let messages = vec![Message::user()
+            .with_text("find the handler")
+            .with_text(TEST_TURN_CONTEXT)];
+        let (bodies, probes) = post_bodies_for(name, request_extensions, &messages).await;
+        (bodies, probes, format!("\n{TEST_TURN_CONTEXT}"))
+    }
+
+    async fn post_bodies_for(
+        name: &str,
+        request_extensions: serde_json::Value,
+        messages: &[Message],
+    ) -> (Vec<serde_json::Value>, usize) {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1202,12 +1220,9 @@ mod tests {
         provider.api_client =
             ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
         provider.supports_streaming = false;
-        let tc = "<turn-context>\n<current-time>2026-09-23 14:07:00</current-time>\n\
-                  <working-directory>/w</working-directory>\n</turn-context>";
-        let messages = vec![Message::user().with_text("find the handler").with_text(tc)];
         for _ in 0..2 {
             let mut stream = provider
-                .stream(&ModelConfig::new("served"), "system", &messages, &[])
+                .stream(&ModelConfig::new("served"), "system", messages, &[])
                 .await
                 .unwrap();
             use futures::StreamExt;
@@ -1223,7 +1238,56 @@ mod tests {
             .filter(|r| r.method.as_str() == "POST")
             .map(|r| serde_json::from_slice(&r.body).unwrap())
             .collect();
-        (bodies, probes, format!("\n{tc}"))
+        (bodies, probes)
+    }
+
+    /// Q-94, #1 turn 2 (sessions.db 764103/764105 → 764106): the request ends on two
+    /// propose_knowledge results and the block rides in that tool-result message. An engine
+    /// without the transient-tail extension gets it appended to the last `role: tool` message — no
+    /// trailing user turn; a declaring Rapid-MLX engine keeps the trailing user message its cache
+    /// snapshot is taken before, byte-for-byte as before.
+    #[tokio::test]
+    async fn the_turn_context_joins_the_tool_results_unless_the_engine_marks_a_user_tail() {
+        use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+        let messages = vec![
+            Message::user().with_text("How long can they stay on Data Center?"),
+            Message::assistant().with_tool_request(
+                "call_1",
+                Ok(CallToolRequestParams::new("propose_knowledge")),
+            ),
+            Message::user()
+                .with_tool_response(
+                    "call_1",
+                    Ok(CallToolResult::success(vec![Content::text(
+                        "Proposed as knowledge in category \"atlassian-migration\"",
+                    )])),
+                )
+                .with_text(TEST_TURN_CONTEXT),
+        ];
+
+        let (bodies, _) = post_bodies_for("omlx", json!([]), &messages).await;
+        let sent = bodies[0]["messages"].as_array().unwrap();
+        let last = sent.last().unwrap();
+        assert_eq!(last["role"], json!("tool"), "{sent:?}");
+        assert!(last["content"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("\n{TEST_TURN_CONTEXT}")));
+        assert_eq!(
+            sent.iter().filter(|m| m["role"] == json!("user")).count(),
+            1,
+            "no user turn besides the question: {sent:?}"
+        );
+
+        let (bodies, _) =
+            post_bodies_for("omlx", json!(["rapid_mlx_transient_tail"]), &messages).await;
+        let sent = bodies[0]["messages"].as_array().unwrap();
+        assert_eq!(sent.last().unwrap()["role"], json!("user"));
+        assert_eq!(sent.last().unwrap()["content"], json!(TEST_TURN_CONTEXT));
+        assert_eq!(
+            bodies[0][RAPID_MLX_TRANSIENT_TAIL],
+            json!(TEST_TURN_CONTEXT)
+        );
     }
 
     /// The marker reaches ONLY an omlx endpoint that declared it, names exactly the appended

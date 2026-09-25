@@ -154,6 +154,14 @@ fn is_reserved_request_param_key(key: &str) -> bool {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenAiFormatOptions {
     pub preserve_thinking_context: bool,
+    /// Q-94: when the turn-context block was hosted in the tool-result message the request ends on
+    /// (`inject_moim`'s chat placement), append it to the last `role: tool` message instead of a
+    /// trailing `role: user` message of its own — which chat templates render as a new user turn
+    /// with nothing in it but goose's context ("The user hasn't sent a new message — this is just a
+    /// turn-context update"). Off for an engine that snapshots its cache before a transient tail on
+    /// the LAST USER message (`rapid_mlx_transient_tail`): the joined block would change the tool
+    /// message on the next request and cost that engine its prefix.
+    pub turn_context_joins_tool_results: bool,
 }
 
 fn merge_reasoning_text(prefix: &str, suffix: &str) -> String {
@@ -286,6 +294,7 @@ pub fn format_messages(messages: &[Message], image_format: &ImageFormat) -> Vec<
         image_format,
         OpenAiFormatOptions {
             preserve_thinking_context: true,
+            ..Default::default()
         },
     )
 }
@@ -301,10 +310,13 @@ pub fn format_messages_with_options(
     // per turn. Pull it out and re-emit it at the request TAIL: every prior byte stays stable and
     // the cache hits. No block -> byte-identical.
     let extracted = extract_turn_context(messages);
-    let (messages, turn_context): (&[Message], Option<&str>) = match &extracted {
-        Some((stripped, text)) => (stripped.as_slice(), Some(text.as_str())),
-        None => (messages, None),
-    };
+    let (messages, turn_context, hosted_on_tool_results): (&[Message], Option<&str>, bool) =
+        match &extracted {
+            Some((stripped, text, on_tool_results)) => {
+                (stripped.as_slice(), Some(text.as_str()), *on_tool_results)
+            }
+            None => (messages, None, false),
+        };
     let mut messages_spec = Vec::new();
     let mut pending_assistant_reasoning = String::new();
     // Reasoning to propagate across consecutive tool-call messages in the same turn.
@@ -610,7 +622,12 @@ pub fn format_messages_with_options(
 
     merge_split_tool_call_messages(&mut messages_spec);
     if let Some(text) = turn_context {
-        append_turn_context_tail(&mut messages_spec, text);
+        let joined = options.turn_context_joins_tool_results
+            && hosted_on_tool_results
+            && join_last_tool_result(&mut messages_spec, text);
+        if !joined {
+            append_turn_context_tail(&mut messages_spec, text);
+        }
     }
 
     messages_spec
@@ -620,13 +637,18 @@ pub fn format_messages_with_options(
 /// block out, returning the stripped history + the block's text. Only strips when the block is not
 /// the message's sole content on a non-final message (mirrors upstream's guard: a lone-context
 /// mid-history user message must stay a message or strict templates lose the turn boundary).
-fn extract_turn_context(messages: &[Message]) -> Option<(Vec<Message>, String)> {
+/// The third field says whether the block sat in a message carrying tool results.
+fn extract_turn_context(messages: &[Message]) -> Option<(Vec<Message>, String, bool)> {
     let (mi, bi) = locate_turn_context(messages)?;
     let mut messages = messages.to_vec();
     let MessageContent::Text(text) = messages[mi].content.remove(bi) else {
         return None;
     };
-    Some((messages, text.text.clone()))
+    let on_tool_results = messages[mi]
+        .content
+        .iter()
+        .any(|c| matches!(c, MessageContent::ToolResponse(_)));
+    Some((messages, text.text.clone(), on_tool_results))
 }
 
 /// The (message, block) index of the turn-context block `extract_turn_context` moves to the tail.
@@ -673,6 +695,21 @@ pub fn turn_context_tail_suffix(messages: &[Message], payload: &Value) -> Option
     }
     let merged = format!("\n{}", block.text);
     content.ends_with(&merged).then_some(merged)
+}
+
+fn join_last_tool_result(messages_spec: &mut [Value], text: &str) -> bool {
+    let Some(last) = messages_spec.last_mut() else {
+        return false;
+    };
+    if last["role"] != json!("tool") {
+        return false;
+    }
+    let Some(Value::String(content)) = last.get_mut("content") else {
+        return false;
+    };
+    content.push('\n');
+    content.push_str(text);
+    true
 }
 
 /// Merges into a trailing user message when one exists; strict chat templates reject consecutive
@@ -1785,6 +1822,7 @@ pub fn create_request(
         for_streaming,
         OpenAiFormatOptions {
             preserve_thinking_context: true,
+            ..Default::default()
         },
     )
 }
@@ -4225,6 +4263,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
+                ..Default::default()
             },
         );
 
@@ -4283,6 +4322,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: false,
+                ..Default::default()
             },
         );
 
@@ -4335,6 +4375,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
+                ..Default::default()
             },
         );
 
@@ -4365,6 +4406,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
+                ..Default::default()
             },
         );
 
@@ -4393,6 +4435,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
+                ..Default::default()
             },
         );
 
@@ -4417,6 +4460,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
+                ..Default::default()
             },
         );
 
@@ -4453,6 +4497,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
+                ..Default::default()
             },
         );
 
@@ -4511,6 +4556,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
+                ..Default::default()
             },
         );
 
@@ -4558,6 +4604,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
+                ..Default::default()
             },
         );
 
@@ -5046,6 +5093,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
+                ..Default::default()
             },
         );
         assert_eq!(spec.len(), 1);
@@ -5080,6 +5128,7 @@ data: [DONE]"#;
             &ImageFormat::OpenAi,
             OpenAiFormatOptions {
                 preserve_thinking_context: true,
+                ..Default::default()
             },
         );
         assert_eq!(spec.len(), 1);
@@ -5522,6 +5571,74 @@ mod cache_prefix_stability_tests {
             payload["messages"].as_array().unwrap().last().unwrap()["role"],
             json!("user")
         );
+    }
+
+    fn tool_tail(tc_in_tool_message: bool, tc: &str) -> Vec<Message> {
+        let question = Message::user().with_text("build the thing");
+        let result = Message::user().with_tool_response(
+            "call_1",
+            Ok(rmcp::model::CallToolResult::success(vec![
+                rmcp::model::Content::text("ok"),
+            ])),
+        );
+        let (question, result) = if tc_in_tool_message {
+            (question, result.with_text(tc))
+        } else {
+            (
+                Message::user().with_text(tc).with_text("build the thing"),
+                result,
+            )
+        };
+        vec![
+            question,
+            Message::assistant().with_tool_request(
+                "call_1",
+                Ok(rmcp::model::CallToolRequestParams::new("shell")),
+            ),
+            result,
+        ]
+    }
+
+    /// Q-94: joined, the block ends the last `role: tool` message and no user turn follows the
+    /// results; not joined, a tool-hosted block renders exactly as the human-hosted one always did.
+    #[test]
+    fn a_tool_hosted_block_joins_the_results_or_renders_as_before() {
+        let tc = turn_context("10:00:00");
+        let joined = format_messages_with_options(
+            &tool_tail(true, &tc),
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions {
+                preserve_thinking_context: true,
+                turn_context_joins_tool_results: true,
+            },
+        );
+        let last = joined.last().unwrap();
+        assert_eq!(last["role"], json!("tool"));
+        assert_eq!(last["content"], json!(format!("ok\n{tc}")));
+        assert_eq!(
+            joined.iter().filter(|m| m["role"] == json!("user")).count(),
+            1
+        );
+
+        let separate = format_messages(&tool_tail(true, &tc), &ImageFormat::OpenAi);
+        let before = format_messages(&tool_tail(false, &tc), &ImageFormat::OpenAi);
+        assert_eq!(separate, before);
+        assert_eq!(separate.last().unwrap()["role"], json!("user"));
+        let payload = request(&tool_tail(true, &tc));
+        assert_eq!(
+            turn_context_tail_suffix(&tool_tail(true, &tc), &payload),
+            Some(tc.clone())
+        );
+
+        let human_hosted = format_messages_with_options(
+            &tool_tail(false, &tc),
+            &ImageFormat::OpenAi,
+            OpenAiFormatOptions {
+                preserve_thinking_context: true,
+                turn_context_joins_tool_results: true,
+            },
+        );
+        assert_eq!(human_hosted, before, "only a tool-hosted block joins");
     }
 
     #[test]
