@@ -21,7 +21,11 @@ use crate::agents::Agent;
 use crate::config::Config;
 use crate::conversation::effective_role;
 use crate::conversation::message::{Message, MessageContent};
+use crate::providers::base::Provider;
 use crate::session::session_manager::{SessionManager, SessionType};
+use goose_providers::conversation::token_usage::ProviderUsage;
+use goose_providers::errors::ProviderError;
+use goose_providers::model::ModelConfig;
 
 pub const ASSESSMENT_MEMORY_MAX_CHARS: usize = 350;
 pub const ASSESSMENT_WHY_MAX_CHARS: usize = 200;
@@ -225,6 +229,29 @@ fn nearest_memories(store: &MemoryStore, query: &str) -> Vec<String> {
     }
 }
 
+/// The one provider call, tagged with the chat's session id. The task is detached
+/// (`tokio::spawn` carries no task-local), so without this scope the swarm router's lease and
+/// serving record for the judgement carried no session, and the desktop's busy bar could not
+/// count it as the chat's own request.
+async fn ask_the_judge(
+    provider: &dyn Provider,
+    model_config: &ModelConfig,
+    session_id: &str,
+    system: &str,
+    user: String,
+) -> Result<(Message, ProviderUsage), ProviderError> {
+    crate::session_context::with_session_id(
+        Some(session_id.to_string()),
+        provider.complete(
+            model_config,
+            system,
+            &[Message::user().with_text(user)],
+            &[],
+        ),
+    )
+    .await
+}
+
 /// The detached task. Every early return is a deliberate "nothing proposed".
 pub async fn assess_turn(
     agent: Arc<Agent>,
@@ -296,21 +323,14 @@ pub async fn assess_turn(
     };
     let system = assessment_system_prompt();
     let user = assessment_user_prompt(&facts, "end_turn", &nearest);
-    let reply = match provider
-        .complete(
-            &model_config,
-            &system,
-            &[Message::user().with_text(user)],
-            &[],
-        )
-        .await
-    {
-        Ok((message, _usage)) => reply_text(&message),
-        Err(err) => {
-            tracing::warn!(session_id, %err, "assessment: provider error, nothing proposed");
-            return;
-        }
-    };
+    let reply =
+        match ask_the_judge(provider.as_ref(), &model_config, &session_id, &system, user).await {
+            Ok((message, _usage)) => reply_text(&message),
+            Err(err) => {
+                tracing::warn!(session_id, %err, "assessment: provider error, nothing proposed");
+                return;
+            }
+        };
     let Some(assessment) = parse_assessment(&reply) else {
         tracing::debug!(session_id, "assessment: nothing worth proposing");
         return;
@@ -337,6 +357,58 @@ pub async fn assess_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Records the session id the call runs under, as the swarm router's lease reads it.
+    struct SessionEcho;
+
+    #[async_trait::async_trait]
+    impl Provider for SessionEcho {
+        fn get_name(&self) -> &str {
+            "session-echo"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[rmcp::model::Tool],
+        ) -> Result<crate::providers::base::MessageStream, ProviderError> {
+            unimplemented!("the assessment calls complete")
+        }
+
+        async fn complete(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[rmcp::model::Tool],
+        ) -> Result<(Message, ProviderUsage), ProviderError> {
+            let seen = crate::session_context::current_session_id();
+            Ok((
+                Message::assistant().with_text(seen.unwrap_or_else(|| "UNTAGGED".to_string())),
+                ProviderUsage::new("test".to_string(), Default::default()),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_judgement_runs_under_the_chats_session_id_from_a_detached_task() {
+        let judged = tokio::spawn(async {
+            ask_the_judge(
+                &SessionEcho,
+                &ModelConfig::new("test-model"),
+                "20260925_20",
+                "system",
+                "user".to_string(),
+            )
+            .await
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(judged.0.as_concat_text(), "20260925_20");
+    }
 
     #[test]
     fn a_well_formed_judgement_is_parsed_and_clamped() {
