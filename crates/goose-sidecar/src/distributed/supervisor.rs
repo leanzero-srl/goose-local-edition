@@ -1810,11 +1810,24 @@ fn launch_specs(
                 .pipeline_starts
                 .as_deref()
                 .ok_or_else(|| anyhow!("the preflight approved no pipeline split"))?;
+            let prefill_step = preflight
+                .nodes
+                .first()
+                .and_then(|node| node.plan.as_ref())
+                .map(|plan| plan.prefill_step)
+                .filter(|step| *step > 0)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "the preflight decided no prefill chunk (a preflight made before Q-104): \
+                         run it again"
+                    )
+                })?;
             launch::pipeline_rank_specs(
                 &ctx.config,
                 &ctx.served_id,
                 context,
                 &super::plan::split_arg(starts),
+                prefill_step,
                 report_seconds,
             )
         }

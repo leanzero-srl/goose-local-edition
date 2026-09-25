@@ -2591,6 +2591,7 @@ devices:
     async fn the_distributed_engine_serves_the_nodes_id_and_the_router_accepts_it() {
         use goose_sidecar::distributed::{
             launch::{rank_specs, TensorLaunch},
+            plan::TensorPrefill,
             DistributedConfig,
         };
         let launch = TensorLaunch {
@@ -2598,6 +2599,14 @@ devices:
             prompt_cache_limit_bytes: 1,
             prompt_cache_entries: 1,
             mlx_cache_limit_bytes: 1,
+            prefill: TensorPrefill {
+                step: 1,
+                workspace_bytes: 1,
+                pair_bytes: 1,
+                kv_bytes_per_token: 1,
+                sequence_state_bytes: 1,
+                batch_transient_ratio: 1.0,
+            },
         };
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};

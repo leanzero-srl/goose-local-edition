@@ -14,11 +14,13 @@ use std::path::Path;
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
-use super::{PROMPT_CACHE_CONTEXTS, RUNTIME_OVERHEAD_RATIO};
+use super::{
+    BATCH_KV_TRANSIENT_RATIO, PROMPT_CACHE_CONTEXTS, RUNTIME_OVERHEAD_RATIO, TENSOR_PREFILL_STEP,
+};
 
 /// mlx_lm `KVCache.step`: the KV buffer grows in 256-token blocks (models/cache.py), so a context
 /// costs its size rounded up to the step. An algorithm constant of the engine, not a policy.
-const KV_CACHE_STEP: u64 = 256;
+pub const KV_CACHE_STEP: u64 = 256;
 /// gated_delta.py allocates the recurrent state in float32.
 const RECURRENT_STATE_BYTES: u64 = 4;
 
@@ -33,9 +35,23 @@ pub struct RankPlan {
     pub weights_bytes: u64,
     /// KV + recurrent state for the allowed context (pipeline: the fork's "state").
     pub state_bytes: u64,
-    /// The fork's prefill workspace (pipeline only: 49× the chunk's stream bytes per layer,
-    /// measured; 0 for tensor, where the measured overhead ratio carries the transients).
+    /// What one prefill chunk materializes beyond the plan's resident bytes. Pipeline: the fork's
+    /// workspace (49× the chunk's stream bytes per layer, measured) plus the attention scores the
+    /// fork's model leaves out (`PipelineAttention::scores_bytes`). Tensor: the attention scores and the
+    /// batch mask ONE row's chunk materializes at the planned context
+    /// (`TensorModelFacts::prefill_workspace_bytes`); the rank keeps every step inside it
+    /// (rank_prefill.py). The chunk's other transients ride `RUNTIME_OVERHEAD_RATIO`.
     pub workspace_bytes: u64,
+    /// Tensor: what the rank's prefill and admission are sized from (the same on every rank).
+    /// `None` for the pipeline runner and for a plan made before Q-104.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill: Option<TensorPrefill>,
+    /// The prefill chunk (tokens) the launch hands the engine: tensor mlx_lm's
+    /// `--prefill-step-size` (the rank shrinks it per step to the workspace); pipeline the fork
+    /// serve's `--prefill-step`, the chunk whose scores fit every stage. 0 = the fork's plan read
+    /// alone, or a plan made before Q-104.
+    #[serde(default)]
+    pub prefill_step: u64,
     /// What the plan charges this rank for CACHED prompts, on top of the live request's
     /// `state_bytes` (tensor: one allowed context; the launch hands mlx_lm the sum — see
     /// [`RankPlan::prompt_cache_limit_bytes`]).
@@ -45,9 +61,12 @@ pub struct RankPlan {
     /// bytes do. 0 for pipeline (the fork's server keeps no prompt cache).
     #[serde(default)]
     pub prompt_cache_entries: u64,
+    /// Tensor: weights + state + prompt cache (the resident bytes; the workspace is apart).
+    /// Pipeline: the fork's total, workspace included.
     pub planned_bytes: u64,
-    /// What is compared with the budget: tensor `planned × RUNTIME_OVERHEAD_RATIO`; pipeline the
-    /// fork's total as planned (no multiplier — see `RUNTIME_OVERHEAD_RATIO`).
+    /// What is compared with the budget: tensor `planned × RUNTIME_OVERHEAD_RATIO + workspace`;
+    /// pipeline the fork's total as planned plus goose's scores term (no multiplier — see
+    /// `RUNTIME_OVERHEAD_RATIO`).
     pub with_overhead_bytes: u64,
     pub budget_bytes: u64,
     pub fits: bool,
@@ -65,13 +84,64 @@ impl RankPlan {
         self.state_bytes + self.prompt_cache_bytes
     }
 
-    /// MLX's free-buffer cache limit on the rank (`mx.set_cache_limit`): the plan's transient
-    /// allowance, `with_overhead − planned` (planned × (RUNTIME_OVERHEAD_RATIO − 1)). The rank
-    /// used to set it to its GPU ceiling less the planned bytes — 48,135,889,408 B on the Studio
-    /// in E2E #2 — which let freed buffers stay resident up to MLX's own reclaim point (95% of
-    /// that ceiling), past what the node could give beside its OS and goose.
+    /// MLX's free-buffer cache limit on a tensor rank (`mx.set_cache_limit`): the plan's
+    /// transient allowance beside the workspace, planned × (RUNTIME_OVERHEAD_RATIO − 1). The
+    /// rank used to set it to its GPU ceiling less the planned bytes — 48,135,889,408 B on the
+    /// Studio in E2E #2 — which let freed buffers stay resident up to MLX's own reclaim point (95%
+    /// of that ceiling), past what the node could give beside its OS and goose. The workspace is
+    /// not in it: mlx_lm hands every prefill chunk's buffers back (`mx.clear_cache()` per chunk).
     pub fn mlx_cache_limit_bytes(&self) -> u64 {
-        self.with_overhead_bytes.saturating_sub(self.planned_bytes)
+        self.with_overhead_bytes
+            .saturating_sub(self.planned_bytes + self.workspace_bytes)
+    }
+
+    /// The prefill chunk this plan's workspace affords one row at the full `context` (tensor).
+    pub fn full_context_chunk(&self, context: u64) -> Option<u64> {
+        self.prefill.map(|p| p.chunk(1, context))
+    }
+
+    /// A tensor plan charged `workspace` instead of its own (every rank of a launch runs the
+    /// smallest workspace any rank affords: the chunk a step takes must agree across ranks).
+    pub fn sharing_workspace(mut self, workspace: u64) -> RankPlan {
+        self.with_overhead_bytes = self.with_overhead_bytes - self.workspace_bytes + workspace;
+        self.workspace_bytes = workspace;
+        if let Some(prefill) = self.prefill.as_mut() {
+            prefill.workspace_bytes = workspace;
+        }
+        self.fits = self.with_overhead_bytes <= self.budget_bytes;
+        self
+    }
+}
+
+/// A tensor rank's prefill figures: the chunk mlx_lm is launched with, the workspace every step
+/// stays inside, and the per-token costs the rank projects a batch's memory with. Every rank of a
+/// launch gets the same figures (`TensorLaunch::for_ranks`): the chunk a step takes, and the
+/// requests a batch admits, must agree across ranks or the collectives no longer pair up.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TensorPrefill {
+    /// `--prefill-step-size`: the largest chunk any step takes.
+    pub step: u64,
+    /// The attention scores + mask one step may materialize (bytes).
+    pub workspace_bytes: u64,
+    /// Bytes per row × chunk token × context token (`TensorModelFacts::prefill_pair_bytes`).
+    pub pair_bytes: u64,
+    /// KV bytes one token costs on the rank.
+    pub kv_bytes_per_token: u64,
+    /// The recurrent state one row holds whatever its length.
+    pub sequence_state_bytes: u64,
+    /// What mlx_lm's batch operations transiently hold of a batch's padded KV
+    /// (`BATCH_KV_TRANSIENT_RATIO`), carried so every rank projects with the requester's figure.
+    pub batch_transient_ratio: f64,
+}
+
+impl TensorPrefill {
+    /// The chunk (tokens) `rows` rows reaching `width` may take in one step: the workspace over
+    /// what one chunk token costs them, rounded down to the KV cache step, at most `step`. 0 when
+    /// not even one step of the KV block fits.
+    pub fn chunk(&self, rows: u64, width: u64) -> u64 {
+        let per_token = rows * width * self.pair_bytes;
+        let chunk = (self.workspace_bytes / per_token.max(1)).min(self.step);
+        chunk / KV_CACHE_STEP * KV_CACHE_STEP
     }
 }
 
@@ -89,6 +159,10 @@ pub struct TensorModelFacts {
     pub num_layers: u64,
     pub full_attention_layers: u64,
     pub linear_layers: u64,
+    /// Query heads (`num_attention_heads`). MLX 0.32.2 has no fused prefill attention for
+    /// head_dim 256, so a full-attention layer's chunk materializes one score per query head ×
+    /// chunk token × context token (Q-104, measured 0.96-1.06× that product).
+    pub attention_heads: u64,
     pub kv_heads: u64,
     pub head_dim: u64,
     pub linear_key_heads: u64,
@@ -263,6 +337,7 @@ pub fn read_tensor_facts(model_dir: &Path) -> Result<TensorModelFacts> {
         num_layers,
         full_attention_layers: full,
         linear_layers: linear,
+        attention_heads: config_u64(text, "num_attention_heads")?,
         kv_heads: config_u64(text, "num_key_value_heads")?,
         head_dim: config_u64(text, "head_dim")?,
         linear_key_heads: config_u64(text, "linear_num_key_heads")?,
@@ -283,6 +358,7 @@ impl TensorModelFacts {
     /// exceeds their count). A count it cannot divide is refused here, not at load.
     pub fn check_divisible(&self, ranks: u64) -> Result<()> {
         for (name, heads) in [
+            ("num_attention_heads", self.attention_heads),
             ("linear_num_key_heads", self.linear_key_heads),
             ("linear_num_value_heads", self.linear_value_heads),
         ] {
@@ -334,6 +410,34 @@ impl TensorModelFacts {
             + self.linear_state_bytes(ranks)
     }
 
+    /// Bytes one row's prefill chunk token costs per context token on one rank, in the full-
+    /// attention layer being computed (one at a time — each needs the previous one's output): the
+    /// rank's query heads' scores at the activation width, and the batch's boolean mask
+    /// (BatchKVCache's left-padded causal mask, one byte). Measured on 2 localhost ranks of the
+    /// 27B's layers (Q-104, 2026-09-26): one row, chunk 2,048, context 12,288 → 135,168: peak −
+    /// the row's KV − the chunk's other transients = 0.604 → 6.644 GB of scores, the product
+    /// exactly.
+    pub fn prefill_pair_bytes(&self, ranks: u64) -> u64 {
+        self.attention_heads / ranks * self.act_bytes + 1
+    }
+
+    /// The workspace one row's `chunk`-token prefill step needs at `context` on one rank.
+    pub fn prefill_workspace_bytes(&self, ranks: u64, chunk: u64, context: u64) -> u64 {
+        chunk * context * self.prefill_pair_bytes(ranks)
+    }
+
+    /// The prefill figures of a plan whose workspace is `workspace_bytes`.
+    pub fn prefill(&self, ranks: u64, workspace_bytes: u64) -> TensorPrefill {
+        TensorPrefill {
+            step: TENSOR_PREFILL_STEP,
+            workspace_bytes,
+            pair_bytes: self.prefill_pair_bytes(ranks),
+            kv_bytes_per_token: self.kv_bytes_per_token(ranks),
+            sequence_state_bytes: self.linear_state_bytes(ranks),
+            batch_transient_ratio: BATCH_KV_TRANSIENT_RATIO,
+        }
+    }
+
     /// What the plan charges for cached prompts on top of the live request (`RankPlan::
     /// prompt_cache_bytes`).
     pub fn prompt_cache_bytes(&self, ranks: u64, context: u64) -> u64 {
@@ -346,12 +450,24 @@ impl TensorModelFacts {
         self.sequence_bytes(ranks, 1)
     }
 
+    /// One rank's plan at `context`. The workspace is what the rank's budget leaves above the
+    /// resident bytes (× the overhead ratio), as a whole number of KV-step chunks for one row at
+    /// the full context: at most `TENSOR_PREFILL_STEP` tokens, at least one KV step — charged even
+    /// when it does not fit, so the verdict names it. `TensorLaunch::for_ranks` hands every rank
+    /// the smallest of the ranks' workspaces.
     pub fn rank_plan(&self, ranks: u64, rank: u64, context: u64, budget: u64) -> RankPlan {
         let weights = self.weights_per_rank(ranks);
         let state = self.sequence_bytes(ranks, context);
         let prompt_cache = self.prompt_cache_bytes(ranks, context);
         let planned = weights + state + prompt_cache;
-        let with_overhead = with_overhead(planned);
+        let resident = with_overhead(planned);
+        let headroom = budget.saturating_sub(resident);
+        let chunk = self
+            .prefill(ranks, headroom)
+            .chunk(1, context)
+            .max(KV_CACHE_STEP.min(TENSOR_PREFILL_STEP));
+        let workspace = self.prefill_workspace_bytes(ranks, chunk, context);
+        let with_overhead = resident + workspace;
         let mut plan = RankPlan {
             layer_start: 0,
             layer_end: self.num_layers as u32,
@@ -359,7 +475,9 @@ impl TensorModelFacts {
             shard_count: Some(ranks as u32),
             weights_bytes: weights,
             state_bytes: state,
-            workspace_bytes: 0,
+            workspace_bytes: workspace,
+            prefill: Some(self.prefill(ranks, workspace)),
+            prefill_step: TENSOR_PREFILL_STEP,
             prompt_cache_bytes: prompt_cache,
             prompt_cache_entries: 0,
             planned_bytes: planned,
@@ -373,9 +491,14 @@ impl TensorModelFacts {
     }
 
     /// The largest context (a multiple of the cache step, at most `max_position`) whose plan fits
-    /// `budget` on every rank; 0 when not even the weights fit.
+    /// `budget` on every rank — its resident bytes and one row's prefill in KV-step chunks at that
+    /// context; 0 when not even the weights fit.
     pub fn max_context(&self, ranks: u64, budget: u64) -> u64 {
-        let fits = |context: u64| with_overhead(self.planned_at(ranks, context)) <= budget;
+        let fits = |context: u64| {
+            with_overhead(self.planned_at(ranks, context))
+                + self.prefill_workspace_bytes(ranks, KV_CACHE_STEP, context)
+                <= budget
+        };
         if !fits(KV_CACHE_STEP.min(self.max_position)) {
             return 0;
         }
@@ -525,8 +648,16 @@ impl PipelineStage {
     /// The rank's plan in goose's terms — the fork's bytes, budget and verdict, verbatim. No
     /// overhead multiplier: the fork's workspace term (49× the chunk's stream bytes per layer)
     /// already covers the measured peaks (see `RUNTIME_OVERHEAD_RATIO`'s receipt), so
-    /// `with_overhead_bytes` is the fork's total.
+    /// `with_overhead_bytes` is the fork's total. [`PipelineStage::rank_plan_with_scores`] adds
+    /// the attention scores that workspace leaves out.
     pub fn rank_plan(&self) -> RankPlan {
+        self.rank_plan_with_scores(0, 0)
+    }
+
+    /// The fork's plan plus `scores` bytes of prefill workspace (`PipelineAttention::scores_bytes`
+    /// at `chunk`), the verdict re-drawn on the fork's own budget.
+    pub fn rank_plan_with_scores(&self, scores: u64, chunk: u64) -> RankPlan {
+        let total = self.total_bytes + scores;
         RankPlan {
             layer_start: self.layer_start,
             layer_end: self.layer_end,
@@ -534,14 +665,145 @@ impl PipelineStage {
             shard_count: None,
             weights_bytes: self.weight_bytes,
             state_bytes: self.state_bytes,
-            workspace_bytes: self.workspace_bytes,
+            workspace_bytes: self.workspace_bytes + scores,
+            prefill: None,
+            prefill_step: chunk,
             prompt_cache_bytes: 0,
             prompt_cache_entries: 0,
-            planned_bytes: self.total_bytes,
-            with_overhead_bytes: self.total_bytes,
+            planned_bytes: total,
+            with_overhead_bytes: total,
             budget_bytes: self.budget_bytes,
-            fits: self.fits,
+            fits: self.fits && total <= self.budget_bytes,
         }
+    }
+}
+
+/// What the fork's workspace model leaves out of a qwen4_exp stage: its prefill takes the DENSE
+/// attention path (both QSA sparse routes are opt-in: `block_sparse_decline_reason` and
+/// `indexed_splitk_decline_reason` answer "disabled" without their env), and MLX 0.32.2's SDPA
+/// has no fused prefill kernel for head_dim 256, so each full-attention layer materializes
+/// rows × query heads × chunk × context scores at the activation width. The fork charges that
+/// layer `batch × tokens × context × (1 + act)` (its selection and additive masks) — measured on
+/// the Flash checkpoint's layer 3 (fork b7bd1afc2, 2026-09-26): one row, chunk 2,048 → 3.50 /
+/// 5.03 GB above the layer's weights at widths 16,384 / 32,768, the slope 93 KB per context
+/// token = 24 heads × 2,048 × 2 B (0.95×); the fork's term for the second is 0.20 GB.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PipelineAttention {
+    /// Per decoder layer: does it run full attention?
+    pub full_attention: Vec<bool>,
+    pub attention_heads: u64,
+    pub act_bytes: u64,
+}
+
+/// Read a qwen4_exp checkpoint's attention layout: `layer_types`, `num_attention_heads`, and the
+/// activation width (the embedding's scales dtype, as the fork's planner reads it).
+pub fn read_pipeline_attention(model_dir: &Path) -> Result<PipelineAttention> {
+    let raw: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(model_dir.join("config.json"))
+            .with_context(|| format!("reading {}/config.json", model_dir.display()))?,
+    )?;
+    let text = raw.get("text_config").unwrap_or(&raw);
+    let full_attention = text
+        .get("layer_types")
+        .and_then(|v| v.as_array())
+        .context("config.json has no `layer_types`")?
+        .iter()
+        .map(|t| {
+            t.as_str()
+                .map(|kind| kind != "linear_attention")
+                .context("layer_types entry")
+        })
+        .collect::<Result<Vec<bool>>>()?;
+    Ok(PipelineAttention {
+        full_attention,
+        attention_heads: config_u64(text, "num_attention_heads")?,
+        act_bytes: activation_bytes(model_dir)?,
+    })
+}
+
+/// The embedding's scales dtype (its weight's when unquantized): the stream's activation width.
+fn activation_bytes(model_dir: &Path) -> Result<u64> {
+    let mut shards: Vec<_> = std::fs::read_dir(model_dir)
+        .with_context(|| format!("listing {}", model_dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("model") && n.ends_with(".safetensors"))
+        })
+        .collect();
+    shards.sort();
+    let mut weight = None;
+    for shard in &shards {
+        for (key, meta) in read_safetensors_header(shard)? {
+            if !key.contains("embed_tokens") {
+                continue;
+            }
+            let dtype = meta
+                .get("dtype")
+                .and_then(|d| d.as_str())
+                .with_context(|| format!("{key}: no dtype"))?;
+            if key.ends_with(".scales") {
+                return dtype_bytes(dtype);
+            }
+            if weight.is_none() {
+                weight = Some(dtype_bytes(dtype)?);
+            }
+        }
+    }
+    weight.with_context(|| format!("no embed_tokens tensor in {}", model_dir.display()))
+}
+
+impl PipelineAttention {
+    /// The scores one prefill chunk of `slots` rows at `context` materializes on a stage holding
+    /// `[layer_start, layer_end)` (one layer at a time: each needs the previous one's output); 0
+    /// for a stage without a full-attention layer.
+    pub fn scores_bytes(&self, stage: &PipelineStage, slots: u64, chunk: u64, context: u64) -> u64 {
+        let holds_attention = self
+            .full_attention
+            .get(stage.layer_start as usize..stage.layer_end as usize)
+            .is_some_and(|kinds| kinds.iter().any(|full| *full));
+        if holds_attention {
+            slots * self.attention_heads * self.act_bytes * chunk * context
+        } else {
+            0
+        }
+    }
+
+    /// The largest prefill chunk (a whole number of KV steps, at most `step`, the fork's own)
+    /// whose scores fit what every stage's budget leaves above the fork's total; 0 when not even
+    /// one KV step does.
+    pub fn chunk(&self, plan: &PipelinePlan, step: u64) -> u64 {
+        let slots = u64::from(plan.slots);
+        plan.stages
+            .iter()
+            .filter_map(|stage| {
+                let per_token = self.scores_bytes(stage, slots, 1, plan.context);
+                (per_token > 0)
+                    .then(|| stage.budget_bytes.saturating_sub(stage.total_bytes) / per_token)
+            })
+            .fold(step, u64::min)
+            / KV_CACHE_STEP
+            * KV_CACHE_STEP
+    }
+
+    /// The largest context (a multiple of the KV step, below the planned one) whose scores at one
+    /// KV-step chunk fit every stage's room above the fork's total at `plan`'s context — the
+    /// fork's own bytes shrink with the context, so the room there is at least this.
+    pub fn context_ceiling(&self, plan: &PipelinePlan) -> u64 {
+        let slots = u64::from(plan.slots);
+        plan.stages
+            .iter()
+            .filter_map(|stage| {
+                let per_context_token = self.scores_bytes(stage, slots, KV_CACHE_STEP, 1);
+                (per_context_token > 0).then(|| {
+                    stage.budget_bytes.saturating_sub(stage.total_bytes) / per_context_token
+                })
+            })
+            .fold(plan.context.saturating_sub(KV_CACHE_STEP), u64::min)
+            / KV_CACHE_STEP
+            * KV_CACHE_STEP
     }
 }
 
@@ -590,6 +852,7 @@ pub(crate) mod tests {
             num_layers: 64,
             full_attention_layers: 16,
             linear_layers: 48,
+            attention_heads: 24,
             kv_heads: 4,
             head_dim: 256,
             linear_key_heads: 16,
@@ -679,10 +942,10 @@ pub(crate) mod tests {
         // The fixture's weights sit 104,936 B under the owner's checkpoint; the rank's own report
         // is the figure.
         plan.planned_bytes = 35_358_285_312;
-        plan.with_overhead_bytes = with_overhead(plan.planned_bytes);
+        plan.with_overhead_bytes = with_overhead(plan.planned_bytes) + plan.workspace_bytes;
         assert_eq!(plan.mlx_cache_limit_bytes(), 3_535_828_532);
         assert_eq!(
-            plan.planned_bytes + plan.mlx_cache_limit_bytes(),
+            plan.planned_bytes + plan.mlx_cache_limit_bytes() + plan.workspace_bytes,
             plan.with_overhead_bytes
         );
         let e2e_2_ceiling = 83_494_174_720u64;
@@ -791,10 +1054,230 @@ pub(crate) mod tests {
         facts.check_divisible(4).unwrap();
     }
 
+    /// Q-104's measurement (2026-09-26, 2 localhost ranks of the owner's 27B layers under
+    /// mlx_lm 0.31.3's own BatchGenerator): one row, chunk 2,048, a 131,072-token prefix read to
+    /// 135,168 peaked 8.049 GB above the weights on its 8-layer view — the row's KV (4,096 B a
+    /// token on that view), the chunk's other transients (0.59 GB, measured on the 4-layer view
+    /// whose last attention layer never runs), and this arithmetic's scores + mask.
+    #[test]
+    fn the_prefill_workspace_is_the_measured_step_of_one_row() {
+        let facts = qwen_27b();
+        assert_eq!(facts.prefill_pair_bytes(2), 12 * 2 + 1);
+        let scores_and_mask = facts.prefill_workspace_bytes(2, 2_048, 135_168);
+        let predicted = scores_and_mask + 135_168 * 4_096 + 590_000_000;
+        let measured = 8_049_000_000u64;
+        assert!(
+            predicted.abs_diff(measured) * 100 < measured,
+            "within 1%: {predicted} vs {measured}"
+        );
+        // The same rule at the planned window is what E2E #2's plan (262,144 tokens) never
+        // charged: 13.42 GB for one row's chunk against the 3.54 GB its overhead ratio granted.
+        let plan = facts.rank_plan(2, 1, 262_144, u64::MAX);
+        assert_eq!(plan.workspace_bytes, 2_048 * 262_144 * 25);
+        assert_eq!(plan.prefill_step, 2_048);
+        assert!(plan.workspace_bytes > 3 * plan.mlx_cache_limit_bytes());
+        assert_eq!(
+            plan.with_overhead_bytes,
+            with_overhead(plan.planned_bytes) + plan.workspace_bytes
+        );
+    }
+
+    /// The workspace is what the rank's budget leaves above the resident plan, in KV-step chunks
+    /// of one row at the full context — never more than mlx_lm's own step, never less than one KV
+    /// step (charged even when it does not fit, so the verdict names it).
+    #[test]
+    fn the_prefill_chunk_is_a_ratio_of_the_ranks_headroom() {
+        let facts = qwen_27b();
+        let workhorse = budget_bytes(gib(61.6), gib(96.0), M3_ULTRA_CEILING);
+        let context = 131_072;
+        let roomy = facts.rank_plan(2, 1, context, workhorse);
+        assert_eq!(roomy.prefill_step, TENSOR_PREFILL_STEP);
+        assert_eq!(roomy.full_context_chunk(context), Some(2_048));
+        assert!(roomy.fits);
+
+        // A budget that leaves 1/4 of the default chunk's scores above the resident bytes.
+        let resident = with_overhead(roomy.planned_bytes);
+        let quarter = resident + facts.prefill_workspace_bytes(2, 512, context);
+        let tight = facts.rank_plan(2, 1, context, quarter);
+        assert_eq!(tight.full_context_chunk(context), Some(512));
+        assert_eq!(tight.with_overhead_bytes, quarter);
+        assert!(tight.fits);
+
+        // Below one KV step's scores the plan does not fit, and says by how much.
+        let short = facts.rank_plan(2, 1, context, resident + 1);
+        assert_eq!(
+            short.workspace_bytes,
+            facts.prefill_workspace_bytes(2, 256, context)
+        );
+        assert!(!short.fits);
+
+        // The context ceiling holds the smallest chunk: at it a 256-token step fits, one KV step
+        // wider does not.
+        let ceiling = facts.max_context(2, workhorse);
+        let at = facts.rank_plan(2, 1, ceiling, workhorse);
+        assert!(at.fits && at.full_context_chunk(ceiling).unwrap() >= 256);
+    }
+
+    /// A step's chunk shrinks as the batch widens so its scores stay inside the workspace.
+    #[test]
+    fn a_wider_batch_takes_a_smaller_chunk_inside_the_same_workspace() {
+        let prefill = qwen_27b().prefill(2, 2_048 * 262_144 * 25);
+        assert_eq!(prefill.chunk(1, 262_144), 2_048);
+        assert_eq!(
+            prefill.chunk(5, 51_200),
+            2_048,
+            "E2E #2's five rows at ~51k fit whole"
+        );
+        assert_eq!(prefill.chunk(5, 100_000), 1_024);
+        assert_eq!(prefill.chunk(8, 262_144), 256);
+        assert_eq!(
+            prefill.chunk(9, 262_144),
+            0,
+            "not one KV step: admission keeps it away"
+        );
+        for (rows, width) in [(1, 262_144), (5, 51_200), (5, 100_000), (8, 262_144)] {
+            let chunk = prefill.chunk(rows, width);
+            assert!(rows * width * chunk * prefill.pair_bytes <= prefill.workspace_bytes);
+        }
+    }
+
+    /// Every rank of a launch runs the smallest workspace any rank affords (the MacBook's
+    /// headroom is larger than the Studio's; the chunk a step takes must agree).
+    #[test]
+    fn every_tensor_rank_runs_the_smallest_workspace() {
+        use crate::distributed::launch::TensorLaunch;
+        let facts = qwen_27b();
+        let context = 262_144;
+        let small = with_overhead(facts.planned_at(2, context))
+            + facts.prefill_workspace_bytes(2, 768, context);
+        let plans = [
+            facts.rank_plan(2, 0, context, u64::MAX),
+            facts.rank_plan(2, 1, context, small),
+        ];
+        assert_ne!(plans[0].workspace_bytes, plans[1].workspace_bytes);
+        let launches = TensorLaunch::for_ranks(&[&plans[0], &plans[1]]).unwrap();
+        assert_eq!(launches[0].prefill, launches[1].prefill);
+        assert_eq!(
+            launches[0].prefill.workspace_bytes,
+            facts.prefill_workspace_bytes(2, 768, context)
+        );
+        let shared = plans[0].clone().sharing_workspace(plans[1].workspace_bytes);
+        assert_eq!(shared.workspace_bytes, plans[1].workspace_bytes);
+        assert_eq!(
+            shared.with_overhead_bytes,
+            with_overhead(shared.planned_bytes) + shared.workspace_bytes
+        );
+
+        // A plan made before Q-104 carries no prefill figures: named, never launched on guesses.
+        let mut older = plans[0].clone();
+        older.prefill = None;
+        let refusal = TensorLaunch::for_ranks(&[&older, &plans[1]])
+            .unwrap_err()
+            .to_string();
+        assert!(refusal.contains("no prefill figures"), "{refusal}");
+    }
+
+    /// The fork's plan for Flash at 32,768 tokens, batch 2 (FLASH_PLAN_32K) leaves rank 1
+    /// 13.93 GB above its total; a 2,048-token chunk of 2 rows materializes 24 heads × 2 B ×
+    /// 2,048 × 32,768 × 2 = 6.44 GB of scores its workspace (4.52 GB) does not model.
+    #[test]
+    fn the_pipeline_chunk_fits_the_scores_the_forks_workspace_leaves_out() {
+        let dir = flash_attention_dir();
+        let attention = read_pipeline_attention(dir.path()).unwrap();
+        assert_eq!(attention.attention_heads, 24);
+        assert_eq!(attention.act_bytes, 2);
+        assert_eq!(attention.full_attention.iter().filter(|f| **f).count(), 12);
+        let plan = parse_pipeline_plan(FLASH_PLAN_32K).unwrap();
+        let rank1 = &plan.stages[1];
+        assert_eq!(
+            attention.scores_bytes(rank1, 2, 2_048, 32_768),
+            6_442_450_944
+        );
+        assert_eq!(attention.chunk(&plan, plan.prefill_step), 2_048);
+        let charged = rank1.rank_plan_with_scores(6_442_450_944, 2_048);
+        assert_eq!(charged.with_overhead_bytes, 48_424_487_136 + 6_442_450_944);
+        assert_eq!(charged.workspace_bytes, 4_515_057_664 + 6_442_450_944);
+        assert!(charged.fits);
+
+        // The same room at the model's full 262,144 tokens: a 2,048-token chunk would need 51.5
+        // GB; the largest multiple of 256 inside rank 1's 13.93 GB is 512 (12.9 GB).
+        let full = FLASH_PLAN_32K.replacen("\"context\": 32768", "\"context\": 262144", 1);
+        let full = parse_pipeline_plan(&full).unwrap();
+        assert_eq!(
+            attention.scores_bytes(&full.stages[1], 2, 2_048, 262_144),
+            51_539_607_552
+        );
+        assert_eq!(attention.chunk(&full, full.prefill_step), 512);
+
+        // A stage with no full-attention layer carries no scores: [0, 3) is linear only.
+        let mut linear = plan.stages[0].clone();
+        linear.layer_end = 3;
+        assert_eq!(attention.scores_bytes(&linear, 2, 2_048, 32_768), 0);
+
+        // Room for less than one KV step: chunk 0, and the ceiling names the context that fits.
+        let squeezed = FLASH_PLAN_32K.replacen(
+            "\"budget_bytes\": 62354335204",
+            "\"budget_bytes\": 49000000000",
+            1,
+        );
+        let squeezed = parse_pipeline_plan(&squeezed).unwrap();
+        assert_eq!(attention.chunk(&squeezed, squeezed.prefill_step), 0);
+        let ceiling = attention.context_ceiling(&squeezed);
+        // (49,000,000,000 − 48,424,487,136) / (2 × 24 × 2 × 256) = 23,417 → 23,296.
+        assert_eq!(ceiling, 23_296);
+    }
+
+    /// The owner's Flash checkpoint, when present on this Mac: its attention layout reads as the
+    /// fixture above says.
+    #[test]
+    fn the_owners_flash_attention_reads_as_recorded_when_present() {
+        let dir = dirs::home_dir()
+            .unwrap()
+            .join(".goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit");
+        if !dir.join("config.json").exists() {
+            eprintln!("skipped: {} absent", dir.display());
+            return;
+        }
+        let attention = read_pipeline_attention(&dir).unwrap();
+        let fixture = read_pipeline_attention(flash_attention_dir().path()).unwrap();
+        assert_eq!(attention, fixture);
+    }
+
     /// The fork planner's real JSON for Flash (2f02ac645, `plan --json --model <Flash> --node
     /// m:128:90:107.52 --node w:96:67:77.76 --context 32768 --batch 2`, 2026-09-24 — the GPU
     /// ceilings are the two Macs' measured max_recommended_working_set_size): exit 0.
     pub(crate) const FLASH_PLAN_32K: &str = r#"{"context": 32768, "batch": 2, "prefill_step": 2048, "max_context": 262144, "starts": [0, 19], "slots": 2, "fits": true, "vision": {"rank": 0, "weight_bytes": 448092512, "workspace_bytes": 1229312000}, "checkpoint": {"text_bytes": 102766153240, "head_bytes": 357580800, "tail_bytes": 361287680, "excluded_bytes": {"mtp": 1467242656, "vision": 448092512}, "layer_bytes": [1459858528, 33478587768, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376, 1459858528, 1459858528, 1459858528, 1456137376]}, "ratios": {"available_margin": 0.093, "layer_transient_stream_multiple": 49}, "wire": {"stream_per_hop": 20480, "hops": 1, "token_broadcast": 4, "total_per_token": 20484}, "stages": [{"rank": 0, "node": "m", "layer_start": 0, "layer_end": 19, "weight_bytes": 60546829976, "state_bytes": 650240032, "workspace_bytes": 4513071104, "total_bytes": 65710141112, "budget_bytes": 83854941488, "available_bytes": 96636764160, "ceiling_bytes": 115448720916, "ram_bytes": 137438953472, "budget_source": "free + GPU ceiling given", "fits": true}, {"rank": 1, "node": "w", "layer_start": 19, "layer_end": 48, "weight_bytes": 42667415776, "state_bytes": 1242013696, "workspace_bytes": 4515057664, "total_bytes": 48424487136, "budget_bytes": 62354335204, "available_bytes": 71940702208, "ceiling_bytes": 83494164234, "ram_bytes": 103079215104, "budget_source": "free + GPU ceiling given", "fits": true}]}"#;
+
+    /// A directory holding what `read_pipeline_attention` reads of the Flash checkpoint: its
+    /// config's 48 layer kinds (every fourth full attention) and 24 query heads, and a
+    /// safetensors header whose embedding scales are BF16.
+    pub(crate) fn flash_attention_dir() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let kinds: Vec<&str> = (0..48)
+            .map(|i| {
+                if (i + 1) % 4 == 0 {
+                    "full_attention"
+                } else {
+                    "linear_attention"
+                }
+            })
+            .collect();
+        let config = serde_json::json!({
+            "model_type": "qwen4_exp",
+            "text_config": {"layer_types": kinds, "num_attention_heads": 24}
+        });
+        std::fs::write(dir.path().join("config.json"), config.to_string()).unwrap();
+        let header = serde_json::json!({
+            "language_model.model.embed_tokens.scales":
+                {"dtype": "BF16", "shape": [1], "data_offsets": [0, 2]}
+        })
+        .to_string();
+        let mut shard = (header.len() as u64).to_le_bytes().to_vec();
+        shard.extend_from_slice(header.as_bytes());
+        shard.extend_from_slice(&[0, 0]);
+        std::fs::write(dir.path().join("model-00001-of-00001.safetensors"), shard).unwrap();
+        dir
+    }
 
     /// The measured soak's shape re-planned by the same planner (2f02ac645): split 20, context
     /// 8,192, batch 2, the node figures recorded at that run (MacBook 92.7 of 128 GiB available,

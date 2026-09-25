@@ -94,6 +94,29 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
 - TRAP: a second 27B beside the owner's (the engine live test) fits the gate (need 30.6, budget 45.1)
   but macOS pages it out mid-load (resident 26.1 → 10.5 GiB) and the >0.9 resident assertion fails —
   environmental; run that test with the owner's engine unmounted.
+- PREFILL PEAK (Q-104, 2026-09-26, measured): MLX 0.32.2's `mx.fast.scaled_dot_product_attention` has
+  NO fused prefill kernel for head_dim 256 (both Qwen 3.x models) — a chunk materializes rows × query
+  heads × chunk × context scores at bf16 (probe: 0.96-1.06× that product; head_dim 128 → ~0, the
+  negative control). 27B tensor rank (12 heads): one row, chunk 2,048 at 262,144 tokens = 12.9 GB — the
+  old plan's overhead ratio granted 3.5 GB. mlx_lm pads every batch row to the longest (E2E #2's
+  summaries rode the agent's ~50k width) and its batch ops transiently hold up to 2.16× the padded KV
+  (merge 1.5-1.6×, extend ≤1.96×, partial split 2.1×; its split deep-copies EVERY row, 2.29× for a lone
+  row). Fix (worktree branch, tag `mlxLmServerPrefill`): plan.rs charges `workspace_bytes` = one row's
+  chunk at the full context (chunk = the rank's headroom in KV steps, ≤ 2,048, ≥ 256, every rank the
+  smallest); rank_prefill.py shrinks each step's chunk to that workspace for its rows × width; rank 0
+  HOLDS a request while 2.2 × the joined batch's padded KV exceeds the KV charge (idle always admits);
+  the prompt cache yields to the projected charge every step; a split that moves every row copies
+  nothing (rank_batch.py). PIPELINE: the fork's workspace models `batch × tokens × context × 3` for
+  attention but its prefill takes the DENSE path (QSA sparse routes are env opt-in) — Flash layer 3
+  measured 5.03 GB at width 32k, chunk 2,048 (fork: 0.20 GB); preflight now adds the scores and
+  passes `--prefill-step` (the largest chunk every stage fits) to plan + serve, lowering a derived
+  context the 256 chunk cannot fit. Measure with real mlx_lm on a TRUNCATED view (config
+  num_hidden_layers=N + symlinked shards; sharded_load is strict=False) — the last full-attention
+  layer's SDPA is dead code in a prefill, so a 4-layer 27B view shows no scores at all.
+- TRAP (2026-09-26): this MacBook's GPU wedged — processes stuck in exit (`?E`) on
+  IOSurfaceSharedEvent waits, a 1024² matmul never finished — while two 27B loads and the single engine
+  competed at kernel WARN/CRITICAL. A test that needs only cache ops runs on `mx.cpu` so it can never
+  hang on the GPU.
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud

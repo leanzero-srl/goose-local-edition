@@ -619,10 +619,17 @@ pub async fn spawn_link_rank(
 }
 
 /// A peer whose goosed predates the tensor runner's current program (Q-66's doorbell, Q-79's
-/// bounded prompt cache) cannot read this Mac's rank spec (its serde names the unknown program
-/// tag). Said as what to do, not as a parse error.
+/// bounded prompt cache, Q-104's planned prefill) cannot read this Mac's rank spec (its serde
+/// names the unknown program tag). Said as what to do, not as a parse error.
 pub fn older_peer_refusal(error: &str) -> Option<&'static str> {
-    (error.contains("mlxLmServerBounded") || error.contains("mlxLmServerDoorbell")).then_some(
+    [
+        "mlxLmServerPrefill",
+        "mlxLmServerBounded",
+        "mlxLmServerDoorbell",
+    ]
+    .iter()
+    .any(|tag| error.contains(tag))
+    .then_some(
         "its goose is older than this Mac's and cannot run this split's rank — update goose on \
          that Mac, then Start again",
     )

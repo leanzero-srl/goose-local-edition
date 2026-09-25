@@ -1433,6 +1433,7 @@ mod tests {
             num_layers: 64,
             full_attention_layers: 16,
             linear_layers: 48,
+            attention_heads: 24,
             kv_heads: 4,
             head_dim: 256,
             linear_key_heads: 16,
