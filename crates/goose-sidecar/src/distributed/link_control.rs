@@ -605,13 +605,26 @@ pub async fn spawn_link_rank(
     )
     .await
     .map_err(|e| {
-        anyhow!(
-            "{} (rank {}) did not start its rank over LeanZero Link — {e}",
-            node.name,
-            spec.rank
-        )
+        let e = e.to_string();
+        match older_peer_refusal(&e) {
+            Some(why) => anyhow!("{} (rank {}): {why} — {e}", node.name, spec.rank),
+            None => anyhow!(
+                "{} (rank {}) did not start its rank over LeanZero Link — {e}",
+                node.name,
+                spec.rank
+            ),
+        }
     })?;
     adopt_link_rank(node, spec, &peer, started).await
+}
+
+/// A peer whose goosed predates the tensor runner's doorbell cannot read this Mac's rank spec
+/// (its serde names the unknown program tag). Said as what to do, not as a parse error.
+pub fn older_peer_refusal(error: &str) -> Option<&'static str> {
+    error.contains("mlxLmServerDoorbell").then_some(
+        "its goose is older than this Mac's and cannot run this split's rank — update goose on \
+         that Mac, then Start again",
+    )
 }
 
 /// Stand up the local session for a rank the peer has started: the session process, the relay,

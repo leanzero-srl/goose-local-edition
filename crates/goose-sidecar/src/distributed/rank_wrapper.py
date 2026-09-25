@@ -15,7 +15,15 @@
 #   stops or the launch's context window is full, never to mlx_lm's 512 default; an explicit one is
 #   held inside the window. Rank 0 settles it BEFORE the request is shared, so every rank receives
 #   the same integer — a peer running an older wrapper (its own goosed embeds its program) still
-#   reads an int, never an absence it would crash on.
+#   reads an int, never an absence it would crash on;
+# - the doorbell (Q-66): mlx_lm's generation thread polls its request queue every 0.1 s while
+#   idle and shares the (empty) answer through an all_sum every time; JACCL waits on a completion
+#   queue created WITHOUT a completion channel (jaccl/rdma.cpp `create_cq(..., nullptr, nullptr,
+#   0)`), so a waiting rank spins `ibv_poll_cq` — the worker ranks, parked in that all_sum while
+#   rank 0 sleeps in queue.get, burned a whole core idle (Studio ~100%, MacBook 0.1%). With the
+#   doorbell, an idle rank 0 shares only a request that exists, ringing one byte per worker first,
+#   and an idle worker parks in recv(1) (kernel-blocking, no clock). While a batch runs every step
+#   is shared exactly as upstream. The fork's pipeline runner has done the same since 286ed77f7.
 group = mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -27,6 +35,58 @@ if group.rank() != spec["rank"] or group.size() != spec["size"]:
         f"goose rank wrapper: MLX reports rank {group.rank()} of {group.size()}, "
         f"goose launched rank {spec['rank']} of {spec['size']}"
     )
+
+
+import socket  # noqa: E402
+from queue import Empty as QueueEmpty  # noqa: E402
+
+
+def rank0_host():
+    """Rank 0's address as the launch told every rank: the JACCL coordinator, or ring host 0."""
+    coordinator = os.environ.get("MLX_JACCL_COORDINATOR")
+    if coordinator:
+        return coordinator.rsplit(":", 1)[0]
+    with open(os.environ["MLX_HOSTFILE"]) as hostfile:
+        return json.load(hostfile)[0][0].rsplit(":", 1)[0]
+
+
+class Doorbell:
+    """One byte from rank 0 to every worker before each collective an idle loop would otherwise
+    spin in. Rank 0 listens on an ephemeral port of its launch address; the port reaches the
+    workers through ONE all_sum right after the group forms (every rank runs this at the same
+    point). A closed socket (rank 0 gone) ends the worker."""
+
+    def __init__(self):
+        self.peers = []
+        self.link = None
+        host = rank0_host()
+        server = socket.create_server((host, 0)) if group.rank() == 0 else None
+        port = server.getsockname()[1] if server is not None else 0
+        port = int(mx.distributed.all_sum(mx.array([port], dtype=mx.int32)).item())
+        if server is not None:
+            for _ in range(group.size() - 1):
+                peer, _ = server.accept()
+                peer.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                self.peers.append(peer)
+            server.close()
+        else:
+            self.link = socket.create_connection((host, port))
+            self.link.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        emit("RANK_DOORBELL", {"rank": group.rank(), "port": port})
+
+    def ring(self):
+        for peer in self.peers:
+            peer.sendall(b"\x01")
+
+    def wait(self):
+        if self.link.recv(1) != b"\x01":
+            emit("RANK_DOORBELL_CLOSED", {"rank": group.rank()})
+            raise SystemExit("goose rank wrapper: rank 0 closed the doorbell")
+
+
+# Only a launch that asked for it (the spec's `doorbell`): a peer running an older wrapper never
+# joins the port all_sum, so the requester refuses that pairing before it forms (launch.rs).
+doorbell = Doorbell() if spec.get("doorbell") else None
 
 import copy  # noqa: E402
 
@@ -44,6 +104,7 @@ for owner, name in (
     (server.ResponseGenerator, "generate"),
     (server.ResponseGenerator, "_tokenize"),
     (server.ResponseGenerator, "_share_request"),
+    (server.ResponseGenerator, "_generate"),
 ):
     if not hasattr(owner, name):
         raise SystemExit(
@@ -100,7 +161,21 @@ original_next = server.ResponseGenerator._next_request
 
 
 def _next_request(self, timeout=None):
-    request = original_next(self, timeout)
+    # `timeout` is None exactly while a batch runs (mlx_lm's `_generate`), and every rank's loop
+    # state is the same, so every rank takes the same branch here.
+    if doorbell is None or timeout is None:
+        request = original_next(self, timeout)
+    elif group.rank() == 0:
+        try:
+            request = self.requests.get(timeout=timeout)
+        except QueueEmpty:
+            request = None
+        if request is not None:
+            doorbell.ring()
+            request = self._share_request(request)
+    else:
+        doorbell.wait()
+        request = self._share_request(None)
     state["steps"] += 1
     return request
 
