@@ -41,7 +41,6 @@ import RunSamplingStrip from './swarm/RunSamplingStrip';
 import { useSwarmRun } from './swarm/useSwarmRun';
 import SwarmWorkspace from './swarm/SwarmWorkspace';
 import MemoryProposalCards from './memories/MemoryProposalCard';
-import NodesStrip from './swarm/NodesStrip';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
 import {
   Button,
@@ -147,7 +146,9 @@ export function SubmitErrorBanner({ error, onDismiss }: { error: string; onDismi
         <div className="flex items-start gap-3 px-4 py-3">
           <StatusDot tone="warn" label={intl.formatMessage(i18n.promptFailed)} className="mt-1.5" />
           <div className="min-w-0 flex-1">
-            <p className={cx(TYPE.body, WEIGHT.semibold)}>{intl.formatMessage(i18n.promptFailed)}</p>
+            <p className={cx(TYPE.body, WEIGHT.semibold)}>
+              {intl.formatMessage(i18n.promptFailed)}
+            </p>
             <p className={cx(TYPE.bodyMuted, 'break-words')}>{error}</p>
             <p className={cx(TYPE.meta, 'mt-0.5')}>{intl.formatMessage(i18n.promptFailedHint)}</p>
           </div>
@@ -161,7 +162,13 @@ export function SubmitErrorBanner({ error, onDismiss }: { error: string; onDismi
 }
 
 /** The session could not be loaded at all: a Panel with an err dot and the one way back. */
-export function SessionLoadErrorPanel({ error, onGoHome }: { error: string; onGoHome: () => void }) {
+export function SessionLoadErrorPanel({
+  error,
+  onGoHome,
+}: {
+  error: string;
+  onGoHome: () => void;
+}) {
   const intl = useIntl();
   return (
     <div data-testid="session-load-error" className="flex flex-col items-center justify-center p-8">
@@ -595,10 +602,6 @@ export default function BaseChat({
             <div className="block h-8" />
           </>
         ) : null}
-
-        {/* Blank session (pass E): show YOUR configured nodes and their occupancy — never a stale
-            board. Disappears the moment the conversation starts or a run takes the stage. */}
-        {isLocal && messages.length === 0 && !recipe && <NodesStrip className="mb-3" />}
 
         {/* With the split up, the run has its OWN pane — leaving these here too would render the whole
             panel twice. Inline in the conversation is the layout for every other moment. */}
