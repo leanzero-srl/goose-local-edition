@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 /// Open proposals a key may hold; the fourth is REFUSED, never queued — more than three
 /// unanswered cards means the user is not answering them (frame 1.14 §3.1 caps).
 pub const MAX_OPEN_PROPOSALS_PER_KEY: usize = 3;
-/// A proposed memory's text is generated, so it is clamped tighter than what a human types.
+/// A proposed memory's text is generated, so it is held tighter than what a human types: a longer
+/// proposal is refused back to the agent, whole.
 pub const PROPOSAL_TEXT_MAX_CHARS: usize = 350;
 pub const PROPOSAL_WHY_MAX_CHARS: usize = 200;
 /// Days an unanswered proposal stays listable; after that it renders as expired and is dropped.
@@ -202,8 +203,11 @@ impl ProposalStore {
             .count())
     }
 
-    /// File a proposal. Text and reason are clamped here, at the one writer. A duplicate text
-    /// under the key is not raised again; a full key REFUSES rather than queues.
+    /// File a proposal. Text longer than a card holds is REFUSED back to the caller, never cut: a
+    /// cut proposal is saved as a fact broken mid-word (Q-93, E2E #1: `…by exception only". Bi` —
+    /// character 350 of a 645-character piece, 513 of data plus its Sources line). The reason is
+    /// clamped. A duplicate text under the key is not raised again; a full key REFUSES rather
+    /// than queues.
     #[allow(clippy::too_many_arguments)]
     pub fn add(
         &self,
@@ -217,11 +221,21 @@ impl ProposalStore {
         is_global: bool,
         sources: &[String],
     ) -> io::Result<ProposeOutcome> {
-        let text = clamp_chars(text, PROPOSAL_TEXT_MAX_CHARS);
+        let text = text.trim().to_string();
         if text.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "a proposal needs text",
+            ));
+        }
+        let length = text.chars().count();
+        if length > PROPOSAL_TEXT_MAX_CHARS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "the proposal is {length} characters and a card holds {PROPOSAL_TEXT_MAX_CHARS}; \
+                     it was not filed — shorten it and propose it again"
+                ),
             ));
         }
         crate::validate_category(category)?;
@@ -393,16 +407,40 @@ mod tests {
         );
     }
 
+    /// Q-93: a text longer than the card is refused whole, never stored as a stump; the reason is
+    /// clamped.
     #[test]
-    fn text_and_why_are_clamped_at_the_writer() {
+    fn long_text_is_refused_not_cut_and_why_is_clamped() {
         let (_d, store) = store();
         let long = "x".repeat(1000);
-        store
+        let err = store
             .add(
                 "s1",
                 ProposalKind::Knowledge,
                 None,
                 &long,
+                "why",
+                "c",
+                &[],
+                false,
+                &["web-search__search".into()],
+            )
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(
+            err.to_string()
+                .contains("1000 characters and a card holds 350"),
+            "{err}"
+        );
+        assert!(store.list("s1").unwrap().is_empty(), "nothing was filed");
+
+        let fits = "y".repeat(PROPOSAL_TEXT_MAX_CHARS);
+        store
+            .add(
+                "s1",
+                ProposalKind::Knowledge,
+                None,
+                &format!("  {fits}  "),
                 &long,
                 "c",
                 &[],
@@ -411,7 +449,7 @@ mod tests {
             )
             .unwrap();
         let row = &store.list("s1").unwrap()[0];
-        assert_eq!(row.text.chars().count(), PROPOSAL_TEXT_MAX_CHARS);
+        assert_eq!(row.text, fits);
         assert_eq!(row.why.chars().count(), PROPOSAL_WHY_MAX_CHARS);
         assert_eq!(row.sources, vec!["web-search__search".to_string()]);
     }

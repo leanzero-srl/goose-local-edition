@@ -1,8 +1,9 @@
 //! FRAME 1.14, event B: the end-of-turn assessment. When a prompt ends on `EndTurn` (never on a
 //! cancel — the user already said what they thought of it), a detached task asks the model ONE
 //! bounded question about the turn: did it go well or badly, and is there something worth
-//! remembering? The judgement is `{worth, polarity, memory, why}`, every field clamped in code
-//! after the parse; anything out of shape discards the whole judgement. Tone is the MODEL's
+//! remembering? The judgement is `{worth, polarity, memory, why}`, checked in code after the parse:
+//! the reason is clamped, and anything out of shape — a memory longer than the card holds too —
+//! discards the whole judgement. Tone is the MODEL's
 //! call — there is no word list and no regex over the user's prose here, ever (LAW 2). A worthy
 //! judgement becomes a PROPOSAL in the proposal store; nothing is stored as a memory until the
 //! user clicks Save on the card. A knowledge-blind agent (a benchmark) is never assessed.
@@ -27,7 +28,8 @@ use goose_providers::conversation::token_usage::ProviderUsage;
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
 
-pub const ASSESSMENT_MEMORY_MAX_CHARS: usize = 350;
+pub const ASSESSMENT_MEMORY_MAX_CHARS: usize =
+    goose_memory_store::proposals::PROPOSAL_TEXT_MAX_CHARS;
 pub const ASSESSMENT_WHY_MAX_CHARS: usize = 200;
 /// The user's own words this turn, fenced; a long paste is cut here, at the prompt builder.
 const USER_TEXT_MAX_CHARS: usize = 2000;
@@ -85,8 +87,10 @@ pub fn parse_assessment(raw: &str) -> Option<Assessment> {
         "negative" => Polarity::Negative,
         _ => return None,
     };
-    let memory = clamp(&parsed.memory, ASSESSMENT_MEMORY_MAX_CHARS);
-    if memory.is_empty() {
+    // Longer than a card is out of shape like any other field: cut, it would be proposed and
+    // saved broken mid-word (Q-93).
+    let memory = parsed.memory.trim().to_string();
+    if memory.is_empty() || memory.chars().count() > ASSESSMENT_MEMORY_MAX_CHARS {
         return None;
     }
     Some(Assessment {
@@ -453,10 +457,20 @@ mod tests {
     }
 
     #[test]
-    fn a_well_formed_judgement_is_parsed_and_clamped() {
+    fn a_well_formed_judgement_is_parsed_and_an_overlong_memory_discarded() {
         let raw = format!(
             "```json\n{{\"worth\": true, \"polarity\": \"NEGATIVE\", \"memory\": \"{}\", \"why\": \"{}\"}}\n```",
             "m".repeat(1000),
+            "w".repeat(1000)
+        );
+        assert_eq!(
+            parse_assessment(&raw),
+            None,
+            "a memory longer than the card is discarded"
+        );
+        let raw = format!(
+            "```json\n{{\"worth\": true, \"polarity\": \"NEGATIVE\", \"memory\": \"{}\", \"why\": \"{}\"}}\n```",
+            "m".repeat(ASSESSMENT_MEMORY_MAX_CHARS),
             "w".repeat(1000)
         );
         let a = parse_assessment(&raw).unwrap();

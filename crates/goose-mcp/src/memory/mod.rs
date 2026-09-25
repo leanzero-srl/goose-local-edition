@@ -114,6 +114,10 @@ pub struct ProposeKnowledgeParams {
     /// Whether to store globally (user-wide) or project-local
     #[serde(default)]
     pub is_global: bool,
+    /// Optional: one sentence on why this is worth keeping for next time, shown on the card as
+    /// "Why:". Omit it rather than restate the sources.
+    #[serde(default)]
+    pub why: Option<String>,
 }
 
 /// Parameters for the search_memories tool
@@ -526,9 +530,28 @@ impl MemoryServer {
         }
         let mut tags = vec!["reference".to_string()];
         tags.extend(params.tags.iter().filter(|t| *t != "reference").cloned());
-        let content = format!("{}\nSources: {}", params.data.trim(), sources.join(", "));
+        let sources_line = format!("\nSources: {}", sources.join(", "));
+        let content = format!("{}{sources_line}", params.data.trim());
 
         if let Some(dir) = &self.proposals_dir {
+            // A card holds PROPOSAL_TEXT_MAX_CHARS; the store refuses a longer proposal rather than
+            // cut it mid-word (Q-93). Say here what the model can change: its own text.
+            let limit = goose_memory_store::proposals::PROPOSAL_TEXT_MAX_CHARS;
+            let length = content.chars().count();
+            if length > limit {
+                let room = limit.saturating_sub(sources_line.chars().count());
+                return Err(ErrorData::new(
+                    ErrorCode::INVALID_PARAMS,
+                    format!(
+                        "Not proposed: with its Sources line this knowledge piece is {length} \
+                         characters and a proposal card holds {limit}. Shorten `data` to at most \
+                         {room} characters (it is {} now), keeping the one fact worth keeping, and \
+                         call propose_knowledge again.",
+                        params.data.trim().chars().count()
+                    ),
+                    None,
+                ));
+            }
             // The chat that asked owns the card: goose sends its session id with every tool call.
             // Keyed by the working dir, one chat's proposal showed at the bottom of every other
             // chat in the project (E2E #2, Q-82). The dir key stays for a caller with no session.
@@ -545,7 +568,7 @@ impl MemoryServer {
                     goose_memory_store::ProposalKind::Knowledge,
                     None,
                     &content,
-                    "grounded by a lookup this turn",
+                    params.why.as_deref().unwrap_or_default(),
                     &params.category,
                     &tags,
                     params.is_global,
@@ -815,12 +838,69 @@ mod tests {
             sources: sources.into_iter().map(String::from).collect(),
             tags: vec!["api".to_string()],
             is_global: false,
+            why: None,
         };
         server.propose_knowledge_inner(
             params,
             Some(working_dir.to_path_buf()),
             session_id.map(str::to_string),
         )
+    }
+
+    /// Q-93: E2E #1's end-of-life piece (513 characters of data plus its Sources line, 645 in all)
+    /// was cut at character 350 — the card and the saved memory ended `by exception only". Bi` —
+    /// and every card said "Why: grounded by a lookup this turn" whatever had happened. Now the
+    /// piece is refused whole with the room the model has, and the why is the model's own or none.
+    #[test]
+    fn a_knowledge_piece_longer_than_the_card_is_refused_whole_and_the_why_is_never_a_stock_line() {
+        let dir = tempdir().unwrap();
+        let wd = dir.path().join("project");
+        let on = server(dir.path(), true);
+        let data = "Atlassian Data Center End of Life timeline (official): EOL = 28 Mar 2029 23:59 PST (all DC licences expire, products go read-only, support ends); end of sale to NEW customers = 30 Mar 2026; end of sale to EXISTING customers = 30 Mar 2028. Support + critical security fixes continue through 28 Mar 2029. Extensions past EOL are \"by exception only\". Bitbucket DC and Jira Align DC are EXCLUDED from EOL. Sources: atlassian.com/licensing/data-center-end-of-life and atlassian.com/blog/announcements/atlassian-ascend.";
+        let sources = vec![
+            "https://www.atlassian.com/licensing/data-center-end-of-life".to_string(),
+            "https://www.atlassian.com/blog/announcements/atlassian-ascend".to_string(),
+        ];
+        let params = |data: &str, why: Option<&str>| ProposeKnowledgeParams {
+            category: "atlassian-migration".to_string(),
+            data: data.to_string(),
+            sources: sources.clone(),
+            tags: vec!["atlassian".to_string()],
+            is_global: false,
+            why: why.map(str::to_string),
+        };
+        let err = on
+            .propose_knowledge_inner(params(data, None), Some(wd.clone()), Some("s1".into()))
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message
+                .contains("645 characters and a proposal card holds 350")
+                && err
+                    .message
+                    .contains("at most 218 characters (it is 513 now)"),
+            "{}",
+            err.message
+        );
+        let store = goose_memory_store::ProposalStore::new(dir.path().join("proposals"));
+        assert!(store.list("s1").unwrap().is_empty(), "no stump was filed");
+
+        let short = "Atlassian Data Center end of life is 28 Mar 2029; end of sale to new customers 30 Mar 2026, to existing 30 Mar 2028.";
+        on.propose_knowledge_inner(params(short, None), Some(wd.clone()), Some("s1".into()))
+            .unwrap();
+        on.propose_knowledge_inner(
+            params(
+                "Bitbucket DC and Jira Align DC are excluded from the EOL.",
+                Some("the client runs Bitbucket DC"),
+            ),
+            Some(wd),
+            Some("s1".into()),
+        )
+        .unwrap();
+        let rows = store.list("s1").unwrap();
+        assert!(rows[0].text.starts_with(short) && rows[0].text.ends_with("atlassian-ascend"));
+        assert_eq!(rows[0].why, "", "no stock reason where the model gave none");
+        assert_eq!(rows[1].why, "the client runs Bitbucket DC");
     }
 
     /// Q-82: a piece proposed in one chat is that chat's card — filed under the session goose
