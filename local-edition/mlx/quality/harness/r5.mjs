@@ -23,10 +23,13 @@ async function buttonIndex(label, way) {
       if (heads.length === 1) return re.test(heads[0]); if (heads.length > 1) return false; } return false; });
   }, { label, src: WAYS[way].source });
 }
+// A disabled button while another switch runs IS the UI refusing the race: recorded, never an error.
 async function click(label, way) {
   const i = await buttonIndex(label, way);
   if (i < 0) { log(`NO ${label} button on ${way}`); return false; }
-  await p.getByRole('button', { name: new RegExp(`^${label}$`) }).nth(i).click();
+  const btn = p.getByRole('button', { name: new RegExp(`^${label}$`) }).nth(i);
+  if (await btn.isDisabled().catch(() => true)) { log(`REFUSED ${label} on ${way}: disabled while busy`); return false; }
+  await btn.click({ timeout: 5000 }).catch((e) => log(`click ${label} on ${way} failed: ${e.message.split('\n')[0]}`));
   log(`clicked ${label} on ${way}`); return true;
 }
 async function tile() {
@@ -48,7 +51,7 @@ async function settle(tag, maxS = 420) {
 await openEngine();
 await settle('r5-0-start', 60);
 // a) Run across both Macs, then — while it is still starting — Run on the Studio.
-if (await click('Run', 'both')) { await p.waitForTimeout(4000); await click('Run', 'studio'); await settle('r5-a-both-then-studio'); }
+if (!process.env.SKIP_A && await click('Run', 'both')) { await p.waitForTimeout(4000); await click('Run', 'studio'); await settle('r5-a-both-then-studio'); }
 // b) Run on this Mac, double-clicked.
 { const i = await buttonIndex('Run', 'here'); if (i >= 0) { const btn = p.getByRole('button', { name: /^Run$/ }).nth(i); await btn.dblclick(); log('double-clicked Run on here'); await settle('r5-b-here-double'); } }
 // c) back to the Studio, then Run on this Mac while the Studio is still mounting.

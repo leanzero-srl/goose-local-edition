@@ -4,7 +4,7 @@
 label=${1:-census}
 out=${CENSUS_OUT:-./census.jsonl}
 probe='
-procs=$(ps -axo pid=,ppid=,rss=,etime=,command= | grep -E "rapid-mlx serve|rapid_mlx|rank_wrapper|mlx_lm|pipeline_qwen4|jaccl" | grep -v grep | awk "{printf \"%s|%s|%s|%s|\", \$1,\$2,\$3,\$4; for(i=5;i<=NF&&i<=9;i++) printf \"%s \", \$i; print \"\"}");
+procs=$(ps -axo pid=,ppid=,rss=,etime=,command= | grep -E "rapid-mlx serve|rapid_mlx|rank_wrapper|mlx_lm|pipeline_qwen4|jaccl|\\.goose/distributed/" | grep -v grep | awk "{printf \"%s|%s|%s|%s|\", \$1,\$2,\$3,\$4; for(i=5;i<=NF&&i<=9;i++) printf \"%s \", \$i; print \"\"}");
 ports=$(lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null | awk "/python|rapid|Python/ {print \$9}" | sort -u | tr "\n" " ");
 pp=$(/usr/bin/memory_pressure -Q 2>/dev/null | awk -F": " "/percentage/ {print \$2}");
 wired=$(vm_stat | awk "/wired down/ {gsub(\"\\\\.\",\"\",\$4); print \$4*16384/1073741824}");
