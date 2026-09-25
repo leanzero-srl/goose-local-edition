@@ -31,7 +31,9 @@ let broke = null; let i = 0;
 while ((Date.now() - t0) / 1000 < 240) {
   const s = await snap(); const t = ((Date.now() - t0) / 1000).toFixed(1);
   let event = '';
-  if (!broke && s.tail.split(' ').length > 40 && (Date.now() - t0) > 8000) {
+  // Break once the answer is being written: the chip's phase word says Writing (the transcript-length test
+  // missed on 3.0.37 — a 220-char tail is under 40 words), and never before 8 s so the turn is under way.
+  if (!broke && /\[Writing\]/.test(s.chip) && (Date.now() - t0) > 8000) {
     broke = Date.now();
     event = mode;
     if (mode === 'kill-link') execSync(`ssh workhorse 'kill $(pgrep -f "Goose Swarm.app/Contents/Resources/bin/tailscaled" | head -1)'`);
