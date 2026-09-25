@@ -198,6 +198,83 @@ const PIPELINE_MODULE: &str = "rapid_mlx.distributed.pipeline_qwen4";
 pub const GPU_CEILING_PROBE: &str =
     "import mlx.core as mx; print(mx.device_info()['max_recommended_working_set_size'])";
 
+/// Prints `free`, or `held` then the holder's record (its holder proven alive by the ranks' own
+/// proof, `rank_load_lock.py`), or `stale <proof>` for a record whose holder is gone.
+fn load_lock_probe() -> String {
+    format!(
+        "{}\n\
+         path = load_lock_path()\n\
+         text = open(path).read() if os.path.exists(path) else ''\n\
+         record = dict(l.split('=', 1) for l in text.splitlines() if '=' in l)\n\
+         if not record:\n    print('free')\n\
+         else:\n    alive, proof = holder_alive(record)\n    print('held' if alive else 'stale ' + str(proof))\n    print(text)\n",
+        include_str!("rank_load_lock.py")
+    )
+}
+
+/// The node's load lock, as `load_lock_probe` answered: FAIL while another load holds the Mac.
+fn load_lock_check(text: &str) -> Check {
+    let mut lines = text.trim_start().splitn(2, '\n');
+    let head = lines.next().unwrap_or_default().trim();
+    let rest = lines.next().unwrap_or_default();
+    if head == "free" {
+        return Check::pass("loadLock", "no other model is loading on this node");
+    }
+    if let Some(proof) = head.strip_prefix("stale ") {
+        return Check::pass(
+            "loadLock",
+            format!("no other model is loading on this node (a stale record: {proof})"),
+        );
+    }
+    if head == "held" {
+        return match crate::machine::LoadHolder::parse_record(rest) {
+            Ok(Some(holder)) => Check::fail(
+                "loadLock",
+                format!(
+                    "another model is loading on this node: {}. One model loads at a time per \
+                     Mac — two loads at once can wedge its GPU. Start the split once it \
+                     finishes, or stop it first",
+                    holder.describe(crate::machine::now_unix())
+                ),
+            ),
+            Ok(None) => Check::fail(
+                "loadLock",
+                "the node's load lock is held with an empty record",
+            ),
+            Err(e) => Check::fail("loadLock", format!("the node's load lock is held: {e:#}")),
+        };
+    }
+    Check::fail(
+        "loadLock",
+        format!("the node's load lock could not be read: {}", text.trim()),
+    )
+}
+
+/// The resident bytes of the other MLX engines on a node (`@@pidrss`, KiB per pid), each named —
+/// what its GPU ceiling already carries.
+fn other_engines_on_node(
+    foreign: &[(u32, String, probe::ForeignKind)],
+    pid_rss: &str,
+) -> (u64, Vec<String>) {
+    let rss: BTreeMap<u32, u64> = pid_rss
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+        })
+        .collect();
+    let mut total = 0u64;
+    let mut named = Vec::new();
+    for (pid, command, _) in foreign {
+        if let Some(kib) = rss.get(pid) {
+            let bytes = kib * 1024;
+            total += bytes;
+            named.push(format!("pid {pid} holds {} (`{command}`)", gib(bytes)));
+        }
+    }
+    (total, named)
+}
+
 /// How many of a node's biggest apps a short node names.
 const TOP_APPS: usize = 3;
 
@@ -267,6 +344,15 @@ pub(crate) fn node_probe_script(
     ));
     add("echo; echo @@wiredlimit; /usr/sbin/sysctl -n iogpu.wired_limit_mb 2>&1".into());
     add("echo; echo @@rss; /bin/ps -axo rss=,comm=".into());
+    // Their own sections (an older peer's answer must keep parsing): every pid's resident KiB, so
+    // the other MLX engines' real footprint is charged against this node's GPU ceiling, and the
+    // Mac's load lock as the ranks' own code proves it (Q-106).
+    add("echo; echo @@pidrss; /bin/ps -axo pid=,rss=".into());
+    add(format!(
+        "echo; echo @@loadlock; {} -c {} 2>&1",
+        sh_quote(&node.python),
+        sh_quote(&load_lock_probe())
+    ));
     if runner == Some(Runner::PipelineQwen4) {
         if let Some(python) = &node.pipeline_python {
             add(format!(
@@ -445,6 +531,30 @@ struct NodeAnswer {
     pings: Vec<PingLine>,
     leftovers: Vec<probe::GooseRankProcess>,
     foreign_splits: Vec<String>,
+    /// The resident bytes the other MLX engines on the node hold, charged against its GPU ceiling.
+    other_engines_bytes: u64,
+    other_engines: Vec<String>,
+}
+
+impl NodeAnswer {
+    /// What of the GPU ceiling the node's other engines leave this launch.
+    fn ceiling_left(&self) -> Option<u64> {
+        self.ceiling
+            .map(|c| c.saturating_sub(self.other_engines_bytes))
+    }
+
+    fn ceiling_words(&self) -> String {
+        match (self.ceiling, self.other_engines_bytes) {
+            (None, _) => "unread".to_string(),
+            (Some(c), 0) => gib(c),
+            (Some(c), other) => format!(
+                "{} − {} other engines hold ({})",
+                gib(c),
+                gib(other),
+                self.other_engines.join("; ")
+            ),
+        }
+    }
 }
 
 /// `owner`: this install's owner token (`launch::OWNER_ARG_PREFIX`); a goose rank carrying it is
@@ -472,6 +582,8 @@ fn read_answer(
         pings: Vec::new(),
         leftovers: Vec::new(),
         foreign_splits: Vec::new(),
+        other_engines_bytes: 0,
+        other_engines: Vec::new(),
     };
     let output = match output {
         Ok(output) if output.ssh_failed() => {
@@ -544,6 +656,14 @@ fn read_answer(
     answer.wired_limit_mb = sections
         .get("wiredlimit")
         .and_then(|t| t.trim().parse().ok());
+    answer.checks.push(match sections.get("loadlock") {
+        Some(text) => load_lock_check(text),
+        None => Check::warn(
+            "loadLock",
+            "this node's goose predates the machine-wide load lock: a load there is not kept \
+             from running beside another",
+        ),
+    });
     answer.top_apps = sections
         .get("rss")
         .map(|t| probe::top_apps_by_rss(t, TOP_APPS))
@@ -568,6 +688,18 @@ fn read_answer(
             let foreign = probe::classify_foreign_engines(text, &not_foreign);
             answer.foreign_splits = foreign_rows(&foreign, probe::ForeignKind::Distributed);
             answer.checks.push(foreign_engines_check(&foreign));
+            match sections.get("pidrss") {
+                Some(pid_rss) => {
+                    (answer.other_engines_bytes, answer.other_engines) =
+                        other_engines_on_node(&foreign, pid_rss);
+                }
+                None if !foreign.is_empty() => answer.checks.push(Check::warn(
+                    "otherEngines",
+                    "this node's goose predates the per-pid memory listing: the other MLX \
+                     engines' memory is NOT charged against its GPU ceiling",
+                )),
+                None => {}
+            }
             if !answer.leftovers.is_empty() {
                 answer.checks.push(previous_split_check(&answer.leftovers));
             }
@@ -773,7 +905,8 @@ fn foreign_engines_check(foreign: &[(u32, String, probe::ForeignKind)]) -> Check
             "foreignEngines",
             format!(
                 "a single MLX server shares this node: {} — its memory is already outside the \
-                 available figure the plan is measured against; it contends for the GPU, so \
+                 available figure the plan is measured against, and is charged against the \
+                 node's GPU ceiling (the memory check names it); it contends for the GPU, so \
                  decode here slows while it serves",
                 single.join("; ")
             ),
@@ -1075,7 +1208,7 @@ pub async fn run_preflight(
             Some(NodeFigures::new(
                 memory.available_bytes,
                 memory.total_bytes,
-                a.ceiling?,
+                a.ceiling_left()?,
             ))
         })
         .collect();
@@ -1113,7 +1246,12 @@ pub async fn run_preflight(
             let head = match &pipeline_ratios {
                 Some(ratios) => format!(
                     "{measured}; {}",
-                    stage_line(plan, ratios, reading.available_bytes, answer.ceiling)
+                    stage_line(
+                        plan,
+                        ratios,
+                        reading.available_bytes,
+                        answer.ceiling_words()
+                    )
                 ),
                 None => format!(
                     "{measured}; budget {} = min(available − RAM × {:.2}, GPU ceiling {}); \
@@ -1121,10 +1259,7 @@ pub async fn run_preflight(
                      workspace {} = {}",
                     gib(plan.budget_bytes),
                     super::AVAILABLE_MARGIN_RATIO,
-                    answer
-                        .ceiling
-                        .map(gib)
-                        .unwrap_or_else(|| "unread".to_string()),
+                    answer.ceiling_words(),
                     gib(plan.planned_bytes),
                     gib(plan.weights_bytes),
                     gib(plan.state_bytes),
@@ -1336,16 +1471,11 @@ fn pipeline_stage_line(stage: &PipelineStage, plan: &RankPlan, ratios: &Pipeline
         plan,
         ratios,
         stage.available_bytes,
-        Some(stage.ceiling_bytes),
+        gib(stage.ceiling_bytes),
     )
 }
 
-fn stage_line(
-    plan: &RankPlan,
-    ratios: &PipelineRatios,
-    available: u64,
-    ceiling: Option<u64>,
-) -> String {
+fn stage_line(plan: &RankPlan, ratios: &PipelineRatios, available: u64, ceiling: String) -> String {
     format!(
         "layers [{}, {}): weights {} + state {} + workspace {} = {} of budget {} = \
          min(available {} − RAM × {:.2}, GPU ceiling {}) (the fork's plan with the prefill's attention scores, {:.0}%) → {}",
@@ -1358,7 +1488,7 @@ fn stage_line(
         gib(plan.budget_bytes),
         gib(available),
         ratios.available_margin,
-        ceiling.map(gib).unwrap_or_else(|| "unread".to_string()),
+        ceiling,
         100.0 * plan.with_overhead_bytes as f64 / plan.budget_bytes.max(1) as f64,
         if plan.fits { "fits" } else { "DOES NOT FIT" },
     )
@@ -2340,6 +2470,107 @@ pub(crate) mod tests {
         assert_eq!(
             check(&tokenless, "foreignEngines").unwrap().verdict,
             CheckVerdict::Fail
+        );
+    }
+
+    /// Q-106 on a split's node: the probe reads the node's load lock with the ranks' own proof. A
+    /// live holder FAILs `loadLock` by name; a dead holder's record passes as stale; no record is
+    /// free. Run for real under /usr/bin/python3, against a lock a stand-in rank holds.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_node_probe_names_a_load_in_progress_and_passes_a_stale_record() {
+        use std::io::{BufRead, Write};
+        let dir = tempfile::tempdir().unwrap();
+        let lock = dir.path().join("mlx-load.lock");
+        let probe = load_lock_probe().replace(
+            "path = load_lock_path()",
+            &format!("path = {:?}", lock.display().to_string()),
+        );
+        let run = || {
+            let out = std::process::Command::new("/usr/bin/python3")
+                .args(["-c", &probe])
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            load_lock_check(&String::from_utf8_lossy(&out.stdout))
+        };
+        let free = run();
+        assert_eq!(free.verdict, CheckVerdict::Pass, "{}", free.message);
+
+        let holder = format!(
+            "{}\nimport sys\ntake_load_lock(sys.argv[1], 'single', 'goose (pid 1) is loading Qwen3.8-27B')\n\
+             print('HELD', flush=True)\nsys.stdin.readline()\n",
+            include_str!("rank_load_lock.py")
+        );
+        let mut rank = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &holder, lock.to_str().unwrap()])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(rank.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        assert_eq!(line.trim(), "HELD");
+        let held = run();
+        assert_eq!(held.verdict, CheckVerdict::Fail);
+        assert!(
+            held.message.contains(&format!("pid {}", rank.id())),
+            "{}",
+            held.message
+        );
+        assert!(
+            held.message.contains("loading Qwen3.8-27B"),
+            "{}",
+            held.message
+        );
+
+        // The holder dies without its release: the record stays, the kernel frees the lock.
+        rank.kill().unwrap();
+        rank.wait().unwrap();
+        let stale = run();
+        assert_eq!(stale.verdict, CheckVerdict::Pass, "{}", stale.message);
+        assert!(stale.message.contains("stale record"), "{}", stale.message);
+        drop(rank.stdin.take().map(|mut s| s.write_all(b"\n")));
+    }
+
+    #[test]
+    fn a_probe_answer_that_is_not_one_fails_loud() {
+        let check = load_lock_check("Traceback: no module named pwd");
+        assert_eq!(check.verdict, CheckVerdict::Fail);
+        assert!(
+            check.message.contains("could not be read"),
+            "{}",
+            check.message
+        );
+    }
+
+    /// Q-106: a single server on a node holds part of its GPU ceiling; the split's budget there is
+    /// what it leaves, and the memory line says whose memory it is.
+    #[test]
+    fn another_engines_resident_bytes_are_charged_against_the_nodes_ceiling() {
+        let foreign = vec![(
+            4388,
+            "/x/bin/python /x/bin/rapid-mlx serve /m --port 8124".to_string(),
+            probe::ForeignKind::SingleServer,
+        )];
+        let (bytes, named) = other_engines_on_node(&foreign, "  4388 33030144\n  1 1024\n");
+        assert_eq!(bytes, 33_030_144 * 1024);
+        assert_eq!(named.len(), 1);
+        assert!(
+            named[0].starts_with("pid 4388 holds 31.50 GiB"),
+            "{}",
+            named[0]
+        );
+        let (none, _) = other_engines_on_node(&foreign, "  1 1024\n");
+        assert_eq!(
+            none, 0,
+            "an engine gone between the two listings holds nothing"
         );
     }
 }

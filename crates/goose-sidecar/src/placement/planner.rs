@@ -346,6 +346,7 @@ fn node_budget(node: &NodeInput) -> Result<Budget, String> {
         available_bytes: memory.available_bytes,
         total_bytes: memory.total_bytes,
         ceiling_bytes: *ceiling,
+        other_engines_bytes: 0,
     };
     Ok(Budget {
         budget: facts.budget_bytes(),
@@ -1916,6 +1917,7 @@ mod tests {
                 available_bytes: gib(93.0),
                 total_bytes: gib(128.0),
                 ceiling_bytes: M4_CEILING,
+                other_engines_bytes: 0,
             },
         );
         assert_eq!(gate.verdict, Verdict::Block);

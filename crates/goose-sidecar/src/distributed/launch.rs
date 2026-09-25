@@ -41,6 +41,7 @@ pub const RANK_MARKER: &str = "goose-distributed-rank";
 pub const OWNER_ARG_PREFIX: &str = "goose-distributed-owner=";
 
 const TENSOR_PROGRAM: &str = concat!(
+    include_str!("rank_load_lock.py"),
     include_str!("rank_env.py"),
     include_str!("rank_live.py"),
     include_str!("rank_budget.py"),
@@ -49,6 +50,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_wrapper.py")
 );
 const PIPELINE_PROGRAM: &str = concat!(
+    include_str!("rank_load_lock.py"),
     include_str!("rank_env.py"),
     include_str!("rank_live.py"),
     include_str!("pipeline_rank.py")
@@ -153,6 +155,12 @@ pub struct RankSpec {
     /// launched it: its leftovers are never provably this install's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// Where the rank takes the Mac's load lock (`rank_load_lock.py`). `None` — every production
+    /// spec — is the machine's own lock under the rank's account home, which the rank resolves on
+    /// the Mac it runs on (the requester cannot know a peer's home). Test builds point each launch
+    /// at a lock of its own, so a stand-in rank never holds this Mac's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_lock: Option<String>,
     #[serde(flatten)]
     pub program: RankProgram,
 }
@@ -358,6 +366,10 @@ fn base_specs(
             )]
         })
         .collect();
+    #[cfg(not(test))]
+    let launch_load_lock: Option<String> = None;
+    #[cfg(test)]
+    let launch_load_lock = Some(tests::launch_load_lock());
     config
         .nodes
         .iter()
@@ -376,6 +388,7 @@ fn base_specs(
             memory_report_seconds,
             planned_weight_bytes: None,
             owner: None,
+            load_lock: launch_load_lock.clone(),
             program: program(rank, node),
         })
         .collect()
@@ -605,9 +618,22 @@ pub fn spawn_rank(node: &NodeConfig, spec: &RankSpec) -> Result<RankProcess> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::distributed::config::tests::two_mac_config;
+
+    /// One launch's own load lock: a test's stand-in ranks never take this Mac's, nor each other's.
+    pub(crate) fn launch_load_lock() -> String {
+        static LAUNCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let launch = LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::env::temp_dir()
+            .join(format!(
+                "goose-sidecar-test-load-locks/{}-{launch}/mlx-load.lock",
+                std::process::id()
+            ))
+            .display()
+            .to_string()
+    }
 
     /// The 27B's prefill figures on 2 ranks at E2E #2's 262,144-token plan (plan.rs's fixture):
     /// one row's 2,048-token chunk at the full context.
@@ -839,6 +865,7 @@ mod tests {
         assert_eq!(
             program,
             concat!(
+                include_str!("rank_load_lock.py"),
                 include_str!("rank_env.py"),
                 include_str!("rank_live.py"),
                 include_str!("pipeline_rank.py")
@@ -1262,6 +1289,7 @@ print("ok")
         assert_eq!(
             program,
             concat!(
+                include_str!("rank_load_lock.py"),
                 include_str!("rank_env.py"),
                 include_str!("rank_live.py"),
                 include_str!("rank_budget.py"),

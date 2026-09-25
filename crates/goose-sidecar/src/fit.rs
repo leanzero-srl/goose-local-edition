@@ -64,6 +64,13 @@ pub struct NodeMemoryFacts {
     pub total_bytes: u64,
     /// Metal's `recommendedMaxWorkingSetSize` on that Mac.
     pub ceiling_bytes: u64,
+    /// The resident bytes the OTHER MLX engines on that Mac hold (`machine::other_engines`, read
+    /// from the kernel), charged against the ceiling: Metal's working set is the Mac's, shared by
+    /// every process on the GPU, and each engine wires up to all of it (Q-11, Q-106). The RAM side
+    /// needs no charge — what they hold is already not available. 0 where the caller has no census
+    /// of the Mac: the placement planner, which recommends and never admits a load (the gates that
+    /// admit one — the single engine's mount and the split's preflight — always measure it).
+    pub other_engines_bytes: u64,
 }
 
 impl NodeMemoryFacts {
@@ -71,14 +78,27 @@ impl NodeMemoryFacts {
         (self.total_bytes as f64 * AVAILABLE_MARGIN_RATIO) as u64
     }
 
+    /// What of the GPU ceiling the other engines leave.
+    pub fn ceiling_left_bytes(&self) -> u64 {
+        self.ceiling_bytes.saturating_sub(self.other_engines_bytes)
+    }
+
     pub fn budget_bytes(&self) -> u64 {
-        budget_bytes(self.available_bytes, self.total_bytes, self.ceiling_bytes)
+        budget_bytes(
+            self.available_bytes,
+            self.total_bytes,
+            self.ceiling_left_bytes(),
+        )
     }
 
     /// The budget if every byte of RAM were available: no amount of reclaimed memory lets a need
-    /// above it through.
+    /// above it through (the other engines' share of the ceiling is not reclaimable memory).
     pub fn best_case_budget_bytes(&self) -> u64 {
-        budget_bytes(self.total_bytes, self.total_bytes, self.ceiling_bytes)
+        budget_bytes(
+            self.total_bytes,
+            self.total_bytes,
+            self.ceiling_left_bytes(),
+        )
     }
 
     pub fn tight_band_bytes(&self) -> u64 {
@@ -181,13 +201,20 @@ impl FitVerdict {
 pub fn judge(need: Need, facts: NodeMemoryFacts) -> FitVerdict {
     let budget = facts.budget_bytes();
     let needed = need.total_bytes();
+    let ceiling = match facts.other_engines_bytes {
+        0 => format!("GPU ceiling {}", gb(facts.ceiling_bytes)),
+        other => format!(
+            "GPU ceiling {} − {} other engines hold",
+            gb(facts.ceiling_bytes),
+            gb(other)
+        ),
+    };
     let rule = format!(
-        "budget {} = min(available {} − the {:.1}% margin {}, GPU ceiling {})",
+        "budget {} = min(available {} − the {:.1}% margin {}, {ceiling})",
         gb(budget),
         gb(facts.available_bytes),
         AVAILABLE_MARGIN_RATIO * 100.0,
         gb(facts.margin_bytes()),
-        gb(facts.ceiling_bytes)
     );
     let (verdict, message) = if needed > budget {
         (
@@ -262,6 +289,7 @@ mod tests {
             available_bytes: gib_f(93.0),
             total_bytes: M4_TOTAL,
             ceiling_bytes: M4_CEILING,
+            other_engines_bytes: 0,
         };
         let v = judge(weights_only(gib_f(97.5)), facts);
         assert_eq!(v.verdict, Verdict::Block);
@@ -291,6 +319,7 @@ mod tests {
             available_bytes: gib_f(90.0),
             total_bytes: M3_TOTAL,
             ceiling_bytes: M3_CEILING,
+            other_engines_bytes: 0,
         };
         // Available 90 − 8.9 margin = 81.1, but Metal's ceiling is 77.8 GiB.
         assert_eq!(facts.budget_bytes(), M3_CEILING);
@@ -311,6 +340,7 @@ mod tests {
             available_bytes: gib_f(60.0),
             total_bytes: M4_TOTAL,
             ceiling_bytes: M4_CEILING,
+            other_engines_bytes: 0,
         };
         let budget = facts.budget_bytes();
         let tight = judge(weights_only(budget - gib_f(1.0)), facts);
@@ -335,12 +365,46 @@ mod tests {
             available_bytes: gib_f(20.0),
             total_bytes: M4_TOTAL,
             ceiling_bytes: M4_CEILING,
+            other_engines_bytes: 0,
         };
         let v = judge(gap, facts);
         assert!(
             v.message.contains("KV not sized: no config.json"),
             "{}",
             v.message
+        );
+    }
+
+    /// Q-106: the ceiling is the Mac's, not one process's. On the M3 Ultra with another engine
+    /// holding 40 GiB and 50 GiB available (its RAM mostly engines and file cache), the RAM side
+    /// alone admits a 38.5 GiB load (budget 41.1); the ceiling that engine leaves (77.8 − 40) does
+    /// not. With no other engine the same Mac admits it.
+    #[test]
+    fn other_engines_are_charged_against_the_gpu_ceiling() {
+        let alone = NodeMemoryFacts {
+            available_bytes: gib_f(50.0),
+            total_bytes: M3_TOTAL,
+            ceiling_bytes: M3_CEILING,
+            other_engines_bytes: 0,
+        };
+        let need = weights_only(gib_f(38.5));
+        assert_ne!(judge(need.clone(), alone).verdict, Verdict::Block);
+        let beside = NodeMemoryFacts {
+            other_engines_bytes: gib_f(40.0),
+            ..alone
+        };
+        assert_eq!(beside.budget_bytes(), M3_CEILING - gib_f(40.0));
+        let v = judge(need, beside);
+        assert_eq!(v.verdict, Verdict::Block, "{}", v.message);
+        assert!(
+            v.message
+                .contains("GPU ceiling 77.8 GB − 40.0 GB other engines hold"),
+            "{}",
+            v.message
+        );
+        assert!(
+            !v.could_ever_fit(),
+            "no reclaim frees what another engine holds, so Make room is not offered"
         );
     }
 }

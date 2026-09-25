@@ -18,6 +18,9 @@ use tokio::sync::Mutex;
 use crate::fit::{self, FitVerdict, Need, NodeMemoryFacts, Verdict};
 use crate::hf::{self, LocalModel};
 use crate::kv_cache::{self, KvCacheMode};
+use crate::machine::{
+    self, LoadClaim, LoadHolder, LoadLock, LoadLockAttempt, LoadLockHeld, OtherEngine,
+};
 use crate::{
     listening_pids, measure, port_has_listener, MemoryReading, Sidecar, SidecarConfig,
     StartupWatch, GIB,
@@ -627,13 +630,20 @@ pub struct EngineStatus {
     pub last_error: Option<String>,
     /// While a mount is in flight: how far the load has come. `None` otherwise.
     pub load: Option<EngineLoad>,
+    /// Another process loading a model on this Mac right now — it holds the Mac's load lock
+    /// (`machine`), proven alive. `None` when no one else is loading, or exactly when
+    /// `machine_load_error` says why the lock could not be read.
+    pub machine_load: Option<LoadHolder>,
+    pub machine_load_error: Option<String>,
 }
 
 /// A mount in flight, measured — never a guessed percentage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EngineLoad {
-    /// "makingRoom" (macOS is asked to reclaim memory before the gate judges again) |
-    /// "starting" (the process runs; the engine has not said it is loading) | "loading" |
+    /// "waitingForLoad" (another load holds this Mac; `EngineStatus::machine_load` names it — the
+    /// mount starts when it ends) | "makingRoom" (macOS is asked to reclaim memory before the gate
+    /// judges again) | "starting" (the process runs; the engine has not said it is loading) |
+    /// "loading" |
     /// "warming" (weights in; compiling kernels before it answers).
     pub phase: String,
     /// Resident bytes of the engine process (see `StartupWatch`); `None` before it exists.
@@ -664,6 +674,8 @@ pub fn start_phase(stderr_tail: &[String]) -> &'static str {
 pub struct MountRefused {
     pub model_id: String,
     pub verdict: FitVerdict,
+    /// The other MLX engines whose memory the verdict charged — what the owner could stop.
+    pub other_engines: Vec<OtherEngine>,
 }
 
 impl std::fmt::Display for MountRefused {
@@ -677,6 +689,33 @@ impl std::fmt::Display for MountRefused {
 }
 
 impl std::error::Error for MountRefused {}
+
+/// Another load holds this Mac (`machine`): the mount is refused before its gate judges, since the
+/// memory it would read is about to change under the other load.
+#[derive(Debug, Clone)]
+pub struct LoadInProgress {
+    pub model_id: String,
+    pub held: LoadLockHeld,
+    /// The engine the holder is loading, when the census can name it (the process a stop targets).
+    pub holder_engine: Option<OtherEngine>,
+}
+
+impl std::fmt::Display for LoadInProgress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "mount of '{}' refused: {}",
+            self.model_id,
+            self.held.message()
+        )?;
+        if let Some(engine) = &self.holder_engine {
+            write!(f, " (its engine: {})", engine.describe())?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for LoadInProgress {}
 
 #[cfg(unix)]
 pub fn local_gpu_ceiling() -> Result<u64> {
@@ -796,12 +835,28 @@ pub struct MlxEngineManager {
     last_gate: StdMutex<Option<FitVerdict>>,
     /// The model a mount is making room for (macOS compaction runs before the gate judges again).
     making_room: StdMutex<Option<(String, u64)>>,
+    /// The mount waiting for another load to leave this Mac (`mount_after_load`).
+    waiting_for_load: StdMutex<Option<WaitingForLoad>>,
+    wait_tickets: std::sync::atomic::AtomicU64,
     probe_client: reqwest::Client,
     /// The memory facts a unit test pins, so a mount's verdict never depends on what else this
     /// Mac is running (Q-105: four lifecycle tests failed whenever other engines held the RAM).
+    /// Pinned memory pins the other engines too (none, unless `test_others` names some).
     /// Test builds only — no production path can hand the gate a figure it did not measure.
     #[cfg(test)]
     test_memory: StdMutex<Option<(MemoryReading, u64)>>,
+    #[cfg(test)]
+    test_others: StdMutex<Option<Vec<OtherEngine>>>,
+    /// A test manager's own load lock: no test ever takes this Mac's.
+    #[cfg(test)]
+    test_lock_dir: tempfile::TempDir,
+}
+
+#[derive(Debug, Clone)]
+struct WaitingForLoad {
+    ticket: u64,
+    model_id: String,
+    weights_bytes: u64,
 }
 
 impl MlxEngineManager {
@@ -811,13 +866,42 @@ impl MlxEngineManager {
             settings: StdMutex::new(EngineSettings::default()),
             last_gate: StdMutex::new(None),
             making_room: StdMutex::new(None),
+            waiting_for_load: StdMutex::new(None),
+            wait_tickets: std::sync::atomic::AtomicU64::new(0),
             probe_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
                 .expect("reqwest client with static configuration"),
             #[cfg(test)]
             test_memory: StdMutex::new(None),
+            #[cfg(test)]
+            test_others: StdMutex::new(None),
+            #[cfg(test)]
+            test_lock_dir: tempfile::tempdir()
+                .expect("a temp dir for the test manager's load lock"),
         }
+    }
+
+    fn load_lock_path(&self) -> Result<PathBuf> {
+        #[cfg(test)]
+        return Ok(self.test_lock_dir.path().join("mlx-load.lock"));
+        #[cfg(not(test))]
+        machine::load_lock_path()
+    }
+
+    /// The other MLX engines on this Mac (`machine::other_engines`), this manager's own engine on
+    /// `port` left out — a mount replaces it, and counts its memory as available.
+    fn other_engines(&self, port: u16) -> Vec<OtherEngine> {
+        #[cfg(test)]
+        {
+            if let Some(others) = self.test_others.lock().unwrap().clone() {
+                return others;
+            }
+            if self.test_memory.lock().unwrap().is_some() {
+                return Vec::new();
+            }
+        }
+        machine::other_engines(Some(port))
     }
 
     fn memory_reading(&self) -> Result<MemoryReading> {
@@ -879,6 +963,15 @@ impl MlxEngineManager {
         settings: &EngineSettings,
         model: &LocalModel,
     ) -> Result<FitVerdict> {
+        Ok(self.judge_model_beside(settings, model).await?.0)
+    }
+
+    /// The fit, and the other engines it charged against the GPU ceiling.
+    async fn judge_model_beside(
+        &self,
+        settings: &EngineSettings,
+        model: &LocalModel,
+    ) -> Result<(FitVerdict, Vec<OtherEngine>)> {
         let reading = self.memory_reading()?;
         let ceiling = self
             .gpu_ceiling()
@@ -892,18 +985,23 @@ impl MlxEngineManager {
                 .get(&model.id)
                 .and_then(|p| p.kv_cache),
         );
+        let others = self.other_engines(settings.port);
         let mut verdict = fit::judge(
             need,
             NodeMemoryFacts {
                 available_bytes: reading.available_bytes.saturating_add(freed),
                 total_bytes: reading.total_bytes,
                 ceiling_bytes: ceiling,
+                other_engines_bytes: machine::other_engines_bytes(&others),
             },
         );
         if let Some(note) = note {
             verdict.append(note);
         }
-        Ok(verdict)
+        if let Some(note) = machine::other_engines_note(&others) {
+            verdict.append(note);
+        }
+        Ok((verdict, others))
     }
 
     /// The running engine's resident bytes (what a mount gets back), with the sentence that says
@@ -935,21 +1033,128 @@ impl MlxEngineManager {
         }
     }
 
-    /// Validate the model and the one fit rule, flip to `Mounting`, and return; the engine start
-    /// continues in a spawned task. A `Block` refuses the mount with [`MountRefused`] (after Make
-    /// room had its chance). Any already-running engine is shut down first — one model per engine
-    /// — and once this manager supervises nothing, a listener still on the port is somebody
-    /// else's: the mount is refused with [`UnsupervisedListenerError`] rather than started over it.
+    /// Take this Mac's load lock (`machine`), validate the model and the one fit rule, flip to
+    /// `Mounting`, and return; the engine start continues in a spawned task, which holds the lock
+    /// until the start ends. Another load holding the Mac refuses the mount with
+    /// [`LoadInProgress`] — before the gate reads memory the other load is about to take
+    /// ([`Self::mount_after_load`] waits instead). A `Block` refuses the mount with
+    /// [`MountRefused`] (after Make room had its chance). Any already-running engine is shut down
+    /// first — one model per engine — and once this manager supervises nothing, a listener still
+    /// on the port is somebody else's: the mount is refused with [`UnsupervisedListenerError`]
+    /// rather than started over it.
     pub async fn mount(&self, model_id: &str) -> Result<()> {
+        *self.waiting_for_load.lock().unwrap() = None;
+        match self.try_claim_the_mac(model_id).await?.1 {
+            LoadLockAttempt::Acquired(lock) => self.mount_holding(model_id, lock).await,
+            LoadLockAttempt::Held(held) => Err(self.load_in_progress(model_id, held).into()),
+        }
+    }
+
+    /// [`Self::mount`], except that another load holding this Mac is waited for: the mount is
+    /// recorded as waiting (status `mounting`, load phase `waitingForLoad`, `machine_load` naming
+    /// the holder) and runs — its gate judged on the memory the finished load left — when the
+    /// holder lets go. No clock bounds the wait; Unmount or another Mount ends it. A lock held by
+    /// a process that is not its recorded holder is refused, never waited for: nothing says when
+    /// such a holder lets go.
+    pub async fn mount_after_load(&'static self, model_id: &str) -> Result<()> {
+        *self.waiting_for_load.lock().unwrap() = None;
+        let (model, attempt) = self.try_claim_the_mac(model_id).await?;
+        let held = match attempt {
+            LoadLockAttempt::Acquired(lock) => return self.mount_holding(model_id, lock).await,
+            LoadLockAttempt::Held(held) => held,
+        };
+        if held.holder.is_none() || held.liveness != machine::Liveness::Alive {
+            return Err(self.load_in_progress(model_id, held).into());
+        }
+        if let ManagerState::Mounting {
+            model_id: current, ..
+        } = &*self.state.lock().await
+        {
+            bail!("mount already in progress for '{current}'");
+        }
         let settings = self.settings();
-        let model = self.local_model(&settings, model_id)?;
+        let path = self.load_lock_path()?;
+        let claim = LoadClaim::single_engine(model_id, settings.port, model.size_bytes);
+        let ticket = self
+            .wait_tickets
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *self.waiting_for_load.lock().unwrap() = Some(WaitingForLoad {
+            ticket,
+            model_id: model_id.to_string(),
+            weights_bytes: model.size_bytes,
+        });
+        let model_id = model_id.to_string();
+        tokio::spawn(async move {
+            let taken =
+                tokio::task::spawn_blocking(move || machine::acquire_waiting(&path, &claim)).await;
+            let ours = |waiting: &Option<WaitingForLoad>| {
+                waiting.as_ref().is_some_and(|w| w.ticket == ticket)
+            };
+            if !ours(&self.waiting_for_load.lock().unwrap()) {
+                return;
+            }
+            let outcome = match taken {
+                Ok(Ok(lock)) => self.mount_holding(&model_id, lock).await,
+                Ok(Err(e)) => Err(e),
+                Err(e) => Err(anyhow::anyhow!("the load lock wait ended in a panic: {e}")),
+            };
+            {
+                let mut waiting = self.waiting_for_load.lock().unwrap();
+                if ours(&waiting) {
+                    *waiting = None;
+                }
+            }
+            if let Err(e) = outcome {
+                *self.state.lock().await = ManagerState::Failed {
+                    model_id,
+                    error: format!("{e:#}"),
+                };
+            }
+        });
+        Ok(())
+    }
+
+    fn mountable_model(&self, settings: &EngineSettings, model_id: &str) -> Result<LocalModel> {
+        let model = self.local_model(settings, model_id)?;
         ensure!(
             model.complete,
             "model '{model_id}' is incomplete: a .part file remains or no .safetensors is present"
         );
+        Ok(model)
+    }
+
+    async fn try_claim_the_mac(&self, model_id: &str) -> Result<(LocalModel, LoadLockAttempt)> {
+        let settings = self.settings();
+        let model = self.mountable_model(&settings, model_id)?;
+        let path = self.load_lock_path()?;
+        let claim = LoadClaim::single_engine(model_id, settings.port, model.size_bytes);
+        let attempt = tokio::task::spawn_blocking(move || machine::try_acquire(&path, &claim))
+            .await
+            .context("the load lock task panicked")??;
+        Ok((model, attempt))
+    }
+
+    fn load_in_progress(&self, model_id: &str, held: LoadLockHeld) -> LoadInProgress {
+        let holder_engine = held.holder.as_ref().and_then(|holder| {
+            self.other_engines(self.settings().port)
+                .into_iter()
+                .find(|e| e.pid == holder.pid || (holder.port.is_some() && e.port == holder.port))
+        });
+        LoadInProgress {
+            model_id: model_id.to_string(),
+            held,
+            holder_engine,
+        }
+    }
+
+    /// The mount, with this Mac's load lock held; the lock moves into the start and is released
+    /// when the start ends (ready or failed), or here on any refusal.
+    async fn mount_holding(&self, model_id: &str, lock: LoadLock) -> Result<()> {
+        let settings = self.settings();
+        let model = self.mountable_model(&settings, model_id)?;
 
         #[allow(unused_mut)]
-        let mut gate = self.judge_model(&settings, &model).await?;
+        let (mut gate, other_engines) = self.judge_model_beside(&settings, &model).await?;
         #[cfg(unix)]
         if gate.verdict == Verdict::Block {
             gate = self.make_room_then_gate(&settings, &model, gate).await?;
@@ -959,6 +1164,7 @@ impl MlxEngineManager {
             return Err(MountRefused {
                 model_id: model_id.to_string(),
                 verdict: gate,
+                other_engines,
             }
             .into());
         }
@@ -1015,6 +1221,7 @@ impl MlxEngineManager {
         let state_arc = Arc::clone(&self.state);
         let model_id = model_id.to_string();
         tokio::spawn(async move {
+            let _the_mac = lock;
             let started = match supervised {
                 Some(sidecar) => sidecar.ensure_running().await.map(|()| sidecar),
                 None => {
@@ -1113,6 +1320,7 @@ impl MlxEngineManager {
     /// goosed — supervision state is in-memory only), unmount reclaims the port by
     /// terminating the listeners per-pid: SIGTERM, a grace window, then SIGKILL.
     pub async fn unmount(&self) {
+        *self.waiting_for_load.lock().unwrap() = None;
         let supervised = {
             let mut state = self.state.lock().await;
             match std::mem::replace(&mut *state, ManagerState::Stopped) {
@@ -1163,7 +1371,16 @@ impl MlxEngineManager {
             restart_required: false,
             last_error: None,
             load: None,
+            machine_load: None,
+            machine_load_error: None,
         };
+        match self
+            .load_lock_path()
+            .and_then(|path| machine::current_holder(&path))
+        {
+            Ok(holder) => status.machine_load = holder,
+            Err(e) => status.machine_load_error = Some(format!("{e:#}")),
+        }
 
         let running = {
             let state = self.state.lock().await;
@@ -1224,6 +1441,15 @@ impl MlxEngineManager {
             }
         };
 
+        if let Some(waiting) = self.waiting_for_load.lock().unwrap().clone() {
+            status.state = "mounting".to_string();
+            status.model_id = Some(waiting.model_id);
+            status.load = Some(EngineLoad {
+                phase: "waitingForLoad".to_string(),
+                resident_bytes: None,
+                weights_bytes: waiting.weights_bytes,
+            });
+        }
         if let Some((model_id, weights_bytes)) = self.making_room.lock().unwrap().clone() {
             status.state = "mounting".to_string();
             status.model_id = Some(model_id);
@@ -2911,5 +3137,185 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         std::fs::write(partial.join("model.safetensors.part"), "p").unwrap();
         let err = manager.mount("pub/partial").await.unwrap_err().to_string();
         assert!(err.contains("incomplete"), "unexpected error: {err}");
+    }
+
+    /// A rank of another goose's split loading on this Mac, held by the REAL rank program's lock
+    /// code (`rank_load_lock.py`) in its own process, until the test writes a line to its stdin.
+    #[cfg(target_os = "macos")]
+    fn a_rank_holding_the_mac(lock: &std::path::Path) -> (std::process::Child, u32) {
+        use std::io::BufRead;
+        let driver = format!(
+            "{}\nimport sys\ntake_load_lock(sys.argv[1], 'split:8090:Qwen3.8-27B', \
+             'goose rank 1 of 2 is loading Qwen3.8-27B')\nprint('HELD', flush=True)\n\
+             sys.stdin.readline()\nrelease_load_lock()\n",
+            include_str!("distributed/rank_load_lock.py")
+        );
+        let mut rank = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &driver, lock.to_str().unwrap()])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(rank.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        assert_eq!(line.trim(), "HELD");
+        let pid = rank.id();
+        (rank, pid)
+    }
+
+    /// Q-106: another load holds this Mac. A Mount is refused BEFORE its gate reads memory the
+    /// other load is about to take, naming the holder; a Mount that waits shows `waitingForLoad`
+    /// with the holder in `machine_load`, and starts — gate and all — the moment the holder lets
+    /// go; the finished start releases the Mac.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_mount_waits_its_turn_behind_another_load_on_this_mac() {
+        use std::io::Write;
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        let manager: &'static MlxEngineManager = Box::leak(Box::new(test_manager()));
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                ARGV_FAKE_ENGINE.to_string(),
+            ],
+            ..Default::default()
+        });
+        let lock = manager.load_lock_path().unwrap();
+        let (mut rank, rank_pid) = a_rank_holding_the_mac(&lock);
+
+        let err = manager.mount("pub/small").await.unwrap_err();
+        let busy = err
+            .downcast_ref::<LoadInProgress>()
+            .expect("a held Mac is a typed refusal");
+        assert_eq!(busy.held.holder.as_ref().unwrap().pid, rank_pid);
+        let words = err.to_string();
+        assert!(
+            words.contains("another model is loading on this Mac"),
+            "{words}"
+        );
+        assert!(
+            words.contains("goose rank 1 of 2 is loading Qwen3.8-27B"),
+            "{words}"
+        );
+        assert!(
+            words.contains("Wait for it to finish, or stop it first"),
+            "{words}"
+        );
+        let status = manager.status().await;
+        assert_eq!(status.state, "stopped");
+        assert_eq!(status.gate_verdict, None, "no gate judged a Mac mid-load");
+        assert_eq!(status.machine_load.as_ref().map(|h| h.pid), Some(rank_pid));
+
+        manager.mount_after_load("pub/small").await.unwrap();
+        let waiting = manager.status().await;
+        assert_eq!(waiting.state, "mounting");
+        assert_eq!(waiting.load.as_ref().unwrap().phase, "waitingForLoad");
+        assert_eq!(waiting.machine_load.as_ref().map(|h| h.pid), Some(rank_pid));
+
+        rank.stdin.take().unwrap().write_all(b"\n").unwrap();
+        rank.wait().unwrap();
+        let status = settle(manager).await;
+        assert_eq!(status.state, "running", "{:?}", status.last_error);
+        assert_eq!(status.gate_verdict.as_deref(), Some("allow"));
+        assert!(
+            matches!(
+                machine::try_acquire(&lock, &LoadClaim::single_engine("probe", 1, 0)).unwrap(),
+                LoadLockAttempt::Acquired(_)
+            ),
+            "the finished start released the Mac"
+        );
+        manager.unmount().await;
+    }
+
+    /// An Unmount ends a wait: when the holder lets go, the waiting mount does not start.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn an_unmount_ends_a_wait_for_the_mac() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        let manager: &'static MlxEngineManager = Box::leak(Box::new(test_manager()));
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        });
+        let lock = manager.load_lock_path().unwrap();
+        let (mut rank, _) = a_rank_holding_the_mac(&lock);
+        manager.mount_after_load("pub/small").await.unwrap();
+        assert_eq!(manager.status().await.state, "mounting");
+        manager.unmount().await;
+        assert_eq!(manager.status().await.state, "stopped");
+        rank.stdin.take().unwrap().write_all(b"\n").unwrap();
+        rank.wait().unwrap();
+        for _ in 0..crate::GRACE_TICKS {
+            if matches!(
+                machine::try_acquire(&lock, &LoadClaim::single_engine("probe", 1, 0)).unwrap(),
+                LoadLockAttempt::Acquired(_)
+            ) {
+                break;
+            }
+            tokio::time::sleep(crate::GRACE_TICK).await;
+        }
+        let status = manager.status().await;
+        assert_eq!(status.state, "stopped", "{:?}", status.last_error);
+        assert_eq!(status.gate_verdict, None, "the cancelled wait never judged");
+    }
+
+    /// Q-106: the ceiling is the Mac's. Another engine holding the whole GPU ceiling leaves this
+    /// mount nothing, on a Mac whose RAM alone would admit it; the refusal names that engine.
+    #[tokio::test]
+    async fn the_gate_charges_the_other_engines_against_the_ceiling_and_names_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        let manager = test_manager();
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        });
+        assert_eq!(
+            manager.mount_fit("pub/small").await.unwrap().verdict,
+            Verdict::Allow
+        );
+        let other = OtherEngine {
+            pid: 4388,
+            started_at: 1_790_370_000,
+            kind: "singleServer".to_string(),
+            command: "python rapid-mlx serve /Users/o/.goose/models/Qwen3.8-27B --port 8124"
+                .to_string(),
+            port: Some(8124),
+            resident_bytes: PINNED_MEMORY.1,
+        };
+        *manager.test_others.lock().unwrap() = Some(vec![other.clone()]);
+        let fit = manager.mount_fit("pub/small").await.unwrap();
+        assert_eq!(fit.verdict, Verdict::Block, "{}", fit.message);
+        assert_eq!(fit.facts.other_engines_bytes, PINNED_MEMORY.1);
+        assert!(
+            fit.message.contains("other engines hold"),
+            "{}",
+            fit.message
+        );
+        assert!(
+            fit.message
+                .contains("pid 4388 — an MLX server on port 8124"),
+            "{}",
+            fit.message
+        );
+        let err = manager.mount("pub/small").await.unwrap_err();
+        let refused = err.downcast_ref::<MountRefused>().unwrap();
+        assert_eq!(refused.other_engines, vec![other]);
+        assert!(
+            !refused.verdict.could_ever_fit(),
+            "Make room cannot free another engine"
+        );
     }
 }

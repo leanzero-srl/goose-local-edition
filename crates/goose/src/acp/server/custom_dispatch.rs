@@ -948,6 +948,22 @@ impl GooseAcpAgent {
         self.on_mlx_engine_mount(req).await
     }
 
+    #[custom_method(MlxEngineMountAfterLoadRequest)]
+    async fn dispatch_mlx_engine_mount_after_load(
+        &self,
+        req: MlxEngineMountAfterLoadRequest,
+    ) -> Result<MlxEngineMountResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_mount_after_load(req).await
+    }
+
+    #[custom_method(MlxEngineStopOtherEngineRequest)]
+    async fn dispatch_mlx_engine_stop_other_engine(
+        &self,
+        req: MlxEngineStopOtherEngineRequest,
+    ) -> Result<MlxEngineStopOtherEngineResponse, agent_client_protocol::Error> {
+        self.on_mlx_engine_stop_other_engine(req).await
+    }
+
     #[custom_method(MlxEngineUnmountRequest)]
     async fn dispatch_mlx_engine_unmount(
         &self,

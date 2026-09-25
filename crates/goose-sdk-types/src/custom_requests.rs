@@ -2529,6 +2529,77 @@ pub struct MlxEngineStatusDto {
     pub serving_intent: Option<MlxServingIntentDto>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub serving_intent_error: Option<String>,
+    /// Another process loading a model on this Mac right now (it holds the Mac's load lock, its
+    /// pid proven alive): a Mount is refused — or waits, with `waitForLoad` — until it ends.
+    /// Absent when no one else is loading (and from a goose before it), or exactly when
+    /// `machineLoadError` says why the lock could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_load: Option<MlxMachineLoadDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_load_error: Option<String>,
+}
+
+/// Who holds this Mac's load lock (goose-sidecar `machine::LoadHolder`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxMachineLoadDto {
+    pub pid: u32,
+    /// The holder's process start, unix seconds.
+    pub started_at: u64,
+    /// When it took the lock, unix seconds.
+    pub since: u64,
+    /// What is loading, in words ("goose (pid 4321) is loading … as a single engine on port 8124"
+    /// | "goose rank 1 of 2 (pid …) is loading …").
+    pub what: String,
+    /// The single engine's port, when one is loading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// A split's launch identity, when a rank is loading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+}
+
+/// Another MLX engine on this Mac (goose-sidecar `machine::OtherEngine`): its real footprint, and
+/// the identity `mlxEngine/stopOtherEngine` needs.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxOtherEngineDto {
+    pub pid: u32,
+    /// Unix seconds; a stop must name it with the pid.
+    pub started_at: u64,
+    /// "singleServer" | "distributed".
+    pub kind: String,
+    /// Its command line, cut for display.
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    pub resident_bytes: u64,
+}
+
+/// Stop ANOTHER MLX engine on this Mac (not this goose's own — Unmount stops that), per-pid:
+/// SIGTERM, a grace window, then SIGKILL. Only the exact process the owner was shown is signalled
+/// — it must still be an MLX engine and still have started at `startedAt`; anything else is an
+/// error and nothing is signalled. Local only (no `nodeId`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/stopOtherEngine",
+    response = MlxEngineStopOtherEngineResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineStopOtherEngineRequest {
+    pub pid: u32,
+    pub started_at: u64,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineStopOtherEngineResponse {
+    pub pid: u32,
+    /// "SIGTERM" (it left inside the grace window) | "SIGKILL".
+    pub signal: String,
+    /// What it held when stopped.
+    pub resident_bytes: u64,
+    pub message: String,
 }
 
 /// The one fit rule (goose-sidecar `fit`) for one model on one Mac: `budget = min(available −
@@ -2556,6 +2627,10 @@ pub struct MlxMountFitDto {
     pub total_bytes: u64,
     /// Metal's recommended working-set ceiling on this Mac.
     pub ceiling_bytes: u64,
+    /// The resident bytes the OTHER MLX engines on this Mac hold, charged against the ceiling:
+    /// `budgetBytes = min(availableBytes − marginBytes, ceilingBytes − otherEnginesBytes)`.
+    #[serde(default)]
+    pub other_engines_bytes: u64,
     /// `totalBytes × marginRatio`.
     pub margin_bytes: u64,
     pub margin_ratio: f64,
@@ -2669,7 +2744,10 @@ pub struct MlxEngineStatusResponse {
 /// Mount a local model into the MLX engine. Returns once mounting has started; poll status for
 /// running/failed. A memory-gate refusal is NOT an error: it is `refusal` (and status's
 /// `gateVerdict: "block"` / `gateMessage` carry the same verdict) — one failure, one carrier of
-/// its text. Every other failure (unknown or incomplete model, a foreign listener) is an error.
+/// its text. Every other failure (unknown or incomplete model, a foreign listener) is an error —
+/// including another load holding this Mac (one model loads at a time per Mac, Q-106): the error
+/// names the holder and says to wait (`mlxEngine/mountAfterLoad`) or stop it, and status's
+/// `machineLoad` carries the holder.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
 #[request(
     method = "_goose/unstable/mlxEngine/mount",
@@ -2682,6 +2760,22 @@ pub struct MlxEngineMountRequest {
     /// forwards over the mesh.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
+}
+
+/// `mlxEngine/mount`, except that another load holding this Mac is WAITED for instead of refused:
+/// the call returns at once, status reads `mounting` with load phase `waitingForLoad` (and
+/// `machineLoad` naming the holder), and the mount — its gate judged on the memory the finished
+/// load left — starts when the holder lets go (a refusal then lands as status `failed` with
+/// `gateVerdict`/`gateMessage`). Unmount or another Mount ends the wait. A lock held by a process
+/// that is not its recorded holder is refused, never waited for. Local only (no `nodeId`).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcRequest)]
+#[request(
+    method = "_goose/unstable/mlxEngine/mountAfterLoad",
+    response = MlxEngineMountResponse
+)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxEngineMountAfterLoadRequest {
+    pub model_id: String,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
@@ -2707,6 +2801,10 @@ pub struct MlxMountRefusalDto {
     /// Why no alternative could be planned (the planner failed, or nothing fits anywhere).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alternative_error: Option<String>,
+    /// The other MLX engines whose memory the refusal charged — what the owner could stop
+    /// (`mlxEngine/stopOtherEngine`) to make room.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub other_engines: Vec<MlxOtherEngineDto>,
 }
 
 /// Stop the MLX engine and unmount its model.
@@ -4919,6 +5017,7 @@ mod mlx_node_id_tests {
                 alternative: None,
                 badge: Some(MlxPlacementBadgeDto::NeedsBothMacs { needs: None }),
                 alternative_error: None,
+                other_engines: Vec::new(),
             }),
         };
         let wire = serde_json::to_value(&refused).unwrap();
