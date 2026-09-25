@@ -322,7 +322,10 @@ pub(super) async fn core_replicate(
         .await
     {
         OFFERS.release(&ticket.token);
-        return Err(super::link::mlx_proxy_err(error));
+        return Err(super::link::mlx_proxy_err(
+            error,
+            &super::link::peer_display_name(&manager, &req.target_node_id).await,
+        ));
     }
     info!(
         model = %req.model_id,

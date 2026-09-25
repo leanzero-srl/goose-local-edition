@@ -1176,15 +1176,6 @@ fn not_connected_to_mesh_err() -> agent_client_protocol::Error {
     agent_client_protocol::Error::invalid_params().data("not connected to the mesh")
 }
 
-/// Map a [`LinkManager::mlx_proxy`](LinkManager::mlx_proxy) failure to an ACP error that
-/// preserves the local mlxEngine error CLASS, so a remote op fails exactly as its local
-/// twin would. A peer's `invalid_params`-class failure (a mount memory-gate BLOCK, a
-/// malformed repo id → HTTP `400` → [`MlxControlError::BadRequest`]) and the target-
-/// selection errors (unknown peer, not connected, mlx control unwired) ride through as
-/// `invalid_params` with their text verbatim — the panel shows "…" as itself. A peer's own
-/// internal failure (disk read, HF fetch → `500` → [`MlxControlError::Failed`]) and any
-/// transport/proxy failure ([`LinkError::MlxProxy`]) are `internal_error` (verbatim text),
-/// never swallowed or faked.
 /// The pure local-vs-remote decision for a mlxEngine `nodeId`: `None` (absent) and a
 /// `nodeId` equal to `self_node_id` both run locally (`None`); a different id names a peer
 /// (`Some`). Free and side-effect-free so the "self behaves identically to absent" contract
@@ -1197,16 +1188,56 @@ fn mlx_remote_target(self_node_id: &str, requested: Option<&str>) -> Option<Stri
     }
 }
 
-pub(super) fn mlx_proxy_err(error: LinkError) -> agent_client_protocol::Error {
-    match error {
-        LinkError::MlxControl(MlxControlError::BadRequest(_))
-        | LinkError::MlxControlUnavailable
-        | LinkError::NotConnected
-        | LinkError::UnknownPeer(_) => {
-            agent_client_protocol::Error::invalid_params().data(error.to_string())
+/// Map a [`LinkManager::mlx_proxy`](LinkManager::mlx_proxy) failure on peer `peer` (the name its
+/// owner gave it) to an ACP error that preserves the local mlxEngine error CLASS, so a remote op
+/// fails exactly as its local twin would. A peer's `invalid_params`-class failure (a mount
+/// memory-gate BLOCK, a malformed repo id → HTTP `400` → [`MlxControlError::BadRequest`]) and the
+/// unwired control ride through as `invalid_params` with their text verbatim. A peer that could
+/// not be reached at all (this Mac off the mesh, the peer not on it, the dial or the send
+/// failed) is a NAMED refusal — `linkNotConnected` / `unknownPeer` / `peerUnreachable` with the
+/// Mac named — as `invalid_params`, never a flattened internal error (2026-09-25 11:20:08Z: a
+/// Link kill surfaced as "Internal error"); so is a peer that answered with a status of its own
+/// (`peer returned 403` — its owner's switch is off). A peer's own internal failure (disk read,
+/// HF fetch → `500` → [`MlxControlError::Failed`]) and an answer that did not parse are
+/// `internal_error` (verbatim text), never swallowed or faked.
+pub(super) fn mlx_proxy_err(error: LinkError, peer: &str) -> agent_client_protocol::Error {
+    let refused = |text: String| agent_client_protocol::Error::invalid_params().data(text);
+    match &error {
+        LinkError::MlxControl(MlxControlError::BadRequest(_)) | LinkError::MlxControlUnavailable => {
+            refused(error.to_string())
+        }
+        LinkError::NotConnected => refused(format!(
+            "linkNotConnected: this Mac is not connected to the LeanZero Link mesh, so {peer} cannot be reached"
+        )),
+        LinkError::UnknownPeer(_) => refused(format!(
+            "unknownPeer: {peer} is not on the LeanZero Link mesh right now ({error})"
+        )),
+        _ if super::mlx_remote_single::peer_did_not_answer(&error) => refused(format!(
+            "peerUnreachable: {peer} does not answer over LeanZero Link right now ({error})"
+        )),
+        LinkError::MlxProxy(text) if text.starts_with("peer returned") => {
+            refused(format!("{peer} refused it over LeanZero Link: {text}"))
         }
         _ => agent_client_protocol::Error::internal_error().data(error.to_string()),
     }
+}
+
+/// The name `node_id`'s owner gave it (the Link roster's ComputerName), its mesh hostname when
+/// it has none, the id itself when the roster does not list it.
+pub(super) async fn peer_display_name(manager: &LinkManager, node_id: &str) -> String {
+    let Some(registry) = manager.active_registry().await else {
+        return node_id.to_string();
+    };
+    registry
+        .peer_nodes()
+        .into_iter()
+        .find(|node| node.node_id == node_id || node.hostname == node_id)
+        .map(|node| {
+            node.computer_name
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or(node.hostname)
+        })
+        .unwrap_or_else(|| node_id.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1578,10 +1609,13 @@ impl GooseAcpAgent {
         if !matches!(manager.status().await.auth, AuthState::Connected { .. }) {
             return Err(not_connected_to_mesh_err());
         }
-        manager
-            .mlx_proxy(node_id, op, body)
-            .await
-            .map_err(mlx_proxy_err)
+        match manager.mlx_proxy(node_id, op, body).await {
+            Ok(value) => Ok(value),
+            Err(error) => Err(mlx_proxy_err(
+                error,
+                &peer_display_name(&manager, node_id).await,
+            )),
+        }
     }
 
     /// Serialize a mlxEngine request, forward it to `node_id`, and decode the peer's
@@ -2243,45 +2277,87 @@ mod tests {
 
     #[test]
     fn mlx_proxy_err_preserves_the_local_error_class_and_text() {
+        const STUDIO: &str = "Work's Mac Studio";
         // A peer's invalid_params-class failure (mount gate BLOCK, malformed repo id) rides
         // through as invalid_params with its text verbatim.
-        let bad = mlx_proxy_err(LinkError::MlxControl(MlxControlError::BadRequest(
-            "memory gate BLOCK: model needs 40GB, 12GB free".to_string(),
-        )));
+        let bad = mlx_proxy_err(
+            LinkError::MlxControl(MlxControlError::BadRequest(
+                "memory gate BLOCK: model needs 40GB, 12GB free".to_string(),
+            )),
+            STUDIO,
+        );
         assert_eq!(bad.code, invalid_params_code());
         assert_eq!(
             err_text(&bad),
             "memory gate BLOCK: model needs 40GB, 12GB free"
         );
 
-        // Target-selection errors are user-actionable → invalid_params.
-        let unknown = mlx_proxy_err(LinkError::UnknownPeer("ghost".to_string()));
-        assert_eq!(unknown.code, invalid_params_code());
-        assert_eq!(
-            err_text(&unknown),
-            "no known mesh peer with node id 'ghost'"
-        );
-
-        let unwired = mlx_proxy_err(LinkError::MlxControlUnavailable);
+        let unwired = mlx_proxy_err(LinkError::MlxControlUnavailable, STUDIO);
         assert_eq!(unwired.code, invalid_params_code());
         assert_eq!(err_text(&unwired), "mlx control is not wired on this node");
 
         // A peer's own internal failure (disk read, HF fetch → 500) → internal_error, verbatim.
-        let failed = mlx_proxy_err(LinkError::MlxControl(MlxControlError::Failed(
-            "reading local models failed: permission denied".to_string(),
-        )));
+        let failed = mlx_proxy_err(
+            LinkError::MlxControl(MlxControlError::Failed(
+                "reading local models failed: permission denied".to_string(),
+            )),
+            STUDIO,
+        );
         assert_eq!(failed.code, internal_error_code());
         assert_eq!(
             err_text(&failed),
             "reading local models failed: permission denied"
         );
+        let garbled = mlx_proxy_err(
+            LinkError::MlxProxy("peer responded but its body did not parse: eof".to_string()),
+            STUDIO,
+        );
+        assert_eq!(garbled.code, internal_error_code());
+    }
 
-        // A transport/proxy failure reaching the peer → internal_error, verbatim.
-        let transport = mlx_proxy_err(LinkError::MlxProxy("connection refused".to_string()));
-        assert_eq!(transport.code, internal_error_code());
+    /// 2026-09-25 11:20:08Z, the Link kill: `mlxEngine/status` for the Studio came back as
+    /// "Internal error" carrying "mlx proxy request to a peer failed: error sending request…".
+    /// Every way of not reaching the peer is a named refusal with the Mac named.
+    #[test]
+    fn a_peer_that_cannot_be_reached_is_a_named_refusal_never_an_internal_error() {
+        const STUDIO: &str = "Work's Mac Studio";
+        let gone = mlx_proxy_err(
+            LinkError::MlxProxy(
+                "error sending request for url (http://100.64.0.5:41226/v1/swarm/mlx/status)"
+                    .to_string(),
+            ),
+            STUDIO,
+        );
+        assert_eq!(gone.code, invalid_params_code());
         assert_eq!(
-            err_text(&transport),
-            "mlx proxy request to a peer failed: connection refused"
+            err_text(&gone),
+            "peerUnreachable: Work's Mac Studio does not answer over LeanZero Link right now (mlx proxy request to a peer failed: error sending request for url (http://100.64.0.5:41226/v1/swarm/mlx/status))"
+        );
+
+        let off_mesh = mlx_proxy_err(LinkError::NotConnected, STUDIO);
+        assert_eq!(off_mesh.code, invalid_params_code());
+        assert_eq!(
+            err_text(&off_mesh),
+            "linkNotConnected: this Mac is not connected to the LeanZero Link mesh, so Work's Mac Studio cannot be reached"
+        );
+
+        let unknown = mlx_proxy_err(LinkError::UnknownPeer("ghost".to_string()), "ghost");
+        assert_eq!(unknown.code, invalid_params_code());
+        assert_eq!(
+            err_text(&unknown),
+            "unknownPeer: ghost is not on the LeanZero Link mesh right now (no known mesh peer with node id 'ghost')"
+        );
+
+        let switched_off = mlx_proxy_err(
+            LinkError::MlxProxy(
+                "peer returned 403: remote model management is disabled on this node".to_string(),
+            ),
+            STUDIO,
+        );
+        assert_eq!(switched_off.code, invalid_params_code());
+        assert_eq!(
+            err_text(&switched_off),
+            "Work's Mac Studio refused it over LeanZero Link: peer returned 403: remote model management is disabled on this node"
         );
     }
 

@@ -206,7 +206,7 @@ fn link_refusal(error: &LinkError) -> MlxRemoteSingleRefusalDto {
 /// does not list the peer, or the dial or the send through the mesh failed — rather than the
 /// peer answering with a refusal (`peer returned <code>`, an undecodable body, a classed
 /// `MlxControl` answer).
-fn peer_did_not_answer(error: &LinkError) -> bool {
+pub(super) fn peer_did_not_answer(error: &LinkError) -> bool {
     match error {
         LinkError::NotConnected | LinkError::UnknownPeer(_) | LinkError::PeerDial(_) => true,
         LinkError::MlxProxy(text) => {
