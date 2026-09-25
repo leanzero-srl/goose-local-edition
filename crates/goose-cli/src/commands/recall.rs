@@ -104,8 +104,13 @@ pub async fn run(text: &str, session: Option<&str>) -> Result<()> {
             " [apart]"
         };
         let topic = if hit.topic_in_name { " [topic]" } else { "" };
+        let body = if hit.body_carries_request {
+            " [body]"
+        } else {
+            ""
+        };
         println!(
-            "  {mark} {}/{} terms, {} rare, {} in name ({} name words, {} its own), score {:5.1}  {}{together}{topic}",
+            "  {mark} {}/{} terms, {} rare, {} in name ({} name words, {} its own), score {:5.1}  {}{together}{topic}{body}",
             hit.matched_terms,
             terms.len(),
             hit.rare_terms,
