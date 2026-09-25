@@ -22,8 +22,10 @@ const mockStatus = vi.fn<() => Promise<MlxEngineStatus>>();
 const mockMount = vi.fn<(modelId: string) => Promise<void>>();
 const mockSettings = vi.fn<() => Promise<MlxEngineSettings>>();
 const mockUnmount = vi.fn<(nodeId?: string) => Promise<void>>();
+const mockModelsList = vi.fn();
 vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineUnmount: (nodeId?: string) => mockUnmount(nodeId),
+  mlxEngineModelsList: () => mockModelsList(),
   mlxEngineStatus: () => mockStatus(),
   mlxEngineMount: (modelId: string) => mockMount(modelId),
   mlxEngineSettingsRead: () => mockSettings(),
@@ -296,6 +298,12 @@ beforeEach(() => {
   mockMount.mockResolvedValue(undefined);
   mockSettings.mockResolvedValue(SETTINGS);
   mockReadConfig.mockResolvedValue({ devices: [MLX_NODE] });
+  // This Mac's models dir holds the 27B (31.0 GiB on the owner's machine).
+  mockModelsList.mockResolvedValue({
+    models: [{ id: HF, sizeBytes: 31 * 1024 ** 3, complete: true, missingFiles: 0 }],
+    diskAvailableBytes: 0,
+    diskTotalBytes: 0,
+  });
 });
 
 describe('ComposerReadinessStrip — a relaunch bringing back what served', () => {
@@ -354,7 +362,13 @@ describe('ComposerReadinessStrip — a route to another Mac', () => {
     );
     expect(strip.className).toContain('bg-lz-phase-loading');
     expect(strip.textContent).not.toContain('WorksMacStudio.lan');
-    expect(screen.getByTestId('composer-readiness-remote-mounting')).toBeInTheDocument();
+    // One layout: the spinner leads, as in every state in progress (Q-63) — and loading HERE stays
+    // one click away while it loads there (Q-57).
+    expect(screen.getByTestId('composer-readiness-spinner')).toHaveAttribute('data-for', 'remote');
+    expect(strip.firstElementChild).toBe(screen.getByTestId('composer-readiness-spinner'));
+    expect(await screen.findByTestId('composer-readiness-run-here')).toHaveTextContent(
+      'Load Qwen3.8-27B-Atlassian-Q8-mlx here (31.0 GB)'
+    );
   });
 
   it('a FAILED route is red and says why in the peer’s words', async () => {
@@ -398,7 +412,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
     });
   });
 
-  it('the route says `reconnecting`: a solid amber bar names the Mac, spins, and offers "Run on this Mac instead"', async () => {
+  it('the route says `reconnecting`: a solid amber bar names the Mac, spins, and offers to load the model here, named with its size', async () => {
     mockExtMethod.mockResolvedValue({
       status: { ...ROUTE, state: 'reconnecting', lastError: 'no answer from the Link peer' },
     });
@@ -408,10 +422,11 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
     expect(strip).toHaveAttribute('data-readiness', 'reconnecting');
     expect(strip.textContent).toContain("Lost contact with Work's Mac Studio — reconnecting…");
     expect(strip.className).toContain('bg-lz-phase-loading');
-    expect(screen.getByTestId('composer-readiness-reconnecting')).toBeInTheDocument();
+    expect(strip.firstElementChild).toBe(screen.getByTestId('composer-readiness-spinner'));
     // Plain words on the bar; the read's own words only behind Details — never inline.
     expect(screen.getByTestId('composer-readiness-detail').textContent).toBe(
-      'goose keeps trying — an answer in progress continues if it comes back, or stops with a Retry'
+      // Q-52: nothing promises the answer continues.
+      "goose keeps trying; once Work's Mac Studio answers, goose checks whether it still has your answer"
     );
     expect(strip.textContent).not.toContain('no answer from the Link peer');
     await userEvent.click(screen.getByTestId('composer-readiness-details'));
@@ -419,9 +434,39 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
       'no answer from the Link peer'
     );
     expect(await screen.findByTestId('composer-readiness-run-here')).toHaveTextContent(
-      'Run on this Mac instead'
+      'Load Qwen3.8-27B-Atlassian-Q8-mlx here (31.0 GB)'
     );
     assertStudioClean(container);
+  });
+
+  it('Q-54: a Mac that said it is restarting goose — the headline says so, and that this answer stops', async () => {
+    mockExtMethod.mockResolvedValue({
+      status: {
+        ...ROUTE,
+        state: 'reconnecting',
+        lastError:
+          "Work's Mac Studio does not answer over LeanZero Link right now: Work's Mac Studio is restarting goose",
+      },
+    });
+    await mlxRemoteSingleStatus();
+    wrap('swarm');
+    const strip = await screen.findByTestId('composer-readiness');
+    expect(strip.textContent).toContain("Work's Mac Studio is restarting goose");
+    expect(strip.textContent).not.toContain('checks whether it still has your answer');
+    expect(screen.getByTestId('composer-readiness-detail').textContent).toBe(
+      'goose reconnects when it is back'
+    );
+  });
+
+  it('a model this Mac does not hold is never offered to load here (the mount would only fail)', async () => {
+    mockModelsList.mockResolvedValue({ models: [], diskAvailableBytes: 0, diskTotalBytes: 0 });
+    mockExtMethod.mockResolvedValue({ status: { ...ROUTE, state: 'reconnecting' } });
+    await mlxRemoteSingleStatus();
+    wrap('swarm');
+    await screen.findByTestId('composer-readiness');
+    await waitFor(() => expect(mockModelsList).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 10));
+    expect(screen.queryByTestId('composer-readiness-run-here')).toBeNull();
   });
 
   it('a route read that FAILS is the same named state — the bar the recording left blank for ten seconds', async () => {
@@ -696,7 +741,10 @@ describe('ComposerReadinessStrip (UX audit C1)', () => {
     const strip = await screen.findByTestId('composer-readiness');
     expect(strip.textContent).toContain('Distributed · 2 nodes · JACCL · Starting — mihai-mlx');
     expect(strip.textContent).not.toContain('No model is mounted');
-    expect(screen.getByTestId('composer-readiness-distributed-starting')).toBeInTheDocument();
+    expect(screen.getByTestId('composer-readiness-spinner')).toHaveAttribute(
+      'data-for',
+      'distributed'
+    );
     expect(screen.queryByTestId('composer-readiness-mount')).toBeNull();
 
     mockExtMethod.mockResolvedValue({ status: DIST_READY });

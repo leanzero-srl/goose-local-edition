@@ -153,7 +153,10 @@ const i18n = defineMessages({
     id: 'mlxStateTile.servingUnknown',
     defaultMessage: 'Who is using it could not be read: {detail}',
   },
-  served: { id: 'mlxStateTile.fact.served', defaultMessage: 'requests served' },
+  served: {
+    id: 'mlxStateTile.fact.served',
+    defaultMessage: '{count, plural, one {request served} other {requests served}}',
+  },
   promptRead: { id: 'mlxStateTile.fact.promptRead', defaultMessage: 'prompt tokens read' },
   written: { id: 'mlxStateTile.fact.written', defaultMessage: 'tokens written' },
   cacheSaved: {
@@ -745,7 +748,7 @@ function LiveReadout({
     facts.push({
       key: 'served',
       value: intl.formatNumber(stats.totalRequests),
-      label: intl.formatMessage(i18n.served),
+      label: intl.formatMessage(i18n.served, { count: stats.totalRequests }),
     });
   }
   if (stats.totalPromptTokens != null) {

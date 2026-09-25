@@ -3,6 +3,7 @@ import { foreignOwner, type MlxDistributedStatus } from '../../acp/mlx-distribut
 import { remoteRouteUp, type MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
 import type { MlxServing } from '../../utils/mlxServing';
+import { leaveCause, type LeaveCause } from '../../utils/leaveCause';
 import type { EnginePhase } from '../lz/tokens';
 import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
 import { routePeerName } from '../leanzero-swarm/macs';
@@ -99,19 +100,7 @@ export type ComposerReadiness =
       instead: RunHere;
     };
 
-/**
- * A linked Mac that said it is going away on purpose — Link's `LeaveReason::describe()` words
- * ("Work's Mac Studio quit goose", "… is restarting goose"), carried in the route's reason and in
- * the relay's drop error. The engine goes with the app (Q-34), so an answer in flight is gone.
- */
-export type LeaveCause = 'quit' | 'restart';
-
-export function leaveCause(text: string | null | undefined): LeaveCause | null {
-  if (!text) return null;
-  if (/\bis restarting goose\b/.test(text)) return 'restart';
-  if (/\bquit goose\b/.test(text)) return 'quit';
-  return null;
-}
+export { leaveCause, type LeaveCause } from '../../utils/leaveCause';
 
 /**
  * Chat back on this Mac while the route's Mac does not answer: drop the route, then mount `mount`

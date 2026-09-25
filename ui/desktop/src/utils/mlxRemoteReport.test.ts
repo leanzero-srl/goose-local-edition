@@ -183,7 +183,9 @@ describe('the tray while chat is served from a linked Mac', () => {
       label: "Lost contact with Work's Mac Studio — reconnecting…",
       phase: 'loading',
     });
-    expect(labels(model)).toContain('Last read: timeout: no answer within 1500 ms');
+    // Q-58: the bar's plain words, never the raw read.
+    expect(labels(model)).toContain('goose keeps trying, then checks whether your answer survived');
+    expect(labels(model).some((l) => /Last read|timeout|Error:/.test(l))).toBe(false);
     expect(model.items.some((i) => i.type === 'action' && i.action === 'stop-remote')).toBe(true);
     expect(model.items.some((i) => i.type === 'action' && i.action === 'mount')).toBe(false);
 
@@ -192,6 +194,22 @@ describe('the tray while chat is served from a linked Mac', () => {
     const fromRoute = buildMlxTrayModel(INITIAL_SNAPSHOT, options(said));
     expect(fromRoute.title).toBe("Reconnecting to Work's Mac Studio");
     expect(fromRoute.phase).toBe('loading');
+
+    // The Mac said it is restarting goose (fdc737969): named so, the raw reason not listed.
+    const leaving = toMlxRemoteReport({
+      ...READY,
+      state: 'reconnecting',
+      lastError:
+        "Work's Mac Studio does not answer over LeanZero Link right now: Work's Mac Studio is restarting goose",
+    })!;
+    const restart = buildMlxTrayModel(INITIAL_SNAPSHOT, options(leaving));
+    expect(restart.title).toBe("Work's Mac Studio is restarting goose");
+    expect(labels(restart)).toEqual([
+      "Work's Mac Studio is restarting goose",
+      'goose reconnects when it is back',
+      'Open Providers',
+      "Stop serving from Work's Mac Studio",
+    ]);
   });
 
   it('`failed` stays red and means the peer answered that its engine failed — never "reconnecting"', () => {

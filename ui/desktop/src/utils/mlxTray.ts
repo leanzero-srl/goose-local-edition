@@ -34,6 +34,7 @@ import type {
 } from './mlxDistributedReport';
 import type { MlxClient, MlxServing } from './mlxServing';
 import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
+import { leaveCause } from './leaveCause';
 import { restoreTrayLine, type MlxRestoreReport } from './mlxRestoreReport';
 
 /**
@@ -165,7 +166,12 @@ function remoteTrayTitle(
   reconnecting: boolean
 ): string {
   const mac = report.peerName;
-  if (reconnecting) return `Reconnecting to ${mac}`;
+  if (reconnecting) {
+    const cause = leaveCause(report.lastError);
+    if (cause === 'restart') return `${mac} is restarting goose`;
+    if (cause === 'quit') return `${mac} quit goose`;
+    return `Reconnecting to ${mac}`;
+  }
   if (report.state === 'ready') return live ? `${mac} · ${mlxTrayTitle(live)}` : mac;
   return report.state === 'failed' ? `${mac} · failed` : `${mac} · ${report.state}`;
 }
@@ -181,21 +187,35 @@ function remoteModel(
   const phase = reconnecting
     ? 'loading'
     : remotePhase(remote.state, live?.stats ? mlxActivity(live.stats) : null);
+  // The composer bar's words (ComposerReadiness), never the raw read (Q-58): a Mac that said it
+  // quit or is restarting goose is named with that; otherwise contact is lost and goose keeps
+  // trying. The raw reason stays in the app, behind the bar's Details.
+  const cause = reconnecting ? leaveCause(remote.lastError ?? snapshot.statusDetail) : null;
+  const mac = remote.peerName;
   const items: MlxTrayItem[] = [
     {
       type: 'info',
       label: clip(
-        reconnecting
-          ? `Lost contact with ${remote.peerName} — reconnecting…`
-          : remoteTrayLine(remote)
+        !reconnecting
+          ? remoteTrayLine(remote)
+          : cause === 'restart'
+            ? `${mac} is restarting goose`
+            : cause === 'quit'
+              ? `${mac} quit goose`
+              : `Lost contact with ${mac} — reconnecting…`
       ),
       phase,
     },
   ];
   if (reconnecting) {
-    if (snapshot.engine === 'remote' && snapshot.statusDetail) {
-      items.push({ type: 'info', label: clip(`Last read: ${snapshot.statusDetail}`) });
-    }
+    items.push({
+      type: 'info',
+      label: clip(
+        cause
+          ? 'goose reconnects when it is back'
+          : 'goose keeps trying, then checks whether your answer survived'
+      ),
+    });
   } else if (live) {
     items.push(...runningItems(live));
   } else if (remote.state === 'ready' && snapshot.engine === 'remote' && snapshot.statusDetail) {
@@ -204,7 +224,9 @@ function remoteModel(
       label: clip(`Rates unavailable over LeanZero Link: ${snapshot.statusDetail}`),
     });
   }
-  if (remote.lastError) items.push({ type: 'info', label: clip(`Error: ${remote.lastError}`) });
+  if (remote.lastError && !reconnecting) {
+    items.push({ type: 'info', label: clip(`Error: ${remote.lastError}`) });
+  }
   items.push(
     { type: 'separator' },
     { type: 'action', label: 'Open Providers', action: 'open-providers', enabled: canAct },

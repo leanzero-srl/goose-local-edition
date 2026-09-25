@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronRight,
@@ -9,7 +9,8 @@ import {
   ServerOff,
   Settings2,
 } from 'lucide-react';
-import type { MlxEngineStatus } from '../../acp/mlx-engine';
+import { mlxEngineModelsList, type MlxEngineStatus } from '../../acp/mlx-engine';
+import { gb1, gib } from '../leanzero-swarm/mlxDistributed';
 import { errorMessage } from '../../utils/conversionUtils';
 import { PeerHeldLine } from '../leanzero-swarm/PeerHeldLine';
 import { dropRoute } from '../leanzero-swarm/routeSwitch';
@@ -85,10 +86,27 @@ const i18n = defineMessages({
   reconnectingPlain: {
     id: 'composerReadiness.reconnectingPlain',
     defaultMessage:
-      'goose keeps trying — an answer in progress continues if it comes back, or stops with a Retry',
+      'goose keeps trying; once {peer} answers, goose checks whether it still has your answer',
+  },
+  leaving: {
+    id: 'composerReadiness.leaving',
+    defaultMessage:
+      '{cause, select, restart {{peer} is restarting goose} other {{peer} quit goose}}{turn, select, yes { — this answer stops} other {}}',
+  },
+  leavingPlain: {
+    id: 'composerReadiness.leavingPlain',
+    defaultMessage: 'goose reconnects when it is back',
+  },
+  loadHere: {
+    id: 'composerReadiness.loadHere',
+    defaultMessage: 'Load {model} here{size, select, none {} other { ({size} GB)}}',
   },
   details: { id: 'composerReadiness.details', defaultMessage: 'Details' },
   runHere: { id: 'composerReadiness.runHere', defaultMessage: 'Run on this Mac instead' },
+  runHereHint: {
+    id: 'composerReadiness.runHereHint',
+    defaultMessage: 'Stops sending chat to {peer} and runs it on this Mac',
+  },
   switchingHere: {
     id: 'composerReadiness.switchingHere',
     defaultMessage: 'Moving chat to this Mac…',
@@ -202,8 +220,40 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
       switching={switching}
       switchError={switchError}
       onRunHere={(instead) => void runHere(instead)}
+      turnInFlight={serving.turnInFlight}
     />
   );
+}
+
+/**
+ * What "Load <model> here" would load, as this Mac's models dir says: its size, or that it is not
+ * here (then Load is not offered — the mount would only fail). `unknown` while unread or when the
+ * list could not be read: the label then names no size, never a guessed one.
+ */
+type LocalModel = { state: 'unknown' } | { state: 'here'; sizeBytes: number } | { state: 'absent' };
+
+function useLocalModel(modelId: string | null): LocalModel {
+  const [fact, setFact] = useState<{ id: string; model: LocalModel } | null>(null);
+  useEffect(() => {
+    if (!modelId) return undefined;
+    let alive = true;
+    mlxEngineModelsList()
+      .then((list) => {
+        const found = list.models.find((m) => m.id === modelId);
+        const model: LocalModel =
+          found && found.complete
+            ? { state: 'here', sizeBytes: found.sizeBytes }
+            : { state: 'absent' };
+        if (alive) setFact({ id: modelId, model });
+      })
+      .catch(() => {
+        if (alive) setFact({ id: modelId, model: { state: 'unknown' } });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [modelId]);
+  return fact && fact.id === modelId ? fact.model : { state: 'unknown' };
 }
 
 /** The strip mounts ONE engine whatever the node count, so its mount state has one key. */
@@ -271,6 +321,7 @@ function ReadinessStripBody({
   switching,
   switchError,
   onRunHere,
+  turnInFlight,
 }: {
   readiness: Exclude<ComposerReadiness, { kind: 'unknown' } | { kind: 'ready' }>;
   model: string | null;
@@ -281,44 +332,76 @@ function ReadinessStripBody({
   switching: boolean;
   switchError: string | null;
   onRunHere: (instead: RunHere) => void;
+  turnInFlight: boolean;
 }) {
   const intl = useIntl();
+  const instead =
+    readiness.kind === 'reconnecting' || readiness.kind === 'remote'
+      ? readiness.instead
+      : undefined;
+  const local = useLocalModel(instead?.kind === 'switch' ? instead.mount : null);
+
+  /**
+   * "Run on this Mac instead", named for what it does (Q-57): load <model> (its size from this
+   * Mac's own models dir), or — this Mac already serving — just stop sending chat there.
+   */
+  const runHereButton = (peer: string): ReactNode => {
+    if (instead?.kind !== 'switch' || (instead.mount && local.state === 'absent')) return null;
+    const label = instead.mount
+      ? intl.formatMessage(i18n.loadHere, {
+          model: shortModelName(instead.mount),
+          size: local.state === 'here' ? gb1(gib(local.sizeBytes)) : 'none',
+        })
+      : intl.formatMessage(i18n.runHere);
+    return (
+      <Button
+        size="sm"
+        variant="secondary"
+        icon={switching ? <Loader2 className="animate-spin" /> : <Laptop />}
+        disabled={switching}
+        title={intl.formatMessage(i18n.runHereHint, { peer })}
+        data-testid="composer-readiness-run-here"
+        onClick={() => onRunHere(instead)}
+      >
+        {switching ? intl.formatMessage(i18n.switchingHere) : label}
+      </Button>
+    );
+  };
 
   let headline: string;
   let detail: string | null = null;
   let raw: string | null = null;
   let action: ReactNode = null;
   let fill = TONE_FILL.warn;
+  // Every state in progress spins in ONE place — the bar's leading icon (Q-63).
+  let spinning = false;
 
   if (readiness.kind === 'no-nodes') {
     headline = intl.formatMessage(i18n.noNodes);
   } else if (readiness.kind === 'reconnecting') {
     // The route's Mac stopped answering: chat still goes there, so every second until it answers
-    // again — or the user moves chat here — is named (Q-47).
+    // again — or the user moves chat here — is named (Q-47). A Mac that said it quit or is
+    // restarting goose took its engine with it: the answer is gone, and the bar says so (Q-54).
     const peer = routePeerName(readiness.status);
-    headline = intl.formatMessage(i18n.reconnecting, { peer });
+    headline = readiness.cause
+      ? intl.formatMessage(i18n.leaving, {
+          peer,
+          cause: readiness.cause,
+          turn: turnInFlight ? 'yes' : 'no',
+        })
+      : intl.formatMessage(i18n.reconnecting, { peer });
     fill = PHASE_FILL.loading;
+    spinning = true;
     // Plain words on the bar; the failed read's own words ("timeout: no answer within 1500 ms",
     // the mesh's URL) only behind Details, as the transcript's dropped-turn notice keeps them.
+    // Nothing promises the answer continues: the relay can tell only once the Mac answers (Q-52).
     detail = switchError
       ? intl.formatMessage(i18n.switchFailed, { error: switchError })
-      : intl.formatMessage(i18n.reconnectingPlain);
+      : readiness.cause
+        ? intl.formatMessage(i18n.leavingPlain)
+        : intl.formatMessage(i18n.reconnectingPlain, { peer });
     raw = readiness.why;
-    const { instead } = readiness;
-    if (instead.kind === 'switch') {
-      action = (
-        <Button
-          size="sm"
-          variant="secondary"
-          icon={switching ? <Loader2 className="animate-spin" /> : <Laptop />}
-          disabled={switching}
-          data-testid="composer-readiness-run-here"
-          onClick={() => onRunHere(instead)}
-        >
-          {intl.formatMessage(switching ? i18n.switchingHere : i18n.runHere)}
-        </Button>
-      );
-    }
+    action = runHereButton(peer);
   } else if (readiness.kind === 'remote') {
     const peer = routePeerName(readiness.status);
     detail = readiness.status.lastError ?? null;
@@ -330,13 +413,10 @@ function ReadinessStripBody({
         ? intl.formatMessage(i18n.remoteLoading, { model: shortModelName(model), peer })
         : intl.formatMessage(i18n.remoteLoadingUnnamed, { peer });
       fill = PHASE_FILL.loading;
-      action = (
-        <Loader2
-          aria-hidden
-          data-testid="composer-readiness-remote-mounting"
-          className="size-4 animate-spin"
-        />
-      );
+      spinning = true;
+      if (switchError) detail = intl.formatMessage(i18n.switchFailed, { error: switchError });
+      // Loading there can take long: loading here stays one click away (Q-57).
+      action = runHereButton(peer);
     }
   } else if (readiness.kind === 'distributed') {
     const { status: dist, wanted } = readiness;
@@ -353,13 +433,7 @@ function ReadinessStripBody({
     }
     if (dist.state === 'preflight' || dist.state === 'starting') {
       fill = PHASE_FILL.loading;
-      action = (
-        <Loader2
-          aria-hidden
-          data-testid="composer-readiness-distributed-starting"
-          className="size-4 animate-spin"
-        />
-      );
+      spinning = true;
     }
   } else {
     headline = intl.formatMessage(i18n.unmounted, { nodes: readiness.nodes.join(', ') });
@@ -375,13 +449,13 @@ function ReadinessStripBody({
     } else if (target.kind === 'none') {
       detail = intl.formatMessage(i18n.noTarget);
     } else if (fact === 'mounting' || requesting) {
+      spinning = true;
       action = (
         <span
           data-testid="composer-readiness-mounting"
           title={target.modelId}
           className={cx('inline-flex items-center gap-1.5', TYPE.meta, 'text-white')}
         >
-          <Loader2 className="size-3.5 animate-spin" />
           {intl.formatMessage(i18n.mounting, { model: shortModelName(target.modelId) })}
         </span>
       );
@@ -411,10 +485,11 @@ function ReadinessStripBody({
         fill
       )}
     >
-      {readiness.kind === 'reconnecting' ? (
+      {spinning ? (
         <Loader2
           aria-hidden
-          data-testid="composer-readiness-reconnecting"
+          data-testid="composer-readiness-spinner"
+          data-for={readiness.kind}
           className="size-4 shrink-0 animate-spin"
         />
       ) : readiness.kind === 'remote' ? (
