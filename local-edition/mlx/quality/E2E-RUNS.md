@@ -9,3 +9,10 @@
 | E2E #2b | 3.0.41 | Studio single over Link, 262,144, deferral | ″ | 0 | 300 | 27 (+2 load_tools) | 3 of 32 agent calls cold across turns 0–2 | — | kickoff.md ✓ |
 | E2E #2b | 3.0.41 | ″ | ″ | 1 | 43 | ″ | ″ | — | 2 memories saved — to ~/.goose/memory/working-agents.txt (category "working-agents") |
 | E2E #2b | 3.0.41 | ″ | ″ | 2 | 573 (split #1: 3207) | ″ | ″ | — | 4 web searches + 28 shell |
+
+## Tool-call failure census (2026-09-25, sessions.db)
+| run | engine | calls | failed | causes |
+|---|---|---|---|---|
+| E2E #1 | split (mlx_lm) | 23 | 3 | 2 × web page 404 (model-guessed URLs), 1 shell |
+| E2E #2 | split (mlx_lm) | 11 | 2 | 2 × edit old_str mismatch (model; goose offered "Did you mean") |
+| E2E #2b | Studio single (Rapid-MLX, qwen3_coder_xml parser) | 71 | 36 | ~22 `</parameter>\n!` appended to shell args + 3 × write "missing field `path`" (Q-85, engine parser) · cascades (files never written) · model: `cat -A` on macOS, analyze on .md |
