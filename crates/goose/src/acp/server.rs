@@ -250,7 +250,7 @@ pub struct GooseAcpAgent {
     client_supports_acp_elicitation: OnceCell<bool>,
     client_supports_goose_custom_notifications: OnceCell<bool>,
     client_supports_recipe_param_requests: OnceCell<bool>,
-    use_login_shell_path: OnceCell<bool>,
+    use_login_shell_path: OnceCell<Option<bool>>,
     client_cx: OnceCell<ConnectionTo<Client>>,
     config_dir: std::path::PathBuf,
     session_manager: Arc<SessionManager>,
@@ -401,12 +401,15 @@ fn extract_client_mcp_host_info(
     }
 }
 
-fn extract_use_login_shell_path(args: &InitializeRequest) -> bool {
+/// `None` when the client does not say, so the server's `--platform` decides: a desktop serve
+/// resolves the login-shell PATH for the shell tool, a CLI serve does not. Coercing the absent flag
+/// to `false` overrode that default for every ui/desktop session, whose initialize never sends it,
+/// and left the shell tool on goose serve's own PATH with goose's runtime shims first (Q-102).
+fn extract_use_login_shell_path(args: &InitializeRequest) -> Option<bool> {
     args.meta
         .as_ref()
         .and_then(|meta| meta.get("goose/useLoginShellPath"))
         .and_then(|v| v.as_bool())
-        .unwrap_or(false)
 }
 
 fn mcp_server_to_extension_config(mcp_server: McpServer) -> Result<ExtensionConfig, String> {
@@ -1062,7 +1065,7 @@ impl GooseAcpAgent {
                 session_id,
                 RuntimeContext {
                     mcp_host_info: self.client_mcp_host_info.get().cloned(),
-                    use_login_shell_path: self.use_login_shell_path.get().copied(),
+                    use_login_shell_path: self.use_login_shell_path.get().copied().flatten(),
                     session_name_update_tx: (!self.disable_session_naming)
                         .then(|| spawn_session_name_update_notifier(cx.clone())),
                 },
@@ -4098,5 +4101,23 @@ print(\"hello, world\")
         assert!(extract_client_supports_goose_custom_notifications(
             goose_client_capabilities.as_ref()
         ));
+    }
+
+    #[test]
+    fn login_shell_path_is_left_to_the_platform_when_the_client_is_silent() {
+        let silent = InitializeRequest::new(agent_client_protocol::schema::ProtocolVersion::LATEST);
+        assert_eq!(extract_use_login_shell_path(&silent), None);
+
+        for flag in [true, false] {
+            let mut meta = serde_json::Map::new();
+            meta.insert(
+                "goose/useLoginShellPath".to_string(),
+                serde_json::Value::Bool(flag),
+            );
+            let request =
+                InitializeRequest::new(agent_client_protocol::schema::ProtocolVersion::LATEST)
+                    .meta(meta);
+            assert_eq!(extract_use_login_shell_path(&request), Some(flag));
+        }
     }
 }
