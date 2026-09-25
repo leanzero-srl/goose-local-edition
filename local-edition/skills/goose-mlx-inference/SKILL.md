@@ -349,3 +349,13 @@ Screen capture of the menu bar fails from this harness ("could not create image 
 `osascript -e 'tell application "System Events" to tell process "Goose Swarm" to get title of menu bar items of menu bar 2'` (title) and click `menu bar item 1 of menu bar 2` then read `name of menu items of menu 1 of …` (menu; press key code 53 to close). Menu items can be CLICKED the same way ("Mount <model>", "Unmount the MLX engine") — a real user path, no CDP needed.
 Measured on 3.0.17: title '' when off (by design) → "Mounting" → "Idle" → "Reading 3.0k" (prompt 3,032 tok) → 18.0–22.7 tok/s → "Idle"; the mounted menu lists model, last run (wrote 21.5 tok/s, read 238 tok/s), cache hits, served count, uptime, GPU memory.
 The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is on the mesh (deliberate: single-Mac installs unchanged). Link sign-in is an email code — owner-only.
+
+- 2026-09-26 (quality loop, E2E runs): three engine-level facts worth keeping.
+  (1) Q-85 — the 27B, after the last `</parameter>\n` of a tool call, greedily writes `}`/`]`/`!` (~5% on `</`),
+      MTP or not; Rapid-MLX's qwen3_coder_xml parser kept it as argument text (51% of calls failed on the Studio in
+      E2E #2b; mlx_lm on the split drops it). Fix = constrain decoding to what the chat template allows at three
+      points in a tool call (fork lz/xml-param-residue → lz.6). `qwen3_xml` in this fork is the JSON parser — wrong wire.
+  (2) Q-103 — lz.5 admits ONE running request for its whole life (MTP verifier), prefill included: a 1-token request
+      waits 256–428 s behind 17k prompts. Fork lz/fair-prefill keeps admission open until a request decodes alone.
+  (3) Q-106 — several 27B engines loading at once under memory pressure (swap 47.5/49 GB) WEDGED the MacBook GPU
+      (Metal hangs uninterruptibly; reboot only). One engine load at a time per Mac.
