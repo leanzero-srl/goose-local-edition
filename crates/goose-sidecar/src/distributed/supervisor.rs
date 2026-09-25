@@ -3112,6 +3112,7 @@ mod tests {
             config,
             served_id: "node-alias".into(),
             runner: Runner::MlxLmTensor,
+            owner: None,
         };
         let (_stop_tx, mut stop_rx) = watch::channel(false);
         let recovered = wait_memory_recovered(&ctx, &mut stop_rx)

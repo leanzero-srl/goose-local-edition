@@ -19,7 +19,8 @@ use crate::fit::{self, FitVerdict, Need, NodeMemoryFacts, Verdict};
 use crate::hf::{self, LocalModel};
 use crate::kv_cache::{self, KvCacheMode};
 use crate::{
-    listening_pids, measure, port_has_listener, Sidecar, SidecarConfig, StartupWatch, GIB,
+    listening_pids, measure, port_has_listener, MemoryReading, Sidecar, SidecarConfig,
+    StartupWatch, GIB,
 };
 
 /// Rapid-MLX's `--max-concurrent-requests` is a HARD ADMISSION CAP, not a queue: the request past
@@ -796,8 +797,11 @@ pub struct MlxEngineManager {
     /// The model a mount is making room for (macOS compaction runs before the gate judges again).
     making_room: StdMutex<Option<(String, u64)>>,
     probe_client: reqwest::Client,
+    /// The memory facts a unit test pins, so a mount's verdict never depends on what else this
+    /// Mac is running (Q-105: four lifecycle tests failed whenever other engines held the RAM).
+    /// Test builds only — no production path can hand the gate a figure it did not measure.
     #[cfg(test)]
-    test_gpu_ceiling: StdMutex<Option<u64>>,
+    test_memory: StdMutex<Option<(MemoryReading, u64)>>,
 }
 
 impl MlxEngineManager {
@@ -812,14 +816,22 @@ impl MlxEngineManager {
                 .build()
                 .expect("reqwest client with static configuration"),
             #[cfg(test)]
-            test_gpu_ceiling: StdMutex::new(None),
+            test_memory: StdMutex::new(None),
         }
+    }
+
+    fn memory_reading(&self) -> Result<MemoryReading> {
+        #[cfg(test)]
+        if let Some((reading, _)) = *self.test_memory.lock().unwrap() {
+            return Ok(reading);
+        }
+        measure()
     }
 
     fn gpu_ceiling(&self) -> Result<u64> {
         #[cfg(test)]
-        if let Some(bytes) = *self.test_gpu_ceiling.lock().unwrap() {
-            return Ok(bytes);
+        if let Some((_, ceiling)) = *self.test_memory.lock().unwrap() {
+            return Ok(ceiling);
         }
         local_gpu_ceiling()
     }
@@ -867,7 +879,7 @@ impl MlxEngineManager {
         settings: &EngineSettings,
         model: &LocalModel,
     ) -> Result<FitVerdict> {
-        let reading = measure()?;
+        let reading = self.memory_reading()?;
         let ceiling = self
             .gpu_ceiling()
             .context("reading the GPU ceiling the fit rule needs")?;
@@ -1121,7 +1133,7 @@ impl MlxEngineManager {
 
     pub async fn status(&self) -> EngineStatus {
         let settings = self.settings();
-        let (reading, memory_error) = match measure() {
+        let (reading, memory_error) = match self.memory_reading() {
             Ok(reading) => (Some(reading), None),
             Err(e) => (None, Some(format!("{e:#}"))),
         };
@@ -1393,15 +1405,25 @@ mod tests {
 
     use super::*;
 
-    /// Metal exists only on macOS. On a Linux CI host the fit rule's ceiling is the host's whole
-    /// RAM, so the RAM budget alone decides and the mount lifecycle under test is unchanged; on a
-    /// Mac the real Metal ceiling is read.
+    /// An M4 Max 128 GB with 96 GiB available — the Metal ceiling `iogpu` reports there
+    /// (115,448,725,504 B, 2026-09-23). Pinned, so a lifecycle test reads the same memory on a
+    /// loaded Mac, an idle one and a Linux CI host.
+    const PINNED_MEMORY: (MemoryReading, u64) = (
+        MemoryReading {
+            available_bytes: 96 * GIB,
+            total_bytes: 128 * GIB,
+            reclaimable_cache_bytes: Some(8 * GIB),
+        },
+        115_448_725_504,
+    );
+
     fn test_manager() -> MlxEngineManager {
+        manager_with_memory(PINNED_MEMORY)
+    }
+
+    fn manager_with_memory(memory: (MemoryReading, u64)) -> MlxEngineManager {
         let manager = MlxEngineManager::new();
-        #[cfg(not(target_os = "macos"))]
-        {
-            *manager.test_gpu_ceiling.lock().unwrap() = Some(measure().unwrap().total_bytes);
-        }
+        *manager.test_memory.lock().unwrap() = Some(memory);
         manager
     }
 
@@ -2556,7 +2578,7 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
             let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             probe.local_addr().unwrap().port()
         };
-        let manager = test_manager();
+        let manager = MlxEngineManager::new();
         manager.set_settings(EngineSettings {
             models_dir,
             port,
@@ -2770,6 +2792,59 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         );
         assert_eq!(status.stray_listener_port, Some(port));
         drop(listener);
+    }
+
+    /// The gate and the status report read the manager's memory facts, never this Mac's live
+    /// ones: pinned to an 8 GiB Mac, a 1 GiB model fits and a 16 GiB one never can — whatever
+    /// the machine running the test holds free right now.
+    #[tokio::test]
+    async fn the_gate_and_status_read_the_pinned_memory_not_this_macs() {
+        let tmp = tempfile::tempdir().unwrap();
+        for (id, gib) in [("pub/one", 1), ("pub/sixteen", 16)] {
+            let dir = tmp.path().join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("config.json"), "{}").unwrap();
+            std::fs::File::create(dir.join("model.safetensors"))
+                .unwrap()
+                .set_len(gib * GIB)
+                .unwrap();
+        }
+        let manager = manager_with_memory((
+            MemoryReading {
+                available_bytes: 6 * GIB,
+                total_bytes: 8 * GIB,
+                reclaimable_cache_bytes: None,
+            },
+            5 * GIB,
+        ));
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        });
+
+        let fits = manager.mount_fit("pub/one").await.unwrap();
+        assert_eq!(fits.verdict, Verdict::Allow, "{}", fits.message);
+        assert!(
+            fits.message
+                .contains("min(available 6.0 GB − the 9.3% margin 0.7 GB, GPU ceiling 5.0 GB)"),
+            "{}",
+            fits.message
+        );
+
+        let err = manager.mount("pub/sixteen").await.unwrap_err();
+        let refused = err.downcast_ref::<MountRefused>().expect("a typed refusal");
+        assert!(
+            !refused.verdict.could_ever_fit(),
+            "{}",
+            refused.verdict.message
+        );
+        assert!(!err.to_string().contains("Make room"), "{err}");
+
+        let status = manager.status().await;
+        assert_eq!(status.available_memory_gb, 6.0);
+        assert_eq!(status.total_memory_gb, 8.0);
+        assert_eq!(status.reclaimable_cache_gb, None);
+        assert_eq!(status.memory_error, None);
     }
 
     #[tokio::test]
