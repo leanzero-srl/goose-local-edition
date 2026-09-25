@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
+import type { MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
+import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { poolEngines, swarmPoolContextLimit } from './swarmContextLimit';
 
 /**
@@ -9,7 +11,13 @@ import { poolEngines, swarmPoolContextLimit } from './swarmContextLimit';
  */
 const MLX_ONLY = {
   devices: [
-    { id: 'workhorse-mlx', model_id: 'workhorse-qwen3.5-9b-4bit-mlx', weight: 1, enabled: true, engine: 'mlx-sidecar' },
+    {
+      id: 'workhorse-mlx',
+      model_id: 'workhorse-qwen3.5-9b-4bit-mlx',
+      weight: 1,
+      enabled: true,
+      engine: 'mlx-sidecar',
+    },
   ],
 };
 const MIXED = {
@@ -18,6 +26,7 @@ const MIXED = {
     ...MLX_ONLY.devices,
   ],
 };
+const OFF = { state: 'off' } as MlxRemoteSingleStatus;
 const running = (contextWindow?: number): MlxEngineStatus => ({
   state: 'running',
   restartRequired: false,
@@ -52,6 +61,8 @@ describe('swarmPoolContextLimit', () => {
       readConfig: async () => MLX_ONLY,
       lmStudioLimit,
       mlxStatus: async () => running(32768),
+      remoteStatus: async () => OFF,
+      distributedStatus: async () => null,
     });
     expect(limit).toBe(32768);
     expect(lmStudioLimit).not.toHaveBeenCalled();
@@ -62,12 +73,16 @@ describe('swarmPoolContextLimit', () => {
       readConfig: async () => MIXED,
       lmStudioLimit: async () => 131072,
       mlxStatus: async () => running(32768),
+      remoteStatus: async () => OFF,
+      distributedStatus: async () => null,
     });
     expect(limit).toBe(32768);
     const other = await swarmPoolContextLimit({
       readConfig: async () => MIXED,
       lmStudioLimit: async () => 16384,
       mlxStatus: async () => running(32768),
+      remoteStatus: async () => OFF,
+      distributedStatus: async () => null,
     });
     expect(other).toBe(16384);
   });
@@ -77,12 +92,16 @@ describe('swarmPoolContextLimit', () => {
       readConfig: async () => MLX_ONLY,
       lmStudioLimit: async () => null,
       mlxStatus: async () => ({ ...running(32768), state: 'stopped' }),
+      remoteStatus: async () => OFF,
+      distributedStatus: async () => null,
     });
     expect(stopped).toBeNull();
     const noWindow = await swarmPoolContextLimit({
       readConfig: async () => MIXED,
       lmStudioLimit: async () => 131072,
       mlxStatus: async () => running(undefined),
+      remoteStatus: async () => OFF,
+      distributedStatus: async () => null,
     });
     expect(noWindow).toBe(131072);
     const thrown = await swarmPoolContextLimit({
@@ -91,6 +110,8 @@ describe('swarmPoolContextLimit', () => {
       mlxStatus: async () => {
         throw new Error('engine unreachable');
       },
+      remoteStatus: async () => OFF,
+      distributedStatus: async () => null,
     });
     expect(thrown).toBe(131072);
   });
@@ -103,8 +124,53 @@ describe('swarmPoolContextLimit', () => {
       },
       lmStudioLimit: async () => 131072,
       mlxStatus,
+      remoteStatus: async () => OFF,
+      distributedStatus: async () => null,
     });
     expect(limit).toBe(131072);
     expect(mlxStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('the MLX window is the engine chat reaches — the router’s own choice', () => {
+  it('chat routed to Work’s Mac Studio: its 262,144 window, not the stopped local engine nor a 128k default', async () => {
+    const limit = await swarmPoolContextLimit({
+      readConfig: async () => MLX_ONLY,
+      lmStudioLimit: async () => null,
+      mlxStatus: async () => ({ ...running(), state: 'stopped' }),
+      remoteStatus: async () =>
+        ({ state: 'ready', contextWindow: 262144 }) as MlxRemoteSingleStatus,
+      distributedStatus: async () => null,
+    });
+    expect(limit).toBe(262144);
+  });
+
+  it('a route still mounting on the peer says nothing yet — the local engine is not asked in its place', async () => {
+    const mlxStatus = vi.fn(async () => running(32768));
+    const limit = await swarmPoolContextLimit({
+      readConfig: async () => MLX_ONLY,
+      lmStudioLimit: async () => null,
+      mlxStatus,
+      remoteStatus: async () => ({ state: 'mounting' }) as MlxRemoteSingleStatus,
+      distributedStatus: async () => null,
+    });
+    expect(limit).toBeNull();
+    expect(mlxStatus).not.toHaveBeenCalled();
+  });
+
+  it('the split owning this Mac: its own limit', async () => {
+    const limit = await swarmPoolContextLimit({
+      readConfig: async () => MLX_ONLY,
+      lmStudioLimit: async () => null,
+      mlxStatus: async () => running(32768),
+      remoteStatus: async () => OFF,
+      distributedStatus: async () =>
+        ({
+          mode: 'distributed',
+          state: 'ready',
+          contextLimit: 65536,
+        }) as unknown as MlxDistributedStatus,
+    });
+    expect(limit).toBe(65536);
   });
 });

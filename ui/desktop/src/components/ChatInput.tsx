@@ -1,5 +1,12 @@
 import { AppEvents } from '../constants/events';
-import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import React, {
+  useRef,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useSyncExternalStore,
+} from 'react';
 import { ArrowUp, Bug, ScrollText, Settings2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/Tooltip';
 import { Button } from './ui/button';
@@ -35,6 +42,11 @@ import { UserInput, ImageData } from '../types/message';
 import { compressImageDataUrl } from '../utils/conversionUtils';
 import { fetchCanonicalModelInfo } from '../utils/canonical';
 import { fetchSwarmPoolContextLimit } from './swarm/swarmContextLimit';
+import {
+  latestMlxRemoteSingleStatus,
+  subscribeMlxRemoteSingleStatus,
+} from '../acp/mlx-remote-single';
+import { latestMlxDistributedStatus, subscribeMlxDistributedStatus } from '../acp/mlx-distributed';
 import { mlxEngineStatus } from '../acp/mlx-engine';
 import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
 import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
@@ -624,9 +636,11 @@ export default function ChatInput({
       // Swarm: the local fleet. Its context window is whatever the resident models were loaded with —
       // LM Studio reports it per model, the LeanZero MLX engine reports it on its status — read live from
       // every engine the POOL runs on and take the min (an MLX-only pool used to fall to the 128k default).
+      // A pool whose engines report no window yet shows NO limit (the indicator hides) — never the
+      // generic 128k, which read as a fact about a model with 262,144.
       if (provider === 'swarm') {
         const swarmLimit = await fetchSwarmPoolContextLimit();
-        setTokenLimit(swarmLimit ?? TOKEN_LIMIT_DEFAULT);
+        setTokenLimit(swarmLimit ?? 0);
         setIsTokenLimitLoaded(true);
         return;
       }
@@ -689,10 +703,25 @@ export default function ChatInput({
 
   // Initial load and refresh when model changes (effective model includes overrides,
   // config model is the fallback for Hub/no-session contexts)
+  // Where swarm chat is served moves the window (this Mac, a linked Mac, the split): the limit is
+  // read again when the route or the split changes, not only when the model does.
+  const remoteRoute = useSyncExternalStore(
+    subscribeMlxRemoteSingleStatus,
+    latestMlxRemoteSingleStatus
+  );
+  const splitNow = useSyncExternalStore(subscribeMlxDistributedStatus, latestMlxDistributedStatus);
+  const servedAt = [
+    remoteRoute?.state,
+    remoteRoute?.peer,
+    remoteRoute?.contextWindow,
+    splitNow?.mode,
+    splitNow?.state,
+    splitNow?.contextLimit,
+  ].join('|');
   useEffect(() => {
     loadProviderDetails();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveModel, effectiveProvider, configModel, configProvider]);
+  }, [effectiveModel, effectiveProvider, configModel, configProvider, servedAt]);
 
   // Handle token usage alerts
   useEffect(() => {
