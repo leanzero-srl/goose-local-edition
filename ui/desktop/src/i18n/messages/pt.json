@@ -4652,6 +4652,12 @@
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
   },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Usar um provedor na nuvem em vez disso"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Deixa {model} nesta conversa"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Limpe suas configurações de modelo e provedor selecionados para começar do zero"
   },

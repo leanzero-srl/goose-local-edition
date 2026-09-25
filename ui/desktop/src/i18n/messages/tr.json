@@ -4652,6 +4652,12 @@
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
   },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Bunun yerine bir bulut sağlayıcı kullan"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Bu sohbet için {model} bırakılır"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Yeni bir başlangıç yapmak için seçtiğiniz model ve sağlayıcı ayarlarını temizleyin"
   },

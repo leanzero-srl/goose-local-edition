@@ -4652,6 +4652,12 @@
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
   },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "대신 클라우드 제공자 사용"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "이 채팅에서 {model} 사용을 그만둡니다"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "선택한 모델 및 제공업체 설정을 지우고 새로 시작합니다."
   },

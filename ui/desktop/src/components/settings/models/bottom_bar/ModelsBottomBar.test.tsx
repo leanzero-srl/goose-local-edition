@@ -389,8 +389,12 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     expect(open).toHaveTextContent('Change the model or the Mac it runs on');
     await userEvent.setup().click(open);
     expect(setView).toHaveBeenCalledWith('mlxEngine');
-    // The provider switch stays for anyone leaving for a cloud provider.
-    expect(screen.getByText('Change Provider')).toBeInTheDocument();
+    // Q-41: the provider switch stays for anyone leaving for a cloud provider — and says that,
+    // never "Change Provider" into a picker whose swarm row names no model.
+    const leave = screen.getByTestId('model-menu-switch');
+    expect(leave).toHaveTextContent('Use a cloud provider instead');
+    expect(leave).toHaveTextContent('Leaves Qwen3.8-27B-Atlassian-Q8-mlx for this chat');
+    expect(screen.queryByText('Change Provider')).toBeNull();
   });
 
   it('the split names both Macs; another window’s run says so', () => {
@@ -431,5 +435,6 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     expect(screen.queryByTestId('model-chip-served')).toBeNull();
     expect(screen.queryByTestId('model-menu-open-engine')).toBeNull();
     expect(screen.getByText('swarm')).toBeInTheDocument();
+    expect(screen.getByTestId('model-menu-switch')).toHaveTextContent('Change Provider');
   });
 });

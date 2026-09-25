@@ -4652,6 +4652,12 @@
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
   },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Dùng nhà cung cấp đám mây thay thế"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Rời {model} cho cuộc trò chuyện này"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Xóa các cài đặt mô hình và nhà cung cấp đã chọn để bắt đầu lại từ đầu"
   },

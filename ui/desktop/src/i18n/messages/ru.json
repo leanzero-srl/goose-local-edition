@@ -4652,6 +4652,12 @@
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
   },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Использовать облачного провайдера"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Уходит с {model} в этом чате"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Очистить выбранную модель и настройки провайдера, чтобы начать заново"
   },

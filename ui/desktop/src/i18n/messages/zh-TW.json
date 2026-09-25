@@ -4652,6 +4652,12 @@
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
   },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "改用雲端供應商"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "此聊天將不再使用 {model}"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "清除您選定的模型與供應商設定以重新開始"
   },

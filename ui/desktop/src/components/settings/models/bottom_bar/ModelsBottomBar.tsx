@@ -56,6 +56,14 @@ const i18n = defineMessages({
     id: 'modelsBottomBar.changeProvider',
     defaultMessage: 'Change Provider',
   },
+  useCloudInstead: {
+    id: 'modelsBottomBar.useCloudInstead',
+    defaultMessage: 'Use a cloud provider instead',
+  },
+  useCloudInsteadHint: {
+    id: 'modelsBottomBar.useCloudInsteadHint',
+    defaultMessage: 'Leaves {model} for this chat',
+  },
   swarmDocs: {
     id: 'modelsBottomBar.swarmDocs',
     defaultMessage: 'Documentation',
@@ -400,9 +408,24 @@ export default function ModelsBottomBar({
               <Cpu className="ml-auto h-4 w-4 shrink-0" />
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={() => setIsAddModelModalOpen(true)}>
-            <span>{intl.formatMessage(isSwarm ? i18n.changeProvider : i18n.changeModel)}</span>
-            <Sliders className="ml-auto h-4 w-4 rotate-90" />
+          <DropdownMenuItem
+            data-testid="model-menu-switch"
+            onClick={() => setIsAddModelModalOpen(true)}
+          >
+            {/* While the chip names the model on your Macs, "Change Provider" opened a picker whose
+                swarm row names no model and contradicts the chip (Q-41): the one thing that
+                picker still does from here is leave for a cloud provider, so it says that. */}
+            {servedModel != null ? (
+              <span className="flex min-w-0 flex-col">
+                <span>{intl.formatMessage(i18n.useCloudInstead)}</span>
+                <span className={TYPE.meta}>
+                  {intl.formatMessage(i18n.useCloudInsteadHint, { model: servedModel })}
+                </span>
+              </span>
+            ) : (
+              <span>{intl.formatMessage(isSwarm ? i18n.changeProvider : i18n.changeModel)}</span>
+            )}
+            <Sliders className="ml-auto h-4 w-4 shrink-0 rotate-90" />
           </DropdownMenuItem>
           {isSwarm && (
             <>

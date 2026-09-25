@@ -4652,6 +4652,12 @@
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
   },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Gunakan penyedia cloud sebagai gantinya"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Meninggalkan {model} untuk obrolan ini"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Bersihkan pengaturan model dan penyedia yang dipilih untuk memulai dari awal"
   },

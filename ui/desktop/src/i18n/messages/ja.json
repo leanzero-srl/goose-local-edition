@@ -4652,6 +4652,12 @@
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
   },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "代わりにクラウドプロバイダーを使う"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "このチャットでは {model} から切り替えます"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "選択したモデルとプロバイダー設定をクリアして最初からやり直します"
   },

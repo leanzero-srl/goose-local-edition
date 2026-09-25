@@ -4652,6 +4652,12 @@
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
   },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "Usa invece un provider cloud"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "Lascia {model} per questa chat"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Cancella le impostazioni del modello e del provider selezionati per ricominciare da zero"
   },

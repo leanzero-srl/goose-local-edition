@@ -4652,6 +4652,12 @@
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
   },
+  "modelsBottomBar.useCloudInstead": {
+    "defaultMessage": "इसके बजाय क्लाउड प्रदाता का उपयोग करें"
+  },
+  "modelsBottomBar.useCloudInsteadHint": {
+    "defaultMessage": "इस चैट के लिए {model} छोड़ देता है"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "नए सिरे से शुरुआत करने के लिए अपने चयनित मॉडल और प्रदाता सेटिंग्स को साफ़ करें"
   },
