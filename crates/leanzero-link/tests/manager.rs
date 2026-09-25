@@ -3039,6 +3039,13 @@ async fn a_leaving_peer_is_refused_by_name_until_the_fabric_sees_it_again() {
         .await
         .expect("relay starts");
     studio.mark_leaving(LeaveReason::Quitting);
+    let left = tokio::spawn({
+        use leanzero_link::inference::PeerCallResolver;
+        let manager = manager.clone();
+        async move { manager.left("studio").await }
+    });
+    tokio::task::yield_now().await;
+    assert!(!left.is_finished(), "nothing said yet");
     registry
         .mark_peer_leaving(&PeerLeavingNotice {
             node_id: "studio".to_string(),
@@ -3048,6 +3055,13 @@ async fn a_leaving_peer_is_refused_by_name_until_the_fabric_sees_it_again() {
         })
         .await
         .expect("matched");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), left)
+            .await
+            .expect("the relay's wait wakes on the notice")
+            .unwrap(),
+        "studio-host quit goose"
+    );
     match manager.peer_call("studio").await {
         Err(err @ LinkError::PeerLeaving { .. }) => {
             assert_eq!(err.to_string(), "studio-host quit goose")

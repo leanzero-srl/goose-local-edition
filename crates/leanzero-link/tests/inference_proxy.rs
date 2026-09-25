@@ -241,6 +241,36 @@ impl PeerCallResolver for Resolver {
     async fn peer_call(&self, _peer: &str) -> Result<PeerCall, String> {
         self.0.clone()
     }
+
+    /// This fixture's peer never says it is leaving: the looks alone decide.
+    async fn left(&self, _peer: &str) -> String {
+        std::future::pending().await
+    }
+}
+
+/// A resolver whose peer says it is leaving when the test says so.
+struct LeavingResolver {
+    call: PeerCall,
+    said: tokio::sync::watch::Receiver<Option<String>>,
+}
+
+#[async_trait::async_trait]
+impl PeerCallResolver for LeavingResolver {
+    async fn peer_call(&self, _peer: &str) -> Result<PeerCall, String> {
+        Ok(self.call.clone())
+    }
+
+    async fn left(&self, _peer: &str) -> String {
+        let mut said = self.said.clone();
+        loop {
+            if let Some(words) = said.borrow_and_update().clone() {
+                return words;
+            }
+            if said.changed().await.is_err() {
+                return std::future::pending().await;
+            }
+        }
+    }
 }
 
 /// Every relay in this file is watched at a fast cadence, so every test here also proves the
@@ -846,4 +876,89 @@ async fn an_older_peer_without_the_look_route_is_ended_only_by_its_absence() {
             .unwrap()
             .contains("could not reach the peer"));
     }
+}
+
+/// Q-51: the peer says it is quitting while a stream is in flight. Its Link is still up and
+/// the peer still HOLDS the request (every look answers Held — the looks alone would never
+/// end it), yet the stream ends at once with the peer's own words, as a named error event.
+/// Before the response head, the same words are a named 502.
+#[tokio::test]
+async fn a_request_in_flight_to_a_peer_that_says_it_is_leaving_ends_at_once_with_its_words() {
+    const WORDS: &str = "Work's Mac Studio quit goose";
+    let (_engine, engine_base) = start_engine(Script::Endless).await;
+    let (_b, b_base) = start_node_b(Some(serving(engine_base).await)).await;
+    let (tell, said) = tokio::sync::watch::channel(None);
+    let relay = InferenceRelay::start(
+        "node-b".into(),
+        Arc::new(LeavingResolver {
+            call: call_to(&b_base),
+            said,
+        }),
+    )
+    .await
+    .unwrap();
+
+    let response = post_chat(relay.base_url()).await;
+    assert_eq!(response.status(), 200);
+    let mut stream = response.bytes_stream();
+    stream.next().await.unwrap().expect("the stream is live");
+    // Negative control: several looks pass on a healthy peer and the stream goes on.
+    tokio::time::sleep(LOOK_INTERVAL * 4).await;
+    stream
+        .next()
+        .await
+        .unwrap()
+        .expect("still live after several looks");
+
+    tell.send_replace(Some(WORDS.to_string()));
+    let mut got = Vec::new();
+    let outcome = tokio::time::timeout(LOOK_INTERVAL * 20, async {
+        loop {
+            match stream.next().await {
+                Some(Ok(chunk)) => got.extend_from_slice(&chunk),
+                Some(Err(err)) => return Err(err.to_string()),
+                None => return Ok(()),
+            }
+        }
+    })
+    .await
+    .expect("the notice ends the stream without waiting on the looks");
+    assert!(
+        outcome.is_err(),
+        "a clean end would impersonate a finished answer"
+    );
+    let body = String::from_utf8_lossy(&got);
+    assert_eq!(
+        relay_error_event(&body)["error"]["message"],
+        format!("{RELAY_FAILED}: Link peer 'node-b' lost this request in flight: {WORDS}")
+    );
+
+    // Before the head: a request the peer is still thinking about is a named 502.
+    let (_silent, silent_base) = start_engine(Script::Silent).await;
+    let (_b2, b2_base) = start_node_b(Some(serving(silent_base).await)).await;
+    let (tell, said) = tokio::sync::watch::channel(None);
+    let relay = InferenceRelay::start(
+        "node-b".into(),
+        Arc::new(LeavingResolver {
+            call: call_to(&b2_base),
+            said,
+        }),
+    )
+    .await
+    .unwrap();
+    let pending = tokio::spawn({
+        let base = relay.base_url().to_string();
+        async move { post_chat(&base).await }
+    });
+    tokio::time::sleep(LOOK_INTERVAL * 4).await;
+    tell.send_replace(Some(WORDS.to_string()));
+    let response = tokio::time::timeout(LOOK_INTERVAL * 20, pending)
+        .await
+        .expect("the notice answers the waiting request")
+        .unwrap();
+    assert_eq!(response.status(), 502);
+    assert_eq!(
+        response.text().await.unwrap(),
+        format!("{RELAY_FAILED}: Link peer 'node-b' lost this request in flight: {WORDS}")
+    );
 }
