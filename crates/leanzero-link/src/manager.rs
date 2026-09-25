@@ -941,16 +941,12 @@ impl LinkManager {
     pub async fn peer_call(&self, target_node_id: &str) -> Result<PeerCall, LinkError> {
         let inner = self.core.inner.lock().await;
         let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
-        if let Some(node) = active.registry.peer_node(target_node_id) {
-            if let Some(leaving) = node.leaving {
-                return Err(LinkError::PeerLeaving {
-                    name: node
-                        .computer_name
-                        .filter(|name| !name.trim().is_empty())
-                        .unwrap_or(node.hostname),
-                    reason: leaving.reason,
-                });
-            }
+        if let Some(error) = active
+            .registry
+            .peer_node(target_node_id)
+            .and_then(leaving_error)
+        {
+            return Err(error);
         }
         let base_url = active
             .registry
@@ -1874,6 +1870,35 @@ impl PeerCallResolver for LinkManager {
             .await
             .map_err(|err| err.to_string())
     }
+
+    /// Wakes on every recorded notice; while this node is off the mesh nothing can be told.
+    async fn left(&self, peer: &str) -> String {
+        let Some(registry) = self.active_registry().await else {
+            return std::future::pending().await;
+        };
+        let mut marks = registry.leaving_marks();
+        loop {
+            if let Some(error) = registry.peer_node(peer).and_then(leaving_error) {
+                return error.to_string();
+            }
+            if marks.changed().await.is_err() {
+                return std::future::pending().await;
+            }
+        }
+    }
+}
+
+/// [`LinkError::PeerLeaving`] for a row whose peer said it is going away, named as every surface
+/// names it (ComputerName, else hostname).
+fn leaving_error(node: crate::wire::NodeState) -> Option<LinkError> {
+    let reason = node.leaving?.reason;
+    Some(LinkError::PeerLeaving {
+        name: node
+            .computer_name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(node.hostname),
+        reason,
+    })
 }
 
 /// `1 + peers that are not Offline`: a peer that answers (even wrongly) is present; an

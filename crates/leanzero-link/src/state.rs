@@ -407,6 +407,9 @@ struct RegistryInner {
     peers: StdMutex<HashMap<String, PeerEntry>>,
     /// Mirror index of peer-originated sessions, keyed by session_id.
     sessions: StdMutex<HashMap<String, SessionSummary>>,
+    /// Bumped by every recorded going-away notice, so a waiter (the relay's in-flight watch)
+    /// learns of one the moment it lands rather than at its next look.
+    leaving_marks: tokio::sync::watch::Sender<u64>,
 }
 
 impl Drop for RegistryInner {
@@ -442,6 +445,7 @@ impl PeerRegistry {
                 dial,
                 peers: StdMutex::new(HashMap::new()),
                 sessions: StdMutex::new(HashMap::new()),
+                leaving_marks: tokio::sync::watch::channel(0).0,
             }),
         })
     }
@@ -639,6 +643,7 @@ impl PeerRegistry {
             );
             entry.state.clone()
         };
+        self.inner.leaving_marks.send_modify(|marks| *marks += 1);
         self.inner
             .pubsub
             .publish(
@@ -647,6 +652,11 @@ impl PeerRegistry {
             )
             .await;
         Some(state)
+    }
+
+    /// Changes every time a going-away notice is recorded ([`Self::mark_peer_leaving`]).
+    pub fn leaving_marks(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.inner.leaving_marks.subscribe()
     }
 
     /// The row of the peer identified by `node_id`, matched as [`Self::peer_base_url`] matches.

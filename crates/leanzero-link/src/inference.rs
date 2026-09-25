@@ -364,6 +364,13 @@ pub struct PeerCall {
 #[async_trait::async_trait]
 pub trait PeerCallResolver: Send + Sync + 'static {
     async fn peer_call(&self, peer: &str) -> Result<PeerCall, String>;
+
+    /// Resolves with the words ("Work's Mac Studio quit goose") the moment `peer` says it is
+    /// going away on purpose; never resolves while it does not. A request in flight to it is
+    /// ended with those words at once — the peer's Link stops right after it says so, so the
+    /// request can never complete, and its looks would take up to [`MESH_POLL_FAILURE_LOOKS`]
+    /// intervals to prove it (Q-51, 3.0.38: 14 s).
+    async fn left(&self, peer: &str) -> String;
 }
 
 /// The relay's two clients over one mesh proxy: the request's own (CONNECT-bounded only — a
@@ -518,12 +525,19 @@ async fn relay(
         call.base_url,
         streams_route().replace("{id}", &stream_id)
     );
-    let mut lost: LostPeer = Box::pin(watch_in_flight(
+    let (resolver, peer) = (ctx.resolver.clone(), ctx.peer.clone());
+    let watch = watch_in_flight(
         clients.look,
         look_url,
         call.token.clone(),
         call.liveness_interval,
-    ));
+    );
+    let mut lost: LostPeer = Box::pin(async move {
+        tokio::select! {
+            evidence = watch => evidence,
+            words = resolver.left(&peer) => words,
+        }
+    });
     tokio::select! {
         sent = send => match sent {
             Ok(response) => watched_passthrough(response, lost, ctx.peer.clone()),
