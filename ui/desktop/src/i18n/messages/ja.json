@@ -3632,6 +3632,12 @@
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} のメモリ"
   },
+  "mlxEngineView.memoryPeerOffline": {
+    "defaultMessage": "{mac} は LeanZero Link でオフラインです"
+  },
+  "mlxEngineView.memoryPeerUnlisted": {
+    "defaultMessage": "{mac} は LeanZero Link が一覧表示する Mac に含まれていません"
+  },
   "mlxEngineView.memoryReading": {
     "defaultMessage": "メモリを読み取り中…"
   },
@@ -4557,7 +4563,7 @@
     "defaultMessage": "プロンプトを読み込み中"
   },
   "modelsBottomBar.phase.unknown": {
-    "defaultMessage": "提供中"
+    "defaultMessage": "状態不明"
   },
   "modelsBottomBar.phase.unloaded": {
     "defaultMessage": "未読み込み"

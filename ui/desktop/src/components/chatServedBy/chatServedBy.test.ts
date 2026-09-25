@@ -120,6 +120,7 @@ const inputs = (over: Partial<ChatServedInputs>): ChatServedInputs => ({
   single: STOPPED,
   distributed: null,
   remote: null,
+  remoteReadError: null,
   main: null,
   sessionId: 's-mine',
   turnInFlight: false,
@@ -368,5 +369,16 @@ describe('mlxEngineServing — the ONE order (split, route, another window’s s
     expect(mlxEngineServing(RUNNING, OTHER_WINDOW, ROUTE, 'This Mac').engine).toBe('remote');
     expect(mlxEngineServing(RUNNING, null, { state: 'off' }, 'This Mac').engine).toBe('single');
     expect(mlxEngineServing(STOPPED, null, null, 'This Mac').engine).toBe('none');
+  });
+});
+
+describe('a failed route read is not "no route" (works-prover on cut 1)', () => {
+  it('keeps the route and its Mac, and says the state is unknown — never "not running" plus Mount', () => {
+    const served = deriveChatServedBy(
+      inputs({ remote: ROUTE, remoteReadError: 'ACP read failed: goosed busy' })
+    );
+    expect(served.engine).toBe('remote');
+    expect(served.where).toEqual(["Work's Mac Studio"]);
+    expect(served.phase).toBeNull();
   });
 });

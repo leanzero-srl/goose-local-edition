@@ -3632,6 +3632,12 @@
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Bộ nhớ trên {mac}"
   },
+  "mlxEngineView.memoryPeerOffline": {
+    "defaultMessage": "{mac} đang ngoại tuyến trên LeanZero Link"
+  },
+  "mlxEngineView.memoryPeerUnlisted": {
+    "defaultMessage": "{mac} không nằm trong các Mac mà LeanZero Link liệt kê"
+  },
   "mlxEngineView.memoryReading": {
     "defaultMessage": "Đang đọc bộ nhớ…"
   },
@@ -4557,7 +4563,7 @@
     "defaultMessage": "Đang đọc lời nhắc"
   },
   "modelsBottomBar.phase.unknown": {
-    "defaultMessage": "Đang phục vụ"
+    "defaultMessage": "Không rõ trạng thái"
   },
   "modelsBottomBar.phase.unloaded": {
     "defaultMessage": "Chưa tải"

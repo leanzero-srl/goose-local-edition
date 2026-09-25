@@ -147,6 +147,14 @@ const i18n = defineMessages({
   servingRemote: { id: 'mlxEngineView.servingRemote', defaultMessage: 'Serving on {peer}' },
   memoryOn: { id: 'mlxEngineView.memoryOn', defaultMessage: 'Memory on {mac}' },
   memoryReading: { id: 'mlxEngineView.memoryReading', defaultMessage: 'Reading its memory…' },
+  memoryPeerOffline: {
+    id: 'mlxEngineView.memoryPeerOffline',
+    defaultMessage: '{mac} is offline on LeanZero Link',
+  },
+  memoryPeerUnlisted: {
+    id: 'mlxEngineView.memoryPeerUnlisted',
+    defaultMessage: '{mac} is not among the Macs LeanZero Link lists',
+  },
   memoryUnread: {
     id: 'mlxEngineView.memoryUnread',
     defaultMessage: 'Memory unmeasured: {error}',
@@ -2352,11 +2360,17 @@ function MlxEngineViewBody() {
     ? {
         macName: routePeerName(remote),
         status: peerFacts?.status ?? null,
+        // Every reason the peer's memory cannot be read is SAID — an offline or unlisted peer is
+        // never read (useMacs skips it), so "Reading its memory…" would wait forever.
         error:
           peerFacts?.statusError ??
-          (servingPeer && peerRefuses(servingPeer, 'manage')
-            ? macsCtx.offText(servingPeer, 'manage')
-            : null),
+          (!servingPeer
+            ? intl.formatMessage(i18n.memoryPeerUnlisted, { mac: routePeerName(remote) })
+            : !servingPeer.online
+              ? intl.formatMessage(i18n.memoryPeerOffline, { mac: routePeerName(remote) })
+              : peerRefuses(servingPeer, 'manage')
+                ? macsCtx.offText(servingPeer, 'manage')
+                : null),
       }
     : {
         // "Serving across Macs" names no Mac: say whose memory this is.

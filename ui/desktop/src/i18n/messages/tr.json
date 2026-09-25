@@ -3632,6 +3632,12 @@
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} üzerindeki bellek"
   },
+  "mlxEngineView.memoryPeerOffline": {
+    "defaultMessage": "{mac} LeanZero Link'te çevrimdışı"
+  },
+  "mlxEngineView.memoryPeerUnlisted": {
+    "defaultMessage": "{mac}, LeanZero Link'in listelediği Mac'ler arasında değil"
+  },
   "mlxEngineView.memoryReading": {
     "defaultMessage": "Belleği okunuyor…"
   },
@@ -4557,7 +4563,7 @@
     "defaultMessage": "İstem okuyor"
   },
   "modelsBottomBar.phase.unknown": {
-    "defaultMessage": "Hizmet veriyor"
+    "defaultMessage": "Durum bilinmiyor"
   },
   "modelsBottomBar.phase.unloaded": {
     "defaultMessage": "Yüklü değil"

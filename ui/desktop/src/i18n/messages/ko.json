@@ -3632,6 +3632,12 @@
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac}의 메모리"
   },
+  "mlxEngineView.memoryPeerOffline": {
+    "defaultMessage": "{mac}이(가) LeanZero Link에서 오프라인입니다"
+  },
+  "mlxEngineView.memoryPeerUnlisted": {
+    "defaultMessage": "{mac}은(는) LeanZero Link가 나열하는 Mac에 없습니다"
+  },
   "mlxEngineView.memoryReading": {
     "defaultMessage": "메모리를 읽는 중…"
   },
@@ -4557,7 +4563,7 @@
     "defaultMessage": "프롬프트 읽는 중"
   },
   "modelsBottomBar.phase.unknown": {
-    "defaultMessage": "제공 중"
+    "defaultMessage": "상태 알 수 없음"
   },
   "modelsBottomBar.phase.unloaded": {
     "defaultMessage": "로드되지 않음"

@@ -40,19 +40,33 @@ function reportToMain(status: MlxRemoteSingleStatus | null): void {
 
 /**
  * The latest remote-single status any read in this window saw, for surfaces that must know where
- * chat goes without a poll of their own. A failed read clears it.
+ * chat goes without a poll of their own. A FAILED read keeps the last status and records why
+ * (`latestMlxRemoteSingleReadError`): a failed read is not "no route" — the router keeps sending
+ * chat to the peer while the route record stands, and clearing it made the chat claim "not running"
+ * and offer Mount, and stopped the reporter's polling (works-prover on cut 1, 2026-09-25).
  */
 let latestStatus: MlxRemoteSingleStatus | null = null;
+let latestReadError: string | null = null;
 const latestListeners = new Set<() => void>();
+
+function notifyLatest(): void {
+  for (const listener of latestListeners) listener();
+}
 
 function publishLatest(status: MlxRemoteSingleStatus | null): void {
   latestStatus = status;
+  latestReadError = null;
   reportToMain(status);
-  for (const listener of latestListeners) listener();
+  notifyLatest();
 }
 
 export function latestMlxRemoteSingleStatus(): MlxRemoteSingleStatus | null {
   return latestStatus;
+}
+
+/** Why the last route read failed, while the last status it read is kept; null after a good read. */
+export function latestMlxRemoteSingleReadError(): string | null {
+  return latestReadError;
 }
 
 export function subscribeMlxRemoteSingleStatus(listener: () => void): () => void {
@@ -75,7 +89,8 @@ export async function mlxRemoteSingleStatus(): Promise<MlxRemoteSingleStatus> {
       {}
     );
   } catch (e) {
-    publishLatest(null);
+    latestReadError = e instanceof Error ? e.message : String(e);
+    notifyLatest();
     throw e;
   }
   publishLatest(response.status);

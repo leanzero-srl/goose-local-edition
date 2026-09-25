@@ -270,6 +270,8 @@ export interface ChatServedInputs {
   single: MlxEngineStatus | null;
   distributed: MlxDistributedStatus | null;
   remote: MlxRemoteSingleStatus | null;
+  /** Why the last route read failed (the last status is kept); while set, the route's state is unknown. */
+  remoteReadError: string | null;
   /** main's latest read of the engine that serves (activity, who it serves); null = none. */
   main: MlxEngineSnapshot | null;
   /** The chat asking — its own requests are not "others". */
@@ -336,6 +338,7 @@ function phaseOf(
     case 'single':
       return singlePhase(single?.state ?? null, false, activity);
     case 'remote':
+      if (inputs.remoteReadError != null) return null;
       return remotePhase(remote?.state ?? 'off', activity);
     case 'split': {
       if (serving.foreign) {

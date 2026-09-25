@@ -3632,6 +3632,12 @@
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} 的内存"
   },
+  "mlxEngineView.memoryPeerOffline": {
+    "defaultMessage": "{mac} 在 LeanZero Link 上离线"
+  },
+  "mlxEngineView.memoryPeerUnlisted": {
+    "defaultMessage": "{mac} 不在 LeanZero Link 列出的 Mac 中"
+  },
   "mlxEngineView.memoryReading": {
     "defaultMessage": "正在读取其内存…"
   },
@@ -4557,7 +4563,7 @@
     "defaultMessage": "正在读取提示"
   },
   "modelsBottomBar.phase.unknown": {
-    "defaultMessage": "服务中"
+    "defaultMessage": "状态未知"
   },
   "modelsBottomBar.phase.unloaded": {
     "defaultMessage": "未加载"

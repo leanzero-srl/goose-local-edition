@@ -33,7 +33,7 @@ export function useMlxRemoteReporter(): void {
       try {
         await mlxRemoteSingleStatus();
       } catch {
-        // The read cleared the latest status; nothing is claimed.
+        // The read recorded why it failed; the last status stands and the next read is scheduled.
       } finally {
         reading = false;
       }

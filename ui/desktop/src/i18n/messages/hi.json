@@ -3632,6 +3632,12 @@
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} पर मेमोरी"
   },
+  "mlxEngineView.memoryPeerOffline": {
+    "defaultMessage": "{mac} LeanZero Link पर ऑफ़लाइन है"
+  },
+  "mlxEngineView.memoryPeerUnlisted": {
+    "defaultMessage": "{mac} LeanZero Link की सूची वाले Mac में नहीं है"
+  },
   "mlxEngineView.memoryReading": {
     "defaultMessage": "उसकी मेमोरी पढ़ी जा रही है…"
   },
@@ -4557,7 +4563,7 @@
     "defaultMessage": "प्रॉम्प्ट पढ़ रहा है"
   },
   "modelsBottomBar.phase.unknown": {
-    "defaultMessage": "सेवा दे रहा है"
+    "defaultMessage": "स्थिति अज्ञात"
   },
   "modelsBottomBar.phase.unloaded": {
     "defaultMessage": "लोड नहीं है"

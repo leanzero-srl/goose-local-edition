@@ -119,7 +119,7 @@ const i18n = defineMessages({
   phaseWriting: { id: 'modelsBottomBar.phase.writing', defaultMessage: 'Writing' },
   phaseHeld: { id: 'modelsBottomBar.phase.held', defaultMessage: 'Queued' },
   phaseFailed: { id: 'modelsBottomBar.phase.failed', defaultMessage: 'Failed' },
-  phaseUnknown: { id: 'modelsBottomBar.phase.unknown', defaultMessage: 'Serving' },
+  phaseUnknown: { id: 'modelsBottomBar.phase.unknown', defaultMessage: 'State unknown' },
 });
 
 const PHASE_WORD: Record<EnginePhase, (typeof i18n)['phaseIdle']> = {

@@ -3632,6 +3632,12 @@
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Память на {mac}"
   },
+  "mlxEngineView.memoryPeerOffline": {
+    "defaultMessage": "{mac} не в сети LeanZero Link"
+  },
+  "mlxEngineView.memoryPeerUnlisted": {
+    "defaultMessage": "{mac} нет среди Mac, которые показывает LeanZero Link"
+  },
   "mlxEngineView.memoryReading": {
     "defaultMessage": "Чтение памяти…"
   },
@@ -4557,7 +4563,7 @@
     "defaultMessage": "Читает промпт"
   },
   "modelsBottomBar.phase.unknown": {
-    "defaultMessage": "Обслуживает"
+    "defaultMessage": "Состояние неизвестно"
   },
   "modelsBottomBar.phase.unloaded": {
     "defaultMessage": "Не загружена"

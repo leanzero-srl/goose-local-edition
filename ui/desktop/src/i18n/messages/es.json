@@ -3632,6 +3632,12 @@
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memoria en {mac}"
   },
+  "mlxEngineView.memoryPeerOffline": {
+    "defaultMessage": "{mac} está desconectado en LeanZero Link"
+  },
+  "mlxEngineView.memoryPeerUnlisted": {
+    "defaultMessage": "{mac} no está entre los Mac que lista LeanZero Link"
+  },
   "mlxEngineView.memoryReading": {
     "defaultMessage": "Leyendo su memoria…"
   },
@@ -4557,7 +4563,7 @@
     "defaultMessage": "Leyendo un prompt"
   },
   "modelsBottomBar.phase.unknown": {
-    "defaultMessage": "Sirviendo"
+    "defaultMessage": "Estado desconocido"
   },
   "modelsBottomBar.phase.unloaded": {
     "defaultMessage": "No cargado"

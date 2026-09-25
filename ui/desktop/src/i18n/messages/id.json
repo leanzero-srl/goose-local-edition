@@ -3632,6 +3632,12 @@
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memori di {mac}"
   },
+  "mlxEngineView.memoryPeerOffline": {
+    "defaultMessage": "{mac} offline di LeanZero Link"
+  },
+  "mlxEngineView.memoryPeerUnlisted": {
+    "defaultMessage": "{mac} tidak termasuk Mac yang dicantumkan LeanZero Link"
+  },
   "mlxEngineView.memoryReading": {
     "defaultMessage": "Membaca memorinya…"
   },
@@ -4557,7 +4563,7 @@
     "defaultMessage": "Membaca prompt"
   },
   "modelsBottomBar.phase.unknown": {
-    "defaultMessage": "Melayani"
+    "defaultMessage": "Status tidak diketahui"
   },
   "modelsBottomBar.phase.unloaded": {
     "defaultMessage": "Tidak dimuat"

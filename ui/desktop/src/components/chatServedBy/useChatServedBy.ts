@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { acpReadConfig } from '../../acp/config';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import {
+  latestMlxRemoteSingleReadError,
   latestMlxRemoteSingleStatus,
   subscribeMlxRemoteSingleStatus,
 } from '../../acp/mlx-remote-single';
@@ -94,9 +95,13 @@ export function useChatServedBy(
     (isMlx ||
       (isSwarm &&
         lookup.devices.some((d) => d.enabled === true && d.engine === 'mlx-sidecar' && !d.host)));
-  const { status } = useMlxEngineStatusPoll(pollsEngine, 3000);
+  const { status } = useMlxEngineStatusPoll(pollsEngine, MLX_STATUS_POLL_MS);
   const distributed = useLatestMlxDistributedStatus();
   const remote = useSyncExternalStore(subscribeMlxRemoteSingleStatus, latestMlxRemoteSingleStatus);
+  const remoteReadError = useSyncExternalStore(
+    subscribeMlxRemoteSingleStatus,
+    latestMlxRemoteSingleReadError
+  );
   const main = useMainEngineSnapshot(armed);
 
   const thisMac = intl.formatMessage(i18n.thisMac);
@@ -109,6 +114,7 @@ export function useChatServedBy(
         single: status,
         distributed,
         remote,
+        remoteReadError,
         main,
         sessionId,
         turnInFlight,
@@ -121,6 +127,7 @@ export function useChatServedBy(
       status,
       distributed,
       remote,
+      remoteReadError,
       main,
       sessionId,
       turnInFlight,
