@@ -6904,6 +6904,30 @@
             }
           ],
           "description": "Set while THIS Mac serves a rank of another Mac's distributed engine over LeanZero Link\n(the same record as `distributedStatus.hosting`): the single engine is refused meanwhile,\nand this is what the Mac is doing instead."
+        },
+        "stoppedBy": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "While `state` is \"stopped\": what left it stopped, since this goose started — `owner` (this\nMac's owner unmounted it) · `linkedMac` (a linked Mac unmounted it over LeanZero Link) ·\n`notStarted` (no Unmount since this goose started: nothing has run the engine since its\nlaunch — what an app relaunch leaves). Absent in every other state, and from a goose\nbefore it. A Link peer whose chat route this engine served re-mounts it only on\n`notStarted`."
+        },
+        "servingIntent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxServingIntentDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What this Mac's owner last started serving here and did not stop — what this goose's own\nlaunch restores (`mlxEngine/servingIntent`). Absent when nothing is recorded (and from a\ngoose before it), or exactly when `servingIntentError` says why it could not be read."
+        },
+        "servingIntentError": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -7154,6 +7178,34 @@
         "lastPollMs"
       ],
       "description": "The rank THIS Mac serves for another Mac's distributed engine over LeanZero Link."
+    },
+    "MlxServingIntentDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "peer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "peerName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "modelId"
+      ],
+      "description": "What the owner last started serving MLX chat from on this Mac and did not stop — the thing a\nrelaunch brings back. `kind`: `single` (this Mac's engine) · `remoteSingle` (the single engine\non Link peer `peer`, whom the owner calls `peerName`) · `split` (the saved distributed config)."
     },
     "MlxEngineMountRequest_unstable": {
       "type": "object",
@@ -10437,12 +10489,39 @@
             "string",
             "null"
           ]
+        },
+        "restore": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxRemoteSingleRestoreDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "This goosed re-mounting the route's model on the peer by itself: the peer answered over\nLeanZero Link with its engine stopped and nothing stopped it there (its goose relaunched).\nAbsent when no restore has started since the route last served."
         }
       },
       "required": [
         "state"
       ],
-      "description": "The remote-single route of THIS goosed. `state`: `off` (no route) · `mounting` (the peer is\nloading the model) · `ready` (the peer's engine serves `servedModelId` through the proxy —\nchat goes there) · `failed` (the peer's engine failed or went away; `lastError` says why)."
+      "description": "The remote-single route of THIS goosed. `state`: `off` (no route) · `mounting` (the peer is\nloading the model, or this goosed is re-mounting it there — `restore`) · `ready` (the peer's\nengine serves `servedModelId` through the proxy — chat goes there) · `failed` (the peer's\nengine failed or went away; `lastError` says why)."
+    },
+    "MlxRemoteSingleRestoreDto": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase",
+        "message"
+      ],
+      "description": "The route's own restore. `phase`: `restoring` (the Mount went, or is going, to the peer;\n`state` reads `mounting` meanwhile) · `failed` (the re-mount was refused or the engine failed\nloading — `state` is `failed` and `lastError` carries the same words; not tried again until\nthe route serves or the owner runs it again). `message` is the line to show verbatim\n(\"Restoring <model> on <Mac>…\")."
     },
     "MlxEngineRemoteSingleStopRequest_unstable": {
       "type": "object",
@@ -10528,34 +10607,6 @@
       },
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/servingIntent"
-    },
-    "MlxServingIntentDto": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "type": "string"
-        },
-        "modelId": {
-          "type": "string"
-        },
-        "peer": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "peerName": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "kind",
-        "modelId"
-      ],
-      "description": "What the owner last started serving MLX chat from on this Mac and did not stop — the thing a\nrelaunch brings back. `kind`: `single` (this Mac's engine) · `remoteSingle` (the single engine\non Link peer `peer`, whom the owner calls `peerName`) · `split` (the saved distributed config)."
     },
     "MlxEngineDistributedMakeRoomRequest_unstable": {
       "type": "object",

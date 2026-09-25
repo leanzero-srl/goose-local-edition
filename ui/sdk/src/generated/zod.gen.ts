@@ -2843,6 +2843,24 @@ export const zMlxDistributedHostedRankDto = z.object({
 });
 
 /**
+ * What the owner last started serving MLX chat from on this Mac and did not stop — the thing a
+ * relaunch brings back. `kind`: `single` (this Mac's engine) · `remoteSingle` (the single engine
+ * on Link peer `peer`, whom the owner calls `peerName`) · `split` (the saved distributed config).
+ */
+export const zMlxServingIntentDto = z.object({
+    kind: z.string(),
+    modelId: z.string(),
+    peer: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    peerName: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
  * Live MLX engine state. `state` is one of "stopped" | "mounting" | "running" | "failed".
  * `context_window` / `tool_call_parser` come from a live `/v1/models` probe and are never
  * fabricated: a failed probe leaves them unset and reports `probe_error` instead.
@@ -2946,6 +2964,18 @@ export const zMlxEngineStatusDto = z.object({
     ]).optional(),
     hosting: z.union([
         zMlxDistributedHostedRankDto,
+        z.null()
+    ]).optional(),
+    stoppedBy: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    servingIntent: z.union([
+        zMlxServingIntentDto,
+        z.null()
+    ]).optional(),
+    servingIntentError: z.union([
+        z.string(),
         z.null()
     ]).optional()
 });
@@ -4351,9 +4381,22 @@ export const zMlxRemoteSingleRefusalDto = z.object({
 });
 
 /**
+ * The route's own restore. `phase`: `restoring` (the Mount went, or is going, to the peer;
+ * `state` reads `mounting` meanwhile) · `failed` (the re-mount was refused or the engine failed
+ * loading — `state` is `failed` and `lastError` carries the same words; not tried again until
+ * the route serves or the owner runs it again). `message` is the line to show verbatim
+ * ("Restoring <model> on <Mac>…").
+ */
+export const zMlxRemoteSingleRestoreDto = z.object({
+    phase: z.string(),
+    message: z.string()
+});
+
+/**
  * The remote-single route of THIS goosed. `state`: `off` (no route) · `mounting` (the peer is
- * loading the model) · `ready` (the peer's engine serves `servedModelId` through the proxy —
- * chat goes there) · `failed` (the peer's engine failed or went away; `lastError` says why).
+ * loading the model, or this goosed is re-mounting it there — `restore`) · `ready` (the peer's
+ * engine serves `servedModelId` through the proxy — chat goes there) · `failed` (the peer's
+ * engine failed or went away; `lastError` says why).
  */
 export const zMlxRemoteSingleStatusDto = z.object({
     state: z.string(),
@@ -4404,6 +4447,10 @@ export const zMlxRemoteSingleStatusDto = z.object({
     lastError: z.union([
         z.string(),
         z.null()
+    ]).optional(),
+    restore: z.union([
+        zMlxRemoteSingleRestoreDto,
+        z.null()
     ]).optional()
 });
 
@@ -4448,24 +4495,6 @@ export const zMlxEngineRemoteSingleStatusResponse_unstable = z.object({
  * start), removed by the matching explicit stop; an app quit or a goosed exit never touches it.
  */
 export const zMlxEngineServingIntentRequest_unstable = z.record(z.unknown());
-
-/**
- * What the owner last started serving MLX chat from on this Mac and did not stop — the thing a
- * relaunch brings back. `kind`: `single` (this Mac's engine) · `remoteSingle` (the single engine
- * on Link peer `peer`, whom the owner calls `peerName`) · `split` (the saved distributed config).
- */
-export const zMlxServingIntentDto = z.object({
-    kind: z.string(),
-    modelId: z.string(),
-    peer: z.union([
-        z.string(),
-        z.null()
-    ]).optional(),
-    peerName: z.union([
-        z.string(),
-        z.null()
-    ]).optional()
-});
 
 export const zMlxEngineServingIntentResponse_unstable = z.object({
     intent: z.union([

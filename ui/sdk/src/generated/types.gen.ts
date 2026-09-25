@@ -2672,6 +2672,22 @@ export type MlxEngineStatusDto = {
      * and this is what the Mac is doing instead.
      */
     hosting?: MlxDistributedHostedRankDto | null;
+    /**
+     * While `state` is "stopped": what left it stopped, since this goose started — `owner` (this
+     * Mac's owner unmounted it) · `linkedMac` (a linked Mac unmounted it over LeanZero Link) ·
+     * `notStarted` (no Unmount since this goose started: nothing has run the engine since its
+     * launch — what an app relaunch leaves). Absent in every other state, and from a goose
+     * before it. A Link peer whose chat route this engine served re-mounts it only on
+     * `notStarted`.
+     */
+    stoppedBy?: string | null;
+    /**
+     * What this Mac's owner last started serving here and did not stop — what this goose's own
+     * launch restores (`mlxEngine/servingIntent`). Absent when nothing is recorded (and from a
+     * goose before it), or exactly when `servingIntentError` says why it could not be read.
+     */
+    servingIntent?: MlxServingIntentDto | null;
+    servingIntentError?: string | null;
 };
 
 /**
@@ -2794,6 +2810,18 @@ export type MlxDistributedHostedRankDto = {
     plannedWeightBytes?: number | null;
     startedMs: number;
     lastPollMs: number;
+};
+
+/**
+ * What the owner last started serving MLX chat from on this Mac and did not stop — the thing a
+ * relaunch brings back. `kind`: `single` (this Mac's engine) · `remoteSingle` (the single engine
+ * on Link peer `peer`, whom the owner calls `peerName`) · `split` (the saved distributed config).
+ */
+export type MlxServingIntentDto = {
+    kind: string;
+    modelId: string;
+    peer?: string | null;
+    peerName?: string | null;
 };
 
 /**
@@ -4166,8 +4194,9 @@ export type MlxRemoteSingleRefusalDto = {
 
 /**
  * The remote-single route of THIS goosed. `state`: `off` (no route) · `mounting` (the peer is
- * loading the model) · `ready` (the peer's engine serves `servedModelId` through the proxy —
- * chat goes there) · `failed` (the peer's engine failed or went away; `lastError` says why).
+ * loading the model, or this goosed is re-mounting it there — `restore`) · `ready` (the peer's
+ * engine serves `servedModelId` through the proxy — chat goes there) · `failed` (the peer's
+ * engine failed or went away; `lastError` says why).
  */
 export type MlxRemoteSingleStatusDto = {
     state: string;
@@ -4214,6 +4243,24 @@ export type MlxRemoteSingleStatusDto = {
     generationTps?: number | null;
     contextWindow?: number | null;
     lastError?: string | null;
+    /**
+     * This goosed re-mounting the route's model on the peer by itself: the peer answered over
+     * LeanZero Link with its engine stopped and nothing stopped it there (its goose relaunched).
+     * Absent when no restore has started since the route last served.
+     */
+    restore?: MlxRemoteSingleRestoreDto | null;
+};
+
+/**
+ * The route's own restore. `phase`: `restoring` (the Mount went, or is going, to the peer;
+ * `state` reads `mounting` meanwhile) · `failed` (the re-mount was refused or the engine failed
+ * loading — `state` is `failed` and `lastError` carries the same words; not tried again until
+ * the route serves or the owner runs it again). `message` is the line to show verbatim
+ * ("Restoring <model> on <Mac>…").
+ */
+export type MlxRemoteSingleRestoreDto = {
+    phase: string;
+    message: string;
 };
 
 /**
@@ -4259,18 +4306,6 @@ export type MlxEngineServingIntentResponse_unstable = {
      * The record exists and could not be read — named, never read as "nothing to restore".
      */
     error?: string | null;
-};
-
-/**
- * What the owner last started serving MLX chat from on this Mac and did not stop — the thing a
- * relaunch brings back. `kind`: `single` (this Mac's engine) · `remoteSingle` (the single engine
- * on Link peer `peer`, whom the owner calls `peerName`) · `split` (the saved distributed config).
- */
-export type MlxServingIntentDto = {
-    kind: string;
-    modelId: string;
-    peer?: string | null;
-    peerName?: string | null;
 };
 
 /**
