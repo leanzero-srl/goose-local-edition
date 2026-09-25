@@ -562,12 +562,16 @@ fn gib(bytes: u64) -> String {
 }
 
 /// Whether `pid` still runs on `host` (a zombie counts as gone: it holds no memory and no port).
+/// A ps that could not answer is an `Err`, never "gone": every caller signals or verifies on it.
 async fn pid_alive(exec: &dyn NodeExec, host: Option<&str>, pid: u32) -> Result<bool> {
     let out = exec.run_op(host, &NodeOp::PidRow { pid }).await?;
     if out.ssh_failed() {
         return Err(anyhow!("ssh failed: {}", out.stderr.trim()));
     }
-    Ok(probe::parse_ps_row(&out.stdout)?.is_some_and(|row| !row.zombie()))
+    match out.ps_answer()? {
+        None => Ok(false),
+        Some(rows) => Ok(probe::parse_ps_row(rows)?.is_some_and(|row| !row.zombie())),
+    }
 }
 
 async fn wait_gone(exec: &dyn NodeExec, host: Option<&str>, pid: u32) -> Result<Option<Duration>> {
@@ -781,12 +785,31 @@ async fn reclaim_marked_ranks(
     node: &str,
 ) -> (Vec<String>, bool) {
     let listing = match exec.run_op(host, &NodeOp::ProcessList).await {
-        Ok(out) if !out.ssh_failed() => out.stdout,
-        Ok(out) => {
+        Ok(out) if out.success() => out.stdout,
+        Ok(out) if out.ssh_failed() => {
             return (
                 vec![format!("{node}: ssh failed: {}", out.stderr.trim())],
                 false,
             )
+        }
+        // An empty listing from a ps that failed is not "no goose ranks": nothing is signalled
+        // and the sweep is unverified.
+        Ok(out) => {
+            tracing::warn!(
+                event = "rank_sweep_unproven",
+                node,
+                status = ?out.status,
+                stderr = out.stderr.trim(),
+                "the process listing failed; no rank was signalled"
+            );
+            return (
+                vec![format!(
+                    "{node}: the process listing failed (exit {:?}: {}); nothing signalled",
+                    out.status,
+                    out.stderr.trim()
+                )],
+                false,
+            );
         }
         Err(e) => return (vec![format!("{node}: {e:#}")], false),
     };
@@ -2565,6 +2588,64 @@ mod tests {
         );
         drop(stubborn);
         drop(bystander);
+    }
+
+    /// A node whose `ps` cannot answer: every script is recorded and fails the way a ps that
+    /// could not run does (non-zero exit, a stderr line, no rows).
+    #[derive(Default)]
+    struct PsFails {
+        scripts: StdMutex<Vec<String>>,
+    }
+    impl NodeExec for PsFails {
+        fn run<'a>(
+            &'a self,
+            _host: Option<&'a str>,
+            script: &'a str,
+        ) -> BoxFuture<'a, Result<ExecOutput>> {
+            self.scripts.lock().unwrap().push(script.to_string());
+            Box::pin(async {
+                Ok(ExecOutput {
+                    status: Some(1),
+                    stdout: String::new(),
+                    stderr: "ps: sysctl: Operation not permitted".into(),
+                })
+            })
+        }
+    }
+
+    /// Gate 4, fail CLOSED: a peer pid whose liveness ps cannot prove is never signalled, the
+    /// stop says so and is unverified — and so is a sweep whose process listing failed.
+    #[tokio::test]
+    async fn a_pid_ps_cannot_prove_is_never_signalled_and_the_stop_says_so() {
+        let local = sleeper("exec sleep 60");
+        let ssh_stand_in = sleeper("exit 0");
+        let peer = sleeper("exec sleep 60");
+        let peer_pid = peer.id().unwrap();
+        let exec = PsFails::default();
+        let mut ranks = vec![
+            rank(0, None, local, None),
+            rank(1, Some("peer"), ssh_stand_in, Some(peer_pid)),
+        ];
+        let report = stop_ranks(&mut ranks, &exec, None, false).await;
+        assert!(!report.verified, "{report:?}");
+        assert!(
+            report.steps[1].contains(&format!("pid {peer_pid}: cannot observe"))
+                && report.steps[1].contains("ps could not answer")
+                && !report.steps[1].contains("SIGTERM"),
+            "{report:?}"
+        );
+
+        let (steps, verified) = reclaim_marked_ranks(&exec, Some("peer"), "node1").await;
+        assert!(!verified);
+        assert!(steps[0].contains("nothing signalled"), "{steps:?}");
+
+        let scripts = exec.scripts.lock().unwrap().clone();
+        assert!(
+            scripts.iter().all(|s| !s.contains("kill")),
+            "no signal may reach an unproven pid: {scripts:?}"
+        );
+        assert!(alive(peer_pid));
+        drop(peer);
     }
 
     /// The pipeline shape: the peer leaves on its own shortly after rank 0 (the fork's shutdown
