@@ -62,6 +62,7 @@ thread.
 | `fallback-hunter` | finds silent substitutions, designs the loud alternative per the fallback gate |
 | `gate-auditor` | audits deterministic checks for theater: keep the refusers, kill the superficial |
 | `memory-skills-surgeon` | the memory store, the memory extension, recall, skills, the Claude Code importer — and the probe that measures what is recalled |
+| `mlx-ux-critic` | the MLX quality loop's critic (skill goose-mlx-quality-loop): walks the installed app as three users, ranked findings — read-only |
 
 The last five are read-only by charter — they report, the orchestrator decides. A kill or a shipped
 fix needs the matching reader's independent verdict (gates 7/8); a third-party finding needs the
