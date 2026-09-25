@@ -23,6 +23,7 @@ use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -55,6 +56,12 @@ use crate::worker_client::{
 /// inferred, so it takes five unbroken looks — long enough that
 /// [`LinkState::mesh_poll_failures`] climbs visibly (1..4) before the connection is
 /// dropped. Any successful look in between resets the count.
+///
+/// The same count judges the other direction: a daemon the supervisor restarted has
+/// PROVEN itself after this many unbroken healthy looks; one that faults before that has
+/// failed again and is not restarted again ([`ReconnectState::Failed`]). And the chat
+/// relay's in-flight watch ([`crate::inference`]) ends a request only after this many
+/// consecutive looks that could not reach the peer at all.
 pub const MESH_POLL_FAILURE_LOOKS: u32 = 5;
 
 /// The abstract mesh the manager drives. [`MeshEngine`] is the production impl; tests
@@ -145,9 +152,10 @@ pub enum AuthState {
 }
 
 /// What the manager did about a `connected` [`LinkIntent`] WITHOUT the user — the
-/// reconnect goosed runs once at launch ([`LinkManager::auto_reconnect`]). Every outcome
-/// is a named state: a launch that could not bring the mesh back is `Failed` with the
-/// reason, never a quiet "not connected". Serde tag `state`.
+/// reconnect goosed runs once at launch ([`LinkManager::auto_reconnect`]), and the
+/// supervisor's restart of a mesh daemon that exited or stopped answering under a live
+/// connection (R3 step 1). Every outcome is a named state: a mesh that did not come back
+/// is `Failed` with the reason, never a quiet "not connected". Serde tag `state`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state")]
 pub enum ReconnectState {
@@ -157,11 +165,14 @@ pub enum ReconnectState {
     Idle,
     /// The intent says stay off (or there is nothing to reconnect); `reason` says which.
     Skipped { reason: String },
-    /// The reconnect is bringing the mesh up now (auth reads `Connecting`).
+    /// The reconnect is bringing the mesh up now (auth reads `Connecting`). For a
+    /// supervisor restart, `LinkState::last_error` names the fault being recovered from.
     Reconnecting { started_at: DateTime<Utc> },
     /// The mesh came back with no user action.
     Reconnected { at: DateTime<Utc>, mesh_ip: String },
     /// The mesh did not come back; `reason` is what the user needs to act (Retry = Connect).
+    /// A supervisor restart's reason starts with what happened to the daemon ("LeanZero
+    /// Link's mesh daemon stopped …"), then why it is not back.
     Failed { reason: String, at: DateTime<Utc> },
 }
 
@@ -190,7 +201,8 @@ pub struct LinkState {
     pub intent: Option<IntentRecord>,
     #[serde(default)]
     pub intent_error: Option<String>,
-    /// The launch reconnect's outcome.
+    /// The launch reconnect's outcome, or the supervisor's restart of a daemon that
+    /// faulted under the connection (see [`ReconnectState`]).
     #[serde(default)]
     pub reconnect: ReconnectState,
 }
@@ -284,6 +296,8 @@ struct Active {
     /// Monotonic per manager; a poll loop or a status read that observed THIS
     /// connection may only tear down THIS connection, never a newer one.
     generation: u64,
+    /// The seams this connection was started with — what the supervisor restarts it with.
+    seams: Seams,
 }
 
 impl Drop for Active {
@@ -306,6 +320,37 @@ struct Inner {
     /// The resolved intent, or the text of why it could not be read.
     intent: Result<IntentRecord, String>,
     reconnect: ReconnectState,
+    /// The generation of the most recent connect STARTED — only that connect may install
+    /// its connection or record its failure (a Disconnect + Connect while an older connect
+    /// was still coming up leaves `Connecting` too, but under the newer generation).
+    last_connect: u64,
+    /// The supervisor's restart of a faulted daemon, from the fault until the restarted
+    /// daemon has PROVEN itself ([`MESH_POLL_FAILURE_LOOKS`] healthy looks); `None`
+    /// otherwise. A daemon that faults while its restart is unproven is not restarted again.
+    restart: Option<SupervisedRestart>,
+}
+
+/// One supervised restart in progress (see [`Inner::restart`]).
+struct SupervisedRestart {
+    /// What happened to the daemon that was restarted — the text every state names.
+    cause: String,
+    /// The connection the restart brought up; `None` while it is still coming up.
+    generation: Option<u64>,
+    /// Consecutive successful status looks of that connection.
+    healthy_looks: u32,
+}
+
+/// What the supervisor does about a faulted daemon ([`drop_active_after_daemon_fault`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FaultResponse {
+    /// The intent says stay connected: restart it with no user action.
+    Restart,
+    /// The faulted daemon WAS a supervised restart that never proved healthy — it failed
+    /// again; `first` is the fault that caused that restart. Loud, and no further restart.
+    FailedAgain { first: String },
+    /// The intent is unreadable: nothing may reconnect on its behalf (the launch reconnect
+    /// refuses the same record); the fault is recorded for the user's Connect.
+    Drop,
 }
 
 impl Inner {
@@ -318,11 +363,15 @@ impl Inner {
 }
 
 /// Who asked for a connect. Only the USER's connect records intent; the launch reconnect
-/// acts on the intent and never rewrites it.
+/// and the supervisor act on the intent and never rewrite it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectOrigin {
     User,
     Reconnect,
+    /// The supervisor restarting a daemon that faulted under a live connection: it runs
+    /// only from the `Connecting` + `Reconnecting` state the fault left, so a user action
+    /// in between (Disconnect, Log out) cancels it.
+    Supervisor,
 }
 
 /// Distinguishes a connect failure that should drop to `LoggedOut` (the token is dead)
@@ -373,13 +422,10 @@ impl From<ControlError> for ConnectFailure {
     }
 }
 
-pub struct LinkManager {
-    config: LinkManagerConfig,
-    identity: IdentityStore,
-    intent: IntentStore,
-    worker: WorkerClient,
-    mesh_factory: Arc<dyn MeshFactory>,
-    source: Arc<dyn SwarmStateSource>,
+/// The seams goose attaches after construction (the builder setters). A connection keeps
+/// the seams it was started with, so the supervisor restarts it with the same ones.
+#[derive(Clone, Default)]
+struct Seams {
     /// The local remote-execute seam, injected beside `source` (mirroring how the
     /// [`SwarmStateSource`] is threaded). `None` → this node cannot run remote prompts
     /// (self short-circuit and the control route both answer as unavailable). goose-server
@@ -387,8 +433,8 @@ pub struct LinkManager {
     executor: Option<Arc<dyn RemoteExecutor>>,
     /// The local MLX-engine seam, injected beside `executor`. `None` → this node cannot
     /// run remote model-management ops (its `/v1/swarm/mlx/*` routes answer `501` and the
-    /// self short-circuit in [`Self::mlx_proxy`] is unavailable). goose supplies the real
-    /// one (`GoosedMlxControl`) before the manager is built.
+    /// self short-circuit in [`LinkManager::mlx_proxy`] is unavailable). goose supplies the
+    /// real one (`GoosedMlxControl`) before the manager is built.
     mlx_control: Option<Arc<dyn MlxControl>>,
     /// This node as a node of a peer's distributed MLX engine. `None` → its
     /// `/v1/swarm/distributed/*` routes answer `501`.
@@ -396,9 +442,24 @@ pub struct LinkManager {
     /// This node's chat engine served to peers (the inference proxy). `None` → its
     /// `/v1/swarm/inference/*` routes answer `501`.
     chat_serving: Option<Arc<dyn ChatServing>>,
-    /// Shared with the connection's poll loop as a `Weak`, so the loop can drop a
-    /// connection whose daemon died and a dropped manager ends the loop.
-    inner: Arc<Mutex<Inner>>,
+}
+
+/// Everything a connect needs, shared: the manager holds it, and a connection's poll loop
+/// holds it WEAKLY — so the loop can drop a connection whose daemon faulted and hand the
+/// restart to [`Core::supervised_restart`], and a dropped manager ends the loop.
+struct Core {
+    config: LinkManagerConfig,
+    identity: IdentityStore,
+    intent: IntentStore,
+    worker: WorkerClient,
+    mesh_factory: Arc<dyn MeshFactory>,
+    source: Arc<dyn SwarmStateSource>,
+    inner: Mutex<Inner>,
+}
+
+pub struct LinkManager {
+    core: Arc<Core>,
+    seams: Seams,
 }
 
 impl LinkManager {
@@ -439,25 +500,26 @@ impl LinkManager {
                 err.to_string()
             });
         Ok(Self {
-            config,
-            identity,
-            intent,
-            worker,
-            mesh_factory,
-            source,
-            executor: None,
-            mlx_control: None,
-            distributed_node: None,
-            chat_serving: None,
-            inner: Arc::new(Mutex::new(Inner {
-                auth,
-                last_error: None,
-                active: None,
-                next_generation: 0,
-                mesh_poll_failures: 0,
-                intent: resolved,
-                reconnect: ReconnectState::Idle,
-            })),
+            core: Arc::new(Core {
+                config,
+                identity,
+                intent,
+                worker,
+                mesh_factory,
+                source,
+                inner: Mutex::new(Inner {
+                    auth,
+                    last_error: None,
+                    active: None,
+                    next_generation: 0,
+                    mesh_poll_failures: 0,
+                    intent: resolved,
+                    reconnect: ReconnectState::Idle,
+                    last_connect: 0,
+                    restart: None,
+                }),
+            }),
+            seams: Seams::default(),
         })
     }
 
@@ -466,7 +528,7 @@ impl LinkManager {
     /// in [`Self::remote_execute`]. A builder-style setter rather than a constructor arg so
     /// the existing construction paths (and their tests) stay unchanged.
     pub fn with_executor(mut self, executor: Arc<dyn RemoteExecutor>) -> Self {
-        self.executor = Some(executor);
+        self.seams.executor = Some(executor);
         self
     }
 
@@ -475,21 +537,21 @@ impl LinkManager {
     /// [`Self::mlx_proxy`]. A builder-style setter, like [`Self::with_executor`], so the
     /// existing construction paths (and their tests) stay unchanged.
     pub fn with_mlx_control(mut self, mlx_control: Arc<dyn MlxControl>) -> Self {
-        self.mlx_control = Some(mlx_control);
+        self.seams.mlx_control = Some(mlx_control);
         self
     }
 
     /// Attach this node's distributed-engine node side (goose's). A builder-style setter, like
     /// [`Self::with_mlx_control`].
     pub fn with_distributed_node(mut self, node: Arc<dyn DistributedNode>) -> Self {
-        self.distributed_node = Some(node);
+        self.seams.distributed_node = Some(node);
         self
     }
 
     /// Attach this node's chat engine for the inference proxy (goose's). A builder-style
     /// setter, like [`Self::with_distributed_node`].
     pub fn with_chat_serving(mut self, serving: Arc<dyn ChatServing>) -> Self {
-        self.chat_serving = Some(serving);
+        self.seams.chat_serving = Some(serving);
         self
     }
 
@@ -510,17 +572,17 @@ impl LinkManager {
 
     /// `GET /v1/health` passthrough so the UI can show what the deployment supports.
     pub async fn health(&self) -> Result<crate::worker_client::Health, LinkError> {
-        Ok(self.worker.health().await?)
+        Ok(self.core.worker.health().await?)
     }
 
     /// Request an email OTP → `CodeSent`. Refused while connecting/connected.
     pub async fn request_code(&self, email: &str) -> Result<RequestCodeResult, LinkError> {
         self.ensure_not_busy().await?;
-        match self.worker.request_code(email).await {
+        match self.core.worker.request_code(email).await {
             Ok(result) => {
                 let expires_at =
                     Utc::now() + chrono::Duration::seconds(result.expires_in_seconds as i64);
-                let mut inner = self.inner.lock().await;
+                let mut inner = self.core.inner.lock().await;
                 inner.auth = AuthState::CodeSent {
                     email: result.email.clone(),
                     expires_at,
@@ -540,16 +602,16 @@ impl LinkManager {
     /// failed verify keeps the current (logged-out) state and records the error.
     pub async fn verify(&self, email: &str, code: &str) -> Result<VerifyResult, LinkError> {
         self.ensure_not_busy().await?;
-        let result = match self.worker.verify(email, code).await {
+        let result = match self.core.worker.verify(email, code).await {
             Ok(result) => result,
             Err(err) => {
                 self.record_error(&err).await;
                 return Err(err.into());
             }
         };
-        self.identity
+        self.core.identity
             .save(&Identity::new(result.email.clone(), result.token.clone()))?;
-        let mut inner = self.inner.lock().await;
+        let mut inner = self.core.inner.lock().await;
         inner.auth = AuthState::LoggedIn {
             email: result.email.clone(),
         };
@@ -571,18 +633,503 @@ impl LinkManager {
     /// outcome. A record that cannot be written refuses the connect loudly — a mesh the
     /// next launch would silently not bring back is the defect this record exists to end.
     pub async fn connect(&self) -> Result<(), LinkError> {
-        self.connect_as(ConnectOrigin::User).await
+        self.core
+            .connect_as(ConnectOrigin::User, self.seams.clone())
+            .await
     }
 
-    async fn connect_as(&self, origin: ConnectOrigin) -> Result<(), LinkError> {
-        let email = {
-            let mut inner = self.inner.lock().await;
+    /// The composed live view: auth + a live mesh status read + the control node count.
+    /// A status read that finds the supervised daemon EXITED drops the connection right
+    /// here (see [`drop_active_after_daemon_fault`]) and reports what the supervisor made
+    /// of it — `Connecting` + `Reconnecting` while it restarts the daemon — so the UI never
+    /// shows `Connected` over a dead daemon.
+    pub async fn status(&self) -> LinkState {
+        let (auth, persisted_error, poll_failures, live, (intent, intent_error), reconnect) = {
+            let inner = self.core.inner.lock().await;
+            let live = inner.active.as_ref().map(|active| {
+                (
+                    active.mesh.clone(),
+                    active.registry.clone(),
+                    active.generation,
+                )
+            });
+            (
+                inner.auth.clone(),
+                inner.last_error.clone(),
+                inner.mesh_poll_failures,
+                live,
+                inner.intent_fields(),
+                inner.reconnect.clone(),
+            )
+        };
+
+        let Some((mesh, registry, generation)) = live else {
+            return LinkState {
+                auth,
+                mesh: None,
+                node_count: 0,
+                mesh_poll_failures: poll_failures,
+                last_error: persisted_error,
+                intent,
+                intent_error,
+                reconnect,
+            };
+        };
+
+        match mesh.status().await {
+            Ok(status) => LinkState {
+                auth,
+                mesh: Some(status),
+                node_count: node_count(&registry),
+                mesh_poll_failures: poll_failures,
+                last_error: persisted_error,
+                intent,
+                intent_error,
+                reconnect,
+            },
+            Err(err @ MeshError::DaemonExited { .. }) => {
+                drop_active_after_daemon_fault(
+                    &self.core,
+                    generation,
+                    DaemonFault::Exited(&err),
+                    false,
+                )
+                .await;
+                let inner = self.core.inner.lock().await;
+                let (intent, intent_error) = inner.intent_fields();
+                LinkState {
+                    auth: inner.auth.clone(),
+                    mesh: None,
+                    node_count: 0,
+                    mesh_poll_failures: inner.mesh_poll_failures,
+                    last_error: inner.last_error.clone(),
+                    intent,
+                    intent_error,
+                    reconnect: inner.reconnect.clone(),
+                }
+            }
+            Err(err) => LinkState {
+                auth,
+                mesh: None,
+                node_count: node_count(&registry),
+                mesh_poll_failures: poll_failures,
+                last_error: Some(format!("mesh status read failed: {err}")),
+                intent,
+                intent_error,
+                reconnect,
+            },
+        }
+    }
+
+    /// The live peer-fabric registry while connected (`None` otherwise). Exposed so the
+    /// swarm dispatcher / UI can read peer node states (and their Idle/Busy status) before
+    /// dispatching, and so [`Self::remote_execute`] can resolve a target's URL.
+    pub async fn active_registry(&self) -> Option<PeerRegistry> {
+        self.core.inner
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .map(|active| active.registry.clone())
+    }
+
+    /// The live connection's `/v1/swarm` bearer (`None` when not connected) — what the
+    /// host's loopback proxy presents to this node's own control service. Derived from
+    /// the worker-issued account secret at connect time; never the template value.
+    pub async fn node_token(&self) -> Option<String> {
+        self.core.inner
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .map(|active| active.node_token.clone())
+    }
+
+    /// Drive a remote execution: tell `target_node_id`'s goose to run `req`. This is how
+    /// node A acts on node B. A `target_node_id` equal to this node's own id short-circuits
+    /// to the local executor (no network hop); any other id is resolved to a peer via the
+    /// fabric registry and reached with `POST <peer>/v1/swarm/execute` (bearer node_token).
+    ///
+    /// The RECEIVE-side idle guard + `allow_remote_execution` gate live on the peer's route
+    /// (a busy/observe-only peer answers `409`/`403`, surfaced here as
+    /// [`LinkError::Execute`]). Callers SHOULD still read the peer's Idle status from
+    /// [`Self::active_registry`] first and pick an Idle node — the route guard is the
+    /// backstop, not the scheduler.
+    pub async fn remote_execute(
+        &self,
+        target_node_id: &str,
+        req: ExecuteRequest,
+    ) -> Result<ExecuteAccepted, LinkError> {
+        let self_node_id = self.core.source.local_node().await.node_id;
+        if target_node_id == self_node_id {
+            let executor = self
+                .seams
+                .executor
+                .clone()
+                .ok_or(LinkError::ExecutorUnavailable)?;
+            return Ok(executor.execute(req).await?);
+        }
+
+        let (base_url, token, proxy) = {
+            let inner = self.core.inner.lock().await;
+            let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+            let base_url = active
+                .registry
+                .peer_base_url(target_node_id)
+                .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
+            (
+                base_url,
+                active.node_token.clone(),
+                active.registry.peer_proxy(),
+            )
+        };
+
+        post_peer_execute(
+            proxy,
+            &base_url,
+            &token,
+            self.core.config.control.connect_timeout,
+            &req,
+        )
+        .await
+    }
+
+    /// Forward one mlxEngine model-management op to `target_node_id`. This is how node A
+    /// runs a download/delete/settings-change/status-read against node B's LOCAL MLX
+    /// engine. `target_node_id` equal to this node's own id short-circuits to the local
+    /// [`MlxControl`] (no network hop); any other id is resolved to a peer via the fabric
+    /// registry and reached with `POST <peer>/v1/swarm/mlx/<op>` (bearer node_token). `body`
+    /// is the op's request DTO as opaque JSON; the `Ok` value is the op's response DTO as
+    /// opaque JSON. A peer's own failure surfaces as [`LinkError::MlxControl`] (verbatim
+    /// text, class preserved); an unreachable/odd peer as [`LinkError::MlxProxy`].
+    pub async fn mlx_proxy(
+        &self,
+        target_node_id: &str,
+        op: MlxOp,
+        body: serde_json::Value,
+    ) -> Result<serde_json::Value, LinkError> {
+        let self_node_id = self.core.source.local_node().await.node_id;
+        if target_node_id == self_node_id {
+            let control = self
+                .seams
+                .mlx_control
+                .clone()
+                .ok_or(LinkError::MlxControlUnavailable)?;
+            return Ok(control.dispatch(op, body).await?);
+        }
+
+        let (base_url, token, proxy) = {
+            let inner = self.core.inner.lock().await;
+            let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+            let base_url = active
+                .registry
+                .peer_base_url(target_node_id)
+                .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
+            (
+                base_url,
+                active.node_token.clone(),
+                active.registry.peer_proxy(),
+            )
+        };
+
+        post_peer_mlx(
+            proxy,
+            &base_url,
+            &token,
+            self.core.config.control.connect_timeout,
+            op,
+            &body,
+        )
+        .await
+    }
+
+    /// Forward one distributed-engine op to peer `target_node_id`: `POST
+    /// <peer>/v1/swarm/distributed/<op>` with the bearer node token, through the mesh proxy.
+    /// `body`/`Ok` are the op's JSON (goose types them). The peer's classed answers come back as
+    /// [`LinkError::DistributedNode`]; everything else as [`LinkError::DistributedProxy`].
+    pub async fn distributed_proxy(
+        &self,
+        target_node_id: &str,
+        op: &str,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, LinkError> {
+        let (base_url, token, proxy) = {
+            let inner = self.core.inner.lock().await;
+            let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+            let base_url = active
+                .registry
+                .peer_base_url(target_node_id)
+                .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
+            (
+                base_url,
+                active.node_token.clone(),
+                active.registry.peer_proxy(),
+            )
+        };
+        post_peer_distributed(
+            proxy,
+            &base_url,
+            &token,
+            self.core.config.control.connect_timeout,
+            op,
+            body,
+        )
+        .await
+    }
+
+    /// How to reach peer `target_node_id`'s control service right now — its base URL, the
+    /// bearer, the mesh proxy — for callers that stream their own request (the inference relay).
+    pub async fn peer_call(&self, target_node_id: &str) -> Result<PeerCall, LinkError> {
+        let inner = self.core.inner.lock().await;
+        let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
+        let base_url = active
+            .registry
+            .peer_base_url(target_node_id)
+            .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
+        Ok(PeerCall {
+            base_url,
+            token: active.node_token.clone(),
+            proxy: active.registry.peer_proxy(),
+            connect_timeout: self.core.config.control.connect_timeout,
+        })
+    }
+
+    /// Tear down the connection (per-pid), clear the stored identity, and drop to
+    /// `LoggedOut`. The mesh state dir is left for a fast re-login unless `wipe`.
+    ///
+    /// A failed `tailscale logout` (the daemon is stopped per-pid instead) still logs
+    /// the account out, but its text lands in `last_error` — never erased. A failed
+    /// identity clear leaves the credential on disk, so auth returns to `LoggedIn`
+    /// (the truthful state: mesh down, credential present) with the error recorded.
+    ///
+    /// The intent becomes `disconnected` first, so no later launch reconnects; a record
+    /// that cannot be written does not stop the logout, its text rides `last_error`.
+    pub async fn logout(&self, wipe: bool) -> Result<(), LinkError> {
+        let record = IntentRecord::new(LinkIntent::Disconnected, IntentCause::UserLogout);
+        let intent_error = self.core.intent.save(&record).err();
+        let (active, email) = {
+            let mut inner = self.core.inner.lock().await;
             let email = match &inner.auth {
-                AuthState::LoggedIn { email } => email.clone(),
-                AuthState::Connecting { .. } | AuthState::Connected { .. } => {
+                AuthState::LoggedIn { email }
+                | AuthState::Connecting { email }
+                | AuthState::Connected { email, .. } => Some(email.clone()),
+                AuthState::LoggedOut | AuthState::CodeSent { .. } => None,
+            };
+            match &intent_error {
+                None => inner.intent = Ok(record),
+                Some(err) => inner.intent = Err(err.to_string()),
+            }
+            inner.reconnect = ReconnectState::Idle;
+            inner.restart = None;
+            (inner.active.take(), email)
+        };
+        let intent_note = intent_error.map(|err| {
+            format!(
+                "the intent record could not be set to disconnected ({err}); the next launch \
+                 reports a reconnect failure until you sign in again"
+            )
+        });
+        let mesh_logout_error = match active {
+            Some(active) => teardown_active(active, true).await,
+            None => None,
+        };
+
+        if let Err(err) = self.core.identity.clear() {
+            let mut inner = self.core.inner.lock().await;
+            inner.auth = match email {
+                Some(email) => AuthState::LoggedIn { email },
+                None => AuthState::LoggedOut,
+            };
+            inner.last_error = Some(format!(
+                "logout incomplete: the mesh is down but the credential could not be removed: {err}"
+            ));
+            return Err(err.into());
+        }
+        if wipe {
+            let dir = &self.core.config.mesh.state_dir;
+            if dir.exists() {
+                std::fs::remove_dir_all(dir).map_err(|source| LinkError::Io {
+                    op: "wipe the mesh state dir",
+                    path: dir.clone(),
+                    source,
+                })?;
+            }
+        }
+
+        let mut inner = self.core.inner.lock().await;
+        inner.auth = AuthState::LoggedOut;
+        let mesh_note = mesh_logout_error.map(|err| {
+            format!(
+                "logged out, but `tailscale logout` failed and the daemon was stopped per-pid \
+                 instead (the node key may linger on the control plane until it expires): {err}"
+            )
+        });
+        inner.last_error = match (mesh_note, intent_note) {
+            (Some(mesh), Some(intent)) => Some(format!("{mesh}; {intent}")),
+            (mesh, intent) => mesh.or(intent),
+        };
+        Ok(())
+    }
+
+    /// Take this node off the mesh and KEEP it off across launches, the account kept:
+    /// records the intent `disconnected` FIRST (a record that cannot be written refuses
+    /// the disconnect with the mesh untouched — otherwise the next launch would silently
+    /// undo it), then stops the connection per-pid (the poll loop, the control service,
+    /// the daemon — SIGTERM → grace → SIGKILL, our child only; no `tailscale logout`, the
+    /// state dir is kept for a fast Connect) and returns auth to `LoggedIn`. From
+    /// `Connecting`, the in-flight connect finds the state moved on and tears its fresh
+    /// connection down itself ([`LinkError::ConnectCancelled`]). Already `LoggedIn`: the
+    /// intent alone changes — that is how a user turns the launch reconnect off.
+    pub async fn disconnect(&self) -> Result<(), LinkError> {
+        let active = {
+            let mut inner = self.core.inner.lock().await;
+            let email = match &inner.auth {
+                AuthState::LoggedIn { email }
+                | AuthState::Connecting { email }
+                | AuthState::Connected { email, .. } => email.clone(),
+                AuthState::LoggedOut | AuthState::CodeSent { .. } => {
+                    return Err(LinkError::NotLoggedIn)
+                }
+            };
+            let record = IntentRecord::new(LinkIntent::Disconnected, IntentCause::UserDisconnect);
+            self.core.intent.save(&record)?;
+            inner.intent = Ok(record);
+            inner.reconnect = ReconnectState::Idle;
+            inner.restart = None;
+            inner.auth = AuthState::LoggedIn { email };
+            inner.last_error = None;
+            inner.mesh_poll_failures = 0;
+            inner.active.take()
+        };
+        if let Some(active) = active {
+            teardown_active(active, false).await;
+        }
+        Ok(())
+    }
+
+    /// The launch reconnect: bring the mesh back with no user action when — and only
+    /// when — the persisted intent is `connected` and a credential is stored. The
+    /// embedding process calls it once per launch (goosed: when it boots); the user's
+    /// Connect / Disconnect / Log out supersede it at any point.
+    ///
+    /// `preflight` is the embedding layer's own refusal (goosed: mesh binaries missing),
+    /// evaluated only when a reconnect is due; `describe` turns a connect failure into
+    /// the text the user acts on. Every outcome is recorded in [`LinkState::reconnect`]
+    /// and returned: `Skipped` (intent `disconnected`, already connected), `Reconnected`,
+    /// or `Failed` with the reason — an unreadable intent, a gone credential, the
+    /// preflight's refusal, or the connect's own error. The credential is only ever
+    /// cleared by the worker's named dead-token verdict, exactly as a manual connect.
+    pub async fn auto_reconnect(
+        &self,
+        preflight: Result<(), String>,
+        describe: impl Fn(&LinkError) -> String,
+    ) -> ReconnectState {
+        let due = {
+            let mut inner = self.core.inner.lock().await;
+            let now = Utc::now();
+            let verdict = match (&inner.intent, &inner.auth) {
+                (Err(reason), _) => Err(ReconnectState::Failed {
+                    reason: format!("the Link intent could not be read: {reason}"),
+                    at: now,
+                }),
+                (Ok(record), _) if record.intent == LinkIntent::Disconnected => {
+                    Err(ReconnectState::Skipped {
+                        reason: skipped_reason(record.cause).to_string(),
+                    })
+                }
+                (Ok(_), AuthState::Connecting { .. } | AuthState::Connected { .. }) => {
+                    Err(ReconnectState::Skipped {
+                        reason: "the mesh is already connecting or connected".to_string(),
+                    })
+                }
+                (Ok(_), AuthState::LoggedOut | AuthState::CodeSent { .. }) => {
+                    Err(ReconnectState::Failed {
+                        reason: "not signed in: the mesh was on, but no account credential is \
+                                 stored on this Mac any more — sign in again to reconnect"
+                            .to_string(),
+                        at: now,
+                    })
+                }
+                (Ok(_), AuthState::LoggedIn { .. }) => match preflight {
+                    Err(reason) => Err(ReconnectState::Failed { reason, at: now }),
+                    Ok(()) => self.mesh_socket_verdict(now),
+                },
+            };
+            inner.reconnect = match &verdict {
+                Err(state) => state.clone(),
+                Ok(()) => ReconnectState::Reconnecting { started_at: now },
+            };
+            verdict
+        };
+        if let Err(state) = due {
+            log_reconnect(&state);
+            return state;
+        }
+
+        let result = self
+            .core
+            .connect_as(ConnectOrigin::Reconnect, self.seams.clone())
+            .await;
+        let mut inner = self.core.inner.lock().await;
+        if !matches!(inner.reconnect, ReconnectState::Reconnecting { .. }) {
+            // The user acted meanwhile (Connect, Disconnect, Log out); theirs stands.
+            return inner.reconnect.clone();
+        }
+        inner.reconnect = match (result, &inner.auth) {
+            (Ok(()), AuthState::Connected { mesh_ip, .. }) => ReconnectState::Reconnected {
+                at: Utc::now(),
+                mesh_ip: mesh_ip.clone(),
+            },
+            (Ok(()), other) => ReconnectState::Failed {
+                reason: format!("the connect returned but auth reads {other:?}"),
+                at: Utc::now(),
+            },
+            (Err(err), _) => ReconnectState::Failed {
+                reason: describe(&err),
+                at: Utc::now(),
+            },
+        };
+        log_reconnect(&inner.reconnect);
+        inner.reconnect.clone()
+    }
+
+    async fn ensure_not_busy(&self) -> Result<(), LinkError> {
+        let inner = self.core.inner.lock().await;
+        match inner.auth {
+            AuthState::Connecting { .. } | AuthState::Connected { .. } => Err(LinkError::Busy),
+            _ => Ok(()),
+        }
+    }
+
+    async fn record_error(&self, err: &WorkerError) {
+        let mut inner = self.core.inner.lock().await;
+        inner.last_error = Some(err.to_string());
+    }
+
+}
+
+impl Core {
+    async fn connect_as(
+        self: &Arc<Self>,
+        origin: ConnectOrigin,
+        seams: Seams,
+    ) -> Result<(), LinkError> {
+        let (email, generation) = {
+            let mut inner = self.inner.lock().await;
+            let email = match (&inner.auth, origin) {
+                // The supervisor continues the `Connecting` its fault handler set; anything
+                // else means the user acted in between, and their action stands.
+                (AuthState::Connecting { email }, ConnectOrigin::Supervisor)
+                    if matches!(inner.reconnect, ReconnectState::Reconnecting { .. }) =>
+                {
+                    email.clone()
+                }
+                (_, ConnectOrigin::Supervisor) => return Err(LinkError::ConnectCancelled),
+                (AuthState::LoggedIn { email }, _) => email.clone(),
+                (AuthState::Connecting { .. } | AuthState::Connected { .. }, _) => {
                     return Err(LinkError::Busy)
                 }
-                AuthState::LoggedOut | AuthState::CodeSent { .. } => {
+                (AuthState::LoggedOut | AuthState::CodeSent { .. }, _) => {
                     return Err(LinkError::NotLoggedIn)
                 }
             };
@@ -591,21 +1138,32 @@ impl LinkManager {
                 self.intent.save(&record)?;
                 inner.intent = Ok(record);
                 inner.reconnect = ReconnectState::Idle;
+                inner.restart = None;
             }
-            inner.auth = AuthState::Connecting {
-                email: email.clone(),
-            };
-            inner.last_error = None;
-            email
+            if origin != ConnectOrigin::Supervisor {
+                // The supervisor's `last_error` names the fault it is restarting from.
+                inner.auth = AuthState::Connecting {
+                    email: email.clone(),
+                };
+                inner.last_error = None;
+            }
+            inner.next_generation += 1;
+            let generation = inner.next_generation;
+            inner.last_connect = generation;
+            (email, generation)
         };
 
-        match self.connect_inner().await {
+        let result = self.connect_inner(generation, &seams).await;
+        let mut inner = self.inner.lock().await;
+        match result {
             Ok(active) => {
-                let mut inner = self.inner.lock().await;
-                let still_connecting = matches!(
-                    &inner.auth,
-                    AuthState::Connecting { email: current } if *current == email
-                );
+                // Auth still reads the `Connecting` THIS connect set: a Disconnect + Connect
+                // in between leaves `Connecting` too, but under another connect's generation.
+                let still_connecting = inner.last_connect == generation
+                    && matches!(
+                        &inner.auth,
+                        AuthState::Connecting { email: current } if *current == email
+                    );
                 if !still_connecting {
                     // `logout()` or `disconnect()` raced us and auth has moved on. The
                     // fresh connection is torn down exactly as that action tears one
@@ -630,13 +1188,30 @@ impl LinkManager {
                     email,
                     mesh_ip: active.mesh_ip.clone(),
                 };
+                if origin == ConnectOrigin::Supervisor {
+                    inner.reconnect = ReconnectState::Reconnected {
+                        at: Utc::now(),
+                        mesh_ip: active.mesh_ip.clone(),
+                    };
+                    inner.last_error = None;
+                    if let Some(restart) = inner.restart.as_mut() {
+                        restart.generation = Some(generation);
+                        restart.healthy_looks = 0;
+                        tracing::info!(
+                            cause = %restart.cause,
+                            mesh_ip = %active.mesh_ip,
+                            "leanzero_link_supervisor: the mesh daemon was restarted with no user action"
+                        );
+                    }
+                }
                 inner.active = Some(active);
                 inner.mesh_poll_failures = 0;
                 Ok(())
             }
             Err(ConnectFailure { error, logout }) => {
-                let mut inner = self.inner.lock().await;
-                if matches!(&inner.auth, AuthState::Connecting { .. }) {
+                if inner.last_connect == generation
+                    && matches!(&inner.auth, AuthState::Connecting { .. })
+                {
                     inner.auth = if logout {
                         AuthState::LoggedOut
                     } else {
@@ -656,7 +1231,11 @@ impl LinkManager {
         }
     }
 
-    async fn connect_inner(&self) -> Result<Active, ConnectFailure> {
+    async fn connect_inner(
+        self: &Arc<Self>,
+        generation: u64,
+        seams: &Seams,
+    ) -> Result<Active, ConnectFailure> {
         let identity = self.identity.load()?.ok_or(ConnectFailure {
             error: LinkError::NotLoggedIn,
             logout: true,
@@ -693,11 +1272,6 @@ impl LinkManager {
                 logout: false,
             })?;
         let node_token = node_token_from_secret(secret);
-        let generation = {
-            let mut inner = self.inner.lock().await;
-            inner.next_generation += 1;
-            inner.next_generation
-        };
 
         let mut mesh_config = self.config.mesh.clone();
         mesh_config.hostname = node_hostname.clone();
@@ -764,10 +1338,10 @@ impl LinkManager {
         let control = match ControlService::start(
             control_config,
             self.source.clone(),
-            self.executor.clone(),
-            self.mlx_control.clone(),
-            self.distributed_node.clone(),
-            self.chat_serving.clone(),
+            seams.executor.clone(),
+            seams.mlx_control.clone(),
+            seams.distributed_node.clone(),
+            seams.chat_serving.clone(),
         )
         .await
         {
@@ -789,7 +1363,7 @@ impl LinkManager {
             registry.clone(),
             self.config.control.poll_interval,
             peer_port,
-            Arc::downgrade(&self.inner),
+            Arc::downgrade(self),
             generation,
         ));
 
@@ -802,468 +1376,10 @@ impl LinkManager {
             email: identity.email,
             node_token,
             generation,
+            seams: seams.clone(),
         })
     }
 
-    /// The composed live view: auth + a live mesh status read + the control node count.
-    /// A status read that finds the supervised daemon EXITED drops the connection right
-    /// here (see [`drop_active_after_daemon_exit`]) and reports the demoted state, so
-    /// the UI never shows `Connected` over a dead daemon.
-    pub async fn status(&self) -> LinkState {
-        let (auth, persisted_error, poll_failures, live, (intent, intent_error), reconnect) = {
-            let inner = self.inner.lock().await;
-            let live = inner.active.as_ref().map(|active| {
-                (
-                    active.mesh.clone(),
-                    active.registry.clone(),
-                    active.generation,
-                )
-            });
-            (
-                inner.auth.clone(),
-                inner.last_error.clone(),
-                inner.mesh_poll_failures,
-                live,
-                inner.intent_fields(),
-                inner.reconnect.clone(),
-            )
-        };
-
-        let Some((mesh, registry, generation)) = live else {
-            return LinkState {
-                auth,
-                mesh: None,
-                node_count: 0,
-                mesh_poll_failures: poll_failures,
-                last_error: persisted_error,
-                intent,
-                intent_error,
-                reconnect,
-            };
-        };
-
-        match mesh.status().await {
-            Ok(status) => LinkState {
-                auth,
-                mesh: Some(status),
-                node_count: node_count(&registry),
-                mesh_poll_failures: poll_failures,
-                last_error: persisted_error,
-                intent,
-                intent_error,
-                reconnect,
-            },
-            Err(err @ MeshError::DaemonExited { .. }) => {
-                drop_active_after_daemon_fault(
-                    &self.inner,
-                    generation,
-                    DaemonFault::Exited(&err),
-                    false,
-                )
-                .await;
-                let inner = self.inner.lock().await;
-                let (intent, intent_error) = inner.intent_fields();
-                LinkState {
-                    auth: inner.auth.clone(),
-                    mesh: None,
-                    node_count: 0,
-                    mesh_poll_failures: inner.mesh_poll_failures,
-                    last_error: inner.last_error.clone(),
-                    intent,
-                    intent_error,
-                    reconnect: inner.reconnect.clone(),
-                }
-            }
-            Err(err) => LinkState {
-                auth,
-                mesh: None,
-                node_count: node_count(&registry),
-                mesh_poll_failures: poll_failures,
-                last_error: Some(format!("mesh status read failed: {err}")),
-                intent,
-                intent_error,
-                reconnect,
-            },
-        }
-    }
-
-    /// The live peer-fabric registry while connected (`None` otherwise). Exposed so the
-    /// swarm dispatcher / UI can read peer node states (and their Idle/Busy status) before
-    /// dispatching, and so [`Self::remote_execute`] can resolve a target's URL.
-    pub async fn active_registry(&self) -> Option<PeerRegistry> {
-        self.inner
-            .lock()
-            .await
-            .active
-            .as_ref()
-            .map(|active| active.registry.clone())
-    }
-
-    /// The live connection's `/v1/swarm` bearer (`None` when not connected) — what the
-    /// host's loopback proxy presents to this node's own control service. Derived from
-    /// the worker-issued account secret at connect time; never the template value.
-    pub async fn node_token(&self) -> Option<String> {
-        self.inner
-            .lock()
-            .await
-            .active
-            .as_ref()
-            .map(|active| active.node_token.clone())
-    }
-
-    /// Drive a remote execution: tell `target_node_id`'s goose to run `req`. This is how
-    /// node A acts on node B. A `target_node_id` equal to this node's own id short-circuits
-    /// to the local executor (no network hop); any other id is resolved to a peer via the
-    /// fabric registry and reached with `POST <peer>/v1/swarm/execute` (bearer node_token).
-    ///
-    /// The RECEIVE-side idle guard + `allow_remote_execution` gate live on the peer's route
-    /// (a busy/observe-only peer answers `409`/`403`, surfaced here as
-    /// [`LinkError::Execute`]). Callers SHOULD still read the peer's Idle status from
-    /// [`Self::active_registry`] first and pick an Idle node — the route guard is the
-    /// backstop, not the scheduler.
-    pub async fn remote_execute(
-        &self,
-        target_node_id: &str,
-        req: ExecuteRequest,
-    ) -> Result<ExecuteAccepted, LinkError> {
-        let self_node_id = self.source.local_node().await.node_id;
-        if target_node_id == self_node_id {
-            let executor = self
-                .executor
-                .clone()
-                .ok_or(LinkError::ExecutorUnavailable)?;
-            return Ok(executor.execute(req).await?);
-        }
-
-        let (base_url, token, proxy) = {
-            let inner = self.inner.lock().await;
-            let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
-            let base_url = active
-                .registry
-                .peer_base_url(target_node_id)
-                .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
-            (
-                base_url,
-                active.node_token.clone(),
-                active.registry.peer_proxy(),
-            )
-        };
-
-        post_peer_execute(
-            proxy,
-            &base_url,
-            &token,
-            self.config.control.connect_timeout,
-            &req,
-        )
-        .await
-    }
-
-    /// Forward one mlxEngine model-management op to `target_node_id`. This is how node A
-    /// runs a download/delete/settings-change/status-read against node B's LOCAL MLX
-    /// engine. `target_node_id` equal to this node's own id short-circuits to the local
-    /// [`MlxControl`] (no network hop); any other id is resolved to a peer via the fabric
-    /// registry and reached with `POST <peer>/v1/swarm/mlx/<op>` (bearer node_token). `body`
-    /// is the op's request DTO as opaque JSON; the `Ok` value is the op's response DTO as
-    /// opaque JSON. A peer's own failure surfaces as [`LinkError::MlxControl`] (verbatim
-    /// text, class preserved); an unreachable/odd peer as [`LinkError::MlxProxy`].
-    pub async fn mlx_proxy(
-        &self,
-        target_node_id: &str,
-        op: MlxOp,
-        body: serde_json::Value,
-    ) -> Result<serde_json::Value, LinkError> {
-        let self_node_id = self.source.local_node().await.node_id;
-        if target_node_id == self_node_id {
-            let control = self
-                .mlx_control
-                .clone()
-                .ok_or(LinkError::MlxControlUnavailable)?;
-            return Ok(control.dispatch(op, body).await?);
-        }
-
-        let (base_url, token, proxy) = {
-            let inner = self.inner.lock().await;
-            let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
-            let base_url = active
-                .registry
-                .peer_base_url(target_node_id)
-                .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
-            (
-                base_url,
-                active.node_token.clone(),
-                active.registry.peer_proxy(),
-            )
-        };
-
-        post_peer_mlx(
-            proxy,
-            &base_url,
-            &token,
-            self.config.control.connect_timeout,
-            op,
-            &body,
-        )
-        .await
-    }
-
-    /// Forward one distributed-engine op to peer `target_node_id`: `POST
-    /// <peer>/v1/swarm/distributed/<op>` with the bearer node token, through the mesh proxy.
-    /// `body`/`Ok` are the op's JSON (goose types them). The peer's classed answers come back as
-    /// [`LinkError::DistributedNode`]; everything else as [`LinkError::DistributedProxy`].
-    pub async fn distributed_proxy(
-        &self,
-        target_node_id: &str,
-        op: &str,
-        body: &serde_json::Value,
-    ) -> Result<serde_json::Value, LinkError> {
-        let (base_url, token, proxy) = {
-            let inner = self.inner.lock().await;
-            let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
-            let base_url = active
-                .registry
-                .peer_base_url(target_node_id)
-                .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
-            (
-                base_url,
-                active.node_token.clone(),
-                active.registry.peer_proxy(),
-            )
-        };
-        post_peer_distributed(
-            proxy,
-            &base_url,
-            &token,
-            self.config.control.connect_timeout,
-            op,
-            body,
-        )
-        .await
-    }
-
-    /// How to reach peer `target_node_id`'s control service right now — its base URL, the
-    /// bearer, the mesh proxy — for callers that stream their own request (the inference relay).
-    pub async fn peer_call(&self, target_node_id: &str) -> Result<PeerCall, LinkError> {
-        let inner = self.inner.lock().await;
-        let active = inner.active.as_ref().ok_or(LinkError::NotConnected)?;
-        let base_url = active
-            .registry
-            .peer_base_url(target_node_id)
-            .ok_or_else(|| LinkError::UnknownPeer(target_node_id.to_string()))?;
-        Ok(PeerCall {
-            base_url,
-            token: active.node_token.clone(),
-            proxy: active.registry.peer_proxy(),
-            connect_timeout: self.config.control.connect_timeout,
-        })
-    }
-
-    /// Tear down the connection (per-pid), clear the stored identity, and drop to
-    /// `LoggedOut`. The mesh state dir is left for a fast re-login unless `wipe`.
-    ///
-    /// A failed `tailscale logout` (the daemon is stopped per-pid instead) still logs
-    /// the account out, but its text lands in `last_error` — never erased. A failed
-    /// identity clear leaves the credential on disk, so auth returns to `LoggedIn`
-    /// (the truthful state: mesh down, credential present) with the error recorded.
-    ///
-    /// The intent becomes `disconnected` first, so no later launch reconnects; a record
-    /// that cannot be written does not stop the logout, its text rides `last_error`.
-    pub async fn logout(&self, wipe: bool) -> Result<(), LinkError> {
-        let record = IntentRecord::new(LinkIntent::Disconnected, IntentCause::UserLogout);
-        let intent_error = self.intent.save(&record).err();
-        let (active, email) = {
-            let mut inner = self.inner.lock().await;
-            let email = match &inner.auth {
-                AuthState::LoggedIn { email }
-                | AuthState::Connecting { email }
-                | AuthState::Connected { email, .. } => Some(email.clone()),
-                AuthState::LoggedOut | AuthState::CodeSent { .. } => None,
-            };
-            match &intent_error {
-                None => inner.intent = Ok(record),
-                Some(err) => inner.intent = Err(err.to_string()),
-            }
-            inner.reconnect = ReconnectState::Idle;
-            (inner.active.take(), email)
-        };
-        let intent_note = intent_error.map(|err| {
-            format!(
-                "the intent record could not be set to disconnected ({err}); the next launch \
-                 reports a reconnect failure until you sign in again"
-            )
-        });
-        let mesh_logout_error = match active {
-            Some(active) => teardown_active(active, true).await,
-            None => None,
-        };
-
-        if let Err(err) = self.identity.clear() {
-            let mut inner = self.inner.lock().await;
-            inner.auth = match email {
-                Some(email) => AuthState::LoggedIn { email },
-                None => AuthState::LoggedOut,
-            };
-            inner.last_error = Some(format!(
-                "logout incomplete: the mesh is down but the credential could not be removed: {err}"
-            ));
-            return Err(err.into());
-        }
-        if wipe {
-            let dir = &self.config.mesh.state_dir;
-            if dir.exists() {
-                std::fs::remove_dir_all(dir).map_err(|source| LinkError::Io {
-                    op: "wipe the mesh state dir",
-                    path: dir.clone(),
-                    source,
-                })?;
-            }
-        }
-
-        let mut inner = self.inner.lock().await;
-        inner.auth = AuthState::LoggedOut;
-        let mesh_note = mesh_logout_error.map(|err| {
-            format!(
-                "logged out, but `tailscale logout` failed and the daemon was stopped per-pid \
-                 instead (the node key may linger on the control plane until it expires): {err}"
-            )
-        });
-        inner.last_error = match (mesh_note, intent_note) {
-            (Some(mesh), Some(intent)) => Some(format!("{mesh}; {intent}")),
-            (mesh, intent) => mesh.or(intent),
-        };
-        Ok(())
-    }
-
-    /// Take this node off the mesh and KEEP it off across launches, the account kept:
-    /// records the intent `disconnected` FIRST (a record that cannot be written refuses
-    /// the disconnect with the mesh untouched — otherwise the next launch would silently
-    /// undo it), then stops the connection per-pid (the poll loop, the control service,
-    /// the daemon — SIGTERM → grace → SIGKILL, our child only; no `tailscale logout`, the
-    /// state dir is kept for a fast Connect) and returns auth to `LoggedIn`. From
-    /// `Connecting`, the in-flight connect finds the state moved on and tears its fresh
-    /// connection down itself ([`LinkError::ConnectCancelled`]). Already `LoggedIn`: the
-    /// intent alone changes — that is how a user turns the launch reconnect off.
-    pub async fn disconnect(&self) -> Result<(), LinkError> {
-        let active = {
-            let mut inner = self.inner.lock().await;
-            let email = match &inner.auth {
-                AuthState::LoggedIn { email }
-                | AuthState::Connecting { email }
-                | AuthState::Connected { email, .. } => email.clone(),
-                AuthState::LoggedOut | AuthState::CodeSent { .. } => {
-                    return Err(LinkError::NotLoggedIn)
-                }
-            };
-            let record = IntentRecord::new(LinkIntent::Disconnected, IntentCause::UserDisconnect);
-            self.intent.save(&record)?;
-            inner.intent = Ok(record);
-            inner.reconnect = ReconnectState::Idle;
-            inner.auth = AuthState::LoggedIn { email };
-            inner.last_error = None;
-            inner.mesh_poll_failures = 0;
-            inner.active.take()
-        };
-        if let Some(active) = active {
-            teardown_active(active, false).await;
-        }
-        Ok(())
-    }
-
-    /// The launch reconnect: bring the mesh back with no user action when — and only
-    /// when — the persisted intent is `connected` and a credential is stored. The
-    /// embedding process calls it once per launch (goosed: when it boots); the user's
-    /// Connect / Disconnect / Log out supersede it at any point.
-    ///
-    /// `preflight` is the embedding layer's own refusal (goosed: mesh binaries missing),
-    /// evaluated only when a reconnect is due; `describe` turns a connect failure into
-    /// the text the user acts on. Every outcome is recorded in [`LinkState::reconnect`]
-    /// and returned: `Skipped` (intent `disconnected`, already connected), `Reconnected`,
-    /// or `Failed` with the reason — an unreadable intent, a gone credential, the
-    /// preflight's refusal, or the connect's own error. The credential is only ever
-    /// cleared by the worker's named dead-token verdict, exactly as a manual connect.
-    pub async fn auto_reconnect(
-        &self,
-        preflight: Result<(), String>,
-        describe: impl Fn(&LinkError) -> String,
-    ) -> ReconnectState {
-        let due = {
-            let mut inner = self.inner.lock().await;
-            let now = Utc::now();
-            let verdict = match (&inner.intent, &inner.auth) {
-                (Err(reason), _) => Err(ReconnectState::Failed {
-                    reason: format!("the Link intent could not be read: {reason}"),
-                    at: now,
-                }),
-                (Ok(record), _) if record.intent == LinkIntent::Disconnected => {
-                    Err(ReconnectState::Skipped {
-                        reason: skipped_reason(record.cause).to_string(),
-                    })
-                }
-                (Ok(_), AuthState::Connecting { .. } | AuthState::Connected { .. }) => {
-                    Err(ReconnectState::Skipped {
-                        reason: "the mesh is already connecting or connected".to_string(),
-                    })
-                }
-                (Ok(_), AuthState::LoggedOut | AuthState::CodeSent { .. }) => {
-                    Err(ReconnectState::Failed {
-                        reason: "not signed in: the mesh was on, but no account credential is \
-                                 stored on this Mac any more — sign in again to reconnect"
-                            .to_string(),
-                        at: now,
-                    })
-                }
-                (Ok(_), AuthState::LoggedIn { .. }) => match preflight {
-                    Err(reason) => Err(ReconnectState::Failed { reason, at: now }),
-                    Ok(()) => self.mesh_socket_verdict(now),
-                },
-            };
-            inner.reconnect = match &verdict {
-                Err(state) => state.clone(),
-                Ok(()) => ReconnectState::Reconnecting { started_at: now },
-            };
-            verdict
-        };
-        if let Err(state) = due {
-            log_reconnect(&state);
-            return state;
-        }
-
-        let result = self.connect_as(ConnectOrigin::Reconnect).await;
-        let mut inner = self.inner.lock().await;
-        if !matches!(inner.reconnect, ReconnectState::Reconnecting { .. }) {
-            // The user acted meanwhile (Connect, Disconnect, Log out); theirs stands.
-            return inner.reconnect.clone();
-        }
-        inner.reconnect = match (result, &inner.auth) {
-            (Ok(()), AuthState::Connected { mesh_ip, .. }) => ReconnectState::Reconnected {
-                at: Utc::now(),
-                mesh_ip: mesh_ip.clone(),
-            },
-            (Ok(()), other) => ReconnectState::Failed {
-                reason: format!("the connect returned but auth reads {other:?}"),
-                at: Utc::now(),
-            },
-            (Err(err), _) => ReconnectState::Failed {
-                reason: describe(&err),
-                at: Utc::now(),
-            },
-        };
-        log_reconnect(&inner.reconnect);
-        inner.reconnect.clone()
-    }
-
-    async fn ensure_not_busy(&self) -> Result<(), LinkError> {
-        let inner = self.inner.lock().await;
-        match inner.auth {
-            AuthState::Connecting { .. } | AuthState::Connected { .. } => Err(LinkError::Busy),
-            _ => Ok(()),
-        }
-    }
-
-    async fn record_error(&self, err: &WorkerError) {
-        let mut inner = self.inner.lock().await;
-        inner.last_error = Some(err.to_string());
-    }
 
     /// The mesh node hostname: the machine hostname joined to a short, stable,
     /// per-machine suffix so two machines that share a hostname (e.g. two default-named
@@ -1292,7 +1408,7 @@ impl LinkManager {
     /// daemon whose spawner is gone → the orphan a goosed killed before its teardown
     /// leaves: `Failed`, naming the pid to stop. Never adopted either way.
     fn mesh_socket_verdict(&self, now: DateTime<Utc>) -> Result<(), ReconnectState> {
-        let socket = &self.config.mesh.socket_path;
+        let socket = &self.core.config.mesh.socket_path;
         match crate::mesh::socket_holder(socket) {
             Ok(None) => Ok(()),
             Ok(Some(holder)) if holder.spawner_alive() => Err(ReconnectState::Skipped {
@@ -1635,6 +1751,17 @@ enum DaemonFault<'a> {
 }
 
 impl DaemonFault<'_> {
+    /// What happened to the daemon, as every supervisor state names it.
+    fn cause(&self) -> String {
+        match self {
+            Self::Exited(err) => format!("LeanZero Link's mesh daemon stopped ({err})"),
+            Self::Unresponsive { looks, last } => format!(
+                "LeanZero Link's mesh daemon stopped answering ({looks} consecutive status \
+                 failures; last: {last}) and was stopped per-pid"
+            ),
+        }
+    }
+
     fn last_error(&self) -> String {
         match self {
             Self::Exited(err) => format!(
@@ -1665,24 +1792,35 @@ impl DaemonFault<'_> {
 }
 
 /// The supervised tailscaled under a live connection is at fault — EXITED, or alive but
-/// UNRESPONSIVE for [`MESH_POLL_FAILURE_LOOKS`] looks. Drop that connection per-pid
-/// (no `tailscale logout`: there is nothing to talk to), record why, and return auth to
-/// `LoggedIn { email }` so `connect()` re-arms — the identity on disk is NEVER touched:
-/// a daemon fault is not a credential problem, and the only path that clears the
-/// credential is the user's own logout (or a worker verdict on the token).
+/// UNRESPONSIVE for [`MESH_POLL_FAILURE_LOOKS`] looks. Drop that connection per-pid (no
+/// `tailscale logout`: there is nothing to talk to) and decide, by the process's own
+/// outcomes and never by a clock, what happens next ([`FaultResponse`]):
+///
+/// - the intent says stay connected → RESTART with no user action: auth reads
+///   `Connecting`, `reconnect` reads `Reconnecting`, `last_error` names the fault — never
+///   `Connected` while the daemon is gone — and [`Core::supervised_restart`] runs the same
+///   connect a launch reconnect runs (R3 step 1: an app relaunch brought Link back in ~6 s;
+///   this is that path without the relaunch);
+/// - the faulted daemon was itself a supervised restart that never proved healthy → it
+///   FAILED AGAIN: auth `LoggedIn`, `reconnect: Failed` naming both faults, no further
+///   restart (a crash loop is a loud named state, not a silent loop);
+/// - the intent is unreadable → dropped, the fault recorded, auth `LoggedIn`.
+///
+/// The identity on disk is NEVER touched: a daemon fault is not a credential problem, and
+/// the only path that clears the credential is the user's own logout (or a worker verdict
+/// on the token).
 ///
 /// Acts only if the connection in place is the one the caller observed (`generation`);
-/// a stale observer never tears down a newer connection. `from_poll_loop` skips
-/// aborting the poll task — the loop is the caller and returns right after. Returns
-/// whether it acted.
+/// a stale observer never tears down a newer connection. `from_poll_loop` skips aborting
+/// the poll task — the loop is the caller and returns right after. Returns whether it acted.
 async fn drop_active_after_daemon_fault(
-    inner: &Arc<Mutex<Inner>>,
+    core: &Arc<Core>,
     generation: u64,
     fault: DaemonFault<'_>,
     from_poll_loop: bool,
 ) -> bool {
-    let active = {
-        let mut guard = inner.lock().await;
+    let (active, response, cause) = {
+        let mut guard = core.inner.lock().await;
         let observed = guard
             .active
             .as_ref()
@@ -1695,15 +1833,102 @@ async fn drop_active_after_daemon_fault(
             // The loop owns this call; dropping the handle detaches rather than aborts.
             active.poll_task = None;
         }
-        guard.auth = AuthState::LoggedIn {
-            email: active.email.clone(),
-        };
-        guard.last_error = Some(fault.last_error());
         fault.log();
-        active
+        let cause = fault.cause();
+        let response = fault_response(&guard, generation);
+        let email = active.email.clone();
+        match &response {
+            FaultResponse::Restart => {
+                guard.auth = AuthState::Connecting { email };
+                guard.reconnect = ReconnectState::Reconnecting {
+                    started_at: Utc::now(),
+                };
+                guard.last_error = Some(format!(
+                    "{cause} — restarting it with no user action"
+                ));
+                guard.restart = Some(SupervisedRestart {
+                    cause: cause.clone(),
+                    generation: None,
+                    healthy_looks: 0,
+                });
+            }
+            FaultResponse::FailedAgain { first } => {
+                let reason = format!(
+                    "{cause}, again, before the automatic restart proved healthy (it followed: \
+                     {first}) — not restarting it again; Connect to retry"
+                );
+                tracing::error!(%reason, "leanzero_link_supervisor: failed again");
+                guard.auth = AuthState::LoggedIn { email };
+                guard.reconnect = ReconnectState::Failed {
+                    reason: reason.clone(),
+                    at: Utc::now(),
+                };
+                guard.last_error = Some(reason);
+                guard.restart = None;
+            }
+            FaultResponse::Drop => {
+                guard.auth = AuthState::LoggedIn { email };
+                guard.last_error = Some(fault.last_error());
+                guard.restart = None;
+            }
+        }
+        (active, response, cause)
     };
+    let seams = active.seams.clone();
     teardown_active(active, false).await;
+    if response == FaultResponse::Restart {
+        let core = core.clone();
+        tokio::spawn(core.supervised_restart(seams, cause));
+    }
     true
+}
+
+/// The supervisor's decision for the faulted connection `generation` (see
+/// [`drop_active_after_daemon_fault`]).
+fn fault_response(inner: &Inner, generation: u64) -> FaultResponse {
+    if let Some(restart) = &inner.restart {
+        if restart.generation == Some(generation) {
+            return FaultResponse::FailedAgain {
+                first: restart.cause.clone(),
+            };
+        }
+    }
+    match &inner.intent {
+        Ok(record) if record.intent == LinkIntent::Connected => FaultResponse::Restart,
+        _ => FaultResponse::Drop,
+    }
+}
+
+impl Core {
+    /// Bring the faulted connection back: the launch reconnect's connect
+    /// ([`ConnectOrigin::Supervisor`]), bounded by its own outcomes — the daemon comes up
+    /// (`Reconnected`; proven after [`MESH_POLL_FAILURE_LOOKS`] healthy looks) or the
+    /// connect fails (`Failed`, naming the fault and the failure; no retry). A user action
+    /// meanwhile (Disconnect, Log out) cancels it and stands.
+    ///
+    /// Boxed: the restart's connect spawns the poll loop that may call back here, and a
+    /// named future type is what breaks that cycle for the compiler.
+    fn supervised_restart(self: Arc<Self>, seams: Seams, cause: String) -> BoxFuture<'static, ()> {
+        Box::pin(async move {
+            let result = self.connect_as(ConnectOrigin::Supervisor, seams).await;
+            let err = match result {
+                Ok(()) | Err(LinkError::ConnectCancelled | LinkError::ConnectAborted) => return,
+                Err(err) => err,
+            };
+            let mut inner = self.inner.lock().await;
+            if !matches!(inner.reconnect, ReconnectState::Reconnecting { .. }) {
+                return;
+            }
+            let reason = format!("{cause}, and the automatic restart failed: {err}");
+            tracing::error!(%reason, "leanzero_link_supervisor: restart failed");
+            inner.reconnect = ReconnectState::Failed {
+                reason: reason.clone(),
+                at: Utc::now(),
+            };
+            inner.last_error = Some(reason);
+            inner.restart = None;
+        })
+    }
 }
 
 async fn peer_sync_loop(
@@ -1711,7 +1936,7 @@ async fn peer_sync_loop(
     registry: PeerRegistry,
     interval: Duration,
     control_port: u16,
-    inner: Weak<Mutex<Inner>>,
+    core: Weak<Core>,
     generation: u64,
 ) {
     let mut last: Option<Vec<MeshPeer>> = None;
@@ -1722,17 +1947,18 @@ async fn peer_sync_loop(
                     registry.set_mesh_peers(&status.peers, control_port);
                     last = Some(status.peers.clone());
                 }
-                let Some(inner) = inner.upgrade() else { return };
-                let mut guard = inner.lock().await;
+                let Some(core) = core.upgrade() else { return };
+                let mut guard = core.inner.lock().await;
                 if guard.mesh_poll_failures != 0 {
                     guard.mesh_poll_failures = 0;
                 }
+                prove_restart(&mut guard, generation);
             }
             Err(err @ MeshError::DaemonExited { .. }) => {
-                let Some(inner) = inner.upgrade() else { return };
-                inner.lock().await.mesh_poll_failures += 1;
+                let Some(core) = core.upgrade() else { return };
+                core.inner.lock().await.mesh_poll_failures += 1;
                 if drop_active_after_daemon_fault(
-                    &inner,
+                    &core,
                     generation,
                     DaemonFault::Exited(&err),
                     true,
@@ -1747,9 +1973,9 @@ async fn peer_sync_loop(
                 tracing::warn!(error = %err, "tailscaled exited before the connection was installed; retrying");
             }
             Err(err) => {
-                let Some(inner) = inner.upgrade() else { return };
+                let Some(core) = core.upgrade() else { return };
                 let failures = {
-                    let mut guard = inner.lock().await;
+                    let mut guard = core.inner.lock().await;
                     guard.mesh_poll_failures += 1;
                     guard.mesh_poll_failures
                 };
@@ -1761,7 +1987,7 @@ async fn peer_sync_loop(
                         "mesh status poll failed; will retry"
                     );
                 } else if drop_active_after_daemon_fault(
-                    &inner,
+                    &core,
                     generation,
                     DaemonFault::Unresponsive {
                         looks: failures,
@@ -1784,5 +2010,27 @@ async fn peer_sync_loop(
             }
         }
         tokio::time::sleep(interval).await;
+    }
+}
+
+/// One healthy status look of connection `generation`: when it is the supervisor's restart,
+/// count it; at [`MESH_POLL_FAILURE_LOOKS`] unbroken healthy looks the restart has proven
+/// itself — the same look count that judges a daemon unresponsive judges it healthy — and a
+/// later fault is a fresh one, restarted again.
+fn prove_restart(inner: &mut Inner, generation: u64) {
+    let Some(restart) = inner.restart.as_mut() else {
+        return;
+    };
+    if restart.generation != Some(generation) {
+        return;
+    }
+    restart.healthy_looks += 1;
+    if restart.healthy_looks >= MESH_POLL_FAILURE_LOOKS {
+        tracing::info!(
+            cause = %restart.cause,
+            looks = restart.healthy_looks,
+            "leanzero_link_supervisor: the restarted mesh daemon proved healthy"
+        );
+        inner.restart = None;
     }
 }

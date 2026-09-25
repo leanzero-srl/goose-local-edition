@@ -97,32 +97,36 @@ pub(super) fn forget_serving(kind: IntentKind) {
     }
 }
 
+fn intent_to_dto(intent: ServingIntent) -> MlxServingIntentDto {
+    match intent {
+        ServingIntent::Single { model_id } => MlxServingIntentDto {
+            kind: "single".to_string(),
+            model_id,
+            ..Default::default()
+        },
+        ServingIntent::RemoteSingle {
+            peer,
+            peer_name,
+            model_id,
+        } => MlxServingIntentDto {
+            kind: "remoteSingle".to_string(),
+            model_id,
+            peer: Some(peer),
+            peer_name: Some(peer_name),
+        },
+        ServingIntent::Split { model_id } => MlxServingIntentDto {
+            kind: "split".to_string(),
+            model_id,
+            ..Default::default()
+        },
+    }
+}
+
 fn serving_intent_response(record: IntentRecord) -> MlxEngineServingIntentResponse {
     match record {
         IntentRecord::Absent => MlxEngineServingIntentResponse::default(),
         IntentRecord::Present(intent) => MlxEngineServingIntentResponse {
-            intent: Some(match intent {
-                ServingIntent::Single { model_id } => MlxServingIntentDto {
-                    kind: "single".to_string(),
-                    model_id,
-                    ..Default::default()
-                },
-                ServingIntent::RemoteSingle {
-                    peer,
-                    peer_name,
-                    model_id,
-                } => MlxServingIntentDto {
-                    kind: "remoteSingle".to_string(),
-                    model_id,
-                    peer: Some(peer),
-                    peer_name: Some(peer_name),
-                },
-                ServingIntent::Split { model_id } => MlxServingIntentDto {
-                    kind: "split".to_string(),
-                    model_id,
-                    ..Default::default()
-                },
-            }),
+            intent: Some(intent_to_dto(intent)),
             error: None,
         },
         IntentRecord::Unreadable { path, error } => MlxEngineServingIntentResponse {
@@ -133,6 +137,29 @@ fn serving_intent_response(record: IntentRecord) -> MlxEngineServingIntentRespon
             )),
         },
     }
+}
+
+/// Who unmounted this goose's single engine last, since this goose started; cleared by the next
+/// accepted Mount. In memory on purpose: a relaunch is exactly the fact that nothing stopped it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EngineStopper {
+    Owner,
+    LinkedMac,
+}
+
+static ENGINE_STOPPED_BY: StdMutex<Option<EngineStopper>> = StdMutex::new(None);
+
+/// `stoppedBy` for a stopped engine: who unmounted it, or `notStarted` when nobody did since this
+/// goose started. `None` for every other state.
+fn stopped_by_wire(state: &str, stopper: Option<EngineStopper>) -> Option<String> {
+    (state == "stopped").then(|| {
+        match stopper {
+            Some(EngineStopper::Owner) => "owner",
+            Some(EngineStopper::LinkedMac) => "linkedMac",
+            None => "notStarted",
+        }
+        .to_string()
+    })
 }
 
 static DOWNLOAD_TRACKER: LazyLock<DownloadTracker> = LazyLock::new(DownloadTracker::new);
@@ -425,6 +452,9 @@ fn status_to_dto(status: goose_sidecar::engine::EngineStatus) -> MlxEngineStatus
         mount_fit_error: None,
         load: status.load.map(load_to_dto),
         hosting: None,
+        stopped_by: None,
+        serving_intent: None,
+        serving_intent_error: None,
     }
 }
 
@@ -506,6 +536,17 @@ async fn core_status(
         }
     }
     status.hosting = super::mlx_distributed::hosting_dto();
+    status.stopped_by = stopped_by_wire(
+        &status.state,
+        *ENGINE_STOPPED_BY.lock().unwrap_or_else(|e| e.into_inner()),
+    );
+    match mlx_serving_intent::read() {
+        IntentRecord::Absent => {}
+        IntentRecord::Present(intent) => status.serving_intent = Some(intent_to_dto(intent)),
+        IntentRecord::Unreadable { path, error } => {
+            status.serving_intent_error = Some(format!("{} is unreadable: {error}", path.display()))
+        }
+    }
     Ok(MlxEngineStatusResponse { status })
 }
 
@@ -518,15 +559,25 @@ async fn local_chip() -> Result<MlxChipDto, String> {
     if let Some(chip) = LOCAL_CHIP.get() {
         return Ok(chip.clone());
     }
-    let chip = goose_sidecar::placement::chip::local_chip()
+    let chip = probe_local_chip().await?;
+    Ok(LOCAL_CHIP.get_or_init(|| chip).clone())
+}
+
+#[cfg(unix)]
+async fn probe_local_chip() -> Result<MlxChipDto, String> {
+    goose_sidecar::placement::chip::local_chip()
         .await
         .map(|c| MlxChipDto {
             hw_model: c.hw_model,
             brand: c.brand,
             gpu_cores: c.gpu_cores,
         })
-        .map_err(|e| format!("{e:#}"))?;
-    Ok(LOCAL_CHIP.get_or_init(|| chip).clone())
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[cfg(not(unix))]
+async fn probe_local_chip() -> Result<MlxChipDto, String> {
+    Err("the chip probe reads the Mac's hardware model, which exists only on macOS".to_string())
 }
 
 /// A memory-gate refusal is the response's `refusal` (with the placement that WOULD work), not an
@@ -538,7 +589,10 @@ async fn core_mount(
     super::mlx_distributed::refuse_single_mount_while_distributed().await?;
     let manager = synced_manager()?;
     match manager.mount(&req.model_id).await {
-        Ok(()) => Ok(MlxEngineMountResponse { refusal: None }),
+        Ok(()) => {
+            *ENGINE_STOPPED_BY.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            Ok(MlxEngineMountResponse { refusal: None })
+        }
         Err(e) => match e.downcast::<MountRefused>() {
             Ok(refused) => Ok(MlxEngineMountResponse {
                 refusal: Some(mount_refusal(&refused).await),
@@ -571,9 +625,12 @@ async fn mount_refusal(refused: &MountRefused) -> MlxMountRefusalDto {
     }
 }
 
+/// Recorded BEFORE the engine goes, so no status read ever sees it stopped without its stopper.
 async fn core_unmount(
     _req: MlxEngineUnmountRequest,
+    by: EngineStopper,
 ) -> Result<EmptyResponse, agent_client_protocol::Error> {
+    *ENGINE_STOPPED_BY.lock().unwrap_or_else(|e| e.into_inner()) = Some(by);
     global_manager().unmount().await;
     Ok(EmptyResponse {})
 }
@@ -885,7 +942,7 @@ impl GooseAcpAgent {
         if let Some(node) = self.mlx_engine_remote_target(req.node_id.as_deref()) {
             return self.mlx_engine_relay(&node, MlxOp::Unmount, &req).await;
         }
-        let response = core_unmount(req).await?;
+        let response = core_unmount(req, EngineStopper::Owner).await?;
         forget_serving(IntentKind::Single);
         Ok(response)
     }
@@ -1117,9 +1174,9 @@ impl MlxControl for GoosedMlxControl {
         match op {
             MlxOp::Status => mlx_response_to_value(core_status(mlx_req_from_value(request)?).await),
             MlxOp::Mount => mlx_response_to_value(core_mount(mlx_req_from_value(request)?).await),
-            MlxOp::Unmount => {
-                mlx_response_to_value(core_unmount(mlx_req_from_value(request)?).await)
-            }
+            MlxOp::Unmount => mlx_response_to_value(
+                core_unmount(mlx_req_from_value(request)?, EngineStopper::LinkedMac).await,
+            ),
             MlxOp::SettingsRead => {
                 mlx_response_to_value(core_settings_read(mlx_req_from_value(request)?).await)
             }
@@ -1191,6 +1248,25 @@ impl MlxControl for GoosedMlxControl {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn a_stopped_engine_says_who_stopped_it_or_that_nobody_did_since_this_goose_started() {
+        assert_eq!(
+            stopped_by_wire("stopped", None).as_deref(),
+            Some("notStarted")
+        );
+        assert_eq!(
+            stopped_by_wire("stopped", Some(EngineStopper::Owner)).as_deref(),
+            Some("owner")
+        );
+        assert_eq!(
+            stopped_by_wire("stopped", Some(EngineStopper::LinkedMac)).as_deref(),
+            Some("linkedMac")
+        );
+        for state in ["mounting", "running", "failed"] {
+            assert_eq!(stopped_by_wire(state, Some(EngineStopper::Owner)), None);
+        }
+    }
 
     #[test]
     fn the_serving_intent_reads_as_its_kind_or_a_named_failure() {

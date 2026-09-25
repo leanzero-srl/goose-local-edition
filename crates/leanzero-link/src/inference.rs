@@ -26,8 +26,29 @@
 //!   URL gets `404`, and an `Origin`-bearing (browser) request gets `403`. The peer is resolved
 //!   on EVERY request, so a peer whose mesh IP changed is followed and a peer that left is a
 //!   named `502` [`RELAY_FAILED`], never a stale dial.
+//!
+//! - IN FLIGHT — a request the relay has sent is WATCHED until it ends (Q-32). A peer whose
+//!   tailscaled dies leaves the requester's connection open and silent — no FIN, no RST ever
+//!   crosses the mesh (r3-1.log `12:14:59 0 120.00s TimeoutError`: the request in flight hung
+//!   until the client's own timeout, while every later request got a named `502` at the
+//!   relay's 5 s connect timeout). The relay tags each request with a random id
+//!   ([`RELAY_STREAM_HEADER`]); the serving node keeps the id in its [`InflightStreams`] for
+//!   exactly as long as the response body lives, and answers `GET` [`streams_route`] with
+//!   [`StreamLiveness`]. Every `liveness_interval` (the fabric's own poll cadence) the relay
+//!   LOOKS — one fresh dial, bounded by the transport's connect timeout
+//!   ([`PeerTimeout::FreshTotal`]) — and ends the request with a named [`RELAY_FAILED`] only
+//!   on transport evidence ([`InFlightWatch`]): the peer, reachable, no longer holds it; or
+//!   [`MESH_POLL_FAILURE_LOOKS`] looks in a row could not reach the peer at all. It never
+//!   times the model: a generation that is silent for minutes (a long prefill) is held by
+//!   the peer and answers every look, so it is never cut. Before the response head, the end
+//!   is a `502` with the reason; after it, an SSE body gets one error event
+//!   (`{"error":{"message":…,"type":"linkRelayFailed"}}`, which the OpenAI stream parser
+//!   raises verbatim) and every body is then aborted — never a clean end.
 
+use std::collections::HashSet;
+use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -38,11 +59,13 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
-use futures::TryStreamExt;
+use futures::{Stream, StreamExt, TryStreamExt};
+use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
+use crate::manager::MESH_POLL_FAILURE_LOOKS;
 use crate::peer_dial::{peer_http_client, MeshProxy, PeerTimeout};
 use crate::state::ChatServing;
 
@@ -56,6 +79,22 @@ pub const ENGINE_UNREACHABLE: &str = "engineUnreachable";
 /// The `502` text prefix when the requester's relay could not reach the peer at all (Link not
 /// connected, the peer left the mesh, the SOCKS dial failed).
 pub const RELAY_FAILED: &str = "linkRelayFailed";
+
+/// The request header carrying the relay's id for one request, so the serving node can say
+/// whether it still holds it ([`streams_route`]). Never forwarded to the engine.
+pub const RELAY_STREAM_HEADER: &str = "x-leanzero-link-stream";
+
+/// Where a serving node answers [`StreamLiveness`] for one relay request id (bearer-gated
+/// like every route): `GET <prefix>/streams/<id>`.
+pub fn streams_route() -> String {
+    format!("{INFERENCE_ROUTE_PREFIX}/streams/{{id}}")
+}
+
+/// Consecutive looks that must find the request RELEASED by a peer that had shown it (held,
+/// under an earlier epoch, or across a look that could not reach it) before the relay ends
+/// it: one look sees the release, the next confirms it was not a response completing with
+/// its final bytes still crossing the mesh (a completed response ends the watch first).
+const RELEASE_CONFIRM_LOOKS: u32 = 2; // ratio: one observation plus one confirmation
 
 /// The response headers carried through both hops. Everything else (hop-by-hop framing,
 /// `content-length` of a re-chunked body) is the transport's own.
@@ -113,15 +152,29 @@ pub(crate) fn engine_client(connect_timeout: Duration) -> Result<reqwest::Client
         .build()
 }
 
-/// Copy the passed headers and stream the body through unchanged.
-fn passthrough(response: reqwest::Response) -> Response {
+/// The passed headers of `response`, on a builder with its status.
+fn passed_head(response: &reqwest::Response) -> axum::http::response::Builder {
     let mut builder = Response::builder().status(response.status().as_u16());
     for name in PASSED_RESPONSE_HEADERS {
         if let Some(value) = response.headers().get(&name) {
             builder = builder.header(name, value.clone());
         }
     }
-    let body = Body::from_stream(response.bytes_stream());
+    builder
+}
+
+/// Copy the passed headers and stream the body through unchanged. `held` (the serving node's
+/// hold on a relay request id) lives exactly as long as the body does.
+fn passthrough(response: reqwest::Response, held: Option<StreamHold>) -> Response {
+    let builder = passed_head(&response);
+    let body = Body::from_stream(response.bytes_stream().map(move |item| {
+        let _held = &held;
+        item
+    }));
+    framed(builder, body)
+}
+
+fn framed(builder: axum::http::response::Builder, body: Body) -> Response {
     builder.body(body).unwrap_or_else(|err| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -153,9 +206,11 @@ fn forward_request(
 }
 
 /// The serving half: one proxied request to this node's engine. `hostname` is asked for only on
-/// the refusal path (it names the node in the `403`).
+/// the refusal path (it names the node in the `403`). A request the relay tagged
+/// ([`RELAY_STREAM_HEADER`]) is held in `streams` for as long as its response body lives.
 pub(crate) async fn serve<F>(
     serving: Option<&Arc<dyn ChatServing>>,
+    streams: &Arc<InflightStreams>,
     engine_http: &reqwest::Client,
     hostname: F,
     path: EnginePath,
@@ -165,6 +220,10 @@ pub(crate) async fn serve<F>(
 where
     F: std::future::Future<Output = String>,
 {
+    let held = headers
+        .get(RELAY_STREAM_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|id| streams.hold(id));
     let Some(serving) = serving else {
         return (
             StatusCode::NOT_IMPLEMENTED,
@@ -194,7 +253,7 @@ where
         .send()
         .await
     {
-        Ok(response) => passthrough(response),
+        Ok(response) => passthrough(response, held),
         Err(err) => (
             StatusCode::BAD_GATEWAY,
             format!(
@@ -206,6 +265,86 @@ where
     }
 }
 
+/// A serving node's answer to "do you still hold relay request `<id>`?" — the wire of
+/// `GET` [`streams_route`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamLiveness {
+    /// Random per control-service start: a peer whose Link restarted answers under a NEW
+    /// epoch, and holds nothing the old one held.
+    pub epoch: String,
+    /// The response to this id is still being served (its body has not been dropped).
+    pub live: bool,
+}
+
+/// The relay request ids a control service is serving right now (see [`serve`]).
+pub struct InflightStreams {
+    epoch: String,
+    held: StdMutex<HashSet<String>>,
+}
+
+impl InflightStreams {
+    pub fn new() -> Self {
+        Self {
+            epoch: crate::replica::hex(&rand::random::<[u8; 16]>()),
+            held: StdMutex::new(HashSet::new()),
+        }
+    }
+
+    /// Hold `id` until the returned guard drops. An id that is not a relay id (32 lowercase
+    /// hex — what [`InferenceRelay`] sends) is not held: nothing is stored from a header a
+    /// relay did not mint.
+    fn hold(self: &Arc<Self>, id: &str) -> Option<StreamHold> {
+        if !is_stream_id(id) {
+            return None;
+        }
+        self.held
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id.to_string());
+        Some(StreamHold {
+            streams: self.clone(),
+            id: id.to_string(),
+        })
+    }
+
+    pub fn liveness(&self, id: &str) -> StreamLiveness {
+        StreamLiveness {
+            epoch: self.epoch.clone(),
+            live: self
+                .held
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(id),
+        }
+    }
+}
+
+impl Default for InflightStreams {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A serving node's hold on one relay request id; released on drop.
+struct StreamHold {
+    streams: Arc<InflightStreams>,
+    id: String,
+}
+
+impl Drop for StreamHold {
+    fn drop(&mut self) {
+        self.streams
+            .held
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.id);
+    }
+}
+
+fn is_stream_id(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 /// How the relay reaches its peer right now: the peer's control base URL, the bearer, and the
 /// mesh proxy to dial through.
 #[derive(Debug, Clone)]
@@ -214,6 +353,10 @@ pub struct PeerCall {
     pub token: String,
     pub proxy: Option<MeshProxy>,
     pub connect_timeout: Duration,
+    /// How often a request in flight is looked at ([`InFlightWatch`]) — the fabric's own
+    /// poll cadence. It decides when the relay LOOKS, never whether a request is cut: only
+    /// what a look finds does.
+    pub liveness_interval: Duration,
 }
 
 /// Resolves a peer (node id or mesh hostname) to a [`PeerCall`] on every relayed request. The
@@ -223,27 +366,40 @@ pub trait PeerCallResolver: Send + Sync + 'static {
     async fn peer_call(&self, peer: &str) -> Result<PeerCall, String>;
 }
 
+/// The relay's two clients over one mesh proxy: the request's own (CONNECT-bounded only — a
+/// generation runs as long as it runs) and the in-flight look's (a fresh dial each time,
+/// bounded in total).
+#[derive(Clone)]
+struct RelayClients {
+    request: reqwest::Client,
+    look: reqwest::Client,
+}
+
 struct RelayCtx {
     peer: String,
     secret: String,
     resolver: Arc<dyn PeerCallResolver>,
-    /// One client per mesh proxy address (the daemon's SOCKS port changes only across
-    /// reconnects); rebuilt when the resolved proxy differs.
-    client: StdMutex<Option<(Option<MeshProxy>, reqwest::Client)>>,
+    /// One pair of clients per mesh proxy address and connect timeout (the daemon's SOCKS
+    /// port changes only across reconnects); rebuilt when the resolved call differs.
+    clients: StdMutex<Option<((Option<MeshProxy>, Duration), RelayClients)>>,
 }
 
 impl RelayCtx {
-    fn client_for(&self, call: &PeerCall) -> Result<reqwest::Client, String> {
-        let mut cached = self.client.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((proxy, client)) = cached.as_ref() {
-            if *proxy == call.proxy {
-                return Ok(client.clone());
+    fn clients_for(&self, call: &PeerCall) -> Result<RelayClients, String> {
+        let key = (call.proxy, call.connect_timeout);
+        let mut cached = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_key, clients)) = cached.as_ref() {
+            if *cached_key == key {
+                return Ok(clients.clone());
             }
         }
-        let client = peer_http_client(call.proxy, PeerTimeout::ConnectOnly(call.connect_timeout))
-            .map_err(|e| e.to_string())?;
-        *cached = Some((call.proxy, client.clone()));
-        Ok(client)
+        let build = |timeout| peer_http_client(call.proxy, timeout).map_err(|e| e.to_string());
+        let clients = RelayClients {
+            request: build(PeerTimeout::ConnectOnly(call.connect_timeout))?,
+            look: build(PeerTimeout::FreshTotal(call.connect_timeout))?,
+        };
+        *cached = Some((key, clients.clone()));
+        Ok(clients)
     }
 }
 
@@ -263,7 +419,7 @@ impl InferenceRelay {
             peer: peer.clone(),
             secret: secret.clone(),
             resolver,
-            client: StdMutex::new(None),
+            clients: StdMutex::new(None),
         });
         let mut router = Router::new();
         for path in EnginePath::ALL {
@@ -340,32 +496,267 @@ async fn relay(
     if !bool::from(secret.as_bytes().ct_eq(ctx.secret.as_bytes())) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let failed = |why: String| {
-        (
-            StatusCode::BAD_GATEWAY,
-            format!(
-                "{RELAY_FAILED}: cannot reach Link peer '{}': {why}",
-                ctx.peer
-            ),
-        )
-            .into_response()
-    };
     let call = match ctx.resolver.peer_call(&ctx.peer).await {
         Ok(call) => call,
-        Err(why) => return failed(why),
+        Err(why) => return unreachable_peer(&ctx.peer, &why),
     };
-    let client = match ctx.client_for(&call) {
-        Ok(client) => client,
-        Err(why) => return failed(why),
+    let clients = match ctx.clients_for(&call) {
+        Ok(clients) => clients,
+        Err(why) => return unreachable_peer(&ctx.peer, &why),
     };
+    let stream_id = crate::replica::hex(&rand::random::<[u8; 16]>());
     let url = format!("{}{}", call.base_url, path.control_route());
-    match forward_request(&client, url, path, &headers, body)
+    let send = forward_request(&clients.request, url, path, &headers, body)
         .bearer_auth(&call.token)
-        .send()
-        .await
-    {
-        Ok(response) => passthrough(response),
-        Err(err) => failed(err.to_string()),
+        .header(RELAY_STREAM_HEADER, &stream_id)
+        .send();
+    let look_url = format!(
+        "{}{}",
+        call.base_url,
+        streams_route().replace("{id}", &stream_id)
+    );
+    let mut lost: LostPeer = Box::pin(watch_in_flight(
+        clients.look,
+        look_url,
+        call.token.clone(),
+        call.liveness_interval,
+    ));
+    tokio::select! {
+        sent = send => match sent {
+            Ok(response) => watched_passthrough(response, lost, lost_in_flight_text(&ctx.peer)),
+            Err(err) => unreachable_peer(&ctx.peer, &err.to_string()),
+        },
+        reason = &mut lost => (
+            StatusCode::BAD_GATEWAY,
+            lost_in_flight_text(&ctx.peer)(&reason),
+        )
+            .into_response(),
+    }
+}
+
+/// The `502` for a request the relay could not deliver at all.
+fn unreachable_peer(peer: &str, why: &str) -> Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        format!("{RELAY_FAILED}: cannot reach Link peer '{peer}': {why}"),
+    )
+        .into_response()
+}
+
+/// The text a request the peer dropped IN FLIGHT ends with, given the watch's evidence.
+fn lost_in_flight_text(peer: &str) -> impl Fn(&str) -> String + Send + 'static {
+    let peer = peer.to_string();
+    move |evidence| format!("{RELAY_FAILED}: Link peer '{peer}' lost this request in flight: {evidence}")
+}
+
+/// Resolves — with the evidence — only when [`InFlightWatch`] ends the request; a request
+/// that ends first simply drops it.
+type LostPeer = Pin<Box<dyn Future<Output = String> + Send>>;
+
+/// Stream the peer's response through, ending it the moment `lost` resolves: an SSE body
+/// gets one OpenAI-shaped error event naming the loss, then every body is aborted (the
+/// chunked response is never terminated), so the requester reads a named error and never
+/// a clean end. A response that completes drops the watch with it.
+fn watched_passthrough(
+    response: reqwest::Response,
+    lost: LostPeer,
+    text: impl Fn(&str) -> String + Send + 'static,
+) -> Response {
+    let builder = passed_head(&response);
+    let sse = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/event-stream"));
+    let body = watched_body(response.bytes_stream(), lost, sse, text);
+    framed(builder, Body::from_stream(body))
+}
+
+enum Watched<S> {
+    Streaming { upstream: S, lost: LostPeer },
+    /// The error event was sent; the abort follows.
+    Lost(String),
+    Done,
+}
+
+fn watched_body<S>(
+    upstream: S,
+    lost: LostPeer,
+    sse: bool,
+    text: impl Fn(&str) -> String + Send + 'static,
+) -> impl Stream<Item = Result<axum::body::Bytes, std::io::Error>> + Send
+where
+    S: Stream<Item = Result<axum::body::Bytes, reqwest::Error>> + Send + Unpin + 'static,
+{
+    let text = Arc::new(text);
+    futures::stream::unfold(Watched::Streaming { upstream, lost }, move |state| {
+        let text = text.clone();
+        async move {
+            match state {
+                Watched::Streaming {
+                    mut upstream,
+                    mut lost,
+                } => {
+                    tokio::select! {
+                        biased;
+                        item = upstream.next() => match item {
+                            Some(Ok(bytes)) => Some((Ok(bytes), Watched::Streaming { upstream, lost })),
+                            Some(Err(err)) => Some((Err(std::io::Error::other(err)), Watched::Done)),
+                            None => None,
+                        },
+                        evidence = &mut lost => {
+                            let message = text(&evidence);
+                            tracing::error!(%message, "leanzero-link relay: request lost in flight");
+                            if sse {
+                                let frame = serde_json::json!({
+                                    "error": {"message": message, "type": RELAY_FAILED, "code": 502}
+                                });
+                                Some((
+                                    Ok(axum::body::Bytes::from(format!("data: {frame}\n\n"))),
+                                    Watched::Lost(message),
+                                ))
+                            } else {
+                                Some((Err(std::io::Error::other(message)), Watched::Done))
+                            }
+                        }
+                    }
+                }
+                Watched::Lost(message) => Some((Err(std::io::Error::other(message)), Watched::Done)),
+                Watched::Done => None,
+            }
+        }
+    })
+}
+
+/// What one look at a request in flight found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Look {
+    /// The peer answered and still serves the request.
+    Held { epoch: String },
+    /// The peer answered and does NOT serve it (never received, finished, or dropped).
+    Released { epoch: String },
+    /// The peer answered, but not with [`StreamLiveness`] (an older goose without the route
+    /// answers `404`): it is reachable, and says nothing about the request.
+    Reached,
+    /// No answer: the fresh dial or the answer did not arrive within the look's bound.
+    Unreached(String),
+}
+
+/// The in-flight verdict, fed one [`Look`] at a time. Every rule is transport evidence — an
+/// answer about THIS request, or the absence of any answer from the peer — never how long
+/// the model has been quiet:
+///
+/// - [`MESH_POLL_FAILURE_LOOKS`] consecutive `Unreached` → the peer is gone (its Link died
+///   and stayed down — r3-1's Studio).
+/// - `Released` after the peer had SHOWN the request — held it, answered under an earlier
+///   epoch, or been unreachable since it was sent — for [`RELEASE_CONFIRM_LOOKS`] looks in
+///   a row → it was dropped on the peer's side (its Link restarted under it: the new
+///   control service holds nothing the old one did).
+/// - `Released` from a peer that has never shown it, for [`MESH_POLL_FAILURE_LOOKS`] looks in
+///   a row → the request never arrived (it went down a kept-alive connection that was
+///   already dead).
+///
+/// A slow, healthy generation is `Held` on every look and is never ended.
+#[derive(Debug, Default)]
+struct InFlightWatch {
+    shown: bool,
+    first_epoch: Option<String>,
+    unreached: u32,
+    released: u32,
+}
+
+impl InFlightWatch {
+    fn observe(&mut self, look: Look) -> Option<String> {
+        match look {
+            Look::Unreached(why) => {
+                self.unreached += 1;
+                self.released = 0;
+                self.shown = self.first_epoch.is_some() || self.shown;
+                if self.unreached >= MESH_POLL_FAILURE_LOOKS {
+                    return Some(format!(
+                        "{} looks in a row could not reach the peer through the mesh (last: {why}) \
+                         — its LeanZero Link is down",
+                        self.unreached
+                    ));
+                }
+                None
+            }
+            Look::Reached => {
+                self.unreached = 0;
+                None
+            }
+            Look::Held { epoch } => {
+                self.unreached = 0;
+                self.released = 0;
+                self.shown = true;
+                self.first_epoch.get_or_insert(epoch);
+                None
+            }
+            Look::Released { epoch } => {
+                let restarted = self.first_epoch.as_ref().is_some_and(|first| *first != epoch);
+                let was_unreached = self.unreached > 0;
+                self.unreached = 0;
+                self.released += 1;
+                if restarted || was_unreached {
+                    self.shown = true;
+                }
+                self.first_epoch.get_or_insert(epoch);
+                let needed = if self.shown {
+                    RELEASE_CONFIRM_LOOKS
+                } else {
+                    MESH_POLL_FAILURE_LOOKS
+                };
+                if self.released < needed {
+                    return None;
+                }
+                Some(if self.shown {
+                    format!(
+                        "the peer answers but no longer holds it ({} looks in a row) — it was \
+                         dropped on the peer's side, as when its LeanZero Link restarts",
+                        self.released
+                    )
+                } else {
+                    format!(
+                        "the peer answered {} looks in a row without ever receiving it",
+                        self.released
+                    )
+                })
+            }
+        }
+    }
+}
+
+/// Look at the request in flight every `interval` until [`InFlightWatch`] ends it; resolves
+/// with the evidence. Dropped (never resolved) when the request ends first.
+async fn watch_in_flight(
+    client: reqwest::Client,
+    url: String,
+    token: String,
+    interval: Duration,
+) -> String {
+    let mut watch = InFlightWatch::default();
+    loop {
+        tokio::time::sleep(interval).await;
+        let look = look_once(&client, &url, &token).await;
+        if let Some(evidence) = watch.observe(look) {
+            return evidence;
+        }
+    }
+}
+
+async fn look_once(client: &reqwest::Client, url: &str, token: &str) -> Look {
+    let response = match client.get(url).bearer_auth(token).send().await {
+        Ok(response) => response,
+        Err(err) => return Look::Unreached(err.to_string()),
+    };
+    if !response.status().is_success() {
+        return Look::Reached;
+    }
+    match response.json::<StreamLiveness>().await {
+        Ok(StreamLiveness { epoch, live: true }) => Look::Held { epoch },
+        Ok(StreamLiveness { epoch, live: false }) => Look::Released { epoch },
+        Err(err) if err.is_timeout() => Look::Unreached(err.to_string()),
+        Err(_) => Look::Reached,
     }
 }
 

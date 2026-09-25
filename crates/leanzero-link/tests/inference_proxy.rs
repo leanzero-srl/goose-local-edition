@@ -544,3 +544,46 @@ async fn a_peer_the_relay_cannot_reach_is_a_named_502_never_a_direct_dial() {
     let text = post_chat(relay.base_url()).await.text().await.unwrap();
     assert!(text.contains("refusing a direct dial"), "{text}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Q-32: the peer's Link dies under a request in flight
+// ---------------------------------------------------------------------------------------------
+
+fn mesh_ip_of(base: &str) -> String {
+    base.trim_start_matches("http://")
+        .split(':')
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+/// Reproduction: r3-1.log `12:14:59 0 120.00s TimeoutError` — the stream in flight when the
+/// peer's tailscaled died hung until the client's own timeout.
+#[tokio::test]
+async fn repro_q32_a_stream_in_flight_hangs_when_the_peers_link_dies() {
+    let (engine, engine_base) = start_engine(Script::Endless).await;
+    let serving = Arc::new(FakeServing {
+        allowed: AtomicBool::new(true),
+        base: Ok(engine_base),
+    });
+    let (_b, b_base) = start_node_b(Some(serving)).await;
+    let mut call = call_to(&b_base);
+    call.connect_timeout = Duration::from_millis(300);
+    let relay = InferenceRelay::start("node-b".into(), Arc::new(Resolver(Ok(call))))
+        .await
+        .unwrap();
+    let response = post_chat(relay.base_url()).await;
+    let mut stream = response.bytes_stream();
+    stream.next().await.unwrap().unwrap();
+    support::fake_tailnet().kill(&mesh_ip_of(&b_base));
+    let ended = tokio::time::timeout(DEADLINE, async {
+        while let Some(item) = stream.next().await {
+            if item.is_err() {
+                return;
+            }
+        }
+    })
+    .await;
+    assert!(ended.is_ok(), "the stream hung {DEADLINE:?} after the peer's Link died");
+    drop(engine);
+}

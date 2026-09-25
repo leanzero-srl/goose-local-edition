@@ -65,6 +65,10 @@ struct MeshCalls {
 struct MeshScript {
     /// `status()` answers `DaemonExited` — the supervised tailscaled is dead.
     daemon_dead: AtomicBool,
+    /// The fake daemons (numbered by start order, from 1) whose process was killed: each
+    /// answers `DaemonExited` from then on, while a daemon started later is healthy — R3
+    /// step 1, one tailscaled killed by pid.
+    killed_instances: StdMutex<Vec<u32>>,
     /// `status()` answers `StatusFailed` this many more times (one per call, any
     /// caller), then succeeds again — the daemon lives but its status read errors.
     status_fail_looks: AtomicU32,
@@ -92,6 +96,7 @@ struct FakeMesh {
     script: Arc<MeshScript>,
     join_fails: bool,
     status: MeshStatus,
+    instance: u32,
 }
 
 #[async_trait]
@@ -115,6 +120,18 @@ impl Mesh for FakeMesh {
         }
     }
     async fn status(&self) -> Result<MeshStatus, MeshError> {
+        if self
+            .script
+            .killed_instances
+            .lock()
+            .unwrap()
+            .contains(&self.instance)
+        {
+            return Err(MeshError::DaemonExited {
+                status: "signal: 15 (SIGTERM)".to_string(),
+                stderr_tail: format!("fake tailscaled #{} killed by pid", self.instance),
+            });
+        }
         if self.script.daemon_dead.load(Ordering::SeqCst) {
             return Err(MeshError::DaemonExited {
                 status: "exit status: 1".to_string(),
@@ -181,13 +198,14 @@ struct FakeFactory {
 #[async_trait]
 impl MeshFactory for FakeFactory {
     async fn start(&self, config: MeshConfig) -> Result<Arc<dyn Mesh>, MeshError> {
-        self.start_count.fetch_add(1, Ordering::SeqCst);
+        let instance = self.start_count.fetch_add(1, Ordering::SeqCst) + 1;
         *self.captured.lock().unwrap() = Some(config);
         Ok(Arc::new(FakeMesh {
             calls: self.calls.clone(),
             script: self.script.clone(),
             join_fails: self.join_fails,
             status: self.status.clone(),
+            instance,
         }))
     }
 }
@@ -2543,4 +2561,28 @@ async fn a_mesh_socket_held_by_a_live_sibling_is_left_to_it_with_no_key_minted()
             .is_empty(),
         "no join key minted for a mesh another goose already holds"
     );
+}
+
+// ── Q-31: the Link manager restarts its own tailscaled ─────────────────────
+
+/// Reproduction: r3-1 — the Studio's goose tailscaled was killed by pid at 12:14:59 and
+/// never restarted; Link stayed down until the whole app was relaunched.
+#[tokio::test]
+async fn repro_q31_a_killed_daemon_is_never_restarted() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+    h.script.killed_instances.lock().unwrap().push(1);
+    wait_until("Link to come back with no click", || {
+        let manager = &manager;
+        let h = &h;
+        async move {
+            h.start_count.load(Ordering::SeqCst) == 2
+                && matches!(manager.status().await.auth, AuthState::Connected { .. })
+        }
+    })
+    .await;
 }

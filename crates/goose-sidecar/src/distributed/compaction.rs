@@ -517,6 +517,8 @@ Anonymous pages:                             1000000.
         assert!(engine_refusal("MacBook", &engines_in("  202 /bin/zsh\n")).is_none());
     }
 
+    /// The script reads `vm_stat` and `kern.memorystatus_vm_pressure_level`, which only macOS has.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn the_script_parses_its_own_refusal_path_on_this_mac() {
         // Runs only the NORMAL check's refusal branch: a level forced to "2" by rewriting the
