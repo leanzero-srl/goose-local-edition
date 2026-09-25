@@ -5,12 +5,14 @@
 
 use anyhow::Result;
 use goose::agents::platform_extensions::recall::{
-    query_terms, relevant_skills, render, select_hits, skill_hits,
+    autoload_pick, past_session_candidates, query_terms, relevant_skill_hits, relevant_skills,
+    render, select_hits, select_past_session, skill_hits, skill_term_frequency, PAST_SESSION_ROWS,
 };
 use goose::config::paths::Paths;
+use goose::session::session_manager::{SessionManager, SessionType};
 use goose_memory_store::MemoryStore;
 
-pub fn run(text: &str) -> Result<()> {
+pub async fn run(text: &str, session: Option<&str>) -> Result<()> {
     let working_dir = std::env::current_dir()?;
     let terms = query_terms(text);
     println!("terms: {}", terms.join(" "));
@@ -62,6 +64,11 @@ pub fn run(text: &str) -> Result<()> {
     }
     let catalogue = goose::skills::discover_skills(Some(&working_dir));
     let skills = relevant_skills(&catalogue, &terms);
+    let frequency: Vec<String> = terms
+        .iter()
+        .zip(skill_term_frequency(&catalogue, &terms))
+        .map(|(term, (df, nf))| format!("{term} {df}/{nf}"))
+        .collect();
     println!(
         "\nskills ({} in catalogue, {} suggested):",
         catalogue.len(),
@@ -69,6 +76,17 @@ pub fn run(text: &str) -> Result<()> {
     );
     for skill in &skills {
         println!("  {}", skill.name);
+    }
+    println!(
+        "  catalogue frequency (text/names): {}",
+        frequency.join(", ")
+    );
+    if let Some(named) = autoload_pick(&relevant_skill_hits(&catalogue, &terms), usize::MAX / 8) {
+        println!(
+            "  names {} — loaded without a call when its {} chars fit a thirty-second of the window",
+            named.name,
+            named.content.chars().count()
+        );
     }
     let candidates = skill_hits(&catalogue, &terms);
     if !candidates.is_empty() {
@@ -85,19 +103,55 @@ pub fn run(text: &str) -> Result<()> {
         } else {
             " [apart]"
         };
+        let topic = if hit.topic_in_name { " [topic]" } else { "" };
         println!(
-            "  {mark} {}/{} terms, {} rare, {} in name ({} its own), score {:5.1}  {}{together}",
+            "  {mark} {}/{} terms, {} rare, {} in name ({} name words, {} its own), score {:5.1}  {}{together}{topic}",
             hit.matched_terms,
             terms.len(),
             hit.rare_terms,
             hit.name_terms,
+            hit.name_words,
             hit.own_name_terms,
             hit.score,
             hit.skill.name
         );
     }
-    match render(&selected, &skills, None) {
-        Some(block) => println!("\n--- turn context part (past-session line omitted: it needs the session DB) ---\n{block}"),
+    let sessions = SessionManager::instance();
+    let before = match session {
+        Some(id) => Some(sessions.get_session(id, false).await?.created_at),
+        None => None,
+    };
+    let history = sessions
+        .search_chat_history(
+            &terms.join(" "),
+            Some(PAST_SESSION_ROWS),
+            None,
+            before,
+            session.map(String::from),
+            vec![SessionType::User, SessionType::Scheduled],
+        )
+        .await?;
+    let past = select_past_session(&history.results, &terms);
+    println!(
+        "\npast session ({} rows share a word, {}):",
+        history
+            .results
+            .iter()
+            .map(|r| r.messages.len())
+            .sum::<usize>(),
+        past.as_ref().map_or("none named".to_string(), |p| format!(
+            "names {}",
+            p.session_id
+        ))
+    );
+    for line in past_session_candidates(&history.results, &terms)
+        .iter()
+        .take(6)
+    {
+        println!("  {line}");
+    }
+    match render(&selected, &skills, past.as_ref()) {
+        Some(block) => println!("\n--- turn context part ---\n{block}"),
         None => println!("\n--- turn context part: none ---"),
     }
     Ok(())
