@@ -3914,11 +3914,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "{file} denetleniyor"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Ayrıntılar"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Kapat"
   },
   "mlxRestore.failed": {
     "defaultMessage": "{model} {kind, select, single {bu Mac’te} split {Mac’lerinizde} other {{peer} üzerinde}} geri yüklenemedi: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Ayrıntıları gizle"
   },
   "mlxRestore.label": {
     "defaultMessage": "Geri yükleme"
@@ -3940,6 +3946,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Yeniden başlatmadan önce neyin sunulduğu okunamadı: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "Önceki bölme {node} üzerinde hâlâ kapanıyor — bu bitince goose onu geri yükler"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Yazıyor"

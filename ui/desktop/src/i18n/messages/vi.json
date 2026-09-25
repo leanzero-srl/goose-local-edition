@@ -3914,11 +3914,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "đang kiểm tra {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Chi tiết"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Bỏ qua"
   },
   "mlxRestore.failed": {
     "defaultMessage": "Không thể khôi phục {model} {kind, select, single {trên Mac này} split {trên các Mac của bạn} other {trên {peer}}}: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Ẩn chi tiết"
   },
   "mlxRestore.label": {
     "defaultMessage": "Khôi phục"
@@ -3940,6 +3946,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Không thể đọc những gì đã phục vụ trước khi khởi động lại: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "Bản chia trước vẫn đang tắt trên {node} — goose sẽ khôi phục khi việc đó xong"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Đang viết"

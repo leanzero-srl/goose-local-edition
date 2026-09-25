@@ -3914,11 +3914,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "memeriksa {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Detail"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Tutup"
   },
   "mlxRestore.failed": {
     "defaultMessage": "Tidak dapat memulihkan {model} {kind, select, single {di Mac ini} split {di seluruh Mac Anda} other {di {peer}}}: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Sembunyikan detail"
   },
   "mlxRestore.label": {
     "defaultMessage": "Pemulihan"
@@ -3940,6 +3946,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Tidak dapat membaca apa yang dilayani sebelum peluncuran ulang: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "Pembagian sebelumnya masih dimatikan di {node} — goose memulihkannya setelah selesai"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Menulis"

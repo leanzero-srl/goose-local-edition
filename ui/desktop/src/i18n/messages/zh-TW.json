@@ -3914,11 +3914,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "正在校驗 {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "詳細資料"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "關閉"
   },
   "mlxRestore.failed": {
     "defaultMessage": "無法{kind, select, single {在這台 Mac 上} split {在你的多台 Mac 上} other {在 {peer} 上}}還原 {model}：{reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "隱藏詳細資料"
   },
   "mlxRestore.label": {
     "defaultMessage": "還原"
@@ -3940,6 +3946,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "無法讀取重新啟動前正在提供的內容：{reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "先前的拆分仍在 {node} 上關閉——完成後 goose 會恢復它"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "正在生成"

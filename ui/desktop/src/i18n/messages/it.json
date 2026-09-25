@@ -3914,11 +3914,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "verifica di {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Dettagli"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Chiudi"
   },
   "mlxRestore.failed": {
     "defaultMessage": "Impossibile ripristinare {model} {kind, select, single {su questo Mac} split {sui tuoi Mac} other {su {peer}}}: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Nascondi dettagli"
   },
   "mlxRestore.label": {
     "defaultMessage": "Ripristino"
@@ -3940,6 +3946,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Impossibile leggere cosa era in servizio prima del riavvio: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "La suddivisione precedente si sta ancora chiudendo su {node}: goose la ripristina appena finisce"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Scrive"

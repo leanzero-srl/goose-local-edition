@@ -3914,11 +3914,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "{file} wird geprüft"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Details"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Schließen"
   },
   "mlxRestore.failed": {
     "defaultMessage": "{model} konnte {kind, select, single {auf diesem Mac} split {über deine Macs} other {auf {peer}}} nicht wiederhergestellt werden: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Details ausblenden"
   },
   "mlxRestore.label": {
     "defaultMessage": "Wiederherstellen"
@@ -3940,6 +3946,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Was vor dem Neustart lief, konnte nicht gelesen werden: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "Die vorherige Aufteilung wird auf {node} noch beendet — goose stellt sie wieder her, sobald das abgeschlossen ist"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Schreibt"

@@ -3914,11 +3914,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "{file} 확인 중"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "세부 정보"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "닫기"
   },
   "mlxRestore.failed": {
     "defaultMessage": "{model}을(를) {kind, select, single {이 Mac에서} split {내 Mac 전체에서} other {{peer}에서}} 복원할 수 없습니다: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "세부 정보 숨기기"
   },
   "mlxRestore.label": {
     "defaultMessage": "복원"
@@ -3940,6 +3946,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "다시 시작하기 전에 무엇을 제공했는지 읽을 수 없습니다: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "이전 분할이 {node}에서 아직 종료 중입니다 — 끝나면 goose가 복원합니다"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "작성 중"

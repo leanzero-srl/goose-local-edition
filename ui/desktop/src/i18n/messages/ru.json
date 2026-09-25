@@ -3914,11 +3914,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "проверка {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Подробности"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Скрыть"
   },
   "mlxRestore.failed": {
     "defaultMessage": "Не удалось восстановить {model} {kind, select, single {на этом Mac} split {на ваших Mac} other {на {peer}}}: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Скрыть подробности"
   },
   "mlxRestore.label": {
     "defaultMessage": "Восстановление"
@@ -3940,6 +3946,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Не удалось прочитать, что работало до перезапуска: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "Предыдущее разделение ещё завершается на {node} — goose восстановит его, когда это закончится"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Пишет"

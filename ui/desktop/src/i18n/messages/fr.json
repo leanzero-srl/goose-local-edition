@@ -3914,11 +3914,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "vérification de {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Détails"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Ignorer"
   },
   "mlxRestore.failed": {
     "defaultMessage": "Impossible de restaurer {model} {kind, select, single {sur ce Mac} split {sur vos Mac} other {sur {peer}}} : {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Masquer les détails"
   },
   "mlxRestore.label": {
     "defaultMessage": "Restauration"
@@ -3940,6 +3946,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Impossible de lire ce qui était servi avant le redémarrage : {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "La répartition précédente s’arrête encore sur {node} — goose la restaure dès que c’est terminé"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Écrit"

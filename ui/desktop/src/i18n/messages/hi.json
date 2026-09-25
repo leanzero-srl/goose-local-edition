@@ -3914,11 +3914,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "{file} जाँची जा रही है"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "विवरण"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "खारिज करें"
   },
   "mlxRestore.failed": {
     "defaultMessage": "{model} {kind, select, single {इस Mac पर} split {आपके Macs पर} other {{peer} पर}} पुनर्स्थापित नहीं हो सका: {reason}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "विवरण छिपाएँ"
   },
   "mlxRestore.label": {
     "defaultMessage": "पुनर्स्थापना"
@@ -3940,6 +3946,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "रीलॉन्च से पहले क्या सर्व हो रहा था, यह पढ़ा नहीं जा सका: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "पिछला बँटवारा {node} पर अभी बंद हो रहा है — यह पूरा होते ही goose इसे बहाल कर देगा"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "लिख रहा है"
