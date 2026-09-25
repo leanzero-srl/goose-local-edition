@@ -5,7 +5,8 @@ import { IntlTestWrapper } from '../../../../i18n/test-utils';
 import type { MlxEngineStatus } from '../../../../acp/mlx-engine';
 import { assertStudioClean } from '../../../lz/assertStudioClean';
 import userEvent from '@testing-library/user-event';
-import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
+import { deriveChatServedBy, type ChatServedBy } from '../../../chatServedBy/chatServedBy';
+import { SPLIT_STOPPED_E2E2 } from '../../../chatServedBy/splitStop.fixtures';
 
 const renderWithIntl = (ui: React.ReactElement, options?: RenderOptions) =>
   render(ui, { wrapper: IntlTestWrapper, ...options });
@@ -424,6 +425,50 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
       'Not running — start it from the Engine'
     );
     expect(screen.getByTestId('model-menu-open-engine')).toBeInTheDocument();
+  });
+
+  it('Q-81: the split chat was on stopped — "Split stopped", both Macs, red; the menu says why', () => {
+    const served = deriveChatServedBy({
+      provider: 'omlx',
+      lookup: {
+        state: 'ready',
+        devices: [],
+        settings: {
+          modelId: HF,
+          servedModelName: 'mihai-qwen3.8-27b-atlassian-q8-mlx',
+          modelsDir: '/models',
+          port: 8090,
+          spawnCommand: [],
+          modelProfiles: {},
+        },
+      },
+      single: {
+        state: 'stopped',
+        restartRequired: false,
+        availableMemoryGb: 61.2,
+        totalMemoryGb: 128,
+      },
+      distributed: SPLIT_STOPPED_E2E2,
+      remote: null,
+      remoteReadError: null,
+      main: null,
+      sessionId: 'session-123',
+      turnInFlight: false,
+      thisMac: 'This Mac',
+      engineLabel: 'LeanZero MLX',
+    });
+    renderChip(served);
+    expect(screen.getByTestId('model-chip-phase').textContent).toBe('Split stopped');
+    const chip = screen.getByTestId('model-chip-served');
+    expect(chip).toHaveTextContent(
+      'Qwen3.8-27B-Atlassian-Q8-mlx · Mihai Macbook and Work’s Mac Studio'
+    );
+    expect(chip).not.toHaveTextContent('not running');
+    expect(chip).toHaveAttribute('title', 'Work’s Mac Studio ran out of memory');
+    expect(screen.getAllByTestId('lz-status-dot')[0]).toHaveAttribute('data-phase', 'failed');
+    expect(screen.getByTestId('model-menu-served')).toHaveTextContent(
+      'Stopped on Mihai Macbook and Work’s Mac Studio — Work’s Mac Studio ran out of memory'
+    );
   });
 
   it('a cloud provider (nothing served): the chip is the provider’s own label, no Open Engine', () => {

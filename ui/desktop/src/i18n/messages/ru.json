@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "Перестаёт отправлять чат на {peer} и запускает его на этом Mac"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "Запустить на одном Mac"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "Загружает {model} только на этот Mac — разделение остаётся остановленным"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "Загрузка на этот Mac…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "Снова запустить разделение"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "Разделение не запустилось: {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "Запуск разделения…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Не удалось перенести чат на этот Mac: {error}"
   },
@@ -4616,6 +4634,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "Переподключение"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "Разделение остановлено"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Состояние неизвестно"
   },
@@ -4642,6 +4663,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Не запущена — запустите её в движке"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "Остановлено на {where} — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} на {where}"
@@ -4784,6 +4808,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Все слоты этого узла заняты."
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "Подробности"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4850,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Для этого узла нет сохранённой модели MLX — выберите её в Providers."
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "Открыть движок"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Открыть Providers"
   },
@@ -4837,6 +4867,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Обслуживается с {peer} — собственный движок этого Mac не используется, пока чат идёт туда."
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "Модель снова работает — повторите, чтобы отправить сообщение."
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — ответ выше обрывается здесь.} other {{reason} — больше ничто не смогло принять это сообщение.}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {Разделение между вашими Mac остановилось посреди ответа} other {Разделение между вашими Mac остановилось}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Swarm проверил каждый активный узел, и ни один не смог принять это сообщение."
@@ -7078,6 +7117,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "Включить проверку орфографии"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "Разделение между вашими Mac остановилось — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "Когда {mac} остановился, было свободно {available} ГБ из {total} ГБ."
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {на {mac} закончилась память} frozen {{mac} перестал отвечать} other {часть модели на {mac} остановилась}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {на одном из ваших Mac закончилась память} frozen {Mac перестали продвигаться} other {одна часть модели остановилась}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "Не удалось загрузить приложение"

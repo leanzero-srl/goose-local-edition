@@ -1,3 +1,5 @@
+import { AGENT_ERROR_WRAP } from '../linkDropNotice/parseLinkDrop';
+
 /**
  * The swarm chat router's refusal (crates/goose/src/providers/swarm_router.rs, the `servable.is_empty()`
  * arm) reaches the chat as ASSISTANT TEXT, wrapped by the agent loop (agents/agent.rs):
@@ -68,6 +70,21 @@ export function classifyReason(raw: string): NodeReason {
   if (raw === 'refused admission this turn') return { kind: 'busy' };
   if (raw.startsWith('no enabled device is configured')) return { kind: 'no-devices' };
   return { kind: 'other' };
+}
+
+/**
+ * The router's refusal and whatever the model had written BEFORE it. A turn cut mid-answer (the
+ * split's rank died with the stream open, E2E #2) is retried by the agent loop, refused by the
+ * router, and the refusal is glued onto the partial answer as `Ran into this error: …` — the answer
+ * renders as written and the refusal as a notice below it, as a Link drop does (Q-49). With no
+ * wrapper found the whole text is the refusal (answer empty).
+ */
+export function splitNoNodeRefusal(text: string): { answer: string; rows: NoNodeRow[] } | null {
+  const rows = parseNoNodeError(text);
+  if (!rows) return null;
+  const marker = text.indexOf(NO_NODE_MARKER);
+  const wrap = text.lastIndexOf(AGENT_ERROR_WRAP, marker);
+  return { answer: wrap >= 0 ? text.slice(0, wrap) : '', rows };
 }
 
 /** Rows when `text` is the router's refusal, else null. */

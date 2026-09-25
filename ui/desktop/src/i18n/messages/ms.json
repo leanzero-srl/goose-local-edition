@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "Berhenti menghantar sembang ke {peer} dan menjalankannya pada Mac ini"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "Jalankan pada satu Mac sebaliknya"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "Memuatkan {model} pada Mac ini sahaja — pembahagian kekal berhenti"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "Memuatkan pada Mac ini…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "Mulakan pembahagian semula"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "Pembahagian tidak bermula: {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "Memulakan pembahagian…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Tidak dapat memindahkan sembang ke Mac ini: {error}"
   },
@@ -4616,6 +4634,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "Menyambung semula"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "Pembahagian berhenti"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Keadaan tidak diketahui"
   },
@@ -4642,6 +4663,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Tidak berjalan — mulakannya dari Enjin"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "Berhenti pada {where} — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} di {where}"
@@ -4784,6 +4808,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Semua slot pada nod ini sibuk."
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "Butiran"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4850,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Tiada model MLX tersimpan untuk nod ini — pilih satu dalam Providers."
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "Buka Enjin"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Buka Providers"
   },
@@ -4837,6 +4867,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Dihidangkan dari {peer} — enjin Mac ini sendiri diketepikan selagi sembang dihantar ke sana."
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "Model berjalan semula — cuba lagi untuk menghantar mesej anda."
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — jawapan di atas berhenti di situ.} other {{reason} — tiada yang lain dapat menerima mesej ini.}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {Pembahagian merentas Mac anda berhenti di tengah jawapan} other {Pembahagian merentas Mac anda berhenti}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Swarm menyemak setiap nod aktif dan tiada satu pun boleh menerima mesej ini."
@@ -7078,6 +7117,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "Dayakan Semakan Ejaan"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "Pembahagian merentas Mac anda berhenti — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "{mac} mempunyai {available} GB kosong daripada {total} GB semasa ia berhenti."
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {{mac} kehabisan memori} frozen {{mac} berhenti bertindak balas} other {bahagian model pada {mac} berhenti}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {salah satu Mac anda kehabisan memori} frozen {Mac berhenti membuat kemajuan} other {satu bahagian model berhenti}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "Gagal Memuatkan Aplikasi"

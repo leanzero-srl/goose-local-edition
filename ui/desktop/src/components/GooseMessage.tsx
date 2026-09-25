@@ -23,7 +23,7 @@ import MessageCopyLink from './MessageCopyLink';
 import { cn } from '../utils';
 import { identifyConsecutiveToolCalls, shouldHideTimestamp } from '../utils/toolCallChaining';
 import NoNodeNotice from './noNodeNotice/NoNodeNotice';
-import { parseNoNodeError } from './noNodeNotice/parseNoNodeError';
+import { splitNoNodeRefusal } from './noNodeNotice/parseNoNodeError';
 import ToolBoundsNotice from './toolBoundsNotice/ToolBoundsNotice';
 import { parseToolBoundsError } from './toolBoundsNotice/toolSchemaBounds';
 import LinkDropNotice from './linkDropNotice/LinkDropNotice';
@@ -58,7 +58,13 @@ export default function GooseMessage({
   // A turn the serving Mac dropped over LeanZero Link ends with the relay's error glued onto the
   // partial answer (Q-49): the answer renders as written, the drop as a notice below it.
   const linkDrop = useMemo(() => splitLinkDrop(fullText), [fullText]);
-  const displayText = linkDrop ? linkDrop.answer : fullText;
+  // The router's "no node can serve this turn" ends a turn the same way — after a partial answer
+  // when the engine died under it (Q-81): the answer as written, the refusal as a notice below.
+  const noNode = useMemo(
+    () => (linkDrop || isStreaming ? null : splitNoNodeRefusal(fullText)),
+    [linkDrop, isStreaming, fullText]
+  );
+  const displayText = linkDrop ? linkDrop.answer : noNode ? noNode.answer : fullText;
   const thinkingContent = getThinkingContent(message);
 
   const timestamp = useMemo(() => formatMessageTimestamp(message.created), [message.created]);
@@ -133,16 +139,16 @@ export default function GooseMessage({
   // swarm router's "no node can serve this turn", or the engine's "tool schema exceeds
   // grammar-compile bounds". Retry resends the last user turn's text — only when that turn was text
   // alone, since a resend without its images would not be the same message.
+  const answered = displayText.trim() !== '' || imagePaths.length > 0 || toolRequests.length > 0;
   const failure = useMemo(() => {
     if (isStreaming || !message.content.every((c) => c.type === 'text')) return null;
-    const noNodeRows = parseNoNodeError(displayText);
-    if (noNodeRows) return { kind: 'no-node' as const, rows: noNodeRows };
+    if (noNode) return answered ? null : { kind: 'no-node' as const, rows: noNode.rows };
     const bounds = parseToolBoundsError(displayText);
     if (bounds) return { kind: 'tool-bounds' as const, bounds };
     return null;
-  }, [isStreaming, message.content, displayText]);
+  }, [isStreaming, message.content, displayText, noNode, answered]);
   const failureRetryText = useMemo(() => {
-    if (!failure && !linkDrop) return null;
+    if (!failure && !linkDrop && !noNode) return null;
     for (let i = messageIndex - 1; i >= 0; i--) {
       if (messages[i].role !== 'user') continue;
       const { textContent, imagePaths: userImages } = getTextAndImageContent(messages[i]);
@@ -150,8 +156,9 @@ export default function GooseMessage({
       return userImages.length === 0 ? textContent : null;
     }
     return null;
-  }, [failure, linkDrop, messages, messageIndex]);
+  }, [failure, linkDrop, noNode, messages, messageIndex]);
   const live = messageIndex === messages.length - 1;
+  const createdMs = message.created * 1000;
 
   if (failure) {
     return (
@@ -163,6 +170,7 @@ export default function GooseMessage({
               live={live}
               retryText={failureRetryText}
               onRetry={append}
+              createdMs={createdMs}
             />
           ) : (
             <ToolBoundsNotice
@@ -183,10 +191,20 @@ export default function GooseMessage({
     <LinkDropNotice
       messageId={message.id ?? `${message.created}`}
       drop={linkDrop}
-      hasAnswer={displayText.trim() !== '' || imagePaths.length > 0 || toolRequests.length > 0}
+      hasAnswer={answered}
       live={live && !isStreaming}
       retryText={failureRetryText}
       onRetry={append}
+    />
+  );
+  const cutNotice = noNode && !failure && (
+    <NoNodeNotice
+      rows={noNode.rows}
+      live={live && !isStreaming}
+      retryText={failureRetryText}
+      onRetry={append}
+      createdMs={createdMs}
+      hasAnswer={answered}
     />
   );
 
@@ -303,6 +321,7 @@ export default function GooseMessage({
         )}
 
         {linkDropNotice}
+        {cutNotice}
       </div>
     </div>
   );

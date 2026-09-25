@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "{peer} へのチャット送信をやめ、この Mac で実行します"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "代わりに 1 台の Mac で実行"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "{model} をこの Mac だけに読み込みます — 分割は停止したままです"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "この Mac に読み込み中…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "分割をもう一度開始"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "分割を開始できませんでした: {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "分割を開始中…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "チャットをこの Mac に移せませんでした: {error}"
   },
@@ -4616,6 +4634,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "再接続中"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "分割が停止"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "状態不明"
   },
@@ -4642,6 +4663,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "停止中 — エンジンから起動してください"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "{where} で停止 — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{where} で{phase}"
@@ -4784,6 +4808,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "このノードのスロットはすべて使用中です。"
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "詳細"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4850,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "このノード用に保存された MLX モデルがありません — Providers で選んでください。"
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "エンジンを開く"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Providers を開く"
   },
@@ -4837,6 +4867,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "{peer} から提供中 — チャットがそちらに向かう間、この Mac 自身のエンジンは使われません。"
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "モデルが再び動いています — 再試行してメッセージを送信してください。"
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — 上の回答はそこで止まっています。} other {{reason} — ほかにこのメッセージを受けられるものはありませんでした。}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {Mac 間の分割が回答の途中で停止しました} other {Mac 間の分割が停止しました}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "スウォームは有効なノードをすべて確認しましたが、このメッセージを受けられるノードはありませんでした。"
@@ -7078,6 +7117,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "スペルチェックを有効にする"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "Mac 間の分割が停止しました — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "停止時、{mac} の空きは {total} GB 中 {available} GB でした。"
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {{mac} のメモリが不足しました} frozen {{mac} が応答しなくなりました} other {{mac} 上のモデルの部分が停止しました}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {Mac のうち 1 台のメモリが不足しました} frozen {Mac の処理が進まなくなりました} other {モデルの一部が停止しました}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "アプリを読み込めませんでした"

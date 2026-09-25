@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "Ngừng gửi cuộc trò chuyện tới {peer} và chạy nó trên Mac này"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "Chạy trên một Mac thay thế"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "Tải {model} chỉ trên Mac này — phần chia vẫn dừng"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "Đang tải trên Mac này…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "Khởi động lại phần chia"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "Phần chia không khởi động: {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "Đang khởi động phần chia…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Không thể chuyển cuộc trò chuyện sang Mac này: {error}"
   },
@@ -4616,6 +4634,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "Đang kết nối lại"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "Phần chia đã dừng"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Không rõ trạng thái"
   },
@@ -4642,6 +4663,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Không chạy — khởi động từ Engine"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "Đã dừng trên {where} — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} trên {where}"
@@ -4784,6 +4808,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Mọi vị trí trên nút này đều đang bận."
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "Chi tiết"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4850,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Không có mô hình MLX đã lưu cho nút này — hãy chọn một trong Providers."
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "Mở Engine"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Mở Providers"
   },
@@ -4837,6 +4867,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Đang phục vụ từ {peer} — engine của chính Mac này được tạm gác lại khi trò chuyện đi tới đó."
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "Mô hình đang chạy lại — thử lại để gửi tin nhắn của bạn."
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — câu trả lời ở trên dừng tại đó.} other {{reason} — không có gì khác nhận được tin nhắn này.}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {Phần chia trên các Mac của bạn đã dừng giữa câu trả lời} other {Phần chia trên các Mac của bạn đã dừng}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Swarm đã kiểm tra mọi nút đang bật và không nút nào nhận được tin nhắn này."
@@ -7078,6 +7117,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "Bật kiểm tra chính tả"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "Phần chia trên các Mac của bạn đã dừng — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "{mac} còn trống {available} GB trên {total} GB khi dừng."
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {{mac} đã hết bộ nhớ} frozen {{mac} đã ngừng phản hồi} other {phần mô hình trên {mac} đã dừng}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {một Mac của bạn đã hết bộ nhớ} frozen {các Mac đã ngừng tiến triển} other {một phần của mô hình đã dừng}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "Không thể tải ứng dụng"

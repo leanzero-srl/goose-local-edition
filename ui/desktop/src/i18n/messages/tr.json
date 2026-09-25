@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "Sohbeti {peer} yerine bu Mac’te çalıştırır"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "Bunun yerine tek Mac’te çalıştır"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "{model} yalnızca bu Mac’e yüklenir — bölme durmuş kalır"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "Bu Mac’e yükleniyor…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "Bölmeyi yeniden başlat"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "Bölme başlamadı: {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "Bölme başlatılıyor…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Sohbet bu Mac'e taşınamadı: {error}"
   },
@@ -4616,6 +4634,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "Yeniden bağlanıyor"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "Bölme durdu"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Durum bilinmiyor"
   },
@@ -4642,6 +4663,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Çalışmıyor — Motor’dan başlatın"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "{where} üzerinde durdu — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{where} üzerinde {phase}"
@@ -4784,6 +4808,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Bu düğümdeki tüm yuvalar dolu."
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "Ayrıntılar"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4850,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Bu düğüm için kayıtlı MLX modeli yok — Providers’ta bir tane seçin."
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "Motoru aç"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Providers’ı aç"
   },
@@ -4837,6 +4867,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "{peer} üzerinden sunuluyor — sohbet oraya gittiği sürece bu Mac'in kendi motoru devre dışı."
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "Model yeniden çalışıyor — mesajını göndermek için yeniden dene."
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — yukarıdaki yanıt orada kesiliyor.} other {{reason} — bu mesajı başka hiçbir şey alamadı.}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {Mac’lerin arasındaki bölme yanıtın ortasında durdu} other {Mac’lerin arasındaki bölme durdu}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Swarm her etkin düğümü denetledi, hiçbiri bu mesajı alamadı."
@@ -7078,6 +7117,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "Yazım Denetimini Etkinleştir"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "Mac’lerin arasındaki bölme durdu — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "{mac} durduğunda {total} GB’ın {available} GB’ı boştu."
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {{mac} belleği tükendi} frozen {{mac} yanıt vermeyi bıraktı} other {modelin {mac} üzerindeki parçası durdu}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {Mac’lerinden birinin belleği tükendi} frozen {Mac’ler ilerlemeyi bıraktı} other {modelin bir parçası durdu}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "Uygulama Yüklenemedi"

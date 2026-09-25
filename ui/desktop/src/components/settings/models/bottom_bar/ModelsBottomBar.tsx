@@ -33,6 +33,7 @@ import {
 import { defineMessages, useIntl } from '../../../../i18n';
 import type { Message } from '../../../../types/message';
 import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
+import { splitStopReason } from '../../../chatServedBy/splitStopText';
 import { shortModelName } from '../../../noNodeNotice/mlxMount';
 
 const i18n = defineMessages({
@@ -121,6 +122,11 @@ const i18n = defineMessages({
   phaseFailed: { id: 'modelsBottomBar.phase.failed', defaultMessage: 'Failed' },
   phaseUnknown: { id: 'modelsBottomBar.phase.unknown', defaultMessage: 'State unknown' },
   phaseReconnecting: { id: 'modelsBottomBar.phase.reconnecting', defaultMessage: 'Reconnecting' },
+  phaseSplitStopped: { id: 'modelsBottomBar.phase.splitStopped', defaultMessage: 'Split stopped' },
+  servedSplitStopped: {
+    id: 'modelsBottomBar.servedSplitStopped',
+    defaultMessage: 'Stopped on {where} — {reason}',
+  },
 });
 
 const PHASE_WORD: Record<EnginePhase, (typeof i18n)['phaseIdle']> = {
@@ -281,17 +287,23 @@ export default function ModelsBottomBar({
       ? intl.formatList(served.where, { type: 'conjunction' })
       : null;
   const servedRunning = served != null && served.engine !== 'none';
+  // The split chat was on stopped by itself (Q-81): the chip names the split, never this Mac's
+  // single engine "not running".
+  const splitStop = served?.readiness.kind === 'split-stopped' ? served.readiness.stop : null;
+  const splitReason = splitStop ? splitStopReason(intl, splitStop) : null;
   // The amber of a Mac that stopped answering is not "Loading" — it is named for what it is.
   const phaseWord =
     served?.readiness.kind === 'reconnecting'
       ? intl.formatMessage(i18n.phaseReconnecting)
-      : served?.phase
-        ? intl.formatMessage(PHASE_WORD[served.phase])
-        : intl.formatMessage(i18n.phaseUnknown);
+      : splitStop
+        ? intl.formatMessage(i18n.phaseSplitStopped)
+        : served?.phase
+          ? intl.formatMessage(PHASE_WORD[served.phase])
+          : intl.formatMessage(i18n.phaseUnknown);
   const chipLabel =
     servedModel == null
       ? null
-      : servedRunning && servedWhere
+      : (servedRunning || splitStop) && servedWhere
         ? intl.formatMessage(i18n.servedChip, { model: servedModel, where: servedWhere })
         : intl.formatMessage(i18n.servedChipNotRunning, { model: servedModel });
 
@@ -323,7 +335,7 @@ export default function ModelsBottomBar({
               <span
                 data-testid="model-chip-served"
                 data-engine={served?.engine}
-                title={served?.model ?? undefined}
+                title={splitReason ?? served?.model ?? undefined}
                 className="truncate text-lz-meta"
               >
                 {chipLabel}
@@ -353,12 +365,17 @@ export default function ModelsBottomBar({
               </p>
               <p className={cx('flex items-center gap-1.5', TYPE.meta)}>
                 {served.phase && <StatusDot phase={served.phase} label={phaseWord} />}
-                {servedRunning && servedWhere
-                  ? intl.formatMessage(
-                      served.foreign ? i18n.servedWhereForeign : i18n.servedWhere,
-                      { phase: phaseWord, where: servedWhere }
-                    )
-                  : intl.formatMessage(i18n.servedNotRunning)}
+                {splitReason && servedWhere
+                  ? intl.formatMessage(i18n.servedSplitStopped, {
+                      where: servedWhere,
+                      reason: splitReason,
+                    })
+                  : servedRunning && servedWhere
+                    ? intl.formatMessage(
+                        served.foreign ? i18n.servedWhereForeign : i18n.servedWhere,
+                        { phase: phaseWord, where: servedWhere }
+                      )
+                    : intl.formatMessage(i18n.servedNotRunning)}
               </p>
               {served.contextWindow != null && (
                 <p className={cx(TYPE.meta, TNUM)}>

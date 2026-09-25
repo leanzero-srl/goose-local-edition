@@ -5,7 +5,21 @@ import { useConfig } from '../ConfigContext';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import type { SwarmConfig } from '../settings/swarm/golden';
 import { defineMessages, useIntl } from '../../i18n';
-import { Button, Chip, SURFACE, SPACE, StatusDot, TONE_TEXT, TYPE, WEIGHT, cx } from '../lz';
+import {
+  Button,
+  Chip,
+  Disclosure,
+  SURFACE,
+  SPACE,
+  StatusDot,
+  TONE_TEXT,
+  TYPE,
+  WEIGHT,
+  cx,
+} from '../lz';
+import { splitStopAt, type SplitStop } from '../chatServedBy/splitStop';
+import { splitStopReason } from '../chatServedBy/splitStopText';
+import { ENGINE_ROUTE } from './ComposerReadiness';
 import type { NoNodeRow, NodeReason } from './parseNoNodeError';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { routePeerName } from '../leanzero-swarm/macs';
@@ -95,7 +109,118 @@ const i18n = defineMessages({
     id: 'noNodeNotice.ready',
     defaultMessage: 'The node is up — retry to send your message again.',
   },
+  splitTitle: {
+    id: 'noNodeNotice.splitTitle',
+    defaultMessage:
+      '{answer, select, yes {The split across your Macs stopped mid-answer} other {The split across your Macs stopped}}',
+  },
+  splitSummary: {
+    id: 'noNodeNotice.splitSummary',
+    defaultMessage:
+      '{answer, select, yes {{reason} — the answer above stops there.} other {{reason} — nothing else could take this message.}}',
+  },
+  splitBack: {
+    id: 'noNodeNotice.splitBack',
+    defaultMessage: 'The model is running again — retry to send your message.',
+  },
+  openEngine: { id: 'noNodeNotice.openEngine', defaultMessage: 'Open Engine' },
+  details: { id: 'noNodeNotice.details', defaultMessage: 'Details' },
 });
+
+/**
+ * The refusal of a turn that met the split already stopped — or an answer the stop CUT (Q-81): said
+ * as the split and why, never as "no model is mounted" on this Mac's single engine, which chat was
+ * not on. Retry resends; the router's words about this Mac's engine port and the supervisor's own
+ * words stay behind Details. Starting the split again or running on one Mac is the composer bar's
+ * (one place for the actions).
+ */
+function SplitStoppedNotice({
+  stop,
+  rows,
+  hasAnswer,
+  live,
+  back,
+  retryText,
+  onRetry,
+}: {
+  stop: SplitStop;
+  rows: NoNodeRow[];
+  hasAnswer: boolean;
+  live: boolean;
+  back: boolean;
+  retryText: string | null;
+  onRetry: (text: string) => void;
+}) {
+  const intl = useIntl();
+  const navigate = useNavigate();
+  const answer = hasAnswer ? 'yes' : 'no';
+  return (
+    <div
+      role="alert"
+      data-testid="no-node-split-stopped"
+      className={cx(SURFACE.card, SPACE.card, hasAnswer && 'mt-2', 'flex flex-col gap-3')}
+    >
+      <div className="flex items-start gap-2.5">
+        <ServerOff aria-hidden className={cx('mt-0.5 size-5 shrink-0', TONE_TEXT.err)} />
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <h3 className={cx(TYPE.body, WEIGHT.semibold)}>
+            {intl.formatMessage(i18n.splitTitle, { answer })}
+          </h3>
+          <p data-testid="no-node-split-summary" className={TYPE.body}>
+            {intl.formatMessage(i18n.splitSummary, {
+              answer,
+              reason: splitStopReason(intl, stop),
+            })}
+          </p>
+        </div>
+      </div>
+      {live && back && (
+        <p className={cx(TYPE.body, TONE_TEXT.ok)}>{intl.formatMessage(i18n.splitBack)}</p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {live && retryText != null && (
+          <Button
+            variant={back ? 'primary' : 'secondary'}
+            size="sm"
+            icon={<RotateCcw />}
+            data-testid="no-node-retry"
+            onClick={() => onRetry(retryText)}
+          >
+            {intl.formatMessage(i18n.retry)}
+          </Button>
+        )}
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Settings2 />}
+          data-testid="no-node-open-engine"
+          onClick={() => navigate(ENGINE_ROUTE)}
+        >
+          {intl.formatMessage(i18n.openEngine)}
+        </Button>
+      </div>
+      <Disclosure variant="plain" testId="no-node-details" title={intl.formatMessage(i18n.details)}>
+        <div className="flex flex-col gap-1">
+          {rows.map((row, i) => (
+            <p
+              key={`${row.nodeId ?? 'pool'}-${i}`}
+              data-testid="no-node-raw"
+              className={cx(TYPE.meta, 'break-words font-mono')}
+            >
+              {row.nodeId ? `${row.nodeId}: ${row.raw}` : row.raw}
+            </p>
+          ))}
+          <p data-testid="no-node-split-raw" className={cx(TYPE.meta, 'break-words font-mono')}>
+            {stop.raw}
+          </p>
+        </div>
+      </Disclosure>
+    </div>
+  );
+}
+
+/** A message's `created` is whole seconds. */
+const SECOND_MS = 1000;
 
 /**
  * The router names a remote route's peer by its mesh hostname (its reason text is parsed on
@@ -154,9 +279,18 @@ export default function NoNodeNotice({
   live,
   retryText,
   onRetry,
+  createdMs = null,
+  hasAnswer = false,
 }: {
   rows: NoNodeRow[];
   live: boolean;
+  /**
+   * When the turn's message was written (ms); null = unknown, and no split stop is claimed. With
+   * `hasAnswer` it is when the CUT answer began.
+   */
+  createdMs?: number | null;
+  /** The model wrote part of an answer before this refusal — the notice renders below it. */
+  hasAnswer?: boolean;
   /** The last user turn's text; null when there is none that can be resent faithfully. */
   retryText: string | null;
   onRetry: (text: string) => void;
@@ -195,6 +329,26 @@ export default function NoNodeNotice({
   const anyMounting = requestingNodeId != null || mlxFacts.includes('mounting');
   const allUp = mlxFacts.length > 0 && mlxFacts.every((f) => f === 'up');
   const retryPrimary = !mlxDown || allUp;
+
+  // Chat was on the split and the split had stopped (or stopped under this very answer): that is
+  // the fact, not "no model is mounted" (Q-81). The message's time is floored to the second.
+  const splitStop =
+    mlxDown && createdMs != null
+      ? splitStopAt(distributed, createdMs, hasAnswer ? null : createdMs + SECOND_MS - 1)
+      : null;
+  if (splitStop) {
+    return (
+      <SplitStoppedNotice
+        stop={splitStop}
+        rows={rows}
+        hasAnswer={hasAnswer}
+        live={live}
+        back={allUp}
+        retryText={retryText}
+        onRetry={onRetry}
+      />
+    );
+  }
 
   const renderMlxAction = (row: NoNodeRow) => {
     if (!armed || row.nodeId == null) return null;
@@ -299,7 +453,7 @@ export default function NoNodeNotice({
   return (
     <div
       data-testid="no-node-notice"
-      className={cx(SURFACE.card, SPACE.card, 'flex flex-col gap-3')}
+      className={cx(SURFACE.card, SPACE.card, hasAnswer && 'mt-2', 'flex flex-col gap-3')}
     >
       <div className="flex items-start gap-2.5">
         <ServerOff className={cx('mt-0.5 size-5 shrink-0', TONE_TEXT.err)} />

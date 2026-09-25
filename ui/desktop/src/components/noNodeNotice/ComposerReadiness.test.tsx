@@ -17,6 +17,7 @@ import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-d
 import { FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
 import { mlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 import { publishRestoreLine } from '../leanzero-swarm/mlxRestore';
+import { SPLIT_STOPPED_E2E2 } from '../chatServedBy/splitStop.fixtures';
 
 const mockStatus = vi.fn<() => Promise<MlxEngineStatus>>();
 const mockMount = vi.fn<(modelId: string) => Promise<void>>();
@@ -823,5 +824,119 @@ describe('ComposerReadinessStrip (UX audit C1)', () => {
     wrap('swarm');
     await user.click(await screen.findByTestId('composer-readiness-open-engine'));
     expect(screen.getByTestId('providers-view')).toBeInTheDocument();
+  });
+});
+
+describe('ComposerReadinessStrip — the split chat was on stopped (Q-81, E2E #2)', () => {
+  afterEach(async () => {
+    mockExtMethod.mockRejectedValue(new Error('reset'));
+    await mlxDistributedStatus().catch(() => undefined);
+  });
+
+  it('says the split stopped and why, offers it again or one Mac — never "No model is mounted" + Mount', async () => {
+    mockExtMethod.mockResolvedValue({ status: SPLIT_STOPPED_E2E2 });
+    await mlxDistributedStatus();
+    const { container } = wrap('swarm');
+    const strip = await screen.findByTestId('composer-readiness');
+    expect(strip).toHaveAttribute('data-readiness', 'split-stopped');
+    expect(strip.textContent).toContain(
+      'The split across your Macs stopped — Work’s Mac Studio ran out of memory'
+    );
+    expect(strip.textContent).not.toContain('No model is mounted');
+    expect(strip.textContent).not.toContain('8090');
+    expect(strip.className).toContain('bg-lz-phase-failed');
+    expect(screen.getByTestId('composer-readiness-detail').textContent).toBe(
+      'Work’s Mac Studio had 3.9 GB of 96.0 GB free when it stopped.'
+    );
+    expect(screen.getByTestId('composer-readiness-split-start').textContent).toBe(
+      'Start the split again'
+    );
+    expect((await screen.findByTestId('composer-readiness-split-one-mac')).textContent).toBe(
+      'Run on one Mac instead'
+    );
+    expect(screen.queryByTestId('composer-readiness-mount')).toBeNull();
+    // The supervisor's own words only behind Details.
+    expect(screen.queryByTestId('composer-readiness-raw')).toBeNull();
+    await userEvent.setup().click(screen.getByTestId('composer-readiness-details'));
+    expect(screen.getByTestId('composer-readiness-raw').textContent).toContain(
+      'rank 1 ended on its Link node'
+    );
+    assertStudioClean(container);
+  });
+
+  it('Start the split again starts the saved split and reads its status, which ends the claim', async () => {
+    const user = userEvent.setup();
+    mockExtMethod.mockResolvedValue({ status: SPLIT_STOPPED_E2E2 });
+    await mlxDistributedStatus();
+    wrap('swarm');
+    const start = await screen.findByTestId('composer-readiness-split-start');
+    mockExtMethod.mockImplementation(async (method: string) => {
+      if (method.endsWith('distributedStart')) return { started: true };
+      return { status: { ...SPLIT_STOPPED_E2E2, mode: 'distributed', state: 'preflight' } };
+    });
+    await user.click(start);
+    expect(mockExtMethod).toHaveBeenCalledWith('_goose/unstable/mlxEngine/distributedStart', {});
+    const strip = await screen.findByTestId('composer-readiness');
+    await waitFor(() => expect(strip).toHaveAttribute('data-readiness', 'distributed'));
+    expect(strip.textContent).not.toContain('stopped —');
+  });
+
+  it('a refused start is said in its own words and the split-stopped bar stays', async () => {
+    const user = userEvent.setup();
+    mockExtMethod.mockResolvedValue({ status: SPLIT_STOPPED_E2E2 });
+    await mlxDistributedStatus();
+    wrap('swarm');
+    const start = await screen.findByTestId('composer-readiness-split-start');
+    mockExtMethod.mockImplementation(async (method: string) => {
+      if (method.endsWith('distributedStart')) {
+        return {
+          started: false,
+          refusal: { code: 'preflightFailed', message: 'Work’s Mac Studio: 3.9 GiB free' },
+        };
+      }
+      return { status: SPLIT_STOPPED_E2E2 };
+    });
+    await user.click(start);
+    expect((await screen.findByTestId('composer-readiness-detail')).textContent).toBe(
+      'The split did not start: Work’s Mac Studio: 3.9 GiB free'
+    );
+    expect(screen.getByTestId('composer-readiness')).toHaveAttribute(
+      'data-readiness',
+      'split-stopped'
+    );
+  });
+
+  it('Run on one Mac instead mounts this Mac’s saved model — then the bar follows that mount', async () => {
+    const user = userEvent.setup();
+    mockExtMethod.mockResolvedValue({ status: SPLIT_STOPPED_E2E2 });
+    await mlxDistributedStatus();
+    wrap('swarm');
+    const oneMac = await screen.findByTestId('composer-readiness-split-one-mac');
+    expect(oneMac.getAttribute('title')).toBe(
+      'Loads Qwen3.8-27B-Atlassian-Q8-mlx on this Mac alone — the split stays stopped'
+    );
+    mockStatus.mockResolvedValue({ ...STOPPED, state: 'mounting', modelId: HF });
+    await user.click(oneMac);
+    expect(mockMount).toHaveBeenCalledWith(HF);
+    // Until the next poll reads it mounting, the click itself is held — spinning, not re-clickable.
+    expect(screen.getByTestId('composer-readiness-split-one-mac')).toBeDisabled();
+    expect(screen.getByTestId('composer-readiness-spinner')).toHaveAttribute(
+      'data-for',
+      'split-stopped'
+    );
+    expect(
+      await screen.findByTestId('composer-readiness-mounting', {}, { timeout: 4000 })
+    ).toBeInTheDocument();
+  });
+
+  it('a model this Mac does not hold is never offered to run here', async () => {
+    mockModelsList.mockResolvedValue({ models: [], diskAvailableBytes: 0, diskTotalBytes: 0 });
+    mockExtMethod.mockResolvedValue({ status: SPLIT_STOPPED_E2E2 });
+    await mlxDistributedStatus();
+    wrap('swarm');
+    await screen.findByTestId('composer-readiness-split-start');
+    await waitFor(() => expect(mockModelsList).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId('composer-readiness-split-one-mac')).toBeNull();
   });
 });

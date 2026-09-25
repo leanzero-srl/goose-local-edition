@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "N’envoie plus le chat à {peer} et l’exécute sur ce Mac"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "Exécuter plutôt sur un seul Mac"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "Charge {model} sur ce Mac seul — la répartition reste arrêtée"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "Chargement sur ce Mac…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "Relancer la répartition"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "La répartition n’a pas démarré : {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "Démarrage de la répartition…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Impossible de déplacer le chat vers ce Mac : {error}"
   },
@@ -4616,6 +4634,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "Reconnexion"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "Répartition arrêtée"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "État inconnu"
   },
@@ -4642,6 +4663,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Arrêté — démarrez-le depuis le moteur"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "Arrêté sur {where} — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} sur {where}"
@@ -4784,6 +4808,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Toutes les places de ce nœud sont occupées."
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "Détails"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4850,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Aucun modèle MLX enregistré pour ce nœud — choisissez-en un dans Providers."
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "Ouvrir le moteur"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Ouvrir Providers"
   },
@@ -4837,6 +4867,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Servi depuis {peer} — le moteur de ce Mac est mis de côté tant que le chat y est acheminé."
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "Le modèle tourne de nouveau — réessayez pour envoyer votre message."
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — la réponse ci-dessus s’arrête là.} other {{reason} — rien d’autre n’a pu prendre ce message.}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {La répartition sur vos Mac s’est arrêtée en pleine réponse} other {La répartition sur vos Mac s’est arrêtée}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Le swarm a vérifié chaque nœud actif et aucun n’a pu prendre ce message."
@@ -7078,6 +7117,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "Activer la vérification orthographique"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "La répartition sur vos Mac s’est arrêtée — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "{mac} avait {available} Go libres sur {total} Go quand il s’est arrêté."
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {{mac} a manqué de mémoire} frozen {{mac} ne répondait plus} other {la partie du modèle sur {mac} s’est arrêtée}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {un de vos Mac a manqué de mémoire} frozen {les Mac n’avançaient plus} other {une partie du modèle s’est arrêtée}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "Échec du chargement de l'application"
