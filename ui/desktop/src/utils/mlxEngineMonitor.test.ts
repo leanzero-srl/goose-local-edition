@@ -1,3 +1,4 @@
+import { bookSpreads } from '../components/leanzero-swarm/mlxLiveStats';
 import { describe, expect, it, vi } from 'vitest';
 import {
   MlxEngineMonitor,
@@ -180,16 +181,16 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
     });
   });
 
-  it('last rates survive into idle and are dropped when the engine goes away', async () => {
+  it('measured runs survive into idle and are dropped when the engine goes away', async () => {
     let result: MlxLiveStatusResult = answered(GENERATING_STATUS);
     const h = harness({ status: () => result });
     await h.monitor.tick();
     result = answered({ ...IDLE_STATUS, uptime_s: 1990 });
     await h.monitor.tick();
-    expect(h.monitor.current().last.decodeTps).toBe(19.9);
+    expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBe(19.9);
     result = refused;
     await h.monitor.tick();
-    expect(h.monitor.current().last.decodeTps).toBeNull();
+    expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBeNull();
   });
 
   it('no port anywhere: nothing is read, the state is unknown', async () => {
@@ -225,7 +226,7 @@ describe('MlxEngineMonitor — the distributed run is read on its own base while
     h.readStatus.mockImplementation(async (url: string) => answered(bodies[url]));
     await h.monitor.tick();
     expect(h.monitor.current().engine).toBe('single');
-    expect(h.monitor.current().last.decodeTps).toBe(19.9);
+    expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBe(19.9);
 
     dist = 'http://127.0.0.1:8091';
     await h.monitor.tick();
@@ -236,14 +237,14 @@ describe('MlxEngineMonitor — the distributed run is read on its own base while
     expect(s.modelId).toBeNull();
     expect(s.stats?.requests[0]).toMatchObject({ prefilledTokens: 2048, promptTps: 152.4 });
     // The single engine's last writing rate is not the split's.
-    expect(s.last.decodeTps).toBeNull();
-    expect(s.last.prefillTps).toBe(152.4);
+    expect(bookSpreads(s.rates).writing?.median ?? null).toBeNull();
+    expect(bookSpreads(s.rates).reading?.median ?? null).toBe(152.4);
     expect(h.scheduled.length).toBeGreaterThan(0);
 
     dist = null;
     await h.monitor.tick();
     expect(h.monitor.current().engine).toBe('single');
-    expect(h.monitor.current().last.prefillTps).not.toBe(152.4);
+    expect(bookSpreads(h.monitor.current().rates).reading?.median ?? null).not.toBe(152.4);
   });
 
   it('an unanswering rank 0 is UNKNOWN with the reason, and never falls back to the single port', async () => {
@@ -275,13 +276,13 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
     expect(h.readStatus).toHaveBeenLastCalledWith(RELAY);
     expect(s.engine).toBe('remote');
     expect(s.mode).toBe('running');
-    expect(s.last.decodeTps).toBe(19.9);
+    expect(bookSpreads(s.rates).writing?.median ?? null).toBe(19.9);
     expect(h.scheduled.length).toBeGreaterThan(0);
 
     relay = null;
     await h.monitor.tick();
     expect(h.monitor.current().engine).toBe('single');
-    expect(h.monitor.current().last.decodeTps).toBeNull();
+    expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBeNull();
   });
 
   it('the distributed run owns the Mac first: a stale remote base is never read over it', async () => {

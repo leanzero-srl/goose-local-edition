@@ -3998,11 +3998,14 @@
   "mlxStateTile.promptSize": {
     "defaultMessage": "токенов промпта, читается {elapsed}"
   },
+  "mlxStateTile.readRange": {
+    "defaultMessage": "ток/с чтение, медленнее–быстрее"
+  },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s при чтении этого промпта"
   },
-  "mlxStateTile.readRateLast": {
-    "defaultMessage": "tok/s при чтении, последний промпт"
+  "mlxStateTile.readRateMedian": {
+    "defaultMessage": "ток/с чтение, {count, plural, one {# промпт} few {медиана # промптов} many {медиана # промптов} other {медиана # промптов}}"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Чтение живой статистики…"
@@ -4091,11 +4094,14 @@
   "mlxStateTile.weightsGb": {
     "defaultMessage": "ГБ весов"
   },
+  "mlxStateTile.writeRange": {
+    "defaultMessage": "ток/с запись, медленнее–быстрее"
+  },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s при записи"
   },
-  "mlxStateTile.writeRateLast": {
-    "defaultMessage": "tok/s при записи, последний запуск"
+  "mlxStateTile.writeRateMedian": {
+    "defaultMessage": "ток/с запись, {count, plural, one {# запуск} few {медиана # запусков} many {медиана # запусков} other {медиана # запусков}}"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Авто"

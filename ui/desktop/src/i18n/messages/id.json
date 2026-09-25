@@ -3998,11 +3998,14 @@
   "mlxStateTile.promptSize": {
     "defaultMessage": "token prompt, dibaca selama {elapsed}"
   },
+  "mlxStateTile.readRange": {
+    "defaultMessage": "tok/s membaca, paling lambat–paling cepat"
+  },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s membaca prompt ini"
   },
-  "mlxStateTile.readRateLast": {
-    "defaultMessage": "tok/s membaca, prompt terakhir"
+  "mlxStateTile.readRateMedian": {
+    "defaultMessage": "tok/s membaca, {count, plural, other {median dari # prompt}}"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Membaca statistik langsung…"
@@ -4091,11 +4094,14 @@
   "mlxStateTile.weightsGb": {
     "defaultMessage": "GB bobot"
   },
+  "mlxStateTile.writeRange": {
+    "defaultMessage": "tok/s menulis, paling lambat–paling cepat"
+  },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s menulis"
   },
-  "mlxStateTile.writeRateLast": {
-    "defaultMessage": "tok/s menulis, proses terakhir"
+  "mlxStateTile.writeRateMedian": {
+    "defaultMessage": "tok/s menulis, {count, plural, other {median dari # proses}}"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Otomatis"

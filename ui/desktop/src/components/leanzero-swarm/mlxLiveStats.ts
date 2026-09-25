@@ -195,28 +195,83 @@ export function measuredPrefillTps(stats: MlxLiveStats): number {
   return best?.tps ?? 0;
 }
 
-/**
- * The last rates this reader MEASURED — what an idle tile or tray states as "last run". Kept apart
- * from the sparkline window (which forgets after two minutes) and dropped when the engine's own
- * uptime goes backwards (a restarted engine, possibly on another model, has measured nothing yet).
- */
-export interface LastRates {
-  uptimeS: number | null;
+/** One run (one request) this reader saw, with the rates the engine measured for it. */
+export interface RunRates {
+  /** Its writing rate at the last read that caught it generating (the engine's own per-request rate). */
   decodeTps: number | null;
+  /** Its prompt's uncached tokens over its time to first token — the same measure as the tile's. */
   prefillTps: number | null;
 }
 
-export const NO_RATES: LastRates = { uptimeS: null, decodeTps: null, prefillTps: null };
+/**
+ * Every run this reader saw on ONE engine life, by request id — what the idle tile and the tray
+ * summarise as a median and a slowest–fastest range instead of one "last run" (the owner, 3.0.33:
+ * "this only shows the last reported value instead of showing a median"). A run shorter than one
+ * read is never seen; that is the reader's limit, stated by the count shown beside the median.
+ */
+export interface RateBook {
+  uptimeS: number | null;
+  runs: ReadonlyMap<string, RunRates>;
+}
 
-export function advanceLastRates(prev: LastRates, stats: MlxLiveStats): LastRates {
+export const EMPTY_BOOK: RateBook = { uptimeS: null, runs: new Map() };
+
+function runPrefillTps(r: MlxLiveRequest): number | null {
+  // The distributed engine's rank 0 reports the prompt's own rate while it reads.
+  if (r.phase === 'prefill')
+    return r.status !== 'waiting' && (r.promptTps ?? 0) > 0 ? r.promptTps : null;
+  if (r.phase !== 'generation' || r.ttftS == null || r.ttftS <= 0 || r.promptTokens == null) {
+    return null;
+  }
+  const computed = r.promptTokens - (r.cachedTokens ?? 0);
+  if (computed <= 0) return null;
+  return r.promptTps ?? computed / r.ttftS;
+}
+
+/** Fold one read into the book; an engine whose uptime went backwards starts a new one. */
+export function advanceRateBook(prev: RateBook, stats: MlxLiveStats): RateBook {
   const restarted = prev.uptimeS != null && stats.uptimeS != null && stats.uptimeS < prev.uptimeS;
-  const base = restarted ? NO_RATES : prev;
-  const decode = liveDecodeTps(stats);
-  const prefill = measuredPrefillTps(stats);
+  const runs = new Map(restarted ? [] : prev.runs);
+  for (const r of stats.requests) {
+    const decode =
+      r.phase === 'generation' && r.completionTokens >= 2 && (r.tokensPerSecond ?? 0) > 0
+        ? r.tokensPerSecond
+        : null;
+    const prefill = runPrefillTps(r);
+    if (decode == null && prefill == null) continue;
+    const had = runs.get(r.id);
+    runs.set(r.id, {
+      decodeTps: decode ?? had?.decodeTps ?? null,
+      prefillTps: prefill ?? had?.prefillTps ?? null,
+    });
+  }
+  return { uptimeS: stats.uptimeS ?? (restarted ? null : prev.uptimeS), runs };
+}
+
+export interface RateSpread {
+  median: number;
+  min: number;
+  max: number;
+  runs: number;
+}
+
+export function rateSpread(values: readonly number[]): RateSpread | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return { median, min: sorted[0], max: sorted[sorted.length - 1], runs: sorted.length };
+}
+
+/** The book's writing and reading spreads — each over the runs that measured it. */
+export function bookSpreads(book: RateBook): {
+  writing: RateSpread | null;
+  reading: RateSpread | null;
+} {
+  const runs = [...book.runs.values()];
   return {
-    uptimeS: stats.uptimeS ?? base.uptimeS,
-    decodeTps: decode > 0 ? decode : base.decodeTps,
-    prefillTps: prefill > 0 ? prefill : base.prefillTps,
+    writing: rateSpread(runs.flatMap((r) => (r.decodeTps != null ? [r.decodeTps] : []))),
+    reading: rateSpread(runs.flatMap((r) => (r.prefillTps != null ? [r.prefillTps] : []))),
   };
 }
 

@@ -3998,11 +3998,14 @@
   "mlxStateTile.promptSize": {
     "defaultMessage": "token prompt, đang đọc {elapsed}"
   },
+  "mlxStateTile.readRange": {
+    "defaultMessage": "tok/s đọc, chậm nhất–nhanh nhất"
+  },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s khi đọc prompt này"
   },
-  "mlxStateTile.readRateLast": {
-    "defaultMessage": "tok/s khi đọc, prompt gần nhất"
+  "mlxStateTile.readRateMedian": {
+    "defaultMessage": "tok/s đọc, {count, plural, other {trung vị của # lời nhắc}}"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Đang đọc số liệu trực tiếp…"
@@ -4091,11 +4094,14 @@
   "mlxStateTile.weightsGb": {
     "defaultMessage": "GB trọng số"
   },
+  "mlxStateTile.writeRange": {
+    "defaultMessage": "tok/s ghi, chậm nhất–nhanh nhất"
+  },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s khi viết"
   },
-  "mlxStateTile.writeRateLast": {
-    "defaultMessage": "tok/s khi viết, lần chạy gần nhất"
+  "mlxStateTile.writeRateMedian": {
+    "defaultMessage": "tok/s ghi, {count, plural, other {trung vị của # lượt}}"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Tự động"

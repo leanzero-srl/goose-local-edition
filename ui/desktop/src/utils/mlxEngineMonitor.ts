@@ -1,9 +1,9 @@
 import * as yaml from 'yaml';
 import {
-  NO_RATES,
-  advanceLastRates,
+  EMPTY_BOOK,
+  advanceRateBook,
   parseMlxLiveStatus,
-  type LastRates,
+  type RateBook,
   type MlxLiveStats,
 } from '../components/leanzero-swarm/mlxLiveStats';
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
@@ -68,7 +68,8 @@ export interface MlxEngineSnapshot {
   stats: MlxLiveStats | null;
   /** Why `stats` is absent or stale, verbatim. */
   statusDetail: string | null;
-  last: LastRates;
+  /** Every run the reads caught on this engine: the tray's median and range. */
+  rates: RateBook;
   /** Null until the engine has been read at least once while running. */
   serving: MlxServing | null;
   failedError: string | null;
@@ -96,7 +97,7 @@ export const INITIAL_SNAPSHOT: MlxEngineSnapshot = {
   baseUrl: null,
   stats: null,
   statusDetail: null,
-  last: NO_RATES,
+  rates: EMPTY_BOOK,
   serving: null,
   failedError: null,
 };
@@ -194,7 +195,7 @@ export class MlxEngineMonitor {
     baseUrl: string
   ): Promise<MlxEngineSnapshot> {
     const held = this.snapshot.engine === engine ? this.snapshot : null;
-    const last = held?.last ?? NO_RATES;
+    const rates = held?.rates ?? EMPTY_BOOK;
     const result = await this.deps.readStatus(baseUrl);
     if (!result.ok) {
       // A split's rank 0 on this Mac that is slow keeps its last read; a linked Mac's engine read
@@ -207,7 +208,7 @@ export class MlxEngineMonitor {
         baseUrl,
         stats: hold ? (held?.stats ?? null) : null,
         statusDetail: `${result.error}: ${result.detail}`,
-        last,
+        rates,
       };
     }
     const parsed = parseMlxLiveStatus(result.body);
@@ -217,7 +218,7 @@ export class MlxEngineMonitor {
         engine,
         baseUrl,
         statusDetail: parsed.detail,
-        last,
+        rates,
       };
     }
     const stats = parsed.stats;
@@ -228,7 +229,7 @@ export class MlxEngineMonitor {
       baseUrl,
       stats,
       statusDetail: null,
-      last: advanceLastRates(last, stats),
+      rates: advanceRateBook(rates, stats),
       serving: await this.attribute(stats, engine === 'remote'),
       failedError: null,
     };
@@ -249,7 +250,7 @@ export class MlxEngineMonitor {
 
   private async readSingle(): Promise<MlxEngineSnapshot> {
     const report = this.report;
-    const last = this.snapshot.engine === 'single' ? this.snapshot.last : NO_RATES;
+    const rates = this.snapshot.engine === 'single' ? this.snapshot.rates : EMPTY_BOOK;
     const baseUrl = report?.baseUrl ?? this.deps.configBaseUrl();
     const reportedModel = report?.servedModelId ?? report?.modelId ?? null;
     const failedError = report?.state === 'failed' ? (report.lastError ?? null) : null;
@@ -259,7 +260,7 @@ export class MlxEngineMonitor {
         mode: report?.state === 'failed' ? 'failed' : 'unknown',
         modelId: reportedModel,
         statusDetail: 'goose names no port for the MLX engine yet',
-        last,
+        rates,
         failedError,
       };
     }
@@ -274,7 +275,7 @@ export class MlxEngineMonitor {
           modelId: mode === 'off' ? null : reportedModel,
           baseUrl,
           statusDetail: `${result.error}: ${result.detail}`,
-          last: mode === 'off' ? NO_RATES : last,
+          rates: mode === 'off' ? EMPTY_BOOK : rates,
           failedError,
         };
       }
@@ -297,7 +298,7 @@ export class MlxEngineMonitor {
         modelId: reportedModel,
         baseUrl,
         statusDetail: parsed.detail,
-        last,
+        rates,
       };
     }
     const stats = parsed.stats;
@@ -311,7 +312,7 @@ export class MlxEngineMonitor {
       baseUrl,
       stats,
       statusDetail: null,
-      last: advanceLastRates(last, stats),
+      rates: advanceRateBook(rates, stats),
       serving,
       failedError: null,
     };

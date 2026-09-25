@@ -3998,11 +3998,14 @@
   "mlxStateTile.promptSize": {
     "defaultMessage": "istem tokenı, {elapsed} süredir okunuyor"
   },
+  "mlxStateTile.readRange": {
+    "defaultMessage": "tok/s okuma, en yavaş–en hızlı"
+  },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s (bu istemi okuma)"
   },
-  "mlxStateTile.readRateLast": {
-    "defaultMessage": "tok/s (okuma, son istem)"
+  "mlxStateTile.readRateMedian": {
+    "defaultMessage": "tok/s okuma, {count, plural, one {# istem} other {# istemin medyanı}}"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Canlı istatistikler okunuyor…"
@@ -4091,11 +4094,14 @@
   "mlxStateTile.weightsGb": {
     "defaultMessage": "GB ağırlık"
   },
+  "mlxStateTile.writeRange": {
+    "defaultMessage": "tok/s yazma, en yavaş–en hızlı"
+  },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s (yazma)"
   },
-  "mlxStateTile.writeRateLast": {
-    "defaultMessage": "tok/s (yazma, son çalıştırma)"
+  "mlxStateTile.writeRateMedian": {
+    "defaultMessage": "tok/s yazma, {count, plural, one {# çalıştırma} other {# çalıştırmanın medyanı}}"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Otomatik"

@@ -19,8 +19,8 @@ import {
 import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
 import { attributeServing, type MlxServingRow } from './mlxServing';
 import {
-  NO_RATES,
-  advanceLastRates,
+  EMPTY_BOOK,
+  advanceRateBook,
   parseMlxLiveStatus,
   type MlxLiveStats,
 } from '../components/leanzero-swarm/mlxLiveStats';
@@ -49,7 +49,7 @@ function running(body: unknown, over: Partial<MlxEngineSnapshot> = {}): MlxEngin
     modelId: MODEL,
     baseUrl: 'http://127.0.0.1:8090',
     stats,
-    last: advanceLastRates(NO_RATES, stats),
+    rates: advanceRateBook(EMPTY_BOOK, stats),
     serving: attributeServing([], 0, [], null),
     ...over,
   };
@@ -138,13 +138,13 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
     ]);
   });
 
-  it('idle: the last measured rates as facts, no live rate invented', () => {
+  it('idle: the measured runs as facts, no live rate invented', () => {
     const idle = running(IDLE_STATUS, {
-      last: advanceLastRates(NO_RATES, statsOf(GENERATING_STATUS)),
+      rates: advanceRateBook(EMPTY_BOOK, statsOf(GENERATING_STATUS)),
     });
     const got = labels(buildMlxTrayModel(idle, OPTS).items);
     expect(got[0]).toBe('LeanZero MLX: idle');
-    expect(got).toContain('Last run: wrote 19.9 tok/s, read 196 tok/s');
+    expect(got).toContain('1 run: writes 19.9 tok/s, reads 196 tok/s');
     expect(got.some((l) => l.startsWith('Writing '))).toBe(false);
   });
 

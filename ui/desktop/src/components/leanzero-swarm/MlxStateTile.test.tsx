@@ -7,13 +7,13 @@ import { attributeServing, type MlxServingRow } from '../../utils/mlxServing';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
 import {
-  NO_RATES,
-  advanceLastRates,
+  EMPTY_BOOK,
+  advanceRateBook,
   advanceMountWatch,
   mountCostOf,
   mountFill,
   parseMlxLiveStatus,
-  type LastRates,
+  type RateBook,
   type MlxLiveStats,
   type TpsSample,
 } from './mlxLiveStats';
@@ -47,7 +47,7 @@ function statsOf(body: unknown): MlxLiveStats {
 }
 
 /** What the tile carries after it watched the fixture's generating read. */
-const LAST_AFTER_GENERATING: LastRates = advanceLastRates(NO_RATES, statsOf(GENERATING_STATUS));
+const LAST_AFTER_GENERATING: RateBook = advanceRateBook(EMPTY_BOOK, statsOf(GENERATING_STATUS));
 
 const ROW_BASE = { startedAt: '2026-09-23T20:00:00Z', sessionError: null };
 
@@ -57,7 +57,7 @@ function tile(overrides: Partial<MlxStateTileProps>) {
     unreachable: false,
     live: null,
     history: [],
-    last: NO_RATES,
+    rates: EMPTY_BOOK,
     serving: null,
     mount: null,
     cost: null,
@@ -95,7 +95,7 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     const { container } = tile({
       live: parseMlxLiveStatus(GENERATING_STATUS),
       history: HISTORY,
-      last: LAST_AFTER_GENERATING,
+      rates: LAST_AFTER_GENERATING,
     });
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-state', 'running');
@@ -141,7 +141,7 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
   it('reading a prompt: the ACCENT fill, the prompt size and its elapsed seconds as the hero', async () => {
     const { container } = tile({
       live: parseMlxLiveStatus(PREFILL_STATUS),
-      last: LAST_AFTER_GENERATING,
+      rates: LAST_AFTER_GENERATING,
     });
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-activity', 'prefill');
@@ -149,18 +149,18 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Reading prompt');
     expect(screen.getByTestId('mlx-live-prompt')).toHaveTextContent('32.3K');
     expect(within(t).getByText('prompt tokens, reading for 2m 45s')).toBeInTheDocument();
-    // No reading rate exists mid-prefill (the engine reports no progress): the last one, labelled so.
+    // No reading rate exists mid-prefill (the engine reports no progress): the measured runs' median.
     expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('196');
-    expect(within(t).getByText('tok/s reading, last prompt')).toBeInTheDocument();
+    expect(within(t).getByText('tok/s reading, 1 prompt')).toBeInTheDocument();
     expect(screen.queryByTestId('mlx-live-tps')).toBeNull();
     await expectDesigned(container);
   });
 
-  it('idle: a SOLID SLATE fill (not green) with the last rates as plain facts', async () => {
+  it('idle: a SOLID SLATE fill (not green) with the measured rates as plain facts', async () => {
     const { container } = tile({
       live: parseMlxLiveStatus(IDLE_STATUS),
       history: [{ uptimeS: 1, tps: 19.9 }],
-      last: LAST_AFTER_GENERATING,
+      rates: LAST_AFTER_GENERATING,
     });
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-activity', 'idle');
@@ -168,12 +168,50 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     expect(t.className).not.toContain('bg-lz-phase-writing');
     expect(screen.getByTestId('mlx-activity')).toHaveTextContent('Idle');
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');
-    expect(within(t).getByText('tok/s writing, last run')).toBeInTheDocument();
-    expect(within(t).getByText('tok/s reading, last prompt')).toBeInTheDocument();
+    expect(within(t).getByText('tok/s writing, 1 run')).toBeInTheDocument();
+    expect(within(t).getByText('tok/s reading, 1 prompt')).toBeInTheDocument();
+    // One run is no range.
+    expect(within(t).queryByText('tok/s writing, slowest–fastest')).toBeNull();
     expect(screen.queryAllByTestId('mlx-live-request')).toHaveLength(0);
     expect(within(t).getByText('54.3 GB')).toBeInTheDocument();
     expect(within(t).getByText('20%')).toBeInTheDocument();
     await expectDesigned(container);
+  });
+
+  it('idle after several runs: the MEDIAN is the big number, slowest–fastest sits in the facts', () => {
+    const run = (id: string, tps: number, uptime: number) =>
+      statsOf({
+        status: 'generating',
+        uptime_s: uptime,
+        requests: [
+          {
+            request_id: id,
+            status: 'running',
+            phase: 'generation',
+            prompt_tokens: 48200,
+            completion_tokens: 60,
+            tokens_per_second: tps,
+            ttft_s: 300,
+            cached_tokens: 5000,
+          },
+        ],
+      });
+    let rates = EMPTY_BOOK;
+    for (const [id, tps, up] of [
+      ['a', 22.0, 10],
+      ['b', 51.4, 20],
+      ['c', 24.1, 30],
+    ] as const) {
+      rates = advanceRateBook(rates, run(id, tps, up));
+    }
+    tile({ live: parseMlxLiveStatus({ ...IDLE_STATUS, uptime_s: 40 }), rates });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('24.1');
+    expect(within(t).getByText('tok/s writing, median of 3 runs')).toBeInTheDocument();
+    expect(within(t).getByText('22.0–51.4')).toBeInTheDocument();
+    expect(within(t).getByText('tok/s writing, slowest–fastest')).toBeInTheDocument();
+    expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('144');
+    expect(within(t).getByText('tok/s reading, median of 3 prompts')).toBeInTheDocument();
   });
 
   it('idle with nothing measured yet: the headline says Idle, no dashes, no flat graph, never the engine aggregate (1,048,576 tok/s after a one-token request)', () => {
@@ -577,7 +615,7 @@ describe('MlxStateTile — a remote single IS the tile while it serves this Mac�
       remote: ROUTE,
       modeLabel: "Serving from Work's Mac Studio",
       live: parseMlxLiveStatus(GENERATING_STATUS),
-      last: LAST_AFTER_GENERATING,
+      rates: LAST_AFTER_GENERATING,
       action: <button type="button">Stop</button>,
     });
     const t = screen.getByTestId('mlx-state-badge');
@@ -635,7 +673,7 @@ describe('MlxStateTile — a remote single IS the tile while it serves this Mac�
       state: 'stopped',
       remote: ROUTE,
       live: { ok: false, detail: 'timeout: no answer within 1500 ms' },
-      last: LAST_AFTER_GENERATING,
+      rates: LAST_AFTER_GENERATING,
     });
     const gone = screen.getByTestId('mlx-live-unavailable');
     expect(gone).toHaveAttribute('data-over-link', 'true');

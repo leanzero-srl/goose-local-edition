@@ -1,4 +1,5 @@
 import {
+  bookSpreads,
   MLX_STATUS_POLL_MS,
   compactTokens,
   formatElapsed,
@@ -8,6 +9,7 @@ import {
   mlxActivity,
   readingNowTps,
   type MlxLiveStats,
+  type RateSpread,
 } from '../components/leanzero-swarm/mlxLiveStats';
 import {
   backendName,
@@ -323,13 +325,19 @@ function runningItems(snapshot: MlxEngineSnapshot): MlxTrayItem[] {
     items.push({ type: 'info', label: `Read the last prompt at ${formatRate(prefill)} tok/s` });
   }
   if (activity !== 'generating' && decode === 0 && prefill === 0) {
-    const { decodeTps, prefillTps } = snapshot.last;
-    if (decodeTps != null || prefillTps != null) {
+    const { writing, reading } = bookSpreads(snapshot.rates);
+    const spread = (s: RateSpread) =>
+      s.max > s.min
+        ? `${formatRate(s.median)} tok/s (${formatRate(s.min)}–${formatRate(s.max)})`
+        : `${formatRate(s.median)} tok/s`;
+    const runs = Math.max(writing?.runs ?? 0, reading?.runs ?? 0);
+    if (writing || reading) {
       const parts = [
-        decodeTps != null ? `wrote ${formatRate(decodeTps)} tok/s` : null,
-        prefillTps != null ? `read ${formatRate(prefillTps)} tok/s` : null,
+        writing ? `writes ${spread(writing)}` : null,
+        reading ? `reads ${spread(reading)}` : null,
       ].filter(Boolean);
-      items.push({ type: 'info', label: `Last run: ${parts.join(', ')}` });
+      const over = runs >= 2 ? `Median of ${runs} runs` : '1 run';
+      items.push({ type: 'info', label: `${over}: ${parts.join(', ')}` });
     }
   }
   if (snapshot.statusDetail) {

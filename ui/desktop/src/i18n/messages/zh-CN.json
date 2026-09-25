@@ -3998,11 +3998,14 @@
   "mlxStateTile.promptSize": {
     "defaultMessage": "个提示词 token，已读取 {elapsed}"
   },
+  "mlxStateTile.readRange": {
+    "defaultMessage": "tok/s 读取，最慢–最快"
+  },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s（读取此提示词）"
   },
-  "mlxStateTile.readRateLast": {
-    "defaultMessage": "tok/s（读取，上一个提示词）"
+  "mlxStateTile.readRateMedian": {
+    "defaultMessage": "tok/s 读取，{count, plural, other {# 个提示的中位数}}"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "正在读取实时统计…"
@@ -4091,11 +4094,14 @@
   "mlxStateTile.weightsGb": {
     "defaultMessage": "GB 权重"
   },
+  "mlxStateTile.writeRange": {
+    "defaultMessage": "tok/s 写入，最慢–最快"
+  },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s（生成）"
   },
-  "mlxStateTile.writeRateLast": {
-    "defaultMessage": "tok/s（生成，上一次）"
+  "mlxStateTile.writeRateMedian": {
+    "defaultMessage": "tok/s 写入，{count, plural, other {# 次运行的中位数}}"
   },
   "mlxThinking.auto": {
     "defaultMessage": "自动"

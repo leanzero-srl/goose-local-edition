@@ -3998,11 +3998,14 @@
   "mlxStateTile.promptSize": {
     "defaultMessage": "프롬프트 토큰, {elapsed}째 읽는 중"
   },
+  "mlxStateTile.readRange": {
+    "defaultMessage": "tok/s 읽기, 최저–최고"
+  },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s (이 프롬프트 읽기)"
   },
-  "mlxStateTile.readRateLast": {
-    "defaultMessage": "tok/s (읽기, 마지막 프롬프트)"
+  "mlxStateTile.readRateMedian": {
+    "defaultMessage": "tok/s 읽기, {count, plural, other {# 개 프롬프트 중앙값}}"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "실시간 통계 읽는 중…"
@@ -4091,11 +4094,14 @@
   "mlxStateTile.weightsGb": {
     "defaultMessage": "GB 가중치"
   },
+  "mlxStateTile.writeRange": {
+    "defaultMessage": "tok/s 쓰기, 최저–최고"
+  },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s (작성)"
   },
-  "mlxStateTile.writeRateLast": {
-    "defaultMessage": "tok/s (작성, 마지막 실행)"
+  "mlxStateTile.writeRateMedian": {
+    "defaultMessage": "tok/s 쓰기, {count, plural, other {# 회 중앙값}}"
   },
   "mlxThinking.auto": {
     "defaultMessage": "자동"

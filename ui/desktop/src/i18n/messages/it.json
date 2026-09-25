@@ -3998,11 +3998,14 @@
   "mlxStateTile.promptSize": {
     "defaultMessage": "token del prompt, in lettura da {elapsed}"
   },
+  "mlxStateTile.readRange": {
+    "defaultMessage": "tok/s in lettura, più lenta–più veloce"
+  },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s leggendo questo prompt"
   },
-  "mlxStateTile.readRateLast": {
-    "defaultMessage": "tok/s in lettura, ultimo prompt"
+  "mlxStateTile.readRateMedian": {
+    "defaultMessage": "tok/s in lettura, {count, plural, one {# prompt} other {mediana di # prompt}}"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Lettura delle statistiche in tempo reale…"
@@ -4091,11 +4094,14 @@
   "mlxStateTile.weightsGb": {
     "defaultMessage": "GB di pesi"
   },
+  "mlxStateTile.writeRange": {
+    "defaultMessage": "tok/s in scrittura, più lenta–più veloce"
+  },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s in scrittura"
   },
-  "mlxStateTile.writeRateLast": {
-    "defaultMessage": "tok/s in scrittura, ultima esecuzione"
+  "mlxStateTile.writeRateMedian": {
+    "defaultMessage": "tok/s in scrittura, {count, plural, one {# esecuzione} other {mediana di # esecuzioni}}"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Auto"

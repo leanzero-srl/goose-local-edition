@@ -3998,11 +3998,14 @@
   "mlxStateTile.promptSize": {
     "defaultMessage": "プロンプトトークン、{elapsed} 読み込み中"
   },
+  "mlxStateTile.readRange": {
+    "defaultMessage": "tok/s 読み取り、最遅–最速"
+  },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s（このプロンプトの読み込み）"
   },
-  "mlxStateTile.readRateLast": {
-    "defaultMessage": "tok/s（読み込み、直前のプロンプト）"
+  "mlxStateTile.readRateMedian": {
+    "defaultMessage": "tok/s 読み取り、{count, plural, other {# 件のプロンプトの中央値}}"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "ライブ統計を読み込み中…"
@@ -4091,11 +4094,14 @@
   "mlxStateTile.weightsGb": {
     "defaultMessage": "GB の重み"
   },
+  "mlxStateTile.writeRange": {
+    "defaultMessage": "tok/s 書き込み、最遅–最速"
+  },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s（書き込み）"
   },
-  "mlxStateTile.writeRateLast": {
-    "defaultMessage": "tok/s（書き込み、前回）"
+  "mlxStateTile.writeRateMedian": {
+    "defaultMessage": "tok/s 書き込み、{count, plural, other {# 回の中央値}}"
   },
   "mlxThinking.auto": {
     "defaultMessage": "自動"

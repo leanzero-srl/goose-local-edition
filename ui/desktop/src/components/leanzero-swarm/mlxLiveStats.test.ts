@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  NO_RATES,
+  EMPTY_BOOK,
   SPARK_WINDOW,
-  advanceLastRates,
+  advanceRateBook,
+  bookSpreads,
+  rateSpread,
   advanceMountWatch,
   compactTokens,
   formatElapsed,
@@ -337,28 +339,64 @@ describe("the distributed engine's reported prefill — read live, through the s
   });
 });
 
-describe('last measured rates — what an idle tile or tray states as "last run"', () => {
-  it('keeps the last writing and reading rates through idle reads', () => {
-    let last = advanceLastRates(NO_RATES, statsOf(GENERATING_STATUS));
-    expect(last.decodeTps).toBe(19.9);
-    expect(last.prefillTps).toBeCloseTo(195.6, 1);
-    last = advanceLastRates(last, statsOf({ ...IDLE_STATUS, uptime_s: 1990 }));
-    expect(last.decodeTps).toBe(19.9);
-    expect(last.prefillTps).toBeCloseTo(195.6, 1);
-    expect(last.uptimeS).toBe(1990);
+describe('the run book — every run a read caught, summarised as a median and a range', () => {
+  const gen = (id: string, tps: number, uptime: number) =>
+    statsOf({
+      status: 'generating',
+      uptime_s: uptime,
+      requests: [
+        {
+          request_id: id,
+          status: 'running',
+          phase: 'generation',
+          prompt_tokens: 1000,
+          completion_tokens: 40,
+          tokens_per_second: tps,
+          ttft_s: 5,
+          cached_tokens: 0,
+        },
+      ],
+    });
+
+  it('keeps each run once, at its latest rate, through idle reads', () => {
+    let book = advanceRateBook(EMPTY_BOOK, statsOf(GENERATING_STATUS));
+    book = advanceRateBook(book, statsOf({ ...IDLE_STATUS, uptime_s: 1990 }));
+    const { writing, reading } = bookSpreads(book);
+    expect(writing?.median).toBe(19.9);
+    expect(reading?.median).toBeCloseTo(195.6, 1);
+    expect(book.uptimeS).toBe(1990);
   });
 
-  it('nothing measured yet is null — never the sticky engine aggregate', () => {
-    const last = advanceLastRates(NO_RATES, statsOf(IDLE_STATUS));
-    expect(last).toEqual({ uptimeS: 874.3, decodeTps: null, prefillTps: null });
+  it('the median leads and the range brackets it — a fast short run does not become "the" rate', () => {
+    let book = EMPTY_BOOK;
+    book = advanceRateBook(book, gen('a', 21.0, 10));
+    book = advanceRateBook(book, gen('a', 22.4, 12)); // the same run, read again: one entry
+    book = advanceRateBook(book, gen('b', 51.4, 20));
+    book = advanceRateBook(book, gen('c', 24.1, 30));
+    expect(book.runs.size).toBe(3);
+    expect(bookSpreads(book).writing).toEqual({ median: 24.1, min: 22.4, max: 51.4, runs: 3 });
+    expect(bookSpreads(book).reading).toEqual({ median: 200, min: 200, max: 200, runs: 3 });
   });
 
-  it('an engine whose uptime went backwards restarted: its old rates are dropped', () => {
-    const before = advanceLastRates(NO_RATES, statsOf(GENERATING_STATUS));
-    const after = advanceLastRates(before, statsOf({ ...IDLE_STATUS, uptime_s: 3 }));
-    expect(after).toEqual({ uptimeS: 3, decodeTps: null, prefillTps: null });
+  it('an even count takes the mean of the middle two', () => {
+    expect(rateSpread([10, 20, 30, 40])).toEqual({ median: 25, min: 10, max: 40, runs: 4 });
+    expect(rateSpread([])).toBeNull();
   });
 
+  it('nothing measured yet is nothing — never the sticky engine aggregate', () => {
+    const book = advanceRateBook(EMPTY_BOOK, statsOf(IDLE_STATUS));
+    expect(bookSpreads(book)).toEqual({ writing: null, reading: null });
+  });
+
+  it('an engine whose uptime went backwards restarted: its runs are dropped', () => {
+    const before = advanceRateBook(EMPTY_BOOK, statsOf(GENERATING_STATUS));
+    const after = advanceRateBook(before, statsOf({ ...IDLE_STATUS, uptime_s: 3 }));
+    expect(after.runs.size).toBe(0);
+    expect(after.uptimeS).toBe(3);
+  });
+});
+
+describe('rates at a glance', () => {
   it('rates read at a glance: one decimal under 100, whole numbers above', () => {
     expect(formatRate(19.94, 'en-US')).toBe('19.9');
     expect(formatRate(1240.4, 'en-US')).toBe('1,240');

@@ -94,8 +94,8 @@ import { MlxRestoreBanner } from './MlxRestoreLine';
 import { settleRestoreLine } from './mlxRestore';
 import type { MlxServing } from '../../utils/mlxServing';
 import {
-  NO_RATES,
-  advanceLastRates,
+  EMPTY_BOOK,
+  advanceRateBook,
   advanceMountWatch,
   liveDecodeTps,
   mountCostOf,
@@ -105,7 +105,8 @@ import {
   pushSample,
   readMlxLiveStatus,
   readMlxServing,
-  type LastRates,
+  type MlxLiveStats,
+  type RateBook,
   type MlxLiveRead,
   type MountWatch,
   type SingleLoad,
@@ -718,8 +719,8 @@ interface EngineSectionProps {
   /** The tile's live instrument while running — the last Rapid-MLX /v1/status read. */
   live: MlxLiveRead | null;
   tpsHistory: readonly TpsSample[];
-  /** The last rates measured while running, for the idle tile. */
-  lastRates: LastRates;
+  /** Every run the live read caught on this engine — the tile's median and range. */
+  rates: RateBook;
   /** Who the engine is serving (main's read of goose's in-flight list). */
   serving: MlxServing | null;
   /** The memory watch across an in-flight mount. */
@@ -756,7 +757,7 @@ function EngineSection(props: EngineSectionProps) {
     onRemount,
     live,
     tpsHistory,
-    lastRates,
+    rates,
     serving,
     mountWatch,
     distributed,
@@ -956,7 +957,7 @@ function EngineSection(props: EngineSectionProps) {
           unreachable={statusError != null && status == null}
           live={live}
           history={tpsHistory}
-          last={lastRates}
+          rates={rates}
           serving={serving}
           mount={mount}
           load={singleLoad(status)}
@@ -2254,6 +2255,27 @@ function draftKey(macKey: string, modelId: string): string {
   return `${macKey}\n${modelId}`;
 }
 
+/**
+ * The run book outlives the page: one per engine source ('single', 'distributed', 'remote:<peer>')
+ * for the window's life, so leaving the Engine tab and coming back keeps the runs it saw (the
+ * page-held "last run" reset on every visit). A new source starts a new book; a restarted engine
+ * starts one inside advanceRateBook.
+ */
+let rateBook: { source: string | null; book: RateBook } = { source: null, book: EMPTY_BOOK };
+
+function ratesFor(source: string | null): RateBook {
+  // No engine read yet (a remount's first tick, or stopped): show nothing, keep the book — a new
+  // engine replaces it below, and a restarted one inside advanceRateBook.
+  if (source === null) return EMPTY_BOOK;
+  if (rateBook.source !== source) rateBook = { source, book: EMPTY_BOOK };
+  return rateBook.book;
+}
+
+function foldRates(source: string, stats: MlxLiveStats): RateBook {
+  rateBook = { source, book: advanceRateBook(ratesFor(source), stats) };
+  return rateBook.book;
+}
+
 function MlxEngineViewBody() {
   const [tab, setTab] = useState<MlxTab>('engine');
   const { mlxDistributed } = useFeatures();
@@ -2313,7 +2335,7 @@ function MlxEngineViewBody() {
   // SAME 2-second status poll below — no second clock.
   const [live, setLive] = useState<MlxLiveRead | null>(null);
   const [tpsHistory, setTpsHistory] = useState<TpsSample[]>([]);
-  const [lastRates, setLastRates] = useState<LastRates>(NO_RATES);
+  const [rates, setRates] = useState<RateBook>(() => rateBook.book);
   const [serving, setServing] = useState<MlxServing | null>(null);
   const [mountWatch, setMountWatch] = useState<MountWatch | null>(null);
   // Free memory at the last status that was NOT mounting: the baseline a mount's claim is measured
@@ -2356,7 +2378,7 @@ function MlxEngineViewBody() {
     if (source !== liveSource.current) {
       liveSource.current = source;
       setTpsHistory([]);
-      setLastRates(NO_RATES);
+      setRates(ratesFor(source));
     }
     if (source === null) {
       setLive(null);
@@ -2383,7 +2405,7 @@ function MlxEngineViewBody() {
       setServing(who);
       if (read.ok) {
         const stats = read.stats;
-        setLastRates((prev) => advanceLastRates(prev, stats));
+        setRates(foldRates(source, stats));
         if (stats.uptimeS != null) {
           const sample = { uptimeS: stats.uptimeS, tps: liveDecodeTps(stats) };
           setTpsHistory((h) => pushSample(h, sample));
@@ -2780,7 +2802,7 @@ function MlxEngineViewBody() {
           onRemount={onRemount}
           live={live}
           tpsHistory={tpsHistory}
-          lastRates={lastRates}
+          rates={rates}
           serving={serving}
           mountWatch={mountWatch}
           distributed={distributed.status}

@@ -39,7 +39,8 @@ import {
   measuredPrefillTps,
   mlxActivity,
   sparklinePoints,
-  type LastRates,
+  bookSpreads,
+  type RateBook,
   type MlxLiveRead,
   type MlxLiveRequest,
   type MlxLiveStats,
@@ -52,7 +53,7 @@ import {
 /**
  * The Engine hero's state tile — ONE solid fill that is the engine's state, and a live INSTRUMENT
  * for it, in the ENGINE-PHASE palette every MLX surface shares (lz/tokens.ts PHASE_FILL, mapped by
- * mlxPhase.ts): dark outlined with no model, grey idle (the last measured rates stay as plain
+ * mlxPhase.ts): dark outlined with no model, grey idle (the median of the measured runs stays as plain
  * facts), amber while weights load, blue while it reads a prompt, green while it writes, orange
  * when requests are queued or admission is held, red when it failed. Every figure is measured
  * (mlxLiveStats.ts): the writing rate from the generating requests' own rates, the reading rate
@@ -91,9 +92,17 @@ const i18n = defineMessages({
     defaultMessage: 'Rates unavailable over LeanZero Link',
   },
   writeRate: { id: 'mlxStateTile.writeRate', defaultMessage: 'tok/s writing' },
-  writeRateLast: { id: 'mlxStateTile.writeRateLast', defaultMessage: 'tok/s writing, last run' },
+  writeRateMedian: {
+    id: 'mlxStateTile.writeRateMedian',
+    defaultMessage: 'tok/s writing, {count, plural, one {# run} other {median of # runs}}',
+  },
+  writeRange: { id: 'mlxStateTile.writeRange', defaultMessage: 'tok/s writing, slowest–fastest' },
   readRate: { id: 'mlxStateTile.readRate', defaultMessage: 'tok/s reading this prompt' },
-  readRateLast: { id: 'mlxStateTile.readRateLast', defaultMessage: 'tok/s reading, last prompt' },
+  readRateMedian: {
+    id: 'mlxStateTile.readRateMedian',
+    defaultMessage: 'tok/s reading, {count, plural, one {# prompt} other {median of # prompts}}',
+  },
+  readRange: { id: 'mlxStateTile.readRange', defaultMessage: 'tok/s reading, slowest–fastest' },
   promptSize: {
     id: 'mlxStateTile.promptSize',
     defaultMessage: 'prompt tokens, reading for {elapsed}',
@@ -294,8 +303,8 @@ export interface MlxStateTileProps {
   live: MlxLiveRead | null;
   /** RUNNING: the writing rate per read, oldest first. */
   history: readonly TpsSample[];
-  /** RUNNING: the last rates this view measured, for the idle tile. */
-  last: LastRates;
+  /** RUNNING: every run this engine served that a read caught — the median and range it shows. */
+  rates: RateBook;
   /** RUNNING: who the engine is serving, from main's read of goose's in-flight list. */
   serving: MlxServing | null;
   /** MOUNTING: the memory the engine has claimed against the model's size. */
@@ -572,7 +581,7 @@ function Fact({ value, label }: { value: string; label: string }) {
 function RunningInstrument(props: {
   live: MlxLiveRead | null;
   history: readonly TpsSample[];
-  last: LastRates;
+  rates: RateBook;
   serving: MlxServing | null;
   /** The engine is a linked Mac's, read through the relay: a failed read names Link. */
   overLink?: boolean;
@@ -602,7 +611,7 @@ function RunningInstrument(props: {
     <LiveReadout
       stats={live.stats}
       history={props.history}
-      last={props.last}
+      rates={props.rates}
       serving={props.serving}
     />
   );
@@ -618,11 +627,12 @@ interface Figure {
 function figures(
   intl: IntlShape,
   stats: MlxLiveStats,
-  last: LastRates
+  rates: RateBook
 ): { hero: Figure | null; second: Figure | null } {
   const activity = mlxActivity(stats);
   const rate = (tps: number) => formatRate(tps, intl.locale);
   const prefillNow = measuredPrefillTps(stats);
+  const { writing, reading } = bookSpreads(rates);
   const readFigure: Figure | null =
     prefillNow > 0
       ? {
@@ -630,21 +640,20 @@ function figures(
           value: rate(prefillNow),
           label: intl.formatMessage(i18n.readRate),
         }
-      : last.prefillTps != null
+      : reading
         ? {
             testId: 'mlx-live-pps',
-            value: rate(last.prefillTps),
-            label: intl.formatMessage(i18n.readRateLast),
+            value: rate(reading.median),
+            label: intl.formatMessage(i18n.readRateMedian, { count: reading.runs }),
           }
         : null;
-  const lastWrite: Figure | null =
-    last.decodeTps != null
-      ? {
-          testId: 'mlx-live-tps',
-          value: rate(last.decodeTps),
-          label: intl.formatMessage(i18n.writeRateLast),
-        }
-      : null;
+  const lastWrite: Figure | null = writing
+    ? {
+        testId: 'mlx-live-tps',
+        value: rate(writing.median),
+        label: intl.formatMessage(i18n.writeRateMedian, { count: writing.runs }),
+      }
+    : null;
 
   if (activity === 'generating') {
     return {
@@ -687,18 +696,18 @@ function figures(
 function LiveReadout({
   stats,
   history,
-  last,
+  rates,
   serving,
 }: {
   stats: MlxLiveStats;
   history: readonly TpsSample[];
-  last: LastRates;
+  rates: RateBook;
   serving: MlxServing | null;
 }) {
   const intl = useIntl();
   const activity = mlxActivity(stats);
   const active = activity === 'generating' || activity === 'prefill' || activity === 'queued';
-  const { hero, second } = figures(intl, stats, last);
+  const { hero, second } = figures(intl, stats, rates);
   // Only measured figures are drawn: a dash beside "Reading prompt · 2m 37s" said no prompt was
   // read, and two dashes beside "2 requests served" said nothing happened (3.0.31–3.0.32).
   const shown = [hero, second].filter((f): f is Figure => f != null);
@@ -708,6 +717,24 @@ function LiveReadout({
     ...stats.requests.filter((r) => r.status === 'waiting'),
   ];
   const facts: Array<{ key: string; value: string; label: string }> = [];
+  // The median leads above; the spread around it sits here, once the runs differ.
+  const spreads = bookSpreads(rates);
+  const range = (min: number, max: number) =>
+    `${formatRate(min, intl.locale)}–${formatRate(max, intl.locale)}`;
+  if (spreads.writing && spreads.writing.max > spreads.writing.min) {
+    facts.push({
+      key: 'writeRange',
+      value: range(spreads.writing.min, spreads.writing.max),
+      label: intl.formatMessage(i18n.writeRange),
+    });
+  }
+  if (spreads.reading && spreads.reading.max > spreads.reading.min) {
+    facts.push({
+      key: 'readRange',
+      value: range(spreads.reading.min, spreads.reading.max),
+      label: intl.formatMessage(i18n.readRange),
+    });
+  }
   if (stats.totalRequests != null) {
     facts.push({
       key: 'served',
@@ -997,13 +1024,13 @@ function DistributedInstrument({
   status,
   live,
   history,
-  last,
+  rates,
   serving,
 }: {
   status: MlxDistributedStatus;
   live: MlxLiveRead | null;
   history: readonly TpsSample[];
-  last: LastRates;
+  rates: RateBook;
   serving: MlxServing | null;
 }) {
   const intl = useIntl();
@@ -1034,7 +1061,7 @@ function DistributedInstrument({
         </span>
       )}
       {live != null && runIsUp(status) ? (
-        <RunningInstrument live={live} history={history} last={last} serving={serving} />
+        <RunningInstrument live={live} history={history} rates={rates} serving={serving} />
       ) : status.inflight != null ? (
         <div className="flex items-baseline gap-2">
           <span data-testid="mlx-dist-tile-inflight" className={HERO}>
@@ -1097,13 +1124,13 @@ function RemoteInstrument({
   remote,
   live,
   history,
-  last,
+  rates,
   serving,
 }: {
   remote: MlxRemoteSingleStatus;
   live: MlxLiveRead | null;
   history: readonly TpsSample[];
-  last: LastRates;
+  rates: RateBook;
   serving: MlxServing | null;
 }) {
   const intl = useIntl();
@@ -1116,7 +1143,7 @@ function RemoteInstrument({
         </span>
       )}
       {remote.state === 'ready' && (
-        <RunningInstrument live={live} history={history} last={last} serving={serving} overLink />
+        <RunningInstrument live={live} history={history} rates={rates} serving={serving} overLink />
       )}
       {remote.state === 'mounting' && (
         <div className="flex flex-col gap-2">
@@ -1229,7 +1256,7 @@ export function MlxStateTile(props: MlxStateTileProps) {
     unreachable,
     live,
     history,
-    last,
+    rates,
     serving,
     mount,
     cost,
@@ -1307,7 +1334,7 @@ export function MlxStateTile(props: MlxStateTileProps) {
           status={dist}
           live={live}
           history={history}
-          last={last}
+          rates={rates}
           serving={serving}
         />
       )}
@@ -1317,12 +1344,12 @@ export function MlxStateTile(props: MlxStateTileProps) {
           remote={remote}
           live={live}
           history={history}
-          last={last}
+          rates={rates}
           serving={serving}
         />
       )}
       {!dist && !hosting && !remote && state === 'running' && (
-        <RunningInstrument live={live} history={history} last={last} serving={serving} />
+        <RunningInstrument live={live} history={history} rates={rates} serving={serving} />
       )}
       {!dist && !hosting && !remote && starting && <MountingInstrument mount={mount} load={load} />}
       {!dist && !hosting && !remote && !starting && state === 'stopped' && (
