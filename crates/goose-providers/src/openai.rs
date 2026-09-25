@@ -19,6 +19,7 @@ use crate::openai_compatible::{
     handle_response_openai_compat, handle_status, stream_responses_compat,
 };
 use crate::request_log::{start_log, LoggerHandleExt};
+use crate::thinking::ThinkingEffort;
 use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::StatusCode;
@@ -419,6 +420,49 @@ impl OpenAiProvider {
         }
 
         payload
+    }
+
+    /// A request that asked for no reasoning (`ThinkingEffort::Off`: goose's helper calls — tool
+    /// labels, titles, tool-pair digests, compaction — via `complete_fast`) reaches an MLX engine
+    /// as `chat_template_kwargs.enable_thinking = false`. The chat format emits an effort only for
+    /// OpenAI Responses models, so without this the Off was dropped on the way and the model's own
+    /// template thought anyway — measured 2026-09-25 on the Qwen3.8-27B split: a 3–8 word tool label
+    /// cost 51 completion tokens and 6.3 s with thinking, 6 tokens and 2.2 s with the switch off.
+    /// Rapid-MLX and mlx_lm both pass these kwargs to the template renderer; a template that reads
+    /// no `enable_thinking` ignores the extra variable. Off wins over the model profile's own
+    /// switch (the swarm router fills it in only where the request set none), and the profile's
+    /// other kwargs stay.
+    fn carry_thinking_off_to_mlx(
+        &self,
+        model_config: &ModelConfig,
+        payload: &mut serde_json::Value,
+    ) -> Result<(), ProviderError> {
+        if !Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str())
+            || model_config.thinking_effort() != Some(ThinkingEffort::Off)
+        {
+            return Ok(());
+        }
+        let Some(obj) = payload.as_object_mut() else {
+            return Err(ProviderError::ExecutionError(
+                "the MLX request body is not a JSON object, so thinking cannot be switched off"
+                    .to_string(),
+            ));
+        };
+        match obj
+            .entry("chat_template_kwargs")
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()))
+        {
+            serde_json::Value::Object(kwargs) => {
+                kwargs.insert(
+                    "enable_thinking".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+                Ok(())
+            }
+            other => Err(ProviderError::ExecutionError(format!(
+                "chat_template_kwargs is {other}, not an object, so the request's thinking-off cannot reach the MLX engine"
+            ))),
+        }
     }
 
     /// Whether this endpoint declared that it honours `rapid_mlx_transient_tail` (the LeanZero
@@ -914,6 +958,7 @@ impl Provider for OpenAiProvider {
                 },
             )?;
             let mut payload = self.sanitize_request_for_compat(payload);
+            self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
             if self.accepts_transient_tail(&model_config.model_name).await {
                 if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
                     payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
@@ -1210,6 +1255,106 @@ mod tests {
         assert!(bodies
             .iter()
             .all(|b| b.get(RAPID_MLX_TRANSIENT_TAIL).is_none()));
+    }
+
+    async fn body_sent(name: &str, model_config: &ModelConfig) -> serde_json::Value {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"object": "list", "data": [{"id": "served"}]})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                             "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+            })))
+            .mount(&server)
+            .await;
+        let mut provider = make_provider(name);
+        provider.api_client =
+            ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
+        provider.supports_streaming = false;
+        let messages = vec![Message::user().with_text("Tool: shell\nArguments: {}")];
+        let mut stream = provider
+            .stream(model_config, "Summarize this tool call", &messages, &[])
+            .await
+            .unwrap();
+        use futures::StreamExt;
+        while stream.next().await.is_some() {}
+        let requests = server.received_requests().await.unwrap();
+        let post = requests
+            .iter()
+            .find(|r| r.method.as_str() == "POST")
+            .expect("the chat request was posted");
+        serde_json::from_slice(&post.body).unwrap()
+    }
+
+    fn with_profile_kwargs(config: ModelConfig) -> ModelConfig {
+        config.with_merged_request_params(HashMap::from([(
+            "chat_template_kwargs".to_string(),
+            json!({"enable_thinking": true, "reasoning_effort": "low"}),
+        )]))
+    }
+
+    /// A helper call's ThinkingEffort::Off reaches the MLX engine as the template switch, over the
+    /// profile's own; a request with no Off — the agent's own turn — and every other provider send
+    /// exactly what they sent before (negative controls).
+    #[tokio::test]
+    async fn thinking_off_reaches_the_mlx_engine_as_the_template_switch() {
+        let off = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Off);
+        assert_eq!(
+            body_sent("omlx", &off).await["chat_template_kwargs"],
+            json!({"enable_thinking": false})
+        );
+        assert_eq!(
+            body_sent("omlx", &with_profile_kwargs(off.clone())).await["chat_template_kwargs"],
+            json!({"enable_thinking": false, "reasoning_effort": "low"})
+        );
+
+        let turn = ModelConfig::new("served");
+        assert!(body_sent("omlx", &turn)
+            .await
+            .get("chat_template_kwargs")
+            .is_none());
+        assert_eq!(
+            body_sent("omlx", &with_profile_kwargs(turn)).await["chat_template_kwargs"],
+            json!({"enable_thinking": true, "reasoning_effort": "low"})
+        );
+        let high = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::High);
+        assert!(body_sent("omlx", &high)
+            .await
+            .get("chat_template_kwargs")
+            .is_none());
+
+        for other in ["lmstudio", "openai", "ollama"] {
+            assert!(
+                body_sent(other, &off)
+                    .await
+                    .get("chat_template_kwargs")
+                    .is_none(),
+                "{other} never receives the MLX template switch"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_object_template_kwargs_refuses_the_thinking_off_loudly() {
+        let provider = make_provider("omlx");
+        let mut payload = json!({"model": "served", "messages": [], "chat_template_kwargs": "x"});
+        let off = ModelConfig::new("served").with_thinking_effort(ThinkingEffort::Off);
+        let err = provider
+            .carry_thinking_off_to_mlx(&off, &mut payload)
+            .unwrap_err();
+        assert!(err.to_string().contains("not an object"), "{err}");
     }
 
     #[test]
