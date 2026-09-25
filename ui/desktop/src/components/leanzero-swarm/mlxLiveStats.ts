@@ -467,19 +467,38 @@ export async function readMlxLiveStatus(baseUrl: string): Promise<MlxLiveRead> {
 }
 
 /**
- * WHO the local engine is serving, as main last read it (utils/mlxEngineMonitor.ts) — null when this
- * build has no bridge, main has not read a running engine, or the bridge fails: the tile then shows
- * no "Serving" block rather than an empty one that would read as "nobody".
+ * What MAIN last read of the engine (utils/mlxEngineMonitor.ts), which reads it the whole time it
+ * answers — the page reads only while the Engine tab is open. WHO it serves, and every run main
+ * caught, for the engine kind main read. null when this build has no bridge or the bridge fails:
+ * the tile then shows no "Serving" block rather than an empty one that would read as "nobody", and
+ * only the runs the page itself caught.
  */
-export async function readMlxServing(): Promise<MlxServing | null> {
+export async function readMainEngine(): Promise<{
+  serving: MlxServing | null;
+  engine: MlxEngineSnapshot['engine'];
+  rates: RateBook;
+} | null> {
   const bridge = (
     window as unknown as { electron?: { mlxEngineActivity?: () => Promise<MlxEngineSnapshot> } }
   ).electron?.mlxEngineActivity;
   if (!bridge) return null;
   try {
     const snapshot = await bridge();
-    return snapshot.mode === 'running' ? snapshot.serving : null;
+    return {
+      serving: snapshot.mode === 'running' ? snapshot.serving : null,
+      engine: snapshot.engine,
+      rates: snapshot.rates,
+    };
   } catch {
     return null;
   }
+}
+
+/** Two readers' books of ONE engine: the union of their runs (request ids are the engine's own). */
+export function mergeRateBooks(a: RateBook, b: RateBook): RateBook {
+  const uptimes = [a.uptimeS, b.uptimeS].filter((u): u is number => u != null);
+  return {
+    uptimeS: uptimes.length ? Math.max(...uptimes) : null,
+    runs: new Map([...a.runs, ...b.runs]),
+  };
 }

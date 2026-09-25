@@ -4,6 +4,7 @@ import {
   SPARK_WINDOW,
   advanceRateBook,
   bookSpreads,
+  mergeRateBooks,
   rateSpread,
   advanceMountWatch,
   compactTokens,
@@ -386,6 +387,18 @@ describe('the run book — every run a read caught, summarised as a median and a
   it('nothing measured yet is nothing — never the sticky engine aggregate', () => {
     const book = advanceRateBook(EMPTY_BOOK, statsOf(IDLE_STATUS));
     expect(bookSpreads(book)).toEqual({ writing: null, reading: null });
+  });
+
+  it('main’s runs and the page’s of one engine join — a chat served while the tab was closed counts', () => {
+    const page = advanceRateBook(EMPTY_BOOK, gen('a', 22.0, 50));
+    const main = advanceRateBook(
+      advanceRateBook(EMPTY_BOOK, gen('b', 51.4, 20)),
+      gen('a', 22.0, 50)
+    );
+    const both = mergeRateBooks(page, advanceRateBook(main, gen('c', 24.1, 60)));
+    expect(both.runs.size).toBe(3);
+    expect(both.uptimeS).toBe(60);
+    expect(bookSpreads(both).writing?.median).toBe(24.1);
   });
 
   it('an engine whose uptime went backwards restarted: its runs are dropped', () => {

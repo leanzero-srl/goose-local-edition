@@ -104,7 +104,8 @@ import {
   singleLoad,
   pushSample,
   readMlxLiveStatus,
-  readMlxServing,
+  mergeRateBooks,
+  readMainEngine,
   type MlxLiveStats,
   type RateBook,
   type MlxLiveRead,
@@ -2400,12 +2401,17 @@ function MlxEngineViewBody() {
     if (liveInFlight.current) return;
     liveInFlight.current = true;
     try {
-      const [read, who] = await Promise.all([readMlxLiveStatus(baseUrl), readMlxServing()]);
+      const [read, main] = await Promise.all([readMlxLiveStatus(baseUrl), readMainEngine()]);
       setLive(read);
-      setServing(who);
+      setServing(main?.serving ?? null);
       if (read.ok) {
         const stats = read.stats;
-        setRates(foldRates(source, stats));
+        const own = foldRates(source, stats);
+        // Main reads the engine the whole time it answers; the page only while this tab is open.
+        // Main's runs of the SAME engine kind join the page's — a chat served while the tab was
+        // closed counts in the median.
+        const kind = source.startsWith('remote:') ? 'remote' : source;
+        setRates(main && main.engine === kind ? mergeRateBooks(own, main.rates) : own);
         if (stats.uptimeS != null) {
           const sample = { uptimeS: stats.uptimeS, tps: liveDecodeTps(stats) };
           setTpsHistory((h) => pushSample(h, sample));
