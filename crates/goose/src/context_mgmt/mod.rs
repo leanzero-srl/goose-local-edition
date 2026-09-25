@@ -698,6 +698,62 @@ mod tests {
     use goose_providers::conversation::token_usage::Usage;
     use rmcp::model::{AnnotateAble, CallToolRequestParams, RawContent, Tool};
 
+    /// Compaction and the tool-pair digest ask `complete_fast` for ThinkingEffort::Off, as every
+    /// other provider has honoured; on an MLX engine the Off now arrives as the template switch.
+    /// Compaction's own prompt carries its reasoning step in-band (`<analysis>`), so the engine's
+    /// thinking block ran that step twice.
+    #[tokio::test]
+    async fn compaction_and_the_tool_pair_digest_reach_the_mlx_engine_with_thinking_off() {
+        use crate::model_config::mlx_endpoint::{thinking_off, MlxEndpoint, SERVED};
+        let session = ModelConfig::new(SERVED);
+        let mut messages = vec![Message::user().with_text("list the notes")];
+        messages.extend(create_tool_pair(
+            "call1",
+            "resp1",
+            "developer__shell",
+            "notes/kickoff.md",
+        ));
+        messages.push(Message::assistant().with_text("one file: notes/kickoff.md"));
+        let conversation = Conversation::new_unvalidated(messages);
+
+        let engine = MlxEndpoint::start().await;
+        compact_messages_with_tail(
+            engine.provider.as_ref(),
+            &session,
+            "s",
+            &conversation,
+            true,
+            0,
+        )
+        .await
+        .unwrap();
+        let bodies = engine.bodies().await;
+        assert_eq!(bodies.len(), 1);
+        assert!(bodies[0]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Wrap reasoning in `<analysis>` tags"));
+        assert_eq!(bodies[0]["chat_template_kwargs"], thinking_off());
+
+        let engine = MlxEndpoint::start().await;
+        summarize_tool_call(
+            engine.provider.as_ref(),
+            &session,
+            "s",
+            &conversation,
+            "call1",
+        )
+        .await
+        .unwrap();
+        let bodies = engine.bodies().await;
+        assert_eq!(bodies.len(), 1);
+        assert!(bodies[0]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("summarize a tool call & response pair"));
+        assert_eq!(bodies[0]["chat_template_kwargs"], thinking_off());
+    }
+
     #[test]
     fn strip_reasoning_content_removes_thinking_keeps_text() {
         let mut msg = Message::assistant()

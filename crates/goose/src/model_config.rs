@@ -122,6 +122,18 @@ pub async fn get_fast_model(
     }
 }
 
+/// The config every helper call runs with — the fast model, reasoning off. A helper's answer is
+/// a label, a title or a digest whose own prompt already says what to write; reasoning first buys
+/// nothing and, on a local engine, competes with the agent's turn for the same decode.
+pub async fn get_fast_model_without_reasoning(
+    provider_name: &str,
+    model_config: &ModelConfig,
+) -> Result<ModelConfig> {
+    Ok(get_fast_model(provider_name, model_config)
+        .await?
+        .with_thinking_effort(ThinkingEffort::Off))
+}
+
 /// Run a completion for a lightweight "fast" task (session naming, compaction,
 /// summarization) using the provider's fast model, falling back to the supplied
 /// main `model_config` if the fast model errors.
@@ -133,10 +145,9 @@ pub async fn complete_fast(
     messages: &[Message],
     tools: &[Tool],
 ) -> Result<(Message, ProviderUsage), ProviderError> {
-    let fast_model_config = get_fast_model(provider.get_name(), model_config)
+    let fast_model_config = get_fast_model_without_reasoning(provider.get_name(), model_config)
         .await
-        .map_err(|e| ProviderError::ExecutionError(e.to_string()))?
-        .with_thinking_effort(ThinkingEffort::Off);
+        .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
 
     match crate::session_context::with_session_id(
         Some(session_id.to_string()),
@@ -262,5 +273,112 @@ fn parse_yaml_bool_config(key: &str, value: serde_yaml::Value) -> Result<bool> {
             serde_yaml::to_string(&other).unwrap_or_else(|_| "<unprintable>".to_string()).trim()
         ))
         }
+    }
+}
+
+/// An MLX engine endpoint for request-body tests: the `omlx` definition (the provider every MLX
+/// node resolves to — local sidecar, distributed split, remote peer) aimed at a mock that answers
+/// every chat request with one short streamed label and records what it was sent.
+#[cfg(test)]
+pub(crate) mod mlx_endpoint {
+    use crate::providers::base::Provider;
+    use serde_json::{json, Value};
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    pub(crate) const SERVED: &str = "mihai-qwen3.8-27b-atlassian-q8-mlx";
+
+    pub(crate) struct MlxEndpoint {
+        server: MockServer,
+        pub(crate) provider: Arc<dyn Provider>,
+    }
+
+    fn chunk(delta: Value, finish: Value) -> String {
+        let chunk = json!({"id": "c1", "object": "chat.completion.chunk", "model": SERVED,
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}});
+        format!("data: {chunk}\n\n")
+    }
+
+    impl MlxEndpoint {
+        pub(crate) async fn start() -> Self {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/v1/models"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"object": "list", "data": [{"id": SERVED}]})),
+                )
+                .mount(&server)
+                .await;
+            let body = format!(
+                "{}{}data: [DONE]\n\n",
+                chunk(
+                    json!({"role": "assistant", "content": "reading project configuration"}),
+                    Value::Null
+                ),
+                chunk(json!({}), json!("stop")),
+            );
+            Mock::given(method("POST"))
+                .and(path("/v1/chat/completions"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_string(body),
+                )
+                .mount(&server)
+                .await;
+            let mut config = crate::config::declarative_providers::load_provider("omlx")
+                .expect("the omlx definition loads")
+                .config;
+            config.base_url = format!("{}/v1/chat/completions", server.uri());
+            config.env_vars = None;
+            let provider = crate::providers::openai_def::from_custom_config(config, None)
+                .expect("the omlx provider builds");
+            Self {
+                server,
+                provider: Arc::new(provider),
+            }
+        }
+
+        /// Every chat request body the engine received, in order.
+        pub(crate) async fn bodies(&self) -> Vec<Value> {
+            self.server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|r| r.method == wiremock::http::Method::POST)
+                .map(|r| serde_json::from_slice(&r.body).unwrap())
+                .collect()
+        }
+    }
+
+    pub(crate) fn thinking_off() -> Value {
+        json!({"enable_thinking": false})
+    }
+
+    /// The agent's own turn is the negative control: its config carries no reasoning choice, so
+    /// the engine receives no template switch and the model's template decides as before.
+    #[tokio::test]
+    async fn the_agent_turn_carries_no_template_switch() {
+        use futures::StreamExt;
+        let engine = MlxEndpoint::start().await;
+        let turn = goose_providers::model::ModelConfig::new(SERVED);
+        let messages = vec![crate::conversation::message::Message::user().with_text("hi")];
+        let mut stream = engine
+            .provider
+            .stream(&turn, "You are goose", &messages, &[])
+            .await
+            .unwrap();
+        while stream.next().await.is_some() {}
+        let bodies = engine.bodies().await;
+        assert_eq!(bodies.len(), 1);
+        assert!(
+            bodies[0].get("chat_template_kwargs").is_none(),
+            "{}",
+            bodies[0]
+        );
     }
 }

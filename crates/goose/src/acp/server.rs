@@ -131,6 +131,7 @@ mod shutdown;
 pub use shutdown::{teardown_supervised, TeardownReport};
 mod slash_commands;
 mod sources;
+mod tool_labels;
 mod tool_notifications;
 mod tools;
 
@@ -1520,77 +1521,25 @@ impl GooseAcpAgent {
                             return;
                         }
 
-                        let system =
-                            "Summarize this tool call in a short lowercase phrase (3-8 words). \
-                             No punctuation. No quotes. Examples: reading project configuration, \
-                             checking network connectivity, listing files in src directory";
                         let user_text = format!("Tool: {name}\nArguments: {args_json}");
                         let message = Message::user().with_text(&user_text);
                         let model_config = match agent.model_config_for_session(&sid.0).await {
                             Ok(config) => config,
                             Err(_) => return,
                         };
-                        let fast_model_config = match crate::model_config::get_fast_model(
-                            provider.get_name(),
+                        let llm_outcome = match tool_labels::complete_tool_label(
+                            provider.as_ref(),
                             &model_config,
+                            &sid.0,
+                            tool_labels::TOOL_CALL_LABEL_SYSTEM,
+                            &message,
+                            &format!("tool call summary for {request_id} ({name})"),
                         )
                         .await
                         {
-                            Ok(config) => config,
+                            Ok(label) => label,
                             Err(_) => return,
                         };
-                        // The fast model occasionally returns an empty response
-                        // under load (rate limiting, transient network). One
-                        // retry with a short backoff is enough to recover the
-                        // common cases without paying for the regular model.
-                        let mut llm_outcome: Option<String> = None;
-                        for attempt in 0..2 {
-                            match crate::session_context::with_session_id(
-                                Some(sid.0.to_string()),
-                                provider.complete(
-                                    &fast_model_config,
-                                    system,
-                                    std::slice::from_ref(&message),
-                                    &[],
-                                ),
-                            )
-                            .await
-                            {
-                                Ok((response, _)) => {
-                                    let summary: String = response
-                                        .content
-                                        .iter()
-                                        .filter_map(|c: &MessageContent| c.as_text())
-                                        .collect::<String>()
-                                        .trim()
-                                        .to_string();
-                                    if !summary.is_empty() {
-                                        llm_outcome = Some(summary);
-                                        break;
-                                    }
-                                    if attempt == 0 {
-                                        warn!(
-                                            "tool call summary: fast_complete returned empty for {request_id} ({name}), retrying once",
-                                        );
-                                        tokio::time::sleep(std::time::Duration::from_millis(150))
-                                            .await;
-                                    }
-                                }
-                                Err(e) => {
-                                    if attempt == 0 {
-                                        warn!(
-                                            "tool call summary: fast_complete errored for {request_id} ({name}): {e}, retrying once",
-                                        );
-                                        tokio::time::sleep(std::time::Duration::from_millis(150))
-                                            .await;
-                                    } else {
-                                        warn!(
-                                            "tool call summary: fast_complete errored for {request_id} ({name}) after retry: {e}",
-                                        );
-                                    }
-                                }
-                            }
-                        }
                         match llm_outcome {
                             Some(summary) => (summary, true),
                             None => {
@@ -1810,11 +1759,6 @@ impl GooseAcpAgent {
                 return;
             }
 
-            let system = "Summarize this sequence of tool calls in a short lowercase phrase \
-                 (3-8 words). No punctuation. No quotes. \
-                 Examples: applied dark mode polish, scanned for security issues, \
-                 refactored config loading";
-
             let mut user_text = String::from("Tool call sequence:\n");
             for (i, (name, args)) in steps.iter().enumerate() {
                 user_text.push_str(&format!("Step {}: {} {}\n", i + 1, name, args));
@@ -1824,63 +1768,22 @@ impl GooseAcpAgent {
                 Ok(config) => config,
                 Err(_) => return,
             };
-            let fast_model_config =
-                match crate::model_config::get_fast_model(provider.get_name(), &model_config).await
-                {
-                    Ok(config) => config,
-                    Err(_) => return,
-                };
-
-            // Match the per-tool retry policy: one retry on empty/error keeps
-            // the chain header reliable when the fast model is rate-limited or
-            // momentarily flaky, without escalating to the regular model.
-            let mut summary: Option<String> = None;
-            for attempt in 0..2 {
-                match crate::session_context::with_session_id(
-                    Some(sid.0.to_string()),
-                    provider.complete(
-                        &fast_model_config,
-                        system,
-                        std::slice::from_ref(&message),
-                        &[],
-                    ),
-                )
-                .await
-                {
-                    Ok((response, _)) => {
-                        let s = response
-                            .content
-                            .iter()
-                            .filter_map(|c: &MessageContent| c.as_text())
-                            .collect::<String>()
-                            .trim()
-                            .to_string();
-                        if !s.is_empty() {
-                            summary = Some(s);
-                            break;
-                        }
-                        if attempt == 0 {
-                            warn!(
-                                "tool chain summary: fast_complete returned empty for chain anchored at {first_id} ({} steps), retrying once",
-                                steps.len(),
-                            );
-                            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                        }
-                    }
-                    Err(e) => {
-                        if attempt == 0 {
-                            warn!(
-                                "tool chain summary: fast_complete errored for chain anchored at {first_id}: {e}, retrying once",
-                            );
-                            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                        } else {
-                            warn!(
-                                "tool chain summary: fast_complete errored for chain anchored at {first_id} after retry: {e}",
-                            );
-                        }
-                    }
-                }
-            }
+            let summary = match tool_labels::complete_tool_label(
+                provider.as_ref(),
+                &model_config,
+                &sid.0,
+                tool_labels::TOOL_CHAIN_LABEL_SYSTEM,
+                &message,
+                &format!(
+                    "tool chain summary for chain anchored at {first_id} ({} steps)",
+                    steps.len()
+                ),
+            )
+            .await
+            {
+                Ok(label) => label,
+                Err(_) => return,
+            };
             let Some(summary) = summary else {
                 warn!(
                     "tool chain summary: no LLM summary produced for chain anchored at {first_id} — replay will fall back to the deterministic phrase",
