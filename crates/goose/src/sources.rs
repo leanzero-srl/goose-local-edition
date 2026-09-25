@@ -1882,6 +1882,7 @@ mod tests {
         assert!(name_description(raw).is_none());
         let raw = "---\nname: x\ndescription: a---b\n---\nbody\n\n---\n\nafter the rule";
         let (meta, body) = name_description(raw).unwrap();
+        assert_eq!(meta.name.as_deref(), Some("x"));
         assert_eq!(meta.description, "a---b");
         assert_eq!(body, "body\n\n---\n\nafter the rule");
     }
