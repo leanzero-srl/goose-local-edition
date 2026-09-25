@@ -12,6 +12,9 @@ import { useFileDrop } from '../hooks/useFileDrop';
 import { useEdition } from '../contexts/EditionContext';
 import { useModelAndProvider } from './ModelAndProviderContext';
 import { ChatState } from '../types/chatState';
+import type { ChatServedBy } from './chatServedBy/chatServedBy';
+import { turnCueText } from './chatServedBy/turnCueText';
+import { useTurnCue } from './chatServedBy/useTurnCue';
 import { ChatType } from '../types/chat';
 import { useIsMobile } from '../hooks/use-mobile';
 import { useNavigationContextSafe } from './Layout/NavigationContext';
@@ -66,10 +69,6 @@ const i18n = defineMessages({
     id: 'baseChat.goHome',
     defaultMessage: 'Go home',
   },
-  waitingForReconnect: {
-    id: 'baseChat.waitingForReconnect',
-    defaultMessage: 'Waiting for {mac} to reconnect…',
-  },
   promptFailed: {
     id: 'baseChat.promptFailed',
     defaultMessage: 'That message did not go through',
@@ -89,18 +88,6 @@ const i18n = defineMessages({
  * (the LeanZero monogram on the accent fill) in the Swarm edition; the goose wordmark otherwise.
  * The links are the ones the old cluster carried.
  */
-/**
- * This chat's turn is in flight on a Mac that stopped answering (served-by `reconnecting`): the
- * status line names it — "working on it" is false while nothing can arrive. Only a turn that is
- * thinking or streaming waits on it; compacting, a question to the user, or idle do not.
- */
-export function turnWaitsOn(reconnectingTo: string | null, chatState: ChatState): string | null {
-  if (reconnectingTo == null) return null;
-  return chatState === ChatState.Streaming || chatState === ChatState.Thinking
-    ? reconnectingTo
-    : null;
-}
-
 export function SessionBrand({ isLocal }: { isLocal: boolean }) {
   const anchor = cx('no-drag inline-flex', RADIUS.control, FOCUS);
   const chip = cx(MOTION, 'hover:text-lz-ink', SURFACE.hover);
@@ -240,7 +227,7 @@ export default function BaseChat({
   const disableAnimation = location.state?.disableAnimation || false;
   const [hasStartedUsingRecipe, setHasStartedUsingRecipe] = React.useState(false);
   const [hasNotAcceptedRecipe, setHasNotAcceptedRecipe] = useState<boolean>();
-  const [reconnectingTo, setReconnectingTo] = useState<string | null>(null);
+  const [served, setServed] = useState<ChatServedBy | null>(null);
   const intl = useIntl();
   const [hasRecipeSecurityWarnings, setHasRecipeSecurityWarnings] = useState(false);
   const isMobile = useIsMobile();
@@ -293,6 +280,9 @@ export default function BaseChat({
   // (dead/absent heartbeat, started before this mount) renders nothing. A live run, or one this
   // session starts, attaches exactly as before.
   const swarmRun = useSwarmRun(session?.working_dir, 500, { residentGate: true });
+  // What THIS turn waits on (the Mac reconnecting, a check after it, a silent stream, a prompt
+  // being read), from the composer's one served-by derivation; null = the default words.
+  const turnCue = useTurnCue(served, chatState, messages);
 
   const recipe = session?.recipe as Recipe | null | undefined;
 
@@ -645,8 +635,8 @@ export default function BaseChat({
               // open (so chatState is Streaming) but nothing is being computed. Say so plainly.
               swarmRun.held
                 ? 'swarm paused — nothing is running until you resume'
-                : turnWaitsOn(reconnectingTo, chatState) != null
-                  ? intl.formatMessage(i18n.waitingForReconnect, { mac: reconnectingTo })
+                : turnCue
+                  ? turnCueText(intl, turnCue)
                   : messages.length > 0
                     ? getThinkingMessage(messages[messages.length - 1])
                     : undefined
@@ -700,7 +690,7 @@ export default function BaseChat({
           workingDir={session?.working_dir}
           onWorkingDirChange={handleWorkingDirChange}
           latestInference={latestInference}
-          onReconnectingChange={setReconnectingTo}
+          onServedChange={setServed}
           {...customChatInputProps}
         />
       </div>

@@ -1,7 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { SessionBrand, SessionLoadErrorPanel, SubmitErrorBanner, turnWaitsOn } from './BaseChat';
-import { ChatState } from '../types/chatState';
+import { SessionBrand, SessionLoadErrorPanel, SubmitErrorBanner } from './BaseChat';
 import { IntlTestWrapper } from '../i18n/test-utils';
 import { LEANZERO_WEBSITE_URL } from '../branding';
 import { allClasses, assertStudioClean } from './lz/assertStudioClean';
@@ -99,15 +98,4 @@ describe('BaseChat chrome — notifications', () => {
     expect(classes.length).toBeGreaterThan(20);
     expect(await missingUtilities(classes)).toEqual([]);
   }, 30_000);
-});
-
-describe('BaseChat status line — a turn waiting on a Mac that stopped answering (3.0.37 live)', () => {
-  it('names the Mac only while THIS chat’s turn is thinking or streaming', () => {
-    expect(turnWaitsOn("Work's Mac Studio", ChatState.Streaming)).toBe("Work's Mac Studio");
-    expect(turnWaitsOn("Work's Mac Studio", ChatState.Thinking)).toBe("Work's Mac Studio");
-    expect(turnWaitsOn("Work's Mac Studio", ChatState.Idle)).toBeNull();
-    expect(turnWaitsOn("Work's Mac Studio", ChatState.Compacting)).toBeNull();
-    expect(turnWaitsOn("Work's Mac Studio", ChatState.WaitingForUserInput)).toBeNull();
-    expect(turnWaitsOn(null, ChatState.Streaming)).toBeNull();
-  });
 });
