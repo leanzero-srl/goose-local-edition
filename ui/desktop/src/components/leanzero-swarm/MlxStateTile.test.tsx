@@ -176,14 +176,30 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     await expectDesigned(container);
   });
 
-  it('idle with nothing measured yet: dashes, never the engine aggregate (1,048,576 tok/s after a one-token request)', () => {
+  it('idle with nothing measured yet: the headline says Idle, no dashes, no flat graph, never the engine aggregate (1,048,576 tok/s after a one-token request)', () => {
     tile({
-      live: parseMlxLiveStatus({ status: 'idle', generation_tps: 1048576.0, requests: [] }),
+      live: parseMlxLiveStatus({
+        status: 'idle',
+        generation_tps: 1048576.0,
+        requests: [],
+        total_requests_processed: 2,
+        cache: { tokens_saved: 0, hit_rate: 0 },
+      }),
+      history: [
+        { uptimeS: 1, tps: 0 },
+        { uptimeS: 2, tps: 0 },
+      ],
     });
-    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('—');
-    expect(screen.getByText('nothing written since this page opened')).toBeInTheDocument();
-    expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('—');
-    expect(screen.getByText('no prompt read since this page opened')).toBeInTheDocument();
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(within(t).getByRole('status')).toHaveTextContent('Idle');
+    expect(within(t).queryByText('Running')).toBeNull();
+    expect(screen.queryByTestId('mlx-live-tps')).toBeNull();
+    expect(screen.queryByTestId('mlx-live-pps')).toBeNull();
+    expect(screen.queryByTestId('mlx-tps-sparkline')).toBeNull();
+    expect(screen.queryByText(/1,048,576/)).toBeNull();
+    // "0 prompt tokens from cache" repeated what "0% of cache lookups hit" says.
+    expect(screen.queryByText('prompt tokens from cache')).toBeNull();
+    expect(screen.getByText('requests served')).toBeInTheDocument();
   });
 
   it('serving: a chat, an external /v1 client, and the unexplained rest COUNTED beside the live swarm run', async () => {
@@ -547,7 +563,7 @@ describe('MlxStateTile — a remote single IS the tile while it serves this Mac�
     expect(t).toHaveAttribute('data-state', 'running');
     expect(t).toHaveAttribute('data-phase', 'writing');
     expect(t.className).toContain('bg-lz-phase-writing');
-    expect(within(t).getByRole('status')).toHaveTextContent('Running');
+    expect(within(t).getByRole('status')).toHaveTextContent('Writing');
     expect(screen.getByTestId('mlx-mode')).toHaveTextContent("Serving from Work's Mac Studio");
     expect(screen.getByTestId('mlx-remote-tile')).toHaveTextContent(ROUTE.modelId);
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');

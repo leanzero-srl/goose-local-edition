@@ -92,10 +92,16 @@ const i18n = defineMessages({
   },
   writeRate: { id: 'mlxStateTile.writeRate', defaultMessage: 'tok/s writing' },
   writeRateLast: { id: 'mlxStateTile.writeRateLast', defaultMessage: 'tok/s writing, last run' },
-  writeRateNone: { id: 'mlxStateTile.writeRateNone', defaultMessage: 'nothing written since this page opened' },
+  writeRateNone: {
+    id: 'mlxStateTile.writeRateNone',
+    defaultMessage: 'nothing written since this page opened',
+  },
   readRate: { id: 'mlxStateTile.readRate', defaultMessage: 'tok/s reading this prompt' },
   readRateLast: { id: 'mlxStateTile.readRateLast', defaultMessage: 'tok/s reading, last prompt' },
-  readRateNone: { id: 'mlxStateTile.readRateNone', defaultMessage: 'no prompt read since this page opened' },
+  readRateNone: {
+    id: 'mlxStateTile.readRateNone',
+    defaultMessage: 'no prompt read since this page opened',
+  },
   promptSize: {
     id: 'mlxStateTile.promptSize',
     defaultMessage: 'prompt tokens, reading for {elapsed}',
@@ -701,6 +707,9 @@ function LiveReadout({
   const activity = mlxActivity(stats);
   const active = activity === 'generating' || activity === 'prefill' || activity === 'queued';
   const { hero, second } = figures(intl, stats, last);
+  // Idle with no rate this page measured: the counters below say what the engine did; two dashes
+  // saying "nothing" beside "2 requests served" were noise.
+  const showFigures = active || last.decodeTps != null || last.prefillTps != null;
   // Running requests first, then the queue — the engine's own order within each.
   const requests = [
     ...stats.requests.filter((r) => r.status !== 'waiting'),
@@ -728,7 +737,7 @@ function LiveReadout({
       label: intl.formatMessage(i18n.written),
     });
   }
-  if (stats.cacheTokensSaved != null) {
+  if (stats.cacheTokensSaved != null && stats.cacheTokensSaved > 0) {
     facts.push({
       key: 'saved',
       value: compact(intl, stats.cacheTokensSaved),
@@ -758,21 +767,25 @@ function LiveReadout({
   }
   return (
     <div data-testid="mlx-live" data-activity={activity} className="flex flex-col gap-4">
-      <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] items-end gap-4">
-        <div className="flex min-w-0 flex-col gap-1">
-          <span data-testid={hero.testId} className={active ? HERO : HERO_QUIET}>
-            {hero.value}
-          </span>
-          <span className={LABEL}>{hero.label}</span>
+      {showFigures && (
+        <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] items-end gap-4">
+          <div className="flex min-w-0 flex-col gap-1">
+            <span data-testid={hero.testId} className={active ? HERO : HERO_QUIET}>
+              {hero.value}
+            </span>
+            <span className={LABEL}>{hero.label}</span>
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <span data-testid={second.testId} className={SECOND}>
+              {second.value}
+            </span>
+            <span className={LABEL}>{second.label}</span>
+          </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-1">
-          <span data-testid={second.testId} className={SECOND}>
-            {second.value}
-          </span>
-          <span className={LABEL}>{second.label}</span>
-        </div>
-      </div>
-      <Sparkline samples={history} />
+      )}
+      {/* The writing rate's trace means something only while it writes; idle it was a flat line
+          with a dot that read as a slider. */}
+      {activity === 'generating' && <Sparkline samples={history} />}
       {serving && <ServingList serving={serving} />}
       {requests.length > 0 && (
         <ul aria-label={intl.formatMessage(i18n.requestsAria)} className="flex flex-col gap-3">
@@ -1191,16 +1204,20 @@ export function servingEngine(
     : starting
       ? 'mounting'
       : (state ?? (unreachable ? 'unreachable' : 'checking'));
-  const wordText = dist
-    ? distributedStateWord(intl, dist.state)
-    : hosting
-      ? hosting.state === 'loading'
-        ? intl.formatMessage(i18n.hostingLoading, {
-            rank: hosting.rank,
-            requester: hosting.requesterName,
-          })
-        : distributedStateWord(intl, hosting.state)
-      : intl.formatMessage(STATE_WORD[word]);
+  // While the engine is up and read, the headline IS what it is doing — the tray's word
+  // ("Remote · Idle"). "Running" beside a grey idle fill read as work (3.0.30, the owner).
+  const wordText = activity
+    ? intl.formatMessage(ACTIVITY_WORD[activity])
+    : dist
+      ? distributedStateWord(intl, dist.state)
+      : hosting
+        ? hosting.state === 'loading'
+          ? intl.formatMessage(i18n.hostingLoading, {
+              rank: hosting.rank,
+              requester: hosting.requesterName,
+            })
+          : distributedStateWord(intl, hosting.state)
+        : intl.formatMessage(STATE_WORD[word]);
   return {
     mode: dist ? 'distributed' : hosting ? 'hosting' : remote ? 'remote' : 'single',
     phase,
@@ -1281,15 +1298,14 @@ export function MlxStateTile(props: MlxStateTileProps) {
         <div className="flex items-center justify-between gap-3">
           <span className="flex items-center gap-2 [&_svg]:size-5">
             <span aria-hidden>{icon}</span>
-            <span role="status" className="text-lz-h2">
+            <span
+              role="status"
+              data-testid={activity ? 'mlx-activity' : undefined}
+              className="text-lz-h2"
+            >
               {wordText}
             </span>
           </span>
-          {activity && (
-            <span data-testid="mlx-activity" className={cx('text-lz-body', WEIGHT.semibold)}>
-              {intl.formatMessage(ACTIVITY_WORD[activity])}
-            </span>
-          )}
         </div>
         <span data-testid="mlx-mode" className={cx(LINE, WEIGHT.semibold)}>
           {modeLabel}

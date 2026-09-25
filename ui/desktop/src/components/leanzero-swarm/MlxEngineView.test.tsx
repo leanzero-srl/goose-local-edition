@@ -911,7 +911,9 @@ describe('MlxEngineView state tile instrument', () => {
     const badge = await screen.findByTestId('mlx-state-badge');
     expect(badge).toHaveAttribute('data-mode', 'remote');
     expect(badge).toHaveAttribute('data-phase', 'writing');
-    expect(badge).toHaveTextContent('Running');
+    // The badge speaks the tile's word: what the engine is doing, never "Running" beside it.
+    expect(badge).toHaveTextContent('Writing');
+    expect(badge).not.toHaveTextContent('Running');
     expect(screen.getByTestId('mlx-mode-chip')).toHaveTextContent("Serving from Work's Mac Studio");
     unmount();
   });
