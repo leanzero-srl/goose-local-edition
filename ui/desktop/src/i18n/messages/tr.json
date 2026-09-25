@@ -740,9 +740,6 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Motoru aç"
   },
-  "composerReadiness.peerKeptModel": {
-    "defaultMessage": "{peer} modelini yüklü tuttu"
-  },
   "composerReadiness.reconnecting": {
     "defaultMessage": "{peer} ile bağlantı kesildi — yeniden bağlanıyor…"
   },
@@ -4969,6 +4966,15 @@
   },
   "parameterInputModal.whatToDo": {
     "defaultMessage": "Ne yapmak istersin?"
+  },
+  "peerHeld.asking": {
+    "defaultMessage": "{peer} modeli hâlâ tutuyor — goose serbest bırakmasını istedi"
+  },
+  "peerHeld.dismiss": {
+    "defaultMessage": "Kapat"
+  },
+  "peerHeld.held": {
+    "defaultMessage": "{peer} modeli hâlâ tutuyor — geri geldiğinde o Mac'te durdurun"
   },
   "permissionModal.alwaysAllow": {
     "defaultMessage": "Her zaman izin ver"

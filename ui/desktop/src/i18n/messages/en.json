@@ -740,9 +740,6 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Open Engine"
   },
-  "composerReadiness.peerKeptModel": {
-    "defaultMessage": "{peer} kept its model loaded"
-  },
   "composerReadiness.reconnecting": {
     "defaultMessage": "Lost contact with {peer} — reconnecting…"
   },
@@ -4969,6 +4966,15 @@
   },
   "parameterInputModal.whatToDo": {
     "defaultMessage": "What would you like to do?"
+  },
+  "peerHeld.asking": {
+    "defaultMessage": "{peer} still holds the model — goose asked it to free it"
+  },
+  "peerHeld.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
+  "peerHeld.held": {
+    "defaultMessage": "{peer} still holds the model — stop it on that Mac once it is back"
   },
   "permissionModal.alwaysAllow": {
     "defaultMessage": "Always allow"

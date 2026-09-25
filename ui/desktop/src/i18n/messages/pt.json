@@ -740,9 +740,6 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Abrir motor"
   },
-  "composerReadiness.peerKeptModel": {
-    "defaultMessage": "{peer} manteve o modelo carregado"
-  },
   "composerReadiness.reconnecting": {
     "defaultMessage": "Contato perdido com {peer} — reconectando…"
   },
@@ -4969,6 +4966,15 @@
   },
   "parameterInputModal.whatToDo": {
     "defaultMessage": "O que pretende fazer?"
+  },
+  "peerHeld.asking": {
+    "defaultMessage": "{peer} ainda mantém o modelo — o goose pediu que o libere"
+  },
+  "peerHeld.dismiss": {
+    "defaultMessage": "Dispensar"
+  },
+  "peerHeld.held": {
+    "defaultMessage": "{peer} ainda mantém o modelo — pare-o naquele Mac quando ele voltar"
   },
   "permissionModal.alwaysAllow": {
     "defaultMessage": "Permitir sempre"

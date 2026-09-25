@@ -740,9 +740,6 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "エンジンを開く"
   },
-  "composerReadiness.peerKeptModel": {
-    "defaultMessage": "{peer} はモデルを読み込んだままです"
-  },
   "composerReadiness.reconnecting": {
     "defaultMessage": "{peer} との接続が切れました — 再接続中…"
   },
@@ -4969,6 +4966,15 @@
   },
   "parameterInputModal.whatToDo": {
     "defaultMessage": "どうしますか？"
+  },
+  "peerHeld.asking": {
+    "defaultMessage": "{peer} はまだモデルを保持しています — goose が解放を依頼しました"
+  },
+  "peerHeld.dismiss": {
+    "defaultMessage": "閉じる"
+  },
+  "peerHeld.held": {
+    "defaultMessage": "{peer} はまだモデルを保持しています — 戻ったらその Mac で停止してください"
   },
   "permissionModal.alwaysAllow": {
     "defaultMessage": "常に許可"

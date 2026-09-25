@@ -740,9 +740,6 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "엔진 열기"
   },
-  "composerReadiness.peerKeptModel": {
-    "defaultMessage": "{peer}이(가) 모델을 로드된 상태로 유지했습니다"
-  },
   "composerReadiness.reconnecting": {
     "defaultMessage": "{peer}와(과) 연결이 끊겼습니다 — 다시 연결하는 중…"
   },
@@ -4969,6 +4966,15 @@
   },
   "parameterInputModal.whatToDo": {
     "defaultMessage": "무엇을 하고 싶나요?"
+  },
+  "peerHeld.asking": {
+    "defaultMessage": "{peer}이(가) 아직 모델을 보유하고 있습니다 — goose가 해제를 요청했습니다"
+  },
+  "peerHeld.dismiss": {
+    "defaultMessage": "닫기"
+  },
+  "peerHeld.held": {
+    "defaultMessage": "{peer}이(가) 아직 모델을 보유하고 있습니다 — 다시 연결되면 그 Mac에서 중지하세요"
   },
   "permissionModal.alwaysAllow": {
     "defaultMessage": "항상 허용"
