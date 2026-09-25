@@ -2777,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "Đã hết hạn — chưa lưu"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "Từ một cuộc trò chuyện trong dự án này · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "Tiêu cực"
   },

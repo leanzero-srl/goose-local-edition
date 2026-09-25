@@ -114,3 +114,32 @@ describe('MemoryProposalCards — J8, the card under the last message', () => {
     expect(container.querySelector('[data-testid="memory-proposals"]')).toBeNull();
   });
 });
+
+describe('MemoryProposalCards — where a card came from (Q-82)', () => {
+  /** E2E #2: run #1's lookup at 22:04, filed under the project, listed at the bottom of run #2. */
+  const atlassian = proposal({
+    id: 'p-1790104-1',
+    key: 'wd-fa718b6d3b269f16',
+    kind: 'knowledge',
+    polarity: undefined,
+    text: 'Atlassian Data Center End of Life timeline (official): EOL = 28 Mar 2029',
+    why: 'grounded by a lookup this turn',
+    category: 'atlassian-migration',
+    sources: ['https://www.atlassian.com/licensing/data-center-end-of-life'],
+    createdAt: Date.UTC(2026, 8, 25, 19, 4) / 1000,
+  });
+
+  it('a card filed for the whole project says so, and when — never passes as this chat’s own', async () => {
+    list.mockResolvedValue([atlassian]);
+    mount();
+    const origin = await screen.findByTestId('memory-proposal-origin');
+    expect(origin.textContent).toMatch(/^From a chat in this project · Sep 25, /);
+  });
+
+  it('a card this chat asked for carries no origin line', async () => {
+    list.mockResolvedValue([{ ...atlassian, key: 'sess-1' }]);
+    mount();
+    await screen.findByTestId('memory-proposal-card');
+    expect(screen.queryByTestId('memory-proposal-origin')).toBeNull();
+  });
+});

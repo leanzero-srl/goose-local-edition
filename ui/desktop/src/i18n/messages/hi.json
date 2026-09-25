@@ -2777,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "समाप्त — सहेजा नहीं गया"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "इस प्रोजेक्ट की एक चैट से · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "नकारात्मक"
   },

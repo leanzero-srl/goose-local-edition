@@ -5,9 +5,11 @@
 //! through [`crate::MemoryStore::remember`] when a human clicks Save; declined ones stay on disk as
 //! the record of what was asked, so the same lesson is never proposed twice in a row.
 //!
-//! Keys: an ACP session id for the end-of-turn assessment, or [`working_dir_key`] for a proposal
-//! filed by the memory extension's `propose_knowledge` tool, which runs in its own process and
-//! knows the working directory but no session. The desktop lists both for a session.
+//! Keys: an ACP session id — the end-of-turn assessment's, and the memory extension's
+//! `propose_knowledge` reads it from the tool call's `agent-session-id` meta — or
+//! [`working_dir_key`] for a proposal filed with no session known (and every knowledge proposal
+//! filed before Q-82, when a card proposed in one chat showed in every chat of the project). The
+//! desktop lists both for a session and says where a working-dir one came from.
 //!
 //! This crate owns the format so the MCP process and the ACP server write ONE shape.
 

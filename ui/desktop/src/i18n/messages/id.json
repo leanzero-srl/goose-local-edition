@@ -2777,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "Kedaluwarsa — tidak disimpan"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "Dari obrolan di proyek ini · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "Negatif"
   },

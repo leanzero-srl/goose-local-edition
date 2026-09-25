@@ -2777,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "만료됨 — 저장되지 않음"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "이 프로젝트의 채팅에서 · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "부정"
   },

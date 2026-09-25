@@ -2777,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "已过期 — 未保存"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "来自此项目中的一个聊天 · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "负面"
   },

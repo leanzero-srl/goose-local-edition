@@ -2777,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "Истекло — не сохранено"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "Из чата в этом проекте · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "Негативно"
   },
