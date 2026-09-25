@@ -39,8 +39,9 @@ pub struct PublishedRoute {
     pub peer: String,
     pub peer_hostname: String,
     /// The name the peer's owner gave it (macOS ComputerName, "Work's Mac Studio") as the Link
-    /// roster reported it when the route started. `None` = its goose did not say, or an older
-    /// goosed published this record.
+    /// roster reported it when the route started, or later ([`name_peer`]: a route started before
+    /// the roster heard a relaunching peer's name). `None` = the roster has not said yet, or an
+    /// older goosed published this record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_computer_name: Option<String>,
     pub model_id: String,
@@ -169,6 +170,39 @@ pub fn install(relay: InferenceRelay, route: PublishedRoute) -> Result<()> {
     Ok(())
 }
 
+/// Name the peer of THIS goosed's route at `base_url` (the live Link roster's ComputerName, heard
+/// after the route started) and republish the record. `Ok(false)` when this goosed no longer owns
+/// that route — the slot is held across the write, and [`uninstall`] takes the slot before it
+/// withdraws the record, so a name never resurrects a withdrawn route.
+pub fn name_peer(base_url: &str, name: &str) -> Result<bool> {
+    let mut owned = OWNED.lock().unwrap_or_else(|e| e.into_inner());
+    match owned.as_mut() {
+        Some(owned) => republish_named(&record_path(), &mut owned.route, base_url, name),
+        None => Ok(false),
+    }
+}
+
+fn republish_named(
+    path: &Path,
+    route: &mut PublishedRoute,
+    base_url: &str,
+    name: &str,
+) -> Result<bool> {
+    if route.base_url != base_url {
+        return Ok(false);
+    }
+    if route.peer_computer_name.as_deref() == Some(name) {
+        return Ok(true);
+    }
+    let named = PublishedRoute {
+        peer_computer_name: Some(name.to_string()),
+        ..route.clone()
+    };
+    publish_at(path, &named)?;
+    *route = named;
+    Ok(true)
+}
+
 /// Drop THIS goosed's route: withdraw the record and stop the relay. Returns the route it held.
 pub fn uninstall() -> Result<Option<PublishedRoute>> {
     let owned = OWNED.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -192,6 +226,41 @@ mod tests {
             capacity: 8,
             template_kwargs: None,
         }
+    }
+
+    /// 2026-09-25 12:15:46Z: the launch restore published the route before the roster had heard
+    /// the Studio's name; the record said `worksmacstudio-lan-6a972f` from then on.
+    #[test]
+    fn a_name_heard_after_the_start_is_written_into_the_owned_record_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(RECORD_FILE);
+        let mut owned = route(10);
+        publish_at(&path, &owned).unwrap();
+
+        assert!(republish_named(
+            &path,
+            &mut owned,
+            "http://127.0.0.1:61001/relay/ab",
+            "Work's Mac Studio"
+        )
+        .unwrap());
+        let RouteRecord::Mine(read) = read_at(&path, 10, |_| true) else {
+            panic!("the owner's record stays its own");
+        };
+        assert_eq!(read.peer_name(), "Work's Mac Studio");
+        assert_eq!(owned, read);
+
+        // A route this goosed no longer holds under that relay is never rewritten.
+        let mut replaced = route(10);
+        replaced.base_url = "http://127.0.0.1:61002/relay/cd".to_string();
+        assert!(!republish_named(
+            &path,
+            &mut replaced,
+            "http://127.0.0.1:61001/relay/ab",
+            "Other"
+        )
+        .unwrap());
+        assert_eq!(replaced.peer_computer_name, None);
     }
 
     #[test]

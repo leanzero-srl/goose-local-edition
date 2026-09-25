@@ -17,7 +17,7 @@
 use super::*;
 use crate::config::ConfigError;
 use crate::providers::mlx_remote::{self, PublishedRoute, RouteRecord};
-use crate::providers::mlx_serving_intent::{IntentKind, ServingIntent};
+use crate::providers::mlx_serving_intent::{self, IntentKind, IntentRecord, ServingIntent};
 use goose_sidecar::engine::{served_model_id, EngineSettings};
 use leanzero_link::inference::{
     InferenceRelay, PeerCallResolver, ENGINE_UNREACHABLE, RELAY_FAILED,
@@ -234,6 +234,10 @@ pub(super) trait PeerControl: Send + Sync {
 
     /// Resolves with [`Self::unreachable`]'s words the first time the fabric cannot reach `peer`.
     async fn lost(&self, peer: &str) -> String;
+
+    /// The name `peer`'s owner gave it (macOS ComputerName) as the live Link roster reports it
+    /// now; `None` while the roster has not heard it (its first poll of a relaunched peer).
+    async fn computer_name(&self, peer: &str) -> Option<String>;
 }
 
 #[async_trait::async_trait]
@@ -263,6 +267,16 @@ impl PeerControl for LinkManager {
             }),
             Some(_) => None,
         }
+    }
+
+    async fn computer_name(&self, peer: &str) -> Option<String> {
+        let registry = self.active_registry().await?;
+        registry
+            .peer_nodes()
+            .into_iter()
+            .find(|node| node.node_id == peer || node.hostname == peer)?
+            .computer_name
+            .filter(|name| !name.trim().is_empty())
     }
 
     /// The fabric's view changes only when one of its polls lands, so it is looked at on the
@@ -552,12 +566,91 @@ fn peer_engine_failure(peer: &str, engine: &MlxEngineStatusDto, proxy_answer: &s
     )
 }
 
+/// Where a route's missing peer name came from.
+#[derive(Debug, PartialEq)]
+enum PeerNameSource {
+    /// The live Link roster, now.
+    Roster(String),
+    /// The name this Mac's owner's remembered serving intent recorded for the SAME peer id — that
+    /// peer's own ComputerName as the roster reported it in an earlier session. An earlier
+    /// MEASUREMENT of this peer, not a substitute: it is used only while the roster has not
+    /// heard the name yet, and never written into the route record.
+    Remembered(String),
+}
+
+/// The intent's name for `route`'s peer, when it IS a name — an intent written by a start that
+/// itself lacked the name recorded the hostname, which names nothing new.
+fn remembered_peer_name(intent: &IntentRecord, route: &PublishedRoute) -> Option<String> {
+    match intent {
+        IntentRecord::Present(ServingIntent::RemoteSingle {
+            peer, peer_name, ..
+        }) if *peer == route.peer
+            && !peer_name.trim().is_empty()
+            && *peer_name != route.peer_hostname
+            && *peer_name != route.peer =>
+        {
+            Some(peer_name.clone())
+        }
+        _ => None,
+    }
+}
+
+/// The route's peer name when its record has none — the route was started (the launch restore
+/// is the measured case, 2026-09-25 12:15:46Z, 5 s after goosed started) before the Link roster
+/// had heard a relaunching peer's ComputerName, and the record kept `None`.
+async fn missing_peer_name(
+    control: Option<&dyn PeerControl>,
+    route: &PublishedRoute,
+    intent: &IntentRecord,
+) -> Option<PeerNameSource> {
+    if route
+        .peer_computer_name
+        .as_deref()
+        .is_some_and(|name| !name.trim().is_empty())
+    {
+        return None;
+    }
+    if let Some(control) = control {
+        if let Some(name) = control.computer_name(&route.peer).await {
+            return Some(PeerNameSource::Roster(name));
+        }
+    }
+    remembered_peer_name(intent, route).map(PeerNameSource::Remembered)
+}
+
+/// `route` with its peer named, for this read. The goosed that OWNS the route also writes a name
+/// the live roster gave into the route record, so the swarm router (it reads the record on every
+/// chat request, so its lease and serving rows follow), main, the tray and every other window
+/// heal from the same file.
+async fn named_route(
+    control: Option<&dyn PeerControl>,
+    mut route: PublishedRoute,
+    owned: bool,
+) -> PublishedRoute {
+    let name = match missing_peer_name(control, &route, &mlx_serving_intent::read()).await {
+        None => return route,
+        Some(PeerNameSource::Remembered(name)) => name,
+        Some(PeerNameSource::Roster(name)) => {
+            if owned {
+                if let Err(error) = mlx_remote::name_peer(&route.base_url, &name) {
+                    warn!(%error, peer = %route.peer, "mlx remote single: the peer's name could not be written into the route record; other windows keep its hostname");
+                }
+            }
+            name
+        }
+    };
+    route.peer_computer_name = Some(name);
+    route
+}
+
 /// The route as every surface reads it. Only the goosed that owns the route restores it; another
 /// window's goosed reports what it sees.
 async fn current_status() -> MlxRemoteSingleStatusDto {
     let manager = super::link::existing_link_manager();
+    let control = manager.as_deref().map(|m| m as &dyn PeerControl);
     match mlx_remote::read() {
         RouteRecord::Mine(route) => {
+            let route = named_route(control, route, true).await;
             owned_route_status(
                 &ROUTE_RESTORE,
                 manager.map(|m| m as Arc<dyn PeerControl>),
@@ -567,7 +660,8 @@ async fn current_status() -> MlxRemoteSingleStatusDto {
             .await
         }
         RouteRecord::Other(route) => {
-            route_status(manager.as_deref().map(|m| m as &dyn PeerControl), &route).await
+            let route = named_route(control, route, false).await;
+            route_status(control, &route).await
         }
         RouteRecord::Unreadable { path, error } => MlxRemoteSingleStatusDto {
             state: "failed".to_string(),
@@ -1006,6 +1100,12 @@ impl GooseAcpAgent {
         match mlx_remote::read() {
             RouteRecord::Mine(route) if route.peer == req.peer && route.model_id == req.model_id => {
                 let manager = super::link::existing_link_manager();
+                let route = named_route(
+                    manager.as_deref().map(|m| m as &dyn PeerControl),
+                    route,
+                    true,
+                )
+                .await;
                 // A restore under way reads `mounting` here: the same placement asked again joins
                 // it. A peer that does not answer (`reconnecting`) is kept too: a fresh start
                 // would withdraw the route and then fail to reach the same peer.
@@ -1030,11 +1130,9 @@ impl GooseAcpAgent {
             }
             RouteRecord::Other(route) if route.peer == req.peer && route.model_id == req.model_id => {
                 let manager = super::link::existing_link_manager();
-                return Ok(route_status(
-                    manager.as_deref().map(|m| m as &dyn PeerControl),
-                    &route,
-                )
-                .await);
+                let control = manager.as_deref().map(|m| m as &dyn PeerControl);
+                let route = named_route(control, route, false).await;
+                return Ok(route_status(control, &route).await);
             }
             RouteRecord::Mine(route) => {
                 return Err(refusal(
@@ -1139,6 +1237,9 @@ impl GooseAcpAgent {
             mounted = mount.mounted,
             "mlx remote single: chat routed to the peer's engine through LeanZero Link"
         );
+        // Named for this answer (and so for the intent remembered from it) even when the roster
+        // had not heard the peer's name at the mount; the record heals on the next status read.
+        let route = named_route(Some(manager.as_ref()), route, false).await;
         Ok(route_status(Some(manager.as_ref()), &route).await)
     }
 
@@ -1340,6 +1441,9 @@ mod tests {
         fabric_lost: StdMutex<Option<String>>,
         /// Every op the route made on the peer over Link.
         ops: AtomicUsize,
+        /// The ComputerName the Link roster has heard for the Studio (`None` right after a
+        /// relaunch, before its first poll).
+        roster_name: StdMutex<Option<String>>,
     }
 
     impl StandInPeer {
@@ -1352,6 +1456,7 @@ mod tests {
                 link_down: Arc::new(StdMutex::new(None)),
                 fabric_lost: StdMutex::new(None),
                 ops: AtomicUsize::new(0),
+                roster_name: StdMutex::new(None),
             })
         }
 
@@ -1429,6 +1534,10 @@ mod tests {
 
         async fn unreachable(&self, _peer: &str) -> Option<String> {
             self.fabric_lost.lock().unwrap().clone()
+        }
+
+        async fn computer_name(&self, _peer: &str) -> Option<String> {
+            self.roster_name.lock().unwrap().clone()
         }
 
         /// The fabric's polls, as a test join: looked at until a test says it noticed.
@@ -1894,6 +2003,68 @@ mod tests {
             .last_error
             .unwrap()
             .starts_with("502: linkRelayFailed: cannot reach Link peer 'wh'"));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The peer's name heals after a start that raced its relaunch (3.0.37, 12:15:46Z).
+    // -----------------------------------------------------------------------------------------
+
+    fn intent_for(peer: &str, name: &str) -> IntentRecord {
+        IntentRecord::Present(ServingIntent::RemoteSingle {
+            peer: peer.to_string(),
+            peer_name: name.to_string(),
+            model_id: QWEN.to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn a_route_started_before_the_roster_heard_the_name_is_named_by_the_roster_then_the_intent(
+    ) {
+        let peer = StandInPeer::new(serving_engine());
+        let unnamed = PublishedRoute {
+            peer: "worksmacstudio-lan-6a972f".to_string(),
+            peer_hostname: "worksmacstudio-lan-6a972f".to_string(),
+            peer_computer_name: None,
+            ..route_to("http://127.0.0.1:1/relay/cap".to_string())
+        };
+        let studio = intent_for("worksmacstudio-lan-6a972f", "Work's Mac Studio");
+        let control = Some(peer.as_ref() as &dyn PeerControl);
+
+        // The roster has not heard it yet: the owner's remembered name for the SAME peer.
+        assert_eq!(
+            missing_peer_name(control, &unnamed, &studio).await,
+            Some(PeerNameSource::Remembered("Work's Mac Studio".to_string()))
+        );
+        // The roster's live name wins once it has it.
+        *peer.roster_name.lock().unwrap() = Some("Studio (renamed)".to_string());
+        assert_eq!(
+            missing_peer_name(control, &unnamed, &studio).await,
+            Some(PeerNameSource::Roster("Studio (renamed)".to_string()))
+        );
+        // A named record is left alone.
+        let named = PublishedRoute {
+            peer_computer_name: Some("Work's Mac Studio".to_string()),
+            ..unnamed.clone()
+        };
+        assert_eq!(missing_peer_name(control, &named, &studio).await, None);
+
+        // No roster, and an intent that is not a name for this peer: nothing is invented.
+        *peer.roster_name.lock().unwrap() = None;
+        for intent in [
+            intent_for("worksmacstudio-lan-6a972f", "worksmacstudio-lan-6a972f"),
+            intent_for("another-mac", "Another Mac"),
+            IntentRecord::Absent,
+        ] {
+            assert_eq!(
+                missing_peer_name(control, &unnamed, &intent).await,
+                None,
+                "{intent:?}"
+            );
+        }
+        assert_eq!(
+            missing_peer_name(None, &unnamed, &IntentRecord::Absent).await,
+            None
+        );
     }
 
     #[test]
