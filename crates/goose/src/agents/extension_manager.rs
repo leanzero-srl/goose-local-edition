@@ -1284,6 +1284,27 @@ impl ExtensionManager {
     }
 
     /// Get all tools from all clients with proper prefixing
+    /// The extensions the user added from outside goose — MCP servers over stdio, streamable HTTP
+    /// or SSE, and inline Python — whose tool schemas `tool_deferral` may leave out of a request.
+    /// goose's own (platform, builtin) and the frontend's tools are never deferred.
+    pub async fn deferrable_extensions(&self) -> std::collections::HashSet<String> {
+        self.extensions
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, extension)| {
+                matches!(
+                    extension.config,
+                    ExtensionConfig::Stdio { .. }
+                        | ExtensionConfig::StreamableHttp { .. }
+                        | ExtensionConfig::Sse { .. }
+                        | ExtensionConfig::InlinePython { .. }
+                )
+            })
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
+
     pub async fn get_prefixed_tools(
         &self,
         session_id: &str,
