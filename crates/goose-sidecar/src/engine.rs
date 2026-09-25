@@ -909,9 +909,8 @@ impl MlxEngineManager {
             Ok(bytes) => (
                 bytes,
                 Some(format!(
-                    "{mounted} is mounted here: its {:.1} GiB count as available, the mount \
-                     replaces it",
-                    bytes as f64 / GIB as f64
+                    "{mounted} is mounted here: mounting replaces it, so its {} count as available",
+                    fit::gb(bytes)
                 )),
             ),
             Err(e) => (

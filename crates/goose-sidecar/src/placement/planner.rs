@@ -1746,7 +1746,7 @@ mod tests {
         assert_eq!(gate.verdict, Verdict::Block);
         assert_eq!(here.fit.detail, format!("Mihai Macbook: {}", gate.message));
         assert_eq!(here.fit.short_bytes, gate.short_bytes());
-        assert!(gate.message.contains("budget 81.1 GiB"), "{}", gate.message);
+        assert!(gate.message.contains("budget 81.1 GB"), "{}", gate.message);
         let split = split_that_fits(&plan.candidates).expect("a split fits");
         assert_eq!(split.id, "pipeline:jaccl:local+link:worksmacstudio");
         assert_eq!(
