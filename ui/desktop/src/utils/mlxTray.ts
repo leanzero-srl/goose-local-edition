@@ -35,6 +35,7 @@ import type {
 import type { MlxClient, MlxServing } from './mlxServing';
 import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
 import { leaveCause } from './leaveCause';
+import { routeContactLost } from './routeContact';
 import { restoreTrayLine, type MlxRestoreReport } from './mlxRestoreReport';
 
 /**
@@ -150,10 +151,9 @@ function remoteLive(
  * Mac is read or offered as if it served (Q-48).
  */
 function remoteReconnecting(snapshot: MlxEngineSnapshot, report: MlxRemoteReport): boolean {
-  return (
-    report.state === 'reconnecting' ||
-    (report.state === 'ready' && snapshot.engine === 'remote' && snapshot.mode === 'reconnecting')
-  );
+  // The composer bar's rule (routeContact.ts): main's own read of the route decides "back".
+  if (report.state !== 'ready' && report.state !== 'reconnecting') return false;
+  return routeContactLost(report, null, snapshot) != null;
 }
 
 /**
