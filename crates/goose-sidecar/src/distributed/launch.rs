@@ -52,10 +52,20 @@ pub enum RankProgram {
     /// `mlx_lm.server` under `rank_wrapper.py` (tensor split). Its in-process memory and wired
     /// limits sit at the node's own GPU ceiling (`max_recommended_working_set_size`, read on the
     /// rank), the cache limit at the ceiling less the planned bytes.
+    ///
+    /// Tagged `mlxLmServerDoorbell` since the doorbell (Q-66): an idle worker parks in recv(1)
+    /// instead of spinning in JACCL's all_sum, which needs every rank's wrapper to take part.
+    /// A Link peer runs its OWN goosed's wrapper, and an older one would never join the
+    /// doorbell's port all_sum (a hang). The new tag makes that peer's goosed refuse the spec at
+    /// rank start instead (serde: unknown variant; see `older_peer_refusal`). `mlxLmServer`
+    /// (an older requester's spec) still reads, with `doorbell` false: upstream waiting.
+    #[serde(rename = "mlxLmServerDoorbell", alias = "mlxLmServer")]
     MlxLmServer {
         context_window: u64,
         prompt_cache_bytes: u64,
         planned_bytes: u64,
+        #[serde(default)]
+        doorbell: bool,
     },
     /// The fork's `pipeline_qwen4_serve.serve` under `pipeline_rank.py` (layer split): the exact
     /// `pipeline_qwen4 serve` arguments, parsed on the rank by the fork's own parser.
@@ -100,6 +110,7 @@ pub fn rank_specs(
             context_window,
             prompt_cache_bytes,
             planned_bytes,
+            doorbell: true,
         }
     })
 }
@@ -809,6 +820,55 @@ print("ok")
         let spec: serde_json::Value =
             serde_json::from_slice(&b64.decode(&args[3]).unwrap()).unwrap();
         assert_eq!(spec["context_window"], 262_144);
+    }
+
+    /// Q-66's doorbell needs every rank's wrapper to take part, so the spec says so twice: the
+    /// `doorbell` flag the wrapper reads, and a program tag an older peer's goosed cannot parse
+    /// (it refuses at rank start instead of joining a launch it would hang).
+    #[test]
+    fn the_tensor_spec_asks_for_the_doorbell_and_an_older_peer_refuses_it() {
+        let config = two_mac_config();
+        let spec = rank_specs(&config, "node-alias", &[(1, 2), (3, 4)], 8_192, 2.0).remove(1);
+        let json = serde_json::to_value(&spec).unwrap();
+        assert_eq!(json["program"], "mlxLmServerDoorbell");
+        assert_eq!(json["doorbell"], true);
+
+        // An older requester's spec (no doorbell, the old tag) still starts a rank here, waiting
+        // the upstream way.
+        let mut older = json.clone();
+        older["program"] = "mlxLmServer".into();
+        older.as_object_mut().unwrap().remove("doorbell");
+        let read: RankSpec = serde_json::from_value(older).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                doorbell: false,
+                ..
+            }
+        ));
+
+        // An older peer's goosed (its enum has no doorbell tag) cannot read this spec, and the
+        // requester says what to do about it.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum OlderProgram {
+            MlxLmServer {
+                context_window: u64,
+                prompt_cache_bytes: u64,
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused = serde_json::from_value::<OlderProgram>(json).unwrap_err();
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
+    }
+
+    fn link_control_refusal(error: &str) -> Option<&'static str> {
+        super::super::link_control::older_peer_refusal(error)
     }
 
     /// The phases a pipeline rank walks, from its own lines (the 27B's figures as a reporter thread
