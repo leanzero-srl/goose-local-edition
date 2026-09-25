@@ -1,0 +1,284 @@
+{
+  "domain": "python-stdlib-backport-refactor",
+  "persona": "Ines Moreau, release engineer at a small medical-imaging software company whose air-gapped macOS build agents are locked to /usr/bin/python3 (3.9, no pip). She spends an afternoon vendoring CPython 3.14's tomllib (about 1,000 lines of real source, 440 lines of unit tests, 74 data files) into her repo, backporting it to 3.9, adding source-position tracking, splitting the parser module, building a release-file checker on top, benchmarking and tuning the overhead, and writing a DOCX/PDF change note and a re-sync procedure.",
+  "workdir_placeholder": "{WORK}",
+  "notes": {
+    "why_this_domain": "Round 3 measures the prompt cache in pipeline mode. The work is a real codebase, not goose-authored toy files: _parser.py is 765 lines (~8k tokens) and is read in full at turns 3, 8, 13 and 22, with the tests and data reread by every suite run (4, 9, 11, 13, 19, 20, 22). Each turn's prompt shares a long, stable prefix with the last.",
+    "preconditions_checked_2026-09-25": "The laptop has Homebrew python3 3.14.6 with tomllib and test/test_tomllib (18 tests, 74 data files) and /usr/bin/python3 3.9.6. The 3.14 tomllib imports and parses on 3.9 as-is. The suite fails on 3.9 only because of `from test.support import load_package_tests` and the two recursion tests that use support.infinite_recursion; with those removed it runs 18 tests, OK (skipped=2). So turn 4 is real but achievable.",
+    "skill_choice": "unattended-loop (~/.claude/skills, also imported under ~/.agents/skills). Turn 20 uses its own trigger words ('loop on this until', 'don't stop in between') and its improvement-loop discipline (change one thing, keep or revert on evidence, log each attempt). It should load there only. stack-fastapi or stack-angular (~/.config/goose/skills) loading anywhere is a precision miss, and so is any Atlassian skill.",
+    "compaction": "Growth comes from full reads of _parser.py/_re.py (3, 8, 13, 22), the 13-turn split rewrite, suite outputs, two web searches (6, 17), golden dumps (13), benchmark logs (20) and docx/pdf reads (26, 27). The context should pass 100k around turns 16 to 22. Turns 23, 28 and 30 check that the thread and the memory survived.",
+    "memory": "Saved at turn 2: /usr/bin/python3 and unittest, never pytest; type hints on new functions; imperative commits under 60 characters with a 'Why:' line. Used without being restated at 4, 5, 8, 9, 12, 16, 17, 19, 23 and 30. Must-not-recall at 15, a CSV question that overlaps round 1's words: nothing about Harbourline or Jira may appear.",
+    "document_processing": "docx write 25, docx read 26, pdf make and extract 27.",
+    "expected_positions_turn_10": "Computed with the real tomllib on the pasted text: identity column 13, team column 65, the indented channel column 3."
+  },
+  "turns": [
+    {
+      "say": "Hi. I look after the release tooling at a small medical-imaging software company. Our macOS build agents are locked to the system Python, /usr/bin/python3, which is 3.9, and they're air-gapped: no pip, nothing from PyPI. Our release checker needs to read TOML, and 3.9 has no tomllib. The plan is to vendor the tomllib from the Homebrew python3 on this Mac (3.14) and make it work on 3.9.\n\nWork in {WORK}. Please start a git repo there, then copy the tomllib package into {WORK}/relcfg/_toml/ and its unit tests plus their data folder (they live under test/test_tomllib in the same Python install) into {WORK}/tests/toml/. Don't change a single line yet. Write a VENDORED.md that records the exact Python version you copied from, the source path, and a sha256 for every file you copied.",
+      "expect": "{WORK}/.git exists; {WORK}/relcfg/_toml/ holds __init__.py, _parser.py (~765 lines), _re.py, _types.py; {WORK}/tests/toml/ holds test_data.py, test_error.py, test_misc.py, burntsushi.py, __init__.py, __main__.py and data/ with valid/ and invalid/ (~74 data files). VENDORED.md names Python 3.14.x, the /opt/homebrew/... source path and one sha256 per copied file; `shasum -a 256` of any copied file matches its line. Copied files are byte-identical to the Homebrew originals (diff -r clean). No skill loaded.",
+      "exercises": [
+        "shell",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Before we go on, three things to remember about how I work, for this project and any future Python work: the target interpreter is always /usr/bin/python3 and tests run with plain unittest, never pytest, because the build boxes have no pip. Every new function I own gets full type hints. And commit messages are imperative, under 60 characters, with a second line that starts with 'Why:'.",
+      "expect": "goose saves the preferences to memory (a memory tool call is visible) and confirms them briefly. No files change.",
+      "exercises": [
+        "memory:save",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now read _parser.py and _re.py properly, top to bottom, and give me a map I can keep: the public entry points, how a [table] header and a [[array of tables]] header are handled, where and how errors are raised with positions, and what Flags and NestedDict are for. I need to understand this before we touch it. Put the map in docs/parser-map.md too.",
+      "expect": "goose reads both files in full (file-read tool calls on relcfg/_toml/_parser.py and _re.py are visible, not only a grep). docs/parser-map.md exists and names real functions that exist in _parser.py: loads/load, create_dict_rule / create_list_rule (header handling), key_value_rule, parse_value, suffixed_err / TOMLDecodeError, Flags (FROZEN / EXPLICIT_NEST) and NestedDict. No function named in the map is absent from the file (grep each name).",
+      "exercises": [
+        "shell",
+        "long-context-read",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Make it work on /usr/bin/python3. The package must import as relcfg._toml, and the tests currently lean on CPython's internal test.support, which 3.9 doesn't ship. Get them off it. Don't skip anything you can make work honestly; if you do skip a test, tell me exactly which and why. Run the full suite on 3.9 and on the Homebrew 3.14 and show me both results.",
+      "expect": "tests/toml imports relcfg._toml instead of tomllib and no longer imports test.support. The suite is run with `/usr/bin/python3 -m unittest` (not pytest; memory applied without restating) and with the Homebrew python3; both outputs are shown and both report 18 tests OK. The two recursion-limit tests in test_misc.py are either rewritten without test.support or skipped with a stated reason, and the count of skips in the output matches what goose says.",
+      "exercises": [
+        "shell",
+        "editor",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Good. Commit that.",
+      "expect": "`git log -1` shows a commit whose subject is imperative and under 60 characters, and whose body has a line starting 'Why:' (memory applied without restating). The vendored-as-is state and the 3.9 fixes are either one commit or two, as goose says.",
+      "exercises": [
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "My lead will ask why we're not just using an existing backport. Look up tomli: how it relates to the standard library's tomllib, its latest version, the oldest Python it supports, and its licence. Also find out whether TOML 1.1 has been released and whether any CPython version has adopted it. Give me the sources, and add a short 'Why vendor' section with those links to VENDORED.md.",
+      "expect": "A web search tool call happens; sources include pypi.org/project/tomli and/or github.com/hukkin/tomli and toml.io or a python.org/docs link; the answer states tomli is the upstream tomllib was derived from, its MIT licence, its minimum supported Python, and the TOML 1.1 status with a date or version. VENDORED.md gains a 'Why vendor' section containing those URLs.",
+      "exercises": [
+        "mcp:web-search",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Quick one, no need to open anything: in plain words, why is vendoring a copy riskier than depending on a package, and what do we owe ourselves to keep a vendored copy safe? A short paragraph.",
+      "expect": "One short paragraph with no tool calls at all and no skill loaded (mentions drift from upstream / missed security fixes and a re-sync habit).",
+      "exercises": [
+        "no-tools",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the feature we actually need. The checker has to report line numbers, so add loads_with_positions(s) and load_with_positions(fp) to relcfg._toml. They return (data, positions), where positions maps each key path, as a tuple like ('release', 'version'), to its 1-based (line, column). Arrays of tables are indexed, so the first [[artifacts]] entry's name is ('artifacts', 0, 'name'). For a dotted key like build.agent = ..., every level gets the position where the dotted key starts. Plain loads() and load() must behave exactly as before. Read the parser again first and tell me where you're hooking in before you edit.",
+      "expect": "goose re-reads relcfg/_toml/_parser.py (a read tool call on it in this turn) and names the hook points (e.g. key_value_rule / create_dict_rule / create_list_rule and the pos→line/col conversion) before editing. The two new functions exist in relcfg/_toml/__init__.py (exported) with full type hints on every new function (memory applied without restating). loads() output on every valid data file is unchanged (goose shows the existing suite still passing).",
+      "exercises": [
+        "editor",
+        "shell",
+        "long-context-reread",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Add unit tests for positions: a top-level key, a dotted key, a key under a [table] header, keys in two [[array of tables]] entries, a key inside an inline table, and a multi-line string value (the key's own line). Then run everything.",
+      "expect": "A new test file under {WORK}/tests/ (e.g. tests/test_positions.py) with at least 6 tests, one per named case. The run uses /usr/bin/python3 -m unittest (memory); the reported total is 18 + the new tests and matches the unittest output line.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Save this as samples/example-release.toml exactly as I paste it, then print the full positions dict for it, one entry per line, sorted by line:\n\n[release]\nversion = \"2.4.0\"\n  channel = \"stable\"\nsigning = { identity = \"Developer ID Application: Example Ltd\", team = \"AB12CD34EF\" }\nbuild.agent = \"mac-03\"\n\n[[artifacts]]\nname = \"relcheck-macos.zip\"\nsha256 = \"803c4f537f7b052377119d0bbf5b6a86e98d76453c0de3787d25bd6e6204e9f3\"\n\n[[artifacts]]\nname = \"relcheck-linux.tar.gz\"\nnotes = \"\"\"\nbuilt on the old agent\n\"\"\"\n",
+      "expect": "{WORK}/samples/example-release.toml matches the paste byte for byte (apart from a possible trailing newline). Printed positions include exactly: ('release','version') 2:1; ('release','channel') 3:3; ('release','signing') 4:1; ('release','signing','identity') 4:13; ('release','signing','team') 4:65; ('release','build') 5:1; ('release','build','agent') 5:1; ('artifacts',0,'name') 8:1; ('artifacts',0,'sha256') 9:1; ('artifacts',1,'name') 12:1; ('artifacts',1,'notes') 13:1. Any deviation (e.g. 0-based columns, the indented channel at column 1, notes on line 15) is a defect goose should notice or the user will.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Change of plan on one detail: a table header should itself appear in positions. [release] becomes ('release',) at the header's line, and each [[artifacts]] entry becomes ('artifacts', 0), ('artifacts', 1) at its own header line. Update the code and the tests, rerun everything, and print the positions for the example file again.",
+      "expect": "Code and tests updated; suite passes on /usr/bin/python3. The reprinted positions add ('release',) 1:1, ('artifacts',0) 7:1, ('artifacts',1) 11:1 and keep every entry from the previous turn unchanged.",
+      "exercises": [
+        "editor",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Commit it.",
+      "expect": "A new commit with an imperative subject under 60 characters and a 'Why:' line (memory, not restated).",
+      "exercises": [
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "_parser.py is now too big to review comfortably. Split it: value parsing (strings, numbers, datetimes, arrays, inline tables) into _values.py, the key and table machinery (Flags, NestedDict, headers, key-value handling) into _tables.py, and leave _parser.py as the thin public entry points. No behaviour change, and I want proof: before you move anything, dump loads() output and the positions for every valid data file and the example to JSON under build/golden-before/, do the split, dump again to build/golden-after/, and show me the checksums match. Every test must still pass.",
+      "expect": "relcfg/_toml/_values.py and _tables.py exist; _parser.py is materially shorter. build/golden-before/ and build/golden-after/ exist with one JSON per valid data file plus the example; a checksum comparison (shasum or diff -r) is shown and is identical. The full suite passes on /usr/bin/python3. If goose wrote the golden-before dumps AFTER starting the split, the rubric fails (check file mtimes against the new modules).",
+      "exercises": [
+        "editor",
+        "shell",
+        "long-context-reread",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Show me the line counts of the three files now and the import graph between them. Is there any circular import, and does importing relcfg._toml on 3.9 take any longer than before?",
+      "expect": "wc -l output for _parser.py, _values.py, _tables.py; an import graph that matches the actual `from .` lines (checkable by grep); a direct answer on circular imports; an import-time measurement (e.g. python3 -X importtime or a timed loop) for before (the commit before the split, via git stash/worktree/checkout of the old file) and after — or goose says plainly it only measured after.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Unrelated quick one: what's the shortest way to turn a CSV file into JSON from the terminal on a Mac with nothing extra installed?",
+      "expect": "A short answer (e.g. a python3 -c one-liner with csv.DictReader and json.dumps). Nothing from this project and nothing from any past session: no mention of Harbourline, Jira, users.csv, identity plans, Node scripts or migration. No skill loaded.",
+      "exercises": [
+        "memory:must-not-recall",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Back to it. Commit the split.",
+      "expect": "A commit whose subject is imperative, under 60 characters, with a 'Why:' line; `git show --stat HEAD` lists _parser.py, _values.py, _tables.py.",
+      "exercises": [
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Now the tool itself: relcheck.py at the top of the work folder, using relcfg._toml. It checks release files against these rules: [release] version is a valid semantic version (use the official regex from semver.org, look it up rather than writing your own, and put the link in a comment above it); channel is one of stable, beta, nightly; signing.identity is required when channel is stable; every [[artifacts]] entry has a name and a sha256 of exactly 64 lowercase hex characters; no top-level tables other than release and artifacts. Each problem prints as file:line:col: message using the positions. Exit 0 when clean, 1 when there are rule problems, 2 when the file isn't valid TOML at all. Also create samples/clean.toml, samples/four-mistakes.toml with exactly four different rule violations, and samples/broken.toml that isn't valid TOML.",
+      "expect": "A web search call for the semver regex; relcheck.py contains the semver.org regex with a comment linking semver.org. Every new function in relcheck.py has type hints (memory). The three sample files exist; four-mistakes.toml contains four distinct violations of the listed rules.",
+      "exercises": [
+        "mcp:web-search",
+        "editor",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Run it on all four sample files, including the example from earlier, and show me each output and exit code.",
+      "expect": "Four runs shown with exit codes: clean.toml 0; example-release.toml 0; four-mistakes.toml 1 with exactly four messages, each file:line:col where the line and column point at the offending key or header in the file (check by opening the sample); broken.toml 2 with a message carrying a line and column. If a reported line is wrong, goose should catch it here.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Add unit tests for relcheck: one per rule, the exit codes, and that line numbers in the messages are right. Run the whole suite on 3.9 and tell me the total.",
+      "expect": "tests/test_relcheck.py (or similar) with at least one test per rule plus exit-code tests; the full suite runs with /usr/bin/python3 -m unittest (memory) and the stated total matches the output line.",
+      "exercises": [
+        "editor",
+        "shell",
+        "memory:use",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "I'm fairly sure the position tracking made parsing slower. Build a benchmark in bench/: generate a seeded, roughly 2 MB release-style TOML file, and time loads(), loads_with_positions() and the untouched upstream copy (from the first commit) on /usr/bin/python3, median of several runs. Then loop on this until the overhead of loads_with_positions over loads is under 15%, or until you've tried five distinct ideas, whichever comes first. Change one thing at a time, keep or revert each change on the numbers, rerun the tests after every kept change, and log every attempt with its numbers in bench/LOG.md. Don't stop in between to ask me.",
+      "expect": "The unattended-loop skill is loaded (a skill tool call, or its change-one-thing / keep-or-revert vocabulary is visibly followed). bench/ holds a seeded generator (same checksum on two runs if asked) and a timing script; bench/LOG.md has a baseline row and one row per attempt with before/after medians and a kept/reverted verdict; at most five attempts; the suite passes after the last kept change. The final overhead number stated equals the last LOG.md row. If the 15% target was not reached, goose says so plainly.",
+      "exercises": [
+        "skill:unattended-loop",
+        "shell",
+        "editor"
+      ]
+    },
+    {
+      "say": "And plain loads() itself: is it now slower than the upstream copy we vendored? Same method, numbers please.",
+      "expect": "A measurement of loads() vs the upstream copy on the same 2 MB file and interpreter, medians shown; a direct yes/no with the percentage. No skill loaded.",
+      "exercises": [
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Re-read _values.py and _tables.py as they are now, and tell me honestly whether anything you changed during that loop made the code worse to maintain. If so, fix it and rerun the tests and the benchmark.",
+      "expect": "Read tool calls on both files in this turn; a concrete answer naming specific functions or changes (not 'looks fine'); if a fix is made, tests pass and a new bench number is shown and appended to bench/LOG.md.",
+      "exercises": [
+        "shell",
+        "long-context-reread",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Commit all of that.",
+      "expect": "One or more commits, each with an imperative subject under 60 characters and a 'Why:' line (memory, after likely compaction).",
+      "exercises": [
+        "shell",
+        "memory:use",
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Walk me through every change we've made to the vendored code compared with the upstream copy, file by file. I'm going to diff it against the Homebrew original myself, so be exact and don't round anything off.",
+      "expect": "An account per file (_parser.py, _values.py, _tables.py, __init__.py, _re.py, _types.py and the tests). Checked against `diff -r` between relcfg/_toml and the Homebrew tomllib (and tests/toml vs test/test_tomllib): it names no change that is not in the diff and omits no substantive one (e.g. the import rename, the test.support removal, positions, the split, any benchmark-loop change).",
+      "exercises": [
+        "self-account",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write the change note for Friday's architecture review as docs/relcfg-change-note.docx: why we vendored instead of using tomli (with the findings and links from earlier), what we changed compared with upstream, the benchmark table with the real numbers from bench/LOG.md, the risks, and how to re-sync when a new upstream release comes out.",
+      "expect": "{WORK}/docs/relcfg-change-note.docx exists and is a real Word file (zip with word/document.xml); it contains the tomli/TOML 1.1 links found earlier and a table whose numbers match bench/LOG.md exactly. If round-1 memories (ISO dates, British spelling) are applied, note it as an observation, not a failure.",
+      "exercises": [
+        "mcp:document",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Open the docx and read me back its headings and the benchmark table exactly as they appear in the file.",
+      "expect": "goose reads the .docx with a document tool or text extraction (not by guessing from memory) and reports headings and table rows; they match the file and bench/LOG.md.",
+      "exercises": [
+        "mcp:document",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Some reviewers won't open Word. Make docs/relcfg-change-note.pdf from it with whatever works on this Mac, then pull the text back out of the PDF, tell me the page count, and check every number in its benchmark table against bench/LOG.md.",
+      "expect": "docs/relcfg-change-note.pdf exists and is a valid PDF; a page count that matches the file (e.g. mdls/pdfinfo/a PDF tool); PDF text extracted and the table numbers compared side by side with LOG.md; any mismatch fixed in both docx and pdf.",
+      "exercises": [
+        "mcp:document",
+        "shell",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Remind me: exactly how do positions work for a table header, which exit code means the file isn't valid TOML, and what overhead did we end on for loads_with_positions?",
+      "expect": "Correct after a long context (compaction expected before here): headers appear as their own tuple at the header line (('release',), ('artifacts', 0) ...); exit code 2 for invalid TOML; the final overhead equals the last row of bench/LOG.md. goose may re-read files to answer; it must not invent a number.",
+      "exercises": [
+        "compaction",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Write RESYNC.md: the exact steps to pull a future upstream tomllib into this, re-apply our changes and prove nothing broke. Then do a real dry run of those steps against the same Homebrew 3.14 copy, which should come out as 'no upstream changes', and tell me if the document was wrong anywhere.",
+      "expect": "{WORK}/RESYNC.md exists; the dry run executes its commands (shell calls visible), compares the Homebrew files' checksums against VENDORED.md and reports no upstream change; any step that failed as written is corrected in RESYNC.md.",
+      "exercises": [
+        "shell",
+        "editor",
+        "no-skill"
+      ]
+    },
+    {
+      "say": "Last thing: commit whatever is left, show me git log --oneline, and tell me in two lines what I should look at first on Monday.",
+      "expect": "Clean `git status`; `git log --oneline` shown; every commit made in this session has an imperative subject under 60 characters, and `git log --format=%B` shows a 'Why:' line in each (memory held across compaction). Two-line answer that refers to a real open item (e.g. the overhead if the 15% target was missed, or the architecture review).",
+      "exercises": [
+        "shell",
+        "memory:use",
+        "compaction",
+        "no-skill"
+      ]
+    }
+  ]
+}
