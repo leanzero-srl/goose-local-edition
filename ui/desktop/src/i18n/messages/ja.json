@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "エンジンを開く"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer} はモデルを読み込んだままです"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "{peer} との接続が切れました — 再接続中…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "最後の読み取り: {why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer} のエンジンが停止しました — そこではメッセージに応答できません"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "{peer} でモデルを読み込み中 — 準備ができるまでメッセージは待機します"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "代わりにこの Mac で実行"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "チャットをこの Mac に移せませんでした: {error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "チャットをこの Mac に移しています…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "エンジン"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "スウォーム設定"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "詳細"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac} が回答の途中で LeanZero Link から切断されました — 上の回答はそこで終わっています。"
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac} が LeanZero Link から切断されました — このターンには回答がありません。"
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "再試行"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "リンクされた Mac"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "gooseが会話を圧縮しています..."
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "{peer} でモデルを読み込み中"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "{peer} との接続が切れました — 再接続中…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "処理中のリクエスト"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "マウント中"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "再接続中"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "実行中"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "プロンプトを読み込み中"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "再接続中"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "状態不明"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "マウント中"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "再接続中"
   },
   "placementCard.live.running": {
     "defaultMessage": "実行中"

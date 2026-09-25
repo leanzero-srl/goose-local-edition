@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Motoru aç"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer} modelini yüklü tuttu"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "{peer} ile bağlantı kesildi — yeniden bağlanıyor…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "Son okuma: {why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer} üzerindeki motor çöktü — orada hiçbir şey mesaja yanıt veremez"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "Model {peer} üzerinde yükleniyor — mesaj hazır olana kadar bekler"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "Bunun yerine bu Mac'te çalıştır"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "Sohbet bu Mac'e taşınamadı: {error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "Sohbet bu Mac'e taşınıyor…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "Motor"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Sürü Ayarları"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "Ayrıntılar"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac} yanıtın ortasında LeanZero Link'ten düştü — yukarıdaki yanıt orada kesiliyor."
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac} LeanZero Link'ten düştü — bu tur yanıt almadı."
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "Yeniden dene"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "Bağlı Mac"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose konuşmayı sıkıştırıyor..."
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "Model {peer} üzerinde yükleniyor"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "{peer} ile bağlantı kesildi — yeniden bağlanıyor…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Süren istekler"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "Bağlanıyor"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "Yeniden bağlanıyor"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "Çalışıyor"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "İstem okuyor"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "Yeniden bağlanıyor"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Durum bilinmiyor"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "Bağlanıyor"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "Yeniden bağlanıyor"
   },
   "placementCard.live.running": {
     "defaultMessage": "Çalışıyor"

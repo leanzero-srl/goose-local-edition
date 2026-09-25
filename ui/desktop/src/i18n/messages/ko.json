@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "엔진 열기"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer}이(가) 모델을 로드된 상태로 유지했습니다"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "{peer}와(과) 연결이 끊겼습니다 — 다시 연결하는 중…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "마지막 읽기: {why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer}의 엔진이 실패했습니다 — 그곳에서는 메시지에 응답할 수 없습니다"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "{peer}에서 모델 로드 중 — 준비될 때까지 메시지는 대기합니다"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "대신 이 Mac에서 실행"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "채팅을 이 Mac으로 옮기지 못했습니다: {error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "채팅을 이 Mac으로 옮기는 중…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "엔진"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "스웜 설정"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "세부 정보"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac}이(가) 답변 도중 LeanZero Link에서 끊겼습니다 — 위의 답변은 거기서 멈춥니다."
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac}이(가) LeanZero Link에서 끊겼습니다 — 이번 차례에는 답변이 없습니다."
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "다시 시도"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "연결된 Mac"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose가 대화를 압축하고 있습니다..."
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "{peer}에서 모델을 불러오는 중"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "{peer}와(과) 연결이 끊겼습니다 — 다시 연결하는 중…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "처리 중인 요청"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "마운트 중"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "다시 연결 중"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "실행 중"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "프롬프트 읽는 중"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "다시 연결 중"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "상태 알 수 없음"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "마운트 중"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "다시 연결 중"
   },
   "placementCard.live.running": {
     "defaultMessage": "실행 중"

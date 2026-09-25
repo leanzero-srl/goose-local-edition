@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Buka Engine"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer} tetap memuat modelnya"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "Kontak dengan {peer} terputus — menyambungkan ulang…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "Pembacaan terakhir: {why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Engine di {peer} gagal — tidak ada yang bisa menjawab pesan di sana"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "Memuat model di {peer} — pesan menunggu sampai siap"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "Jalankan di Mac ini saja"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "Tidak dapat memindahkan chat ke Mac ini: {error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "Memindahkan chat ke Mac ini…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "Engine"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Pengaturan Swarm"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "Detail"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac} terputus dari LeanZero Link di tengah jawaban — jawaban di atas berhenti di sana."
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac} terputus dari LeanZero Link — giliran ini tidak mendapat jawaban."
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "Coba lagi"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "Mac yang ditautkan"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose sedang meringkas percakapan..."
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "Memuat model di {peer}"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "Kontak dengan {peer} terputus — menyambungkan ulang…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Permintaan yang berjalan"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "Memasang"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "Menyambungkan ulang"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "Berjalan"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "Membaca prompt"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "Menyambungkan ulang"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Status tidak diketahui"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "Memasang"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "Menyambungkan ulang"
   },
   "placementCard.live.running": {
     "defaultMessage": "Berjalan"

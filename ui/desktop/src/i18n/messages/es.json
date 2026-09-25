@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Abrir motor"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer} mantuvo su modelo cargado"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "Se perdió el contacto con {peer} — reconectando…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "Última lectura: {why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "El motor en {peer} falló — nada allí puede responder un mensaje"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "Cargando el modelo en {peer} — un mensaje espera hasta que esté listo"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "Ejecutar en este Mac en su lugar"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "No se pudo mover el chat a este Mac: {error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "Moviendo el chat a este Mac…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "El motor"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Ajustes del enjambre"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "Detalles"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac} se desconectó de LeanZero Link a mitad de la respuesta — la respuesta de arriba termina ahí."
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac} se desconectó de LeanZero Link — este turno no recibió respuesta."
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "Reintentar"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "El Mac vinculado"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose está compactando la conversación..."
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "Cargando el modelo en {peer}"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "Se perdió el contacto con {peer} — reconectando…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Solicitudes en curso"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "Montando"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "Reconectando"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "En ejecución"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "Leyendo un prompt"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "Reconectando"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Estado desconocido"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "Montando"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "Reconectando"
   },
   "placementCard.live.running": {
     "defaultMessage": "En ejecución"

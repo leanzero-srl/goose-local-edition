@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Open Engine"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer} kept its model loaded"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "Lost contact with {peer} — reconnecting…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "Last read: {why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "The engine on {peer} failed — nothing there can answer a message"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "Loading the model on {peer} — a message waits until it is ready"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "Run on this Mac instead"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "Could not move chat to this Mac: {error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "Moving chat to this Mac…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "The engine"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Swarm Settings"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "Details"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac} dropped off LeanZero Link mid-answer — the answer above stops there."
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac} dropped off LeanZero Link — this turn got no answer."
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "Retry"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "The linked Mac"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose is compacting the conversation..."
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "Loading the model on {peer}"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "Lost contact with {peer} — reconnecting…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Requests in flight"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "Mounting"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "Reconnecting"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "Running"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "Reading a prompt"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "Reconnecting"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "State unknown"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "Mounting"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "Reconnecting"
   },
   "placementCard.live.running": {
     "defaultMessage": "Running"

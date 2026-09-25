@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Engine öffnen"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer} hat sein Modell geladen gelassen"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "Verbindung zu {peer} verloren — Verbindung wird wiederhergestellt…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "Letzte Abfrage: {why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Die Engine auf {peer} ist ausgefallen — dort kann nichts auf eine Nachricht antworten"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "Das Modell wird auf {peer} geladen — eine Nachricht wartet, bis es bereit ist"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "Stattdessen auf diesem Mac ausführen"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "Chat konnte nicht auf diesen Mac verlegt werden: {error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "Chat wird auf diesen Mac verlegt…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "Die Engine"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Schwarm-Einstellungen"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "Details"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac} hat LeanZero Link mitten in der Antwort verlassen — die Antwort oben endet dort."
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac} hat LeanZero Link verlassen — dieser Durchgang hat keine Antwort erhalten."
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "Erneut versuchen"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "Der verbundene Mac"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose komprimiert die Unterhaltung..."
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "Das Modell wird auf {peer} geladen"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "Verbindung zu {peer} verloren — Verbindung wird wiederhergestellt…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Laufende Anfragen"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "Wird gemountet"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "Verbindet erneut"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "Läuft"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "Liest einen Prompt"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "Verbindet erneut"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Zustand unbekannt"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "Wird gemountet"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "Verbindet erneut"
   },
   "placementCard.live.running": {
     "defaultMessage": "Läuft"

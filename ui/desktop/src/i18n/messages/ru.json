@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Открыть движок"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer} оставил модель загруженной"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "Связь с {peer} потеряна — переподключение…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "Последнее чтение: {why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Движок на {peer} дал сбой — там никто не может ответить на сообщение"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "Загрузка модели на {peer} — сообщение подождёт, пока она не будет готова"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "Запустить на этом Mac"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "Не удалось перенести чат на этот Mac: {error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "Перенос чата на этот Mac…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "Движок"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Настройки роя"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "Подробности"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac} отключился от LeanZero Link посреди ответа — ответ выше обрывается там."
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac} отключился от LeanZero Link — этот ход остался без ответа."
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "Повторить"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "Связанный Mac"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose сжимает разговор..."
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "Модель загружается на {peer}"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "Связь с {peer} потеряна — переподключение…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Запросы в работе"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "Монтирование"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "Переподключение"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "Работает"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "Читает промпт"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "Переподключение"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Состояние неизвестно"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "Монтирование"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "Переподключение"
   },
   "placementCard.live.running": {
     "defaultMessage": "Работает"

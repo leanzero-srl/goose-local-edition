@@ -26,6 +26,8 @@ import NoNodeNotice from './noNodeNotice/NoNodeNotice';
 import { parseNoNodeError } from './noNodeNotice/parseNoNodeError';
 import ToolBoundsNotice from './toolBoundsNotice/ToolBoundsNotice';
 import { parseToolBoundsError } from './toolBoundsNotice/toolSchemaBounds';
+import LinkDropNotice from './linkDropNotice/LinkDropNotice';
+import { splitLinkDrop } from './linkDropNotice/parseLinkDrop';
 
 interface GooseMessageProps {
   sessionId: string;
@@ -52,7 +54,11 @@ export default function GooseMessage({
 }: GooseMessageProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
 
-  const { textContent: displayText, imagePaths } = getTextAndImageContent(message);
+  const { textContent: fullText, imagePaths } = getTextAndImageContent(message);
+  // A turn the serving Mac dropped over LeanZero Link ends with the relay's error glued onto the
+  // partial answer (Q-49): the answer renders as written, the drop as a notice below it.
+  const linkDrop = useMemo(() => splitLinkDrop(fullText), [fullText]);
+  const displayText = linkDrop ? linkDrop.answer : fullText;
   const thinkingContent = getThinkingContent(message);
 
   const timestamp = useMemo(() => formatMessageTimestamp(message.created), [message.created]);
@@ -136,7 +142,7 @@ export default function GooseMessage({
     return null;
   }, [isStreaming, message.content, displayText]);
   const failureRetryText = useMemo(() => {
-    if (!failure) return null;
+    if (!failure && !linkDrop) return null;
     for (let i = messageIndex - 1; i >= 0; i--) {
       if (messages[i].role !== 'user') continue;
       const { textContent, imagePaths: userImages } = getTextAndImageContent(messages[i]);
@@ -144,10 +150,10 @@ export default function GooseMessage({
       return userImages.length === 0 ? textContent : null;
     }
     return null;
-  }, [failure, messages, messageIndex]);
+  }, [failure, linkDrop, messages, messageIndex]);
+  const live = messageIndex === messages.length - 1;
 
   if (failure) {
-    const live = messageIndex === messages.length - 1;
     return (
       <div className="goose-message flex w-[90%] justify-start min-w-0">
         <div className="flex flex-col w-full min-w-0">
@@ -167,6 +173,29 @@ export default function GooseMessage({
               onRetry={append}
             />
           )}
+          <div className="text-xs font-mono text-text-secondary pt-1">{timestamp}</div>
+        </div>
+      </div>
+    );
+  }
+
+  const linkDropNotice = linkDrop && (
+    <LinkDropNotice
+      drop={linkDrop}
+      hasAnswer={displayText.trim() !== '' || imagePaths.length > 0 || toolRequests.length > 0}
+      live={live && !isStreaming}
+      retryText={failureRetryText}
+      onRetry={append}
+    />
+  );
+
+  // The drop arrived as its own message: nothing was written, so the notice is the message.
+  if (linkDrop && !displayText.trim() && imagePaths.length === 0 && toolRequests.length === 0) {
+    return (
+      <div className="goose-message flex w-[90%] justify-start min-w-0">
+        <div className="flex flex-col w-full min-w-0">
+          {thinkingContent && <ThinkingContent content={thinkingContent} isExpanded={false} />}
+          {linkDropNotice}
           <div className="text-xs font-mono text-text-secondary pt-1">{timestamp}</div>
         </div>
       </div>
@@ -271,6 +300,8 @@ export default function GooseMessage({
             onSubmit={submitElicitationResponse}
           />
         )}
+
+        {linkDropNotice}
       </div>
     </div>
   );

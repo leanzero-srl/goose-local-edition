@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "開啟引擎"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer} 保留了已載入的模型"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "與 {peer} 失去聯繫 — 正在重新連線…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "最後一次讀取：{why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer} 上的引擎已失敗 — 那裡無法回覆訊息"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "正在 {peer} 上載入模型 — 訊息會等到它就緒"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "改為在這台 Mac 上執行"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "無法將聊天移到這台 Mac：{error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "正在將聊天移到這台 Mac…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "引擎"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "蜂群設定"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "詳細資訊"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac} 在回答途中從 LeanZero Link 斷線 — 上方的回答到此為止。"
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac} 從 LeanZero Link 斷線 — 本輪沒有得到回答。"
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "重試"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "已連結的 Mac"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose 正在壓縮對話…"
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "正在 {peer} 上載入模型"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "與 {peer} 失去聯繫 — 正在重新連線…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "處理中的請求"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "掛載中"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "正在重新連線"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "運行中"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "正在讀取提示"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "正在重新連線"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "狀態不明"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "掛載中"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "正在重新連線"
   },
   "placementCard.live.running": {
     "defaultMessage": "運行中"

@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Mở Engine"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer} vẫn giữ mô hình đã tải"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "Mất liên lạc với {peer} — đang kết nối lại…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "Lần đọc cuối: {why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Engine trên {peer} đã lỗi — không có gì ở đó trả lời được tin nhắn"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "Đang tải mô hình trên {peer} — tin nhắn chờ đến khi sẵn sàng"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "Chạy trên Mac này thay thế"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "Không thể chuyển cuộc trò chuyện sang Mac này: {error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "Đang chuyển cuộc trò chuyện sang Mac này…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "Engine"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "Cài đặt bầy"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "Chi tiết"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac} đã rời LeanZero Link giữa chừng câu trả lời — câu trả lời ở trên dừng tại đó."
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac} đã rời LeanZero Link — lượt này không nhận được câu trả lời."
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "Thử lại"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "Mac được liên kết"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose đang nén cuộc trò chuyện..."
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "Đang tải mô hình trên {peer}"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "Mất liên lạc với {peer} — đang kết nối lại…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Yêu cầu đang xử lý"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "Đang nạp"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "Đang kết nối lại"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "Đang chạy"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "Đang đọc lời nhắc"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "Đang kết nối lại"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Không rõ trạng thái"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "Đang nạp"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "Đang kết nối lại"
   },
   "placementCard.live.running": {
     "defaultMessage": "Đang chạy"

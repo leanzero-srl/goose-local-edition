@@ -740,6 +740,15 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "इंजन खोलें"
   },
+  "composerReadiness.peerKeptModel": {
+    "defaultMessage": "{peer} ने अपना मॉडल लोड रखा"
+  },
+  "composerReadiness.reconnecting": {
+    "defaultMessage": "{peer} से संपर्क टूट गया — फिर से जोड़ा जा रहा है…"
+  },
+  "composerReadiness.reconnectingWhy": {
+    "defaultMessage": "अंतिम पठन: {why}"
+  },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer} पर इंजन विफल हो गया — वहाँ कुछ भी संदेश का जवाब नहीं दे सकता"
   },
@@ -748,6 +757,15 @@
   },
   "composerReadiness.remoteLoadingUnnamed": {
     "defaultMessage": "{peer} पर मॉडल लोड हो रहा है — संदेश तैयार होने तक इंतज़ार करेगा"
+  },
+  "composerReadiness.runHere": {
+    "defaultMessage": "इसके बजाय इस Mac पर चलाएँ"
+  },
+  "composerReadiness.switchFailed": {
+    "defaultMessage": "चैट को इस Mac पर नहीं ले जाया जा सका: {error}"
+  },
+  "composerReadiness.switchingHere": {
+    "defaultMessage": "चैट को इस Mac पर ले जाया जा रहा है…"
   },
   "composerReadiness.theEngine": {
     "defaultMessage": "इंजन"
@@ -2254,6 +2272,21 @@
   },
   "leanzeroSwarm.tabSwarm": {
     "defaultMessage": "स्वार्म सेटिंग्स"
+  },
+  "linkDropNotice.details": {
+    "defaultMessage": "विवरण"
+  },
+  "linkDropNotice.midAnswer": {
+    "defaultMessage": "{mac} उत्तर के बीच में LeanZero Link से हट गया — ऊपर का उत्तर वहीं रुक जाता है।"
+  },
+  "linkDropNotice.noAnswer": {
+    "defaultMessage": "{mac} LeanZero Link से हट गया — इस बारी को कोई उत्तर नहीं मिला।"
+  },
+  "linkDropNotice.retry": {
+    "defaultMessage": "फिर से प्रयास करें"
+  },
+  "linkDropNotice.unnamed": {
+    "defaultMessage": "जुड़ा हुआ Mac"
   },
   "loadingGoose.compacting": {
     "defaultMessage": "goose बातचीत को संक्षिप्त कर रहा है..."
@@ -4049,6 +4082,9 @@
   "mlxStateTile.remote.loading": {
     "defaultMessage": "{peer} पर मॉडल लोड हो रहा है"
   },
+  "mlxStateTile.remoteReconnecting": {
+    "defaultMessage": "{peer} से संपर्क टूट गया — फिर से जोड़ा जा रहा है…"
+  },
   "mlxStateTile.requestsAria": {
     "defaultMessage": "चल रहे अनुरोध"
   },
@@ -4096,6 +4132,9 @@
   },
   "mlxStateTile.state.mounting": {
     "defaultMessage": "माउंट हो रहा है"
+  },
+  "mlxStateTile.state.reconnecting": {
+    "defaultMessage": "फिर से जुड़ रहा है"
   },
   "mlxStateTile.state.running": {
     "defaultMessage": "चल रहा है"
@@ -4561,6 +4600,9 @@
   },
   "modelsBottomBar.phase.reading": {
     "defaultMessage": "प्रॉम्प्ट पढ़ रहा है"
+  },
+  "modelsBottomBar.phase.reconnecting": {
+    "defaultMessage": "फिर से जुड़ रहा है"
   },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "स्थिति अज्ञात"
@@ -5056,6 +5098,9 @@
   },
   "placementCard.live.mounting": {
     "defaultMessage": "माउंट हो रहा है"
+  },
+  "placementCard.live.reconnecting": {
+    "defaultMessage": "फिर से जुड़ रहा है"
   },
   "placementCard.live.running": {
     "defaultMessage": "चल रहा है"
