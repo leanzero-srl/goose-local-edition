@@ -11,6 +11,7 @@ import type { PlacementPlan } from '../../acp/mlx-placement';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import type { NodesResponse } from '../../acp/leanzero-link';
 import DISCOVERY from './mlxDistributedDiscovery.fixture.json';
+import { dismissPeerHeld } from './routeSwitch';
 
 const mockPlan = vi.fn();
 const mockMeasure = vi.fn();
@@ -31,6 +32,8 @@ vi.mock('../../acp/mlx-remote-single', () => ({
   mlxRemoteSingleStop: (...a: unknown[]) => mockRemoteStop(...a),
   mlxRemoteSingleStatus: (...a: unknown[]) => mockRemoteStatus(...a),
   latestMlxRemoteSingleStatus: () => remoteLatest,
+  latestMlxRemoteSingleReadError: () => null,
+  remoteRouteUp: (s: { state: string } | null) => s != null && s.state !== 'off',
   subscribeMlxRemoteSingleStatus: () => () => undefined,
 }));
 const mockDiscover = vi.fn();
@@ -160,6 +163,7 @@ function renderCard(props: Partial<Parameters<typeof PlacementCard>[0]> = {}): {
 }
 
 beforeEach(() => {
+  dismissPeerHeld();
   sessionStorage.clear();
   localStorage.clear();
   remoteLatest = null;
@@ -486,6 +490,43 @@ describe('Run it on the real 27B plan', () => {
     expect(mockRemoteStop).toHaveBeenCalledWith(false);
   });
 
+  it('a switch off a Studio that is NOT answering drops the route and mounts here — no "switch failed", no wait on the Studio', async () => {
+    mockPlan.mockResolvedValue(answer(localFits));
+    remoteLatest = { state: 'reconnecting', peer: 'wh', modelId: MODEL };
+    const order: string[] = [];
+    mockRemoteStop.mockImplementation(async (keepMounted: boolean) => {
+      order.push(`drop route (keepMounted ${keepMounted})`);
+      remoteLatest = null;
+      return { unmounted: false, unmountError: null, status: { state: 'off' } };
+    });
+    mockUnmount.mockReturnValue(new Promise(() => undefined));
+    const { onMountHere } = renderCard();
+    onMountHere.mockImplementation(() => order.push('mount here'));
+    await userEvent.click(await screen.findByTestId('placement-run-local'));
+    await waitFor(() => expect(order).toEqual(['drop route (keepMounted true)', 'mount here']));
+    expect(mockUnmount).toHaveBeenCalledWith('wh');
+    expect(screen.queryByText(/Nothing started/)).toBeNull();
+    expect(await screen.findByTestId('peer-held')).toBeInTheDocument();
+  });
+
+  it('a reachable Studio that keeps its model does not block the switch: the kept model is a quiet line', async () => {
+    mockPlan.mockResolvedValue(answer(localFits));
+    remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
+    mockRemoteStop.mockImplementation(async () => {
+      remoteLatest = null;
+      return {
+        unmounted: false,
+        unmountError: "wh's engine was left mounted: peer refused",
+        status: { state: 'off' },
+      };
+    });
+    const { onMountHere } = renderCard();
+    await userEvent.click(await screen.findByTestId('placement-run-local'));
+    await waitFor(() => expect(onMountHere).toHaveBeenCalledTimes(1));
+    expect(mockRemoteStop).toHaveBeenCalledWith(false);
+    expect((await screen.findByTestId('peer-held')).getAttribute('data-phase')).toBe('held');
+  });
+
   it('the "Starting" notice ends once the way it started serves (Q-36)', async () => {
     mockPlan.mockResolvedValue(answer(localFits));
     remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
@@ -538,18 +579,18 @@ describe('Run it on the real 27B plan', () => {
     await waitFor(() => expect(order).toEqual(['unmount here', 'start studio']));
   });
 
-  it('a copy that cannot be stopped starts nothing, and says why', async () => {
+  it('a route that cannot be withdrawn (another window owns it) starts nothing, and says why', async () => {
     mockPlan.mockResolvedValue(answer(localFits));
     remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
-    mockRemoteStop.mockResolvedValue({
-      unmounted: false,
-      unmountError: "Work's Mac Studio's engine was left mounted: peer did not answer",
-      status: { state: 'off' },
-    });
+    mockRemoteStop.mockRejectedValue(
+      new Error('remoteSingleActive: another goose window on this Mac owns the route')
+    );
     const { onMountHere } = renderCard();
     await userEvent.click(await screen.findByTestId('placement-run-local'));
     expect(
-      await screen.findByText(/Nothing started: Qwen3.8-27B-Atlassian-Q8-mlx could not be stopped/)
+      await screen.findByText(
+        /Nothing started: Qwen3.8-27B-Atlassian-Q8-mlx could not be stopped .*remoteSingleActive/
+      )
     ).toBeInTheDocument();
     expect(onMountHere).not.toHaveBeenCalled();
   });

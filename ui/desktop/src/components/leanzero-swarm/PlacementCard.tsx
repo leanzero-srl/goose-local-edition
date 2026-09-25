@@ -59,6 +59,8 @@ import { MLX_STATUS_POLL_MS } from './mlxLiveStats';
 import { touchLocalNetwork } from './LocalNetworkNotice';
 import { distributedStateWord } from './mlxModeLabel';
 import { remotePhase, runPhase, singlePhase } from './mlxPhase';
+import { PeerHeldLine } from './PeerHeldLine';
+import { dropRouteForSwitch } from './routeSwitch';
 import { formatGb } from './primitives';
 import { macForPlacementNode, minutesAt, peerRefuses, SELF_KEY, type Mac } from './macs';
 import { WithMacs, copyKey, copyRunning, useMacs } from './useMacs';
@@ -783,24 +785,25 @@ function PlacementCardBody({
   /**
    * Stop a way of this model and return once it has let go of its memory: the single engine's
    * unmount and the peer's unmount both return after the engine process exits; the split is
-   * followed until it no longer owns the Mac — bounded by its own state, never a clock.
-   * The failure text, or null.
+   * followed until it no longer owns the Mac — bounded by its own state, never a clock. A route
+   * is withdrawn on this Mac (routeSwitch.ts): a linked Mac that is not answering, or keeps its
+   * model, is a quiet line (PeerHeldLine), never a switch that cannot go on. Throws only when the
+   * current way could not be stopped at all.
    */
-  const stopForSwitch = async (way: Way): Promise<string | null> => {
+  const stopForSwitch = async (way: Way): Promise<void> => {
     if (way.kind === 'local') {
       await mlxEngineUnmount();
-      return null;
+      return;
     }
     if (way.kind === 'peer') {
-      const response = await mlxRemoteSingleStop(false);
-      return response.unmountError ?? null;
+      await dropRouteForSwitch().routeGone;
+      return;
     }
     let status = (await mlxDistributedStop()).status;
     while (ownsTheMac(status) && status.state !== 'failed') {
       await sleep(MLX_STATUS_POLL_MS);
       status = await mlxDistributedStatus();
     }
-    return null;
   };
 
   /**
@@ -826,11 +829,13 @@ function PlacementCardBody({
         const model = modelId.split('/').pop() || modelId;
         const where = title(current);
         setNotice({ tone: 'accent', text: intl.formatMessage(i18n.switching, { model, where }) });
-        const failed = await stopForSwitch(current);
-        if (failed) {
+        try {
+          await stopForSwitch(current);
+        } catch (e) {
+          const reason = mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed));
           setNotice({
             tone: 'err',
-            text: intl.formatMessage(i18n.switchStopFailed, { model, where, reason: failed }),
+            text: intl.formatMessage(i18n.switchStopFailed, { model, where, reason }),
           });
           return;
         }
@@ -1220,6 +1225,7 @@ function PlacementCardBody({
         <ToneBanner tone="err" label={intl.formatMessage(i18n.planFailed)} text={plan.error} />
       )}
       {(error || plan?.error) && <p className={TYPE.meta}>{intl.formatMessage(i18n.noPlanWays)}</p>}
+      <PeerHeldLine />
       {notice && (
         <ToneBanner tone={notice.tone} label={intl.formatMessage(i18n.title)} text={notice.text} />
       )}
