@@ -18,8 +18,9 @@ const t0 = Date.now(); const out = `${dir}/timeline.tsv`;
 writeFileSync(out, 't_s\tevent\tbar\tchip\ttranscript_tail\ttray\n');
 const snap = async () => p.evaluate(async () => {
   const bar = document.querySelector('[data-testid=composer-readiness]')?.innerText.replace(/\s+/g, ' ') ?? '';
-  const chipEl = document.querySelector('[data-testid=model-chip], [data-testid=chat-served-chip]');
-  const chip = (chipEl?.innerText ?? '').replace(/\s+/g, ' ');
+  const chipEl = document.querySelector('[data-testid=model-chip-served]')?.closest('button');
+  const dot = chipEl?.querySelector('[aria-label]')?.getAttribute('aria-label') ?? '';
+  const chip = `${dot ? '[' + dot + '] ' : ''}${(chipEl?.innerText ?? '').replace(/\s+/g, ' ')}`;
   const main = document.querySelector('main') ?? document.body;
   const txt = main.innerText.replace(/\s+/g, ' ');
   let tray = '';
