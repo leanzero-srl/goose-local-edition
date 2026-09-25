@@ -518,15 +518,25 @@ async fn local_chip() -> Result<MlxChipDto, String> {
     if let Some(chip) = LOCAL_CHIP.get() {
         return Ok(chip.clone());
     }
-    let chip = goose_sidecar::placement::chip::local_chip()
+    let chip = probe_local_chip().await?;
+    Ok(LOCAL_CHIP.get_or_init(|| chip).clone())
+}
+
+#[cfg(unix)]
+async fn probe_local_chip() -> Result<MlxChipDto, String> {
+    goose_sidecar::placement::chip::local_chip()
         .await
         .map(|c| MlxChipDto {
             hw_model: c.hw_model,
             brand: c.brand,
             gpu_cores: c.gpu_cores,
         })
-        .map_err(|e| format!("{e:#}"))?;
-    Ok(LOCAL_CHIP.get_or_init(|| chip).clone())
+        .map_err(|e| format!("{e:#}"))
+}
+
+#[cfg(not(unix))]
+async fn probe_local_chip() -> Result<MlxChipDto, String> {
+    Err("the chip probe reads the Mac's hardware model, which exists only on macOS".to_string())
 }
 
 /// A memory-gate refusal is the response's `refusal` (with the placement that WOULD work), not an
