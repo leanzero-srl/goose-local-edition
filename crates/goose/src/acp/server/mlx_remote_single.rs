@@ -692,6 +692,86 @@ async fn current_status() -> MlxRemoteSingleStatusDto {
 }
 
 // ---------------------------------------------------------------------------------------------
+// A turn sent while the route's engine loads waits for it (Q-53).
+// ---------------------------------------------------------------------------------------------
+
+fn status_peer_name(status: &MlxRemoteSingleStatusDto) -> String {
+    status
+        .peer_computer_name
+        .clone()
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| status.peer_hostname.clone())
+        .or_else(|| status.peer.clone())
+        .unwrap_or_else(|| "the linked Mac".to_string())
+}
+
+/// Follow the route while it reads `mounting`, looking again after each `wait` (the fabric's own
+/// poll cadence in production), to what the load comes to. `None` when the first read is not
+/// `mounting` — nothing is loading, so nothing is waited on. Every read is a real status read,
+/// so the owner's restore (Q-34) advances on these reads exactly as on the panel's.
+async fn settle_load<R, RF, W, WF>(read: R, wait: W) -> Option<Result<(), String>>
+where
+    R: Fn() -> RF,
+    RF: std::future::Future<Output = MlxRemoteSingleStatusDto>,
+    W: Fn(Option<String>) -> WF,
+    WF: std::future::Future<Output = Result<(), String>>,
+{
+    let mut status = read().await;
+    if status.state != "mounting" {
+        return None;
+    }
+    loop {
+        if let Err(why) = wait(status.peer.clone()).await {
+            return Some(Err(format!(
+                "swarm chat: {}'s engine was loading, and this Mac can no longer follow it: {why}",
+                status_peer_name(&status)
+            )));
+        }
+        status = read().await;
+        let name = status_peer_name(&status);
+        return Some(match status.state.as_str() {
+            "mounting" => continue,
+            "ready" => Ok(()),
+            "off" => Err(format!(
+                "swarm chat: the route to {name} was stopped while this message waited; send it again"
+            )),
+            other => Err(format!(
+                "swarm chat: {name}'s engine did not come up while this message waited — {}",
+                status.last_error.as_deref().unwrap_or(other)
+            )),
+        });
+    }
+}
+
+/// One look's pause: the Link fabric's poll cadence (`liveness_interval`) — the status can only
+/// change when the fabric or the peer's engine does, and the fabric is looked at on its own clock.
+async fn fabric_cadence(peer: Option<String>) -> Result<(), String> {
+    let manager = super::link::existing_link_manager()
+        .ok_or_else(|| "LeanZero Link has not started in this goose".to_string())?;
+    let peer = peer.ok_or_else(|| "the route names no peer".to_string())?;
+    let call = manager
+        .peer_call(&peer)
+        .await
+        .map_err(|error| link_refusal(&error).message)?;
+    tokio::time::sleep(call.liveness_interval).await;
+    Ok(())
+}
+
+struct RouteLoadWatch;
+
+#[async_trait::async_trait]
+impl crate::providers::swarm_router::RouteLoad for RouteLoadWatch {
+    async fn settle(&self) -> Option<Result<(), String>> {
+        settle_load(current_status, fabric_cadence).await
+    }
+}
+
+/// Let the swarm router wait on a loading route (called once as the ACP server starts).
+pub(super) fn install_route_load() {
+    crate::providers::swarm_router::install_route_load(Arc::new(RouteLoadWatch));
+}
+
+// ---------------------------------------------------------------------------------------------
 // The start path, shared by Run and the route's own restore.
 // ---------------------------------------------------------------------------------------------
 
@@ -2161,6 +2241,89 @@ mod tests {
             missing_peer_name(None, &unnamed, &IntentRecord::Absent).await,
             None
         );
+    }
+
+    fn state(state: &str, last_error: Option<&str>) -> MlxRemoteSingleStatusDto {
+        MlxRemoteSingleStatusDto {
+            state: state.to_string(),
+            peer: Some("worksmacstudio-lan-6a972f".to_string()),
+            peer_computer_name: Some("Work's Mac Studio".to_string()),
+            last_error: last_error.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    /// Replays the reads a turn makes while it waits; counts the looks between them.
+    async fn settle_over(
+        reads: Vec<MlxRemoteSingleStatusDto>,
+    ) -> (Option<Result<(), String>>, usize) {
+        let reads = StdMutex::new(reads.into_iter());
+        let looks = AtomicUsize::new(0);
+        let settled = settle_load(
+            || {
+                let next = reads
+                    .lock()
+                    .unwrap()
+                    .next()
+                    .expect("a read past the recording");
+                async move { next }
+            },
+            |_| {
+                looks.fetch_add(1, Ordering::SeqCst);
+                async { Ok(()) }
+            },
+        )
+        .await;
+        (settled, looks.load(Ordering::SeqCst))
+    }
+
+    #[tokio::test]
+    async fn a_turn_waits_through_the_restore_and_is_routed_when_the_engine_serves() {
+        // 3.0.37 relaunch 23.2–34 s: the restore's `mounting` reads, then `ready`.
+        let (settled, looks) = settle_over(vec![
+            state("mounting", None),
+            state("mounting", None),
+            state("mounting", None),
+            state("ready", None),
+        ])
+        .await;
+        assert_eq!(settled, Some(Ok(())));
+        assert_eq!(looks, 3);
+    }
+
+    #[tokio::test]
+    async fn a_load_that_fails_or_a_peer_that_drops_ends_the_wait_with_its_words() {
+        let (settled, _) = settle_over(vec![
+            state("mounting", None),
+            state("failed", Some("Restoring Qwen3.8-27B-Atlassian-Q8-mlx on Work's Mac Studio failed: memory gate BLOCK")),
+        ])
+        .await;
+        assert_eq!(settled, Some(Err("swarm chat: Work's Mac Studio's engine did not come up while this message waited — Restoring Qwen3.8-27B-Atlassian-Q8-mlx on Work's Mac Studio failed: memory gate BLOCK".to_string())));
+
+        let (settled, _) = settle_over(vec![
+            state("mounting", None),
+            state("reconnecting", Some("Work's Mac Studio does not answer over LeanZero Link right now: Work's Mac Studio quit goose")),
+        ])
+        .await;
+        assert!(settled
+            .unwrap()
+            .unwrap_err()
+            .ends_with("Work's Mac Studio quit goose"));
+
+        let (settled, _) = settle_over(vec![state("mounting", None), state("off", None)]).await;
+        assert!(settled
+            .unwrap()
+            .unwrap_err()
+            .contains("was stopped while this message waited"));
+    }
+
+    #[tokio::test]
+    async fn only_a_loading_route_is_waited_on() {
+        for now in ["ready", "reconnecting", "failed", "off"] {
+            let (settled, looks) = settle_over(vec![state(now, Some("words"))]).await;
+            assert_eq!(settled, None, "{now}");
+            assert_eq!(looks, 0, "{now}");
+        }
     }
 
     #[test]

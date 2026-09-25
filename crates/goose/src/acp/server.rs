@@ -942,6 +942,7 @@ impl GooseAcpAgent {
     pub async fn new(options: GooseAcpAgentOptions) -> Result<Self> {
         let session_manager = Arc::new(SessionManager::new(options.data_dir));
 
+        mlx_remote_single::install_route_load();
         // Eagerly initialize the SQLite pool so it's ready when providers/sessions need it.
         let storage_clone = session_manager.storage().clone();
         tokio::spawn(async move {

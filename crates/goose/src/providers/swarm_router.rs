@@ -1055,12 +1055,43 @@ fn add_template_kwargs(
     }
 }
 
+/// A remote-single route whose engine is LOADING on its peer (`mounting`: a Run, or the route's
+/// own restore after the peer relaunched). A turn that finds no node while it loads waits for the
+/// load to end instead of failing — the promise the desktop's Loading bar makes ("a message waits
+/// until it is ready"). The wait follows the route's own state, never a clock: `ready` → the turn
+/// is routed; `failed`, `reconnecting` or a withdrawn route → the turn ends at once with the
+/// route's words. A route that is not loading (`reconnecting` included: nothing says the peer
+/// comes back) is never waited on. Installed by the ACP server, which owns the route's status.
+#[async_trait]
+pub(crate) trait RouteLoad: Send + Sync {
+    /// `None` when the live route is not loading; else resolves when the load ends: `Ok(())` =
+    /// the route serves, pick again; `Err(words)` = the turn's named error.
+    async fn settle(&self) -> Option<Result<(), String>>;
+}
+
+/// No route status in this process (the CLI): nothing is waited on.
+pub(crate) struct NoRouteLoad;
+
+#[async_trait]
+impl RouteLoad for NoRouteLoad {
+    async fn settle(&self) -> Option<Result<(), String>> {
+        None
+    }
+}
+
+static ROUTE_LOAD: std::sync::OnceLock<Arc<dyn RouteLoad>> = std::sync::OnceLock::new();
+
+pub(crate) fn install_route_load(load: Arc<dyn RouteLoad>) {
+    let _ = ROUTE_LOAD.set(load);
+}
+
 pub(crate) async fn route_stream(
     router: &Router,
     nodes: &[Node],
     probe: &dyn NodeProbe,
     providers: &dyn ProviderSource,
     kwargs_source: &dyn TemplateKwargsSource,
+    route_load: &dyn RouteLoad,
     turn: Turn<'_>,
 ) -> Result<MessageStream, ProviderError> {
     let Turn {
@@ -1076,7 +1107,19 @@ pub(crate) async fn route_stream(
     loop {
         let lease = match router.pick(nodes, probe, key, &saturated).await {
             Ok(lease) => lease,
-            Err(no_node) => return Err(last_refusal.unwrap_or(no_node)),
+            Err(no_node) => {
+                let routed_remote = nodes
+                    .iter()
+                    .any(|n| matches!(n.kind, NodeKind::MlxRemote(_)));
+                if last_refusal.is_none() && routed_remote {
+                    match route_load.settle().await {
+                        Some(Ok(())) => continue,
+                        Some(Err(words)) => return Err(ProviderError::ExecutionError(words)),
+                        None => {}
+                    }
+                }
+                return Err(last_refusal.unwrap_or(no_node));
+            }
         };
         let provider = providers
             .provider_for(&lease.node)
@@ -1183,12 +1226,17 @@ pub(crate) async fn route_chat(
         )));
     }
     let providers: &LiveProviders = &PROVIDERS;
+    let route_load: &dyn RouteLoad = match ROUTE_LOAD.get() {
+        Some(load) => load.as_ref(),
+        None => &NoRouteLoad,
+    };
     route_stream(
         &ROUTER,
         &nodes,
         &*PROBE,
         providers,
         &ConfiguredTemplateKwargs,
+        route_load,
         Turn {
             model_config,
             system,
@@ -1676,6 +1724,7 @@ devices:
             &probe,
             &RecordingSource(recorded.clone()),
             source,
+            &NoRouteLoad,
             Turn {
                 model_config,
                 system: "sys",
@@ -1961,6 +2010,7 @@ devices:
             &probe,
             &FakeProviders,
             &NoKwargs,
+            &NoRouteLoad,
             Turn {
                 model_config: &ModelConfig::new("swarm"),
                 system: "sys",
@@ -2018,6 +2068,7 @@ devices:
             &probe,
             &AllRefuse,
             &NoKwargs,
+            &NoRouteLoad,
             Turn {
                 model_config: &ModelConfig::new("swarm"),
                 system: "sys",
@@ -2032,6 +2083,142 @@ devices:
         assert!(matches!(err, ProviderError::ServerError(_)));
         assert!(err.to_string().contains("max concurrent"));
         assert_eq!(router.semaphore(&nodes[0]).available_permits(), 1);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Q-53: a turn that arrives while the route's engine loads on its peer waits for it.
+    // -----------------------------------------------------------------------------------------
+
+    /// The Studio's engine through the relay: the proxy's `502 engineUnreachable` until the load
+    /// lands, then servable.
+    struct LoadingPeer(std::sync::atomic::AtomicBool);
+
+    #[async_trait]
+    impl NodeProbe for LoadingPeer {
+        async fn probe(&self, _: &Node) -> Result<Servable, String> {
+            if self.0.load(Ordering::SeqCst) {
+                Ok(Servable::default())
+            } else {
+                Err("Work's Mac Studio's MLX engine is not serving through Link — v1/models answered 502 Bad Gateway: engineUnreachable: no MLX engine answers at http://127.0.0.1:8090".to_string())
+            }
+        }
+    }
+
+    /// The route's load as the ACP server would settle it: `ends` is what the load came to, and
+    /// a load that ends serving flips the peer's probe.
+    struct Load<'a> {
+        peer: &'a LoadingPeer,
+        ends: Option<Result<(), String>>,
+        settles: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl RouteLoad for Load<'_> {
+        async fn settle(&self) -> Option<Result<(), String>> {
+            self.settles.fetch_add(1, Ordering::SeqCst);
+            if matches!(self.ends, Some(Ok(()))) {
+                self.peer.0.store(true, Ordering::SeqCst);
+            }
+            self.ends.clone()
+        }
+    }
+
+    fn studio_route() -> Node {
+        Node {
+            kind: NodeKind::MlxRemote(RemoteTarget {
+                peer_name: "Work's Mac Studio".to_string(),
+                base_url: "http://127.0.0.1:61001/relay/cafe".to_string(),
+                template_kwargs: None,
+            }),
+            ..node("remote-studio", 8, 1)
+        }
+    }
+
+    async fn turn_on(
+        nodes: &[Node],
+        probe: &dyn NodeProbe,
+        load: &dyn RouteLoad,
+    ) -> Result<MessageStream, ProviderError> {
+        let messages = vec![Message::user().with_text("hi")];
+        route_stream(
+            &Router::new(),
+            nodes,
+            probe,
+            &FakeProviders,
+            &NoKwargs,
+            load,
+            Turn {
+                model_config: &ModelConfig::new("swarm"),
+                system: "sys",
+                messages: &messages,
+                tools: &[],
+                session: &SessionTemplateKwargs::default(),
+            },
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_turn_sent_while_the_route_loads_waits_and_is_answered_when_it_serves() {
+        let peer = LoadingPeer(std::sync::atomic::AtomicBool::new(false));
+        let load = Load {
+            peer: &peer,
+            ends: Some(Ok(())),
+            settles: AtomicUsize::new(0),
+        };
+        let mut stream = turn_on(&[studio_route()], &peer, &load).await.unwrap();
+        let (message, _) = stream.next().await.unwrap().unwrap();
+        assert_eq!(message.unwrap().as_concat_text(), "hello from b");
+        assert_eq!(load.settles.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_load_that_fails_ends_the_turn_with_the_routes_words_and_nothing_else_waits() {
+        let peer = LoadingPeer(std::sync::atomic::AtomicBool::new(false));
+        let words = "swarm chat: Work's Mac Studio's engine did not come up while this message waited — memory gate BLOCK";
+        let failed = Load {
+            peer: &peer,
+            ends: Some(Err(words.to_string())),
+            settles: AtomicUsize::new(0),
+        };
+        let err = turn_on(&[studio_route()], &peer, &failed)
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(
+            err.to_string(),
+            ProviderError::ExecutionError(words.to_string()).to_string()
+        );
+
+        // Not loading (reconnecting, failed, off): the pick's own named error, at once.
+        let idle = Load {
+            peer: &peer,
+            ends: None,
+            settles: AtomicUsize::new(0),
+        };
+        let err = turn_on(&[studio_route()], &peer, &idle)
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            err.to_string().contains("no node can serve this turn"),
+            "{err}"
+        );
+        assert!(err.to_string().contains("engineUnreachable"), "{err}");
+
+        // A pool with no route never asks.
+        let lm = node("lm", 1, 1);
+        let never = Load {
+            peer: &peer,
+            ends: Some(Ok(())),
+            settles: AtomicUsize::new(0),
+        };
+        let down = FakeProbe(HashMap::from([(
+            "lm".to_string(),
+            Err("LM Studio is down".to_string()),
+        )]));
+        assert!(turn_on(&[lm], &down, &never).await.is_err());
+        assert_eq!(never.settles.load(Ordering::SeqCst), 0);
     }
 
     /// The base URL rule: a stopped local manager defers to the configured port; no block → the
