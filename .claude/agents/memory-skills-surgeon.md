@@ -337,7 +337,14 @@ quoting what was recalled), and you ship the mechanism that changes it, with the
   five chats) named no past session and the model wrote 297 words with no "you asked this before".
   MCP/extensions have NO per-request selection: every enabled extension's tools ride every call (the case:
   79 tools, 105,747 chars of schemas — leanzerodocuments 49,963, playwright 19,305 — and a 40,689-char skill
-  listing in a 92,054-char system prompt on a 128k local model) — filed as its own action.
+  listing in a 92,054-char system prompt on a 128k local model) — VA-190: `agents/tool_deferral.rs` behind
+  GOOSE_TOOL_DEFERRAL (off): outside MCP servers' schemas leave the list, the system prompt names each tool
+  with its description's first sentence, `extensionmanager__load_tools` returns schemas and DECLARES the
+  loaded tools after the core list (derived from the conversation). Refuted: names only (8/10 right tool),
+  schema only in the result, undeclared (the model re-loads instead of calling: 2/5). Qwen's template puts
+  tools BEFORE the system prompt — a load re-prefills it once.
+  VA-189 (2): one own name word ALSO names a skill whose name + description + BODY carry every request
+  term (`SkillHit::body_carries_request`, `[body]`): corpus recall 11/14 → 13/14, precision 11/18 → 13/20.
 - The measurement corpus: `~/.config/goose/memory` (imported Claude notes, wrong for judging aboutness)
   PLUS the project-local `.goose/memory` of this repo (the 62 goose-project notes) — judge recall on the
   goose requests in queries.txt against the local store.
