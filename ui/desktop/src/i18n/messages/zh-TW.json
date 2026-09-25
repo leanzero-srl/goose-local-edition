@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "正在等待影像儲存…"
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "這台 Mac"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "選擇 Goose 用於新工作階段的預設模式。現有的工作階段會維持目前的模式。"
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "新增 OpenAI 相容端點"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where} 正在處理另一個請求 — 你的訊息會排隊等候} other {{where} 正在處理另外 # 個請求 — 你的訊息會排隊等候}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where} 正在讀取另一個請求的 {tokens} 詞元提示 — 你的訊息會排隊等候"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "沒有已儲存的 MLX 模型 — 請在 Providers 中選擇一個。"
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "開啟 Providers"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "開啟引擎"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "由 {peer} 提供 · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "{peer} 上的引擎已失敗 — 那裡無法回覆訊息"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "正在 {peer} 上載入 {model} — 訊息會等到它就緒"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "正在 {peer} 上載入模型 — 訊息會等到它就緒"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "引擎"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "沒有已掛載的模型 — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "分散式引擎正佔用這台 Mac：在下方「分散式引擎」區段停止它之前，單機引擎無法掛載。"
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "{mac} 的記憶體"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "正在讀取其記憶體…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "記憶體未測得：{error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "掛載被阻擋"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "本機模型設定 — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "開啟引擎"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "更換模型或執行它的 Mac"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "失敗"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "排隊中"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "閒置"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "載入中"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "正在讀取提示"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "服務中"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "未載入"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "正在生成"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "已解析的模型"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "選擇模型"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · 未執行"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "{tokens} 詞元上下文"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "未執行 — 請在引擎中啟動"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "在 {where} 上{phase}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "在 {where} 上{phase} · 由另一個視窗執行"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "沒有已掛載的模型"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "失敗"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "閒置"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "掛載中"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "服務中"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "節點"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "未掛載"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "伺服器可能正在啟動或暫時無法使用。"

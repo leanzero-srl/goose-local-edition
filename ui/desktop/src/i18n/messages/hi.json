@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "छवियों को सहेजने की प्रतीक्षा की जा रही है..."
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "यह Mac"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "कॉन्फ़िगर करें कि Goose टूल और एक्सटेंशन के साथ कैसे इंटरैक्ट करता है"
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "OpenAI-संगत एंडपॉइंट जोड़ें"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where} किसी दूसरे अनुरोध पर काम कर रहा है — आपका संदेश अपनी बारी का इंतज़ार करेगा} other {{where} # दूसरे अनुरोधों पर काम कर रहा है — आपका संदेश अपनी बारी का इंतज़ार करेगा}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where} किसी दूसरे अनुरोध का {tokens}-टोकन प्रॉम्प्ट पढ़ रहा है — आपका संदेश अपनी बारी का इंतज़ार करेगा"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "कोई सहेजा MLX मॉडल नहीं — Providers में एक चुनें।"
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "Providers खोलें"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "इंजन खोलें"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "{peer} से सर्व हो रहा है · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "{peer} पर इंजन विफल हो गया — वहाँ कुछ भी संदेश का जवाब नहीं दे सकता"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "{peer} पर {model} लोड हो रहा है — संदेश तैयार होने तक इंतज़ार करेगा"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "{peer} पर मॉडल लोड हो रहा है — संदेश तैयार होने तक इंतज़ार करेगा"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "इंजन"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "कोई मॉडल माउंट नहीं है — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "वितरित इंजन इस Mac पर है: जब तक इसे नीचे वितरित इंजन अनुभाग में रोका नहीं जाता, एकल इंजन माउंट नहीं हो सकता।"
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "{mac} पर मेमोरी"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "उसकी मेमोरी पढ़ी जा रही है…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "मेमोरी मापी नहीं गई: {error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "माउंट रोका गया"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "स्थानीय मॉडल Settings — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "इंजन खोलें"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "मॉडल या वह Mac बदलें जिस पर यह चलता है"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "विफल"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "कतार में"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "निष्क्रिय"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "लोड हो रहा है"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "प्रॉम्प्ट पढ़ रहा है"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "सेवा दे रहा है"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "लोड नहीं है"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "लिख रहा है"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "हल किया गया मॉडल"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "मॉडल का चयन करें"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · नहीं चल रहा"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "{tokens}-टोकन संदर्भ"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "नहीं चल रहा — इसे इंजन से शुरू करें"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "{where} पर {phase}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "{where} पर {phase} · किसी दूसरी विंडो द्वारा चलाया गया"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "कोई मॉडल माउंट नहीं है"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "विफल"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "निष्क्रिय"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "माउंट हो रहा है"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "सर्व कर रहा है"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "नोड"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "अनमाउंट"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "सर्वर चालू हो सकता है या अस्थायी रूप से अनुपलब्ध हो सकता है।"

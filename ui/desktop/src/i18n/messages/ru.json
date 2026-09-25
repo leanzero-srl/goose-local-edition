@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Ожидание сохранения изображений..."
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "Этот Mac"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "Настройте как Goose взаимодействует с инструментами и расширениями"
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Добавить OpenAI-совместимую конечную точку"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where} обрабатывает другой запрос — ваше сообщение ждёт своей очереди} other {{where} обрабатывает других запросов: # — ваше сообщение ждёт своей очереди}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where} читает промпт другого запроса на {tokens} токенов — ваше сообщение ждёт своей очереди"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "Нет сохранённой модели MLX — выберите её в Providers."
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "Открыть Providers"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "Открыть движок"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "Обслуживается с {peer} · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "Движок на {peer} дал сбой — там никто не может ответить на сообщение"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "Загрузка {model} на {peer} — сообщение подождёт, пока модель не будет готова"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "Загрузка модели на {peer} — сообщение подождёт, пока она не будет готова"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "Движок"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "Модель не смонтирована — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Распределённый движок занимает этот Mac: одиночный движок нельзя загрузить, пока распределённый не остановлен в разделе «Распределённый движок» ниже."
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "Память на {mac}"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "Чтение памяти…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "Память не измерена: {error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "Монтирование заблокировано"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "Настройки локальной модели — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "Открыть движок"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "Сменить модель или Mac, на котором она работает"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "Сбой"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "В очереди"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "Простаивает"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "Загрузка"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "Читает промпт"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "Обслуживает"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "Не загружена"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "Пишет"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Разрешенная модель"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Выбрать модель"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · не запущена"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "Контекст {tokens} токенов"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "Не запущена — запустите её в движке"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "{phase} на {where}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "{phase} на {where} · запущена другим окном"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Модель не смонтирована"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "сбой"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "простаивает"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "монтируется"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "обслуживает"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "Узлы"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "отключено"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Сервер может запускаться или быть временно недоступен."

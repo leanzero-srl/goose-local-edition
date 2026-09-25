@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "이미지 저장을 기다리는 중..."
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "이 Mac"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "goose가 도구 및 익스텐션과 상호작용하는 방식을 설정합니다."
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "OpenAI 호환 엔드포인트 추가"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where}에서 다른 요청을 처리하는 중입니다 — 메시지는 차례를 기다립니다} other {{where}에서 다른 요청 #개를 처리하는 중입니다 — 메시지는 차례를 기다립니다}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where}에서 다른 요청의 {tokens}토큰 프롬프트를 읽는 중입니다 — 메시지는 차례를 기다립니다"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "저장된 MLX 모델이 없습니다 — Providers에서 선택하세요."
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "Providers 열기"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "엔진 열기"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "{peer}에서 제공 중 · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "{peer}의 엔진이 실패했습니다 — 그곳에서는 메시지에 응답할 수 없습니다"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "{peer}에서 {model} 로드 중 — 준비될 때까지 메시지는 대기합니다"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "{peer}에서 모델 로드 중 — 준비될 때까지 메시지는 대기합니다"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "엔진"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "마운트된 모델이 없습니다 — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "분산 엔진이 이 Mac을 사용 중입니다. 아래의 분산 엔진 섹션에서 중지할 때까지 단일 엔진을 마운트할 수 없습니다."
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "{mac}의 메모리"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "메모리를 읽는 중…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "메모리를 측정하지 못함: {error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "마운트 차단됨"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "로컬 모델 설정 — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "엔진 열기"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "모델이나 실행할 Mac 변경"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "실패"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "대기열"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "유휴"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "로드 중"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "프롬프트 읽는 중"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "제공 중"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "로드되지 않음"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "작성 중"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "확인된 모델"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "모델 선택"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · 실행 중 아님"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "{tokens}토큰 컨텍스트"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "실행 중 아님 — 엔진에서 시작하세요"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "{where}에서 {phase}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "{where}에서 {phase} · 다른 창에서 실행 중"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "마운트된 모델이 없습니다"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "실패"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "유휴"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "마운트 중"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "서빙 중"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "노드"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "마운트 해제됨"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "서버가 시작 중이거나 일시적으로 사용할 수 없습니다."

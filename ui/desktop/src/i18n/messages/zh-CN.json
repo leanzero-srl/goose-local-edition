@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "正在等待图片保存…"
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "这台 Mac"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "配置 Goose 与工具和扩展的交互方式"
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "添加 OpenAI 兼容端点"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where} 正在处理另一个请求 — 你的消息将排队等候} other {{where} 正在处理另外 # 个请求 — 你的消息将排队等候}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where} 正在读取另一个请求的 {tokens} 词元提示 — 你的消息将排队等候"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "没有已保存的 MLX 模型 — 请在 Providers 中选择一个。"
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "打开 Providers"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "打开引擎"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "由 {peer} 提供 · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "{peer} 上的引擎已失败 — 那里无法回复消息"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "正在 {peer} 上加载 {model} — 消息会等到它就绪"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "正在 {peer} 上加载模型 — 消息会等到它就绪"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "引擎"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "没有已挂载的模型 — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "分布式引擎正占用这台 Mac：在下方“分布式引擎”部分停止它之前，单机引擎无法挂载。"
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "{mac} 的内存"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "正在读取其内存…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "内存未测得：{error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "挂载被阻止"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "本地模型设置 — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "打开引擎"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "更换模型或运行它的 Mac"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "失败"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "排队中"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "空闲"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "加载中"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "正在读取提示"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "服务中"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "未加载"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "正在生成"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "解析后的模型"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "选择模型"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · 未运行"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "{tokens} 词元上下文"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "未运行 — 请在引擎中启动"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "在 {where} 上{phase}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "在 {where} 上{phase} · 由另一个窗口运行"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "没有已挂载的模型"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "失败"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "空闲"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "挂载中"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "服务中"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "节点"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "未挂载"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "服务器可能正在启动或暂时不可用。"

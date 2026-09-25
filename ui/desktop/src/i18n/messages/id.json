@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Menunggu gambar disimpan..."
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "Mac ini"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "Pilih mode default yang digunakan Goose untuk sesi baru. Sesi yang sudah ada tetap menggunakan mode saat ini."
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Tambah endpoint yang kompatibel dengan OpenAI"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where} sedang mengerjakan permintaan lain — pesan Anda menunggu gilirannya} other {{where} sedang mengerjakan # permintaan lain — pesan Anda menunggu gilirannya}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where} sedang membaca prompt {tokens} token dari permintaan lain — pesan Anda menunggu gilirannya"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "Tidak ada model MLX tersimpan — pilih satu di Providers."
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "Buka Providers"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "Buka Engine"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "Dilayani dari {peer} · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "Engine di {peer} gagal — tidak ada yang bisa menjawab pesan di sana"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "Memuat {model} di {peer} — pesan menunggu sampai siap"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "Memuat model di {peer} — pesan menunggu sampai siap"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "Engine"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "Tidak ada model yang terpasang — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Mesin terdistribusi menguasai Mac ini: mesin tunggal tidak bisa dipasang sampai mesin itu dihentikan di bagian Mesin terdistribusi di bawah."
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "Memori di {mac}"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "Membaca memorinya…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "Memori tidak terukur: {error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "Pemasangan diblokir"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "Pengaturan Model Lokal — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "Buka Engine"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "Ganti model atau Mac tempat model berjalan"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "Dalam antrean"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "Menganggur"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "Memuat"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "Membaca prompt"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "Melayani"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "Tidak dimuat"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "Menulis"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Model yang diselesaikan"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Pilih Model"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · tidak berjalan"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "Konteks {tokens} token"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "Tidak berjalan — jalankan dari Engine"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "{phase} di {where}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "{phase} di {where} · dijalankan oleh jendela lain"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Tidak ada model yang terpasang"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "gagal"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "menganggur"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "memasang"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "melayani"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "Node"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "tidak terpasang"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Server mungkin sedang dimulai atau tidak tersedia untuk sementara."

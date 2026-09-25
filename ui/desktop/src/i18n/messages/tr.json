@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Resimlerin kaydedilmesi bekleniyor..."
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "Bu Mac"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "Goose'nin araçlar ve uzantılarla nasıl etkileşimde bulunacağını yapılandırın"
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "OpenAI uyumlu uç nokta ekle"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where} başka bir isteği işliyor — mesajınız sırasını bekliyor} other {{where} # başka isteği işliyor — mesajınız sırasını bekliyor}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where} başka bir isteğin {tokens} tokenlik istemini okuyor — mesajınız sırasını bekliyor"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "Kayıtlı MLX modeli yok — Providers’ta bir tane seçin."
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "Providers’ı aç"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "Motoru aç"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "{peer} üzerinden sunuluyor · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "{peer} üzerindeki motor çöktü — orada hiçbir şey mesaja yanıt veremez"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "{model}, {peer} üzerinde yükleniyor — mesaj hazır olana kadar bekler"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "Model {peer} üzerinde yükleniyor — mesaj hazır olana kadar bekler"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "Motor"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "Takılı model yok — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Dağıtık motor bu Mac'i kullanıyor: tekli motor, aşağıdaki Dağıtık motor bölümünde durdurulana kadar bağlanamaz."
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "{mac} üzerindeki bellek"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "Belleği okunuyor…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "Bellek ölçülemedi: {error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "Bağlama engellendi"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "Yerel Model Ayarları — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "Motoru aç"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "Modeli veya çalıştığı Mac’i değiştir"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "Başarısız"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "Sırada"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "Boşta"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "Yükleniyor"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "İstem okuyor"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "Hizmet veriyor"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "Yüklü değil"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "Yazıyor"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Çözümlenen model"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Modeli Seçin"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · çalışmıyor"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "{tokens} tokenlik bağlam"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "Çalışmıyor — Motor’dan başlatın"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "{where} üzerinde {phase}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "{where} üzerinde {phase} · başka bir pencere çalıştırıyor"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Takılı model yok"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "başarısız"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "boşta"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "bağlanıyor"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "sunuyor"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "Düğümler"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "bağlı değil"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Sunucu başlatılıyor veya geçici olarak kullanılamıyor olabilir."

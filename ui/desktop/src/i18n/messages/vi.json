@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Đang chờ lưu hình ảnh..."
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "Mac này"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "Chọn chế độ mặc định mà Goose sử dụng cho các phiên mới. Các phiên hiện có vẫn giữ chế độ hiện tại của chúng."
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Thêm endpoint tương thích OpenAI"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where} đang xử lý một yêu cầu khác — tin nhắn của bạn chờ đến lượt} other {{where} đang xử lý # yêu cầu khác — tin nhắn của bạn chờ đến lượt}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where} đang đọc lời nhắc {tokens} token của một yêu cầu khác — tin nhắn của bạn chờ đến lượt"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "Không có mô hình MLX đã lưu — hãy chọn một trong Providers."
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "Mở Providers"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "Mở Engine"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "Đang phục vụ từ {peer} · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "Engine trên {peer} đã lỗi — không có gì ở đó trả lời được tin nhắn"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "Đang tải {model} trên {peer} — tin nhắn chờ đến khi sẵn sàng"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "Đang tải mô hình trên {peer} — tin nhắn chờ đến khi sẵn sàng"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "Engine"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "Chưa gắn mô hình nào — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Engine phân tán đang chiếm máy Mac này: engine đơn không thể gắn cho đến khi nó được dừng trong mục Engine phân tán bên dưới."
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "Bộ nhớ trên {mac}"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "Đang đọc bộ nhớ…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "Chưa đo được bộ nhớ: {error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "Nạp bị chặn"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "Cài đặt mô hình cục bộ — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "Mở Engine"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "Đổi mô hình hoặc máy Mac chạy nó"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "Lỗi"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "Đang xếp hàng"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "Rảnh"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "Đang tải"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "Đang đọc lời nhắc"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "Đang phục vụ"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "Chưa tải"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "Đang viết"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Mô hình đã phân giải"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Chọn mô hình"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · không chạy"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "Ngữ cảnh {tokens} token"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "Không chạy — khởi động từ Engine"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "{phase} trên {where}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "{phase} trên {where} · do cửa sổ khác chạy"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Chưa gắn mô hình nào"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "thất bại"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "rảnh"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "đang gắn"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "đang phục vụ"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "Nút"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "đã gỡ"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Máy chủ có thể đang khởi động hoặc tạm thời không khả dụng."

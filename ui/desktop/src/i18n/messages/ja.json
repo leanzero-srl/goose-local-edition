@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "画像の保存を待機中..."
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "この Mac"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "Gooseがツールや拡張機能とどのようにやり取りするかを設定します"
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "OpenAI 互換エンドポイントを追加"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where} は別のリクエストを処理中です — メッセージは順番を待ちます} other {{where} は他の # 件のリクエストを処理中です — メッセージは順番を待ちます}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where} は別のリクエストの {tokens} トークンのプロンプトを読み込み中です — メッセージは順番を待ちます"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "保存された MLX モデルがありません — Providers で選んでください。"
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "Providers を開く"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "エンジンを開く"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "{peer} から提供中 · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "{peer} のエンジンが停止しました — そこではメッセージに応答できません"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "{peer} で {model} を読み込み中 — 準備ができるまでメッセージは待機します"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "{peer} でモデルを読み込み中 — 準備ができるまでメッセージは待機します"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "エンジン"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "マウントされたモデルがありません — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "分散エンジンがこの Mac を使用中です。下の「分散エンジン」セクションで停止するまで、単一エンジンはマウントできません。"
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "{mac} のメモリ"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "メモリを読み取り中…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "メモリを測定できません: {error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "マウントがブロックされました"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "ローカルモデル設定 — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "エンジンを開く"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "モデルや実行する Mac を変更"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "失敗"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "待機中"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "アイドル"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "読み込み中"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "プロンプトを読み込み中"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "提供中"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "未読み込み"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "生成中"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "解決済みモデル"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "モデルを選択"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · 停止中"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "{tokens} トークンのコンテキスト"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "停止中 — エンジンから起動してください"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "{where} で{phase}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "{where} で{phase} · 別のウィンドウが実行中"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "マウントされたモデルがありません"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "失敗"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "アイドル"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "マウント中"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "提供中"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "ノード"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "アンマウント済み"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "サーバーの起動中、または一時的に利用できない可能性があります。"

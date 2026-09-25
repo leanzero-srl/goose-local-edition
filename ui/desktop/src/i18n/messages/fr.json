@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "En attente de l'enregistrement des images..."
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "Ce Mac"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "Choisissez le mode par défaut que Goose utilise pour les nouvelles sessions. Les sessions existantes conservent leur mode actuel."
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Ajouter un endpoint compatible OpenAI"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where} traite une autre requête — votre message attend son tour} other {{where} traite # autres requêtes — votre message attend son tour}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where} lit le prompt de {tokens} jetons d’une autre requête — votre message attend son tour"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "Aucun modèle MLX enregistré — choisissez-en un dans Providers."
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "Ouvrir Providers"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "Ouvrir le moteur"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "Servi depuis {peer} · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "Le moteur sur {peer} a échoué — rien là-bas ne peut répondre à un message"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "Chargement de {model} sur {peer} — un message attend qu’il soit prêt"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "Chargement du modèle sur {peer} — un message attend qu’il soit prêt"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "Le moteur"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "Aucun modèle n’est monté — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Le moteur distribué occupe ce Mac : le moteur unique ne peut pas être monté tant qu’il n’est pas arrêté dans la section Moteur distribué ci-dessous."
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "Mémoire sur {mac}"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "Lecture de sa mémoire…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "Mémoire non mesurée : {error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "Montage bloqué"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "Paramètres du modèle local — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "Ouvrir le moteur"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "Changer le modèle ou le Mac qui l’exécute"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "Échec"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "En file d’attente"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "Inactif"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "Chargement"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "Lit un prompt"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "En service"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "Non chargé"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "Écrit"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Modèle résolu"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Sélectionner un modèle"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · arrêté"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "Contexte de {tokens} jetons"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "Arrêté — démarrez-le depuis le moteur"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "{phase} sur {where}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "{phase} sur {where} · géré par une autre fenêtre"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Aucun modèle n’est monté"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "en échec"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "inactif"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "montage"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "en service"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "Nœuds"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "démonté"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Le serveur est peut-être en cours de démarrage ou temporairement indisponible."

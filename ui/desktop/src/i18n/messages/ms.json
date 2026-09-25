@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Menunggu imej disimpan..."
   },
+  "chatServedBy.thisMac": {
+    "defaultMessage": "Mac ini"
+  },
   "chatSettings.modeDescription": {
     "defaultMessage": "Pilih mod lalai yang Goose gunakan untuk sesi baharu. Sesi sedia ada mengekalkan mod semasanya."
   },
@@ -701,6 +704,12 @@
   "compatibleEndpoint.titleNew": {
     "defaultMessage": "Tambah titik akhir yang serasi dengan OpenAI"
   },
+  "composerReadiness.busy": {
+    "defaultMessage": "{count, plural, one {{where} sedang memproses permintaan lain — mesej anda menunggu gilirannya} other {{where} sedang memproses # permintaan lain — mesej anda menunggu gilirannya}}"
+  },
+  "composerReadiness.busyReading": {
+    "defaultMessage": "{where} sedang membaca prompt {tokens} token bagi permintaan lain — mesej anda menunggu gilirannya"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -728,11 +737,20 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "Tiada model MLX tersimpan — pilih satu dalam Providers."
   },
-  "composerReadiness.openProviders": {
-    "defaultMessage": "Buka Providers"
+  "composerReadiness.openEngine": {
+    "defaultMessage": "Buka Enjin"
   },
-  "composerReadiness.remote": {
-    "defaultMessage": "Dihidangkan dari {peer} · {state}"
+  "composerReadiness.remoteFailed": {
+    "defaultMessage": "Enjin di {peer} gagal — tiada apa di sana boleh menjawab mesej"
+  },
+  "composerReadiness.remoteLoading": {
+    "defaultMessage": "Memuatkan {model} di {peer} — mesej menunggu sehingga ia sedia"
+  },
+  "composerReadiness.remoteLoadingUnnamed": {
+    "defaultMessage": "Memuatkan model di {peer} — mesej menunggu sehingga ia sedia"
+  },
+  "composerReadiness.theEngine": {
+    "defaultMessage": "Enjin"
   },
   "composerReadiness.unmounted": {
     "defaultMessage": "Tiada model dipasang — {nodes}"
@@ -3611,6 +3629,15 @@
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Enjin teragih menguasai Mac ini: enjin tunggal tidak boleh dilekapkan sehingga ia dihentikan dalam bahagian Enjin teragih di bawah."
   },
+  "mlxEngineView.memoryOn": {
+    "defaultMessage": "Memori di {mac}"
+  },
+  "mlxEngineView.memoryReading": {
+    "defaultMessage": "Membaca memorinya…"
+  },
+  "mlxEngineView.memoryUnread": {
+    "defaultMessage": "Memori tidak diukur: {error}"
+  },
   "mlxEngineView.mountBlocked": {
     "defaultMessage": "Lekapan disekat"
   },
@@ -4508,11 +4535,59 @@
   "modelsBottomBar.localModelSettingsTitle": {
     "defaultMessage": "Tetapan Model Tempatan — {modelName}"
   },
+  "modelsBottomBar.openEngine": {
+    "defaultMessage": "Buka Enjin"
+  },
+  "modelsBottomBar.openEngineHint": {
+    "defaultMessage": "Tukar model atau Mac yang menjalankannya"
+  },
+  "modelsBottomBar.phase.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "modelsBottomBar.phase.held": {
+    "defaultMessage": "Dalam baris gilir"
+  },
+  "modelsBottomBar.phase.idle": {
+    "defaultMessage": "Melahu"
+  },
+  "modelsBottomBar.phase.loading": {
+    "defaultMessage": "Memuatkan"
+  },
+  "modelsBottomBar.phase.reading": {
+    "defaultMessage": "Membaca prompt"
+  },
+  "modelsBottomBar.phase.unknown": {
+    "defaultMessage": "Berkhidmat"
+  },
+  "modelsBottomBar.phase.unloaded": {
+    "defaultMessage": "Tidak dimuatkan"
+  },
+  "modelsBottomBar.phase.writing": {
+    "defaultMessage": "Menulis"
+  },
   "modelsBottomBar.resolvedModel": {
     "defaultMessage": "Model diselesaikan"
   },
   "modelsBottomBar.selectModel": {
     "defaultMessage": "Pilih Model"
+  },
+  "modelsBottomBar.servedChip": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "modelsBottomBar.servedChipNotRunning": {
+    "defaultMessage": "{model} · tidak berjalan"
+  },
+  "modelsBottomBar.servedContext": {
+    "defaultMessage": "Konteks {tokens} token"
+  },
+  "modelsBottomBar.servedNotRunning": {
+    "defaultMessage": "Tidak berjalan — mulakannya dari Enjin"
+  },
+  "modelsBottomBar.servedWhere": {
+    "defaultMessage": "{phase} di {where}"
+  },
+  "modelsBottomBar.servedWhereForeign": {
+    "defaultMessage": "{phase} di {where} · dijalankan oleh tetingkap lain"
   },
   "modelsBottomBar.swarmDocs": {
     "defaultMessage": "Documentation"
@@ -4711,24 +4786,6 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Tiada model dipasang"
-  },
-  "nodesStrip.failed": {
-    "defaultMessage": "gagal"
-  },
-  "nodesStrip.idle": {
-    "defaultMessage": "melahu"
-  },
-  "nodesStrip.mounting": {
-    "defaultMessage": "melekap"
-  },
-  "nodesStrip.serving": {
-    "defaultMessage": "melayan"
-  },
-  "nodesStrip.title": {
-    "defaultMessage": "Nod"
-  },
-  "nodesStrip.unmounted": {
-    "defaultMessage": "tidak dipasang"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Pelayan mungkin sedang dimulakan atau tidak tersedia buat sementara waktu."
