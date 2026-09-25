@@ -287,6 +287,9 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
+  "baseChat.waitingForReconnect": {
+    "defaultMessage": "Warten, bis {mac} wieder verbunden ist…"
+  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "KI-Sitzung über diesen Lauf starten"
   },
@@ -710,6 +713,9 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} liest den {tokens}-Token-Prompt einer anderen Anfrage — deine Nachricht wartet, bis sie dran ist"
   },
+  "composerReadiness.details": {
+    "defaultMessage": "Details"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -743,8 +749,8 @@
   "composerReadiness.reconnecting": {
     "defaultMessage": "Verbindung zu {peer} verloren — Verbindung wird wiederhergestellt…"
   },
-  "composerReadiness.reconnectingWhy": {
-    "defaultMessage": "Letzte Abfrage: {why}"
+  "composerReadiness.reconnectingPlain": {
+    "defaultMessage": "goose versucht es weiter — eine laufende Antwort geht weiter, wenn er zurückkommt, oder endet mit „Erneut versuchen“"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Die Engine auf {peer} ist ausgefallen — dort kann nichts auf eine Nachricht antworten"

@@ -287,6 +287,9 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
+  "baseChat.waitingForReconnect": {
+    "defaultMessage": "Menunggu {mac} tersambung kembali…"
+  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Mulai sesi AI tentang run ini"
   },
@@ -710,6 +713,9 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} sedang membaca prompt {tokens} token dari permintaan lain — pesan Anda menunggu gilirannya"
   },
+  "composerReadiness.details": {
+    "defaultMessage": "Detail"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -743,8 +749,8 @@
   "composerReadiness.reconnecting": {
     "defaultMessage": "Kontak dengan {peer} terputus — menyambungkan ulang…"
   },
-  "composerReadiness.reconnectingWhy": {
-    "defaultMessage": "Pembacaan terakhir: {why}"
+  "composerReadiness.reconnectingPlain": {
+    "defaultMessage": "goose terus mencoba — jawaban yang sedang berjalan berlanjut jika kembali, atau berhenti dengan Coba lagi"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Engine di {peer} gagal — tidak ada yang bisa menjawab pesan di sana"

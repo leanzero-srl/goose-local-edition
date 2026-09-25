@@ -287,6 +287,9 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
+  "baseChat.waitingForReconnect": {
+    "defaultMessage": "En attente de la reconnexion de {mac}…"
+  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Démarrer une session IA à propos de cette exécution"
   },
@@ -710,6 +713,9 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} lit le prompt de {tokens} jetons d’une autre requête — votre message attend son tour"
   },
+  "composerReadiness.details": {
+    "defaultMessage": "Détails"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -743,8 +749,8 @@
   "composerReadiness.reconnecting": {
     "defaultMessage": "Contact perdu avec {peer} — reconnexion…"
   },
-  "composerReadiness.reconnectingWhy": {
-    "defaultMessage": "Dernière lecture : {why}"
+  "composerReadiness.reconnectingPlain": {
+    "defaultMessage": "goose continue d’essayer — une réponse en cours reprend s’il revient, ou s’arrête avec un Réessayer"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Le moteur sur {peer} a échoué — rien là-bas ne peut répondre à un message"

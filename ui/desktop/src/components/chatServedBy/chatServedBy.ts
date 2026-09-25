@@ -531,3 +531,8 @@ export function servedReady(served: ChatServedBy): boolean {
     (readiness.kind === 'remote' && readiness.status.state === 'ready')
   );
 }
+
+/** The Mac chat waits on while contact with it is lost, by its one name; null otherwise. */
+export function reconnectingMac(served: ChatServedBy): string | null {
+  return served.readiness.kind === 'reconnecting' ? routePeerName(served.readiness.status) : null;
+}

@@ -287,6 +287,9 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
+  "baseChat.waitingForReconnect": {
+    "defaultMessage": "正在等待 {mac} 重新連線…"
+  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "開始一個關於此次執行的 AI 工作階段"
   },
@@ -710,6 +713,9 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} 正在讀取另一個請求的 {tokens} 詞元提示 — 你的訊息會排隊等候"
   },
+  "composerReadiness.details": {
+    "defaultMessage": "詳細資訊"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -743,8 +749,8 @@
   "composerReadiness.reconnecting": {
     "defaultMessage": "與 {peer} 失去聯繫 — 正在重新連線…"
   },
-  "composerReadiness.reconnectingWhy": {
-    "defaultMessage": "最後一次讀取：{why}"
+  "composerReadiness.reconnectingPlain": {
+    "defaultMessage": "goose 會持續嘗試 — 恢復後進行中的回答會繼續，否則會停下並提供重試"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer} 上的引擎已失敗 — 那裡無法回覆訊息"

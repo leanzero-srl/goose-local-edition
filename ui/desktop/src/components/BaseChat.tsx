@@ -66,6 +66,10 @@ const i18n = defineMessages({
     id: 'baseChat.goHome',
     defaultMessage: 'Go home',
   },
+  waitingForReconnect: {
+    id: 'baseChat.waitingForReconnect',
+    defaultMessage: 'Waiting for {mac} to reconnect…',
+  },
   promptFailed: {
     id: 'baseChat.promptFailed',
     defaultMessage: 'That message did not go through',
@@ -85,6 +89,18 @@ const i18n = defineMessages({
  * (the LeanZero monogram on the accent fill) in the Swarm edition; the goose wordmark otherwise.
  * The links are the ones the old cluster carried.
  */
+/**
+ * This chat's turn is in flight on a Mac that stopped answering (served-by `reconnecting`): the
+ * status line names it — "working on it" is false while nothing can arrive. Only a turn that is
+ * thinking or streaming waits on it; compacting, a question to the user, or idle do not.
+ */
+export function turnWaitsOn(reconnectingTo: string | null, chatState: ChatState): string | null {
+  if (reconnectingTo == null) return null;
+  return chatState === ChatState.Streaming || chatState === ChatState.Thinking
+    ? reconnectingTo
+    : null;
+}
+
 export function SessionBrand({ isLocal }: { isLocal: boolean }) {
   const anchor = cx('no-drag inline-flex', RADIUS.control, FOCUS);
   const chip = cx(MOTION, 'hover:text-lz-ink', SURFACE.hover);
@@ -224,6 +240,8 @@ export default function BaseChat({
   const disableAnimation = location.state?.disableAnimation || false;
   const [hasStartedUsingRecipe, setHasStartedUsingRecipe] = React.useState(false);
   const [hasNotAcceptedRecipe, setHasNotAcceptedRecipe] = useState<boolean>();
+  const [reconnectingTo, setReconnectingTo] = useState<string | null>(null);
+  const intl = useIntl();
   const [hasRecipeSecurityWarnings, setHasRecipeSecurityWarnings] = useState(false);
   const isMobile = useIsMobile();
   const { isLocal } = useEdition();
@@ -627,9 +645,11 @@ export default function BaseChat({
               // open (so chatState is Streaming) but nothing is being computed. Say so plainly.
               swarmRun.held
                 ? 'swarm paused — nothing is running until you resume'
-                : messages.length > 0
-                  ? getThinkingMessage(messages[messages.length - 1])
-                  : undefined
+                : turnWaitsOn(reconnectingTo, chatState) != null
+                  ? intl.formatMessage(i18n.waitingForReconnect, { mac: reconnectingTo })
+                  : messages.length > 0
+                    ? getThinkingMessage(messages[messages.length - 1])
+                    : undefined
             }
           />
         </div>
@@ -680,6 +700,7 @@ export default function BaseChat({
           workingDir={session?.working_dir}
           onWorkingDirChange={handleWorkingDirChange}
           latestInference={latestInference}
+          onReconnectingChange={setReconnectingTo}
           {...customChatInputProps}
         />
       </div>

@@ -15,6 +15,7 @@ import {
 import {
   deriveChatServedBy,
   mlxEngineServing,
+  reconnectingMac,
   servedReady,
   type ChatServedInputs,
 } from './chatServedBy';
@@ -508,6 +509,13 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
     expect(deriveChatServedBy(inputs({ remote: ROUTE, main: elsewhere })).readiness.kind).toBe(
       'remote'
     );
+  });
+
+  it('reconnectingMac names the Mac for the chat’s status line — only while reconnecting', () => {
+    expect(
+      reconnectingMac(deriveChatServedBy(inputs({ remote: { ...ROUTE, state: 'reconnecting' } })))
+    ).toBe("Work's Mac Studio");
+    expect(reconnectingMac(deriveChatServedBy(inputs({ remote: ROUTE })))).toBeNull();
   });
 
   it('`failed` stays red: the peer answered that its engine failed', () => {

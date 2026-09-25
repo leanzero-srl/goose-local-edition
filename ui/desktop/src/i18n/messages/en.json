@@ -287,6 +287,9 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
+  "baseChat.waitingForReconnect": {
+    "defaultMessage": "Waiting for {mac} to reconnect…"
+  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Start an AI session about this run"
   },
@@ -710,6 +713,9 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} is reading another request’s {tokens}-token prompt — your message waits its turn"
   },
+  "composerReadiness.details": {
+    "defaultMessage": "Details"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -743,8 +749,8 @@
   "composerReadiness.reconnecting": {
     "defaultMessage": "Lost contact with {peer} — reconnecting…"
   },
-  "composerReadiness.reconnectingWhy": {
-    "defaultMessage": "Last read: {why}"
+  "composerReadiness.reconnectingPlain": {
+    "defaultMessage": "goose keeps trying — an answer in progress continues if it comes back, or stops with a Retry"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "The engine on {peer} failed — nothing there can answer a message"

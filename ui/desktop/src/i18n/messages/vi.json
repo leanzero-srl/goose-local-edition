@@ -287,6 +287,9 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
+  "baseChat.waitingForReconnect": {
+    "defaultMessage": "Đang chờ {mac} kết nối lại…"
+  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Bắt đầu phiên AI về lượt chạy này"
   },
@@ -710,6 +713,9 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} đang đọc lời nhắc {tokens} token của một yêu cầu khác — tin nhắn của bạn chờ đến lượt"
   },
+  "composerReadiness.details": {
+    "defaultMessage": "Chi tiết"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -743,8 +749,8 @@
   "composerReadiness.reconnecting": {
     "defaultMessage": "Mất liên lạc với {peer} — đang kết nối lại…"
   },
-  "composerReadiness.reconnectingWhy": {
-    "defaultMessage": "Lần đọc cuối: {why}"
+  "composerReadiness.reconnectingPlain": {
+    "defaultMessage": "goose vẫn đang thử — câu trả lời đang dở sẽ tiếp tục nếu kết nối trở lại, hoặc dừng lại kèm nút Thử lại"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Engine trên {peer} đã lỗi — không có gì ở đó trả lời được tin nhắn"

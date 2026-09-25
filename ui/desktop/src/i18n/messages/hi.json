@@ -287,6 +287,9 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
+  "baseChat.waitingForReconnect": {
+    "defaultMessage": "{mac} के फिर से जुड़ने की प्रतीक्षा…"
+  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "इस रन के बारे में एआई सत्र शुरू करें"
   },
@@ -710,6 +713,9 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} किसी दूसरे अनुरोध का {tokens}-टोकन प्रॉम्प्ट पढ़ रहा है — आपका संदेश अपनी बारी का इंतज़ार करेगा"
   },
+  "composerReadiness.details": {
+    "defaultMessage": "विवरण"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -743,8 +749,8 @@
   "composerReadiness.reconnecting": {
     "defaultMessage": "{peer} से संपर्क टूट गया — फिर से जोड़ा जा रहा है…"
   },
-  "composerReadiness.reconnectingWhy": {
-    "defaultMessage": "अंतिम पठन: {why}"
+  "composerReadiness.reconnectingPlain": {
+    "defaultMessage": "goose कोशिश करता रहता है — चल रहा उत्तर उसके लौटने पर जारी रहता है, या फिर से प्रयास के विकल्प के साथ रुक जाता है"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer} पर इंजन विफल हो गया — वहाँ कुछ भी संदेश का जवाब नहीं दे सकता"

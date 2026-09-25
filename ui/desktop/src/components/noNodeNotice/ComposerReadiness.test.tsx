@@ -409,8 +409,14 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
     expect(strip.textContent).toContain("Lost contact with Work's Mac Studio — reconnecting…");
     expect(strip.className).toContain('bg-lz-phase-loading');
     expect(screen.getByTestId('composer-readiness-reconnecting')).toBeInTheDocument();
+    // Plain words on the bar; the read's own words only behind Details — never inline.
     expect(screen.getByTestId('composer-readiness-detail').textContent).toBe(
-      'Last read: no answer from the Link peer'
+      'goose keeps trying — an answer in progress continues if it comes back, or stops with a Retry'
+    );
+    expect(strip.textContent).not.toContain('no answer from the Link peer');
+    await userEvent.click(screen.getByTestId('composer-readiness-details'));
+    expect(screen.getByTestId('composer-readiness-raw').textContent).toBe(
+      'no answer from the Link peer'
     );
     expect(await screen.findByTestId('composer-readiness-run-here')).toHaveTextContent(
       'Run on this Mac instead'
@@ -448,8 +454,10 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
     wrap('swarm', 's-mine');
     const strip = await screen.findByTestId('composer-readiness');
     expect(strip).toHaveAttribute('data-readiness', 'reconnecting');
-    expect(screen.getByTestId('composer-readiness-detail').textContent).toBe(
-      'Last read: timeout: no answer within 1500 ms'
+    expect(strip.textContent).not.toContain('1500 ms');
+    await userEvent.click(screen.getByTestId('composer-readiness-details'));
+    expect(screen.getByTestId('composer-readiness-raw').textContent).toBe(
+      'timeout: no answer within 1500 ms'
     );
   });
 

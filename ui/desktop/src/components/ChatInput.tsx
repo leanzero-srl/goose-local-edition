@@ -38,6 +38,7 @@ import { fetchSwarmPoolContextLimit } from './swarm/swarmContextLimit';
 import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
 import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
 import { useChatServedBy } from './chatServedBy/useChatServedBy';
+import { reconnectingMac } from './chatServedBy/chatServedBy';
 import { PersonaChooser } from './swarm/PersonaChooser';
 import { usePersona } from './swarm/usePersona';
 import AgentSetupWizard from './swarm/AgentSetupWizard';
@@ -213,6 +214,11 @@ interface ChatInputProps {
   latestInference?: Message['metadata']['inference'] | null;
   nextChatExtensionDraft?: NextChatExtensionDraft;
   onNextChatExtensionDraftChange?: (draft: NextChatExtensionDraft) => void;
+  /**
+   * The Mac that serves this chat while contact with it is lost (served-by `reconnecting`), by its
+   * one name; null otherwise. The one derivation lives here; the chat's status line reads it.
+   */
+  onReconnectingChange?: (mac: string | null) => void;
 }
 
 export default function ChatInput({
@@ -248,6 +254,7 @@ export default function ChatInput({
   latestInference,
   nextChatExtensionDraft,
   onNextChatExtensionDraftChange,
+  onReconnectingChange,
 }: ChatInputProps) {
   const [_value, setValue] = useState(initialValue);
   const [displayValue, setDisplayValue] = useState(initialValue); // For immediate visual feedback
@@ -325,6 +332,10 @@ export default function ChatInput({
   const chatServing = useChatServedBy(effectiveProvider, sessionId, isLoading);
   const servedRef = useRef(chatServing.served);
   servedRef.current = chatServing.served;
+  const reconnectingTo = reconnectingMac(chatServing.served);
+  useEffect(() => {
+    onReconnectingChange?.(reconnectingTo);
+  }, [reconnectingTo, onReconnectingChange]);
   const { persona, setPersona } = usePersona();
   const [agentWizardOpen, setAgentWizardOpen] = useState(false);
 

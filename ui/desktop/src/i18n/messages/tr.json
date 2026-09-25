@@ -287,6 +287,9 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
+  "baseChat.waitingForReconnect": {
+    "defaultMessage": "{mac} yeniden bağlanması bekleniyor…"
+  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Bu çalıştırma hakkında bir AI oturumu başlat"
   },
@@ -710,6 +713,9 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} başka bir isteğin {tokens} tokenlik istemini okuyor — mesajınız sırasını bekliyor"
   },
+  "composerReadiness.details": {
+    "defaultMessage": "Ayrıntılar"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -743,8 +749,8 @@
   "composerReadiness.reconnecting": {
     "defaultMessage": "{peer} ile bağlantı kesildi — yeniden bağlanıyor…"
   },
-  "composerReadiness.reconnectingWhy": {
-    "defaultMessage": "Son okuma: {why}"
+  "composerReadiness.reconnectingPlain": {
+    "defaultMessage": "goose denemeye devam ediyor — geri gelirse süren yanıt devam eder, gelmezse Yeniden dene ile durur"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer} üzerindeki motor çöktü — orada hiçbir şey mesaja yanıt veremez"

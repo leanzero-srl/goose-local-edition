@@ -1,6 +1,14 @@
 import { useCallback, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Hourglass, Laptop, Loader2, Network, ServerOff, Settings2 } from 'lucide-react';
+import {
+  ChevronRight,
+  Hourglass,
+  Laptop,
+  Loader2,
+  Network,
+  ServerOff,
+  Settings2,
+} from 'lucide-react';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import { errorMessage } from '../../utils/conversionUtils';
 import { PeerHeldLine } from '../leanzero-swarm/PeerHeldLine';
@@ -74,10 +82,12 @@ const i18n = defineMessages({
     id: 'composerReadiness.reconnecting',
     defaultMessage: 'Lost contact with {peer} — reconnecting…',
   },
-  reconnectingWhy: {
-    id: 'composerReadiness.reconnectingWhy',
-    defaultMessage: 'Last read: {why}',
+  reconnectingPlain: {
+    id: 'composerReadiness.reconnectingPlain',
+    defaultMessage:
+      'goose keeps trying — an answer in progress continues if it comes back, or stops with a Retry',
   },
+  details: { id: 'composerReadiness.details', defaultMessage: 'Details' },
   runHere: { id: 'composerReadiness.runHere', defaultMessage: 'Run on this Mac instead' },
   switchingHere: {
     id: 'composerReadiness.switchingHere',
@@ -276,6 +286,7 @@ function ReadinessStripBody({
 
   let headline: string;
   let detail: string | null = null;
+  let raw: string | null = null;
   let action: ReactNode = null;
   let fill = TONE_FILL.warn;
 
@@ -287,11 +298,12 @@ function ReadinessStripBody({
     const peer = routePeerName(readiness.status);
     headline = intl.formatMessage(i18n.reconnecting, { peer });
     fill = PHASE_FILL.loading;
+    // Plain words on the bar; the failed read's own words ("timeout: no answer within 1500 ms",
+    // the mesh's URL) only behind Details, as the transcript's dropped-turn notice keeps them.
     detail = switchError
       ? intl.formatMessage(i18n.switchFailed, { error: switchError })
-      : readiness.why
-        ? intl.formatMessage(i18n.reconnectingWhy, { why: readiness.why })
-        : null;
+      : intl.formatMessage(i18n.reconnectingPlain);
+    raw = readiness.why;
     const { instead } = readiness;
     if (instead.kind === 'switch') {
       action = (
@@ -417,11 +429,39 @@ function ReadinessStripBody({
             {detail}
           </span>
         )}
+        {raw && <RawReason label={intl.formatMessage(i18n.details)} raw={raw} />}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {action}
         <OpenEngineButton />
       </div>
+    </div>
+  );
+}
+
+/**
+ * The failed read's own words, folded: a small toggle in the bar's own ink (the lz Disclosure draws
+ * the page's ink, which the solid amber fill does not carry in the dark theme).
+ */
+function RawReason({ label, raw }: { label: string; raw: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="flex flex-col items-start">
+      <button
+        type="button"
+        aria-expanded={open}
+        data-testid="composer-readiness-details"
+        onClick={() => setOpen((o) => !o)}
+        className={cx('inline-flex items-center gap-1 text-lz-meta underline', WEIGHT.semibold)}
+      >
+        <ChevronRight aria-hidden className={cx('size-3.5', open && 'rotate-90')} />
+        {label}
+      </button>
+      {open && (
+        <span data-testid="composer-readiness-raw" className="text-lz-meta break-words font-mono">
+          {raw}
+        </span>
+      )}
     </div>
   );
 }

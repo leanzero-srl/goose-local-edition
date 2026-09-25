@@ -287,6 +287,9 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
+  "baseChat.waitingForReconnect": {
+    "defaultMessage": "Ожидание переподключения {mac}…"
+  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Начать ИИ-сессию об этом запуске"
   },
@@ -710,6 +713,9 @@
   "composerReadiness.busyReading": {
     "defaultMessage": "{where} читает промпт другого запроса на {tokens} токенов — ваше сообщение ждёт своей очереди"
   },
+  "composerReadiness.details": {
+    "defaultMessage": "Подробности"
+  },
   "composerReadiness.distributed": {
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
@@ -743,8 +749,8 @@
   "composerReadiness.reconnecting": {
     "defaultMessage": "Связь с {peer} потеряна — переподключение…"
   },
-  "composerReadiness.reconnectingWhy": {
-    "defaultMessage": "Последнее чтение: {why}"
+  "composerReadiness.reconnectingPlain": {
+    "defaultMessage": "goose продолжает попытки — начатый ответ продолжится, если связь вернётся, или остановится с кнопкой «Повторить»"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Движок на {peer} дал сбой — там никто не может ответить на сообщение"
