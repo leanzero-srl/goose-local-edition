@@ -14,7 +14,7 @@ ps -axo pid=,ppid=,etime=,command= | while read pid ppid et cmd; do
   esac
   kind=""
   case "$cmd" in
-    *"bin/rapid-mlx serve"*|*rapid_mlx*|*mlx_lm.server*|*mlx.launch*|*rank_wrapper*|*.goose/distributed/*) [ "$ppid" = 1 ] && kind="orphan-engine" ;;
+    *"bin/rapid-mlx serve"*|*rapid_mlx*|*mlx_lm.server*|*mlx.launch*|*rank_wrapper*|*.goose/distributed/*|*"import base64,sys"*) [ "$ppid" = 1 ] && kind="orphan-engine" ;;
     *"quality/harness/"*|*"ux-audit/"*|*r1.mjs*|*recovery.mjs*|*load.py*|*ladder.py*|*canary.py*|*sampler.sh*) kind="harness" ;;
   esac
   [ -n "$kind" ] && echo "$kind|$pid|$ppid|$et|${cmd[1,160]}"
