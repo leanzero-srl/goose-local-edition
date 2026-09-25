@@ -20,12 +20,14 @@ from rapid_mlx.distributed import pipeline_qwen4_serve  # noqa: E402
 # seams (pinned commit, provision.rs): a job's arrival (`_Job`), its batch's prefill start
 # (`run_batch`), each prefill chunk's collective (`_step` with sample=False — an all_sum every rank
 # joins, so a chunk is done on EVERY stage when it returns), its tokens (`produced`), and the
-# `/v1/status` route `_build_app` registers, answered with the request table added.
-for name in ("_Job", "run_batch", "_step", "_build_app"):
+# `/v1/status` route `_build_app` registers, answered with the request table added. The prefill's
+# ranges are the fork's own `prefill_chunks` (b7bd1afc2): a restored prefix-cache entry starts the
+# prefill past the prompt's head (`row.cached`) and a snapshot ends one range at `row.store_at`.
+for name in ("_Job", "run_batch", "_step", "_build_app", "prefill_chunks"):
     if not hasattr(pipeline_qwen4_serve, name):
         raise SystemExit(
             f"goose pipeline rank: the fork's pipeline_qwen4_serve has no {name}; the live "
-            "request table was written against fork 2f02ac645"
+            "request table was written against fork b7bd1afc2"
         )
 
 jobs_by_row = weakref.WeakValueDictionary()
@@ -66,14 +68,20 @@ def run_batch(stage, guard, rows, prefill_step, *args, **kwargs):
     jobs = [jobs_by_row.get(id(row)) for row in rows] if stage.is_first else []
     if jobs and all(job is not None for job in jobs):
         width = max(len(row.ids) for row in rows)
+        head = rows[0]
+        one = len(rows) == 1
+        start = head.cached if one and head.reuse_id else 0
+        split = head.store_at if one and head.store_id else 0
+        ranges = pipeline_qwen4_serve.prefill_chunks(start, width - 1, prefill_step, split)
         now = time.monotonic()
         for job in jobs:
             job.prefill_started = now
+            job.prefilled = start
         batch_now["current"] = {
             "jobs": jobs,
             "pads": [width - len(row.ids) for row in rows],
-            "prefix": width - 1,
-            "step": prefill_step,
+            "ends": [end for _, end in ranges],
+            "start": start,
             "chunks": 0,
         }
     try:
@@ -87,9 +95,10 @@ def _step(*args, sample, **kwargs):
     current = batch_now["current"]
     if current is not None and not sample:
         current["chunks"] += 1
-        done = min(current["prefix"], current["chunks"] * current["step"])
         for job, pad in zip(current["jobs"], current["pads"]):
-            job.prefilled = max(0, done - pad)
+            job.prefilled = prefill_position(
+                current["ends"], current["chunks"], current["start"], pad
+            )
     return result
 
 
@@ -99,6 +108,8 @@ def live_row(job, now):
         job.arrived,
         now,
         prompt_tokens=len(job.row.ids),
+        # Rank 0 decides the restore when the job's batch forms: unknown (None) until then.
+        cached_tokens=job.row.cached if job.prefill_started is not None else None,
         max_tokens=job.row.max_tokens,
         prefill_started=job.prefill_started,
         prefilled=job.prefilled,
