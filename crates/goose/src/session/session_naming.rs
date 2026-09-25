@@ -70,13 +70,13 @@ fn extract_short_title(text: &str) -> String {
     text.to_string()
 }
 
-/// Returns the first 3 user messages as strings for session naming,
-/// filtering out assistant-only content (e.g. preprompt blocks).
-fn get_initial_user_messages(messages: &Conversation) -> Vec<String> {
+/// The user's own prompts, as the text the user can see. A tool result is a user-role message
+/// too, so counting roles spent the title's three chances inside turn 0 (Q-97: E2E #1 ran 4 tools in
+/// turn 0, its one title attempt stored no name, and turns 1 and 2 never asked again).
+fn user_prompt_texts(messages: &Conversation) -> impl Iterator<Item = String> + '_ {
     messages
         .iter()
-        .filter(|m| m.role == rmcp::model::Role::User)
-        .take(MSG_COUNT_FOR_SESSION_NAME_GENERATION)
+        .filter(|m| m.role == rmcp::model::Role::User && m.is_user_visible())
         .map(|m| {
             m.content
                 .iter()
@@ -85,6 +85,16 @@ fn get_initial_user_messages(messages: &Conversation) -> Vec<String> {
                 .collect::<Vec<_>>()
                 .join("\n")
         })
+        .filter(|text| !text.trim().is_empty())
+}
+
+pub(crate) fn user_prompt_count(messages: &Conversation) -> usize {
+    user_prompt_texts(messages).count()
+}
+
+fn get_initial_user_messages(messages: &Conversation) -> Vec<String> {
+    user_prompt_texts(messages)
+        .take(MSG_COUNT_FOR_SESSION_NAME_GENERATION)
         .collect()
 }
 
@@ -165,8 +175,14 @@ pub(crate) async fn generate_session_name(
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-
-    Ok(safe_truncate(&extract_short_title(&description), 100))
+    let title = safe_truncate(&extract_short_title(&description), 100);
+    if title.trim().is_empty() {
+        anyhow::bail!(
+            "the title model answered with no title text ({} chars of raw output); the next prompt asks again",
+            raw.len()
+        );
+    }
+    Ok(title)
 }
 
 #[cfg(test)]

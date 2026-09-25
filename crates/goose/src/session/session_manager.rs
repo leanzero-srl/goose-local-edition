@@ -6,7 +6,7 @@ use crate::providers::base::Provider;
 use crate::recipe::Recipe;
 use crate::session::extension_data::ExtensionData;
 use crate::session::session_naming::{
-    generate_session_name, MSG_COUNT_FOR_SESSION_NAME_GENERATION,
+    generate_session_name, user_prompt_count, MSG_COUNT_FOR_SESSION_NAME_GENERATION,
 };
 use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
@@ -527,13 +527,8 @@ impl SessionManager {
             .conversation
             .ok_or_else(|| anyhow::anyhow!("No messages found"))?;
 
-        let user_message_count = conversation
-            .messages()
-            .iter()
-            .filter(|m| matches!(m.role, Role::User))
-            .count();
-
-        if user_message_count <= MSG_COUNT_FOR_SESSION_NAME_GENERATION {
+        let prompt_count = user_prompt_count(&conversation);
+        if (1..=MSG_COUNT_FOR_SESSION_NAME_GENERATION).contains(&prompt_count) {
             let name =
                 generate_session_name(provider.as_ref(), &model_config, id, &conversation).await?;
             return Ok(Some(self.system_generated_name_update(id, name).await?));
@@ -2224,6 +2219,41 @@ mod tests {
         Arc::new(NamingTestProvider)
     }
 
+    /// A title call that comes back with reasoning and no answer text — what a thinking model
+    /// returns when its whole reply stays inside the think block.
+    struct BlankTitleProvider;
+
+    #[async_trait::async_trait]
+    impl Provider for BlankTitleProvider {
+        fn get_name(&self) -> &str {
+            "naming-test-blank"
+        }
+
+        async fn stream(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[rmcp::model::Tool],
+        ) -> std::result::Result<MessageStream, goose_providers::errors::ProviderError> {
+            unimplemented!("session naming calls complete")
+        }
+
+        async fn complete(
+            &self,
+            _model_config: &ModelConfig,
+            _system: &str,
+            _messages: &[Message],
+            _tools: &[Tool],
+        ) -> Result<(Message, ProviderUsage), ProviderError> {
+            Ok((
+                Message::assistant()
+                    .with_thinking("The user is starting a migration assessment", "sig"),
+                ProviderUsage::new("test".to_string(), Default::default()),
+            ))
+        }
+    }
+
     fn test_recipe(title: &str) -> Recipe {
         Recipe::builder()
             .title(title)
@@ -2480,6 +2510,99 @@ mod tests {
         let reloaded = sm.get_session(&session.id, false).await.unwrap();
         assert_eq!(reloaded.name, GENERATED_SESSION_NAME);
         assert!(!reloaded.user_set_name);
+    }
+
+    /// Q-97, E2E #1 (session 20260925_33): the first prompt, then turn 0's tool calls. Their results
+    /// are user-role messages, and counting them closed the title window after turn 0, so a title
+    /// that failed there was never asked for again: "New Chat" for 3 turns and 67 messages.
+    #[tokio::test]
+    async fn tool_results_do_not_spend_the_title_window() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let session = sm
+            .create_session(
+                temp_dir.path().to_path_buf(),
+                "New Chat".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        add_user_message(&sm, &session.id).await;
+        for i in 0..4 {
+            let id = format!("t{i}");
+            sm.add_message(
+                &session.id,
+                &Message::assistant().with_tool_request(
+                    id.clone(),
+                    Ok(rmcp::model::CallToolRequestParams::new("shell")),
+                ),
+            )
+            .await
+            .unwrap();
+            sm.add_message(
+                &session.id,
+                &Message::user().with_tool_response(
+                    id,
+                    Ok(rmcp::model::CallToolResult::success(vec![
+                        rmcp::model::Content::text("done"),
+                    ])),
+                ),
+            )
+            .await
+            .unwrap();
+        }
+        sm.add_message(
+            &session.id,
+            &Message::user().with_text("Remember two rules for this client"),
+        )
+        .await
+        .unwrap();
+
+        let update = sm
+            .maybe_update_name(&session.id, naming_test_provider())
+            .await
+            .unwrap();
+        assert_eq!(
+            update.as_ref().map(|update| update.name.as_str()),
+            Some(GENERATED_SESSION_NAME)
+        );
+    }
+
+    /// Q-97: an answer with no title text used to "succeed" — the builder dropped the empty name, the
+    /// session kept "New Chat", and an update with an empty title went to the client. It is an error
+    /// now (logged by the caller), nothing is stored, and the next prompt asks again.
+    #[tokio::test]
+    async fn a_title_answer_with_no_text_is_an_error_and_stores_nothing() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let session = sm
+            .create_session(
+                temp_dir.path().to_path_buf(),
+                "New Chat".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        add_user_message(&sm, &session.id).await;
+
+        let err = sm
+            .maybe_update_name(&session.id, Arc::new(BlankTitleProvider))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no title text"), "{err}");
+        let reloaded = sm.get_session(&session.id, false).await.unwrap();
+        assert_eq!(reloaded.name, "New Chat");
+
+        let update = sm
+            .maybe_update_name(&session.id, naming_test_provider())
+            .await
+            .unwrap();
+        assert_eq!(
+            update.as_ref().map(|update| update.name.as_str()),
+            Some(GENERATED_SESSION_NAME)
+        );
     }
 
     #[tokio::test]

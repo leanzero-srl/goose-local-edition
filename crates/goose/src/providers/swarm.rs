@@ -574,7 +574,19 @@ async fn session_title_stream(
     let titled = match routed.await {
         Ok(stream) => super::base::collect_stream(stream).await,
         Err(e) => Err(e),
-    };
+    }
+    .and_then(|(message, usage)| {
+        // Q-97: a thinking model can spend its whole reply inside the think block; that answer
+        // names nothing, and storing it left the session "New Chat" with no word in the log.
+        if message.as_concat_text().trim().is_empty() {
+            Err(ProviderError::ExecutionError(format!(
+                "{} answered the title request with no text",
+                usage.model
+            )))
+        } else {
+            Ok((message, usage))
+        }
+    });
     match titled {
         Ok((message, usage)) => {
             record_call(&usage.model, start, None, Some(&usage.usage), None);
@@ -989,6 +1001,28 @@ mod tests {
             .await
             .unwrap();
         assert!(MEASURED_FIRST_MESSAGE.starts_with(title_text(stream).await.trim()));
+    }
+
+    /// Q-97: the pool answered, but only with reasoning (a thinking model's whole reply inside its
+    /// think block). That names nothing, so it is treated like a refusal: the first words stand.
+    #[tokio::test]
+    async fn a_title_answer_with_only_reasoning_keeps_the_first_words_title() {
+        let routed = async {
+            Ok(stream_from_single_message(
+                Message::assistant().with_thinking("The user wants a fetch extension", "sig"),
+                ProviderUsage::new(
+                    "mihai-qwen3.8-27b-atlassian-q8-mlx".to_string(),
+                    Usage::default(),
+                ),
+            ))
+        };
+        let messages = title_request(MEASURED_FIRST_MESSAGE);
+        let stream = session_title_stream(routed, "swarm", &messages)
+            .await
+            .unwrap();
+        let title = title_text(stream).await;
+        assert!(!title.trim().is_empty());
+        assert!(MEASURED_FIRST_MESSAGE.starts_with(title.trim()));
     }
 
     #[test]
