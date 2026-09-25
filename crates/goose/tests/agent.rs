@@ -921,7 +921,16 @@ mod tests {
             Config::global()
                 .set_param("GOOSE_TOOL_CALL_CUTOFF", 2)
                 .unwrap();
+            // Q-88: a chat agent condenses pairs into records built from their facts; a swarm
+            // worker keeps the model-written summary. Both run here, one after the other, because
+            // the cutoff override is process-global.
+            let chat = batch_condensation(false, goose::context_mgmt::TOOL_RECORD_HEADER).await;
+            let swarm = batch_condensation(true, "Summary of tool call #").await;
+            Config::global().delete("GOOSE_TOOL_CALL_CUTOFF").unwrap();
+            chat.and(swarm)
+        }
 
+        async fn batch_condensation(swarm_worker: bool, marker: &str) -> Result<()> {
             let temp_dir = tempfile::tempdir()?;
             let session_manager = Arc::new(SessionManager::new(temp_dir.path().join("data")));
             let agent = Agent::with_config(AgentConfig::new(
@@ -932,6 +941,9 @@ mod tests {
                 true,
                 GoosePlatform::GooseCli,
             ));
+            if swarm_worker {
+                agent.configure_swarm_worker(None);
+            }
             let provider = Arc::new(SummarizationTestProvider::new());
 
             let session = session_manager
@@ -1015,7 +1027,7 @@ mod tests {
                 .filter(|m| {
                     m.metadata.agent_visible
                         && !m.metadata.user_visible
-                        && m.as_concat_text().starts_with("Summary of tool call #")
+                        && m.as_concat_text().starts_with(marker)
                 })
                 .collect();
 
@@ -1058,7 +1070,7 @@ mod tests {
 
             let last_summary_pos = agent_visible
                 .iter()
-                .rposition(|m| m.as_concat_text().starts_with("Summary of tool call #"))
+                .rposition(|m| m.as_concat_text().starts_with(marker))
                 .expect("Should have at least one summary");
             let agent_reply_pos = agent_visible
                 .iter()
@@ -1071,9 +1083,6 @@ mod tests {
                 last_summary_pos,
                 agent_reply_pos,
             );
-
-            // Clean up the config override
-            Config::global().delete("GOOSE_TOOL_CALL_CUTOFF").unwrap();
 
             Ok(())
         }
@@ -1791,6 +1800,7 @@ mod tests {
                 &ImageFormat::OpenAi,
                 OpenAiFormatOptions {
                     preserve_thinking_context: true,
+                    ..Default::default()
                 },
             );
             let has_reasoning_on_tool_call = spec.iter().any(|m| {
@@ -2129,6 +2139,7 @@ mod tests {
                 &ImageFormat::OpenAi,
                 OpenAiFormatOptions {
                     preserve_thinking_context: true,
+                    ..Default::default()
                 },
             );
 

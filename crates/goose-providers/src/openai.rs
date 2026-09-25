@@ -147,7 +147,7 @@ pub struct OpenAiProvider {
     /// Per model: whether the endpoint's `/v1/models` entry declared
     /// `request_extensions: ["rapid_mlx_transient_tail"]`. Only answered probes are cached.
     #[serde(skip)]
-    transient_tail_cache: Arc<Mutex<HashMap<String, bool>>>,
+    transient_tail_cache: Arc<Mutex<HashMap<String, TransientTail>>>,
 }
 
 /// Builder for [`OpenAiProvider`].
@@ -465,12 +465,13 @@ impl OpenAiProvider {
         }
     }
 
-    /// Whether this endpoint declared that it honours `rapid_mlx_transient_tail` (the LeanZero
-    /// Rapid-MLX fork, v0.14.3-lz.2+). The declaration is the engine identity: a stock Rapid-MLX or
-    /// a real oMLX server behind `OMLX_HOST` never declares it and so never receives the field.
-    async fn accepts_transient_tail(&self, model_name: &str) -> bool {
+    /// Where this endpoint declared it honours `rapid_mlx_transient_tail` (the LeanZero Rapid-MLX
+    /// fork: on the last user message since v0.14.3-lz.2, on the last tool message too since
+    /// lz.6). The declaration is the engine identity: a stock Rapid-MLX or a real oMLX server
+    /// behind `OMLX_HOST` never declares it and so never receives the field.
+    async fn transient_tail(&self, model_name: &str) -> TransientTail {
         if !Self::PROVIDERS_FRONTING_RAPID_MLX.contains(&self.name.as_str()) {
-            return false;
+            return TransientTail::default();
         }
         if let Some(known) = self
             .transient_tail_cache
@@ -492,11 +493,18 @@ impl OpenAiProvider {
                     "transient_tail_probe_failed: the turn-context tail rides this request \
                      unmarked; the probe is retried on the next request"
                 );
-                return false;
+                return TransientTail::default();
             }
         };
-        let accepted = declares_request_extension(&json, model_name, RAPID_MLX_TRANSIENT_TAIL);
-        if !accepted {
+        let accepted = TransientTail {
+            on_user: declares_request_extension(&json, model_name, RAPID_MLX_TRANSIENT_TAIL),
+            on_tool: declares_request_extension(
+                &json,
+                model_name,
+                RAPID_MLX_TRANSIENT_TAIL_ON_TOOL,
+            ),
+        };
+        if !accepted.on_user {
             tracing::info!(
                 host = %self.api_client.host(),
                 model = %model_name,
@@ -626,6 +634,24 @@ impl OpenAiProvider {
 /// The request field the LeanZero Rapid-MLX fork reads to snapshot a hybrid cache before the
 /// request's volatile tail (`ChatCompletionRequest.rapid_mlx_transient_tail`).
 const RAPID_MLX_TRANSIENT_TAIL: &str = "rapid_mlx_transient_tail";
+/// Declared by the fork from v0.14.3-lz.6: the tail may end the last TOOL message, so the
+/// turn-context block can ride the tool results a request ends on (Q-94) and still leave the cache
+/// snapshot before it. An engine without it ignores such a tail and snapshots after the block.
+const RAPID_MLX_TRANSIENT_TAIL_ON_TOOL: &str = "rapid_mlx_transient_tail_on_tool";
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct TransientTail {
+    on_user: bool,
+    on_tool: bool,
+}
+
+impl TransientTail {
+    /// The block joins the tool results unless the engine snapshots its cache before a tail it
+    /// finds only on the last user message.
+    fn block_joins_tool_results(self) -> bool {
+        !self.on_user || self.on_tool
+    }
+}
 
 /// Whether `/v1/models` lists `extension` in the `request_extensions` of `model_name`'s entry (or of
 /// the sole entry, the single-model server serving under another id).
@@ -946,6 +972,7 @@ impl Provider for OpenAiProvider {
                 Ok(super::base::stream_from_single_message(message, usage))
             }
         } else {
+            let transient_tail = self.transient_tail(&model_config.model_name).await;
             let payload = create_request_with_options(
                 model_config,
                 system,
@@ -955,11 +982,12 @@ impl Provider for OpenAiProvider {
                 self.supports_streaming,
                 OpenAiFormatOptions {
                     preserve_thinking_context: self.preserve_thinking_context,
+                    turn_context_joins_tool_results: transient_tail.block_joins_tool_results(),
                 },
             )?;
             let mut payload = self.sanitize_request_for_compat(payload);
             self.carry_thinking_off_to_mlx(model_config, &mut payload)?;
-            if self.accepts_transient_tail(&model_config.model_name).await {
+            if transient_tail.on_user {
                 if let Some(tail) = turn_context_tail_suffix(messages, &payload) {
                     payload[RAPID_MLX_TRANSIENT_TAIL] = serde_json::Value::String(tail);
                 }
@@ -1172,10 +1200,26 @@ mod tests {
         }
     }
 
+    const TEST_TURN_CONTEXT: &str =
+        "<turn-context>\n<current-time>2026-09-23 14:07:00</current-time>\n\
+                  <working-directory>/w</working-directory>\n</turn-context>";
+
     async fn post_bodies_through(
         name: &str,
         request_extensions: serde_json::Value,
     ) -> (Vec<serde_json::Value>, usize, String) {
+        let messages = vec![Message::user()
+            .with_text("find the handler")
+            .with_text(TEST_TURN_CONTEXT)];
+        let (bodies, probes) = post_bodies_for(name, request_extensions, &messages).await;
+        (bodies, probes, format!("\n{TEST_TURN_CONTEXT}"))
+    }
+
+    async fn post_bodies_for(
+        name: &str,
+        request_extensions: serde_json::Value,
+        messages: &[Message],
+    ) -> (Vec<serde_json::Value>, usize) {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1202,12 +1246,9 @@ mod tests {
         provider.api_client =
             ApiClient::new_with_tls(server.uri(), AuthMethod::NoAuth, None).unwrap();
         provider.supports_streaming = false;
-        let tc = "<turn-context>\n<current-time>2026-09-23 14:07:00</current-time>\n\
-                  <working-directory>/w</working-directory>\n</turn-context>";
-        let messages = vec![Message::user().with_text("find the handler").with_text(tc)];
         for _ in 0..2 {
             let mut stream = provider
-                .stream(&ModelConfig::new("served"), "system", &messages, &[])
+                .stream(&ModelConfig::new("served"), "system", messages, &[])
                 .await
                 .unwrap();
             use futures::StreamExt;
@@ -1223,7 +1264,164 @@ mod tests {
             .filter(|r| r.method.as_str() == "POST")
             .map(|r| serde_json::from_slice(&r.body).unwrap())
             .collect();
-        (bodies, probes, format!("\n{tc}"))
+        (bodies, probes)
+    }
+
+    /// Q-94, #1 turn 2 (sessions.db 764103/764105 → 764106): the request ends on two
+    /// propose_knowledge results and the block rides in that tool-result message. An engine
+    /// without the transient-tail extension gets it appended to the last `role: tool` message — no
+    /// trailing user turn; a declaring Rapid-MLX engine keeps the trailing user message its cache
+    /// snapshot is taken before, byte-for-byte as before.
+    #[tokio::test]
+    async fn the_turn_context_joins_the_tool_results_unless_the_engine_marks_a_user_tail() {
+        use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+        let messages = vec![
+            Message::user().with_text("How long can they stay on Data Center?"),
+            Message::assistant().with_tool_request(
+                "call_1",
+                Ok(CallToolRequestParams::new("propose_knowledge")),
+            ),
+            Message::user()
+                .with_tool_response(
+                    "call_1",
+                    Ok(CallToolResult::success(vec![Content::text(
+                        "Proposed as knowledge in category \"atlassian-migration\"",
+                    )])),
+                )
+                .with_text(TEST_TURN_CONTEXT),
+        ];
+
+        let (bodies, _) = post_bodies_for("omlx", json!([]), &messages).await;
+        let sent = bodies[0]["messages"].as_array().unwrap();
+        let last = sent.last().unwrap();
+        assert_eq!(last["role"], json!("tool"), "{sent:?}");
+        assert!(last["content"]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!("\n{TEST_TURN_CONTEXT}")));
+        assert_eq!(
+            sent.iter().filter(|m| m["role"] == json!("user")).count(),
+            1,
+            "no user turn besides the question: {sent:?}"
+        );
+
+        let (bodies, _) =
+            post_bodies_for("omlx", json!(["rapid_mlx_transient_tail"]), &messages).await;
+        let sent = bodies[0]["messages"].as_array().unwrap();
+        assert_eq!(sent.last().unwrap()["role"], json!("user"));
+        assert_eq!(sent.last().unwrap()["content"], json!(TEST_TURN_CONTEXT));
+        assert_eq!(
+            bodies[0][RAPID_MLX_TRANSIENT_TAIL],
+            json!(TEST_TURN_CONTEXT)
+        );
+
+        // lz.6 declares the tail on a tool message: the block joins the results AND is marked.
+        let (bodies, _) = post_bodies_for(
+            "omlx",
+            json!([
+                "rapid_mlx_transient_tail",
+                "rapid_mlx_transient_tail_on_tool"
+            ]),
+            &messages,
+        )
+        .await;
+        let sent = bodies[0]["messages"].as_array().unwrap();
+        let last = sent.last().unwrap();
+        assert_eq!(last["role"], json!("tool"), "{sent:?}");
+        let joined = format!("\n{TEST_TURN_CONTEXT}");
+        assert!(last["content"].as_str().unwrap().ends_with(&joined));
+        assert_eq!(bodies[0][RAPID_MLX_TRANSIENT_TAIL], json!(joined));
+    }
+
+    /// Q-94 on a real engine: a chat turn's two tool steps, sent by this provider exactly as the
+    /// agent loop sends them, against the engine at `OMLX_MEASURE_URL` (its `/v1/models` decides
+    /// the shape). Prints what step 2 found cached of step 1's prefix, and the shape step 1 used.
+    /// `OMLX_MEASURE_URL=http://127.0.0.1:<port> OMLX_MEASURE_MODEL=<served id> cargo test -p
+    /// goose-providers --lib openai::tests::measure_the_tool_step_prefix -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn measure_the_tool_step_prefix() {
+        use futures::StreamExt;
+        use rmcp::model::{CallToolRequestParams, CallToolResult, Content};
+
+        let url = std::env::var("OMLX_MEASURE_URL").expect("OMLX_MEASURE_URL");
+        let model = std::env::var("OMLX_MEASURE_MODEL").expect("OMLX_MEASURE_MODEL");
+        let mut provider = make_provider("omlx");
+        provider.api_client = ApiClient::new_with_tls(url, AuthMethod::NoAuth, None).unwrap();
+        provider.supports_streaming = false;
+        let block = |time: &str| {
+            format!(
+                "<turn-context>\n<current-time>2026-09-26 {time}</current-time>\n\
+                 <working-directory>/w</working-directory>\n</turn-context>"
+            )
+        };
+        let listing: String = (0..400)
+            .map(|i| format!("src/module_{i}.rs  {} lines\n", 40 + i))
+            .collect();
+        let call = |id: &str, command: &str| {
+            Message::assistant().with_tool_request(
+                id,
+                Ok(CallToolRequestParams::new("shell").with_arguments(
+                    serde_json::json!({ "command": command })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                )),
+            )
+        };
+        let result = |id: &str, text: &str| {
+            Message::user().with_tool_response(
+                id,
+                Ok(CallToolResult::success(vec![Content::text(
+                    text.to_string(),
+                )])),
+            )
+        };
+        let step1 = vec![
+            Message::user()
+                .with_text("Which module is the longest? Look, then answer in one line."),
+            call("c1", "wc -l src/*.rs"),
+            result("c1", &listing).with_text(block("10:00:00")),
+        ];
+        let step2 = vec![
+            Message::user()
+                .with_text("Which module is the longest? Look, then answer in one line."),
+            call("c1", "wc -l src/*.rs"),
+            result("c1", &listing),
+            call("c2", "head -3 src/module_399.rs"),
+            result("c2", "// module 399\nfn main() {}\n").with_text(block("10:01:00")),
+        ];
+        let config = ModelConfig::new(&model).with_max_tokens(Some(8));
+        let mut usages = Vec::new();
+        for messages in [&step1, &step2] {
+            let mut stream = provider
+                .stream(&config, "You are a terse coding agent.", messages, &[])
+                .await
+                .unwrap();
+            let mut last = None;
+            while let Some(item) = stream.next().await {
+                if let Ok((_, Some(usage))) = item {
+                    last = Some(usage.usage);
+                }
+            }
+            usages.push(last.expect("the engine reported usage"));
+        }
+        let shape = if provider
+            .transient_tail(&model)
+            .await
+            .block_joins_tool_results()
+        {
+            "block joined to the tool result"
+        } else {
+            "block as its own user message"
+        };
+        println!(
+            "shape: {shape}; step 1 prompt {:?} (cached {:?}); step 2 prompt {:?}, cached {:?}",
+            usages[0].input_tokens,
+            usages[0].cache_read_input_tokens,
+            usages[1].input_tokens,
+            usages[1].cache_read_input_tokens
+        );
     }
 
     /// The marker reaches ONLY an omlx endpoint that declared it, names exactly the appended

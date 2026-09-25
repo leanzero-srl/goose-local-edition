@@ -294,6 +294,10 @@ pub struct Agent {
     /// judge supervises and whose golden benchmark was measured without it. Shared with the
     /// repetition inspector and read again where tool results are noted.
     repeat_guard: Arc<std::sync::atomic::AtomicBool>,
+    /// Set by `configure_swarm_worker`. Chat-only context changes made after the golden benchmark
+    /// (393a99351) check it, so a swarm worker's context stays what that run measured until a run
+    /// measures the change.
+    swarm_worker: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone, Debug)]
@@ -432,6 +436,7 @@ impl Agent {
             swarm_single_owned_file: std::sync::RwLock::new(None),
             swarm_measured_context: std::sync::atomic::AtomicBool::new(false),
             repeat_guard,
+            swarm_worker: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -447,6 +452,12 @@ impl Agent {
     pub fn configure_swarm_worker(&self, single_owned_file: Option<String>) {
         self.set_swarm_single_owned_file(single_owned_file);
         self.set_repeat_guard(false);
+        self.swarm_worker
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn is_swarm_worker(&self) -> bool {
+        self.swarm_worker.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// SWARM: register the task's single owned file so a pathless `write`/`edit` gets repaired (see the field
@@ -2153,6 +2164,7 @@ impl Agent {
                     turns_taken,
                     max_turns,
                     measured_context,
+                    !self.is_swarm_worker(),
                 ).await;
                 // VA-107: the not-reported arm is LOUD to the caller — the swarm turns this notice
                 // into one `usage_unavailable{task, attempt, turn}` event per lane.
@@ -2172,7 +2184,12 @@ impl Agent {
                     .messages()
                     .iter()
                     .rev()
-                    .find(|m| m.is_agent_visible() && crate::conversation::effective_role(m) == "user")
+                    .find(|m| {
+                        m.is_agent_visible()
+                            && m.content.iter().any(|c| {
+                                matches!(c, MessageContent::Text(t) if crate::conversation::is_turn_context_text(&t.text))
+                            })
+                    })
                     .and_then(|m| {
                         m.content.iter().find_map(|c| match c {
                             MessageContent::Text(t) => super::platform_extensions::recall::recall_line_of(&t.text),
@@ -2215,6 +2232,7 @@ impl Agent {
                         conversation.clone(),
                         tool_call_cut_off,
                         current_turn_tool_count,
+                        !self.is_swarm_worker(),
                     )
                 };
 
@@ -3058,7 +3076,26 @@ impl Agent {
                 for msg in &messages_to_add {
                     session_manager.add_message(&session_config.id, msg).await?;
                 }
+                let response_starts_at = conversation.len();
                 conversation.extend(messages_to_add);
+
+                // Q-84/Q-91: the reply is held against this turn's tool results, and what does not
+                // hold is said under it — on screen and in the session, never only in a log.
+                if !self.is_swarm_worker() {
+                    let findings = crate::claim_check::check_new_text(
+                        conversation.messages(),
+                        response_starts_at,
+                        &working_dir,
+                        &|path: &std::path::Path| path.exists(),
+                        chrono::Datelike::year(&chrono::Local::now()),
+                    );
+                    if let Some(line) = crate::claim_check::correction_line(&findings) {
+                        let notice = crate::claim_check::correction_notice(line);
+                        session_manager.add_message(&session_config.id, &notice).await?;
+                        conversation.push(notice.clone());
+                        yield AgentEvent::Message(notice);
+                    }
+                }
 
                 // local-edition: PER-TURN proactive compaction. Goose's built-in proactive check runs
                 // only once before the loop, so an effective-window cap (GOOSE_LOCAL_CONTEXT_CAP) never

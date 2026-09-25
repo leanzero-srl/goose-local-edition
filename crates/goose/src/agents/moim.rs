@@ -47,6 +47,11 @@ pub async fn inject_moim(
     // (P%)` line (the compaction guard's two numbers) in place of the threshold-relative
     // `<compaction>~Nk tokens remaining</compaction>` figure; None = every other agent, unchanged.
     measured: Option<LastCallUsage>,
+    // Q-94: true = when the request ends on tool results, the block rides in that tool-result
+    // message, so a formatter that can join it to the results never renders it as a user turn of
+    // its own. false = the swarm's workers, whose golden run was measured with the block in the
+    // human message.
+    host_on_tool_results: bool,
 ) -> Conversation {
     if SKIP.with(|f| f.get()) {
         return conversation;
@@ -99,20 +104,28 @@ pub async fn inject_moim(
     );
 
     let mut messages = conversation.messages().clone();
-    let Some(idx) = messages
+    let tool_results_tail = messages
         .iter()
-        .rposition(|m| m.is_agent_visible() && effective_role(m) == "user")
-    else {
-        return conversation;
-    };
-    let insert_idx = messages[idx]
-        .content
-        .iter()
-        .take_while(|content| matches!(content, MessageContent::ToolResponse(_)))
-        .count();
-    messages[idx]
-        .content
-        .insert(insert_idx, MessageContent::text(moim));
+        .rposition(|m| m.is_agent_visible())
+        .filter(|&last| host_on_tool_results && effective_role(&messages[last]) == "tool");
+    if let Some(last) = tool_results_tail {
+        messages[last].content.push(MessageContent::text(moim));
+    } else {
+        let Some(idx) = messages
+            .iter()
+            .rposition(|m| m.is_agent_visible() && effective_role(m) == "user")
+        else {
+            return conversation;
+        };
+        let insert_idx = messages[idx]
+            .content
+            .iter()
+            .take_while(|content| matches!(content, MessageContent::ToolResponse(_)))
+            .count();
+        messages[idx]
+            .content
+            .insert(insert_idx, MessageContent::text(moim));
+    }
 
     let (fixed, issues) = fix_conversation(Conversation::new_unvalidated(messages));
 
@@ -339,7 +352,7 @@ mod tests {
             Message::assistant().with_text("Hi"),
             Message::user().with_text("Bye"),
         ]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100, None).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, None, false).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 3);
@@ -366,7 +379,7 @@ mod tests {
             .unwrap();
 
         let conv = Conversation::new_unvalidated(vec![Message::user().with_text("Hello")]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100, None).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, None, false).await;
 
         assert_eq!(result.messages().len(), 1);
         assert!(is_moim(&result.messages()[0].content[0]));
@@ -394,7 +407,7 @@ mod tests {
             Message::assistant().with_text("reply"),
             Message::user().with_text("user only").user_only(),
         ]);
-        let result = inject_moim(&session.id, conv, &em, 0, 100, None).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, None, false).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 2);
@@ -429,7 +442,7 @@ mod tests {
                 .with_tool_response("search_1", Ok(rmcp::model::CallToolResult::success(vec![]))),
         ]);
 
-        let result = inject_moim(&session.id, conv, &em, 0, 100, None).await;
+        let result = inject_moim(&session.id, conv, &em, 0, 100, None, false).await;
         let msgs = result.messages();
 
         assert_eq!(msgs.len(), 3);
@@ -440,6 +453,54 @@ mod tests {
             MessageContent::ToolResponse(_)
         ));
         assert_eq!(msgs[2].content.len(), 1);
+    }
+
+    /// Q-94: a chat agent whose request ends on tool results hosts the block in that tool-result
+    /// message (the formatter joins it to the results); a request ending on the user's own words,
+    /// and every swarm worker, keep it in the human message.
+    #[tokio::test]
+    async fn chat_hosts_the_block_on_a_tool_results_tail() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let em = ExtensionManager::new_without_provider(temp_dir.path().to_path_buf());
+        let session = em
+            .get_context()
+            .session_manager
+            .create_session(
+                PathBuf::from("/test/dir"),
+                "test".to_string(),
+                crate::session::SessionType::User,
+                crate::config::GooseMode::Auto,
+            )
+            .await
+            .unwrap();
+        let tool_tail = || {
+            Conversation::new_unvalidated(vec![
+                Message::user().with_text("How long can they stay on Data Center?"),
+                Message::assistant()
+                    .with_text("Answered.")
+                    .with_tool_request("k1", Ok(CallToolRequestParams::new("propose_knowledge"))),
+                Message::user()
+                    .with_tool_response("k1", Ok(rmcp::model::CallToolResult::success(vec![]))),
+            ])
+        };
+
+        let chat = inject_moim(&session.id, tool_tail(), &em, 0, 100, None, true).await;
+        let msgs = chat.messages();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].content.len(), 1, "the question stays as asked");
+        assert!(matches!(
+            msgs[2].content[0],
+            MessageContent::ToolResponse(_)
+        ));
+        assert!(is_moim(msgs[2].content.last().unwrap()));
+
+        let swarm = inject_moim(&session.id, tool_tail(), &em, 0, 100, None, false).await;
+        assert!(is_moim(&swarm.messages()[0].content[0]));
+        assert_eq!(swarm.messages()[2].content.len(), 1);
+
+        let asked = Conversation::new_unvalidated(vec![Message::user().with_text("Bye")]);
+        let asked = inject_moim(&session.id, asked, &em, 0, 100, None, true).await;
+        assert!(is_moim(&asked.messages()[0].content[0]));
     }
 
     /// The turn-context block is produced here (`compose_moim`, in goose) but
