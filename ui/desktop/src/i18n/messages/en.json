@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "Stops sending chat to {peer} and runs it on this Mac"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "Run on one Mac instead"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "Loads {model} on this Mac alone — the split stays stopped"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "Loading on this Mac…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "Start the split again"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "The split did not start: {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "Starting the split…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Could not move chat to this Mac: {error}"
   },
@@ -2759,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "Expired — not saved"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "From a chat in this project · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "Negative"
   },
@@ -4625,6 +4646,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "Reconnecting"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "Split stopped"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "State unknown"
   },
@@ -4651,6 +4675,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Not running — start it from the Engine"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "Stopped on {where} — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} on {where}"
@@ -4793,6 +4820,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Every slot on this node is busy."
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "Details"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4832,6 +4862,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "No saved MLX model for this node — pick one in Providers."
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "Open Engine"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Open Providers"
   },
@@ -4846,6 +4879,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Serving from {peer} — this Mac’s own engine is set aside while chat goes there."
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "The model is running again — retry to send your message."
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer,select,yes{{reason} — the answer above stops there.} other{{reason} — nothing else could take this message.}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer,select,yes{The split across your Macs stopped mid-answer} other{The split across your Macs stopped}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "The swarm checked every enabled node and none could take this message."
@@ -7087,6 +7129,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "Enable Spellcheck"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "The split across your Macs stopped — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "{mac} had {available} GB of {total} GB free when it stopped."
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause,select,memory{{mac} ran out of memory} frozen{{mac} stopped responding} other{{mac}’s part of the model stopped}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause,select,memory{one of your Macs ran out of memory} frozen{the Macs stopped making progress} other{one part of the model stopped}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "Failed to Load App"

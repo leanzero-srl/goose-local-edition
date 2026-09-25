@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "Deja de enviar el chat a {peer} y lo ejecuta en este Mac"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "Ejecutar en un solo Mac en su lugar"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "Carga {model} solo en este Mac — la división sigue detenida"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "Cargando en este Mac…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "Volver a iniciar la división"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "La división no se inició: {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "Iniciando la división…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "No se pudo mover el chat a este Mac: {error}"
   },
@@ -2759,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "Caducado — no guardado"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "De un chat de este proyecto · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "Negativo"
   },
@@ -4616,6 +4637,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "Reconectando"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "División detenida"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Estado desconocido"
   },
@@ -4642,6 +4666,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Sin ejecutar — inícialo desde el motor"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "Detenido en {where} — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} en {where}"
@@ -4784,6 +4811,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Todas las plazas de este nodo están ocupadas."
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "Detalles"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4853,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "No hay un modelo MLX guardado para este nodo — elige uno en Providers."
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "Abrir motor"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Abrir Providers"
   },
@@ -4837,6 +4870,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Servido desde {peer}: el motor propio de este Mac queda a un lado mientras el chat va allí."
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "El modelo vuelve a funcionar — reintenta para enviar tu mensaje."
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — la respuesta de arriba se queda ahí.} other {{reason} — nada más pudo atender este mensaje.}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {La división entre tus Macs se detuvo a mitad de la respuesta} other {La división entre tus Macs se detuvo}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "El swarm revisó cada nodo activo y ninguno pudo atender este mensaje."
@@ -7078,6 +7120,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "Activar corrección ortográfica"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "La división entre tus Macs se detuvo — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "{mac} tenía {available} GB libres de {total} GB cuando se detuvo."
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {{mac} se quedó sin memoria} frozen {{mac} dejó de responder} other {la parte del modelo en {mac} se detuvo}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {uno de tus Macs se quedó sin memoria} frozen {los Macs dejaron de avanzar} other {una parte del modelo se detuvo}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "No se pudo cargar la app"

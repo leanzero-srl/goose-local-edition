@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "Smette di inviare la chat a {peer} e la esegue su questo Mac"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "Esegui invece su un solo Mac"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "Carica {model} solo su questo Mac — la suddivisione resta ferma"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "Caricamento su questo Mac…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "Riavvia la suddivisione"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "La suddivisione non è partita: {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "Avvio della suddivisione…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Impossibile spostare la chat su questo Mac: {error}"
   },
@@ -2759,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "Scaduto — non salvato"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "Da una chat di questo progetto · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "Negativo"
   },
@@ -4616,6 +4637,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "Riconnessione"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "Suddivisione ferma"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Stato sconosciuto"
   },
@@ -4642,6 +4666,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Non in esecuzione — avvialo dal motore"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "Fermo su {where} — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} su {where}"
@@ -4784,6 +4811,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Tutti gli slot di questo nodo sono occupati."
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "Dettagli"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4853,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Nessun modello MLX salvato per questo nodo — scegline uno in Providers."
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "Apri motore"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Apri Providers"
   },
@@ -4837,6 +4870,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Servito da {peer} — il motore di questo Mac resta da parte finché la chat va lì."
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "Il modello è di nuovo in esecuzione — riprova per inviare il messaggio."
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — la risposta qui sopra si ferma lì.} other {{reason} — nient’altro poteva accettare questo messaggio.}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {La suddivisione sui tuoi Mac si è fermata a metà risposta} other {La suddivisione sui tuoi Mac si è fermata}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Lo swarm ha controllato ogni nodo attivo e nessuno ha potuto prendere questo messaggio."
@@ -7078,6 +7120,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "Abilita controllo ortografico"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "La suddivisione sui tuoi Mac si è fermata — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "{mac} aveva {available} GB liberi su {total} GB quando si è fermato."
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {{mac} ha esaurito la memoria} frozen {{mac} ha smesso di rispondere} other {la parte del modello su {mac} si è fermata}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {uno dei tuoi Mac ha esaurito la memoria} frozen {i Mac hanno smesso di avanzare} other {una parte del modello si è fermata}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "Impossibile caricare l'app"

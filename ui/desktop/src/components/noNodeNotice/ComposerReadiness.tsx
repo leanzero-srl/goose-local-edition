@@ -6,10 +6,12 @@ import {
   Laptop,
   Loader2,
   Network,
+  Play,
   ServerOff,
   Settings2,
 } from 'lucide-react';
 import { mlxEngineModelsList, type MlxEngineStatus } from '../../acp/mlx-engine';
+import { mlxDistributedStart, mlxDistributedStatus } from '../../acp/mlx-distributed';
 import { gb1, gib } from '../leanzero-swarm/mlxDistributed';
 import { errorMessage } from '../../utils/conversionUtils';
 import { PeerHeldLine } from '../leanzero-swarm/PeerHeldLine';
@@ -33,6 +35,7 @@ import {
   type RunHere,
 } from '../chatServedBy/chatServedBy';
 import type { ChatServing } from '../chatServedBy/useChatServedBy';
+import { splitStopHeadline, splitStopMemory } from '../chatServedBy/splitStopText';
 import {
   distributedProblem,
   distributedServedId,
@@ -130,6 +133,21 @@ const i18n = defineMessages({
     defaultMessage:
       '{where} is reading another request’s {tokens}-token prompt — your message waits its turn',
   },
+  splitStart: { id: 'composerReadiness.splitStart', defaultMessage: 'Start the split again' },
+  splitStarting: { id: 'composerReadiness.splitStarting', defaultMessage: 'Starting the split…' },
+  splitStartFailed: {
+    id: 'composerReadiness.splitStartFailed',
+    defaultMessage: 'The split did not start: {error}',
+  },
+  splitOneMac: { id: 'composerReadiness.splitOneMac', defaultMessage: 'Run on one Mac instead' },
+  splitOneMacHint: {
+    id: 'composerReadiness.splitOneMacHint',
+    defaultMessage: 'Loads {model} on this Mac alone — the split stays stopped',
+  },
+  splitOneMacLoading: {
+    id: 'composerReadiness.splitOneMacLoading',
+    defaultMessage: 'Loading on this Mac…',
+  },
   mount: { id: 'composerReadiness.mount', defaultMessage: 'Mount {model}' },
   mounting: { id: 'composerReadiness.mounting', defaultMessage: 'Mounting {model}' },
   openEngine: { id: 'composerReadiness.openEngine', defaultMessage: 'Open Engine' },
@@ -165,6 +183,8 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
   const restoreDetails = useRestoreDetails(restore);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [startingSplit, setStartingSplit] = useState(false);
+  const [splitStartError, setSplitStartError] = useState<string | null>(null);
 
   // "Run on this Mac instead": the route withdrawn on this Mac without waiting on the Mac that is
   // not answering (routeSwitch.ts — the one switch path), then this Mac's Mount at once. Whether
@@ -187,6 +207,24 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
     },
     [mount]
   );
+
+  // "Start the split again": the saved split, the same call Run it and the relaunch restore make.
+  // Its status is read at once so every surface leaves "stopped" on the run's own state.
+  const startSplit = useCallback(async () => {
+    setStartingSplit(true);
+    setSplitStartError(null);
+    try {
+      const response = await mlxDistributedStart(null);
+      if (!response.started) {
+        setSplitStartError(response.refusal?.message ?? response.refusal?.code ?? null);
+      }
+      await mlxDistributedStatus().catch(() => undefined);
+    } catch (e) {
+      setSplitStartError(errorMessage(e, String(e)));
+    } finally {
+      setStartingSplit(false);
+    }
+  }, []);
 
   // A relaunch bringing back what served: that is the line, not "No model is mounted" + Mount.
   if (armed && restoreText != null && !servedReady(served)) {
@@ -233,6 +271,9 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
       switchError={switchError}
       onRunHere={(instead) => void runHere(instead)}
       turnInFlight={serving.turnInFlight}
+      startingSplit={startingSplit}
+      splitStartError={splitStartError}
+      onStartSplit={() => void startSplit()}
     />
   );
 }
@@ -334,6 +375,9 @@ function ReadinessStripBody({
   switchError,
   onRunHere,
   turnInFlight,
+  startingSplit,
+  splitStartError,
+  onStartSplit,
 }: {
   readiness: Exclude<ComposerReadiness, { kind: 'unknown' } | { kind: 'ready' }>;
   model: string | null;
@@ -345,10 +389,15 @@ function ReadinessStripBody({
   switchError: string | null;
   onRunHere: (instead: RunHere) => void;
   turnInFlight: boolean;
+  startingSplit: boolean;
+  splitStartError: string | null;
+  onStartSplit: () => void;
 }) {
   const intl = useIntl();
   const instead =
-    readiness.kind === 'reconnecting' || readiness.kind === 'remote'
+    readiness.kind === 'reconnecting' ||
+    readiness.kind === 'remote' ||
+    readiness.kind === 'split-stopped'
       ? readiness.instead
       : undefined;
   const local = useLocalModel(instead?.kind === 'switch' ? instead.mount : null);
@@ -390,6 +439,50 @@ function ReadinessStripBody({
 
   if (readiness.kind === 'no-nodes') {
     headline = intl.formatMessage(i18n.noNodes);
+  } else if (readiness.kind === 'split-stopped') {
+    // The split chat was on stopped on its own: said as the split, with why — its two ways back
+    // are starting it again or this Mac alone (Q-81). The supervisor's words only behind Details.
+    const { stop } = readiness;
+    headline = splitStopHeadline(intl, stop);
+    fill = PHASE_FILL.failed;
+    spinning = startingSplit || requesting;
+    detail = splitStartError
+      ? intl.formatMessage(i18n.splitStartFailed, { error: splitStartError })
+      : mountError
+        ? intl.formatMessage(i18n.failed, { error: mountError })
+        : splitStopMemory(intl, stop);
+    raw = stop.raw;
+    const oneMac =
+      instead?.kind === 'switch' && instead.mount && local.state !== 'absent'
+        ? instead.mount
+        : null;
+    action = (
+      <>
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<Play />}
+          disabled={startingSplit || requesting}
+          data-testid="composer-readiness-split-start"
+          onClick={onStartSplit}
+        >
+          {intl.formatMessage(startingSplit ? i18n.splitStarting : i18n.splitStart)}
+        </Button>
+        {oneMac && (
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<Laptop />}
+            disabled={startingSplit || requesting}
+            title={intl.formatMessage(i18n.splitOneMacHint, { model: shortModelName(oneMac) })}
+            data-testid="composer-readiness-split-one-mac"
+            onClick={() => onMount(oneMac)}
+          >
+            {intl.formatMessage(requesting ? i18n.splitOneMacLoading : i18n.splitOneMac)}
+          </Button>
+        )}
+      </>
+    );
   } else if (readiness.kind === 'reconnecting') {
     // The route's Mac stopped answering: chat still goes there, so every second until it answers
     // again — or the user moves chat here — is named (Q-47). A Mac that said it quit or is

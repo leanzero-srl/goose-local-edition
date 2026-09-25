@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
 import { IntlProvider } from 'react-intl';
 import { createUserMessage, type Message } from '../../types/message';
@@ -12,6 +12,7 @@ import { resolveMountTarget, shortModelName } from './mlxMount';
 import { parseNoNodeError } from './parseNoNodeError';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
+import { DIED_MS, SPLIT_STOPPED_E2E2, WARN_MS } from '../chatServedBy/splitStop.fixtures';
 
 const mockStatus = vi.fn<() => Promise<MlxEngineStatus>>();
 const mockMount = vi.fn<(modelId: string, nodeId?: string) => Promise<void>>();
@@ -397,5 +398,103 @@ describe('GooseMessage renders the refusal as the notice', () => {
     );
     expect(screen.getByTestId('no-node-notice')).toBeInTheDocument();
     expect(screen.queryByTestId('no-node-retry')).toBeNull();
+  });
+});
+
+describe('the split chat was on stopped — the turn’s notice says so (Q-81, E2E #2)', () => {
+  const at = (ms: number) => Math.floor(ms / 1000);
+  function turn(text: string | string[], createdMs: number): Message {
+    const parts = Array.isArray(text) ? text : [text];
+    return {
+      id: 'a1',
+      role: 'assistant',
+      created: at(createdMs),
+      content: parts.map((t) => ({ type: 'text' as const, text: t })),
+      metadata: { userVisible: true, agentVisible: true },
+    };
+  }
+  function show(message: Message, append = vi.fn()) {
+    const userTurn = createUserMessage('First thing Aoife will ask: how long can they stay on DC?');
+    return wrap(
+      <GooseMessage
+        sessionId="s1"
+        message={message}
+        messages={[userTurn, message]}
+        toolCallNotifications={new Map()}
+        append={append}
+        isStreaming={false}
+      />
+    );
+  }
+
+  afterEach(async () => {
+    mockExtMethod.mockRejectedValue(new Error('reset'));
+    await mlxDistributedStatus().catch(() => undefined);
+  });
+
+  it('a refusal after the stop: the split and why, Retry — the 8090 internals only behind Details', async () => {
+    mockExtMethod.mockResolvedValue({ status: SPLIT_STOPPED_E2E2 });
+    await act(async () => {
+      await mlxDistributedStatus();
+    });
+    const user = userEvent.setup();
+    const append = vi.fn();
+    const { container } = show(turn(OWNER_TEXT, DIED_MS + 900), append);
+    const notice = await screen.findByTestId('no-node-split-stopped');
+    expect(notice.textContent).toContain('The split across your Macs stopped');
+    expect(screen.getByTestId('no-node-split-summary').textContent).toBe(
+      'Work’s Mac Studio ran out of memory — nothing else could take this message.'
+    );
+    expect(notice.textContent).not.toContain('No model is mounted');
+    expect(screen.queryByTestId('no-node-open-providers')).toBeNull();
+    expect(screen.queryByTestId('no-node-mount-mihai-mlx')).toBeNull();
+    for (const raw of screen.getAllByTestId('no-node-raw')) expect(raw).not.toBeVisible();
+    await user.click(screen.getByRole('button', { name: /Details/ }));
+    expect(screen.getAllByTestId('no-node-raw')[0].textContent).toContain(
+      'mihai-mlx: MLX engine is not listening on http://127.0.0.1:8090'
+    );
+    expect(screen.getByTestId('no-node-split-raw').textContent).toContain(
+      'rank 1 ended on its Link node'
+    );
+    await user.click(screen.getByTestId('no-node-retry'));
+    expect(append).toHaveBeenCalledWith(
+      'First thing Aoife will ask: how long can they stay on DC?'
+    );
+    assertStudioClean(container);
+  });
+
+  it('the answer the stop CUT: kept as written, the notice below it says the answer stops there', async () => {
+    mockExtMethod.mockResolvedValue({ status: SPLIT_STOPPED_E2E2 });
+    await act(async () => {
+      await mlxDistributedStatus();
+    });
+    const answer = 'Atlassian announced the Data Center end of life for 28 March 2029. The';
+    show(turn([answer, OWNER_TEXT], WARN_MS - 90_000));
+    expect(screen.getByText(/end of life for 28 March 2029\. The$/)).toBeInTheDocument();
+    const notice = await screen.findByTestId('no-node-split-stopped');
+    expect(notice.textContent).toContain('The split across your Macs stopped mid-answer');
+    expect(screen.getByTestId('no-node-split-summary').textContent).toBe(
+      'Work’s Mac Studio ran out of memory — the answer above stops there.'
+    );
+    expect(screen.getByTestId('no-node-retry')).toBeInTheDocument();
+    expect(screen.queryByText(/Please retry if you think/)).toBeNull();
+  });
+
+  it('a cut answer with no split behind it keeps the answer and the plain notice below', () => {
+    const answer = 'Half an answer';
+    show(turn([answer, OWNER_TEXT], DIED_MS));
+    expect(screen.getByText('Half an answer')).toBeInTheDocument();
+    expect(screen.getByTestId('no-node-notice').textContent).toContain('No model is mounted');
+    expect(screen.queryByTestId('no-node-split-stopped')).toBeNull();
+  });
+
+  it('a refusal from BEFORE the split ever served is not blamed on it', async () => {
+    mockExtMethod.mockResolvedValue({ status: SPLIT_STOPPED_E2E2 });
+    await act(async () => {
+      await mlxDistributedStatus();
+    });
+    show(turn(OWNER_TEXT, WARN_MS - 30 * 60_000));
+    expect(await screen.findByTestId('no-node-notice')).toBeInTheDocument();
+    expect(screen.queryByTestId('no-node-split-stopped')).toBeNull();
   });
 });

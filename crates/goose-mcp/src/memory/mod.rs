@@ -20,6 +20,7 @@ use std::{
 };
 
 const WORKING_DIR_HEADER: &str = "agent-working-dir";
+const SESSION_ID_HEADER: &str = "agent-session-id";
 
 fn extract_working_dir_from_meta(meta: &Meta) -> Option<PathBuf> {
     meta.0
@@ -27,6 +28,14 @@ fn extract_working_dir_from_meta(meta: &Meta) -> Option<PathBuf> {
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
+}
+
+fn extract_session_id_from_meta(meta: &Meta) -> Option<String> {
+    meta.0
+        .get(SESSION_ID_HEADER)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 fn memory_error(error: io::Error) -> ErrorData {
@@ -482,7 +491,8 @@ impl MemoryServer {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let working_dir = extract_working_dir_from_meta(&context.meta);
-        let message = self.propose_knowledge_inner(params.0, working_dir)?;
+        let session_id = extract_session_id_from_meta(&context.meta);
+        let message = self.propose_knowledge_inner(params.0, working_dir, session_id)?;
         Ok(CallToolResult::success(vec![Content::text(message)]))
     }
 
@@ -490,6 +500,7 @@ impl MemoryServer {
         &self,
         params: ProposeKnowledgeParams,
         working_dir: Option<PathBuf>,
+        session_id: Option<String>,
     ) -> Result<String, ErrorData> {
         if params.data.trim().is_empty() {
             return Err(ErrorData::new(
@@ -518,11 +529,16 @@ impl MemoryServer {
         let content = format!("{}\nSources: {}", params.data.trim(), sources.join(", "));
 
         if let Some(dir) = &self.proposals_dir {
-            let key = goose_memory_store::working_dir_key(
-                working_dir
-                    .as_deref()
-                    .unwrap_or_else(|| std::path::Path::new(".")),
-            );
+            // The chat that asked owns the card: goose sends its session id with every tool call.
+            // Keyed by the working dir, one chat's proposal showed at the bottom of every other
+            // chat in the project (E2E #2, Q-82). The dir key stays for a caller with no session.
+            let key = session_id.unwrap_or_else(|| {
+                goose_memory_store::working_dir_key(
+                    working_dir
+                        .as_deref()
+                        .unwrap_or_else(|| std::path::Path::new(".")),
+                )
+            });
             let outcome = goose_memory_store::ProposalStore::new(dir.clone())
                 .add(
                     &key,
@@ -783,6 +799,15 @@ mod tests {
         working_dir: &std::path::Path,
         sources: Vec<&str>,
     ) -> Result<String, ErrorData> {
+        call_in(server, working_dir, None, sources)
+    }
+
+    fn call_in(
+        server: &MemoryServer,
+        working_dir: &std::path::Path,
+        session_id: Option<&str>,
+        sources: Vec<&str>,
+    ) -> Result<String, ErrorData> {
         let params = ProposeKnowledgeParams {
             category: "vendor-api".to_string(),
             data: "The vendor API returns 409 on a conflict.\nBody is the error envelope."
@@ -791,7 +816,40 @@ mod tests {
             tags: vec!["api".to_string()],
             is_global: false,
         };
-        server.propose_knowledge_inner(params, Some(working_dir.to_path_buf()))
+        server.propose_knowledge_inner(
+            params,
+            Some(working_dir.to_path_buf()),
+            session_id.map(str::to_string),
+        )
+    }
+
+    /// Q-82: a piece proposed in one chat is that chat's card — filed under the session goose
+    /// names on the call, never under the working dir every chat of the project lists.
+    #[test]
+    fn propose_knowledge_files_under_the_asking_chat() {
+        let dir = tempdir().unwrap();
+        let wd = dir.path().join("project");
+        let on = server(dir.path(), true);
+        let reply = call_in(&on, &wd, Some("20260925_31"), vec!["web-search__search"]).unwrap();
+        assert!(reply.contains("Proposed as knowledge"), "{reply}");
+        let store = goose_memory_store::ProposalStore::new(dir.path().join("proposals"));
+        assert_eq!(store.list("20260925_31").unwrap().len(), 1);
+        let wd_key = goose_memory_store::working_dir_key(&wd);
+        assert!(store.list(&wd_key).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_session_id_is_read_from_the_call_meta() {
+        let mut meta = Meta::default();
+        assert_eq!(extract_session_id_from_meta(&meta), None);
+        meta.0.insert(
+            SESSION_ID_HEADER.to_string(),
+            serde_json::Value::String("20260925_31".to_string()),
+        );
+        assert_eq!(
+            extract_session_id_from_meta(&meta).as_deref(),
+            Some("20260925_31")
+        );
     }
 
     /// FRAME 1.14 G2: with proposals on (the default) a grounded piece is PROPOSED — nothing in

@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "Sendet den Chat nicht mehr an {peer}, sondern führt ihn auf diesem Mac aus"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "Stattdessen auf einem Mac ausführen"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "Lädt {model} nur auf diesem Mac — die Aufteilung bleibt gestoppt"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "Wird auf diesem Mac geladen…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "Aufteilung erneut starten"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "Die Aufteilung ist nicht gestartet: {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "Aufteilung wird gestartet…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Chat konnte nicht auf diesen Mac verlegt werden: {error}"
   },
@@ -2759,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "Abgelaufen — nicht gespeichert"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "Aus einem Chat in diesem Projekt · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "Negativ"
   },
@@ -4616,6 +4637,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "Verbindet erneut"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "Aufteilung gestoppt"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "Zustand unbekannt"
   },
@@ -4642,6 +4666,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "Läuft nicht — starte es in der Engine"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "Gestoppt auf {where} — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{phase} auf {where}"
@@ -4784,6 +4811,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Alle Plätze auf diesem Knoten sind belegt."
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "Details"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4853,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "Kein gespeichertes MLX-Modell für diesen Knoten — wähle eines unter Providers."
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "Engine öffnen"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Providers öffnen"
   },
@@ -4837,6 +4870,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Bereitgestellt von {peer} — die eigene Engine dieses Mac wird beiseitegestellt, solange der Chat dorthin geht."
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "Das Modell läuft wieder — wiederhole den Versuch, um deine Nachricht zu senden."
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — die Antwort oben endet dort.} other {{reason} — nichts anderes konnte diese Nachricht annehmen.}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {Die Aufteilung auf deine Macs wurde mitten in der Antwort gestoppt} other {Die Aufteilung auf deine Macs wurde gestoppt}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Der Swarm hat jeden aktiven Knoten geprüft, keiner konnte diese Nachricht übernehmen."
@@ -7078,6 +7120,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "Rechtschreibprüfung aktivieren"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "Die Aufteilung auf deine Macs wurde gestoppt — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "{mac} hatte {available} GB von {total} GB frei, als er stoppte."
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {{mac} hatte keinen Arbeitsspeicher mehr} frozen {{mac} hat nicht mehr reagiert} other {der Teil des Modells auf {mac} wurde gestoppt}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {einem deiner Macs ist der Arbeitsspeicher ausgegangen} frozen {die Macs kamen nicht mehr voran} other {ein Teil des Modells wurde gestoppt}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "App konnte nicht geladen werden"

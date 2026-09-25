@@ -19,8 +19,10 @@ import {
 } from '../leanzero-swarm/mlxLiveStats';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
+import { splitStopAt, type SplitStop } from './splitStop';
 import {
   distributedFact,
+  distributedServedId,
   distributedServes,
   distributedSummary,
   engineFact,
@@ -85,6 +87,17 @@ export type ComposerReadiness =
   | { kind: 'unmounted'; nodes: string[]; target: MountTarget; fact: EngineFact }
   | { kind: 'distributed'; nodes: string[]; status: MlxDistributedStatus; wanted: string | null }
   | {
+      /**
+       * The split across the Macs served chat and stopped on its own (a rank died, froze, ran out
+       * of memory) — this Mac's single engine is not what chat was on, so its Mount is never the
+       * headline (Q-81). `instead` is that Mount, offered as "Run on one Mac instead".
+       */
+      kind: 'split-stopped';
+      stop: SplitStop;
+      status: MlxDistributedStatus;
+      instead: RunHere;
+    }
+  | {
       kind: 'remote';
       status: MlxRemoteSingleStatus;
       /** While the route LOADS there, what "Run on this Mac instead" does (Q-57); else absent. */
@@ -102,6 +115,7 @@ export type ComposerReadiness =
     };
 
 export { leaveCause, type LeaveCause } from '../../utils/leaveCause';
+export { splitStopAt, type SplitStop, type SplitStopCause } from './splitStop';
 
 /**
  * Chat back on this Mac while the route's Mac does not answer: drop the route, then mount `mount`
@@ -518,6 +532,12 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
           route
         );
   let readiness = readinessVia(remote);
+  if (readiness.kind === 'unmounted' && readiness.fact === 'down') {
+    const stop = splitStopAt(distributed, null);
+    if (stop && distributed && splitServedThisChat(distributed, isSwarm, lookup)) {
+      readiness = { kind: 'split-stopped', stop, status: distributed, instead: runHere(readiness) };
+    }
+  }
   if (readiness.kind === 'remote') {
     const lost = lostContactWith(readiness.status, inputs.remoteReadError, main);
     if (lost) {
@@ -542,6 +562,23 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
     lookup.devices.filter((d) => d.enabled === true).every(isLocalMlx);
   let serving = mlxEngineServing(single, distributed, remote, thisMac);
   if (isSwarm && serving.engine !== 'remote' && !poolIsLocalMlx) serving = NO_ENGINE;
+
+  if (serving.engine === 'none' && readiness.kind === 'split-stopped') {
+    // The split that served stopped: the chip names IT — its model, its Macs, red — never this
+    // Mac's single engine "not running", which chat was not on.
+    const { stop } = readiness;
+    return {
+      ...NO_ENGINE,
+      model: stop.modelId ?? distributedServedId(readiness.status),
+      where: stop.macs,
+      phase: 'failed',
+      activity: null,
+      busyWithOthers: null,
+      turnRequest: null,
+      readTps: null,
+      readiness,
+    };
+  }
 
   if (serving.engine === 'none') {
     // Nothing runs: name the model a Mount would bring, on this Mac, so the chip never falls back
@@ -581,6 +618,21 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
     readTps: stats && main ? (bookSpreads(main.rates).reading?.median ?? null) : null,
     readiness,
   };
+}
+
+/**
+ * Chat was on the split: the omlx provider follows whatever the split serves; a swarm pool's local
+ * MLX node is served by it only when the node names the id the ranks serve (`distributedFact`).
+ */
+function splitServedThisChat(
+  distributed: MlxDistributedStatus,
+  isSwarm: boolean,
+  lookup: MountLookup
+): boolean {
+  if (!isSwarm) return true;
+  const served = distributed.servedModelId;
+  if (served == null || lookup.state !== 'ready') return false;
+  return lookup.devices.some((d) => d.enabled === true && isLocalMlx(d) && d.model_id === served);
 }
 
 /**

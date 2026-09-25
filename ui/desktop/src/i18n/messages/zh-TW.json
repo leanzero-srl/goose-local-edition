@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "不再將聊天傳送到 {peer}，改在這台 Mac 上執行"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "改為在一台 Mac 上執行"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "僅在這台 Mac 上載入 {model} — 分割保持停止"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "正在這台 Mac 上載入…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "重新啟動分割"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "分割未能啟動：{error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "正在啟動分割…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "無法將聊天移到這台 Mac：{error}"
   },
@@ -2759,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "已過期 — 未儲存"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "來自此專案中的一個聊天 · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "負面"
   },
@@ -4616,6 +4637,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "正在重新連線"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "分割已停止"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "狀態不明"
   },
@@ -4642,6 +4666,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "未執行 — 請在引擎中啟動"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "已在 {where} 上停止 — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "在 {where} 上{phase}"
@@ -4784,6 +4811,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "此節點的所有槽位都已佔用。"
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "詳細資訊"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4853,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "此節點沒有已儲存的 MLX 模型 — 請在 Providers 中選擇一個。"
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "開啟引擎"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "開啟 Providers"
   },
@@ -4837,6 +4870,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "由 {peer} 提供 — 聊天送往那裡期間，這台 Mac 自己的引擎不參與。"
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "模型已重新執行 — 重試以傳送你的訊息。"
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — 上面的回答到此為止。} other {{reason} — 沒有其他節點能接收這則訊息。}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {跨 Mac 的分割在回答途中停止了} other {跨 Mac 的分割已停止}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "Swarm 檢查了每個已啟用的節點，沒有一個能接收這則訊息。"
@@ -7078,6 +7120,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "啟用拼字檢查"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "跨 Mac 的分割已停止 — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "停止時 {mac} 的 {total} GB 中有 {available} GB 可用。"
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {{mac} 記憶體不足} frozen {{mac} 停止回應} other {{mac} 上的模型部分已停止}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {你的一台 Mac 記憶體不足} frozen {這些 Mac 不再有進展} other {模型的一部分已停止}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "無法載入應用程式"

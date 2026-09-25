@@ -773,6 +773,24 @@
   "composerReadiness.runHereHint": {
     "defaultMessage": "चैट को {peer} पर भेजना बंद करके इस Mac पर चलाता है"
   },
+  "composerReadiness.splitOneMac": {
+    "defaultMessage": "इसके बजाय एक Mac पर चलाएँ"
+  },
+  "composerReadiness.splitOneMacHint": {
+    "defaultMessage": "{model} को केवल इस Mac पर लोड करता है — विभाजन रुका रहता है"
+  },
+  "composerReadiness.splitOneMacLoading": {
+    "defaultMessage": "इस Mac पर लोड हो रहा है…"
+  },
+  "composerReadiness.splitStart": {
+    "defaultMessage": "विभाजन फिर से शुरू करें"
+  },
+  "composerReadiness.splitStartFailed": {
+    "defaultMessage": "विभाजन शुरू नहीं हुआ: {error}"
+  },
+  "composerReadiness.splitStarting": {
+    "defaultMessage": "विभाजन शुरू हो रहा है…"
+  },
   "composerReadiness.switchFailed": {
     "defaultMessage": "चैट को इस Mac पर नहीं ले जाया जा सका: {error}"
   },
@@ -2759,6 +2777,9 @@
   "memoryProposal.expired": {
     "defaultMessage": "समाप्त — सहेजा नहीं गया"
   },
+  "memoryProposal.fromProject": {
+    "defaultMessage": "इस प्रोजेक्ट की एक चैट से · {when}"
+  },
   "memoryProposal.negative": {
     "defaultMessage": "नकारात्मक"
   },
@@ -4616,6 +4637,9 @@
   "modelsBottomBar.phase.reconnecting": {
     "defaultMessage": "फिर से जुड़ रहा है"
   },
+  "modelsBottomBar.phase.splitStopped": {
+    "defaultMessage": "विभाजन रुका"
+  },
   "modelsBottomBar.phase.unknown": {
     "defaultMessage": "स्थिति अज्ञात"
   },
@@ -4642,6 +4666,9 @@
   },
   "modelsBottomBar.servedNotRunning": {
     "defaultMessage": "नहीं चल रहा — इसे इंजन से शुरू करें"
+  },
+  "modelsBottomBar.servedSplitStopped": {
+    "defaultMessage": "{where} पर रुका — {reason}"
   },
   "modelsBottomBar.servedWhere": {
     "defaultMessage": "{where} पर {phase}"
@@ -4784,6 +4811,9 @@
   "noNodeNotice.busy": {
     "defaultMessage": "इस नोड के सभी स्लॉट व्यस्त हैं।"
   },
+  "noNodeNotice.details": {
+    "defaultMessage": "विवरण"
+  },
   "noNodeNotice.distributedState": {
     "defaultMessage": "{mode} · {state}"
   },
@@ -4823,6 +4853,9 @@
   "noNodeNotice.noMountTarget": {
     "defaultMessage": "इस नोड के लिए कोई सहेजा MLX मॉडल नहीं — Providers में एक चुनें।"
   },
+  "noNodeNotice.openEngine": {
+    "defaultMessage": "इंजन खोलें"
+  },
   "noNodeNotice.openProviders": {
     "defaultMessage": "Providers खोलें"
   },
@@ -4837,6 +4870,15 @@
   },
   "noNodeNotice.routedRemote": {
     "defaultMessage": "{peer} से सर्व हो रहा है — जब तक चैट वहाँ जाती है, इस Mac का अपना इंजन अलग रखा गया है।"
+  },
+  "noNodeNotice.splitBack": {
+    "defaultMessage": "मॉडल फिर से चल रहा है — अपना संदेश भेजने के लिए फिर से प्रयास करें।"
+  },
+  "noNodeNotice.splitSummary": {
+    "defaultMessage": "{answer, select, yes {{reason} — ऊपर का उत्तर वहीं रुक जाता है।} other {{reason} — कोई और यह संदेश नहीं ले सका।}}"
+  },
+  "noNodeNotice.splitTitle": {
+    "defaultMessage": "{answer, select, yes {आपके Macs में विभाजन उत्तर के बीच में रुक गया} other {आपके Macs में विभाजन रुक गया}}"
   },
   "noNodeNotice.summary": {
     "defaultMessage": "स्वॉर्म ने हर सक्रिय नोड जाँचा, कोई भी यह संदेश नहीं ले सका।"
@@ -7078,6 +7120,18 @@
   },
   "spellcheckToggle.title": {
     "defaultMessage": "वर्तनी जांच सक्षम करें"
+  },
+  "splitStop.headline": {
+    "defaultMessage": "आपके Macs में विभाजन रुक गया — {reason}"
+  },
+  "splitStop.memory": {
+    "defaultMessage": "रुकते समय {mac} पर {total} GB में से {available} GB खाली था।"
+  },
+  "splitStop.reason": {
+    "defaultMessage": "{cause, select, memory {{mac} की मेमोरी खत्म हो गई} frozen {{mac} ने जवाब देना बंद कर दिया} other {{mac} पर मॉडल का हिस्सा रुक गया}}"
+  },
+  "splitStop.reasonUnnamed": {
+    "defaultMessage": "{cause, select, memory {आपके एक Mac की मेमोरी खत्म हो गई} frozen {Macs आगे नहीं बढ़ रहे थे} other {मॉडल का एक हिस्सा रुक गया}}"
   },
   "standaloneAppView.failedToLoad": {
     "defaultMessage": "ऐप लोड करने में विफल"

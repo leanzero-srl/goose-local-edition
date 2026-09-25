@@ -24,6 +24,10 @@ const i18n = defineMessages({
   scope: { id: 'memoryProposal.scope', defaultMessage: '{category} · {scope}' },
   scopeGlobal: { id: 'memoryProposal.scopeGlobal', defaultMessage: 'global' },
   scopeLocal: { id: 'memoryProposal.scopeLocal', defaultMessage: 'this project' },
+  fromProject: {
+    id: 'memoryProposal.fromProject',
+    defaultMessage: 'From a chat in this project · {when}',
+  },
 });
 
 // The same solid hues MemoriesView paints its type chips with: user/memory teal, feedback amber.
@@ -35,12 +39,23 @@ export const POLARITY_FILL: Record<'positive' | 'negative', string> = {
 
 interface CardProps {
   proposal: MemoryProposalDto;
+  /**
+   * Filed for the whole project, not this chat (Q-82: every knowledge piece before the fix, or one
+   * filed with no session) — the card says so and when, so it never reads as this chat's own.
+   */
+  fromProject?: boolean;
   busy: boolean;
   onAnswer: (decision: 'save' | 'decline', text?: string) => void;
   onDismiss: () => void;
 }
 
-export function ProposalCard({ proposal, busy, onAnswer, onDismiss }: CardProps) {
+export function ProposalCard({
+  proposal,
+  fromProject = false,
+  busy,
+  onAnswer,
+  onDismiss,
+}: CardProps) {
   const intl = useIntl();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(proposal.text);
@@ -66,7 +81,10 @@ export function ProposalCard({ proposal, busy, onAnswer, onDismiss }: CardProps)
         {polarity && (
           <span
             data-testid="memory-proposal-polarity"
-            className={cx(RADIUS.pill, 'px-2 py-0.5 text-[11px] font-lz-semibold uppercase text-white')}
+            className={cx(
+              RADIUS.pill,
+              'px-2 py-0.5 text-[11px] font-lz-semibold uppercase text-white'
+            )}
             style={{ backgroundColor: POLARITY_FILL[polarity] }}
           >
             {intl.formatMessage(polarity === 'positive' ? i18n.positive : i18n.negative)}
@@ -79,6 +97,18 @@ export function ProposalCard({ proposal, busy, onAnswer, onDismiss }: CardProps)
           })}
         </span>
       </div>
+      {fromProject && (
+        <p data-testid="memory-proposal-origin" className={cx(TYPE.meta, 'mt-1 font-lz-semibold')}>
+          {intl.formatMessage(i18n.fromProject, {
+            when: intl.formatDate(proposal.createdAt * 1000, {
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+          })}
+        </p>
+      )}
 
       {editing && !expired ? (
         <textarea
@@ -104,7 +134,9 @@ export function ProposalCard({ proposal, busy, onAnswer, onDismiss }: CardProps)
       )}
 
       {proposal.why && (
-        <p className={cx(TYPE.meta, 'mt-1')}>{intl.formatMessage(i18n.why, { why: proposal.why })}</p>
+        <p className={cx(TYPE.meta, 'mt-1')}>
+          {intl.formatMessage(i18n.why, { why: proposal.why })}
+        </p>
       )}
       {proposal.sources.length > 0 && (
         <p className={cx(TYPE.meta, 'mt-1')}>
@@ -179,6 +211,7 @@ export default function MemoryProposalCards({ sessionId, chatState, className }:
         <ProposalCard
           key={p.id}
           proposal={p}
+          fromProject={p.key !== sessionId}
           busy={busyId === p.id}
           onAnswer={(decision, text) => void answer(p, decision, text)}
           onDismiss={() => dismissExpired(p.id)}
