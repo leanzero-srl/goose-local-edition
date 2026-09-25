@@ -21,6 +21,7 @@ use leanzero_link::control::{ControlConfig, ControlHandle, ControlService};
 use leanzero_link::inference::{
     InferenceRelay, PeerCall, PeerCallResolver, ENGINE_UNREACHABLE, RELAY_FAILED,
 };
+use leanzero_link::manager::MESH_POLL_FAILURE_LOOKS;
 use leanzero_link::state::{ChatServing, SwarmStateSource};
 use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus};
 
@@ -53,6 +54,11 @@ enum Script {
     DiesMidStream,
     /// a chunk every 20 ms until the client leaves
     Endless,
+    /// never answers — not even a response head (a long prefill, a non-streamed answer)
+    Silent,
+    /// a slow, HEALTHY generation: no response head for `head_after`, one chunk, then
+    /// `gap` of silence, then the rest — the case the in-flight watch must never cut
+    SlowAlive { head_after: Duration, gap: Duration },
 }
 
 struct Engine {
@@ -120,6 +126,21 @@ async fn engine_chat(
                     sent.fetch_add(1, Ordering::SeqCst);
                     Some((Ok(Bytes::from_static(CHUNK_1.as_bytes())), guard))
                 }
+            })
+            .boxed())
+        }
+        Script::Silent => std::future::pending().await,
+        Script::SlowAlive { head_after, gap } => {
+            tokio::time::sleep(head_after).await;
+            sse(futures::stream::iter(vec![
+                (Duration::ZERO, CHUNK_1),
+                (gap, CHUNK_2),
+                (Duration::ZERO, CHUNK_END),
+                (Duration::ZERO, DONE),
+            ])
+            .then(|(wait, chunk)| async move {
+                tokio::time::sleep(wait).await;
+                Ok::<Bytes, std::io::Error>(Bytes::from_static(chunk.as_bytes()))
             })
             .boxed())
         }
@@ -221,12 +242,26 @@ impl PeerCallResolver for Resolver {
     }
 }
 
+/// Every relay in this file is watched at a fast cadence, so every test here also proves the
+/// in-flight watch leaves a healthy request alone.
+const LOOK_INTERVAL: Duration = Duration::from_millis(50);
+/// The kill tests' connect timeout: short, so a dead peer's unanswered dials resolve fast.
+const FAST_CONNECT: Duration = Duration::from_millis(300);
+
 fn call_to(base_url: &str) -> PeerCall {
     PeerCall {
         base_url: base_url.to_string(),
         token: TOKEN.to_string(),
         proxy: Some(support::fake_tailnet().proxy()),
         connect_timeout: Duration::from_secs(5),
+        liveness_interval: LOOK_INTERVAL,
+    }
+}
+
+fn fast_call_to(base_url: &str) -> PeerCall {
+    PeerCall {
+        connect_timeout: FAST_CONNECT,
+        ..call_to(base_url)
     }
 }
 
@@ -543,4 +578,275 @@ async fn a_peer_the_relay_cannot_reach_is_a_named_502_never_a_direct_dial() {
         .unwrap();
     let text = post_chat(relay.base_url()).await.text().await.unwrap();
     assert!(text.contains("refusing a direct dial"), "{text}");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Q-32: the peer's Link dies under a request in flight
+// ---------------------------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------------------------
+// Q-32: the peer's Link dies under a request in flight (r3-1.log 12:14:59)
+// ---------------------------------------------------------------------------------------------
+
+fn mesh_addr_of(base: &str) -> (String, u16) {
+    let (ip, port) = base.trim_start_matches("http://").rsplit_once(':').unwrap();
+    (ip.to_string(), port.parse().unwrap())
+}
+
+/// The bound the watch promises for a peer that went away and stayed away: every look is one
+/// fresh dial that the dead peer never answers (the connect timeout), and the request ends at
+/// the `MESH_POLL_FAILURE_LOOKS`th in a row. Transport facts only.
+fn unreachable_bound(call: &PeerCall) -> Duration {
+    (call.liveness_interval + call.connect_timeout) * MESH_POLL_FAILURE_LOOKS
+        + Duration::from_secs(2)
+}
+
+async fn relay_to(call: PeerCall) -> InferenceRelay {
+    InferenceRelay::start("node-b".into(), Arc::new(Resolver(Ok(call))))
+        .await
+        .unwrap()
+}
+
+async fn serving(engine_base: String) -> Arc<FakeServing> {
+    Arc::new(FakeServing {
+        allowed: AtomicBool::new(true),
+        base: Ok(engine_base),
+    })
+}
+
+/// Read a streamed body to its end: the bytes, and whether it ended in an error (an aborted
+/// body) or cleanly.
+async fn drain(response: reqwest::Response) -> (String, Result<(), String>) {
+    let mut stream = response.bytes_stream();
+    let mut got = Vec::new();
+    let outcome = loop {
+        match stream.next().await {
+            Some(Ok(chunk)) => got.extend_from_slice(&chunk),
+            Some(Err(err)) => break Err(err.to_string()),
+            None => break Ok(()),
+        }
+    };
+    (String::from_utf8_lossy(&got).into_owned(), outcome)
+}
+
+/// The one error event the relay appends when it ends an SSE stream: OpenAI-shaped, so the
+/// requester's stream parser raises `error.message` verbatim.
+fn relay_error_event(body: &str) -> serde_json::Value {
+    let line = body
+        .lines()
+        .rev()
+        .find(|line| line.starts_with("data: {\"error\""))
+        .unwrap_or_else(|| panic!("no relay error event in {body:?}"));
+    let event: serde_json::Value = serde_json::from_str(&line["data: ".len()..]).unwrap();
+    assert_eq!(event["error"]["type"], RELAY_FAILED, "{event}");
+    event
+}
+
+#[tokio::test]
+async fn a_stream_in_flight_when_the_peers_link_dies_ends_with_a_named_error() {
+    let (_engine, engine_base) = start_engine(Script::Endless).await;
+    let (_b, b_base) = start_node_b(Some(serving(engine_base).await)).await;
+    let call = fast_call_to(&b_base);
+    let bound = unreachable_bound(&call);
+    let relay = relay_to(call).await;
+
+    let response = post_chat(relay.base_url()).await;
+    assert_eq!(response.status(), 200);
+    let mut stream = response.bytes_stream();
+    stream.next().await.unwrap().expect("the stream is live");
+    let killed_at = tokio::time::Instant::now();
+    support::fake_tailnet().kill(&mesh_addr_of(&b_base).0);
+
+    let mut got = Vec::new();
+    let outcome = tokio::time::timeout(DEADLINE, async {
+        loop {
+            match stream.next().await {
+                Some(Ok(chunk)) => got.extend_from_slice(&chunk),
+                Some(Err(err)) => return Err(err.to_string()),
+                None => return Ok(()),
+            }
+        }
+    })
+    .await
+    .expect("the stream ended — never a silent hang");
+    let waited = killed_at.elapsed();
+    assert!(
+        outcome.is_err(),
+        "a clean end would impersonate a finished answer"
+    );
+    assert!(waited <= bound, "ended after {waited:?}, bound {bound:?}");
+    let body = String::from_utf8_lossy(&got);
+    let message = relay_error_event(&body)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        message.starts_with(&format!(
+            "{RELAY_FAILED}: Link peer 'node-b' lost this request in flight: "
+        )) && message.contains("could not reach the peer"),
+        "{message}"
+    );
+}
+
+#[tokio::test]
+async fn a_request_awaiting_its_answer_when_the_peers_link_dies_is_a_named_502() {
+    let (engine, engine_base) = start_engine(Script::Silent).await;
+    let (_b, b_base) = start_node_b(Some(serving(engine_base).await)).await;
+    let call = fast_call_to(&b_base);
+    let bound = unreachable_bound(&call);
+    let relay = relay_to(call).await;
+
+    let base = relay.base_url().to_string();
+    let pending = tokio::spawn(async move { post_chat(&base).await });
+    let deadline = tokio::time::Instant::now() + DEADLINE;
+    while engine.received.lock().unwrap().is_empty() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the engine never saw the request"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let killed_at = tokio::time::Instant::now();
+    support::fake_tailnet().kill(&mesh_addr_of(&b_base).0);
+
+    let response = tokio::time::timeout(DEADLINE, pending)
+        .await
+        .expect("answered — never a silent hang")
+        .unwrap();
+    let waited = killed_at.elapsed();
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let text = response.text().await.unwrap();
+    assert!(
+        text.starts_with(&format!(
+            "{RELAY_FAILED}: Link peer 'node-b' lost this request in flight: "
+        )) && text.contains("could not reach the peer"),
+        "{text}"
+    );
+    assert!(
+        waited <= bound,
+        "answered after {waited:?}, bound {bound:?}"
+    );
+}
+
+/// Q-31 and Q-32 together: the peer's Link comes back (a fresh control service, a new epoch)
+/// before its absence could end the request — the look that reaches it finds the request
+/// gone and says so, instead of waiting on a connection nothing will ever answer again.
+#[tokio::test]
+async fn a_peer_whose_link_restarted_under_the_stream_names_the_drop() {
+    let (engine, engine_base) = start_engine(Script::Endless).await;
+    let serving = serving(engine_base).await;
+    let (_b, b_base) = start_node_b(Some(serving.clone())).await;
+    let relay = relay_to(fast_call_to(&b_base)).await;
+
+    let response = post_chat(relay.base_url()).await;
+    let mut stream = response.bytes_stream();
+    stream.next().await.unwrap().expect("the stream is live");
+    tokio::time::sleep(LOOK_INTERVAL * 4).await; // looks that find it held
+
+    let (mesh_ip, mesh_port) = mesh_addr_of(&b_base);
+    support::fake_tailnet().kill(&mesh_ip);
+    let (b2, _) = start_node_b(Some(serving)).await;
+    support::fake_tailnet().revive(&mesh_ip, mesh_port, b2.local_addr().port());
+
+    let mut got = Vec::new();
+    let outcome = tokio::time::timeout(DEADLINE, async {
+        loop {
+            match stream.next().await {
+                Some(Ok(chunk)) => got.extend_from_slice(&chunk),
+                Some(Err(err)) => return Err(err.to_string()),
+                None => return Ok(()),
+            }
+        }
+    })
+    .await
+    .expect("the stream ended — never a silent hang");
+    assert!(outcome.is_err());
+    let body = String::from_utf8_lossy(&got);
+    let message = relay_error_event(&body)["error"]["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        message.contains("no longer holds it") && message.contains("LeanZero Link restarts"),
+        "the reachable peer's answer decided, not its absence: {message}"
+    );
+    assert!(
+        engine.stream_dropped.load(Ordering::SeqCst),
+        "the old node's engine stream was released when its Link died"
+    );
+}
+
+/// The negative control: silence is not death. No response head for many looks, then a gap
+/// of many more between chunks — every look finds the request held, and every byte arrives.
+#[tokio::test]
+async fn a_slow_but_alive_generation_is_never_cut() {
+    let slow = Script::SlowAlive {
+        head_after: LOOK_INTERVAL * 20,
+        gap: LOOK_INTERVAL * 30,
+    };
+    let (_engine, engine_base) = start_engine(slow).await;
+    let (_b, b_base) = start_node_b(Some(serving(engine_base).await)).await;
+    let relay = relay_to(fast_call_to(&b_base)).await;
+
+    let response = post_chat(relay.base_url()).await;
+    assert_eq!(response.status(), 200);
+    let (body, outcome) = drain(response).await;
+    assert_eq!(outcome, Ok(()));
+    assert_eq!(
+        body,
+        format!("{CHUNK_1}{CHUNK_2}{CHUNK_END}{DONE}"),
+        "byte for byte, nothing appended"
+    );
+}
+
+/// A peer running an older goose has no look route (`404`): the watch still ends a request
+/// whose peer went away, and still never cuts a slow one.
+#[tokio::test]
+async fn an_older_peer_without_the_look_route_is_ended_only_by_its_absence() {
+    let slow = Script::SlowAlive {
+        head_after: LOOK_INTERVAL * 10,
+        gap: LOOK_INTERVAL * 10,
+    };
+    for (script, dies) in [(slow, false), (Script::Endless, true)] {
+        let (engine, _) = start_engine(script).await;
+        let old_peer = Router::new()
+            .route("/v1/swarm/inference/v1/chat/completions", post(engine_chat))
+            .with_state(engine.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, old_peer).await.unwrap() });
+        let base = format!("http://{}:{port}", support::fake_tailnet().expose(port));
+        let call = fast_call_to(&base);
+        let bound = unreachable_bound(&call);
+        let relay = relay_to(call).await;
+
+        let response = post_chat(relay.base_url()).await;
+        if !dies {
+            let (body, outcome) = drain(response).await;
+            assert_eq!(outcome, Ok(()));
+            assert_eq!(body, format!("{CHUNK_1}{CHUNK_2}{CHUNK_END}{DONE}"));
+            continue;
+        }
+        let mut stream = response.bytes_stream();
+        stream.next().await.unwrap().expect("the stream is live");
+        let killed_at = tokio::time::Instant::now();
+        support::fake_tailnet().kill(&mesh_addr_of(&base).0);
+        let mut got = Vec::new();
+        let ended = tokio::time::timeout(DEADLINE, async {
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(chunk) => got.extend_from_slice(&chunk),
+                    Err(_) => return,
+                }
+            }
+        })
+        .await;
+        assert!(ended.is_ok(), "never a silent hang");
+        assert!(killed_at.elapsed() <= bound);
+        let body = String::from_utf8_lossy(&got);
+        assert!(relay_error_event(&body)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("could not reach the peer"));
+    }
 }

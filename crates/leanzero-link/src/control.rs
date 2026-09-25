@@ -47,6 +47,11 @@
 //!   `502`. It never mounts. Separate from `allow_remote_execution` and from the distributed
 //!   switch: serving chat lets a peer neither run prompts here nor reshape the engine. Detail in
 //!   [`crate::inference`].
+//! - `GET /v1/swarm/inference/streams/{id}` → [`crate::inference::StreamLiveness`]
+//!   `{epoch, live}`: whether this control service is still serving the relay request `id`
+//!   (a requester's in-flight look — Q-32). `epoch` is random per [`ControlService::start`],
+//!   so a node whose Link restarted answers under a new one. Unknown ids answer `live:
+//!   false`, never `404` (a `404` is what an older node without the route answers).
 //!
 //! Listeners: 127.0.0.1 always (the local desktop), plus the mesh IP when one is
 //! up. Under `--tun=userspace-networking` (this crate's only tailscaled mode) the
@@ -82,7 +87,7 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
-use crate::inference::{self, EnginePath};
+use crate::inference::{self, EnginePath, InflightStreams, StreamLiveness};
 use crate::peer_dial::{MeshProxy, PeerDialError};
 use crate::pubsub::{EventOrigin, PubSub, StampedEvent, SubscribeError};
 use crate::state::{
@@ -213,6 +218,8 @@ struct Ctx {
     chat_serving: Option<Arc<dyn ChatServing>>,
     /// Loopback-only, CONNECT-timeout-only client to this node's own engine.
     engine_http: reqwest::Client,
+    /// The relay requests this service is serving right now, under this start's epoch.
+    streams: Arc<InflightStreams>,
     allow_remote_execution: bool,
 }
 
@@ -260,6 +267,7 @@ impl ControlService {
             chat_serving,
             engine_http: inference::engine_client(config.connect_timeout)
                 .map_err(ControlError::EngineClient)?,
+            streams: Arc::new(InflightStreams::new()),
             allow_remote_execution: config.allow_remote_execution,
         };
         let router = swarm_router(ctx, Arc::new(config.node_token));
@@ -403,6 +411,7 @@ fn swarm_router(ctx: Ctx, token: Arc<String>) -> Router {
         )
         .route(&EnginePath::Models.control_route(), get(inference_models))
         .route(&EnginePath::Status.control_route(), get(inference_status))
+        .route(&inference::streams_route(), get(inference_stream_liveness))
         .layer(axum::middleware::from_fn_with_state(token, require_token))
         .with_state(ctx)
 }
@@ -742,6 +751,7 @@ async fn inference(ctx: Ctx, path: EnginePath, headers: HeaderMap, body: Body) -
     let source = ctx.source.clone();
     inference::serve(
         ctx.chat_serving.as_ref(),
+        &ctx.streams,
         &ctx.engine_http,
         async move { source.local_node().await.hostname },
         path,
@@ -757,6 +767,13 @@ async fn inference_chat_completions(
     body: Body,
 ) -> Response {
     inference(ctx, EnginePath::ChatCompletions, headers, body).await
+}
+
+async fn inference_stream_liveness(
+    State(ctx): State<Ctx>,
+    Path(id): Path<String>,
+) -> Json<StreamLiveness> {
+    Json(ctx.streams.liveness(&id))
 }
 
 async fn inference_models(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {

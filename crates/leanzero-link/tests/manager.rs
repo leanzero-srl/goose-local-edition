@@ -65,6 +65,13 @@ struct MeshCalls {
 struct MeshScript {
     /// `status()` answers `DaemonExited` — the supervised tailscaled is dead.
     daemon_dead: AtomicBool,
+    /// The fake daemons (numbered by start order, from 1) whose process was killed: each
+    /// answers `DaemonExited` from then on, while a daemon started later is healthy — R3
+    /// step 1, one tailscaled killed by pid.
+    killed_instances: StdMutex<Vec<u32>>,
+    /// Instance → how many more healthy status answers it gives before its process dies
+    /// (then it is killed as above) — a restarted daemon that dies again, at a known look.
+    dies_after_looks: StdMutex<std::collections::HashMap<u32, u32>>,
     /// `status()` answers `StatusFailed` this many more times (one per call, any
     /// caller), then succeeds again — the daemon lives but its status read errors.
     status_fail_looks: AtomicU32,
@@ -92,6 +99,7 @@ struct FakeMesh {
     script: Arc<MeshScript>,
     join_fails: bool,
     status: MeshStatus,
+    instance: u32,
 }
 
 #[async_trait]
@@ -115,6 +123,35 @@ impl Mesh for FakeMesh {
         }
     }
     async fn status(&self) -> Result<MeshStatus, MeshError> {
+        if let Some(left) = self
+            .script
+            .dies_after_looks
+            .lock()
+            .unwrap()
+            .get_mut(&self.instance)
+        {
+            if *left == 0 {
+                self.script
+                    .killed_instances
+                    .lock()
+                    .unwrap()
+                    .push(self.instance);
+            } else {
+                *left -= 1;
+            }
+        }
+        if self
+            .script
+            .killed_instances
+            .lock()
+            .unwrap()
+            .contains(&self.instance)
+        {
+            return Err(MeshError::DaemonExited {
+                status: "signal: 15 (SIGTERM)".to_string(),
+                stderr_tail: format!("fake tailscaled #{} killed by pid", self.instance),
+            });
+        }
         if self.script.daemon_dead.load(Ordering::SeqCst) {
             return Err(MeshError::DaemonExited {
                 status: "exit status: 1".to_string(),
@@ -181,13 +218,14 @@ struct FakeFactory {
 #[async_trait]
 impl MeshFactory for FakeFactory {
     async fn start(&self, config: MeshConfig) -> Result<Arc<dyn Mesh>, MeshError> {
-        self.start_count.fetch_add(1, Ordering::SeqCst);
+        let instance = self.start_count.fetch_add(1, Ordering::SeqCst) + 1;
         *self.captured.lock().unwrap() = Some(config);
         Ok(Arc::new(FakeMesh {
             calls: self.calls.clone(),
             script: self.script.clone(),
             join_fails: self.join_fails,
             status: self.status.clone(),
+            instance,
         }))
     }
 }
@@ -1010,49 +1048,46 @@ async fn node_token_is_none_until_connected_then_the_secret_derived_value() {
     );
 }
 
-/// FH#1: the supervised tailscaled dies under a live connection. The poll loop must
-/// drop the connection per-pid, keep the credential, and return auth to `LoggedIn` so
-/// `connect()` re-arms — never a calm `Connected`/`Stopped`, never a wiped identity.
+/// A daemon that cannot come back: every tailscaled this machine starts dies at once. The
+/// supervisor restarts ONCE — the restart's own status read finds the fresh daemon dead —
+/// and the outcome is a loud `Failed` naming both, auth `LoggedIn`, the identity kept, and
+/// no further restart. The user's Connect re-arms once a daemon can live again.
 #[tokio::test]
-async fn dead_daemon_drops_to_logged_in_keeps_identity_and_re_arms() {
+async fn a_restart_that_cannot_bring_the_daemon_up_is_named_and_not_retried() {
     let server = MockServer::start().await;
-    mount(
-        &server,
-        "POST",
-        "/v1/mesh/join-key",
-        200,
-        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
-    )
-    .await;
+    mount_join_key_ok(&server).await;
     let h = Harness::new(tempfile::tempdir().unwrap());
     h.seed_identity("a@example.com", "good-token");
     let manager = h.manager(&server, false);
     manager.connect().await.expect("connects");
-    assert!(matches!(
-        manager.status().await.auth,
-        AuthState::Connected { .. }
-    ));
 
     h.script.daemon_dead.store(true, Ordering::SeqCst);
-
-    // Observed through `active_registry()` only — it never polls the mesh, so the
-    // demotion seen here is the POLL LOOP's, not a status read's.
-    wait_until("the poll loop to drop the dead connection", || {
+    wait_until("the supervisor's restart to fail", || {
         let manager = &manager;
-        async move { manager.active_registry().await.is_none() }
+        async move {
+            matches!(
+                manager.status().await.reconnect,
+                ReconnectState::Failed { .. }
+            )
+        }
     })
     .await;
 
     let state = manager.status().await;
     match &state.auth {
         AuthState::LoggedIn { email } => assert_eq!(email, "a@example.com"),
-        other => panic!("expected LoggedIn after the daemon died, got {other:?}"),
+        other => panic!("expected LoggedIn after the restart failed, got {other:?}"),
     }
-    let err = state.last_error.expect("the death is recorded, not erased");
+    let ReconnectState::Failed { reason, .. } = &state.reconnect else {
+        unreachable!()
+    };
     assert!(
-        err.contains("tailscaled exited") && err.contains("fake tailscaled crashed"),
-        "last_error carries the daemon's exit + stderr tail: {err}"
+        reason.starts_with("LeanZero Link's mesh daemon stopped (tailscaled exited")
+            && reason.contains("and the automatic restart failed: tailscaled exited")
+            && reason.contains("fake tailscaled crashed"),
+        "the reason names the fault and the failed restart: {reason}"
     );
+    assert_eq!(state.last_error.as_deref(), Some(reason.as_str()));
     assert!(state.mesh.is_none());
     assert_eq!(state.node_count, 0);
     assert!(
@@ -1060,77 +1095,95 @@ async fn dead_daemon_drops_to_logged_in_keeps_identity_and_re_arms() {
         "a daemon crash never clears the credential"
     );
     assert!(manager.node_token().await.is_none());
+
+    // Bounded by the outcome, not a clock: no third daemon, however long we wait.
+    tokio::time::sleep(Duration::from_millis(50) * 20).await;
+    assert_eq!(
+        h.start_count.load(Ordering::SeqCst),
+        2,
+        "one restart, no loop"
+    );
     {
         let calls = h.calls.lock().unwrap();
-        assert_eq!(calls.shutdown_count, 1, "torn down per-pid");
+        assert_eq!(
+            calls.shutdown_count, 2,
+            "the dead daemon and the failed restart's, each per-pid"
+        );
         assert_eq!(
             calls.logout_count, 0,
             "no `tailscale logout` against a dead daemon, and no account logout"
         );
     }
 
-    // Re-arm: the same identity connects again once the daemon can come back.
+    // Re-arm: the user's Connect, once a daemon can live again.
     h.script.daemon_dead.store(false, Ordering::SeqCst);
     manager
         .connect()
         .await
         .expect("re-connects with the kept identity");
-    assert!(matches!(
-        manager.status().await.auth,
-        AuthState::Connected { .. }
-    ));
+    let state = manager.status().await;
+    assert!(matches!(state.auth, AuthState::Connected { .. }));
     assert_eq!(
-        h.start_count.load(Ordering::SeqCst),
-        2,
-        "a fresh daemon was started"
+        state.reconnect,
+        ReconnectState::Idle,
+        "the user's action supersedes"
     );
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 3);
     manager.logout(false).await.unwrap();
 }
 
-/// The same death seen first by a `status()` read (the UI's poll) instead of the loop:
-/// that read demotes in place and reports the demoted state, never `Connected` over a
-/// dead daemon.
+/// The same death seen first by a `status()` read (the UI's poll) instead of the loop: that
+/// read hands the connection to the supervisor and reports the restart — `Connecting`,
+/// `Reconnecting`, the fault named, no mesh — never `Connected` over a dead daemon.
 #[tokio::test]
-async fn status_read_that_finds_the_daemon_dead_demotes_in_place() {
+async fn status_read_that_finds_the_daemon_dead_reports_the_restart() {
     let server = MockServer::start().await;
-    mount(
-        &server,
-        "POST",
-        "/v1/mesh/join-key",
-        200,
-        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
-    )
-    .await;
+    mount_join_key_ok(&server).await;
     let h = Harness::new(tempfile::tempdir().unwrap());
     h.seed_identity("a@example.com", "good-token");
     let manager = h.manager(&server, false);
     manager.connect().await.expect("connects");
 
-    h.script.daemon_dead.store(true, Ordering::SeqCst);
+    h.script.hold_join.store(true, Ordering::SeqCst);
+    h.script.killed_instances.lock().unwrap().push(1);
     let state = manager.status().await;
     assert!(
-        matches!(state.auth, AuthState::LoggedIn { .. }),
-        "the very read that saw the death reports LoggedIn, got {:?}",
+        matches!(state.auth, AuthState::Connecting { .. }),
+        "the very read that saw the death reports the restart, got {:?}",
         state.auth
     );
+    assert!(matches!(
+        state.reconnect,
+        ReconnectState::Reconnecting { .. }
+    ));
     assert!(state.mesh.is_none());
     assert_eq!(state.node_count, 0);
     assert!(state
         .last_error
         .as_deref()
-        .is_some_and(|e| e.contains("tailscaled exited")));
+        .is_some_and(|e| e.contains("tailscaled exited")
+            && e.contains("fake tailscaled #1 killed by pid")
+            && e.ends_with("restarting it with no user action")));
     assert!(h.identity_present());
     assert!(manager.active_registry().await.is_none());
+
+    h.script.hold_join.store(false, Ordering::SeqCst);
+    wait_until("the restart to land", || {
+        let manager = &manager;
+        async move { matches!(manager.status().await.auth, AuthState::Connected { .. }) }
+    })
+    .await;
+    manager.logout(false).await.unwrap();
 }
 
 /// 11e242e5e's first uncovered sequence: the daemon is ALIVE but wedged — `tailscale
 /// status` fails on every look. Progress-based, never timed: at N-1 consecutive failed
 /// looks the connection is still Connected (and one success resets the count); at
-/// N = `MESH_POLL_FAILURE_LOOKS` it is dropped per-pid, auth returns to `LoggedIn`,
-/// `last_error` names the count and the last failure, the identity stays on disk, and
-/// `connect()` re-arms.
+/// N = `MESH_POLL_FAILURE_LOOKS` it is dropped per-pid and the supervisor restarts it —
+/// while the restart runs, auth reads `Connecting` and `last_error` names the count and the
+/// last failure; the identity stays on disk; a fresh daemon brings Link back with no click.
 #[tokio::test]
-async fn wedged_daemon_is_dropped_at_the_look_count_and_the_identity_is_kept() {
+async fn wedged_daemon_is_dropped_at_the_look_count_and_restarted() {
     let server = MockServer::start().await;
     mount(
         &server,
@@ -1181,7 +1234,10 @@ async fn wedged_daemon_is_dropped_at_the_look_count_and_the_identity_is_kept() {
     ));
 
     // N failed looks in a row: the Nth drops the connection. Observed through
-    // `active_registry()` only (it never polls the mesh), so the loop is the actor.
+    // `active_registry()` only (it never polls the mesh), so the loop is the actor. The
+    // restart's join is held so the state DURING the restart can be read.
+    h.script.hold_join.store(true, Ordering::SeqCst);
+    h.script.join_entered.store(false, Ordering::SeqCst);
     h.script
         .status_fail_looks
         .store(MESH_POLL_FAILURE_LOOKS, Ordering::SeqCst);
@@ -1191,16 +1247,27 @@ async fn wedged_daemon_is_dropped_at_the_look_count_and_the_identity_is_kept() {
     })
     .await;
 
+    wait_until("the restart to reach the mesh join", || async {
+        h.script.join_entered.load(Ordering::SeqCst)
+    })
+    .await;
     let state = manager.status().await;
     match &state.auth {
-        AuthState::LoggedIn { email } => assert_eq!(email, "a@example.com"),
-        other => panic!("expected LoggedIn after the wedged daemon was dropped, got {other:?}"),
+        AuthState::Connecting { email } => assert_eq!(email, "a@example.com"),
+        other => panic!("expected the restart's Connecting, got {other:?}"),
     }
-    let err = state.last_error.expect("the drop is recorded, not erased");
+    assert!(matches!(
+        state.reconnect,
+        ReconnectState::Reconnecting { .. }
+    ));
+    let err = state
+        .last_error
+        .expect("the fault is named while it restarts");
     assert!(
         err.contains(&format!(
-            "mesh daemon unresponsive: {MESH_POLL_FAILURE_LOOKS} consecutive status failures; last: "
-        )) && err.contains("fake: status read errored"),
+            "stopped answering ({MESH_POLL_FAILURE_LOOKS} consecutive status failures; last: "
+        )) && err.contains("fake: status read errored")
+            && err.ends_with("restarting it with no user action"),
         "last_error names the look count and the last failure: {err}"
     );
     assert_eq!(state.mesh_poll_failures, MESH_POLL_FAILURE_LOOKS);
@@ -1220,14 +1287,20 @@ async fn wedged_daemon_is_dropped_at_the_look_count_and_the_identity_is_kept() {
         );
     }
 
-    // Re-arm: the kept identity connects again; a fresh daemon, counter back to 0.
-    manager
-        .connect()
-        .await
-        .expect("re-connects with the kept identity");
+    // The restart lands with no click: a fresh daemon, counter back to 0.
+    h.script.hold_join.store(false, Ordering::SeqCst);
+    wait_until("Link to come back with no click", || {
+        let manager = &manager;
+        async move { matches!(manager.status().await.auth, AuthState::Connected { .. }) }
+    })
+    .await;
     let state = manager.status().await;
-    assert!(matches!(state.auth, AuthState::Connected { .. }));
     assert_eq!(state.mesh_poll_failures, 0);
+    assert!(matches!(
+        state.reconnect,
+        ReconnectState::Reconnected { .. }
+    ));
+    assert_eq!(state.last_error, None);
     assert_eq!(
         h.start_count.load(Ordering::SeqCst),
         2,
@@ -2543,4 +2616,197 @@ async fn a_mesh_socket_held_by_a_live_sibling_is_left_to_it_with_no_key_minted()
             .is_empty(),
         "no join key minted for a mesh another goose already holds"
     );
+}
+
+// ── Q-31: the Link manager restarts its own tailscaled ─────────────────────
+
+/// R3 step 1 on the Studio (r3-1.log 12:14:59): goose's tailscaled killed by pid. Link comes
+/// back with no click; while it does, the state says what happened and never `Connected`.
+#[tokio::test]
+async fn a_killed_daemon_is_restarted_and_link_comes_back_with_no_click() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+    let intent_before = h.intent();
+
+    h.script.hold_join.store(true, Ordering::SeqCst);
+    h.script.join_entered.store(false, Ordering::SeqCst);
+    h.script.killed_instances.lock().unwrap().push(1);
+    wait_until(
+        "the supervisor to reach the restart's mesh join",
+        || async { h.script.join_entered.load(Ordering::SeqCst) },
+    )
+    .await;
+    let during = manager.status().await;
+    assert!(
+        matches!(during.auth, AuthState::Connecting { .. }),
+        "never Connected while the daemon is gone: {:?}",
+        during.auth
+    );
+    assert!(matches!(
+        during.reconnect,
+        ReconnectState::Reconnecting { .. }
+    ));
+    let err = during.last_error.expect("what happened, while it happens");
+    assert!(
+        err.starts_with("LeanZero Link's mesh daemon stopped (tailscaled exited (signal: 15")
+            && err.contains("fake tailscaled #1 killed by pid")
+            && err.ends_with("restarting it with no user action"),
+        "{err}"
+    );
+    assert!(during.mesh.is_none());
+    assert_eq!(during.node_count, 0);
+    assert!(manager.node_token().await.is_none());
+
+    h.script.hold_join.store(false, Ordering::SeqCst);
+    wait_until("Link to come back with no click", || {
+        let manager = &manager;
+        async move { matches!(manager.status().await.auth, AuthState::Connected { .. }) }
+    })
+    .await;
+    let after = manager.status().await;
+    assert!(
+        matches!(&after.reconnect, ReconnectState::Reconnected { mesh_ip, .. }
+            if Some(mesh_ip) == connected_status().self_ip.as_ref()),
+        "{:?}",
+        after.reconnect
+    );
+    assert_eq!(after.last_error, None);
+    assert!(after.mesh.is_some());
+    assert!(manager.node_token().await.is_some());
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 2, "one fresh daemon");
+    assert_eq!(
+        h.intent(),
+        intent_before,
+        "the supervisor never rewrites the intent"
+    );
+    assert!(h.identity_present());
+    {
+        let calls = h.calls.lock().unwrap();
+        assert_eq!(calls.shutdown_count, 1, "the killed daemon, per-pid");
+        assert_eq!(calls.logout_count, 0, "never `tailscale logout`");
+        assert_eq!(calls.joined.len(), 2, "the restart joined with a fresh key");
+    }
+    manager.logout(false).await.unwrap();
+}
+
+/// A crash loop is a loud named state, not a silent loop: the restarted daemon dies again
+/// before it has answered `MESH_POLL_FAILURE_LOOKS` healthy looks, so it is not restarted
+/// again — `Failed` names both deaths and the user's Connect is the way back.
+#[tokio::test]
+async fn a_restarted_daemon_that_dies_before_proving_itself_is_not_restarted_again() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+
+    // #2 answers the restart's own status read and one poll look, then dies.
+    h.script.dies_after_looks.lock().unwrap().insert(2, 2);
+    h.script.killed_instances.lock().unwrap().push(1);
+    wait_until("the second death to fail the supervision", || {
+        let manager = &manager;
+        async move {
+            matches!(
+                manager.status().await.reconnect,
+                ReconnectState::Failed { .. }
+            )
+        }
+    })
+    .await;
+    let state = manager.status().await;
+    assert!(
+        matches!(state.auth, AuthState::LoggedIn { .. }),
+        "{:?}",
+        state.auth
+    );
+    let ReconnectState::Failed { reason, .. } = &state.reconnect else {
+        unreachable!()
+    };
+    assert!(
+        reason.contains("fake tailscaled #2 killed by pid")
+            && reason.contains("again, before the automatic restart proved healthy")
+            && reason.contains("fake tailscaled #1 killed by pid")
+            && reason.ends_with("not restarting it again; Connect to retry"),
+        "{reason}"
+    );
+    tokio::time::sleep(Duration::from_millis(50) * 20).await;
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 2, "no third daemon");
+    assert!(h.identity_present());
+}
+
+/// A restart that PROVED itself (it answered the look count healthy) is an ordinary daemon:
+/// a later death is a fresh fault and is restarted again.
+#[tokio::test]
+async fn a_restart_that_proved_itself_is_restarted_again_on_a_later_death() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+
+    h.script
+        .dies_after_looks
+        .lock()
+        .unwrap()
+        .insert(2, MESH_POLL_FAILURE_LOOKS * 4);
+    h.script.killed_instances.lock().unwrap().push(1);
+    wait_until("a third daemon to carry Link", || {
+        let manager = &manager;
+        let h = &h;
+        async move {
+            h.start_count.load(Ordering::SeqCst) == 3
+                && matches!(manager.status().await.auth, AuthState::Connected { .. })
+        }
+    })
+    .await;
+    assert!(matches!(
+        manager.status().await.reconnect,
+        ReconnectState::Reconnected { .. }
+    ));
+    manager.logout(false).await.unwrap();
+}
+
+/// The user's Disconnect during the restart stands: the fresh daemon is torn down per-pid,
+/// the intent reads disconnected, nothing reconnects.
+#[tokio::test]
+async fn a_disconnect_during_the_supervisors_restart_stands() {
+    let server = MockServer::start().await;
+    mount_join_key_ok(&server).await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    let manager = h.manager(&server, false);
+    manager.connect().await.expect("connects");
+
+    h.script.hold_join.store(true, Ordering::SeqCst);
+    h.script.join_entered.store(false, Ordering::SeqCst);
+    h.script.killed_instances.lock().unwrap().push(1);
+    wait_until("the restart's mesh join", || async {
+        h.script.join_entered.load(Ordering::SeqCst)
+    })
+    .await;
+    manager.disconnect().await.expect("disconnects");
+    h.script.hold_join.store(false, Ordering::SeqCst);
+    wait_until("the restart's fresh daemon to be torn down", || async {
+        h.calls.lock().unwrap().shutdown_count == 2
+    })
+    .await;
+    let state = manager.status().await;
+    assert!(
+        matches!(state.auth, AuthState::LoggedIn { .. }),
+        "{:?}",
+        state.auth
+    );
+    assert_eq!(state.reconnect, ReconnectState::Idle);
+    assert!(manager.active_registry().await.is_none());
+    assert_eq!(
+        h.intent().map(|record| record.intent),
+        Some(LinkIntent::Disconnected)
+    );
+    assert_eq!(h.start_count.load(Ordering::SeqCst), 2);
 }
