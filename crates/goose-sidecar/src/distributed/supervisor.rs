@@ -11,7 +11,10 @@
 //!    (SIGTERM, then SIGKILL, per pid — never a process group); a pipeline peer is first given
 //!    the grace window to leave on rank 0's shutdown broadcast;
 //! 5. the memory watchdog on the same poll: WARN stops admitting new requests, CRITICAL stops the
-//!    run with a loud event and never restarts it.
+//!    run with a loud event and never restarts it; a busy stretch that has already taken what is
+//!    left above CRITICAL on a node closes admission too (`MemoryGrowth`), before the floor;
+//! 6. a rank that died of memory (`RankOutOfMemory`) restarts the pair once memory recovered on
+//!    every node — once per outage, whatever `restart_on_failure` says.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
@@ -60,6 +63,9 @@ pub enum RunState {
     Serving,
     Failed,
     Stopping,
+    /// A rank died of memory: the pair is stopped and waits for every node's memory to recover,
+    /// then restarts once (`DistributedStatus::memory_recovery` says what it waits for).
+    Recovering,
 }
 
 impl RunState {
@@ -72,6 +78,7 @@ impl RunState {
             RunState::Serving => "serving",
             RunState::Failed => "failed",
             RunState::Stopping => "stopping",
+            RunState::Recovering => "recovering",
         }
     }
 
@@ -84,6 +91,7 @@ impl RunState {
                 | RunState::Ready
                 | RunState::Serving
                 | RunState::Stopping
+                | RunState::Recovering
         )
     }
 }
@@ -147,6 +155,17 @@ pub enum EventKind {
     MemoryCompacted,
     /// A compaction did not run on a node (an engine loaded there, pressure not NORMAL) or failed.
     CompactionSkipped,
+    /// A rank died of memory: its own words name a Metal out-of-memory (or the wrapper's
+    /// `RANK_FATAL` says so), or it was SIGKILLed while the watchdog held admission for memory.
+    RankOutOfMemory,
+    /// The memory a busy stretch has consumed on a node is at least what is left before its
+    /// CRITICAL reserve: one more stretch like it would reach CRITICAL, so admission closes.
+    MemoryGrowth,
+    /// A rank's MLX active bytes exceed its plan (with overhead): the plan's accounting no longer
+    /// holds on that rank.
+    RankOverPlan,
+    /// After a memory death, every node is back above its WARN reserve: the pair restarts.
+    MemoryRecovered,
 }
 
 impl EventKind {
@@ -176,6 +195,10 @@ impl EventKind {
             EventKind::LocalNetworkBlocked => "localNetworkBlocked",
             EventKind::MemoryCompacted => "memoryCompacted",
             EventKind::CompactionSkipped => "compactionSkipped",
+            EventKind::RankOutOfMemory => "rankOutOfMemory",
+            EventKind::MemoryGrowth => "memoryGrowth",
+            EventKind::RankOverPlan => "rankOverPlan",
+            EventKind::MemoryRecovered => "memoryRecovered",
         }
     }
 }
@@ -208,6 +231,9 @@ pub struct NodeStatus {
     /// MLX's own counters on the rank (`mx.get_active_memory` / `get_peak_memory`).
     pub active_bytes: Option<u64>,
     pub peak_bytes: Option<u64>,
+    /// MLX's free-buffer cache on the rank (`mx.get_cache_memory`): resident, counted by the
+    /// node's footprint, invisible in `active_bytes`.
+    pub cache_bytes: Option<u64>,
     /// The launch plan's WITH-OVERHEAD figure (`RankPlan::with_overhead_bytes`) — the one the
     /// preflight compares with the budget and prints as "planned with overhead", so the node
     /// card and the preflight never show two different "planned" numbers.
@@ -280,6 +306,8 @@ pub struct DistributedStatus {
     pub compactions: Vec<NodeCompaction>,
     /// The Macs macOS is reclaiming memory on right now, before the start judges them again.
     pub making_room: Vec<String>,
+    /// While `state` is `recovering`: what the restart after a memory death waits for, per node.
+    pub memory_recovery: Option<String>,
 }
 
 impl DistributedStatus {
@@ -308,6 +336,7 @@ impl DistributedStatus {
             config: None,
             compactions: Vec::new(),
             making_room: Vec::new(),
+            memory_recovery: None,
         }
     }
 
@@ -949,18 +978,22 @@ fn local_progress_mark(sys: &mut System, ranks: &[RankProcess]) -> Vec<u64> {
 
 /// A dead rank, named. A rank an APP runs — this Mac's, or a Link peer's (spawned by the peer's
 /// goosed) — whose last output names EHOSTUNREACH is that app's Local Network privilege, not a
-/// dead link; a peer under ssh is exempt (TN3179).
+/// dead link; a peer under ssh is exempt (TN3179). A rank whose death names memory
+/// ([`memory_death`]) is `RankOutOfMemory`. A Link rank's own end (who ended it, its code) is the
+/// peer's report line in the tail — E2E #2's read "exited on its own with code 0", which the old
+/// "its LeanZero Link session closed" contradicted.
 fn rank_exit(
     rank: &RankProcess,
     status: std::process::ExitStatus,
     when: &str,
     after: &str,
+    memory_short: Option<&str>,
 ) -> (EventKind, String) {
     let tail = rank.tail();
     let link = link_control::link_peer(rank.host.as_deref()).is_some();
     let what = match (&rank.host, link) {
         (None, _) => "exited",
-        (Some(_), true) => "ended on its Link node (its LeanZero Link session closed)",
+        (Some(_), true) => "ended on its Link node",
         (Some(_), false) => "its ssh session ended",
     };
     let message = format!(
@@ -977,8 +1010,39 @@ fn rank_exit(
             EventKind::LocalNetworkBlocked,
             format!("{} ({whose}): {message}", local_network::BLOCKED),
         )
+    } else if let Some(evidence) = memory_death(&tail, status, memory_short) {
+        (
+            EventKind::RankOutOfMemory,
+            format!("rank {} died of memory ({evidence}): {message}", rank.rank),
+        )
     } else {
         (EventKind::RankDied, message)
+    }
+}
+
+/// Memory's hand in a rank's death, quoted: the rank's own words — the wrapper's `RANK_FATAL`
+/// with `out_of_memory`, or the Metal out-of-memory mlx raises (E2E #2's Studio rank: "RuntimeError:
+/// [METAL] Command buffer execution failed: Insufficient Memory
+/// (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)") — or a SIGKILL while the watchdog held
+/// admission for memory (the kernel's jetsam leaves no words; a Link session reports it as 128 + 9).
+fn memory_death(
+    tail: &str,
+    status: std::process::ExitStatus,
+    memory_short: Option<&str>,
+) -> Option<String> {
+    use std::os::unix::process::ExitStatusExt;
+    if let Some(line) = tail.lines().rev().find(|line| {
+        (line.starts_with("GOOSE_RANK_FATAL ") && line.contains("\"out_of_memory\": true"))
+            || line.contains("kIOGPUCommandBufferCallbackErrorOutOfMemory")
+            || line.contains("Command buffer execution failed: Insufficient Memory")
+    }) {
+        return Some(line.trim().to_string());
+    }
+    let killed =
+        status.signal() == Some(libc::SIGKILL) || status.code() == Some(128 + libc::SIGKILL);
+    match memory_short {
+        Some(short) if killed => Some(format!("SIGKILL while {short}")),
+        _ => None,
     }
 }
 
@@ -1000,7 +1064,7 @@ async fn wait_ready(
         }
         for rank in ranks.iter_mut() {
             if let Ok(Some(status)) = rank.child.try_wait() {
-                let (kind, message) = rank_exit(rank, status, " during startup", ".");
+                let (kind, message) = rank_exit(rank, status, " during startup", ".", None);
                 return ReadyOutcome::Failed(kind, Some(rank.node.clone()), message);
             }
         }
@@ -1270,14 +1334,55 @@ pub(crate) fn sample_script(pid: Option<u32>) -> String {
     script
 }
 
+/// One node's `NodeOp::Sample` answer: its memory, the kernel's pressure level, and the rank's
+/// ps row when a pid was asked for.
+fn parse_sample(
+    out: super::ExecOutput,
+) -> Result<(crate::MemoryReading, Pressure, Option<probe::ProcSample>)> {
+    anyhow::ensure!(!out.ssh_failed(), "ssh failed: {}", out.stderr.trim());
+    let sections = probe::sections(&out.stdout);
+    let values = probe::parse_sysctl_values(probe::section(&sections, "sysctl")?, 2)?;
+    let reading = probe::parse_vm_stat(probe::section(&sections, "vm")?, values[0])?;
+    let pressure = Pressure::from_level(values[1])?;
+    let row = match sections.get("ps") {
+        Some(text) => probe::parse_ps_row(text)?,
+        None => None,
+    };
+    Ok((reading, pressure, row))
+}
+
+/// The busy stretch's own growth measured against what is left on the node: `consumed` is what
+/// the node's available memory has lost since the engine was last idle, `left` what remains above
+/// the CRITICAL reserve. A stretch that has already consumed at least what is left would reach
+/// CRITICAL if it ran as long again — the floor alone reads that too late (E2E #2: the Studio went
+/// from 49% to 14% free in 2.5 minutes, and WARN at 5% fired 2 s before the rank died). Bytes
+/// against bytes over the engine's own busy/idle boundary; no clock decides it.
+fn growth_projection(
+    idle_available: u64,
+    available: u64,
+    total: u64,
+    critical_ratio: f64,
+) -> Option<(u64, u64)> {
+    let consumed = idle_available.saturating_sub(available);
+    let left = available.saturating_sub((critical_ratio * total as f64) as u64);
+    (consumed > 0 && consumed >= left).then_some((consumed, left))
+}
+
 async fn monitor(
     ctx: &RunContext,
     ranks: &mut [RankProcess],
     stop_rx: &mut watch::Receiver<bool>,
+    served: &mut bool,
 ) -> RunOutcome {
     let mut meter = ProgressMeter::new(Instant::now(), ranks.len());
     let mut admission_closed = false;
     let mut blind_reported = vec![false; ranks.len()];
+    // Per node: its available memory the last time the engine was idle (the busy stretch's start).
+    let mut idle_available: Vec<Option<u64>> = vec![None; ranks.len()];
+    let mut over_plan = vec![false; ranks.len()];
+    // Why admission is held for memory, while it is: a SIGKILL then is the kernel's.
+    let mut memory_short: Option<String> = None;
+    let mut was_busy = false;
     loop {
         tokio::select! {
             _ = stop_rx.changed() => return RunOutcome::Stop,
@@ -1285,7 +1390,13 @@ async fn monitor(
         }
         for rank in ranks.iter_mut() {
             if let Ok(Some(status)) = rank.child.try_wait() {
-                let (kind, message) = rank_exit(rank, status, "", "; the pair cannot serve.");
+                let (kind, message) = rank_exit(
+                    rank,
+                    status,
+                    "",
+                    "; the pair cannot serve.",
+                    memory_short.as_deref(),
+                );
                 return RunOutcome::Failed(kind, Some(rank.node.clone()), message);
             }
         }
@@ -1326,21 +1437,12 @@ async fn monitor(
 
         let mut cpu: Vec<Option<u64>> = vec![None; ranks.len()];
         let mut stats: Vec<Option<String>> = vec![None; ranks.len()];
-        let mut worst = (Watchdog::Normal, String::new());
+        let mut worst = (Watchdog::Normal, EventKind::WatchdogWarn, String::new());
+        let busy_now = progress.as_ref().map(|p| p.inflight > 0);
+        let (warn_ratio, critical_ratio) = ctx.config.watchdog_ratios();
         for (rank, sample) in samples.into_iter().enumerate() {
             let node_name = ctx.config.nodes[rank].name.clone();
-            let parsed = sample.and_then(|out| {
-                anyhow::ensure!(!out.ssh_failed(), "ssh failed: {}", out.stderr.trim());
-                let sections = probe::sections(&out.stdout);
-                let values = probe::parse_sysctl_values(probe::section(&sections, "sysctl")?, 2)?;
-                let reading = probe::parse_vm_stat(probe::section(&sections, "vm")?, values[0])?;
-                let pressure = Pressure::from_level(values[1])?;
-                let row = match sections.get("ps") {
-                    Some(text) => probe::parse_ps_row(text)?,
-                    None => None,
-                };
-                Ok((reading, pressure, row))
-            });
+            let parsed = sample.and_then(parse_sample);
             let (reading, pressure, row) = match parsed {
                 Ok(parsed) => parsed,
                 Err(e) => {
@@ -1387,16 +1489,47 @@ async fn monitor(
                     }
                 }
             }
-            let (warn_ratio, critical_ratio) = ctx.config.watchdog_ratios();
             let verdict = watchdog_verdict(
                 pressure,
                 reading.available_bytes,
                 reading.total_bytes,
                 (warn_ratio, critical_ratio),
             );
+            if busy_now == Some(false) || idle_available[rank].is_none() {
+                idle_available[rank] = Some(reading.available_bytes);
+            }
+            let growth = match (busy_now, idle_available[rank]) {
+                (Some(true), Some(idle)) => growth_projection(
+                    idle,
+                    reading.available_bytes,
+                    reading.total_bytes,
+                    critical_ratio,
+                ),
+                _ => None,
+            };
+            if let (Some((consumed, left)), Watchdog::Normal) = (growth, worst.0) {
+                worst = (
+                    Watchdog::Warn,
+                    EventKind::MemoryGrowth,
+                    format!(
+                        "{node_name}: this busy stretch has taken {} of available memory since \
+                         the engine was last idle and {} is left above the CRITICAL reserve \
+                         ({critical_ratio:.3} × RAM) — one more stretch like it would reach \
+                         CRITICAL (available {} of {})",
+                        gib(consumed),
+                        gib(left),
+                        gib(reading.available_bytes),
+                        gib(reading.total_bytes),
+                    ),
+                );
+            }
             if verdict != Watchdog::Normal && verdict as u8 >= worst.0 as u8 {
                 worst = (
                     verdict,
+                    match verdict {
+                        Watchdog::Critical => EventKind::WatchdogCritical,
+                        _ => EventKind::WatchdogWarn,
+                    },
                     format!(
                         "{node_name}: kernel pressure {}, available {} of {} (WARN below {} = \
                          {warn_ratio:.3} × RAM, CRITICAL below {} = {critical_ratio:.3} × RAM)",
@@ -1419,6 +1552,8 @@ async fn monitor(
             };
             let (memory_limit, wired_limit, cache_limit) =
                 (cap("memory_limit"), cap("wired_limit"), cap("cache_limit"));
+            let was_over = over_plan[rank];
+            let mut over = was_over;
             ctx.update(|s| {
                 let node = &mut s.status.nodes[rank];
                 node.memory_limit_bytes = memory_limit;
@@ -1430,9 +1565,30 @@ async fn monitor(
                 node.memory_error = None;
                 if let Some(live) = live {
                     node.active_bytes = Some(live.active);
+                    node.cache_bytes = Some(live.cache);
                     node.peak_bytes = Some(live.peak.max(node.peak_bytes.unwrap_or(0)));
+                    if let Some(planned) = node.planned_bytes {
+                        over = live.active > planned;
+                        if over && !was_over {
+                            let message = format!(
+                                "MLX active {} exceeds the plan's {} (with overhead); free-buffer \
+                                 cache {} beside it",
+                                gib(live.active),
+                                gib(planned),
+                                gib(live.cache)
+                            );
+                            s.event(EventKind::RankOverPlan, Some(&node_name), message);
+                        }
+                    }
                 }
             });
+            over_plan[rank] = over;
+        }
+        if let Some(busy) = busy_now {
+            if was_busy && !busy {
+                *served = true;
+            }
+            was_busy = busy;
         }
 
         let now = Instant::now();
@@ -1486,14 +1642,15 @@ async fn monitor(
         }
         match worst.0 {
             Watchdog::Critical => {
-                ctx.event(EventKind::WatchdogCritical, None, worst.1.clone());
-                return RunOutcome::Critical(worst.1);
+                ctx.event(EventKind::WatchdogCritical, None, worst.2.clone());
+                return RunOutcome::Critical(worst.2);
             }
             Watchdog::Warn if !admission_closed => {
-                ctx.event(EventKind::WatchdogWarn, None, worst.1.clone());
-                match set_admission(ctx, false, &worst.1).await {
+                ctx.event(worst.1, None, worst.2.clone());
+                match set_admission(ctx, false, &worst.2).await {
                     Ok(()) => {
                         admission_closed = true;
+                        memory_short = Some(worst.2.clone());
                         ctx.update(|s| s.status.admission_open = false);
                         ctx.event(
                             EventKind::AdmissionClosed,
@@ -1511,6 +1668,7 @@ async fn monitor(
             Watchdog::Normal if admission_closed => match set_admission(ctx, true, "").await {
                 Ok(()) => {
                     admission_closed = false;
+                    memory_short = None;
                     ctx.update(|s| s.status.admission_open = true);
                     ctx.event(
                         EventKind::AdmissionOpened,
@@ -1525,6 +1683,73 @@ async fn monitor(
                 ),
             },
             _ => {}
+        }
+    }
+}
+
+/// After a memory death, with the ranks stopped: sample every node on the poll cadence until each
+/// is back above its WARN reserve with the kernel NORMAL, publishing what it waits for. Nothing
+/// bounds the wait but the owner's Stop — memory that never comes back is said, not guessed
+/// around. `None` = a stop was requested.
+async fn wait_memory_recovered(
+    ctx: &RunContext,
+    stop_rx: &mut watch::Receiver<bool>,
+) -> Option<String> {
+    let (warn_ratio, critical_ratio) = ctx.config.watchdog_ratios();
+    loop {
+        let samples = futures::future::join_all(ctx.config.nodes.iter().map(|node| {
+            let exec = Arc::clone(&ctx.exec);
+            let host = node.ssh.clone();
+            async move {
+                exec.run_op(host.as_deref(), &NodeOp::Sample { pid: None })
+                    .await
+            }
+        }))
+        .await;
+        let mut short = Vec::new();
+        let mut recovered = Vec::new();
+        for (node, sample) in ctx.config.nodes.iter().zip(samples) {
+            match sample.and_then(parse_sample) {
+                Ok((reading, pressure, _)) => {
+                    let line = format!(
+                        "{}: kernel {}, available {} of {} (WARN below {})",
+                        node.name,
+                        pressure.as_str(),
+                        gib(reading.available_bytes),
+                        gib(reading.total_bytes),
+                        gib((warn_ratio * reading.total_bytes as f64) as u64),
+                    );
+                    let verdict = watchdog_verdict(
+                        pressure,
+                        reading.available_bytes,
+                        reading.total_bytes,
+                        (warn_ratio, critical_ratio),
+                    );
+                    if verdict == Watchdog::Normal {
+                        recovered.push(line);
+                    } else {
+                        short.push(line);
+                    }
+                }
+                Err(e) => short.push(format!("{}: cannot sample: {e:#}", node.name)),
+            }
+        }
+        if short.is_empty() {
+            ctx.update(|s| s.status.memory_recovery = None);
+            return Some(recovered.join("; "));
+        }
+        ctx.update(|s| {
+            s.status.memory_recovery = Some(format!(
+                "waiting for memory to recover before restarting: {}",
+                short.join("; ")
+            ))
+        });
+        tokio::select! {
+            _ = stop_rx.changed() => {
+                ctx.update(|s| s.status.memory_recovery = None);
+                return None;
+            }
+            _ = tokio::time::sleep(POLL_INTERVAL) => {}
         }
     }
 }
@@ -1577,6 +1802,9 @@ async fn supervise(
     let mut restarts: VecDeque<Instant> = VecDeque::new();
     let mut backoff = parity.backoff_initial;
     let peers_follow_rank0 = ctx.runner == Runner::PipelineQwen4;
+    // One restart per memory outage: spent by a memory death's restart, re-armed once the
+    // restarted pair has served a request to its end.
+    let mut memory_restart_armed = true;
     loop {
         let context = preflight.context_limit.unwrap_or_default();
         let specs = match launch_specs(&ctx, &preflight, context) {
@@ -1651,7 +1879,12 @@ async fn supervise(
                             None,
                             "the readiness completion ended with [DONE]",
                         );
-                        match monitor(&ctx, &mut ranks, &mut stop_rx).await {
+                        let mut served = false;
+                        let outcome = monitor(&ctx, &mut ranks, &mut stop_rx, &mut served).await;
+                        if served {
+                            memory_restart_armed = true;
+                        }
+                        match outcome {
                             RunOutcome::Failed(kind, node, message) => Err((kind, node, message)),
                             RunOutcome::Stop => Ok(Finish::Stop),
                             RunOutcome::Critical(reason) => Ok(Finish::Critical(reason)),
@@ -1750,10 +1983,30 @@ async fn supervise(
                         report.steps.join("; ")
                     ),
                 );
+                let memory = kind == EventKind::RankOutOfMemory;
                 // A refused Local Network privilege is the owner's click, not a transient: a
-                // restart would only fail the same way.
-                if !ctx.config.restart_on_failure || kind == EventKind::LocalNetworkBlocked {
+                // restart would only fail the same way. A memory death restarts on its own
+                // policy (once per outage, after memory recovered) whatever `restart_on_failure`
+                // says: the engine the owner started stays up through a memory spike.
+                if !memory
+                    && (!ctx.config.restart_on_failure || kind == EventKind::LocalNetworkBlocked)
+                {
                     ctx.update(|s| s.status.state = RunState::Failed);
+                    return report;
+                }
+                if memory && !memory_restart_armed {
+                    ctx.update(|s| {
+                        s.status.state = RunState::Failed;
+                        s.event(
+                            EventKind::BreakerOpen,
+                            None,
+                            format!(
+                                "a rank died of memory again before the pair restarted after the \
+                                 last memory death had served a request; not restarting. Last \
+                                 failure: {message}"
+                            ),
+                        );
+                    });
                     return report;
                 }
                 if !breaker_allows(
@@ -1776,22 +2029,40 @@ async fn supervise(
                     });
                     return report;
                 }
-                ctx.update(|s| {
-                    s.status.restarts += 1;
-                    s.event(
-                        EventKind::Restart,
-                        None,
-                        format!("restarting after {} (backoff {backoff:?})", kind.as_str()),
-                    );
-                });
-                tokio::select! {
-                    _ = stop_rx.changed() => {
+                if memory {
+                    memory_restart_armed = false;
+                    ctx.update(|s| s.status.state = RunState::Recovering);
+                    let Some(recovered) = wait_memory_recovered(&ctx, &mut stop_rx).await else {
                         ctx.update(|s| s.status.state = RunState::Stopped);
                         return report;
+                    };
+                    ctx.update(|s| {
+                        s.status.restarts += 1;
+                        s.event(EventKind::MemoryRecovered, None, recovered);
+                        s.event(
+                            EventKind::Restart,
+                            None,
+                            "restarting once after rankOutOfMemory: memory recovered on every node",
+                        );
+                    });
+                } else {
+                    ctx.update(|s| {
+                        s.status.restarts += 1;
+                        s.event(
+                            EventKind::Restart,
+                            None,
+                            format!("restarting after {} (backoff {backoff:?})", kind.as_str()),
+                        );
+                    });
+                    tokio::select! {
+                        _ = stop_rx.changed() => {
+                            ctx.update(|s| s.status.state = RunState::Stopped);
+                            return report;
+                        }
+                        _ = tokio::time::sleep(backoff) => {}
                     }
-                    _ = tokio::time::sleep(backoff) => {}
+                    backoff = (backoff * 2).min(parity.backoff_cap);
                 }
-                backoff = (backoff * 2).min(parity.backoff_cap);
                 ctx.update(|s| s.status.state = RunState::Preflight);
                 match preflight_making_room(&ctx.config, &ctx.exec, &ctx.shared, true).await {
                     Ok(report) if report.ok => {
@@ -2074,6 +2345,7 @@ impl DistributedManager {
                     memory_error: None,
                     active_bytes: None,
                     peak_bytes: None,
+                    cache_bytes: None,
                     planned_bytes: plan.map(|p| p.with_overhead_bytes),
                     memory_limit_bytes: None,
                     wired_limit_bytes: None,
@@ -2463,6 +2735,181 @@ mod tests {
         ));
     }
 
+    /// E2E #2's Studio (96 GiB, the CRITICAL reserve 0.02 × RAM = 1.9 GiB), read from the
+    /// sampler's free percentage every 30 s while one busy stretch ran from 22:40:46 (49% free):
+    /// 45% at 22:41:17, 34%, 32% at 22:42:18, 20% at 22:42:49, 14% at 22:43:20; the rank died at
+    /// 22:43:46, 2 s after the 5% floor's WARN. The stretch's own growth against what is left
+    /// fires at 22:42:49 — before the 44,430-token turn and the one that died were admitted.
+    #[test]
+    fn a_busy_stretch_that_took_what_is_left_closes_admission_before_the_floor() {
+        let total = 96 * GIB;
+        let at = |percent: u64| total * percent / 100;
+        let project = |available| growth_projection(at(49), available, total, 0.02);
+        assert_eq!(project(at(45)), None);
+        assert_eq!(project(at(34)), None);
+        assert_eq!(project(at(32)), None);
+        let (consumed, left) = project(at(20)).expect("fires at 22:42:49");
+        assert!(consumed >= left, "{consumed} {left}");
+        assert!(
+            watchdog_verdict(Pressure::Normal, at(20), total, (0.05, 0.02)) == Watchdog::Normal,
+            "the floor alone still read NORMAL there"
+        );
+        // An idle engine re-baselines: nothing consumed, nothing projected.
+        assert_eq!(growth_projection(at(20), at(20), total, 0.02), None);
+    }
+
+    fn exit_status(raw: i32) -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(raw)
+    }
+
+    /// E2E #2's Studio rank, its last words verbatim: the generation thread's Metal OOM, then
+    /// Link's report — and exit 0, which read as an ordinary rank death.
+    #[test]
+    fn a_metal_out_of_memory_names_the_death_even_at_exit_zero() {
+        let tail = "2026-09-25 22:43:43,320 - INFO - Prompt Cache: 41 sequences, 16.00 GB\n\
+            Exception in thread Thread-2 (_generate):\n\
+            Traceback (most recent call last):\n\
+            \x20   mx.eval([c.state for c in self.prompt_cache])\n\
+            RuntimeError: [METAL] Command buffer execution failed: Insufficient Memory \
+            (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory).\n\
+            [LeanZero Link] Work’s Mac Studio reports its rank ended: exited on its own with code 0";
+        let evidence = memory_death(tail, exit_status(0), None).expect("named");
+        assert!(evidence.starts_with("RuntimeError: [METAL]"), "{evidence}");
+
+        let fatal = "GOOSE_RANK_FATAL {\"rank\": 1, \"thread\": \"generation\", \"error\": \"x\", \
+            \"out_of_memory\": true}";
+        assert!(memory_death(fatal, exit_status(70 << 8), None).is_some());
+
+        let other = "Traceback (most recent call last):\nValueError: bad shape";
+        assert_eq!(memory_death(other, exit_status(70 << 8), None), None);
+        // The kernel's SIGKILL leaves no words: memory's only while the watchdog held admission.
+        assert_eq!(memory_death("", exit_status(libc::SIGKILL), None), None);
+        assert!(memory_death("", exit_status(libc::SIGKILL), Some("Studio: WARN")).is_some());
+        assert!(memory_death("", exit_status(137 << 8), Some("Studio: WARN")).is_some());
+    }
+
+    /// The Studio's memory after the rank died: short on the first poll (2.1 GiB of 96, below the
+    /// 5% reserve), back on the second. The restart waits for the second and says, meanwhile,
+    /// what it waits for.
+    struct RecoveringNode {
+        polls: StdMutex<u32>,
+        shared: Arc<StdMutex<Shared>>,
+        seen: StdMutex<Vec<Option<String>>>,
+    }
+
+    impl NodeExec for RecoveringNode {
+        fn run<'a>(
+            &'a self,
+            _host: Option<&'a str>,
+            _script: &'a str,
+        ) -> BoxFuture<'a, Result<ExecOutput>> {
+            let poll = {
+                let mut polls = self.polls.lock().unwrap();
+                *polls += 1;
+                *polls
+            };
+            self.seen
+                .lock()
+                .unwrap()
+                .push(self.shared.lock().unwrap().status.memory_recovery.clone());
+            let (free, file, level) = if poll == 1 {
+                (100_000, 30_000, 2)
+            } else {
+                (4_000_000, 900_000, 1)
+            };
+            let stdout = format!(
+                "\n@@vm\nMach Virtual Memory Statistics: (page size of 16384 bytes)\n\
+                 Pages free:                                  {free}.\n\
+                 Pages active:                                1000000.\n\
+                 Pages inactive:                              1000000.\n\
+                 Pages speculative:                            100000.\n\
+                 Pages throttled:                                   0.\n\
+                 Pages wired down:                             500000.\n\
+                 Pages purgeable:                               10000.\n\
+                 File-backed pages:                            {file}.\n\
+                 Anonymous pages:                             1000000.\n\
+                 \n@@sysctl\n103079215104\n{level}\n\n@@end\n"
+            );
+            Box::pin(async move {
+                Ok(ExecOutput {
+                    status: Some(0),
+                    stdout,
+                    stderr: String::new(),
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn the_memory_restart_waits_until_every_node_is_back_above_its_reserve() {
+        let shared = Arc::new(StdMutex::new(Shared {
+            status: DistributedStatus::stopped(),
+            stop_tx: None,
+            task: None,
+        }));
+        let exec = Arc::new(RecoveringNode {
+            polls: StdMutex::new(0),
+            shared: Arc::clone(&shared),
+            seen: StdMutex::new(Vec::new()),
+        });
+        let mut config = two_mac_config();
+        config.nodes.truncate(1);
+        let ctx = RunContext {
+            shared: Arc::clone(&shared),
+            exec: exec.clone(),
+            http: reqwest::Client::new(),
+            stream_http: reqwest::Client::new(),
+            config,
+            served_id: "node-alias".into(),
+            runner: Runner::MlxLmTensor,
+        };
+        let (_stop_tx, mut stop_rx) = watch::channel(false);
+        let recovered = wait_memory_recovered(&ctx, &mut stop_rx)
+            .await
+            .expect("recovers on the second poll");
+        assert!(recovered.contains("kernel normal"), "{recovered}");
+        let seen = exec.seen.lock().unwrap().clone();
+        assert_eq!(seen[0], None);
+        let waiting = seen[1].clone().expect("said what it waits for");
+        assert!(
+            waiting.starts_with("waiting for memory to recover before restarting")
+                && waiting.contains("kernel warn, available 2.1 GiB of 96.0 GiB"),
+            "{waiting}"
+        );
+        assert_eq!(shared.lock().unwrap().status.memory_recovery, None);
+    }
+
+    #[tokio::test]
+    async fn a_link_rank_that_ended_of_memory_is_named_by_its_own_words() {
+        let ended = sleeper("exit 0");
+        let rank = rank(1, Some("link:studio-1a2b"), ended, Some(42));
+        {
+            let mut live = rank.live.lock().unwrap();
+            live.tail.push_back(
+                "RuntimeError: [METAL] Command buffer execution failed: Insufficient Memory \
+                 (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)."
+                    .into(),
+            );
+            live.tail.push_back(
+                "[LeanZero Link] Studio reports its rank ended: exited on its own with code 0"
+                    .into(),
+            );
+        }
+        let (kind, message) =
+            rank_exit(&rank, exit_status(0), "", "; the pair cannot serve.", None);
+        assert_eq!(kind, EventKind::RankOutOfMemory);
+        assert!(
+            message.starts_with("rank 1 died of memory (RuntimeError"),
+            "{message}"
+        );
+        assert!(
+            message.contains("ended on its Link node (exit status: 0)")
+                && !message.contains("session closed"),
+            "{message}"
+        );
+    }
+
     #[test]
     fn the_watchdog_follows_the_kernel_and_the_reserves() {
         let total = 96 * GIB;
@@ -2813,6 +3260,7 @@ mod tests {
             memory_error: None,
             active_bytes: None,
             peak_bytes: None,
+            cache_bytes: None,
             planned_bytes: None,
             memory_limit_bytes: None,
             wired_limit_bytes: None,

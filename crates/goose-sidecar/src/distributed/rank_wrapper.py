@@ -5,7 +5,13 @@
 # - in-process memory caps at THIS node's GPU ceiling (max_recommended_working_set_size — the
 #   budget preflight planned against is at most that), applied after mlx_lm.server's own
 #   set_wired_limit, so an over-allocation raises in MLX instead of the kernel wiring past the
-#   ceiling (exo panicked a 96 GB M3 Ultra that way);
+#   ceiling (exo panicked a 96 GB M3 Ultra that way); MLX's free-buffer cache at the plan's
+#   transient allowance (Q-79), not at the ceiling's remainder;
+# - every prompt-cache entry owns exactly its bytes (Q-79, `compact`): mlx_lm's extracted
+#   entries kept whole padded batch buffers alive while counting one row, so the cache's byte
+#   bound was enforced on a figure several times smaller than what it held;
+# - a generation thread that dies ends the rank with RANK_FATAL and a non-zero exit (Q-79: the
+#   Studio rank's Metal OOM exited 0);
 # - rank 0's HTTP surface: /v1/models serves ONLY the goose model id (mlx_lm lists the HF cache,
 #   and a request naming any of those would make every rank try to load it), the goose id maps to
 #   each rank's OWN --model path (paths differ per node), /goose/progress exposes the
@@ -102,6 +108,10 @@ class Doorbell:
 doorbell = Doorbell() if spec.get("doorbell") else None
 
 import copy  # noqa: E402
+import traceback  # noqa: E402
+
+# sysexits EX_SOFTWARE: the generation thread died (its RANK_FATAL line names why).
+RANK_FATAL_EXIT = 70
 
 import mlx_lm  # noqa: E402
 import mlx_lm.server as server  # noqa: E402
@@ -119,6 +129,11 @@ for owner, name in (
     (server.ResponseGenerator, "_share_request"),
     (server.ResponseGenerator, "_generate"),
     (server, "LRUPromptCache"),
+    (server.LRUPromptCache, "insert_cache"),
+    (server.LRUPromptCache, "trim_to"),
+    (server, "BatchGenerator"),
+    (server.BatchGenerator, "close"),
+    (server.BatchGenerator, "prompt_cache_nbytes"),
 ):
     if not hasattr(owner, name):
         raise SystemExit(
@@ -142,7 +157,13 @@ def apply_caps():
     ceiling = int(info["max_recommended_working_set_size"])
     memory_limit = ceiling
     wired_limit = ceiling
-    cache_limit = max(0, memory_limit - int(spec["planned_bytes"]))
+    # MLX's free-buffer cache holds the plan's transient allowance and no more
+    # (RankPlan::mlx_cache_limit_bytes, planned × (RUNTIME_OVERHEAD_RATIO − 1)). An older
+    # requester's spec carries no figure: its own rule, the ceiling less the planned bytes.
+    if "mlx_cache_limit_bytes" in spec:
+        cache_limit = int(spec["mlx_cache_limit_bytes"])
+    else:
+        cache_limit = max(0, memory_limit - int(spec["planned_bytes"]))
     mx.set_memory_limit(memory_limit)
     mx.set_wired_limit(wired_limit)
     mx.set_cache_limit(cache_limit)
@@ -171,8 +192,66 @@ def run(host, port, model_provider, *args, **kwargs):
 
 server.run = run
 
+def owned(value):
+    """`value` with every array replaced by one that owns exactly its own bytes."""
+    if isinstance(value, mx.array):
+        return mx.contiguous(value)
+    if isinstance(value, (list, tuple)):
+        return type(value)(owned(item) for item in value)
+    return value
+
+
+def arrays_in(value):
+    if isinstance(value, mx.array):
+        yield value
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from arrays_in(item)
+
+
+def compact(prompt_cache):
+    """Give a prompt-cache entry its own buffers before the cache keeps it. mlx_lm 0.31.3 hands
+    the cache an UNEVALUATED `contiguous(batch keys[i, :, pad:idx])` (BatchKVCache.extract) and a
+    VIEW `state[i:i+1]` (ArraysCache.extract): both keep the whole batch buffer alive — every row,
+    padded to the longest — while `nbytes` counts one row's tokens. Measured (Q-79): a 5-row
+    buffer held 40 MiB for an entry counted at 0–8 MiB, and E2E #2's ranks grew 43 → 77 GB while
+    the cache reported 16 GB. Contiguous + eval copies exactly the entry and drops the batch
+    buffer; `nbytes` is then the truth the byte bound is enforced on. Eviction is unchanged
+    (nbytes was the logical size before and is the same size after), so a peer rank whose
+    wrapper does not compact still evicts alike."""
+    layers = [layer for layer in prompt_cache if not layer.empty()]
+    for layer in layers:
+        layer.state = owned(layer.state)
+    mx.eval([array for layer in layers for array in arrays_in(layer.state)])
+
+
+# The BatchGenerator mlx_lm's generation loop is serving (it makes at most one at a time): its
+# live KV is what the prompt cache shares the plan's KV charge with between admissions.
+live_batch = []
+
+
+class TrackedBatchGenerator(server.BatchGenerator):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        live_batch[:] = [self]
+
+    def close(self):
+        if live_batch and live_batch[0] is self:
+            live_batch.clear()
+        super().close()
+
+
+server.BatchGenerator = TrackedBatchGenerator
+
 if "prompt_cache_limit_bytes" in spec:
     prompt_cache_limit = int(spec["prompt_cache_limit_bytes"])
+    # A spec that asks for it (`prompt_cache_live_bound`, tag mlxLmServerBounded) bounds cached
+    # + live at EVERY insert, not only at admission (mlx_lm's own trim, server.py:795-798): the
+    # plan charges the KV once — state + prompt cache — and a cache refilled to the whole charge
+    # while a batch still holds its live KV overran it by that batch (E2E #2: 16–17.3 GB cached
+    # beside 1–7 GB live). It changes what is evicted, so only a launch whose every rank runs it
+    # asks for it (an older peer's goosed cannot read the tag and refuses the rank).
+    live_bound = bool(spec.get("prompt_cache_live_bound"))
     prompt_cache_flags = [
         "--prompt-cache-size",
         str(int(spec["prompt_cache_entries"])),
@@ -184,9 +263,53 @@ if "prompt_cache_limit_bytes" in spec:
         def __init__(self, max_size):
             super().__init__(max_size, prompt_cache_limit)
 
+        def insert_cache(self, model, tokens, prompt_cache, *, cache_type="assistant"):
+            compact(prompt_cache)
+            super().insert_cache(model, tokens, prompt_cache, cache_type=cache_type)
+            if live_bound and live_batch:
+                self.trim_to(n_bytes=prompt_cache_limit - live_batch[0].prompt_cache_nbytes)
+
     server.LRUPromptCache = BoundedPromptCache
 else:
     prompt_cache_flags = ["--prompt-cache-bytes", str(int(spec["prompt_cache_bytes"]))]
+
+    class CompactPromptCache(server.LRUPromptCache):
+        def insert_cache(self, model, tokens, prompt_cache, *, cache_type="assistant"):
+            compact(prompt_cache)
+            super().insert_cache(model, tokens, prompt_cache, cache_type=cache_type)
+
+    server.LRUPromptCache = CompactPromptCache
+
+original_generate_loop = server.ResponseGenerator._generate
+
+
+def _generate(self):
+    # mlx_lm's generation thread: an exception ends the thread, and a worker rank's main thread
+    # only joins it (server.py `run`: `response_generator.join()`), so the process then exits 0
+    # with the traceback as its last words — E2E #2's Studio rank died of a Metal OOM and was
+    # reported "exit status: 0". The death is named and the exit is not a success; on rank 0 the
+    # HTTP server would otherwise keep accepting requests nothing will ever answer.
+    try:
+        original_generate_loop(self)
+    except BaseException as death:
+        message = f"{type(death).__name__}: {death}"
+        traceback.print_exc()
+        emit(
+            "RANK_FATAL",
+            {
+                "rank": group.rank(),
+                "thread": "generation",
+                "error": message,
+                "out_of_memory": "Insufficient Memory" in message
+                or "OutOfMemory" in message,
+            },
+        )
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(RANK_FATAL_EXIT)
+
+
+server.ResponseGenerator._generate = _generate
 
 original_next = server.ResponseGenerator._next_request
 
@@ -380,6 +503,10 @@ def do_POST(self):
         body = json.loads(self.rfile.read(length) or b"{}")
         state["admission_open"] = bool(body.get("open"))
         state["admission_reason"] = body.get("reason")
+        if not state["admission_open"]:
+            # Memory is short: MLX's free-buffer cache goes back to the OS now (per process, no
+            # collective, nothing a peer must mirror).
+            mx.clear_cache()
         return send_json(self, 200, {"admission_open": state["admission_open"]})
     if not state["admission_open"]:
         length = int(self.headers.get("Content-Length") or 0)

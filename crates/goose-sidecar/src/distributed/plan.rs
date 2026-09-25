@@ -64,6 +64,15 @@ impl RankPlan {
     pub fn prompt_cache_limit_bytes(&self) -> u64 {
         self.state_bytes + self.prompt_cache_bytes
     }
+
+    /// MLX's free-buffer cache limit on the rank (`mx.set_cache_limit`): the plan's transient
+    /// allowance, `with_overhead − planned` (planned × (RUNTIME_OVERHEAD_RATIO − 1)). The rank
+    /// used to set it to its GPU ceiling less the planned bytes — 48,135,889,408 B on the Studio
+    /// in E2E #2 — which let freed buffers stay resident up to MLX's own reclaim point (95% of
+    /// that ceiling), past what the node could give beside its OS and goose.
+    pub fn mlx_cache_limit_bytes(&self) -> u64 {
+        self.with_overhead_bytes.saturating_sub(self.planned_bytes)
+    }
 }
 
 /// The tensor runner's per-rank budget is the ONE fit rule's (`crate::fit`); the pipeline
@@ -657,6 +666,27 @@ pub(crate) mod tests {
             "the old flag's room"
         );
         assert!(plan.prompt_cache_limit_bytes() - live >= needed);
+    }
+
+    /// E2E #2 (2026-09-25, the Studio's GOOSE_RANK_CAPS): the 27B over 2 ranks at 262,144 tokens
+    /// planned 35,358,285,312 B, and the rank set MLX's free-buffer cache limit to its ceiling
+    /// less that — 48,135,889,408 B. The plan's own transient allowance is a tenth of the plan.
+    #[test]
+    fn the_mlx_buffer_cache_holds_the_plans_transient_allowance_only() {
+        let facts = qwen_27b();
+        let mut plan = facts.rank_plan(2, 1, 262_144, u64::MAX);
+        assert_eq!(plan.prompt_cache_limit_bytes(), 17_333_813_248);
+        // The fixture's weights sit 104,936 B under the owner's checkpoint; the rank's own report
+        // is the figure.
+        plan.planned_bytes = 35_358_285_312;
+        plan.with_overhead_bytes = with_overhead(plan.planned_bytes);
+        assert_eq!(plan.mlx_cache_limit_bytes(), 3_535_828_532);
+        assert_eq!(
+            plan.planned_bytes + plan.mlx_cache_limit_bytes(),
+            plan.with_overhead_bytes
+        );
+        let e2e_2_ceiling = 83_494_174_720u64;
+        assert_eq!(e2e_2_ceiling - plan.planned_bytes, 48_135_889_408);
     }
 
     /// The ranks' budgets differ (the MacBook and the Studio), their cache bounds may not.
