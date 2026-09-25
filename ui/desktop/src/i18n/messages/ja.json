@@ -5189,9 +5189,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "プランがないため速度の数値はありませんが、どの方法でも起動できます。"
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "この 1 台の Mac に収まります：書き込みは ~{singleWrite} tok/s（分割では ~{splitWrite}）で、ほかの Mac も空いたままです。"
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{他の分割 # 件} other{他の分割 # 件}}"
   },
@@ -5209,6 +5206,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "読み込み ~{value} tok/s"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "文書 1 ターン全体で ~{value} tok/s（回答を含む）"
   },
   "placementCard.refresh": {
     "defaultMessage": "再計画"

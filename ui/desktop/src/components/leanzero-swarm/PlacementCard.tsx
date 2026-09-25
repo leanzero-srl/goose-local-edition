@@ -101,6 +101,10 @@ const i18n = defineMessages({
   pipeline: { id: 'placementCard.pipelineKind', defaultMessage: 'pipeline split · {link}' },
   writes: { id: 'placementCard.writes', defaultMessage: '~{value} tok/s writing' },
   reads: { id: 'placementCard.reads', defaultMessage: '~{value} tok/s reading' },
+  readsWholeTurn: {
+    id: 'placementCard.readsWholeTurn',
+    defaultMessage: '~{value} tok/s through a whole document turn, answer included',
+  },
   total: {
     id: 'placementCard.total',
     defaultMessage: '~{value} tok/s total at {concurrency} at once',
@@ -200,11 +204,6 @@ const i18n = defineMessages({
     id: 'placementCard.tradeOffWritesOnly',
     defaultMessage:
       '{name} alone fits this model. Split across your Macs it writes ~{splitWrite} tok/s against ~{singleWrite} there.',
-  },
-  oneMacPreferred: {
-    id: 'placementCard.oneMacPreferred',
-    defaultMessage:
-      'Fits on this one Mac: it writes ~{singleWrite} tok/s against the split’s ~{splitWrite}, and leaves your other Macs free.',
   },
   splitContextFixed: {
     id: 'placementCard.splitContextFixed',
@@ -340,10 +339,13 @@ function figureText(
   intl: IntlShape,
   goal: PlacementGoal,
   figure: SpeedFigure,
-  concurrency: number | null | undefined
+  candidate: PlacementCandidate
 ): string {
   const value = tps(figure.estimate.value);
-  if (goal === 'longDocuments') return intl.formatMessage(i18n.reads, { value });
+  const concurrency = candidate.speed.concurrency;
+  if (goal === 'longDocuments') {
+    return intl.formatMessage(candidate.speed.turn ? i18n.readsWholeTurn : i18n.reads, { value });
+  }
   if (goal === 'manyRequests')
     return intl.formatMessage(i18n.total, { value, concurrency: concurrency ?? '—' });
   return intl.formatMessage(i18n.writes, { value });
@@ -433,24 +435,6 @@ export function splitTradeOff(
     splitRead: split.speed.prefill?.estimate.value ?? null,
     singleRead: single.speed.prefill?.estimate.value ?? null,
   };
-}
-
-/**
- * The way Run it recommends ("Best"): goose's best for the goal — unless that is a split while the
- * model FITS one Mac. Then one Mac is recommended: measured on E2E #1/#2b, the split wrote ~14 tok/s
- * against ~22 on the Studio alone and its turns ran 1,220 / 507 / 3,207 s against 300 / 43 / 573 s,
- * so the ~1.2× faster prompt reading never paid back. Among the Macs that fit, the one with the best
- * figure for the goal.
- */
-export function recommendedCandidate(plan: PlacementPlan | null): string | null {
-  if (!plan?.best) return null;
-  const candidates = plan.candidates ?? [];
-  const best = candidates.find((c) => c.id === plan.best);
-  if (!best || best.key.kind === 'single') return plan.best;
-  const alone = candidates.filter(fitsAlone);
-  if (alone.length === 0) return plan.best;
-  const score = (c: PlacementCandidate) => goalFigure(c, plan.goal)?.estimate.value ?? -1;
-  return alone.reduce((a, b) => (score(b) > score(a) ? b : a)).id;
 }
 
 function tradeOffText(intl: IntlShape, t: SplitTradeOff): string {
@@ -1108,11 +1092,6 @@ function PlacementCardBody({
 
   const { ways, otherSplits } = waysOf(plan, macs.macs, distributedCapability);
   const distributedOwns = ownsTheMac(distributed);
-  const recommended = recommendedCandidate(plan);
-  const bestSplit =
-    plan?.best != null && plan.best !== recommended
-      ? ((plan.candidates ?? []).find((x) => x.id === plan.best) ?? null)
-      : null;
 
   const title = (way: Way): string => {
     if (way.kind === 'local') return intl.formatMessage(i18n.runHere);
@@ -1133,24 +1112,14 @@ function PlacementCardBody({
     const running = live != null && live.state !== 'failed';
     const figure = c ? goalFigure(c, goal) : null;
     const action = c?.action ?? null;
-    const isBest = c != null && recommended === c.id;
-    const isBestNow =
-      c != null && plan?.bestAvailable === c.id && plan.bestAvailable !== recommended;
+    // "Best" is goose's: the planner ranks long documents by a whole turn's expected time, so a
+    // split that reads faster but writes slower wins only when the turn's answer is short enough.
+    const isBest = c != null && plan?.best === c.id;
+    const isBestNow = c != null && plan?.bestAvailable === c.id && plan.bestAvailable !== plan.best;
     // The split beside a Mac the model fits on states what it costs and buys (Q-72) — that line
     // carries both writing figures, so goose's "Slower for this" would only repeat half of it.
     const tradeOff = c && way.kind === 'split' ? splitTradeOff(plan, c) : null;
-    // One Mac recommended over goose's best (a split): its "slower" is the reading figure alone.
-    const oneMacOverSplit = isBest && c != null && plan?.best !== c.id ? bestSplit : null;
-    const why = tradeOff
-      ? tradeOffText(intl, tradeOff)
-      : oneMacOverSplit && c
-        ? intl.formatMessage(i18n.oneMacPreferred, {
-            singleWrite: tps(c.speed.decode?.estimate.value ?? 0),
-            splitWrite: tps(oneMacOverSplit.speed.decode?.estimate.value ?? 0),
-          })
-        : c
-          ? outcomeText(intl, c)
-          : null;
+    const why = tradeOff ? tradeOffText(intl, tradeOff) : c ? outcomeText(intl, c) : null;
     const needsCopy = missingOn(way);
     const copyJob = needsCopy ? macs.copies[copyKey(modelId, needsCopy.key)] : undefined;
     const copyLink = needsCopy ? macs.linkBetween(SELF_KEY, needsCopy.key) : null;
@@ -1194,7 +1163,7 @@ function PlacementCardBody({
             {figure && (
               <>
                 <span className={cx('text-lz-body', WEIGHT.semibold, TNUM, TONE_TEXT.accent)}>
-                  {figureText(intl, goal, figure, c.speed.concurrency)}
+                  {figureText(intl, goal, figure, c)}
                 </span>
                 <span className={cx(TYPE.meta, TNUM)}>
                   {intl.formatMessage(i18n.range, {

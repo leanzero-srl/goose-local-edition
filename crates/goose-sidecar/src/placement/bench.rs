@@ -151,6 +151,18 @@ impl Workload {
         }
     }
 
+    /// The answer a typical turn of this shape writes — what a whole turn is timed with when goose
+    /// has no recorded turns of the model at this size. (The measurement pass stops at
+    /// `max_tokens`: it is after the prompt's rate, not the answer.)
+    pub fn answer_tokens(self) -> u64 {
+        match self {
+            // ratio: the recorded runs' `-g 256`.
+            Workload::Chat => 256,
+            // ratio: bench.py (b)'s long-document answer is 200 tokens.
+            Workload::LongDocument => 200,
+        }
+    }
+
     /// The context bucket the workload's prompt falls in.
     pub fn bucket(self) -> u64 {
         super::store::context_bucket(self.prompt_tokens())

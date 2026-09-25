@@ -5189,9 +5189,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Без плана нет оценки скорости — но любой способ всё равно можно запустить."
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "Помещается на этот один Mac: пишет ~{singleWrite} tok/s против ~{splitWrite} у разделения и оставляет другие Mac свободными."
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{Ещё # разделение} few{Ещё # разделения} many{Ещё # разделений} other{Ещё # разделения}}"
   },
@@ -5209,6 +5206,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "~{value} ток/с на чтение"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "~{value} tok/s за весь ход с документом, включая ответ"
   },
   "placementCard.refresh": {
     "defaultMessage": "Спланировать снова"

@@ -5189,9 +5189,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Không có kế hoạch thì không có con số tốc độ — nhưng vẫn có thể khởi chạy mọi cách."
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "Vừa trên một máy Mac này: viết ~{singleWrite} tok/s so với ~{splitWrite} của bản chia, và để trống các máy Mac khác."
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# cách chia khác} other{# cách chia khác}}"
   },
@@ -5209,6 +5206,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "đọc ~{value} tok/s"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "~{value} tok/s cho trọn một lượt tài liệu, kể cả câu trả lời"
   },
   "placementCard.refresh": {
     "defaultMessage": "Lập kế hoạch lại"

@@ -5189,9 +5189,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "没有计划就没有速度数字 — 但每种方式仍然可以启动。"
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "这一台 Mac 就放得下：写入 ~{singleWrite} tok/s，拆分为 ~{splitWrite}，且其他 Mac 保持空闲。"
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{另外 # 种拆分} other{另外 # 种拆分}}"
   },
@@ -5209,6 +5206,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "读取 ~{value} tok/s"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "整轮文档处理 ~{value} tok/s（含回答）"
   },
   "placementCard.refresh": {
     "defaultMessage": "重新规划"

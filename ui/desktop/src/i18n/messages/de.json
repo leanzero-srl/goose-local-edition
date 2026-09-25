@@ -5189,9 +5189,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Ohne Plan gibt es keine Geschwindigkeitsangabe — jeder Weg kann trotzdem gestartet werden."
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "Passt auf diesen einen Mac: Er schreibt ~{singleWrite} tok/s statt ~{splitWrite} bei der Aufteilung und lässt deine anderen Macs frei."
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# weiterer Split} other{# weitere Splits}}"
   },
@@ -5209,6 +5206,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "~{value} Tok/s lesen"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "~{value} tok/s über einen ganzen Dokument-Durchgang, Antwort eingeschlossen"
   },
   "placementCard.refresh": {
     "defaultMessage": "Neu planen"

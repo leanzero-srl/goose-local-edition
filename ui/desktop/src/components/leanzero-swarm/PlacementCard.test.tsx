@@ -8,7 +8,6 @@ import {
   PlacementBadge,
   PlacementCard,
   pickerBadgeOf,
-  recommendedCandidate,
   splitTradeOff,
   type PickerBadge,
 } from './PlacementCard';
@@ -416,30 +415,55 @@ describe('Run it on the real 27B plan', () => {
     expect(within(split).queryByText('Best')).toBeNull();
   });
 
-  it('Long documents: goose ranks the split first by reading, Run it still recommends the one Mac it fits on', async () => {
-    const split = PLAN_27B.candidates!.find((c) => c.key.kind === 'tensor')!;
+  /**
+   * Long documents: goose ranks by a whole turn's expected time (planner.rs turn_figure), and Run it
+   * shows goose's "Best" and that figure — never a reading rate the ranking no longer used.
+   */
+  it('Long documents: the headline is the whole-turn figure goose ranked by, and "Best" is goose’s', async () => {
+    const turnOf = (id: string, value: number) => {
+      const c = PLAN_27B.candidates!.find((x) => x.id === id)!;
+      return {
+        ...c,
+        speed: {
+          ...c.speed,
+          turn: {
+            estimate: { value, low: value * 0.9, high: value * 1.1 },
+            measured: false,
+            runs: 0,
+          },
+        },
+      };
+    };
     const long: PlacementPlan = {
       ...PLAN_27B,
       goal: 'longDocuments',
-      best: split.id,
-      bestAvailable: split.id,
+      candidates: PLAN_27B.candidates!.map((c) =>
+        c.id === 'single:workhorse'
+          ? turnOf(c.id, 304)
+          : c.key.kind === 'tensor'
+            ? turnOf(c.id, 347)
+            : c
+      ),
     };
-    expect(recommendedCandidate(long)).toBe('single:workhorse');
     mockPlan.mockResolvedValue(answer(long));
     renderCard();
+    await screen.findByTestId('placement-ways');
+    await userEvent.click(screen.getByRole('radio', { name: 'Long documents' }));
+    await waitFor(() => expect(mockPlan).toHaveBeenLastCalledWith('longDocuments', MODEL));
     const peer = await screen.findByTestId('placement-way-peer');
     expect(within(peer).getByText('Best')).toBeInTheDocument();
     expect(
-      within(peer).getByText(
-        'Fits on this one Mac: it writes ~21.9 tok/s against the split’s ~13.9, and leaves your other Macs free.'
-      )
+      within(peer).getByText('~304 tok/s through a whole document turn, answer included')
     ).toBeInTheDocument();
     const row = screen.getByTestId('placement-way-split');
     expect(within(row).queryByText('Best')).toBeNull();
+    expect(
+      within(row).getByText('~347 tok/s through a whole document turn, answer included')
+    ).toBeInTheDocument();
     expect(within(row).getByText(/reads prompts 1\.2× faster/)).toBeInTheDocument();
   });
 
-  it('a model no single Mac fits: the split keeps goose’s recommendation and says no trade-off', () => {
+  it('a model no single Mac fits: the split has no trade-off to state', () => {
     const split = PLAN_27B.candidates!.find((c) => c.key.kind === 'tensor')!;
     const tooBig: PlacementPlan = {
       ...PLAN_27B,
@@ -448,9 +472,7 @@ describe('Run it on the real 27B plan', () => {
         c.key.kind === 'single' ? { ...c, fit: { ...c.fit, status: 'short' as const } } : c
       ),
     };
-    expect(recommendedCandidate(tooBig)).toBe(split.id);
     expect(splitTradeOff(tooBig, split)).toBeNull();
-    expect(recommendedCandidate(null)).toBeNull();
   });
 
   it('switches the goal and plans again for it', async () => {

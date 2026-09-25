@@ -5189,9 +5189,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "योजना के बिना गति का कोई आँकड़ा नहीं — फिर भी हर तरीका शुरू किया जा सकता है।"
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "यह इस एक Mac पर फ़िट है: यह ~{singleWrite} tok/s लिखता है, बँटवारे के ~{splitWrite} के मुकाबले, और आपके बाकी Mac खाली रहते हैं।"
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# अन्य विभाजन} other{# अन्य विभाजन}}"
   },
@@ -5209,6 +5206,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "पढ़ना ~{value} tok/s"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "पूरे दस्तावेज़ टर्न में ~{value} tok/s, उत्तर सहित"
   },
   "placementCard.refresh": {
     "defaultMessage": "फिर से योजना बनाएँ"

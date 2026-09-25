@@ -71,12 +71,16 @@ export async function mlxSpeedHistory(modelId?: string): Promise<SpeedHistoryRes
   );
 }
 
-/** The goal's headline figure of a candidate. */
+/**
+ * The goal's headline figure of a candidate — the one goose ranked it by. Long documents rank by a
+ * whole turn (reading the document AND writing the answer, `turn`); a goose that sends no turn
+ * figure ranked by reading alone.
+ */
 export function goalFigure(candidate: PlacementCandidate, goal: PlacementGoal): SpeedFigure | null {
   const speed = candidate.speed;
   const figure =
     goal === 'longDocuments'
-      ? speed.prefill
+      ? (speed.turn ?? speed.prefill)
       : goal === 'manyRequests'
         ? speed.throughput
         : speed.decode;

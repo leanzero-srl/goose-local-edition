@@ -5189,9 +5189,6 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Plan olmadan hız rakamı yok — yine de her yol başlatılabilir."
   },
-  "placementCard.oneMacPreferred": {
-    "defaultMessage": "Bu tek Mac’e sığar: bölmenin ~{splitWrite} değerine karşı ~{singleWrite} tok/s yazar ve diğer Mac’lerinizi boş bırakır."
-  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# diğer bölme} other{# diğer bölme}}"
   },
@@ -5209,6 +5206,9 @@
   },
   "placementCard.reads": {
     "defaultMessage": "~{value} tok/sn okuma"
+  },
+  "placementCard.readsWholeTurn": {
+    "defaultMessage": "Yanıt dahil, bütün bir belge turunda ~{value} tok/s"
   },
   "placementCard.refresh": {
     "defaultMessage": "Yeniden planla"

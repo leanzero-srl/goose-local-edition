@@ -3084,6 +3084,10 @@ export const zMlxPlacementSpeedDto = z.object({
         zMlxSpeedFigureDto,
         z.null()
     ]).optional(),
+    turn: z.union([
+        zMlxSpeedFigureDto,
+        z.null()
+    ]).optional(),
     concurrency: z.union([
         z.number().int().gte(0),
         z.null()
