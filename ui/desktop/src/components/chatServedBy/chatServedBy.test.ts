@@ -19,6 +19,13 @@ import {
   type ChatServedInputs,
 } from './chatServedBy';
 
+/** The Studio reading one prompt while another request WAITS behind it (4.2 s so far). */
+const PREFILL_WITH_WAITING = {
+  ...PREFILL_STATUS,
+  num_waiting: 1,
+  requests: [GENERATING_STATUS.requests[0], ...PREFILL_STATUS.requests],
+};
+
 /**
  * One derivation, six moments (the frame's proof plan) — every chat surface reads the object this
  * returns, so each moment is pinned as the WHOLE object a surface would see.
@@ -251,11 +258,11 @@ describe('deriveChatServedBy — the six moments', () => {
 });
 
 describe('deriveChatServedBy — busy with others (Q-17)', () => {
-  it('round 1, 08:42: the Studio reads another client’s 39k prompt — busy, reading, never "ready" alone', () => {
+  it('round 1, 08:42: the Studio reads another client’s 39k prompt while a request waits — busy, reading, never "ready" alone', () => {
     const served = deriveChatServedBy(
       inputs({
         remote: ROUTE,
-        main: snapshot('remote', PREFILL_STATUS, {
+        main: snapshot('remote', PREFILL_WITH_WAITING, {
           clients: [],
           unattributed: 1,
           swarmRuns: [],
@@ -268,6 +275,71 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
       requests: 1,
       readingTokens: PREFILL_STATUS.requests[0].prompt_tokens,
     });
+  });
+
+  it('Q-40: another request running BESIDE ours makes nobody wait (Rapid-MLX batches) — no bar without a request WAITING', () => {
+    const main = (body: unknown) =>
+      snapshot('remote', body, { clients: [], unattributed: 1, swarmRuns: [], error: null });
+    expect(
+      deriveChatServedBy(inputs({ remote: ROUTE, main: main(PREFILL_STATUS) })).busyWithOthers
+    ).toBeNull();
+    // A canary the engine has held for 0.4 s is a blink, never a bar (R3's 0.3–0.5 s canaries).
+    const blink = {
+      ...PREFILL_WITH_WAITING,
+      requests: [
+        { ...GENERATING_STATUS.requests[0], elapsed_s: 0.4, prompt_tokens: 27 },
+        ...PREFILL_STATUS.requests,
+      ],
+    };
+    expect(
+      deriveChatServedBy(inputs({ remote: ROUTE, main: main(blink) })).busyWithOthers
+    ).toBeNull();
+  });
+
+  it('Q-39/Q-50: goose’s own background calls (the end-of-turn reviewer, a hidden session) are never "another request"', () => {
+    // The reviewer is a detached task outside any session's context: its router lease has no
+    // session — the recording's "reading another request's 140-token prompt" during the user's
+    // own turn.
+    const reviewer = {
+      key: 'session:row-7',
+      kind: 'session' as const,
+      sessionId: null,
+      sessionName: null,
+      sessionType: null,
+      count: 1,
+    };
+    const hidden = {
+      key: 'session:h1',
+      kind: 'session' as const,
+      sessionId: 'h1',
+      sessionName: null,
+      sessionType: 'hidden',
+      count: 1,
+    };
+    const mine = {
+      key: 'chat:s-mine',
+      kind: 'chat' as const,
+      sessionId: 's-mine',
+      sessionName: 'story',
+      count: 1,
+    };
+    const busy = (clients: NonNullable<MlxEngineSnapshot['serving']>['clients']) =>
+      deriveChatServedBy(
+        inputs({
+          remote: ROUTE,
+          turnInFlight: true,
+          main: snapshot('remote', PREFILL_WITH_WAITING, {
+            clients,
+            unattributed: 0,
+            swarmRuns: [],
+            error: null,
+          }),
+        })
+      ).busyWithOthers;
+    expect(busy([mine, reviewer, hidden])).toBeNull();
+    // A sub-agent or a scheduled job is its own session — still someone else's request.
+    const scheduled = { ...hidden, key: 'session:j1', sessionId: 'j1', sessionType: 'scheduled' };
+    expect(busy([mine, reviewer, scheduled])).toEqual({ requests: 1, readingTokens: null });
   });
 
   it('this chat’s own turn is not "others"; another chat’s and an external client’s are', () => {
@@ -373,12 +445,90 @@ describe('mlxEngineServing — the ONE order (split, route, another window’s s
 });
 
 describe('a failed route read is not "no route" (works-prover on cut 1)', () => {
-  it('keeps the route and its Mac, and says the state is unknown — never "not running" plus Mount', () => {
+  it('keeps the route and its Mac — never "not running" plus Mount — and says it is reconnecting', () => {
     const served = deriveChatServedBy(
       inputs({ remote: ROUTE, remoteReadError: 'ACP read failed: goosed busy' })
     );
     expect(served.engine).toBe('remote');
     expect(served.where).toEqual(["Work's Mac Studio"]);
-    expect(served.phase).toBeNull();
+    expect(served.readiness.kind).toBe('reconnecting');
+  });
+});
+
+describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48)', () => {
+  const lookupFor = (settings: MlxEngineSettings): MountLookup => ({ ...POOL, settings });
+
+  it('the route’s own `reconnecting`: amber, named, and "Run on this Mac instead" mounts what the bar’s Mount would', () => {
+    const served = deriveChatServedBy(
+      inputs({ remote: { ...ROUTE, state: 'reconnecting', lastError: 'Link peer refused' } })
+    );
+    expect(served.engine).toBe('remote');
+    expect(served.where).toEqual(["Work's Mac Studio"]);
+    expect(served.phase).toBe('loading');
+    expect(servedReady(served)).toBe(false);
+    expect(served.readiness).toEqual({
+      kind: 'reconnecting',
+      status: { ...ROUTE, state: 'reconnecting', lastError: 'Link peer refused' },
+      why: 'Link peer refused',
+      instead: { kind: 'switch', mount: HF },
+    });
+  });
+
+  it('the renderer’s route read FAILING while the route is the engine is reconnecting — never a blank bar (was phase null)', () => {
+    const served = deriveChatServedBy(
+      inputs({ remote: ROUTE, remoteReadError: 'ACP read failed: goosed busy' })
+    );
+    expect(served.phase).toBe('loading');
+    expect(served.readiness).toMatchObject({
+      kind: 'reconnecting',
+      why: 'ACP read failed: goosed busy',
+    });
+  });
+
+  it('main’s relay read failing (kill-link, 11.6 s) is reconnecting even while the route still says ready', () => {
+    const lost: MlxEngineSnapshot = {
+      engine: 'remote',
+      mode: 'reconnecting',
+      modelId: null,
+      baseUrl: ROUTE.baseUrl ?? null,
+      stats: null,
+      statusDetail: 'timeout: no answer within 1500 ms',
+      rates: EMPTY_BOOK,
+      serving: null,
+      failedError: null,
+    };
+    const served = deriveChatServedBy(inputs({ remote: ROUTE, main: lost }));
+    expect(served.readiness).toMatchObject({
+      kind: 'reconnecting',
+      why: 'timeout: no answer within 1500 ms',
+    });
+    expect(served.busyWithOthers).toBeNull();
+    // main's read of ANOTHER engine (this Mac's single) never says the route's Mac is lost.
+    const elsewhere = { ...lost, engine: 'single' as const };
+    expect(deriveChatServedBy(inputs({ remote: ROUTE, main: elsewhere })).readiness.kind).toBe(
+      'remote'
+    );
+  });
+
+  it('`failed` stays red: the peer answered that its engine failed', () => {
+    const served = deriveChatServedBy(inputs({ remote: { ...ROUTE, state: 'failed' } }));
+    expect(served.phase).toBe('failed');
+    expect(served.readiness.kind).toBe('remote');
+  });
+
+  it('Run here: this Mac already serving is a route drop only; no saved model offers nothing (Open Engine)', () => {
+    const reconnecting = { ...ROUTE, state: 'reconnecting' };
+    const serving = deriveChatServedBy(inputs({ remote: reconnecting, single: RUNNING }));
+    expect(serving.readiness).toMatchObject({ instead: { kind: 'switch', mount: null } });
+    const none = deriveChatServedBy(
+      inputs({
+        provider: 'omlx',
+        remote: reconnecting,
+        lookup: lookupFor({ ...SETTINGS, modelId: undefined }),
+      })
+    );
+    expect(none.readiness).toMatchObject({ kind: 'reconnecting', instead: { kind: 'none' } });
+    const omlx = deriveChatServedBy(inputs({ provider: 'omlx', remote: reconnecting }));
+    expect(omlx.readiness).toMatchObject({ instead: { kind: 'switch', mount: HF } });
   });
 });

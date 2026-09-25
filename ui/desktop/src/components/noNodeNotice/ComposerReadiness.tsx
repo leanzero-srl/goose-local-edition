@@ -1,7 +1,10 @@
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Hourglass, Loader2, Network, ServerOff, Settings2 } from 'lucide-react';
+import { Hourglass, Laptop, Loader2, Network, ServerOff, Settings2 } from 'lucide-react';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
+import { mlxRemoteSingleStop } from '../../acp/mlx-remote-single';
+import { toastError } from '../../toasts';
+import { errorMessage } from '../../utils/conversionUtils';
 import { routePeerName } from '../leanzero-swarm/macs';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { compactTokens } from '../leanzero-swarm/mlxLiveStats';
@@ -13,6 +16,7 @@ import {
   type ChatBusy,
   type ChatServedBy,
   type ComposerReadiness,
+  type RunHere,
 } from '../chatServedBy/chatServedBy';
 import type { ChatServing } from '../chatServedBy/useChatServedBy';
 import {
@@ -66,6 +70,27 @@ const i18n = defineMessages({
     id: 'composerReadiness.remoteFailed',
     defaultMessage: 'The engine on {peer} failed — nothing there can answer a message',
   },
+  reconnecting: {
+    id: 'composerReadiness.reconnecting',
+    defaultMessage: 'Lost contact with {peer} — reconnecting…',
+  },
+  reconnectingWhy: {
+    id: 'composerReadiness.reconnectingWhy',
+    defaultMessage: 'Last read: {why}',
+  },
+  runHere: { id: 'composerReadiness.runHere', defaultMessage: 'Run on this Mac instead' },
+  switchingHere: {
+    id: 'composerReadiness.switchingHere',
+    defaultMessage: 'Moving chat to this Mac…',
+  },
+  switchFailed: {
+    id: 'composerReadiness.switchFailed',
+    defaultMessage: 'Could not move chat to this Mac: {error}',
+  },
+  peerKeptModel: {
+    id: 'composerReadiness.peerKeptModel',
+    defaultMessage: '{peer} kept its model loaded',
+  },
   busy: {
     id: 'composerReadiness.busy',
     defaultMessage:
@@ -99,6 +124,33 @@ export function ComposerReadinessStrip({ serving }: { serving: ChatServing }) {
   const { requestingNodeId, mountErrors, mount } = useMlxMount(single);
   const restore = useRestoreLine();
   const restoreText = restoreLineText(intl, restore);
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
+
+  // "Run on this Mac instead": the route's own Stop (the tray's and Run it's), then this Mac's Mount
+  // — the bar's Mount path. A peer that cannot be reached keeps its model, and goose says so.
+  const runHere = useCallback(
+    async (instead: RunHere, peer: string) => {
+      if (instead.kind !== 'switch') return;
+      setSwitching(true);
+      setSwitchError(null);
+      try {
+        const { unmountError } = await mlxRemoteSingleStop(false);
+        if (unmountError) {
+          toastError({
+            title: intl.formatMessage(i18n.peerKeptModel, { peer }),
+            msg: unmountError,
+          });
+        }
+        if (instead.mount) await mount(STRIP_MOUNT_KEY, instead.mount);
+      } catch (e) {
+        setSwitchError(errorMessage(e, String(e)));
+      } finally {
+        setSwitching(false);
+      }
+    },
+    [intl, mount]
+  );
 
   // A relaunch bringing back what served: that is the line, not "No model is mounted" + Mount.
   if (armed && restoreText != null && !servedReady(served)) {
@@ -135,6 +187,9 @@ export function ComposerReadinessStrip({ serving }: { serving: ChatServing }) {
       requesting={requestingNodeId != null}
       mountError={mountErrors[STRIP_MOUNT_KEY] ?? null}
       onMount={(modelId) => void mount(STRIP_MOUNT_KEY, modelId)}
+      switching={switching}
+      switchError={switchError}
+      onRunHere={(instead, peer) => void runHere(instead, peer)}
     />
   );
 }
@@ -201,6 +256,9 @@ function ReadinessStripBody({
   requesting,
   mountError,
   onMount,
+  switching,
+  switchError,
+  onRunHere,
 }: {
   readiness: Exclude<ComposerReadiness, { kind: 'unknown' } | { kind: 'ready' }>;
   model: string | null;
@@ -208,6 +266,9 @@ function ReadinessStripBody({
   requesting: boolean;
   mountError: string | null;
   onMount: (modelId: string) => void;
+  switching: boolean;
+  switchError: string | null;
+  onRunHere: (instead: RunHere, peer: string) => void;
 }) {
   const intl = useIntl();
 
@@ -218,6 +279,32 @@ function ReadinessStripBody({
 
   if (readiness.kind === 'no-nodes') {
     headline = intl.formatMessage(i18n.noNodes);
+  } else if (readiness.kind === 'reconnecting') {
+    // The route's Mac stopped answering: chat still goes there, so every second until it answers
+    // again — or the user moves chat here — is named (Q-47).
+    const peer = routePeerName(readiness.status);
+    headline = intl.formatMessage(i18n.reconnecting, { peer });
+    fill = PHASE_FILL.loading;
+    detail = switchError
+      ? intl.formatMessage(i18n.switchFailed, { error: switchError })
+      : readiness.why
+        ? intl.formatMessage(i18n.reconnectingWhy, { why: readiness.why })
+        : null;
+    const { instead } = readiness;
+    if (instead.kind === 'switch') {
+      action = (
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={switching ? <Loader2 className="animate-spin" /> : <Laptop />}
+          disabled={switching}
+          data-testid="composer-readiness-run-here"
+          onClick={() => onRunHere(instead, peer)}
+        >
+          {intl.formatMessage(switching ? i18n.switchingHere : i18n.runHere)}
+        </Button>
+      );
+    }
   } else if (readiness.kind === 'remote') {
     const peer = routePeerName(readiness.status);
     detail = readiness.status.lastError ?? null;
@@ -310,7 +397,13 @@ function ReadinessStripBody({
         fill
       )}
     >
-      {readiness.kind === 'remote' ? (
+      {readiness.kind === 'reconnecting' ? (
+        <Loader2
+          aria-hidden
+          data-testid="composer-readiness-reconnecting"
+          className="size-4 shrink-0 animate-spin"
+        />
+      ) : readiness.kind === 'remote' ? (
         <Network aria-hidden className="size-4 shrink-0" />
       ) : (
         <ServerOff aria-hidden className="size-4 shrink-0" />

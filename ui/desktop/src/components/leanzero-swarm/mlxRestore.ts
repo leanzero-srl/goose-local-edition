@@ -120,7 +120,11 @@ async function restoreRemote(deps: RestoreDeps, peer: string, modelId: string): 
     const status = await deps.remoteStatus();
     if (status.state === 'ready') return { served: true };
     if (status.state === 'failed') return said(status.lastError ?? 'failed');
-    if (status.state !== 'mounting') return { served: false, reason: { code: 'stoppedEarly' } };
+    // `reconnecting`: the route stands and its Mac is not answering yet (a relaunch settling) —
+    // still coming up, never "it stopped before it served".
+    if (status.state !== 'mounting' && status.state !== 'reconnecting') {
+      return { served: false, reason: { code: 'stoppedEarly' } };
+    }
     await deps.wait();
   }
 }

@@ -2,11 +2,17 @@ import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
 import { foreignOwner, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { remoteRouteUp, type MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
+import type { MlxServing } from '../../utils/mlxServing';
 import type { EnginePhase } from '../lz/tokens';
 import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
 import { routePeerName } from '../leanzero-swarm/macs';
 import { activityPhase, remotePhase, runPhase, singlePhase } from '../leanzero-swarm/mlxPhase';
-import { mlxActivity, type MlxActivity, type MlxLiveStats } from '../leanzero-swarm/mlxLiveStats';
+import {
+  MLX_STATUS_POLL_MS,
+  mlxActivity,
+  type MlxActivity,
+  type MlxLiveStats,
+} from '../leanzero-swarm/mlxLiveStats';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import {
@@ -65,7 +71,8 @@ export interface ChatBusy {
  * its state and mode, never a Mount offer.
  *
  * While chat is routed to a LeanZero Link peer's engine (REMOTE SINGLE) that engine is the MLX node
- * (the router adds it and sets this Mac's sidecar aside; `omlx` follows the relay): `remote`.
+ * (the router adds it and sets this Mac's sidecar aside; `omlx` follows the relay): `remote` —
+ * or `reconnecting` while that Mac does not answer (`lostContactWith`).
  */
 export type ComposerReadiness =
   | { kind: 'unknown' }
@@ -73,7 +80,23 @@ export type ComposerReadiness =
   | { kind: 'no-nodes' }
   | { kind: 'unmounted'; nodes: string[]; target: MountTarget; fact: EngineFact }
   | { kind: 'distributed'; nodes: string[]; status: MlxDistributedStatus; wanted: string | null }
-  | { kind: 'remote'; status: MlxRemoteSingleStatus };
+  | { kind: 'remote'; status: MlxRemoteSingleStatus }
+  | {
+      kind: 'reconnecting';
+      status: MlxRemoteSingleStatus;
+      /** The failed read's own words (the route's, the renderer's or main's); null = none given. */
+      why: string | null;
+      /** What "Run on this Mac instead" does — this Mac's readiness with the route set aside. */
+      instead: RunHere;
+    };
+
+/**
+ * Chat back on this Mac while the route's Mac does not answer: drop the route, then mount `mount`
+ * (null = this Mac's engine already serves or mounts what chat needs). `none` = nothing this Mac
+ * could run is known (no saved model, a mismatch, a pool this renderer cannot see into) — the bar
+ * offers the Engine view instead.
+ */
+export type RunHere = { kind: 'switch'; mount: string | null } | { kind: 'none' };
 
 const UNKNOWN: ComposerReadiness = { kind: 'unknown' };
 
@@ -91,6 +114,34 @@ export function routeServesChat(
   distributed: MlxDistributedStatus | null
 ): remote is MlxRemoteSingleStatus {
   return remote != null && remoteRouteUp(remote) && !ownsTheMac(distributed);
+}
+
+/**
+ * The route is published but its Mac does not answer right now — the one state the recovery
+ * recordings had no word for (Q-47/Q-48: ten blank seconds, then main fell back to reading THIS
+ * Mac's engine). Any of three reads says so: the route's own `reconnecting` (the peer's status op
+ * refused over Link, or the relay gave no answer), the renderer's route read failing, or main's
+ * read of the peer's engine through the relay failing. The words of whichever read failed, or
+ * null when it gave none; null = contact is not known to be lost. `failed` is not this: it means
+ * the peer answered that its engine failed.
+ */
+export function lostContactWith(
+  remote: MlxRemoteSingleStatus,
+  remoteReadError: string | null,
+  main: MlxEngineSnapshot | null
+): { why: string | null } | null {
+  if (remote.state === 'reconnecting') return { why: remote.lastError ?? null };
+  if (remoteReadError != null) return { why: remoteReadError };
+  if (main?.engine === 'remote' && main.mode === 'reconnecting') {
+    return { why: main.statusDetail };
+  }
+  return null;
+}
+
+function runHere(local: ComposerReadiness): RunHere {
+  if (local.kind === 'ready') return { kind: 'switch', mount: null };
+  if (local.kind !== 'unmounted' || local.target.kind !== 'ok') return { kind: 'none' };
+  return { kind: 'switch', mount: local.fact === 'mounting' ? null : local.target.modelId };
 }
 
 const isLocalMlx = (d: SwarmDeviceRow) =>
@@ -299,6 +350,31 @@ function liveStatsOf(main: MlxEngineSnapshot | null, engine: ChatEngine): MlxLiv
   return main.mode === 'running' ? main.stats : null;
 }
 
+/**
+ * goose's own background call on the engine — the end-of-turn reviewer, a title, a recall: a
+ * router lease with no session (the reviewer is a detached task outside any session's context,
+ * crates/goose/src/turn_assessment.rs) or a hidden one. Never "another request" (Q-39): the chat
+ * the user is in caused it.
+ */
+function gooseBackground(client: MlxServing['clients'][number]): boolean {
+  return (
+    client.kind === 'session' &&
+    (client.sessionId == null || client.sessionType == null || client.sessionType === 'hidden')
+  );
+}
+
+/**
+ * A request the engine holds WAITING — the only fact that makes a new turn wait: Rapid-MLX batches
+ * what it runs, so a request running beside ours delays nobody's start (Q-40). One the engine has
+ * held for less than a read interval is a blink the reads cannot show as more than a flicker (the
+ * 0.3–0.5 s canaries); one whose age the engine does not report counts — it IS waiting.
+ */
+function holdsARequestWaiting(stats: MlxLiveStats): boolean {
+  return stats.requests.some(
+    (r) => r.status === 'waiting' && (r.elapsedS == null || r.elapsedS * 1000 >= MLX_STATUS_POLL_MS)
+  );
+}
+
 function busyWith(
   main: MlxEngineSnapshot,
   stats: MlxLiveStats,
@@ -307,6 +383,7 @@ function busyWith(
   turnInFlight: boolean
 ): ChatBusy | null {
   if (activity === 'idle' || activity === 'not_loaded') return null;
+  if (!holdsARequestWaiting(stats)) return null;
   const serving = main.serving;
   // Who the requests are is unknown: nothing is claimed about them.
   if (!serving || serving.error) return null;
@@ -315,7 +392,7 @@ function busyWith(
   for (const client of serving.clients) {
     const mine = client.kind !== 'external' && sessionId != null && client.sessionId === sessionId;
     if (mine) own += client.count;
-    else others += client.count;
+    else if (!gooseBackground(client)) others += client.count;
   }
   if (!(turnInFlight && own === 0)) others += serving.unattributed;
   if (others <= 0) return null;
@@ -338,7 +415,9 @@ function phaseOf(
     case 'single':
       return singlePhase(single?.state ?? null, false, activity);
     case 'remote':
-      if (inputs.remoteReadError != null) return null;
+      if (remote && lostContactWith(remote, inputs.remoteReadError, inputs.main)) {
+        return 'loading';
+      }
       return remotePhase(remote?.state ?? 'off', activity);
     case 'split': {
       if (serving.foreign) {
@@ -371,15 +450,28 @@ export function deriveChatServedBy(inputs: ChatServedInputs): ChatServedBy {
   const isMlx = provider === MLX_PROVIDER_ID;
   if (!isSwarm && !isMlx) return NOT_MLX;
 
-  const readiness = isSwarm
-    ? swarmReadiness(lookup, single, distributed, remote)
-    : mlxProviderReadiness(
-        lookup.state === 'ready' ? lookup.settings : null,
-        single,
-        distributed,
-        inputs.engineLabel,
-        remote
-      );
+  const readinessVia = (route: MlxRemoteSingleStatus | null) =>
+    isSwarm
+      ? swarmReadiness(lookup, single, distributed, route)
+      : mlxProviderReadiness(
+          lookup.state === 'ready' ? lookup.settings : null,
+          single,
+          distributed,
+          inputs.engineLabel,
+          route
+        );
+  let readiness = readinessVia(remote);
+  if (readiness.kind === 'remote') {
+    const lost = lostContactWith(readiness.status, inputs.remoteReadError, main);
+    if (lost) {
+      readiness = {
+        kind: 'reconnecting',
+        status: readiness.status,
+        why: lost.why,
+        instead: runHere(readinessVia(null)),
+      };
+    }
+  }
 
   // A swarm pool with a node this renderer cannot probe (LM Studio, cloud) — or not read yet —
   // sends a turn to whichever node is idle: no one engine can be named, unless a route or the

@@ -216,6 +216,7 @@ const i18n = defineMessages({
   liveMounting: { id: 'placementCard.live.mounting', defaultMessage: 'Mounting' },
   liveRunning: { id: 'placementCard.live.running', defaultMessage: 'Running' },
   liveFailed: { id: 'placementCard.live.failed', defaultMessage: 'Failed' },
+  liveReconnecting: { id: 'placementCard.live.reconnecting', defaultMessage: 'Reconnecting' },
   copyFirst: {
     id: 'placementCard.copyFirst',
     defaultMessage:
@@ -549,7 +550,9 @@ function LiveChip({ live }: { live: { phase: EnginePhase; state: string } }) {
         ? intl.formatMessage(i18n.liveRunning)
         : live.state === 'failed'
           ? intl.formatMessage(i18n.liveFailed)
-          : distributedStateWord(intl, live.state);
+          : live.state === 'reconnecting'
+            ? intl.formatMessage(i18n.liveReconnecting)
+            : distributedStateWord(intl, live.state);
   return (
     <Chip phase={live.phase}>
       <span data-testid="placement-live" data-phase={live.phase}>

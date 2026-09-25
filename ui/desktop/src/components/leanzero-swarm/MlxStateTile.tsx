@@ -66,6 +66,10 @@ import {
 
 const i18n = defineMessages({
   running: { id: 'mlxStateTile.state.running', defaultMessage: 'Running' },
+  remoteReconnecting: {
+    id: 'mlxStateTile.remoteReconnecting',
+    defaultMessage: 'Lost contact with {peer} — reconnecting…',
+  },
   remoteLoading: {
     id: 'mlxStateTile.remote.loading',
     defaultMessage: 'Loading the model on {peer}',
@@ -79,6 +83,7 @@ const i18n = defineMessages({
   stopped: { id: 'mlxStateTile.state.stopped', defaultMessage: 'Stopped' },
   unreachable: { id: 'mlxStateTile.state.unreachable', defaultMessage: 'Unreachable' },
   checking: { id: 'mlxStateTile.state.checking', defaultMessage: 'Checking' },
+  reconnecting: { id: 'mlxStateTile.state.reconnecting', defaultMessage: 'Reconnecting' },
   groupLabel: { id: 'mlxStateTile.groupLabel', defaultMessage: 'Engine {state}' },
   generating: { id: 'mlxStateTile.activity.generating', defaultMessage: 'Writing' },
   prefill: { id: 'mlxStateTile.activity.prefill', defaultMessage: 'Reading prompt' },
@@ -285,6 +290,7 @@ const STATE_WORD = {
   stopped: i18n.stopped,
   unreachable: i18n.unreachable,
   checking: i18n.checking,
+  reconnecting: i18n.reconnecting,
 } as const;
 
 const HERO = cx('text-[56px] leading-none tracking-tight', WEIGHT.semibold, TNUM);
@@ -1157,6 +1163,11 @@ function RemoteInstrument({
           <IndeterminateBar label={intl.formatMessage(i18n.remoteLoading, { peer })} />
         </div>
       )}
+      {remote.state === 'reconnecting' && (
+        <span data-testid="mlx-remote-reconnecting" className={cx(LINE, WEIGHT.semibold)}>
+          {intl.formatMessage(i18n.remoteReconnecting, { peer })}
+        </span>
+      )}
       {remote.state === 'failed' && (
         <p
           data-testid="mlx-failed-excerpt"
@@ -1222,7 +1233,9 @@ export function servingEngine(
       ? 'running'
       : remote.state === 'mounting'
         ? 'mounting'
-        : 'failed'
+        : remote.state === 'reconnecting'
+          ? 'reconnecting'
+          : 'failed'
     : starting
       ? 'mounting'
       : (state ?? (unreachable ? 'unreachable' : 'checking'));
@@ -1272,7 +1285,7 @@ export function MlxStateTile(props: MlxStateTileProps) {
   const engine = servingEngine(intl, props);
   const { starting, dist, hosting, remote, activity, phase, wordText } = engine;
   const icon = remote ? (
-    remote.state === 'mounting' ? (
+    remote.state === 'mounting' || remote.state === 'reconnecting' ? (
       <Loader2 className="animate-spin" />
     ) : remote.state === 'failed' ? (
       <X />

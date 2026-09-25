@@ -120,6 +120,7 @@ const i18n = defineMessages({
   phaseHeld: { id: 'modelsBottomBar.phase.held', defaultMessage: 'Queued' },
   phaseFailed: { id: 'modelsBottomBar.phase.failed', defaultMessage: 'Failed' },
   phaseUnknown: { id: 'modelsBottomBar.phase.unknown', defaultMessage: 'State unknown' },
+  phaseReconnecting: { id: 'modelsBottomBar.phase.reconnecting', defaultMessage: 'Reconnecting' },
 });
 
 const PHASE_WORD: Record<EnginePhase, (typeof i18n)['phaseIdle']> = {
@@ -280,9 +281,13 @@ export default function ModelsBottomBar({
       ? intl.formatList(served.where, { type: 'conjunction' })
       : null;
   const servedRunning = served != null && served.engine !== 'none';
-  const phaseWord = served?.phase
-    ? intl.formatMessage(PHASE_WORD[served.phase])
-    : intl.formatMessage(i18n.phaseUnknown);
+  // The amber of a Mac that stopped answering is not "Loading" — it is named for what it is.
+  const phaseWord =
+    served?.readiness.kind === 'reconnecting'
+      ? intl.formatMessage(i18n.phaseReconnecting)
+      : served?.phase
+        ? intl.formatMessage(PHASE_WORD[served.phase])
+        : intl.formatMessage(i18n.phaseUnknown);
   const chipLabel =
     servedModel == null
       ? null
