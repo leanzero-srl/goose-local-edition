@@ -4,7 +4,9 @@
 //! chronological complement of project memory (facts, deduplicated) and of the scratchpad (this
 //! session's state): after a compaction the model reads the ledger's tail and knows what the project
 //! has already been through. Modelled on the operator's own agent ledgers (TICK-NOTES,
-//! EXPERIMENTS-LEDGER): one line per entry, a date, a kind, the words.
+//! EXPERIMENTS-LEDGER): one line per entry, a date, a kind, the words. The ledger follows the chat's
+//! CURRENT folder; a chat whose folder is the home folder has no project and keeps its own
+//! ledger (`LedgerFile::for_chat`).
 
 use crate::agents::extension::PlatformExtensionContext;
 use crate::agents::mcp_client::{Error, McpClientTrait};
@@ -56,6 +58,146 @@ pub struct LedgerClient {
 
 pub fn ledger_path(working_dir: &Path) -> PathBuf {
     working_dir.join(".goose").join(LEDGER_FILE)
+}
+
+/// Where one chat's ledger lives and how the tools name it to the model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerFile {
+    pub path: PathBuf,
+    /// The chat runs in the home folder: the ledger is the chat's own, not a project's.
+    pub chat_only: bool,
+}
+
+impl LedgerFile {
+    /// The ledger of a chat in `working_dir`. A project folder keeps `.goose/ledger.md`, shared by
+    /// every chat in it. The HOME folder is no project — it is where every new chat starts — so a
+    /// chat there keeps its own ledger under `~/.goose/ledgers/<session>.md`.
+    ///
+    /// Why (Q-89, E2E #2b, 2026-09-25): two chats about two clients both ran in the home folder and
+    /// shared `~/.goose/ledger.md`; #2b's turn context carried #1's "[decision] Harbourline…".
+    pub fn for_chat(working_dir: &Path, session_id: &str, home: Option<&Path>) -> Self {
+        if home.is_some_and(|home| home == working_dir) {
+            let key: String = session_id
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            Self {
+                path: working_dir
+                    .join(".goose")
+                    .join("ledgers")
+                    .join(format!("{key}.md")),
+                chat_only: true,
+            }
+        } else {
+            Self {
+                path: ledger_path(working_dir),
+                chat_only: false,
+            }
+        }
+    }
+
+    fn label(&self) -> String {
+        if self.chat_only {
+            format!("this chat's ledger, {}", self.path.display())
+        } else {
+            ".goose/ledger.md".to_string()
+        }
+    }
+
+    pub fn read_all(&self) -> std::io::Result<Vec<String>> {
+        if !self.path.exists() {
+            return Ok(Vec::new());
+        }
+        Ok(parse_entries(&std::fs::read_to_string(&self.path)?))
+    }
+
+    fn append(&self, kind: &str, text: &str) -> std::io::Result<usize> {
+        use std::io::Write;
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let fresh = !self.path.exists();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&self.path)?;
+        if fresh {
+            if self.chat_only {
+                writeln!(file, "# Chat ledger — one dated line per finding, decision, attempt or fact; newest last\n")?;
+            } else {
+                writeln!(file, "# Project ledger — one dated line per finding, decision, attempt or fact; newest last\n")?;
+            }
+        }
+        let when = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+        file.write_all(format_entry(&when, kind, text).as_bytes())?;
+        Ok(self.read_all()?.len())
+    }
+
+    /// The `<ledger>` part of a turn's context.
+    pub fn moim(&self) -> String {
+        let where_ = if self.chat_only {
+            "This chat's folder is the home folder, which is no project, so this chat keeps its own \
+             ledger; other chats never see it. When the user names a folder to work in, offer to make \
+             it this chat's folder (the folder chip under the message box) — the ledger and the \
+             project memories then follow the chat there.\n"
+        } else {
+            ""
+        };
+        match self.read_all() {
+            Ok(entries) if entries.is_empty() => {
+                if self.chat_only {
+                    format!(
+                        "<ledger>\n{where_}This chat's ledger ({}) is empty — ledger_append the first finding, decision or dead end you meet.\n</ledger>\n",
+                        self.path.display()
+                    )
+                } else {
+                    "<ledger>\nThe project ledger (.goose/ledger.md) is empty — ledger_append the first finding, decision or dead end you meet.\n</ledger>\n"
+                        .to_string()
+                }
+            }
+            Ok(entries) => {
+                let tail = select_entries(&entries, None, TAIL_ENTRIES);
+                let mut out = if self.chat_only {
+                    format!(
+                        "<ledger>\n{where_}Chat ledger ({}), {} entries, newest {} — what this chat has already been through; ledger_read for more:\n",
+                        self.path.display(),
+                        entries.len(),
+                        tail.len()
+                    )
+                } else {
+                    format!(
+                        "<ledger>\nProject ledger (.goose/ledger.md), {} entries, newest {} — what this project has already been through; ledger_read for more:\n",
+                        entries.len(),
+                        tail.len()
+                    )
+                };
+                for entry in tail {
+                    out.push_str("- ");
+                    out.push_str(&entry);
+                    out.push('\n');
+                }
+                out.push_str("</ledger>\n");
+                out
+            }
+            Err(err) => {
+                tracing::warn!(%err, path = %self.path.display(), "ledger unreadable");
+                format!(
+                    "<ledger>\nThe {} could not be read ({err}).\n</ledger>\n",
+                    if self.chat_only {
+                        "chat ledger"
+                    } else {
+                        "project ledger"
+                    }
+                )
+            }
+        }
+    }
 }
 
 /// One entry per line: `- <YYYY-MM-DD HH:MM> [<kind>] <text>`; blank lines and headings are skipped.
@@ -116,39 +258,27 @@ impl LedgerClient {
         Ok(Self { info, context })
     }
 
-    fn working_dir(&self) -> PathBuf {
-        self.context
-            .session
-            .as_ref()
-            .map(|s| s.working_dir.clone())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
-    }
-
-    fn read_all(&self) -> std::io::Result<Vec<String>> {
-        let path = ledger_path(&self.working_dir());
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        Ok(parse_entries(&std::fs::read_to_string(path)?))
-    }
-
-    fn append(&self, kind: &str, text: &str) -> std::io::Result<usize> {
-        use std::io::Write;
-        let path = ledger_path(&self.working_dir());
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let fresh = !path.exists();
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&path)?;
-        if fresh {
-            writeln!(file, "# Project ledger — one dated line per finding, decision, attempt or fact; newest last\n")?;
-        }
-        let when = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-        file.write_all(format_entry(&when, kind, text).as_bytes())?;
-        Ok(self.read_all()?.len())
+    /// The chat's CURRENT folder: the session is read at every call, because the user can move a
+    /// chat to another folder mid-session (the folder chip → `update_working_dir`), and a folder
+    /// captured when the extension was built kept writing to the old one.
+    async fn ledger_file(&self, session_id: &str) -> LedgerFile {
+        let working_dir = match self
+            .context
+            .session_manager
+            .get_session(session_id, false)
+            .await
+        {
+            Ok(session) => session.working_dir,
+            Err(err) => {
+                tracing::warn!(session_id, %err, "ledger: session unreadable, using the folder the extension started in");
+                self.context
+                    .session
+                    .as_ref()
+                    .map(|s| s.working_dir.clone())
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+            }
+        };
+        LedgerFile::for_chat(&working_dir, session_id, dirs::home_dir().as_deref())
     }
 
     fn get_tools() -> Vec<Tool> {
@@ -207,11 +337,17 @@ impl McpClientTrait for LedgerClient {
 
     async fn call_tool(
         &self,
-        _ctx: &ToolCallContext,
+        ctx: &ToolCallContext,
         name: &str,
         arguments: Option<JsonObject>,
         _cancellation_token: CancellationToken,
     ) -> Result<CallToolResult, Error> {
+        let ledger = match &ctx.working_dir {
+            Some(working_dir) => {
+                LedgerFile::for_chat(working_dir, &ctx.session_id, dirs::home_dir().as_deref())
+            }
+            None => self.ledger_file(&ctx.session_id).await,
+        };
         let result: std::result::Result<String, String> = match name {
             "ledger_append" => {
                 let parsed: std::result::Result<LedgerAppendParams, String> = arguments
@@ -232,11 +368,12 @@ impl McpClientTrait for LedgerClient {
                         } else if params.text.trim().is_empty() {
                             Err("text must not be empty".to_string())
                         } else {
-                            match self.append(&kind, &params.text) {
+                            match ledger.append(&kind, &params.text) {
                                 Ok(total) => {
                                     tracing::info!(kind, total, "ledger appended");
                                     Ok(format!(
-                                        "Appended [{kind}] to .goose/ledger.md ({total} entries)."
+                                        "Appended [{kind}] to {} ({total} entries).",
+                                        ledger.label()
                                     ))
                                 }
                                 Err(e) => Err(format!("ledger write failed: {e}")),
@@ -262,9 +399,13 @@ impl McpClientTrait for LedgerClient {
                         ))]))
                     }
                 };
-                match self.read_all() {
+                match ledger.read_all() {
                     Ok(entries) if entries.is_empty() => {
-                        Ok("The project ledger is empty (.goose/ledger.md).".to_string())
+                        if ledger.chat_only {
+                            Ok(format!("{} is empty.", ledger.label()))
+                        } else {
+                            Ok("The project ledger is empty (.goose/ledger.md).".to_string())
+                        }
                     }
                     Ok(entries) => {
                         let limit = params
@@ -308,34 +449,8 @@ impl McpClientTrait for LedgerClient {
         Some(&self.info)
     }
 
-    async fn get_moim(&self, _session_id: &str) -> Option<String> {
-        match self.read_all() {
-            Ok(entries) if entries.is_empty() => Some(
-                "<ledger>\nThe project ledger (.goose/ledger.md) is empty — ledger_append the first finding, decision or dead end you meet.\n</ledger>\n"
-                    .to_string(),
-            ),
-            Ok(entries) => {
-                let tail = select_entries(&entries, None, TAIL_ENTRIES);
-                let mut out = format!(
-                    "<ledger>\nProject ledger (.goose/ledger.md), {} entries, newest {} — what this project has already been through; ledger_read for more:\n",
-                    entries.len(),
-                    tail.len()
-                );
-                for entry in tail {
-                    out.push_str("- ");
-                    out.push_str(&entry);
-                    out.push('\n');
-                }
-                out.push_str("</ledger>\n");
-                Some(out)
-            }
-            Err(err) => {
-                tracing::warn!(%err, "ledger unreadable");
-                Some(format!(
-                    "<ledger>\nThe project ledger could not be read ({err}).\n</ledger>\n"
-                ))
-            }
-        }
+    async fn get_moim(&self, session_id: &str) -> Option<String> {
+        Some(self.ledger_file(session_id).await.moim())
     }
 }
 
@@ -377,5 +492,51 @@ mod tests {
         let hits = select_entries(&entries, Some("vendor port 8850"), 10);
         assert_eq!(hits.len(), 7, "two of three terms cover it");
         assert!(select_entries(&entries, Some("kubernetes ingress"), 10).is_empty());
+    }
+
+    /// Q-89: E2E #1 and #2b, two chats about two clients, both ran in the home folder; #2b's turn
+    /// context carried #1's "[decision] Harbourline…" from the one shared `~/.goose/ledger.md`.
+    #[test]
+    fn chats_in_the_home_folder_keep_their_own_ledgers_and_a_project_shares_one() {
+        let home = tempfile::tempdir().unwrap();
+        let first = LedgerFile::for_chat(home.path(), "20260925_33", Some(home.path()));
+        let second = LedgerFile::for_chat(home.path(), "20260925_39", Some(home.path()));
+        assert!(first.chat_only && second.chat_only);
+        assert_ne!(first.path, second.path);
+        assert_eq!(
+            first.path,
+            home.path().join(".goose/ledgers/20260925_33.md"),
+            "never the shared {}",
+            ledger_path(home.path()).display()
+        );
+        first
+            .append("decision", "Harbourline: 24-month inactivity cutoff")
+            .unwrap();
+        assert!(second.read_all().unwrap().is_empty());
+        assert!(!second.moim().contains("Harbourline"));
+        assert!(first.moim().contains("Harbourline"));
+        assert!(
+            second
+                .moim()
+                .contains("offer to make it this chat's folder"),
+            "{}",
+            second.moim()
+        );
+
+        let project = home.path().join("work");
+        let a = LedgerFile::for_chat(&project, "20260925_33", Some(home.path()));
+        let b = LedgerFile::for_chat(&project, "20260925_39", Some(home.path()));
+        assert_eq!(a, b);
+        assert_eq!(a.path, ledger_path(&project));
+        assert!(!a.chat_only);
+        assert_eq!(
+            a.moim(),
+            "<ledger>\nThe project ledger (.goose/ledger.md) is empty — ledger_append the first finding, decision or dead end you meet.\n</ledger>\n",
+            "a project's turn context is unchanged"
+        );
+        assert_eq!(
+            LedgerFile::for_chat(home.path(), "a/../b", Some(home.path())).path,
+            home.path().join(".goose/ledgers/a____b.md")
+        );
     }
 }

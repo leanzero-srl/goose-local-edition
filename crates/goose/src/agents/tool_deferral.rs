@@ -9,6 +9,7 @@
 //! for "create a Python package". Off unless `GOOSE_TOOL_DEFERRAL` is true.
 
 use crate::agents::extension_manager::get_tool_owner;
+use crate::agents::platform_extensions::recall::query_terms;
 use crate::conversation::message::{Message, MessageContent};
 use goose_memory_store::{term_occurrences, tokenize};
 use rmcp::model::Tool;
@@ -78,8 +79,21 @@ fn first_sentence(description: &str) -> &str {
 }
 
 /// The deferred tools a `load_tools` call asks for: every tool named (full name, or the name after
-/// the extension prefix), and for a query, the tools whose name and description carry the most of
-/// its words (every tool tied at that count).
+/// the extension prefix), and for a query, the tools that carry at least HALF of its words in their
+/// name and first sentence — the text the "Deferred tools" catalogue shows the model — ranked with
+/// a word in the NAME counting twice (the memory search's rule), every tool tied at the top score.
+/// The query is read as the recall reads a request (`query_terms`: function words, one-letter
+/// tokens, URLs and path directories out).
+///
+/// Why (Q-96, E2E #2b turn 2): `load_tools("Atlassian support lifecycle data center end of sale end
+/// of support")` — the research SUBJECT, not a capability — returned `create-doc`: its 4,474-char
+/// description carries "Supported markdown", "tabular/numeric data", alignment "center" and "end
+/// users" in its parameter notes, four of seven words, more than any tool that does a lookup. The
+/// model read a Word-document schema, said "Wrong tool family" and lost 2 min 49 s. Counted over
+/// the name and first sentence with the half floor, that query matches no tool (one word, "data",
+/// in `browser_drop`), and the load says what a query is for instead of handing over a schema;
+/// its next query, "fetch a web page and return its content", now loads
+/// `get-single-web-page-content` rather than the two search tools.
 pub fn find<'a>(deferred: &'a [Tool], names: &[String], query: Option<&str>) -> Vec<&'a Tool> {
     let mut found: Vec<&Tool> = deferred
         .iter()
@@ -95,24 +109,30 @@ pub fn find<'a>(deferred: &'a [Tool], names: &[String], query: Option<&str>) -> 
         })
         .collect();
     if let Some(query) = query {
-        let terms: Vec<String> = tokenize(query)
-            .into_iter()
-            .filter(|t| !goose_memory_store::STOPWORDS.contains(&t.as_str()))
-            .collect();
-        let matched = |tool: &Tool| {
-            let text = tokenize(&format!(
-                "{} {}",
-                tool.name.replace("__", " ").replace('_', " "),
-                tool.description.as_deref().unwrap_or_default()
+        let terms = query_terms(query);
+        let score = |tool: &Tool| {
+            let name = tokenize(&tool.name.replace("__", " ").replace('_', " "));
+            let summary = tokenize(first_sentence(
+                tool.description.as_deref().unwrap_or_default(),
             ));
-            terms
-                .iter()
-                .filter(|term| term_occurrences(term, &text) > 0)
-                .count()
+            let mut matched = 0;
+            let mut score = 0;
+            for term in &terms {
+                let in_name = term_occurrences(term, &name) > 0;
+                if in_name || term_occurrences(term, &summary) > 0 {
+                    matched += 1;
+                    score += if in_name { 2 } else { 1 };
+                }
+            }
+            if matched > 0 && matched * 2 >= terms.len() {
+                score
+            } else {
+                0
+            }
         };
-        let best = deferred.iter().map(matched).max().unwrap_or(0);
+        let best = deferred.iter().map(score).max().unwrap_or(0);
         if best > 0 {
-            for tool in deferred.iter().filter(|tool| matched(tool) == best) {
+            for tool in deferred.iter().filter(|tool| score(tool) == best) {
                 if !found.iter().any(|f| f.name == tool.name) {
                     found.push(tool);
                 }
@@ -196,6 +216,74 @@ mod tests {
         );
         tool.meta = Some(rmcp::model::Meta(meta));
         tool
+    }
+
+    /// Q-96: the real catalogue of E2E #2b's outside servers (leanzerodocuments, leanzerowebsearch,
+    /// playwright; names and full descriptions as the servers list them on 2026-09-25) and the two
+    /// queries of turn 2, then the capability queries the catalogue has to keep answering.
+    #[test]
+    fn load_tools_ranks_by_what_a_tool_does_on_the_real_catalogue() {
+        let catalogue: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../tests/fixtures/tool-deferral/catalogue-2026-09-25.json"
+        ))
+        .unwrap();
+        let deferred: Vec<Tool> = catalogue
+            .iter()
+            .map(|entry| {
+                let full = entry["name"].as_str().unwrap();
+                let (owner, name) = full.split_once("__").unwrap();
+                tool(owner, name, entry["description"].as_str().unwrap())
+            })
+            .collect();
+        let found = |query: &str| -> Vec<String> {
+            find(&deferred, &[], Some(query))
+                .iter()
+                .map(|t| t.name.to_string())
+                .collect()
+        };
+
+        assert_eq!(
+            found("Atlassian support lifecycle data center end of sale end of support"),
+            Vec::<String>::new(),
+            "a research subject names no tool; it was create-doc, create-pdf and create-pptx on \
+             'support', 'data', 'center' and 'end' in their parameter notes"
+        );
+        assert_eq!(
+            found("fetch a web page and return its content"),
+            vec!["leanzerowebsearch__get-single-web-page-content"]
+        );
+        assert_eq!(
+            found("Read the sitemap of https://www.rust-lang.org"),
+            vec!["leanzerowebsearch__get-website-sitemap"]
+        );
+        assert_eq!(
+            found("Create a Word document report.docx"),
+            vec!["leanzerodocuments__create-doc"]
+        );
+        assert_eq!(
+            found("create an Excel file"),
+            vec!["leanzerodocuments__create-excel"]
+        );
+        assert_eq!(
+            found("search the web"),
+            vec![
+                "leanzerowebsearch__full-web-search",
+                "leanzerowebsearch__get-web-search-summaries",
+                "leanzerowebsearch__progressive-web-search"
+            ]
+        );
+        assert_eq!(
+            found("open a url in the browser"),
+            vec!["playwright__browser_navigate"]
+        );
+        assert_eq!(
+            found("take a screenshot of the page"),
+            vec!["playwright__browser_take_screenshot"]
+        );
+        assert_eq!(
+            found("fact check claims in a document"),
+            vec!["leanzerodocuments__fact-check"]
+        );
     }
 
     #[test]

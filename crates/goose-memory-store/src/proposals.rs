@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 /// Open proposals a key may hold; the fourth is REFUSED, never queued — more than three
 /// unanswered cards means the user is not answering them (frame 1.14 §3.1 caps).
 pub const MAX_OPEN_PROPOSALS_PER_KEY: usize = 3;
-/// A proposed memory's text is generated, so it is clamped tighter than what a human types.
+/// A proposed memory's text is generated, so it is held tighter than what a human types: a longer
+/// proposal is refused back to the agent, whole.
 pub const PROPOSAL_TEXT_MAX_CHARS: usize = 350;
 pub const PROPOSAL_WHY_MAX_CHARS: usize = 200;
 /// Days an unanswered proposal stays listable; after that it renders as expired and is dropped.
@@ -113,6 +114,21 @@ fn clamp_chars(text: &str, max: usize) -> String {
     text.trim().chars().take(max).collect()
 }
 
+fn parse_rows(text: &str) -> io::Result<Vec<MemoryProposal>> {
+    serde_json::from_str(text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+fn expire(rows: &mut [MemoryProposal]) {
+    let now = now_secs();
+    for row in rows {
+        if row.state == ProposalState::Open
+            && now.saturating_sub(row.created_at) > PROPOSAL_TTL_SECS
+        {
+            row.state = ProposalState::Expired;
+        }
+    }
+}
+
 fn safe_key(key: &str) -> io::Result<String> {
     let ok = !key.is_empty()
         && key
@@ -146,28 +162,36 @@ impl ProposalStore {
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let text = fs::read_to_string(path)?;
-        serde_json::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        parse_rows(&fs::read_to_string(path)?)
     }
 
-    fn write(&self, key: &str, rows: &[MemoryProposal]) -> io::Result<()> {
-        fs::create_dir_all(&self.dir)?;
-        let text = serde_json::to_string_pretty(rows)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        fs::write(self.file(key)?, text)
+    /// Read the key's rows, change them and write them back as ONE locked step (Q-87: two
+    /// parallel proposals each read the file and wrote it back, and one of them vanished).
+    fn update<T>(
+        &self,
+        key: &str,
+        change: impl FnOnce(&mut Vec<MemoryProposal>) -> io::Result<(T, bool)>,
+    ) -> io::Result<T> {
+        crate::update_file_locked(&self.file(key)?, |existing| {
+            let mut rows = match existing {
+                Some(text) => parse_rows(text)?,
+                None => Vec::new(),
+            };
+            expire(&mut rows);
+            let (value, changed) = change(&mut rows)?;
+            if !changed {
+                return Ok((value, None));
+            }
+            let text = serde_json::to_string_pretty(&rows)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            Ok((value, Some(text)))
+        })
     }
 
     /// Every proposal under the key, with open ones past the TTL flipped to expired.
     pub fn list(&self, key: &str) -> io::Result<Vec<MemoryProposal>> {
-        let now = now_secs();
         let mut rows = self.read(key)?;
-        for row in &mut rows {
-            if row.state == ProposalState::Open
-                && now.saturating_sub(row.created_at) > PROPOSAL_TTL_SECS
-            {
-                row.state = ProposalState::Expired;
-            }
-        }
+        expire(&mut rows);
         Ok(rows)
     }
 
@@ -179,8 +203,11 @@ impl ProposalStore {
             .count())
     }
 
-    /// File a proposal. Text and reason are clamped here, at the one writer. A duplicate text
-    /// under the key is not raised again; a full key REFUSES rather than queues.
+    /// File a proposal. Text longer than a card holds is REFUSED back to the caller, never cut: a
+    /// cut proposal is saved as a fact broken mid-word (Q-93, E2E #1: `…by exception only". Bi` —
+    /// character 350 of a 645-character piece, 513 of data plus its Sources line). The reason is
+    /// clamped. A duplicate text under the key is not raised again; a full key REFUSES rather
+    /// than queues.
     #[allow(clippy::too_many_arguments)]
     pub fn add(
         &self,
@@ -194,42 +221,52 @@ impl ProposalStore {
         is_global: bool,
         sources: &[String],
     ) -> io::Result<ProposeOutcome> {
-        let text = clamp_chars(text, PROPOSAL_TEXT_MAX_CHARS);
+        let text = text.trim().to_string();
         if text.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "a proposal needs text",
             ));
         }
+        let length = text.chars().count();
+        if length > PROPOSAL_TEXT_MAX_CHARS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "the proposal is {length} characters and a card holds {PROPOSAL_TEXT_MAX_CHARS}; \
+                     it was not filed — shorten it and propose it again"
+                ),
+            ));
+        }
         crate::validate_category(category)?;
-        let mut rows = self.list(key)?;
-        if rows.iter().any(|p| p.text == text) {
-            return Ok(ProposeOutcome::Duplicate);
-        }
-        if rows
-            .iter()
-            .filter(|p| p.state == ProposalState::Open)
-            .count()
-            >= MAX_OPEN_PROPOSALS_PER_KEY
-        {
-            return Ok(ProposeOutcome::Refused);
-        }
-        let created_at = now_secs();
-        rows.push(MemoryProposal {
-            id: format!("p-{created_at}-{}", rows.len() + 1),
-            kind,
-            polarity,
-            text,
-            why: clamp_chars(why, PROPOSAL_WHY_MAX_CHARS),
-            category: category.to_string(),
-            tags: tags.to_vec(),
-            is_global,
-            sources: sources.to_vec(),
-            created_at,
-            state: ProposalState::Open,
-        });
-        self.write(key, &rows)?;
-        Ok(ProposeOutcome::Added)
+        self.update(key, |rows| {
+            if rows.iter().any(|p| p.text == text) {
+                return Ok((ProposeOutcome::Duplicate, false));
+            }
+            if rows
+                .iter()
+                .filter(|p| p.state == ProposalState::Open)
+                .count()
+                >= MAX_OPEN_PROPOSALS_PER_KEY
+            {
+                return Ok((ProposeOutcome::Refused, false));
+            }
+            let created_at = now_secs();
+            rows.push(MemoryProposal {
+                id: format!("p-{created_at}-{}", rows.len() + 1),
+                kind,
+                polarity,
+                text,
+                why: clamp_chars(why, PROPOSAL_WHY_MAX_CHARS),
+                category: category.to_string(),
+                tags: tags.to_vec(),
+                is_global,
+                sources: sources.to_vec(),
+                created_at,
+                state: ProposalState::Open,
+            });
+            Ok((ProposeOutcome::Added, true))
+        })
     }
 
     /// Record the human's answer. The edited text (if any) is re-clamped here. Returns the row as
@@ -241,27 +278,29 @@ impl ProposalStore {
         saved: bool,
         edited_text: Option<&str>,
     ) -> io::Result<Option<MemoryProposal>> {
-        let mut rows = self.list(key)?;
-        let Some(row) = rows
-            .iter_mut()
-            .find(|p| p.id == id && p.state == ProposalState::Open)
-        else {
+        if !self.file(key)?.exists() {
             return Ok(None);
-        };
-        if let Some(text) = edited_text {
-            let text = clamp_chars(text, PROPOSAL_TEXT_MAX_CHARS);
-            if !text.is_empty() {
-                row.text = text;
-            }
         }
-        row.state = if saved {
-            ProposalState::Saved
-        } else {
-            ProposalState::Declined
-        };
-        let answered = row.clone();
-        self.write(key, &rows)?;
-        Ok(Some(answered))
+        self.update(key, |rows| {
+            let Some(row) = rows
+                .iter_mut()
+                .find(|p| p.id == id && p.state == ProposalState::Open)
+            else {
+                return Ok((None, false));
+            };
+            if let Some(text) = edited_text {
+                let text = clamp_chars(text, PROPOSAL_TEXT_MAX_CHARS);
+                if !text.is_empty() {
+                    row.text = text;
+                }
+            }
+            row.state = if saved {
+                ProposalState::Saved
+            } else {
+                ProposalState::Declined
+            };
+            Ok((Some(row.clone()), true))
+        })
     }
 }
 
@@ -368,16 +407,40 @@ mod tests {
         );
     }
 
+    /// Q-93: a text longer than the card is refused whole, never stored as a stump; the reason is
+    /// clamped.
     #[test]
-    fn text_and_why_are_clamped_at_the_writer() {
+    fn long_text_is_refused_not_cut_and_why_is_clamped() {
         let (_d, store) = store();
         let long = "x".repeat(1000);
-        store
+        let err = store
             .add(
                 "s1",
                 ProposalKind::Knowledge,
                 None,
                 &long,
+                "why",
+                "c",
+                &[],
+                false,
+                &["web-search__search".into()],
+            )
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(
+            err.to_string()
+                .contains("1000 characters and a card holds 350"),
+            "{err}"
+        );
+        assert!(store.list("s1").unwrap().is_empty(), "nothing was filed");
+
+        let fits = "y".repeat(PROPOSAL_TEXT_MAX_CHARS);
+        store
+            .add(
+                "s1",
+                ProposalKind::Knowledge,
+                None,
+                &format!("  {fits}  "),
                 &long,
                 "c",
                 &[],
@@ -386,9 +449,49 @@ mod tests {
             )
             .unwrap();
         let row = &store.list("s1").unwrap()[0];
-        assert_eq!(row.text.chars().count(), PROPOSAL_TEXT_MAX_CHARS);
+        assert_eq!(row.text, fits);
         assert_eq!(row.why.chars().count(), PROPOSAL_WHY_MAX_CHARS);
         assert_eq!(row.sources, vec!["web-search__search".to_string()]);
+    }
+
+    /// Q-87: E2E #1 said "Proposed as knowledge" twice for two parallel propose_knowledge calls and
+    /// the key held one row. Parallel proposals under one key all land, with distinct ids.
+    #[test]
+    fn parallel_proposals_under_one_key_all_land() {
+        let (_d, store) = store();
+        let store = std::sync::Arc::new(store);
+        let start = std::sync::Arc::new(std::sync::Barrier::new(MAX_OPEN_PROPOSALS_PER_KEY));
+        let handles: Vec<_> = (0..MAX_OPEN_PROPOSALS_PER_KEY)
+            .map(|i| {
+                let store = store.clone();
+                let start = start.clone();
+                std::thread::spawn(move || {
+                    start.wait();
+                    store
+                        .add(
+                            "s1",
+                            ProposalKind::Knowledge,
+                            None,
+                            &format!("fact {i}"),
+                            "why",
+                            "atlassian-migration",
+                            &[],
+                            false,
+                            &["https://www.atlassian.com".into()],
+                        )
+                        .unwrap()
+                })
+            })
+            .collect();
+        for handle in handles {
+            assert_eq!(handle.join().unwrap(), ProposeOutcome::Added);
+        }
+        let rows = store.list("s1").unwrap();
+        assert_eq!(rows.len(), MAX_OPEN_PROPOSALS_PER_KEY, "{rows:?}");
+        let mut ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), MAX_OPEN_PROPOSALS_PER_KEY);
     }
 
     #[test]

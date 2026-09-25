@@ -378,12 +378,20 @@ impl ExtensionManagerClient {
             "load_tools"
         );
         if found.is_empty() {
-            return Err(ExtensionManagerToolError::OperationFailed {
-                message: format!(
-                    "no deferred tool matches names {:?} or query {:?}; the names are listed under \"Deferred tools\" in your instructions",
-                    params.names, params.query
+            let message = match &params.query {
+                Some(query) => format!(
+                    "no deferred tool's name and summary carry half of the words of {query:?} \
+                     (names asked: {:?}). A query finds a tool by what it DOES — \"search the web\", \
+                     \"read one web page\", \"create a PDF\" — not by the subject you are working on; \
+                     the names and summaries are listed under \"Deferred tools\" in your instructions",
+                    params.names
                 ),
-            });
+                None => format!(
+                    "no deferred tool matches names {:?}; the names are listed under \"Deferred tools\" in your instructions",
+                    params.names
+                ),
+            };
+            return Err(ExtensionManagerToolError::OperationFailed { message });
         }
         Ok(vec![Content::text(crate::agents::tool_deferral::render(
             &found,

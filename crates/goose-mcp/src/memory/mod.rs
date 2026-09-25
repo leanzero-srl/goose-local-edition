@@ -1,5 +1,7 @@
 use etcetera::{choose_app_strategy, AppStrategy};
-use goose_memory_store::{scope_label, search_terms, MemoryStore, RememberOutcome};
+use goose_memory_store::{
+    scope_label, search_covering, search_terms, MemoryStore, RememberOutcome, STOPWORDS,
+};
 use indoc::formatdoc;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -56,7 +58,8 @@ pub struct RememberMemoryParams {
     /// The category to store the memory in
     pub category: String,
     /// The data to remember. Its FIRST LINE is the headline shown in the memory index — make it one
-    /// specific sentence; details go on the following lines.
+    /// specific sentence; details go on the following lines. Only what the user said or what you
+    /// verified: no reason the user did not give.
     pub data: String,
     /// Tags; put the kind first: user, feedback, project or reference
     #[serde(default)]
@@ -113,6 +116,10 @@ pub struct ProposeKnowledgeParams {
     /// Whether to store globally (user-wide) or project-local
     #[serde(default)]
     pub is_global: bool,
+    /// Optional: one sentence on why this is worth keeping for next time, shown on the card as
+    /// "Why:". Omit it rather than restate the sources.
+    #[serde(default)]
+    pub why: Option<String>,
 }
 
 /// Parameters for the search_memories tool
@@ -181,8 +188,8 @@ impl MemoryServer {
              CALL remember_memory (do NOT ask the user first) the moment you learn any of these:
              - a durable USER PREFERENCE or taste (how they like things done; tools, styles, or conventions
                they favor or reject)
-             - a CORRECTION the user makes ("no, actually…", "don't do X", "always Y") — capture the rule
-               and the reason behind it
+             - a CORRECTION the user makes ("no, actually…", "don't do X", "always Y") — capture the rule,
+               and its reason only when the user gave one
              - a stable PROJECT or ENVIRONMENT fact (paths, hosts, where credentials live, build/run/test
                commands, naming conventions)
              - a recurring COMMAND or workflow you had to figure out and would want again next time
@@ -190,7 +197,9 @@ impl MemoryServer {
              user-wide). Write the data so its FIRST LINE is one specific sentence — that line is the
              headline the index shows — and put the kind first among the tags: user, feedback, project or
              reference. Saving data whose first line matches an existing memory's headline UPDATES that
-             memory in place, so restate the headline when you correct a fact. Do NOT store secrets/tokens
+             memory in place, so restate the headline when you correct a fact. Store what the user SAID: a
+             reason, a context or a who-asked-for-it the user did not state is your guess, and a saved guess
+             is read back next session as the user's word — leave it out. Do NOT store secrets/tokens
              verbatim, transient chatter, or anything already obvious from the code or repo.
 
              HOW TO READ IT: below is the INDEX of every saved memory — one line per entry, in the form
@@ -370,20 +379,16 @@ impl MemoryServer {
             return Ok(());
         }
 
-        let mut file = fs::File::open(&memory_file_path)?;
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-
-        let memories: Vec<&str> = content.split("\n\n").collect();
-        let new_content: Vec<String> = memories
-            .into_iter()
-            .filter(|entry| !entry.contains(memory_content))
-            .map(|s| s.to_string())
-            .collect();
-
-        fs::write(memory_file_path, new_content.join("\n\n"))?;
-
-        Ok(())
+        goose_memory_store::update_file_locked(&memory_file_path, |content| {
+            let Some(content) = content else {
+                return Ok(((), None));
+            };
+            let kept: Vec<&str> = content
+                .split("\n\n")
+                .filter(|entry| !entry.contains(memory_content))
+                .collect();
+            Ok(((), Some(kept.join("\n\n"))))
+        })
     }
 
     pub fn clear_memory(
@@ -419,7 +424,8 @@ impl MemoryServer {
                        PROACTIVELY (without asking first) the moment you learn a durable user preference, a \
                        correction the user made, a stable project/environment fact (paths, hosts, build/run \
                        commands, conventions), or a recurring command/workflow. The data's first line is the \
-                       headline the index shows: one specific sentence. Re-saving with the same headline \
+                       headline the index shows: one specific sentence. Store the user's own rule; add a \
+                       reason only when the user gave one, never one you inferred. Re-saving with the same headline \
                        updates that memory. Pick a category, tags (kind first: user/feedback/project/reference) \
                        and scope. Do not store secrets verbatim or transient chatter."
     )]
@@ -526,9 +532,28 @@ impl MemoryServer {
         }
         let mut tags = vec!["reference".to_string()];
         tags.extend(params.tags.iter().filter(|t| *t != "reference").cloned());
-        let content = format!("{}\nSources: {}", params.data.trim(), sources.join(", "));
+        let sources_line = format!("\nSources: {}", sources.join(", "));
+        let content = format!("{}{sources_line}", params.data.trim());
 
         if let Some(dir) = &self.proposals_dir {
+            // A card holds PROPOSAL_TEXT_MAX_CHARS; the store refuses a longer proposal rather than
+            // cut it mid-word (Q-93). Say here what the model can change: its own text.
+            let limit = goose_memory_store::proposals::PROPOSAL_TEXT_MAX_CHARS;
+            let length = content.chars().count();
+            if length > limit {
+                let room = limit.saturating_sub(sources_line.chars().count());
+                return Err(ErrorData::new(
+                    ErrorCode::INVALID_PARAMS,
+                    format!(
+                        "Not proposed: with its Sources line this knowledge piece is {length} \
+                         characters and a proposal card holds {limit}. Shorten `data` to at most \
+                         {room} characters (it is {} now), keeping the one fact worth keeping, and \
+                         call propose_knowledge again.",
+                        params.data.trim().chars().count()
+                    ),
+                    None,
+                ));
+            }
             // The chat that asked owns the card: goose sends its session id with every tool call.
             // Keyed by the working dir, one chat's proposal showed at the bottom of every other
             // chat in the project (E2E #2, Q-82). The dir key stays for a caller with no session.
@@ -545,7 +570,7 @@ impl MemoryServer {
                     goose_memory_store::ProposalKind::Knowledge,
                     None,
                     &content,
-                    "grounded by a lookup this turn",
+                    params.why.as_deref().unwrap_or_default(),
                     &params.category,
                     &tags,
                     params.is_global,
@@ -645,8 +670,9 @@ impl MemoryServer {
     /// Searches memories by keywords and returns the matching entries in full
     #[tool(
         name = "search_memories",
-        description = "Search your long-term memory by keywords and get the matching entries IN FULL, best \
-                       match first (category, tags and content are all searched). Use it when a line of \
+        description = "Search your long-term memory by keywords: the entries ABOUT them come IN FULL, best \
+                       match first (category, tags and content are all searched); entries that only share a \
+                       word come as one headline line each, and when none is about them it says so. Use it when a line of \
                        the memory index looks relevant, when the user refers to something from an earlier \
                        session, and BEFORE remember_memory so you update an existing memory instead of \
                        duplicating it."
@@ -658,36 +684,82 @@ impl MemoryServer {
     ) -> Result<CallToolResult, ErrorData> {
         let params = params.0;
         let working_dir = extract_working_dir_from_meta(&context.meta);
+        let report = self.search_report(
+            &params.query,
+            params.is_global,
+            params.limit,
+            working_dir.as_ref(),
+        )?;
+        Ok(CallToolResult::success(vec![Content::text(report)]))
+    }
 
-        let terms = search_terms(&params.query);
+    /// What `search_memories` answers. The entries the query is ABOUT
+    /// (`goose_memory_store::search_covering` — recall's law, plus an entry whose name carries two
+    /// of the query's words, plus every hit of a one-word query) come in full; an entry that only
+    /// shares a word with it comes as one headline line, so the model can still open it but does
+    /// not read its body as an answer; when nothing covers the query it says so first. Function
+    /// words and one-letter tokens are dropped from the query, as recall drops them.
+    ///
+    /// Why (Q-98, E2E #2 turn 1): "ISO dates British spelling client deliverables Node zero
+    /// dependencies scripts" — two rules the user had just stated, neither saved yet — answered
+    /// "10 of 32 matching memories", in full, topped by `jira-mentions-indexed-by-accountid` (4/10:
+    /// client, node, scripts, zero — "finds ZERO mentions", "a mention node"), then an article
+    /// playbook (3/10) and a production-config rule (1/10); recall had put none of them in the turn.
+    fn search_report(
+        &self,
+        query: &str,
+        is_global: Option<bool>,
+        limit: Option<usize>,
+        working_dir: Option<&PathBuf>,
+    ) -> Result<String, ErrorData> {
+        let terms: Vec<String> = search_terms(query)
+            .into_iter()
+            .filter(|t| t.chars().count() > 1 && !STOPWORDS.contains(&t.as_str()))
+            .collect();
         if terms.is_empty() {
             return Err(ErrorData::new(
                 ErrorCode::INVALID_PARAMS,
-                "query must contain at least one word".to_string(),
+                "query must contain at least one word that is not a function word".to_string(),
                 None,
             ));
         }
         let hits = self
-            .search(&params.query, params.is_global, working_dir.as_ref())
+            .search(&terms.join(" "), is_global, working_dir)
             .map_err(memory_error)?;
         if hits.is_empty() {
-            return Ok(CallToolResult::success(vec![Content::text(format!(
-                "No memory matched \"{}\". The memory index in your instructions lists every saved entry \
-                 by category; retrieve_memories(category, is_global) loads one in full.",
-                params.query
-            ))]));
+            return Ok(format!(
+                "No memory matched \"{query}\". The memory index in your instructions lists every saved entry \
+                 by category; retrieve_memories(category, is_global) loads one in full."
+            ));
         }
 
-        let limit = params.limit.unwrap_or(SEARCH_DEFAULT_LIMIT).max(1);
-        let total = hits.len();
-        tracing::info!(query = %params.query, hits = total, "memories searched");
-        let mut out = format!(
-            "{} of {} matching memories for \"{}\":\n",
-            total.min(limit),
-            total,
-            params.query
+        let limit = limit.unwrap_or(SEARCH_DEFAULT_LIMIT).max(1);
+        let covers = search_covering(&hits, terms.len());
+        let (about, sharing): (Vec<_>, Vec<_>) = hits
+            .into_iter()
+            .zip(covers)
+            .partition(|(_, covers)| *covers);
+        tracing::info!(
+            query,
+            covering = about.len(),
+            sharing = sharing.len(),
+            "memories searched"
         );
-        for hit in hits.into_iter().take(limit) {
+
+        let mut out = if about.is_empty() {
+            format!(
+                "No memory covers \"{query}\": {} share a word with it, and none is named by it, \
+                 says its words together, or carries its rarest word in its name.\n",
+                sharing.len()
+            )
+        } else {
+            format!(
+                "{} of {} memories covering \"{query}\":\n",
+                about.len().min(limit),
+                about.len()
+            )
+        };
+        for (hit, _) in about.iter().take(limit) {
             let phrase = if hit.phrase { ", exact phrase" } else { "" };
             out.push_str(&format!(
                 "\n{}/{} terms ({} rare, {} in name){phrase}, score {:.2} — ",
@@ -699,14 +771,38 @@ impl MemoryServer {
             ));
             out.push_str(&hit.entry.render());
         }
-        if total > limit {
+        if about.len() > limit {
             out.push_str(&format!(
-                "\n{} more matched; narrow the query or raise limit.\n",
-                total - limit
+                "\n{} more cover it; narrow the query or raise limit.\n",
+                about.len() - limit
             ));
         }
-
-        Ok(CallToolResult::success(vec![Content::text(out)]))
+        if !sharing.is_empty() {
+            out.push_str(&format!(
+                "\n{} {} share a word with the query without being about it — headlines only; \
+                 retrieve_memories(category, is_global) reads one in full:\n",
+                sharing.len(),
+                if sharing.len() == 1 {
+                    "entry"
+                } else {
+                    "entries"
+                }
+            ));
+            for (hit, _) in sharing.iter().take(limit) {
+                out.push_str(&format!(
+                    "- {} ({}, {}/{} terms): {}\n",
+                    hit.entry.category,
+                    hit.entry.scope_label(),
+                    hit.matched_terms,
+                    terms.len(),
+                    hit.entry.headline()
+                ));
+            }
+            if sharing.len() > limit {
+                out.push_str(&format!("- … and {} more\n", sharing.len() - limit));
+            }
+        }
+        Ok(out)
     }
 
     /// Removes all memories within a specified category
@@ -815,12 +911,69 @@ mod tests {
             sources: sources.into_iter().map(String::from).collect(),
             tags: vec!["api".to_string()],
             is_global: false,
+            why: None,
         };
         server.propose_knowledge_inner(
             params,
             Some(working_dir.to_path_buf()),
             session_id.map(str::to_string),
         )
+    }
+
+    /// Q-93: E2E #1's end-of-life piece (513 characters of data plus its Sources line, 645 in all)
+    /// was cut at character 350 — the card and the saved memory ended `by exception only". Bi` —
+    /// and every card said "Why: grounded by a lookup this turn" whatever had happened. Now the
+    /// piece is refused whole with the room the model has, and the why is the model's own or none.
+    #[test]
+    fn a_knowledge_piece_longer_than_the_card_is_refused_whole_and_the_why_is_never_a_stock_line() {
+        let dir = tempdir().unwrap();
+        let wd = dir.path().join("project");
+        let on = server(dir.path(), true);
+        let data = "Atlassian Data Center End of Life timeline (official): EOL = 28 Mar 2029 23:59 PST (all DC licences expire, products go read-only, support ends); end of sale to NEW customers = 30 Mar 2026; end of sale to EXISTING customers = 30 Mar 2028. Support + critical security fixes continue through 28 Mar 2029. Extensions past EOL are \"by exception only\". Bitbucket DC and Jira Align DC are EXCLUDED from EOL. Sources: atlassian.com/licensing/data-center-end-of-life and atlassian.com/blog/announcements/atlassian-ascend.";
+        let sources = vec![
+            "https://www.atlassian.com/licensing/data-center-end-of-life".to_string(),
+            "https://www.atlassian.com/blog/announcements/atlassian-ascend".to_string(),
+        ];
+        let params = |data: &str, why: Option<&str>| ProposeKnowledgeParams {
+            category: "atlassian-migration".to_string(),
+            data: data.to_string(),
+            sources: sources.clone(),
+            tags: vec!["atlassian".to_string()],
+            is_global: false,
+            why: why.map(str::to_string),
+        };
+        let err = on
+            .propose_knowledge_inner(params(data, None), Some(wd.clone()), Some("s1".into()))
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+        assert!(
+            err.message
+                .contains("645 characters and a proposal card holds 350")
+                && err
+                    .message
+                    .contains("at most 218 characters (it is 513 now)"),
+            "{}",
+            err.message
+        );
+        let store = goose_memory_store::ProposalStore::new(dir.path().join("proposals"));
+        assert!(store.list("s1").unwrap().is_empty(), "no stump was filed");
+
+        let short = "Atlassian Data Center end of life is 28 Mar 2029; end of sale to new customers 30 Mar 2026, to existing 30 Mar 2028.";
+        on.propose_knowledge_inner(params(short, None), Some(wd.clone()), Some("s1".into()))
+            .unwrap();
+        on.propose_knowledge_inner(
+            params(
+                "Bitbucket DC and Jira Align DC are excluded from the EOL.",
+                Some("the client runs Bitbucket DC"),
+            ),
+            Some(wd),
+            Some("s1".into()),
+        )
+        .unwrap();
+        let rows = store.list("s1").unwrap();
+        assert!(rows[0].text.starts_with(short) && rows[0].text.ends_with("atlassian-ascend"));
+        assert_eq!(rows[0].why, "", "no stock reason where the model gave none");
+        assert_eq!(rows[1].why, "the client runs Bitbucket DC");
     }
 
     /// Q-82: a piece proposed in one chat is that chat's card — filed under the session goose
@@ -1247,6 +1400,139 @@ mod tests {
             "{instructions}"
         );
         assert!(instructions.contains("search_memories(query)"));
+    }
+
+    /// Q-92: E2E #2b saved "British spelling is the client's own convention" and "the receiving team
+    /// often has restricted tooling" — reasons the user never gave — because the instructions said
+    /// "capture the rule and the reason behind it". The words now ask for the user's rule and a
+    /// reason only when the user gave one, in the instructions and the tool description alike.
+    #[test]
+    fn the_memory_words_never_ask_for_a_reason_the_user_did_not_give() {
+        let temp_dir = tempdir().unwrap();
+        let server = MemoryServer::with_global_dir(temp_dir.path().join("global"));
+        let instructions = server.get_instructions();
+        assert!(
+            !instructions.contains("the reason behind it"),
+            "{instructions}"
+        );
+        assert!(instructions.contains("its reason only when the user gave one"));
+        assert!(
+            instructions.contains("a saved guess\nis read back next session as the user's word")
+        );
+        let description = MemoryServer::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|tool| tool.name == "remember_memory")
+            .and_then(|tool| tool.description)
+            .unwrap();
+        assert!(
+            description
+                .contains("add a reason only when the user gave one, never one you inferred"),
+            "{description}"
+        );
+    }
+
+    /// Q-98: E2E #2 searched "ISO dates British spelling client deliverables Node zero dependencies
+    /// scripts" before saving two rules nobody had saved yet, and read "10 of 32 matching memories"
+    /// in full, topped by `jira-mentions-indexed-by-accountid` (client, node, scripts, zero). The
+    /// entries here carry the matched words where the real ones do.
+    #[test]
+    fn search_says_none_covers_a_query_and_lists_word_sharers_by_headline_only() {
+        const QUERY: &str =
+            "ISO dates British spelling client deliverables Node zero dependencies scripts";
+        let temp_dir = tempdir().unwrap();
+        let wd = temp_dir.path().join("project");
+        let server = MemoryServer::with_global_dir(temp_dir.path().join("global"));
+        let save = |category: &str, data: &str, tags: &[&str]| {
+            server
+                .remember("context", category, data, tags, true, Some(&wd))
+                .unwrap();
+        };
+        save(
+            "jira-mentions-indexed-by-accountid",
+            "Jira indexes @mentions by accountId, NOT display name — a display-name search finds ZERO mentions.\nA mention node renders the accountId. The client's mention sweep in scripts/sweep.py returns 0 and looks like an empty queue.",
+            &["reference", "imported:claude-code"],
+        );
+        save(
+            "article-authoring-unlocked",
+            "Community article authoring is live via the Contributors group.\nThe weekly flag resets on ISO-week rollover; the discover script is scripts/discover.mjs. Every article carries ZERO app references.",
+            &["project"],
+        );
+        save(
+            "ask-before-client-prod-config",
+            "Ask the CLIENT before any config change on their production system.\nSandbox: go ahead. Production: ask, wait for their yes, then act.",
+            &["feedback"],
+        );
+        for (category, data) in [
+            ("vendor-port", "The vendor API listens on 8850."),
+            ("fmt-first", "Run cargo fmt before every commit."),
+            (
+                "tick-cadence",
+                "Tick every five minutes during a benchmark run.",
+            ),
+            ("workhorse", "The workhorse is a Mac Studio on the LAN."),
+            ("reaping", "Kill pids, never a process group."),
+            ("plans", "A plan opens with the phases before and after."),
+            (
+                "keyring",
+                "Secrets come from secrets.yaml; the keyring is off.",
+            ),
+        ] {
+            save(category, data, &["project"]);
+        }
+
+        let report = server.search_report(QUERY, None, None, Some(&wd)).unwrap();
+        assert!(
+            report.starts_with(&format!(
+                "No memory covers \"{QUERY}\": 3 share a word with it"
+            )),
+            "{report}"
+        );
+        assert!(
+            report.contains("- jira-mentions-indexed-by-accountid (global, 4/10 terms): Jira indexes @mentions by accountId"),
+            "{report}"
+        );
+        assert!(
+            !report.contains("mention sweep"),
+            "a body that only shares words is not read as an answer: {report}"
+        );
+
+        save(
+            "client-deliverables",
+            "Client-facing output uses ISO dates (YYYY-MM-DD) and British spelling.\nApplies to reports, PDFs and every client deliverable; internal notes are exempt.",
+            &["user", "preference", "iso-dates", "british-spelling"],
+        );
+        save(
+            "handover-scripts",
+            "Handover scripts are always plain Node with zero npm dependencies.\nNode stdlib only: no package installs, no node_modules.",
+            &["user", "preference", "node", "zero-dependencies", "scripts"],
+        );
+        let report = server.search_report(QUERY, None, None, Some(&wd)).unwrap();
+        assert!(
+            report.starts_with(&format!("2 of 2 memories covering \"{QUERY}\":")),
+            "{report}"
+        );
+        let dates = report.find("## client-deliverables").unwrap();
+        let scripts = report.find("## handover-scripts").unwrap();
+        let sharers = report.find("share a word with the query").unwrap();
+        assert!(dates < sharers && scripts < sharers, "{report}");
+        assert!(
+            report.contains("Node stdlib only"),
+            "both rules come in full"
+        );
+        assert!(!report.contains("mention sweep"), "{report}");
+
+        let one_word = server
+            .search_report("postgres", None, None, Some(&wd))
+            .unwrap();
+        assert!(one_word.starts_with("No memory matched"), "{one_word}");
+        let one_word = server
+            .search_report("the scripts", None, None, Some(&wd))
+            .unwrap();
+        assert!(
+            one_word.starts_with("3 of 3 memories covering"),
+            "a one-word query (function words out) is covered by every entry with the word: {one_word}"
+        );
     }
 
     #[test]
