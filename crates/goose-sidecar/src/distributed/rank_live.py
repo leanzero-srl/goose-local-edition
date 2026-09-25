@@ -8,6 +8,15 @@
 # told apart. Pure stdlib; concatenated after rank_env.py, before the rank program.
 
 
+def prefill_position(ends, chunks, start=0, pad=0):
+    """How far into one row's prompt the prefill is after `chunks` of the batch's prefill ranges.
+    `ends` are the ranges' ends in the padded batch (the fork's `prefill_chunks`), `start` where
+    the prefill began (a restored prefix-cache entry's length, else 0), `pad` the row's own left
+    padding, which is no part of its prompt."""
+    done = ends[min(chunks, len(ends)) - 1] if chunks and ends else start
+    return max(0, done - pad)
+
+
 def live_request(
     request_id,
     arrived,
@@ -23,7 +32,8 @@ def live_request(
 ):
     """One in-flight request from its measured instants (monotonic seconds). A rate is None until
     it has a span to divide by: the prefill's from its first processed token, decode's from its
-    second token (the first token's own time belongs to the prefill)."""
+    second token (the first token's own time belongs to the prefill). `prefilled` counts the
+    prompt position, a restored prefix included; the prefill rate counts only what was read."""
     if first_token is not None:
         phase = "generation"
     elif prefill_started is not None:
@@ -32,8 +42,9 @@ def live_request(
         phase = "queued"
     prefill_end = first_token if first_token is not None else now
     prompt_rate = None
-    if prefill_started is not None and prefilled > 0 and prefill_end > prefill_started:
-        prompt_rate = prefilled / (prefill_end - prefill_started)
+    read = prefilled - (cached_tokens or 0)
+    if prefill_started is not None and read > 0 and prefill_end > prefill_started:
+        prompt_rate = read / (prefill_end - prefill_started)
     decode_rate = None
     if first_token is not None and last_token is not None and completion > 1:
         span = last_token - first_token

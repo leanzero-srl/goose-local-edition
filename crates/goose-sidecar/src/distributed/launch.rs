@@ -642,6 +642,7 @@ mod tests {
              \x20   row: object\n\
              \x20   produced: int = 0\n\
              def run_batch(stage, guard, rows, prefill_step, on_tokens=None, control_fn=None): pass\n\
+             def prefill_chunks(start, end, step, split=0): return []\n\
              def _step(stage, out, cache, rows, guard, control, *, sample): pass\n\
              def _build_app(state, tokenizer, eos_ids, vision=None): pass\n\
              def add_arguments(parser):\n\
@@ -749,6 +750,20 @@ assert busy["status"] == "generating" and busy["generation_tps"] == writing["tok
 assert busy["num_running"] == 1 and len(busy["requests"]) == 2
 idle = live_status({"num_running": 0, "num_waiting": 0}, [])
 assert (idle["status"], idle["generation_tps"], idle["requests"]) == ("idle", None, [])
+assert prefill_position([2048, 4096, 5000], 0) == 0
+assert prefill_position([2048, 4096, 5000], 2, pad=96) == 4000
+assert prefill_position([2048, 4096, 5000], 9) == 5000, "past the last range: the whole prefix"
+# A restored 48,647-token prefix: the prefill starts there and one range ends at the snapshot.
+restored = [50695, 50800, 52000]
+assert prefill_position(restored, 0, start=48647) == 48647
+assert prefill_position(restored, 1, start=48647) == 50695
+cached = live_request("r", 0.0, 10.52, prompt_tokens=52001, cached_tokens=48647,
+                      prefill_started=0.52, prefilled=50695)
+assert cached["prompt_tokens_per_second"] == round(2048 / 10.0, 2), "only the read tokens count"
+assert cached["cached_tokens"] == 48647 and cached["prefilled_tokens"] == 50695
+restored_whole = live_request("r", 0.0, 1.0, prompt_tokens=48648, cached_tokens=48647,
+                              prefill_started=0.5, prefilled=48647)
+assert restored_whole["prompt_tokens_per_second"] is None, "nothing read yet: no rate"
 print("ok")
 "#;
         let out = std::process::Command::new("/usr/bin/python3")

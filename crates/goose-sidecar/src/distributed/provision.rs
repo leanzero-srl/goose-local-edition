@@ -29,12 +29,17 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// the node budget = available − 7% of RAM capped at Metal's working set (2ce699589), and IMAGE
 /// INPUT — the vision tower on rank 0, (t, h, w) RoPE on every rank, OpenAI image content parts,
 /// `/v1/models` `capabilities: ["text", "vision", …]` (d40e9e363, dabcc67b2, 2f7cdf27c), and the
-/// available margin backed off 7% → 9.3% of RAM after the M4 Max warned at 7.3% (2f02ac645).
+/// available margin backed off 7% → 9.3% of RAM after the M4 Max warned at 7.3% (2f02ac645), and
+/// a PREFIX CACHE (b7bd1afc2, branch lz/pipeline-prefix-cache, tag lz-pipeline-qwen4.1, Q-75):
+/// every rank snapshots its own layers at the single engine's stable boundary and restores the
+/// SAME prefix rank 0 chose, bounded inside each rank's planned KV budget minus the live batch;
+/// usage carries `prompt_tokens_details.cached_tokens`, `/v1/status` a `prefix_cache` block, and
+/// `/v1/models` declares `rapid_mlx_transient_tail` (so the omlx provider sends the tail).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "2f02ac645a8d8a54bc184d008cfdcec855d09c80";
+pub const PIPELINE_FORK_COMMIT: &str = "b7bd1afc2fd1d75ed366c09c3e41b96be2cfbb68";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@2f02ac645a8d8a54bc184d008cfdcec855d09c80";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@b7bd1afc2fd1d75ed366c09c3e41b96be2cfbb68";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.
