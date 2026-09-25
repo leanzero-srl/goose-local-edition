@@ -2156,9 +2156,11 @@ You review code."#;
         )
         .unwrap();
         fs::write(agents_dir.join("plain.md"), "No frontmatter at all.").unwrap();
+        // Nested, so the Claude-Code-parity retry (sources.rs `quote_misread_values`, which reads a
+        // top-level `name: [unterminated` as the text it is) cannot repair it: this stays broken YAML.
         fs::write(
             agents_dir.join("broken.md"),
-            "---\nname: [unterminated\n---\nBroken YAML.",
+            "---\nname: broken\ntools:\n  - [unterminated\n---\nBroken YAML.",
         )
         .unwrap();
 

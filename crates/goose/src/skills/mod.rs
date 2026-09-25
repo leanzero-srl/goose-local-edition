@@ -19,6 +19,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::SystemTime;
 use tracing::warn;
 
 #[derive(Debug, Deserialize)]
@@ -373,43 +375,131 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn parse_skill_content(content: &str, path: &Path, global: bool) -> Option<SourceEntry> {
+/// Claude Code's cut for a description taken from the body (2.1.280 `hhe`: 97 chars + "...").
+const BODY_DESCRIPTION_MAX_CHARS: usize = 100;
+
+/// Claude Code's `hhe`: the body's first non-empty line, a heading's `#`s stripped.
+fn description_from_body(body: &str) -> Option<String> {
+    let line = body.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let heading = line.trim_start_matches('#');
+    let text = if heading.len() < line.len() && heading.starts_with(char::is_whitespace) {
+        heading.trim()
+    } else {
+        line
+    };
+    if text.chars().count() > BODY_DESCRIPTION_MAX_CHARS {
+        let cut: String = text.chars().take(BODY_DESCRIPTION_MAX_CHARS - 3).collect();
+        return Some(format!("{cut}..."));
+    }
+    Some(text.to_string())
+}
+
+/// Read one SKILL.md the way Claude Code does: the frontmatter is optional, a missing `name` is the
+/// skill's directory name, a missing `description` is the body's first line. `Err` is the reason the file
+/// cannot be a skill, worded for "couldn't read <file>: <why>".
+fn parse_skill_content(
+    content: &str,
+    skill_dir: &Path,
+    global: bool,
+) -> Result<SourceEntry, String> {
     let (metadata, body): (SkillFrontmatter, String) = match parse_frontmatter(content) {
         Ok(Some(parsed)) => parsed,
-        Ok(None) => return None,
-        Err(e) => {
-            warn!("Failed to parse skill frontmatter: {}", e);
-            return None;
-        }
+        Ok(None) => (
+            SkillFrontmatter {
+                name: None,
+                description: String::new(),
+                metadata: HashMap::new(),
+            },
+            content.trim().to_string(),
+        ),
+        Err(e) => return Err(format!("its frontmatter is not valid YAML ({e})")),
     };
 
     let name = match metadata.name.filter(|n| !n.is_empty()) {
         Some(n) => n,
-        None => {
-            warn!(
-                "Skill at '{}' is missing a required 'name' in frontmatter, skipping",
-                path.display()
-            );
-            return None;
-        }
+        None => skill_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_string)
+            .ok_or("its frontmatter has no name")?,
     };
-
     if name.contains('/') {
-        warn!("Skill name '{}' contains '/', skipping", name);
-        return None;
+        return Err(format!("its name \"{name}\" contains '/'"));
     }
 
-    Some(SourceEntry {
+    let description = if metadata.description.trim().is_empty() {
+        description_from_body(&body).ok_or("it has no description and no text")?
+    } else {
+        metadata.description
+    };
+
+    Ok(SourceEntry {
         source_type: SourceType::Skill,
         name,
-        description: metadata.description,
+        description,
         content: body,
-        path: path.to_string_lossy().into_owned(),
+        path: skill_dir.to_string_lossy().into_owned(),
         global,
         writable: true,
         supporting_files: Vec::new(),
         properties: metadata.metadata,
     })
+}
+
+/// A SKILL.md that exists and cannot be a skill: shown on the Skills page, never to the model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnreadableSkill {
+    pub skill_md: PathBuf,
+    pub reason: String,
+    pub global: bool,
+}
+
+impl UnreadableSkill {
+    pub fn message(&self) -> String {
+        format!("couldn't read {}: {}", self.skill_md.display(), self.reason)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SkillScan {
+    pub skills: Vec<SourceEntry>,
+    pub unreadable: Vec<UnreadableSkill>,
+}
+
+type FileStamp = Option<(Option<SystemTime>, u64)>;
+type SkillRead = Result<SourceEntry, String>;
+
+/// Every SKILL.md read by this process, by path, with the stamp it was read at.
+///
+/// Discovery runs several times per turn — the skills extension's instructions, the request-turn recall,
+/// the slash-command list, the Skills page — and it used to re-parse every file and re-log every failure
+/// each time: measured 2026-09-25, session log 20260925_222121, 40 "Failed to parse skill frontmatter"
+/// lines in 22 minutes from 4 files × 10 scans (2 per turn). A file is now parsed, and its failure
+/// logged, once per change of its modification time or length.
+static SKILL_READS: LazyLock<Mutex<HashMap<PathBuf, (FileStamp, SkillRead)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn read_skill_file(skill_md: &Path, skill_dir: &Path, global: bool) -> SkillRead {
+    let stamp: FileStamp = std::fs::metadata(skill_md)
+        .ok()
+        .map(|m| (m.modified().ok(), m.len()));
+    let mut reads = SKILL_READS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((seen, read)) = reads.get(skill_md) {
+        if *seen == stamp {
+            return read.clone().map(|mut skill| {
+                skill.global = global;
+                skill
+            });
+        }
+    }
+    let read = std::fs::read_to_string(skill_md)
+        .map_err(|e| e.to_string())
+        .and_then(|content| parse_skill_content(&content, skill_dir, global));
+    if let Err(reason) = &read {
+        warn!("couldn't read skill {}: {}", skill_md.display(), reason);
+    }
+    reads.insert(skill_md.to_path_buf(), (stamp, read.clone()));
+    read
 }
 
 /// Directories a skill's walk must never descend into: VCS metadata, and DEPENDENCY TREES.
@@ -478,7 +568,12 @@ fn walk_files_recursively<F, G>(
     }
 }
 
-fn scan_skills_from_dir(dir: &Path, global: bool, seen: &mut HashSet<String>) -> Vec<SourceEntry> {
+fn scan_skills_from_dir(
+    dir: &Path,
+    global: bool,
+    seen: &mut HashSet<String>,
+    scan: &mut SkillScan,
+) {
     let mut skill_files = Vec::new();
     let mut visited_dirs = HashSet::new();
 
@@ -493,21 +588,17 @@ fn scan_skills_from_dir(dir: &Path, global: bool, seen: &mut HashSet<String>) ->
         },
     );
 
-    let mut sources = Vec::new();
     for skill_file in skill_files {
         let Some(skill_dir) = skill_file.parent() else {
             continue;
         };
-        let content = match std::fs::read_to_string(&skill_file) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!("Failed to read skill file {}: {}", skill_file.display(), e);
-                continue;
-            }
-        };
-
-        if let Some(mut source) = parse_skill_content(&content, skill_dir, global) {
-            if !seen.contains(&source.name) {
+        match read_skill_file(&skill_file, skill_dir, global) {
+            Err(reason) => scan.unreadable.push(UnreadableSkill {
+                skill_md: skill_file.clone(),
+                reason,
+                global,
+            }),
+            Ok(mut source) if !seen.contains(&source.name) => {
                 let mut files = Vec::new();
                 let mut visited_support_dirs = HashSet::new();
                 walk_files_recursively(
@@ -523,41 +614,46 @@ fn scan_skills_from_dir(dir: &Path, global: bool, seen: &mut HashSet<String>) ->
                 source.supporting_files = files;
 
                 seen.insert(source.name.clone());
-                sources.push(source);
+                scan.skills.push(source);
             }
+            Ok(_) => {}
         }
     }
-    sources
 }
 
 /// Discover skills from all configured filesystem locations and built-ins.
 /// Each returned entry has `global` set according to the directory it was
 /// found in (or `true` for built-ins).
 pub fn discover_skills(working_dir: Option<&Path>) -> Vec<SourceEntry> {
-    let mut sources: Vec<SourceEntry> = Vec::new();
+    scan_skills(working_dir).skills
+}
+
+/// [`discover_skills`] plus every SKILL.md that could not be read, with the reason.
+pub fn scan_skills(working_dir: Option<&Path>) -> SkillScan {
+    let mut scan = SkillScan::default();
     let mut seen = HashSet::new();
 
     for (dir, is_global) in all_skill_dirs(working_dir) {
-        for source in scan_skills_from_dir(&dir, is_global, &mut seen) {
-            sources.push(source);
-        }
+        scan_skills_from_dir(&dir, is_global, &mut seen, &mut scan);
     }
 
     for content in builtin::get_all() {
-        if let Some(source) = parse_skill_content(content, &PathBuf::new(), true) {
-            if !seen.contains(&source.name) {
+        match parse_skill_content(content, Path::new(""), true) {
+            Ok(source) if !seen.contains(&source.name) => {
                 seen.insert(source.name.clone());
                 let path = format!("builtin://skills/{}", source.name);
-                sources.push(SourceEntry {
+                scan.skills.push(SourceEntry {
                     source_type: SourceType::BuiltinSkill,
                     path,
                     ..source
                 });
             }
+            Ok(_) => {}
+            Err(reason) => warn!("built-in skill cannot be read: {reason}"),
         }
     }
 
-    sources
+    scan
 }
 
 pub fn list_installed_skills(working_dir: Option<&Path>) -> Vec<SourceEntry> {
@@ -734,6 +830,97 @@ mod tests {
             "{dirs:?}"
         );
         assert!(dirs.contains(&(home.join(".goose").join("skills"), false)));
+    }
+
+    /// Claude Code reads a SKILL.md with no frontmatter as a skill named by its directory, described by
+    /// its first line (2.1.280 `hhe`). ~/.agents/skills/talent-vault-skill is exactly that file.
+    #[test]
+    fn a_skill_without_frontmatter_is_named_by_its_directory() {
+        let dir = Path::new("/s/talent-vault-skill");
+        let raw = "# TalentVault Technical Skill — Component Map\n\n> Purpose: the map.\n\n---\n\n**Two parallel \"employee\" stores**";
+        let skill = parse_skill_content(raw, dir, true).expect("a skill");
+        assert_eq!(skill.name, "talent-vault-skill");
+        assert_eq!(
+            skill.description,
+            "TalentVault Technical Skill — Component Map"
+        );
+        assert_eq!(skill.content, raw);
+
+        let skill = parse_skill_content("---\ndescription: d\n---\nbody", dir, true).unwrap();
+        assert_eq!(
+            skill.name, "talent-vault-skill",
+            "a missing name is the directory's"
+        );
+        let skill =
+            parse_skill_content("---\nname: n\n---\n\n## Heading line\nbody", dir, true).unwrap();
+        assert_eq!(
+            skill.description, "Heading line",
+            "a missing description is the first line"
+        );
+
+        let long = format!("# {}", "x".repeat(150));
+        let skill = parse_skill_content(&long, dir, true).unwrap();
+        assert_eq!(skill.description, format!("{}...", "x".repeat(97)));
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_a_skill_says_why() {
+        let dir = Path::new("/s/empty");
+        assert_eq!(
+            parse_skill_content("", dir, true).unwrap_err(),
+            "it has no description and no text"
+        );
+        assert!(parse_skill_content(
+            "---\nname: x\nmetadata:\n  - [unclosed\n---\nbody",
+            dir,
+            true
+        )
+        .unwrap_err()
+        .starts_with("its frontmatter is not valid YAML"));
+        assert_eq!(
+            parse_skill_content("---\nname: a/b\ndescription: d\n---\n", dir, true).unwrap_err(),
+            "its name \"a/b\" contains '/'"
+        );
+        assert!(
+            parse_skill_content("no frontmatter", Path::new(""), true).is_err(),
+            "a built-in has no directory to be named by"
+        );
+    }
+
+    /// The per-turn rescan re-parsed and re-logged every file (40 warnings in one session). A read is kept
+    /// until the file's modification time or length changes.
+    #[test]
+    fn a_skill_file_is_read_again_only_when_it_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("cached");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let md = skill_dir.join("SKILL.md");
+        std::fs::write(&md, "---\nname: cached\ndescription: first\n---\nbody").unwrap();
+        assert_eq!(
+            read_skill_file(&md, &skill_dir, true).unwrap().description,
+            "first"
+        );
+        assert!(
+            !read_skill_file(&md, &skill_dir, false).unwrap().global,
+            "scope is per call"
+        );
+
+        std::fs::write(
+            &md,
+            "---\nname: cached\ndescription: second: edit\n---\nbody",
+        )
+        .unwrap();
+        assert_eq!(
+            read_skill_file(&md, &skill_dir, true).unwrap().description,
+            "second: edit"
+        );
+
+        std::fs::write(&md, "---\nname: cached\nmetadata:\n  - [unclosed\n---\nx").unwrap();
+        assert!(read_skill_file(&md, &skill_dir, true).is_err());
+        assert!(
+            read_skill_file(&md, &skill_dir, true).is_err(),
+            "cached failure"
+        );
     }
 
     #[test]
