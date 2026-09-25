@@ -254,6 +254,31 @@ impl Agent {
         Ok((tools, toolshim_tools, system_prompt, model_config))
     }
 
+    /// What the provider is sent: with `GOOSE_TOOL_DEFERRAL`, the outside extensions' schemas leave
+    /// the tool list until the session loads them, and the system prompt names them
+    /// (`tool_deferral`); the full list stays with the caller for dispatch, coercion and approval.
+    /// Unchanged when nothing is deferred.
+    pub(crate) async fn disclose_tools(
+        &self,
+        tools: &[Tool],
+        system_prompt: &str,
+        messages: &[Message],
+    ) -> (Vec<Tool>, String) {
+        if tools.is_empty() || !crate::agents::tool_deferral::enabled() {
+            return (tools.to_vec(), system_prompt.to_string());
+        }
+        let deferrable = self.extension_manager.deferrable_extensions().await;
+        let (mut sent, deferred) = crate::agents::tool_deferral::split(tools, &deferrable);
+        sent.extend(crate::agents::tool_deferral::loaded(&deferred, messages));
+        (
+            sent,
+            format!(
+                "{system_prompt}{}",
+                crate::agents::tool_deferral::catalogue(&deferred)
+            ),
+        )
+    }
+
     #[tracing::instrument(
         skip(provider, model_config, session_id, system_prompt, messages, tools, toolshim_tools),
         fields(session.id = %session_id)

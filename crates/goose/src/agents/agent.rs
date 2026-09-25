@@ -2186,13 +2186,15 @@ impl Agent {
                     ));
                 }
 
+                let (disclosed_tools, disclosed_prompt) =
+                    self.disclose_tools(&tools, &system_prompt, conversation.messages()).await;
                 let mut stream = Self::stream_response_from_provider(
                     self.provider().await?,
                     model_config.clone(),
                     &session_config.id,
-                    &system_prompt,
+                    &disclosed_prompt,
                     conversation_with_moim.messages(),
-                    &tools,
+                    &disclosed_tools,
                     &toolshim_tools,
                 ).await?;
                 last_assistant_text.clear();
