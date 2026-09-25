@@ -38,3 +38,7 @@ Failure modes and sources: `RESEARCH-failure-modes.md` (ids D=MLX/exo, L=LM Link
   29 load requests (25 complete, 4 aborted mid-body), 0 errors, 0 relay 5xx, 8/8 canaries 200, 0 panic/ips files, engine alive throughout,
   Studio footprint 51–66 GB, free 23–38%. LATENCY: a 1-token canary took up to 161 s — head-of-line behind the 13k prefills (Q-103).
   Not yet covered: a model copy over Link during the load, a half-close run, ≥ 2 h duration. Evidence ~/goose-builds/quality/R2-2026-09-25/.
+- 2026-09-25 23:55 → 2026-09-26 01:27 — R2 run 2, 90-min soak on 3.0.41 (Studio single over Link, 4 workers × unique 8k prompts, 20% aborted):
+  164 load requests (144 complete + 20 aborted mid-body), 0 errors, 0 relay 5xx, 32/32 canaries 200, 0 panic/ips files; Studio engine
+  footprint FLAT 52–59 GB (first 59 → last 55), free 30–39%. Canary median 103.7 s / max 232.9 s = Q-103 (fix in the fork, A/B pending).
+  VERDICT: PASS on stability for 90 min under continuous load. Evidence ~/goose-builds/quality/R2-2026-09-25-long/.
