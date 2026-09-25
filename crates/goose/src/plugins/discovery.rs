@@ -192,13 +192,8 @@ fn load_all_settings(project_root: Option<&Path>) -> Vec<(SettingsScope, PluginS
 }
 
 fn user_settings_path() -> Option<PathBuf> {
-    if let Ok(test_root) = std::env::var("GOOSE_PATH_ROOT") {
-        return Some(
-            PathBuf::from(test_root)
-                .join(".config")
-                .join("goose")
-                .join("settings.json"),
-        );
+    if let Some(root) = crate::config::paths::Paths::root_override() {
+        return Some(root.join(".config").join("goose").join("settings.json"));
     }
     Some(
         dirs::home_dir()?

@@ -10,6 +10,11 @@ use goose::providers::base::{
 };
 use goose::session::session_manager::SessionType;
 use goose::session::Session;
+
+#[ctor::ctor]
+fn hermetic_path_root() {
+    goose_test_support::hermetic_path_root();
+}
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;

@@ -8,6 +8,11 @@ use rmcp::model::Tool;
 use rmcp::object;
 use serial_test::serial;
 
+#[ctor::ctor]
+fn hermetic_path_root() {
+    goose_test_support::hermetic_path_root();
+}
+
 /// Test module for Tetrate Agent Router Service streaming functionality
 #[cfg(test)]
 mod tetrate_streaming_tests {

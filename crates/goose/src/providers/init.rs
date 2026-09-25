@@ -346,9 +346,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_custom_provider_context_limit_is_applied_from_file() {
-        let _guard = env_lock::lock_env([("GOOSE_PATH_ROOT", None::<&str>)]);
         let temp_dir = tempfile::tempdir().expect("tempdir should be created");
-        std::env::set_var("GOOSE_PATH_ROOT", temp_dir.path());
+        let _guard = env_lock::lock_env([("GOOSE_PATH_ROOT", temp_dir.path().to_str())]);
 
         let custom_dir = Paths::config_dir().join("custom_providers");
         fs::create_dir_all(&custom_dir).expect("custom providers dir should be created");
@@ -408,14 +407,13 @@ mod tests {
             )
             .expect("custom_zero model config should normalize");
         assert_eq!(zero_config.context_limit, None);
-
-        std::env::remove_var("GOOSE_PATH_ROOT");
     }
 
     #[tokio::test]
     async fn test_goose_context_limit_overrides_known_models_and_defaults() {
+        let temp_dir = tempfile::tempdir().expect("tempdir should be created");
         let _guard = env_lock::lock_env([
-            ("GOOSE_PATH_ROOT", None::<&str>),
+            ("GOOSE_PATH_ROOT", temp_dir.path().to_str()),
             ("GOOSE_CONTEXT_LIMIT", Some("1000000")),
             ("GOOSE_MAX_TOKENS", None::<&str>),
             ("GOOSE_TEMPERATURE", None::<&str>),
@@ -431,9 +429,6 @@ mod tests {
             .normalize_model_config(ModelConfig::new("totally-unknown-model"))
             .expect("unknown model config should normalize");
         assert_eq!(unknown.context_limit(), 1_000_000);
-
-        let temp_dir = tempfile::tempdir().expect("tempdir should be created");
-        std::env::set_var("GOOSE_PATH_ROOT", temp_dir.path());
 
         let custom_dir = Paths::config_dir().join("custom_providers");
         fs::create_dir_all(&custom_dir).expect("custom providers dir should be created");
@@ -464,7 +459,5 @@ mod tests {
             .normalize_model_config(ModelConfig::new("kimi-k2.5"))
             .expect("custom_inf model config should normalize");
         assert_eq!(inf_config.context_limit(), 1_000_000);
-
-        std::env::remove_var("GOOSE_PATH_ROOT");
     }
 }
