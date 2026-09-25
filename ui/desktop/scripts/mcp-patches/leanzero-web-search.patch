@@ -35,3 +35,356 @@
        let docType: TechnicalDocType = TechnicalDocType.OPENAPI_JSON;
  
        if (contentType.includes('yaml') || url.toLowerCase().endsWith('.yaml')) {
+diff --git a/src/progressive-search-engine.ts b/src/progressive-search-engine.ts
+index d9425f0..035f4ee 100644
+--- a/src/progressive-search-engine.ts
++++ b/src/progressive-search-engine.ts
+@@ -3,7 +3,7 @@
+  * Implements multi-stage progressive search with automatic expansion and deepening
+  */
+ 
+-import { SearchEngine } from './search-engine.js';
++import { SearchEngine, SearchUnavailableError } from './search-engine.js';
+ import { SearchResult } from './types.js';
+ import { StandardIntentDetector, QueryIntent, generateIntentBasedExpansions } from './query-intent-detector.js';
+ import { SemanticExpander, HeuristicSemanticExpander } from './semantic-expander.js';
+@@ -321,6 +321,9 @@ export class ProgressiveSearchEngine implements IProgressiveSearchEngine {
+         return result.results;
+       }
+     } catch (error) {
++      // No search ran: expanding or rewording the query cannot help, and an empty
++      // "no relevant content" answer would say it did.
++      if (error instanceof SearchUnavailableError) throw error;
+       console.warn(`[ProgressiveSearchEngine] Primary engine failed, trying fallbacks:`, error);
+     }
+     
+@@ -364,6 +367,7 @@ export class ProgressiveSearchEngine implements IProgressiveSearchEngine {
+           return result.results;
+         }
+       } catch (error) {
++        if (error instanceof SearchUnavailableError) throw error;
+         console.warn(`[ProgressiveSearchEngine] Engine search failed for "${query}":`, error);
+       }
+     }
+diff --git a/src/search-engine.ts b/src/search-engine.ts
+index d979c9d..17f5cb2 100644
+--- a/src/search-engine.ts
++++ b/src/search-engine.ts
+@@ -18,6 +18,48 @@ import { requestDeduplicator } from './request-deduplicator.js';
+ // Per-request context: a caller-supplied Serper key overrides the process env.
+ import { requestContext } from './request-context.js';
+ 
++/**
++ * No search ran, and the reason is the setup or the provider, never the query.
++ * Serper-only mode has no other search path, so an empty list here would read to
++ * the agent as "nothing matched" and send it rewording a query that never ran.
++ */
++export class SearchUnavailableError extends Error {
++  constructor(message: string) {
++    super(message);
++    this.name = 'SearchUnavailableError';
++  }
++}
++
++export const SEARCH_NOT_CONFIGURED_MESSAGE =
++  'Web search is not set up: no Serper API key is configured, so no search ran. ' +
++  'This is a setup problem, not a problem with the query; rewording it will not help. ' +
++  'In goose: open MCPs in the sidebar, then LeanZero Web Search, then paste a key from serper.dev ' +
++  'into "Search API key" and save; new chats pick it up. In other clients: set SERPER_API_KEY in ' +
++  "this server's environment. Without a key, get-single-web-page-content still reads a page " +
++  'whose URL you already know.';
++
++export function serperFailureMessage(reason: string): string {
++  return (
++    `Web search failed at the search provider (Serper): ${reason}. No search ran to completion, ` +
++    'so this says nothing about the query; rewording it will not help. ' +
++    'get-single-web-page-content still reads a page whose URL you already know.'
++  );
++}
++
++export function describeSerperError(error: unknown): string {
++  if (axios.isAxiosError(error) && error.response) {
++    const status = error.response.status;
++    if (status === 401 || status === 403) {
++      return `the Serper key was rejected (HTTP ${status}); check "Search API key" in the LeanZero Web Search settings`;
++    }
++    if (status === 429) {
++      return 'the Serper account is out of credits or rate-limited (HTTP 429)';
++    }
++    return `HTTP ${status}`;
++  }
++  return error instanceof Error ? error.message : String(error);
++}
++
+ export interface SearchEngineConfig {
+   maxRequestsPerMinute?: number;
+   resetIntervalMs?: number;
+@@ -89,23 +131,13 @@ export class SearchEngine {
+ 
+     console.log(`[SearchEngine] Serper-only mode: ${useSerperOnly} (USE_SERPER_ONLY=${serperOnlyEnv ?? 'unset'}, ENABLE_BROWSER_FALLBACKS=${process.env.ENABLE_BROWSER_FALLBACKS ?? 'unset'})`);
+ 
+-    // Fast path: Skip browser engines entirely for maximum performance
++    // Serper is the only search path in this mode: a missing key or a failed call
++    // is raised as SearchUnavailableError; only a call that ran and matched
++    // nothing returns an empty list.
+     if (useSerperOnly) {
+-      try {
+-        // Skip rate limiter for cache hits, but still use it for actual API calls
+-        const results = await this.tryApiSearch(query, numResults, timeout);
+-        if (results.length > 0) {
+-          console.log(`[SearchEngine] ✓ Serper returned ${results.length} results directly`);
+-          return { results, engine: 'serper-only' };
+-        }
+-      } catch (error) {
+-        console.error('[SearchEngine] Serper API failed:', error instanceof Error ? error.message : 'Unknown');
+-      }
+-      // If Serper fails, optionally try browser fallbacks
+-      if (!enableBrowserFallbacks) {
+-        console.log('[SearchEngine] Serper failed, but browser fallbacks disabled. Returning empty results.');
+-        return { results: [], engine: 'serper-failed-no-fallback' };
+-      }
++      const results = await this.serperSearch(query, numResults, timeout);
++      console.log(`[SearchEngine] ✓ Serper returned ${results.length} results directly`);
++      return { results, engine: 'serper-only' };
+     }
+ 
+     // Only proceed to browser engines if fallbacks are enabled
+@@ -379,18 +411,32 @@ export class SearchEngine {
+   /**
+    * Runs a search with a specific browser engine
+    */
++  /** Browser-fallback chain member: a Serper failure hands over to the next engine. */
+   private async tryApiSearch(query: string, numResults: number, timeout: number): Promise<SearchResult[]> {
++    try {
++      return await this.serperSearch(query, numResults, timeout);
++    } catch (error) {
++      console.error(`[SearchEngine] ${error instanceof Error ? error.message : 'Serper failed'} — trying the next engine`);
++      return [];
++    }
++  }
++
++  private async serperSearch(query: string, numResults: number, timeout: number): Promise<SearchResult[]> {
+     // Prefer the per-request key (HTTP callers bring their own); fall back to the
+     // process env (stdio callers set it in their mcp.json `env`).
+     const apiKey = requestContext.getStore()?.serperKey || process.env.SERPER_API_KEY;
+     if (!apiKey) {
+       console.error('[SearchEngine] API search failed: SERPER_API_KEY is not set');
+-      return [];
++      throw new SearchUnavailableError(SEARCH_NOT_CONFIGURED_MESSAGE);
+     }
+ 
+     if (SearchEngine.serperBreakerShouldSkip()) {
+-      console.error('[SearchEngine] Serper circuit breaker OPEN — skipping API call, using fallback');
+-      return [];
++      const b = SearchEngine.serperBreaker;
++      throw new SearchUnavailableError(
++        serperFailureMessage(
++          `${b.consecutiveFailures} calls in a row failed, so calls are paused for ${Math.round(b.cooldownMs / 1000)} s`,
++        ),
++      );
+     }
+ 
+     // NOTE: Cache check has been moved to the search() method above.
+@@ -450,7 +496,7 @@ export class SearchEngine {
+           data: error.response?.data,
+         });
+       }
+-      return [];
++      throw new SearchUnavailableError(serperFailureMessage(describeSerperError(error)));
+     }
+   }
+ 
+diff --git a/src/server.ts b/src/server.ts
+index dbc822f..7ec88f0 100644
+--- a/src/server.ts
++++ b/src/server.ts
+@@ -38,7 +38,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+ import { z } from 'zod';
+ import * as fs from 'fs';
+ import * as path from 'path';
+-import { SearchEngine } from './search-engine.js';
++import { SearchEngine, SearchUnavailableError } from './search-engine.js';
+ import { EnhancedContentExtractor } from './enhanced-content-extractor.js';
+ import { pdfExtractor as pdfExtractorInstance } from './pdf-extractor.js';
+ 
+@@ -170,6 +170,12 @@ export class WebSearchMCPServer {
+       throw error;
+     }
+ 
++    // Verbatim: the keyword mapping below would relabel a setup message
++    // ("Access denied: …", "Resource not found: …") as something it is not.
++    if (error instanceof SearchUnavailableError) {
++      throw new McpError(ERROR_CODES.InternalError, error.message);
++    }
++
+     if (error instanceof Error) {
+       // Categorize common errors and map to appropriate MCP error codes
+       const message = error.message.toLowerCase();
+@@ -2082,11 +2088,9 @@ export class WebSearchMCPServer {
+       }
+       const message = error instanceof Error ? error.message : 'Unknown web search error';
+       telemetryCollector.recordSearchFailure(searchEngineName || 'unknown', Date.now() - startTime);
+-      auditLogger.logToolError('full-web-search', ERROR_CODES.InternalError, `Web search failed: ${message}`, 'Internal');
+-      throw new McpError(
+-        ERROR_CODES.InternalError,
+-        `Web search failed: ${message}`
+-      );
++      const text = error instanceof SearchUnavailableError ? message : `Web search failed: ${message}`;
++      auditLogger.logToolError('full-web-search', ERROR_CODES.InternalError, text, 'Internal');
++      throw new McpError(ERROR_CODES.InternalError, text);
+     }
+   }
+ 
+diff --git a/tests/integration/api_search.test.ts b/tests/integration/api_search.test.ts
+index 19618b7..3ddb336 100644
+--- a/tests/integration/api_search.test.ts
++++ b/tests/integration/api_search.test.ts
+@@ -1,5 +1,5 @@
+ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+-import { SearchEngine } from '../../src/search-engine.js';
++import { SearchEngine, SearchUnavailableError } from '../../src/search-engine.js';
+ 
+ describe('SearchEngine API Integration', () => {
+   let engine: SearchEngine;
+@@ -12,20 +12,15 @@ describe('SearchEngine API Integration', () => {
+     await engine.closeAll();
+   });
+ 
+-  it('should attempt API search when SERPER_API_KEY is provided', async () => {
+-    // We can't easily set env vars in a running process without side effects,
+-    // but we can check if the logic handles missing keys gracefully.
+-    const result = await engine.search({ query: 'test query', numResults: 1 });
+-    
+-    // Since SERPER_API_KEY is likely not set in the test environment, 
+-    // it should fall back to other engines or return empty if all fail.
+-    // We just want to ensure it doesn't crash.
+-    expect(result).toBeDefined();
+-    expect(result.results).toBeDefined();
+-  }, 30000); // Increased timeout for fallback engines
+-
+-  it('should handle empty results gracefully', async () => {
+-    const result = await engine.search({ query: '', numResults: 1 });
+-    expect(result.results).toBeInstanceOf(Array);
+-  }, 30000); // Increased timeout for fallback engines
++  it('without a key, says the search is not set up instead of returning an empty list', async () => {
++    const saved = process.env.SERPER_API_KEY;
++    delete process.env.SERPER_API_KEY;
++    try {
++      await expect(engine.search({ query: 'test query', numResults: 1 })).rejects.toBeInstanceOf(
++        SearchUnavailableError,
++      );
++    } finally {
++      if (saved !== undefined) process.env.SERPER_API_KEY = saved;
++    }
++  }, 30000);
+ });
+diff --git a/tests/unit/search-unavailable.test.ts b/tests/unit/search-unavailable.test.ts
+new file mode 100644
+index 0000000..45da1ec
+--- /dev/null
++++ b/tests/unit/search-unavailable.test.ts
+@@ -0,0 +1,104 @@
++import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
++import axios, { AxiosError, AxiosHeaders } from 'axios';
++import {
++  SearchEngine,
++  SearchUnavailableError,
++  SEARCH_NOT_CONFIGURED_MESSAGE,
++  describeSerperError,
++} from '../../src/search-engine.js';
++import { ProgressiveSearchEngine } from '../../src/progressive-search-engine.js';
++
++function httpError(status: number): AxiosError {
++  const headers = new AxiosHeaders();
++  return new AxiosError('Request failed', 'ERR_BAD_REQUEST', { headers }, null, {
++    status,
++    statusText: '',
++    headers: {},
++    config: { headers },
++    data: {},
++  });
++}
++
++let counter = 0;
++const unique = (text: string) => `${text} ${++counter} ${Date.now()}`;
++
++describe('a search that could not run says why, and never blames the query', () => {
++  const saved = { ...process.env };
++  beforeEach(() => {
++    process.env.SEMANTIC_CACHE_ENABLED = 'false';
++    delete process.env.USE_SERPER_ONLY;
++    delete process.env.ENABLE_BROWSER_FALLBACKS;
++    delete process.env.SERPER_API_KEY;
++  });
++  afterEach(() => {
++    process.env = { ...saved };
++    vi.restoreAllMocks();
++  });
++
++  it('no key: rejects with the setup message and makes no call', async () => {
++    const post = vi.spyOn(axios, 'post');
++    const engine = new SearchEngine();
++    const error = await engine
++      .search({ query: unique('Atlassian Data Center end of life') })
++      .catch((e: unknown) => e);
++    expect(error).toBeInstanceOf(SearchUnavailableError);
++    expect((error as Error).message).toBe(SEARCH_NOT_CONFIGURED_MESSAGE);
++    expect((error as Error).message).toContain('Search API key');
++    expect((error as Error).message).not.toMatch(/broaden|site:|exact-phrase/);
++    expect(post).not.toHaveBeenCalled();
++  });
++
++  it('a rejected key names the key, not the query', async () => {
++    process.env.SERPER_API_KEY = 'bad';
++    vi.spyOn(axios, 'post').mockRejectedValue(httpError(401));
++    const error = await new SearchEngine()
++      .search({ query: unique('jcma versions') })
++      .catch((e: unknown) => e);
++    expect(error).toBeInstanceOf(SearchUnavailableError);
++    expect((error as Error).message).toContain('the Serper key was rejected (HTTP 401)');
++  });
++
++  it('a call that ran and matched nothing is an honest empty result', async () => {
++    process.env.SERPER_API_KEY = 'good';
++    vi.spyOn(axios, 'post').mockResolvedValue({ data: { organic: [] } });
++    const result = await new SearchEngine().search({ query: unique('zzqx nothing') });
++    expect(result.results).toEqual([]);
++    expect(result.engine).toBe('serper-only');
++  });
++
++  it('a call that ran returns its results', async () => {
++    process.env.SERPER_API_KEY = 'good';
++    vi.spyOn(axios, 'post').mockResolvedValue({
++      data: {
++        organic: [
++          {
++            title: 'Data Center End of Life',
++            link: 'https://www.atlassian.com/licensing/data-center-end-of-life',
++            snippet: 's',
++          },
++        ],
++      },
++    });
++    const result = await new SearchEngine().search({ query: unique('dc eol') });
++    expect(result.results.map((r) => r.url)).toEqual([
++      'https://www.atlassian.com/licensing/data-center-end-of-life',
++    ]);
++  });
++
++  it('progressive search does not turn a missing key into "no relevant content"', async () => {
++    const progressive = new ProgressiveSearchEngine([new SearchEngine()], { maxDepth: 2 });
++    const q = unique('Atlassian DC end of support');
++    const error = await progressive.search(q, { query: q, maxDepth: 2 }).catch((e: unknown) => e);
++    expect(error).toBeInstanceOf(SearchUnavailableError);
++    expect((error as Error).message).toBe(SEARCH_NOT_CONFIGURED_MESSAGE);
++  });
++
++  it('describes provider failures by what happened', () => {
++    expect(describeSerperError(httpError(403))).toContain('rejected (HTTP 403)');
++    expect(describeSerperError(httpError(429))).toContain('out of credits or rate-limited');
++    expect(describeSerperError(httpError(500))).toBe('HTTP 500');
++    expect(describeSerperError(new Error('getaddrinfo ENOTFOUND google.serper.dev'))).toBe(
++      'getaddrinfo ENOTFOUND google.serper.dev',
++    );
++  });
++});
