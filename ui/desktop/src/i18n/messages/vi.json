@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "Cần cả hai máy Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {Vừa cả hai máy Mac} other {Vừa cả # máy Mac}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Vừa với {name}"
   },

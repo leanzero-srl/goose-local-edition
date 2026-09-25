@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "두 Mac 모두 필요"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {두 Mac 모두에 맞음} other {Mac # 대 모두에 맞음}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name}에 들어감"
   },

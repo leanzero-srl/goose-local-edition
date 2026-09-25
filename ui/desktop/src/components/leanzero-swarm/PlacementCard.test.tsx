@@ -4,7 +4,7 @@ import { useState } from 'react';
 import userEvent from '@testing-library/user-event';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
-import { PlacementBadge, PlacementCard } from './PlacementCard';
+import { PlacementBadge, PlacementCard, pickerBadgeOf, type PickerBadge } from './PlacementCard';
 import { PLAN_27B, PLAN_FLASH, NODES } from './placement.fixtures';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import type { PlacementPlan } from '../../acp/mlx-placement';
@@ -749,13 +749,15 @@ describe('Run it on the real 27B plan', () => {
 });
 
 describe('PlacementBadge', () => {
+  const only = (badge: PickerBadge['badge']): PickerBadge => ({ badge, fitsOn: [], macs: 0 });
+
   it('says where a model fits, in solid tones', () => {
     render(
       <IntlTestWrapper>
-        <PlacementBadge badge={{ kind: 'fitsPeer', name: 'Work’s Mac Studio' }} />
-        <PlacementBadge badge={{ kind: 'tooBig', shortBytes: 14715588048 }} />
-        <PlacementBadge badge={{ kind: 'fitsThisMac' }} />
-        <PlacementBadge badge={{ kind: 'needsBothMacs' }} />
+        <PlacementBadge badge={only({ kind: 'fitsPeer', name: 'Work’s Mac Studio' })} />
+        <PlacementBadge badge={only({ kind: 'tooBig', shortBytes: 14715588048 })} />
+        <PlacementBadge badge={only({ kind: 'fitsThisMac' })} />
+        <PlacementBadge badge={only({ kind: 'needsBothMacs' })} />
       </IntlTestWrapper>
     );
     expect(screen.getByText('Fits Work’s Mac Studio').closest('[data-tone]')).toHaveAttribute(
@@ -768,6 +770,47 @@ describe('PlacementBadge', () => {
     );
     expect(screen.getByText('Fits this Mac')).toBeInTheDocument();
     expect(screen.getByText('Needs both Macs')).toBeInTheDocument();
+  });
+
+  /**
+   * Q-42: under "Memory on Work's Mac Studio · 37.0 GB available of 96.0 GB" the picker said
+   * "31 GB · Fits this Mac" — "this Mac" was the MacBook. The badge names the Mac(s) from the plan's
+   * own single candidates.
+   */
+  it('names the Mac a model fits on, never "this Mac" beside another Mac’s memory', () => {
+    const fits = (id: string, status: 'fits' | 'short') => {
+      const c = PLAN_27B.candidates!.find((x) => x.id === id)!;
+      return { ...c, fit: { ...c.fit, status } };
+    };
+    const plan = (local: 'fits' | 'short', studio: 'fits' | 'short'): PlacementPlan => ({
+      ...PLAN_27B,
+      badge: local === 'fits' ? { kind: 'fitsThisMac' } : { kind: 'fitsPeer', name: 'x' },
+      candidates: [
+        fits('single:local', local),
+        fits('single:workhorse', studio),
+        ...PLAN_27B.candidates!.filter((c) => c.key.kind !== 'single'),
+      ],
+    });
+    const hereOnly = pickerBadgeOf(plan('fits', 'short'))!;
+    const both = pickerBadgeOf(plan('fits', 'fits'))!;
+    expect(hereOnly.fitsOn).toEqual(['Mihai Macbook']);
+    expect(both).toMatchObject({ fitsOn: ['Mihai Macbook', 'Work’s Mac Studio'], macs: 2 });
+    render(
+      <IntlTestWrapper>
+        <PlacementBadge badge={hereOnly} />
+        <PlacementBadge badge={both} />
+      </IntlTestWrapper>
+    );
+    expect(screen.getByText('Fits Mihai Macbook').closest('[data-tone]')).toHaveAttribute(
+      'data-tone',
+      'ok'
+    );
+    expect(screen.getByText('Fits both Macs')).toBeInTheDocument();
+    expect(screen.queryByText('Fits this Mac')).toBeNull();
+  });
+
+  it('a plan with no badge has no picker badge', () => {
+    expect(pickerBadgeOf({ ...PLAN_27B, badge: undefined })).toBeNull();
   });
 });
 

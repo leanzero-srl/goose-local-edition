@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "両方の Mac が必要"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {両方の Mac に収まる} other {# 台すべての Mac に収まる}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name} に収まる"
   },

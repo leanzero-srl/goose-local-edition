@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "Perlu kedua-dua Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {Muat pada kedua-dua Mac} other {Muat pada semua # Mac}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Muat dalam {name}"
   },

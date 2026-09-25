@@ -128,8 +128,13 @@ import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import { PeerHeldLine } from './PeerHeldLine';
 import { dropRoute } from './routeSwitch';
 import { routeServesChat } from '../chatServedBy/chatServedBy';
-import { PlacementBadge, PlacementCard, badgesOf, usePlacementPlans } from './PlacementCard';
-import type { PlacementBadge as PlacementBadgeDto } from '../../acp/mlx-placement';
+import {
+  PlacementBadge,
+  PlacementCard,
+  badgesOf,
+  usePlacementPlans,
+  type PickerBadge,
+} from './PlacementCard';
 
 // Formatters stay importable from this module — tests and older callers reach them here.
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
@@ -583,7 +588,7 @@ function NumericField({
 
 interface ModelOption extends StudioSelectOption {
   model: MlxLocalModel;
-  badge?: PlacementBadgeDto;
+  badge?: PickerBadge;
 }
 
 function ModelOptionLabel({ option }: { option: ModelOption }) {
@@ -613,7 +618,7 @@ function ModelPicker({
   onChange: (id: string | null) => void;
   disabled: boolean;
   /** Where each model fits (the placement planner), by model id. */
-  badges?: Map<string, PlacementBadgeDto>;
+  badges?: Map<string, PickerBadge>;
 }) {
   const options: ModelOption[] = models.map((model) => ({
     value: model.id,

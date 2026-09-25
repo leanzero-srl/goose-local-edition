@@ -205,6 +205,10 @@ const i18n = defineMessages({
   },
   badgeThisMac: { id: 'placementCard.badgeThisMac', defaultMessage: 'Fits this Mac' },
   badgePeer: { id: 'placementCard.badgePeer', defaultMessage: 'Fits {name}' },
+  badgeEvery: {
+    id: 'placementCard.badgeEvery',
+    defaultMessage: 'Fits {count, plural, =2 {both Macs} other {all # Macs}}',
+  },
   badgeBoth: { id: 'placementCard.badgeBoth', defaultMessage: 'Needs both Macs' },
   badgeTooBig: { id: 'placementCard.badgeTooBig', defaultMessage: 'Too big, short {gb}' },
   badgeUnknown: { id: 'placementCard.badgeUnknown', defaultMessage: 'Fit unknown' },
@@ -374,19 +378,50 @@ function badgeTone(badge: PlacementBadgeDto): Tone | undefined {
   }
 }
 
-/** The model picker's badge: where this model fits, measured just now. */
-export function PlacementBadge({ badge }: { badge: PlacementBadgeDto }) {
+/**
+ * The picker's badge for one model: goose's badge, plus every Mac ONE engine fits it on, by name,
+ * from the plan's own single candidates. goose's `fitsThisMac` names no Mac, and under "Memory on
+ * Work's Mac Studio" the picker's "Fits this Mac" read as the Studio when it meant the MacBook (Q-42).
+ */
+export interface PickerBadge {
+  badge: PlacementBadgeDto;
+  /** The Macs a single engine fits the model on (goose's fit rule), in the plan's order. */
+  fitsOn: string[];
+  /** How many Macs the plan judged alone — "both" / "all" only when every one fits. */
+  macs: number;
+}
+
+/** The picker's badge from one plan (`null` when goose sent none). */
+export function pickerBadgeOf(plan: PlacementPlan): PickerBadge | null {
+  if (!plan.badge) return null;
+  const singles = (plan.candidates ?? []).filter((c) => c.key.kind === 'single');
+  const fitsOn = singles
+    .filter((c) => c.supported && (c.fit.status === 'fits' || c.fit.status === 'smallerContext'))
+    .flatMap((c) => (c.nodeNames[0] ? [c.nodeNames[0]] : []));
+  return { badge: plan.badge, fitsOn, macs: singles.length };
+}
+
+/** The model picker's badge: where this model fits, measured just now — each Mac by its name. */
+export function PlacementBadge({ badge: picker }: { badge: PickerBadge }) {
   const intl = useIntl();
+  const { badge, fitsOn, macs } = picker;
+  const fitsAlone = badge.kind === 'fitsThisMac' || badge.kind === 'fitsPeer';
   const text =
-    badge.kind === 'fitsThisMac'
-      ? intl.formatMessage(i18n.badgeThisMac)
-      : badge.kind === 'fitsPeer'
-        ? intl.formatMessage(i18n.badgePeer, { name: badge.name })
-        : badge.kind === 'needsBothMacs'
-          ? intl.formatMessage(i18n.badgeBoth)
-          : badge.kind === 'tooBig'
-            ? intl.formatMessage(i18n.badgeTooBig, { gb: gb(badge.shortBytes) })
-            : intl.formatMessage(i18n.badgeUnknown);
+    fitsAlone && fitsOn.length >= 2 && fitsOn.length === macs
+      ? intl.formatMessage(i18n.badgeEvery, { count: fitsOn.length })
+      : fitsAlone && fitsOn.length > 0
+        ? intl.formatMessage(i18n.badgePeer, {
+            name: intl.formatList(fitsOn, { type: 'conjunction' }),
+          })
+        : badge.kind === 'fitsThisMac'
+          ? intl.formatMessage(i18n.badgeThisMac)
+          : badge.kind === 'fitsPeer'
+            ? intl.formatMessage(i18n.badgePeer, { name: badge.name })
+            : badge.kind === 'needsBothMacs'
+              ? intl.formatMessage(i18n.badgeBoth)
+              : badge.kind === 'tooBig'
+                ? intl.formatMessage(i18n.badgeTooBig, { gb: gb(badge.shortBytes) })
+                : intl.formatMessage(i18n.badgeUnknown);
   return (
     <Chip tone={badgeTone(badge)} title={badge.kind === 'unknown' ? badge.reason : undefined}>
       {text}
@@ -418,9 +453,12 @@ export function usePlacementPlans(modelKey: string): Map<string, PlacementPlan> 
 }
 
 /** The picker's badge per model, from the plans. */
-export function badgesOf(plans: Map<string, PlacementPlan>): Map<string, PlacementBadgeDto> {
-  const out = new Map<string, PlacementBadgeDto>();
-  for (const [id, plan] of plans) if (plan.badge) out.set(id, plan.badge);
+export function badgesOf(plans: Map<string, PlacementPlan>): Map<string, PickerBadge> {
+  const out = new Map<string, PickerBadge>();
+  for (const [id, plan] of plans) {
+    const badge = pickerBadgeOf(plan);
+    if (badge) out.set(id, badge);
+  }
   return out;
 }
 

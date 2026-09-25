@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "需要两台 Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {两台 Mac 都放得下} other {全部 # 台 Mac 都放得下}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "可放入 {name}"
   },

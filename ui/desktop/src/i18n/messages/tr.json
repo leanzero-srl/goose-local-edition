@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "İki Mac de gerekli"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {İki Mac’e de sığar} other {# Mac’in hepsine sığar}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name} üzerine sığar"
   },

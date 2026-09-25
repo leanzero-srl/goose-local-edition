@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "Nécessite les deux Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {Tient sur les deux Mac} other {Tient sur les # Mac}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Tient sur {name}"
   },

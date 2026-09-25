@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "Braucht beide Macs"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {Passt auf beide Macs} other {Passt auf alle # Macs}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Passt auf {name}"
   },

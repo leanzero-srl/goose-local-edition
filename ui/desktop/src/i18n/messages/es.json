@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "Necesita ambos Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {Cabe en ambos Mac} other {Cabe en los # Mac}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Cabe en {name}"
   },

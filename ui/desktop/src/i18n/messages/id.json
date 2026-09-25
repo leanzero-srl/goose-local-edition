@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "Perlu kedua Mac"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {Muat di kedua Mac} other {Muat di semua # Mac}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Muat di {name}"
   },

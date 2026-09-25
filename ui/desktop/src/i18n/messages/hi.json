@@ -5054,6 +5054,9 @@
   "placementCard.badgeBoth": {
     "defaultMessage": "दोनों Mac चाहिए"
   },
+  "placementCard.badgeEvery": {
+    "defaultMessage": "{count, plural, =2 {दोनों Mac पर फ़िट} other {सभी # Mac पर फ़िट}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name} में समाता है"
   },
