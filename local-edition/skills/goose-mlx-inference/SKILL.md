@@ -240,6 +240,14 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   and the tray menu opening. The tray section is a pure model (`utils/mlxTray.ts`); Mount/Unmount run in a window's
   renderer (`hooks/useMlxTrayActions.ts`) because main has no ACP client.
 - Tile colours while RUNNING: slate idle / accent reading / ok writing / slate when activity is unknown.
+- TILE WORDS (owner, 2026-09-25, 3.0.31–3.0.33): the headline IS the activity (Idle / Reading prompt / Writing / Queued) —
+  `servingEngine().wordText`, shared with the other tabs' badge; "Running" only when up with no live read. Only MEASURED
+  figures are drawn (no dashes, no "nothing written yet"); the rate trace only while writing; cache-saved only when > 0.
+  He reads the tile against the tray ("Remote · Idle"): the two must never disagree.
+- RESTORE RACE (3.0.31): route_status asks the proxy first and the peer's status only on failure — an engine that becomes
+  ready between the two reads looked "running but not serving". Fixed: re-ask the proxy after the peer says running
+  (`route_models`). A failed restore line clears itself once its model serves (`settleRestoreLine`); Run it re-plans when
+  what serves changes. Harness trap: `restore.mjs` breaks on "Running" — the headline no longer says it; key on Idle.
 - TRAP (2026-09-24, 3.0.28 → fixed 6e287d4b9): main's `net.fetch` rides `session.defaultSession`, whose
   `onBeforeSendHeaders` hook (upstream goose) stamped `Origin: http://localhost:5173` on EVERY request — main's too. The
   Link relay refuses any Origin-bearing request (403), so a remote single's tile read "Rates unavailable over LeanZero

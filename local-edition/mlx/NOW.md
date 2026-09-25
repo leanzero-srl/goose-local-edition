@@ -1,5 +1,11 @@
 # NOW — MLX in-house engine campaign (branch goose/mlx-inferencing)
 
+## 2026-09-25 (later) — 3.0.33 PUBLISHED + on both Macs: the tile's headline is what the engine does; restore race fixed
+Owner caught "Running" over an idle tile. 5bd73e93b (headline = activity, noise gone), 5c8960f22 (measured figures only),
+e6476b9f7 (route_status re-asks the proxy; failed restore line self-clears), 47f04e3f8 (Run it re-plans on serving change).
+Verified live: reinstall → restore on the Studio with no failure line; Idle / Reading prompt / Writing 33 tok/s green / Idle
+with last rates. 27B still served from Work's Mac Studio.
+
 ## 2026-09-25 — 3.0.30 PUBLISHED + installed on BOTH Macs: Run is a switch (47c31c32e), rates over Link (6e287d4b9), attribution (7d9b1b85c)
 Verified live: Studio single → Run across both Macs (stopped Studio, tensor split Ready 17.8 GiB/Mac) → Run on Studio (split
 gone on both Macs, Studio serving in 12 s); tile shows the Studio's live rates + "Chat · <session>"; relaunch restores the
