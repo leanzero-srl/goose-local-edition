@@ -512,6 +512,36 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
     );
   });
 
+  it('Q-64: once main reads the Mac again, the route’s lagging `reconnecting` mark does not re-raise the bar', async () => {
+    const idle = parseMlxLiveStatus(PREFILL_STATUS);
+    if (!idle.ok) throw new Error(idle.detail);
+    (window as unknown as { electron: unknown }).electron = {
+      mlxEngineActivity: async (): Promise<MlxEngineSnapshot> => ({
+        engine: 'remote',
+        mode: 'running',
+        modelId: null,
+        baseUrl: ROUTE.baseUrl,
+        stats: idle.stats,
+        statusDetail: null,
+        rates: EMPTY_BOOK,
+        serving: { clients: [], unattributed: 0, swarmRuns: [], error: null },
+        failedError: null,
+      }),
+    };
+    mockExtMethod.mockResolvedValue({
+      status: {
+        ...ROUTE,
+        state: 'reconnecting',
+        lastError:
+          "Work's Mac Studio does not answer over LeanZero Link right now: the LeanZero Link mesh cannot reach it (connection refused)",
+      },
+    });
+    await mlxRemoteSingleStatus();
+    wrap('swarm', 's-mine');
+    // Before main's read lands, the route's word stands; once it lands, main's word is "back".
+    await waitFor(() => expect(screen.queryByTestId('composer-readiness')).toBeNull());
+  });
+
   it('Q-59: main’s PUSHED read clears the bar the moment the Mac answers — no wait for the next poll', async () => {
     const handlers: Record<string, (event: unknown, ...args: unknown[]) => void> = {};
     const lost: MlxEngineSnapshot = {

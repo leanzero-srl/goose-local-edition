@@ -221,4 +221,17 @@ describe('the tray while chat is served from a linked Mac', () => {
     expect(f.title).toBe("Work's Mac Studio · failed");
     expect(f.phase).toBe('failed');
   });
+
+  it('Q-64: the registry’s lagging Offline mark does not re-raise "Reconnecting" once main reads the Mac', () => {
+    const marked = toMlxRemoteReport({
+      ...READY,
+      state: 'reconnecting',
+      lastError:
+        "Work's Mac Studio does not answer over LeanZero Link right now: the LeanZero Link mesh cannot reach it (connection refused)",
+    })!;
+    const model = buildMlxTrayModel(remoteSnapshot(IDLE_STATUS), options(marked));
+    expect(model.title).toBe("Work's Mac Studio · Idle");
+    expect(model.phase).toBe('idle');
+    expect(labels(model).some((l) => /Error:|cannot reach/.test(l))).toBe(false);
+  });
 });

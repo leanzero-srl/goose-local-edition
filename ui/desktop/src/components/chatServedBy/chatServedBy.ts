@@ -4,6 +4,7 @@ import { remoteRouteUp, type MlxRemoteSingleStatus } from '../../acp/mlx-remote-
 import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
 import type { MlxServing } from '../../utils/mlxServing';
 import { leaveCause, type LeaveCause } from '../../utils/leaveCause';
+import { routeContactLost } from '../../utils/routeContact';
 import type { EnginePhase } from '../lz/tokens';
 import { ownsTheMac } from '../leanzero-swarm/mlxDistributed';
 import { routePeerName } from '../leanzero-swarm/macs';
@@ -135,19 +136,15 @@ export function routeServesChat(
  * refused over Link, or the relay gave no answer), the renderer's route read failing, or main's
  * read of the peer's engine through the relay failing. The words of whichever read failed, or
  * null when it gave none; null = contact is not known to be lost. `failed` is not this: it means
- * the peer answered that its engine failed.
+ * the peer answered that its engine failed. Once main's read of the route answers, "back" is its
+ * word alone — a lagging registry mark never re-raises the bar (utils/routeContact.ts, Q-64).
  */
 export function lostContactWith(
   remote: MlxRemoteSingleStatus,
   remoteReadError: string | null,
   main: MlxEngineSnapshot | null
 ): { why: string | null } | null {
-  if (remote.state === 'reconnecting') return { why: remote.lastError ?? null };
-  if (remoteReadError != null) return { why: remoteReadError };
-  if (main?.engine === 'remote' && main.mode === 'reconnecting') {
-    return { why: main.statusDetail };
-  }
-  return null;
+  return routeContactLost(remote, remoteReadError, main);
 }
 
 function runHere(local: ComposerReadiness): RunHere {
@@ -497,7 +494,14 @@ const NOT_MLX: ChatServedBy = {
   readiness: UNKNOWN,
 };
 
-export function deriveChatServedBy(inputs: ChatServedInputs): ChatServedBy {
+export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
+  // A route whose `reconnecting` is only the registry's lagging mark while main reads its Mac
+  // answering is the route main's read proves: serving (Q-64, utils/routeContact.ts).
+  const inputs: ChatServedInputs =
+    given.remote?.state === 'reconnecting' &&
+    !lostContactWith(given.remote, given.remoteReadError, given.main)
+      ? { ...given, remote: { ...given.remote, state: 'ready', lastError: null } }
+      : given;
   const { provider, lookup, single, distributed, remote, main, sessionId, thisMac } = inputs;
   const isSwarm = provider === 'swarm';
   const isMlx = provider === MLX_PROVIDER_ID;
