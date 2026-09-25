@@ -2611,6 +2611,81 @@ mod tests {
         session.id
     }
 
+    /// VA-189: the stored "YYYY-MM-DD HH:MM:SS" and a bound RFC 3339 date compare as dates, not as
+    /// text — as text a same-day later message passed a `before` bound — and the rows sharing the
+    /// most keywords survive the limit ahead of newer rows sharing one.
+    #[tokio::test]
+    async fn test_search_chat_history_bounds_by_date_and_keeps_the_best_covered_rows() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+
+        let fact = create_search_session(
+            &sm,
+            "Release notes",
+            SessionType::User,
+            "2026-09-23T09:00:00Z",
+            &[(
+                "my release notes go in docs/releases and are published with just",
+                "2026-09-23T09:00:00Z",
+            )],
+        )
+        .await;
+        let later_same_day = create_search_session(
+            &sm,
+            "Later",
+            SessionType::User,
+            "2026-09-25T15:36:52Z",
+            &[
+                ("the release is out", "2026-09-25T15:36:52Z"),
+                ("notes on the release", "2026-09-25T15:37:00Z"),
+            ],
+        )
+        .await;
+
+        let results = sm
+            .search_chat_history(
+                "release notes published",
+                Some(1),
+                None,
+                None,
+                None,
+                vec![SessionType::User],
+            )
+            .await
+            .unwrap();
+        assert_eq!(results.results.len(), 1);
+        assert_eq!(
+            results.results[0].session_id, fact,
+            "the older message carrying all three keywords outranks newer ones carrying fewer"
+        );
+
+        let before = chrono::DateTime::parse_from_rfc3339("2026-09-25T12:20:51Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let results = sm
+            .search_chat_history(
+                "release",
+                Some(10),
+                None,
+                Some(before),
+                None,
+                vec![SessionType::User],
+            )
+            .await
+            .unwrap();
+        let ids: Vec<&str> = results
+            .results
+            .iter()
+            .map(|r| r.session_id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![fact.as_str()],
+            "{later_same_day} is after the bound"
+        );
+        assert_eq!(results.results[0].session_description, "Release notes");
+    }
+
     #[tokio::test]
     async fn test_search_chat_history_preserves_message_limited_behavior() {
         let temp_dir = TempDir::new().unwrap();

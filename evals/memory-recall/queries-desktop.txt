@@ -1,0 +1,35 @@
+# The desktop chat's requests (VA-189, 2026-09-25): run from the home folder, the desktop's working dir.
+# Labels are judged by the WORDS of each skill's description (goose-benchmark-iteration is "build a new tier, fix a
+# scorer, re-score, publish" — not how to start a run). Each line: the request ||| the skills that SHOULD be suggested (comma list, empty = none) [||| session=<id>:
+# replay the past-session pick at the moment that session began — `goose recall --session`].
+# The live case (session 20260925_30): paths named goose-mlx-quality-loop and app-testing.
+Work only inside /Users/mihaiperdum/goose-builds/quality/R1-smoke/work. Create a Python package "ledger" with ledger/__init__.py and ledger/core.py holding a class Ledger that records (date, account, amount, memo) entries in memory. Show me the files. ||| ||| session=20260925_30
+Add pytest tests in /Users/mihaiperdum/goose-builds/quality/R1-smoke/work/tests/test_core.py for adding entries and for the balance of one account. Run them with python3 -m pytest -q from /Users/mihaiperdum/goose-builds/quality/R1-smoke/work and show the output. ||| ||| session=20260925_30
+# stories and chit-chat asked today (sessions 20260925_1..29)
+Write a 300-word story about a lighthouse keeper. No tools. ||| ||| session=20260925_22
+Write a 400-word story about a tram driver in Lisbon, run 1790342335860. No tools, no preamble. ||| ||| session=20260925_24
+Write a 400-word story about a lighthouse cat in Hel, run 1790342814076. No tools, no preamble. ||| ||| session=20260925_26
+Write a 150-word paragraph about the history of the Rhine. ||| ||| session=20260925_5
+Name three rivers in Europe, one line. ||| ||| session=20260925_1
+# coding tasks whose PATHS carry skill words
+Write a bash script ~/bin/cleanup-logs.sh that deletes .log files older than 7 days in ~/Library/Logs/mlx-quality. |||
+Add a --dry-run flag to ~/Projects/forge-tuner-demo/cli.py that prints the actions instead of running them. |||
+In /Users/mihaiperdum/Projects/jira-export/src/main.rs, replace the unwrap calls with proper error handling. |||
+Create a FastAPI endpoint GET /health in ~/scratch/api/main.py that returns ok true. ||| stack-fastapi
+# goose itself
+How do I start a benchmark run properly? ||| goose-swarm-campaign
+Why won't cargo test -p goose-mcp build on its own? ||| goose-feature-dev
+Clean the goose checkout's build caches, the target directory is huge. ||| goose-clean
+# MLX: goose-mlx-quality-loop SHOULD match
+Run the next MLX quality loop round on the remote single over LeanZero Link. ||| goose-mlx-quality-loop
+Continue the goose MLX quality loop and pick the next open finding. ||| goose-mlx-quality-loop
+Soak test the MLX engine under heavy load and log what breaks for the quality loop. ||| goose-mlx-quality-loop
+Why does the MLX prefix cache miss on the second agent turn? ||| goose-mlx-inference
+Set up the JACCL distributed MLX cluster across the two Macs. ||| mlx-jaccl-cluster
+# other catalogue skills asked plainly
+How do I search Jira issues with JQL over the REST API? ||| jira-api-skill
+Sync my Projects folder between the laptop and the workhorse. ||| machine-sync
+Design a pricing page frontend with bold solid colors. ||| frontend-design
+# past sessions that SHOULD be named: a fact the user stated (20260923_19) and a question answered (20260923_64)
+Where do my release notes go and how are they published? ||| ||| past=20260923_19|20260923_20
+How much bandwidth does Thunderbolt 5 have? ||| ||| past=20260923_64

@@ -200,17 +200,25 @@ pub fn open_question(assistant_text: &str) -> Option<String> {
     asks.then(|| headline(last))
 }
 
-/// Which skill to load without a call: the best suggestion, when the request names it (two name
-/// terms) and its body fits the auto-load budget.
+/// Which skill to load without a call: the best suggestion, when the request NAMES it — two words of
+/// its name or keywords, at least one its OWN (no other skill's name carries it) — and its body fits
+/// the auto-load budget. A family word does not help name it: measured (VA-189, session 20260925_30)
+/// "goose" (in seven names, from a path) + "quality" loaded `goose-mlx-quality-loop` into a Python
+/// ledger task, and two request terms reaching ONE name word ("memo", "memory" → `import-memory`)
+/// are one word.
 pub fn autoload_pick<'a>(
-    ranked: &[(usize, &'a SourceEntry)],
+    suggested: &[SkillHit<'a>],
     context_limit_tokens: usize,
 ) -> Option<&'a SourceEntry> {
     let budget = (context_limit_tokens as f64 * CHARS_PER_TOKEN * AUTOLOAD_WINDOW_SHARE) as usize;
-    ranked
+    suggested
         .first()
-        .filter(|(name_terms, skill)| *name_terms >= 2 && skill.content.chars().count() <= budget)
-        .map(|(_, skill)| *skill)
+        .filter(|hit| {
+            hit.name_words >= 2
+                && hit.own_name_terms >= 1
+                && hit.skill.content.chars().count() <= budget
+        })
+        .map(|hit| hit.skill)
 }
 
 pub struct RecallClient {
@@ -288,9 +296,73 @@ pub fn last_user_text(messages: &[Message]) -> Option<String> {
     }
 }
 
-/// The query terms a request contributes: its words minus function words and one-letter tokens.
+/// The request with its LOCATIONS taken out: a path, a URL or a file name says WHERE the work
+/// happens, not what it is about. A path keeps only its file's stem ("crates/x/src/scheduler.rs" →
+/// "scheduler"); a directory path and a URL keep nothing; a bare file name keeps its stem
+/// ("test_core.py" → "test_core"). Every other word passes through untouched, so a request without a
+/// location searches exactly as before. Measured (VA-189, 62 skills, the desktop chat of 2026-09-25,
+/// session 20260925_30): "Add pytest tests in /Users/mihaiperdum/goose-builds/quality/R1-smoke/work/
+/// tests/test_core.py …" searched users, mihaiperdum, goose, builds, quality, r1, smoke, work — and
+/// "goose" + "quality" named `goose-mlx-quality-loop` and LOADED its body on a Python ledger task, two
+/// turns running; "~/Library/Logs/mlx-quality" suggested it on a log-cleanup script and
+/// "~/Projects/forge-tuner-demo/cli.py" suggested `forge-tuner` and `leanzero-apps-demo-data`.
+pub fn intent_text(text: &str) -> String {
+    text.split_whitespace()
+        .filter_map(|raw| {
+            let word = raw.trim_matches(|c: char| {
+                matches!(
+                    c,
+                    '"' | '\''
+                        | '`'
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '<'
+                        | '>'
+                        | ','
+                        | ';'
+                        | ':'
+                        | '.'
+                        | '!'
+                        | '?'
+                )
+            });
+            if word.contains("://") {
+                return None;
+            }
+            let last = word.rsplit(['/', '\\']).find(|s| !s.is_empty());
+            let is_path = word.starts_with('/')
+                || word.starts_with('~')
+                || word.contains('\\')
+                || word.matches('/').count() >= 2
+                || (word.contains('/') && last.and_then(file_stem).is_some());
+            if is_path {
+                return last.and_then(file_stem).map(String::from);
+            }
+            Some(file_stem(word).unwrap_or(raw).to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The stem of a file name — "core" of "core.py", "cleanup-logs" of "cleanup-logs.sh" — or None when
+/// the word is not one: the extension is one to five letters or digits and starts with a letter, so
+/// "3.0.39" and "v1.2" stay words.
+fn file_stem(word: &str) -> Option<&str> {
+    let (stem, extension) = word.rsplit_once('.')?;
+    let is_extension = (1..=5).contains(&extension.len())
+        && extension.starts_with(|c: char| c.is_ascii_alphabetic())
+        && extension.chars().all(|c| c.is_ascii_alphanumeric());
+    (is_extension && !stem.is_empty()).then_some(stem)
+}
+
+/// The query terms a request contributes: its intent words (`intent_text`) minus function words and
+/// one-letter tokens.
 pub fn query_terms(text: &str) -> Vec<String> {
-    search_terms(text)
+    search_terms(&intent_text(text))
         .into_iter()
         .filter(|t| t.chars().count() > 1 && !STOPWORDS.contains(&t.as_str()))
         .collect()
@@ -407,9 +479,15 @@ pub struct SkillHit<'a> {
     pub matched_terms: usize,
     pub rare_terms: usize,
     pub name_terms: usize,
-    /// Name terms that are this skill's OWN: in no other skill's name or keywords. A word several
-    /// names share — goose, atlassian, api, skill — is a family word and names nothing.
+    /// Words of this skill's name or keywords the request reaches with a term no other skill's name
+    /// carries — counted by NAME WORD, so "memo" and "memory" reaching "memory" are one. A word
+    /// several names share — goose, atlassian, api, skill — is a family word and names nothing.
     pub own_name_terms: usize,
+    /// Words of the name or keywords the request reaches, own or family, counted by name word.
+    pub name_words: usize,
+    /// The request's TOPIC word — its rarest term across the catalogue among those some skill
+    /// carries (ties count every tied term) — reaches one of this skill's own name words.
+    pub topic_in_name: bool,
     /// Two request words said together in the skill's name, keywords or description
     /// (`goose_memory_store::said_together`) — the description path's aboutness.
     pub together: bool,
@@ -419,8 +497,10 @@ pub struct SkillHit<'a> {
 
 /// Every skill sharing a term with the request, best first: terms weighted by their rarity across
 /// the catalogue (a name or keyword match counts twice), and whether the skill is ABOUT the request.
-pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillHit<'a>> {
-    let catalogue: Vec<(&SourceEntry, Vec<String>, Vec<String>)> = skills
+/// The catalogue a request is scored against: each skill with its NAME tokens (name and keywords)
+/// and its TEXT tokens (name, keywords and description).
+fn skill_catalogue(skills: &[SourceEntry]) -> Vec<(&SourceEntry, Vec<String>, Vec<String>)> {
+    skills
         .iter()
         .filter(|s| matches!(s.source_type, SourceType::Skill | SourceType::BuiltinSkill))
         .map(|skill| {
@@ -432,26 +512,37 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
             ));
             (skill, name, text)
         })
-        .collect();
+        .collect()
+}
+
+/// Per request term: in how many skills' text it occurs, and in how many names.
+pub fn skill_term_frequency(skills: &[SourceEntry], terms: &[String]) -> Vec<(usize, usize)> {
+    let catalogue = skill_catalogue(skills);
+    terms
+        .iter()
+        .map(|term| {
+            let count = |pick: &dyn Fn(&(&SourceEntry, Vec<String>, Vec<String>)) -> bool| {
+                catalogue.iter().filter(|entry| pick(entry)).count()
+            };
+            (
+                count(&|(_, _, text)| term_occurrences(term, text) > 0),
+                count(&|(_, name, _)| term_occurrences(term, name) > 0),
+            )
+        })
+        .collect()
+}
+
+pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillHit<'a>> {
+    let catalogue = skill_catalogue(skills);
     let n = catalogue.len();
-    let document_frequency: Vec<usize> = terms
+    let frequency = skill_term_frequency(skills, terms);
+    let document_frequency: Vec<usize> = frequency.iter().map(|(df, _)| *df).collect();
+    let name_frequency: Vec<usize> = frequency.iter().map(|(_, nf)| *nf).collect();
+    let topic_frequency = document_frequency
         .iter()
-        .map(|term| {
-            catalogue
-                .iter()
-                .filter(|(_, _, text)| term_occurrences(term, text) > 0)
-                .count()
-        })
-        .collect();
-    let name_frequency: Vec<usize> = terms
-        .iter()
-        .map(|term| {
-            catalogue
-                .iter()
-                .filter(|(_, name, _)| term_occurrences(term, name) > 0)
-                .count()
-        })
-        .collect();
+        .copied()
+        .filter(|&df| df > 0)
+        .min();
     let mut hits: Vec<SkillHit<'a>> = catalogue
         .iter()
         .filter_map(|(skill, name, text)| {
@@ -459,7 +550,9 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
             let mut rare_terms = 0;
             let mut matched_terms = 0;
             let mut name_terms = 0;
-            let mut own_name_terms = 0;
+            let mut name_words = std::collections::BTreeSet::new();
+            let mut own_words = std::collections::BTreeSet::new();
+            let mut topic_in_name = false;
             for (i, term) in terms.iter().enumerate() {
                 if term_occurrences(term, text) == 0 {
                     continue;
@@ -473,14 +566,22 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
                 if term_occurrences(term, name) > 0 {
                     name_terms += 1;
                     score += weight;
-                    if name_frequency[i] == 1 {
-                        own_name_terms += 1;
+                    for (word, token) in name.iter().enumerate() {
+                        if term_occurrences(term, std::slice::from_ref(token)) == 0 {
+                            continue;
+                        }
+                        name_words.insert(word);
+                        if name_frequency[i] == 1 {
+                            own_words.insert(word);
+                            topic_in_name |= Some(document_frequency[i]) == topic_frequency;
+                        }
                     }
                 }
             }
             if matched_terms == 0 {
                 return None;
             }
+            let own_name_terms = own_words.len();
             let together = said_together(text, terms);
             // a skill named by the request — a word of its name or keywords that no other skill's
             // carries — is suggested on one rare term; one matched only by its description, or only
@@ -499,10 +600,19 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
             // tenant, key or site, matched on the words every desk's description carries apart; the
             // description suggestions worth keeping say the words side by side: "blog post",
             // "weekly write-up", "LM Studio", "Jira issues", "Forge deployment", "run or benchmark".
-            let about = if own_name_terms >= 1 {
-                rare_terms >= 1
-            } else {
-                rare_terms >= 2 && matched_terms * 2 >= terms.len() && together
+            //
+            // ONE own name word names the skill only when it is the request's TOPIC word or the
+            // skill carries half the request (VA-189, 62 skills, 21 desktop requests): "test"/"tests"
+            // reached `app-testing` ("Test ANY Atlassian Marketplace app … live, in a real browser")
+            // on a pytest request whose topic is "pytest", 3 of 13 terms; "turn" reached
+            // `goose-knob-turning` for "Why does the MLX prefix cache miss on the second agent
+            // turn?" (topic "prefix", 1 of 7); while `stack-fastapi` (topic "fastapi"),
+            // `goose-benchmark-iteration` (topic "benchmark") and `machine-sync` (4 of 6) keep theirs.
+            // Two own name WORDS name it outright ("frontend" + "design", "jaccl" + "cluster").
+            let about = match own_name_terms {
+                0 => rare_terms >= 2 && matched_terms * 2 >= terms.len() && together,
+                1 => rare_terms >= 1 && (topic_in_name || matched_terms * 2 >= terms.len()),
+                _ => rare_terms >= 1,
             };
             Some(SkillHit {
                 score,
@@ -510,6 +620,8 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
                 rare_terms,
                 name_terms,
                 own_name_terms,
+                name_words: name_words.len(),
+                topic_in_name,
                 together,
                 about,
                 skill,
@@ -527,7 +639,7 @@ pub fn skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillH
 
 /// Skills the request is about, by the same rule as memories: the hits that are ABOUT it, scoring
 /// at least half the best of them, at most `RECALL_MAX_SKILLS`.
-pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&'a SourceEntry> {
+pub fn relevant_skill_hits<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<SkillHit<'a>> {
     let hits = skill_hits(skills, terms);
     let top = hits
         .iter()
@@ -537,25 +649,29 @@ pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&
     hits.into_iter()
         .filter(|hit| hit.about && hit.score >= top * RECALL_MIN_SHARE_OF_TOP)
         .take(RECALL_MAX_SKILLS)
+        .collect()
+}
+
+pub fn relevant_skills<'a>(skills: &'a [SourceEntry], terms: &[String]) -> Vec<&'a SourceEntry> {
+    relevant_skill_hits(skills, terms)
+        .into_iter()
         .map(|hit| hit.skill)
         .collect()
 }
 
-/// The suggested skills with how many request terms sit in their name or keywords, best first.
-pub fn ranked_skills<'a>(
-    skills: &'a [SourceEntry],
-    terms: &[String],
-) -> Vec<(usize, &'a SourceEntry)> {
-    relevant_skills(skills, terms)
-        .into_iter()
-        .map(|skill| {
-            let name = tokenize(&format!("{} {}", skill.name, skill_keywords(skill)));
-            let name_terms = terms
-                .iter()
-                .filter(|term| term_occurrences(term, &name) > 0)
-                .count();
-            (name_terms, skill)
+/// The skills already in this session's history: every `load_skill(name)` the model called. Their
+/// bodies sit in the conversation, so recall neither suggests nor loads them again.
+pub fn loaded_skills(messages: &[Message]) -> Vec<String> {
+    messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|c| match c {
+            MessageContent::ToolRequest(req) => req.tool_call.as_ref().ok(),
+            _ => None,
         })
+        .filter(|call| call.name == "load_skill" || call.name.ends_with("__load_skill"))
+        .filter_map(|call| call.arguments.as_ref()?.get("name")?.as_str())
+        .map(|name| name.split('/').next().unwrap_or(name).to_string())
         .collect()
 }
 
@@ -571,10 +687,92 @@ pub struct PastSession {
 
 // ratio: the history search is an OR of LIKEs, so it returns every message sharing one word; twenty
 // rows is enough to find one that covers the request when one exists, and cheap when none does.
-const PAST_SESSION_ROWS: usize = 20;
+pub const PAST_SESSION_ROWS: usize = 20;
 
-/// From history-search rows (newest first), the first message in another session that covers the
-/// request by the same rule memories use: at least half of the request's terms.
+/// How one earlier message stands against the request.
+struct PastReading {
+    matched: usize,
+    together: bool,
+    /// The session's title words the request reaches — and whether it reaches every one of them.
+    name_words: usize,
+    title_covered: bool,
+    same_ask: bool,
+    /// Request terms in the message's headline — the line the `<past-session>` block quotes.
+    headline_terms: usize,
+}
+
+impl PastReading {
+    /// The memory law, read on a conversation: a message carrying EVERY request term with two of
+    /// them said together, or a session NAMED by the request — at least two title words, every
+    /// word of the title a request word, and more than half the request in the message — and never
+    /// a session that was the same ask. The whole title, because a title word the request lacks
+    /// is another subject: "Hel lighthouse cat story" shares "lighthouse" and "story" with "Write a
+    /// 300-word story about a lighthouse keeper" and is not about a keeper.
+    ///
+    /// The quoted headline has to say one of the request's words: a document-sized message carries
+    /// every word somewhere. Measured (VA-189): session 20260909_3 — a 54,905-char benchmark spec
+    /// pasted as a user message and its "<analysis>" continuations — carried all four words of
+    /// "Which git identity do goose commits use?" with two side by side, and was named for it and
+    /// for "Is swarm resume still broken?" under the headlines "```xml" and "<analysis>".
+    fn covers(&self, term_count: usize) -> bool {
+        !self.same_ask
+            && self.headline_terms >= 1
+            && ((self.matched >= term_count && self.together)
+                || (self.name_words >= 2 && self.title_covered && self.matched * 2 > term_count))
+    }
+}
+
+/// A session is the SAME ASK when one of its user messages says nothing the request does not: the
+/// request asked again in a new chat is a fresh attempt, not a source. Measured (VA-189, 2026-09-25):
+/// "Write a 300-word story about a lighthouse keeper. No tools." asked in five new chats; the
+/// fourth answered "you asked this identical question four times in this session already" and
+/// the fifth "you asked this identical question in full context today and I already gave you the
+/// story … Same ask, same honest answer." — and wrote no story.
+fn read_past(
+    result: &crate::session::chat_history_search::ChatRecallResult,
+    message: &crate::session::chat_history_search::ChatRecallMessage,
+    terms: &[String],
+) -> PastReading {
+    let tokens = tokenize(&message.content);
+    let title = query_terms(&result.session_description);
+    let reached = |word: &String| {
+        terms
+            .iter()
+            .any(|term| term_occurrences(term, std::slice::from_ref(word)) > 0)
+    };
+    let same_ask = result.messages.iter().any(|m| {
+        if m.role != "user" {
+            return false;
+        }
+        let said = query_terms(&m.content);
+        !said.is_empty() && said.iter().all(|t| terms.contains(t))
+    });
+    PastReading {
+        matched: terms
+            .iter()
+            .filter(|term| term_occurrences(term, &tokens) > 0)
+            .count(),
+        together: said_together(&tokens, terms),
+        headline_terms: {
+            let quoted = tokenize(&headline(&message.content));
+            terms
+                .iter()
+                .filter(|term| term_occurrences(term, &quoted) > 0)
+                .count()
+        },
+        name_words: title.iter().filter(|word| reached(word)).count(),
+        title_covered: title.iter().all(reached),
+        same_ask,
+    }
+}
+
+/// From history-search rows (newest first), the newest message in another session that covers the
+/// request (`PastReading::covers`). Measured (VA-189, the session DB of 2026-09-25, 21 desktop
+/// requests replayed at the moment each was asked): the shipped rule — half the request's terms,
+/// anywhere — named `20260925_28` ("Write a 400-word story about a violin maker in Cremona … No
+/// tools, no preamble.") for the tram-driver story (7 of 12: write, 400, word, story, run, tools,
+/// preamble), a Rhine essay for "Name three rivers in Europe", an Apple-Silicon memory essay for the
+/// JACCL cluster request and a benchmark app spec for a pricing page.
 pub fn select_past_session(
     results: &[crate::session::chat_history_search::ChatRecallResult],
     terms: &[String],
@@ -582,12 +780,7 @@ pub fn select_past_session(
     let mut candidates: Vec<(chrono::DateTime<chrono::Utc>, PastSession)> = Vec::new();
     for result in results {
         for message in &result.messages {
-            let tokens = tokenize(&message.content);
-            let matched = terms
-                .iter()
-                .filter(|term| term_occurrences(term, &tokens) > 0)
-                .count();
-            if matched * 2 < terms.len() {
+            if !read_past(result, message, terms).covers(terms.len()) {
                 continue;
             }
             candidates.push((
@@ -604,6 +797,50 @@ pub fn select_past_session(
     }
     candidates.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
     candidates.into_iter().next().map(|(_, past)| past)
+}
+
+/// Every earlier message the history search returned, newest first, with the numbers
+/// `select_past_session` reads — the `goose recall` instrument's lines.
+pub fn past_session_candidates(
+    results: &[crate::session::chat_history_search::ChatRecallResult],
+    terms: &[String],
+) -> Vec<String> {
+    let mut lines: Vec<(chrono::DateTime<chrono::Utc>, String)> = Vec::new();
+    for result in results {
+        for message in &result.messages {
+            let reading = read_past(result, message, terms);
+            let mark = if reading.covers(terms.len()) {
+                "RECALL"
+            } else {
+                "      "
+            };
+            let together = if reading.together { " [together]" } else { "" };
+            let title = if reading.title_covered {
+                ""
+            } else {
+                " (title not covered)"
+            };
+            let same_ask = if reading.same_ask { " [same ask]" } else { "" };
+            lines.push((
+                message.timestamp,
+                format!(
+                    "{mark} {}/{} terms, {} in name{title}{together}{same_ask}  {} {} (\"{}\"): {}",
+                    reading.matched,
+                    terms.len(),
+                    reading.name_words,
+                    result.session_id,
+                    message.role,
+                    result.session_description,
+                    headline(&message.content)
+                        .chars()
+                        .take(90)
+                        .collect::<String>()
+                ),
+            ));
+        }
+    }
+    lines.sort_by_key(|(at, _)| std::cmp::Reverse(*at));
+    lines.into_iter().map(|(_, line)| line).collect()
 }
 
 /// One line naming what rode along — shown to the person as a system notice and carried at the top of
@@ -798,8 +1035,10 @@ impl McpClientTrait for RecallClient {
         } else {
             Vec::new()
         };
-        let ranked = ranked_skills(&catalogue, &terms);
-        let skills: Vec<&SourceEntry> = ranked.iter().map(|(_, s)| *s).collect();
+        let already_loaded = loaded_skills(session.conversation.as_ref()?.messages());
+        let mut suggested = relevant_skill_hits(&catalogue, &terms);
+        suggested.retain(|hit| !already_loaded.contains(&hit.skill.name));
+        let skills: Vec<&SourceEntry> = suggested.iter().map(|hit| hit.skill).collect();
 
         let mut extras = Extras::default();
         let context_limit = match (
@@ -825,7 +1064,7 @@ impl McpClientTrait for RecallClient {
             _ => None,
         };
         if let Some(limit) = context_limit {
-            if let Some(skill) = autoload_pick(&ranked, limit) {
+            if let Some(skill) = autoload_pick(&suggested, limit) {
                 extras.autoloaded = Some((skill.name.clone(), skill.content.clone()));
             }
         }
@@ -1302,27 +1541,32 @@ mod tests {
             content: content.to_string(),
             timestamp: at(h),
         };
-        let results = vec![
-            ChatRecallResult {
-                session_id: "s-old".to_string(),
-                session_description: "vendor port".to_string(),
+        let session =
+            |id: &str, name: &str, h: u32, messages: Vec<ChatRecallMessage>| ChatRecallResult {
+                session_id: id.to_string(),
+                session_description: name.to_string(),
                 session_working_dir: "/tmp".to_string(),
-                last_activity: at(50),
+                last_activity: at(h),
                 total_messages_in_session: 2,
-                messages: vec![message(
+                messages,
+            };
+        let results = vec![
+            session(
+                "s-old",
+                "vendor port",
+                50,
+                vec![message(
                     "user",
-                    "which port does the bench vendor answer on?\nsecond line",
+                    "the bench vendor answers on port 8850\nsecond line",
                     50,
                 )],
-            },
-            ChatRecallResult {
-                session_id: "s-new".to_string(),
-                session_description: "unrelated".to_string(),
-                session_working_dir: "/tmp".to_string(),
-                last_activity: at(1),
-                total_messages_in_session: 2,
-                messages: vec![message("assistant", "the port is closed", 1)],
-            },
+            ),
+            session(
+                "s-new",
+                "unrelated",
+                1,
+                vec![message("assistant", "the port is closed", 1)],
+            ),
         ];
         let terms = query_terms("Which port does the bench vendor answer on?");
         let past = select_past_session(&results, &terms).unwrap();
@@ -1331,13 +1575,67 @@ mod tests {
             "one shared word ('port') does not cover the request"
         );
         assert_eq!(past.role, "user");
-        assert_eq!(past.headline, "which port does the bench vendor answer on?");
+        assert_eq!(past.headline, "the bench vendor answers on port 8850");
         let block = render(&[], &[], Some(&past)).unwrap();
         assert!(block.starts_with(
             "<recall-line>recalled: past session s-old</recall-line>\n<past-session>"
         ));
         assert!(block.contains("session s-old (\"vendor port\","));
         assert!(select_past_session(&results, &query_terms("bake bread")).is_none());
+
+        // VA-189: the same ask in a new chat is a fresh attempt, not a source.
+        let asked_before = vec![session(
+            "20260925_22",
+            "Lighthouse keeper story",
+            3,
+            vec![
+                message(
+                    "user",
+                    "Write a 300-word story about a lighthouse keeper. No tools.",
+                    3,
+                ),
+                message(
+                    "assistant",
+                    "The lighthouse keeper wrote a 300-word story, no tools needed.",
+                    3,
+                ),
+            ],
+        )];
+        let terms = query_terms("Write a 300-word story about a lighthouse keeper. No tools.");
+        assert!(select_past_session(&asked_before, &terms).is_none());
+
+        // VA-189: another story shares the template's words, not the subject.
+        let terms = query_terms(
+            "Write a 400-word story about a tram driver in Lisbon, run 1790342335860. No tools, no preamble.",
+        );
+        let violin = vec![session(
+            "20260925_28",
+            "Cremona violin maker story",
+            1,
+            vec![message(
+                "user",
+                "Write a 400-word story about a violin maker in Cremona, run 1790345976491. No tools, no preamble.",
+                1,
+            )],
+        )];
+        assert!(select_past_session(&violin, &terms).is_none());
+
+        // a session whose title names the request, its message carrying most of it
+        let terms = query_terms("How much bandwidth does Thunderbolt 5 have?");
+        let thunderbolt = vec![session(
+            "20260923_64",
+            "Thunderbolt 5 bandwidth",
+            30,
+            vec![message(
+                "assistant",
+                "Thunderbolt 5 carries 80 Gb/s of bandwidth each way.",
+                30,
+            )],
+        )];
+        assert_eq!(
+            select_past_session(&thunderbolt, &terms).map(|p| p.session_id),
+            Some("20260923_64".to_string())
+        );
     }
 
     #[test]
@@ -1682,27 +1980,215 @@ mod tests {
         );
     }
 
+    fn skill_hit(skill: &SourceEntry, name_words: usize, own_name_terms: usize) -> SkillHit<'_> {
+        SkillHit {
+            score: 1.0,
+            matched_terms: 1,
+            rare_terms: 1,
+            name_terms: name_words,
+            own_name_terms,
+            name_words,
+            topic_in_name: false,
+            together: false,
+            about: true,
+            skill,
+        }
+    }
+
     #[test]
-    fn autoload_needs_two_name_terms_and_a_body_within_budget() {
+    fn autoload_needs_two_name_words_one_its_own_and_a_body_within_budget() {
         let mut small = skill("jira-api", "Jira REST");
         small.content = "x".repeat(1_000);
         let mut big = skill("jira-api-big", "Jira REST");
         big.content = "x".repeat(100_000);
         assert_eq!(
-            autoload_pick(&[(2, &small)], 262_144).map(|s| s.name.as_str()),
+            autoload_pick(&[skill_hit(&small, 2, 1)], 262_144).map(|s| s.name.as_str()),
             Some("jira-api")
         );
         assert!(
-            autoload_pick(&[(1, &small)], 262_144).is_none(),
-            "one name term is a hint, not a pick"
+            autoload_pick(&[skill_hit(&small, 1, 1)], 262_144).is_none(),
+            "one name word is a hint, not a pick"
         );
         assert!(
-            autoload_pick(&[(2, &big)], 262_144).is_none(),
+            autoload_pick(&[skill_hit(&small, 2, 0)], 262_144).is_none(),
+            "two family words (goose + skill) name no skill"
+        );
+        assert!(
+            autoload_pick(&[skill_hit(&big, 2, 1)], 262_144).is_none(),
             "100k chars exceeds a 32k budget"
         );
         assert!(
-            autoload_pick(&[(2, &small)], 4_000).is_none(),
+            autoload_pick(&[skill_hit(&small, 2, 1)], 4_000).is_none(),
             "a 4k-token window has a 500-char budget"
+        );
+    }
+
+    /// VA-189: the desktop chat of 2026-09-25 (session 20260925_30). Paths are where the work
+    /// happens; their directories named `goose-mlx-quality-loop` ("goose" + "quality") and loaded it.
+    #[test]
+    fn a_path_contributes_its_file_stem_and_nothing_else() {
+        let request = "Add pytest tests in /Users/mihaiperdum/goose-builds/quality/R1-smoke/work/tests/test_core.py for adding entries. Run them with python3 -m pytest -q from /Users/mihaiperdum/goose-builds/quality/R1-smoke/work and show the output.";
+        let terms = query_terms(request);
+        for location in [
+            "goose",
+            "quality",
+            "smoke",
+            "r1",
+            "users",
+            "mihaiperdum",
+            "work",
+        ] {
+            assert!(
+                !terms.contains(&location.to_string()),
+                "{location} in {terms:?}"
+            );
+        }
+        for intent in ["pytest", "tests", "test", "core", "entries", "output"] {
+            assert!(
+                terms.contains(&intent.to_string()),
+                "{intent} missing: {terms:?}"
+            );
+        }
+        assert_eq!(
+            intent_text(
+                "see https://example.com/goose/quality and ledger/core.py, ~/Logs/mlx-quality."
+            ),
+            "see and core"
+        );
+        assert_eq!(
+            intent_text("bump 3.0.39 and fix README.md"),
+            "bump 3.0.39 and fix README"
+        );
+        assert_eq!(
+            query_terms("Can you fix the Postgres port in docker, please?"),
+            query_terms(&intent_text(
+                "Can you fix the Postgres port in docker, please?"
+            )),
+            "a request without a location searches exactly as before"
+        );
+        let skills = vec![
+            skill(
+                "goose-mlx-quality-loop",
+                "The ongoing QUALITY LOOP for Goose Swarm's local-inference product.",
+            ),
+            skill(
+                "goose-clean",
+                "Reclaim disk by cleaning the goose checkout's build caches.",
+            ),
+            skill("goose-feature-dev", "Add a feature to goose."),
+        ];
+        assert!(relevant_skills(&skills, &terms).is_empty());
+        assert_eq!(
+            relevant_skills(
+                &skills,
+                &query_terms("Continue the goose MLX quality loop.")
+            )
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect::<Vec<_>>(),
+            vec!["goose-mlx-quality-loop"]
+        );
+    }
+
+    /// VA-189: one own name word names a skill only as the request's topic word or with half the
+    /// request behind it; two request terms reaching ONE name word are one word.
+    #[test]
+    fn one_own_name_word_names_a_skill_only_as_the_topic_or_with_half_the_request() {
+        let skills = vec![
+            skill(
+                "app-testing",
+                "Test ANY Atlassian Marketplace app live, in a real browser, with evidence.",
+            ),
+            skill(
+                "stack-fastapi",
+                "FastAPI service conventions: routers, pydantic models, pytest fixtures.",
+            ),
+            skill(
+                "import-memory",
+                "Import a memory export from another AI assistant into memory.",
+            ),
+            skill(
+                "goose-knob-turning",
+                "Tune goose swarm knobs one at a time; test each turn of a knob.",
+            ),
+            skill(
+                "goose-mlx-inference",
+                "The MLX engine: prefix cache, unified memory, agent turns.",
+            ),
+            skill(
+                "goose-mlx-quality-loop",
+                "The quality loop: each finding carried in a ledger to a shipped fix.",
+            ),
+            skill(
+                "frontend-design",
+                "Distinctive frontend interfaces with bold design.",
+            ),
+        ];
+        let names = |request: &str| -> Vec<String> {
+            relevant_skills(&skills, &query_terms(request))
+                .into_iter()
+                .map(|s| s.name.clone())
+                .collect()
+        };
+        assert!(
+            names("Add pytest tests in test_core.py for adding entries and the balance of one account.")
+                .is_empty(),
+            "'test' reaches app-testing's name, but the topic is pytest"
+        );
+        assert_eq!(
+            names("Create a FastAPI endpoint that returns ok."),
+            vec!["stack-fastapi"]
+        );
+        assert_eq!(
+            names("Why does the prefix cache miss on the second agent turn?"),
+            vec!["goose-mlx-inference"],
+            "'turn' reaches knob-turning's name; the topic is the prefix cache"
+        );
+        assert!(
+            names("The Ledger class records date, amount and memo entries in memory.").is_empty(),
+            "memo and memory reach ONE name word, and the topic is the ledger"
+        );
+        assert_eq!(
+            names("Design a pricing page frontend."),
+            vec!["frontend-design"]
+        );
+        let hits = skill_hits(&skills, &query_terms("memo entries in memory"));
+        let import = hits
+            .iter()
+            .find(|h| h.skill.name == "import-memory")
+            .unwrap();
+        assert_eq!(
+            (import.name_terms, import.name_words, import.own_name_terms),
+            (2, 1, 1)
+        );
+    }
+
+    #[test]
+    fn a_skill_already_loaded_in_the_session_is_named_by_its_load_call() {
+        let mut args = serde_json::Map::new();
+        args.insert(
+            "name".to_string(),
+            serde_json::json!("goose-clean/reference.md"),
+        );
+        let mut other = serde_json::Map::new();
+        other.insert("name".to_string(), serde_json::json!("jira-api-skill"));
+        let messages = vec![
+            Message::user().with_text("clean the checkout"),
+            Message::assistant().with_tool_request(
+                "call-1",
+                Ok(rmcp::model::CallToolRequestParams::new("load_skill").with_arguments(args)),
+            ),
+            Message::assistant().with_tool_request(
+                "call-2",
+                Ok(
+                    rmcp::model::CallToolRequestParams::new("skills__load_skill")
+                        .with_arguments(other),
+                ),
+            ),
+        ];
+        assert_eq!(
+            loaded_skills(&messages),
+            vec!["goose-clean", "jira-api-skill"]
         );
     }
 
