@@ -711,6 +711,8 @@ pub(crate) struct Lease {
     /// The node is the local MLX engine: this turn is listed as in flight on it for exactly the
     /// lease's life (see `mlx_serving`).
     _serving: Option<super::mlx_serving::ServingGuard>,
+    /// The node's own context window as its probe read it at this pick; `None` = it did not say.
+    pub context_window: Option<u64>,
 }
 
 pub(crate) struct Router {
@@ -775,7 +777,7 @@ impl Router {
         saturated: &HashSet<String>,
     ) -> Result<Lease, ProviderError> {
         let probes = futures::future::join_all(nodes.iter().map(|n| probe.probe(n))).await;
-        let mut servable: Vec<(&Node, Arc<Semaphore>, u32)> = Vec::new();
+        let mut servable: Vec<(&Node, Arc<Semaphore>, u32, Option<u64>)> = Vec::new();
         let mut reasons: Vec<String> = Vec::new();
         let mut smallest_window: Option<u64> = None;
         for (node, outcome) in nodes.iter().zip(probes) {
@@ -788,7 +790,7 @@ impl Router {
                     let leased = node.capacity.saturating_sub(sem.available_permits() as u32);
                     let used = facts.live_in_flight.map_or(leased, |l| l.max(leased));
                     let free = node.capacity.saturating_sub(used);
-                    servable.push((node, sem, free));
+                    servable.push((node, sem, free, facts.context_window));
                     if let Some(window) = facts.context_window {
                         smallest_window = Some(smallest_window.map_or(window, |w| w.min(window)));
                     }
@@ -819,16 +821,20 @@ impl Router {
             .cloned();
         let preferred = sticky_id
             .as_deref()
-            .and_then(|id| servable.iter().find(|(n, _, free)| n.id == id && *free > 0))
+            .and_then(|id| {
+                servable
+                    .iter()
+                    .find(|(n, _, free, _)| n.id == id && *free > 0)
+            })
             .or_else(|| {
                 servable
                     .iter()
-                    .filter(|(_, _, free)| *free > 0)
-                    .max_by_key(|(n, _, free)| (*free, n.weight))
+                    .filter(|(_, _, free, _)| *free > 0)
+                    .max_by_key(|(n, _, free, _)| (*free, n.weight))
             });
-        if let Some((node, sem, free)) = preferred {
+        if let Some((node, sem, free, window)) = preferred {
             if let Ok(permit) = sem.clone().try_acquire_owned() {
-                return Ok(self.leased(node, permit, *free, 0, key));
+                return Ok(self.leased(node, *window, permit, *free, 0, key));
             }
         }
 
@@ -836,26 +842,27 @@ impl Router {
         let depth = self.queued.fetch_add(1, Ordering::SeqCst) + 1;
         tracing::info!(
             target: "swarm_router",
-            nodes = %servable.iter().map(|(n, _, _)| n.id.as_str()).collect::<Vec<_>>().join(","),
+            nodes = %servable.iter().map(|(n, _, _, _)| n.id.as_str()).collect::<Vec<_>>().join(","),
             queue_depth = depth,
             "queued"
         );
         let waits = servable
             .iter()
-            .map(|(_, sem, _)| Box::pin(sem.clone().acquire_owned()))
+            .map(|(_, sem, _, _)| Box::pin(sem.clone().acquire_owned()))
             .collect::<Vec<_>>();
         let (first, index, _rest) = futures::future::select_all(waits).await;
         self.queued.fetch_sub(1, Ordering::SeqCst);
         let permit = first.map_err(|e| {
             ProviderError::ExecutionError(format!("swarm chat: a node's slot pool closed ({e})"))
         })?;
-        let node = servable[index].0;
-        Ok(self.leased(node, permit, 0, start.elapsed().as_millis(), key))
+        let (node, _, _, window) = &servable[index];
+        Ok(self.leased(node, *window, permit, 0, start.elapsed().as_millis(), key))
     }
 
     fn leased(
         &self,
         node: &Node,
+        context_window: Option<u64>,
         permit: OwnedSemaphorePermit,
         free_slots: u32,
         queued_ms: u128,
@@ -893,6 +900,7 @@ impl Router {
             node: node.clone(),
             _permit: permit,
             _serving: serving,
+            context_window,
         }
     }
 }
@@ -1127,6 +1135,11 @@ pub(crate) async fn route_stream(
             .map_err(ProviderError::ExecutionError)?;
         let mut node_cfg = model_config.clone();
         node_cfg.model_name = lease.node.model_id.clone();
+        // The session's config is the `swarm` model's (an unknown name → the 128,000 default); the
+        // routed call is the node's model, so it carries the node's own window or states none.
+        node_cfg.context_limit = lease
+            .context_window
+            .map(|w| usize::try_from(w).unwrap_or(usize::MAX));
         let kwargs = match &lease.node.kind {
             NodeKind::MlxSidecar => session.for_model(&lease.node.model_id, kwargs_source)?,
             NodeKind::MlxRemote(target) => session.for_model(
@@ -1758,7 +1771,8 @@ devices:
     /// THE ISOLATION PROOF. With the thinking choices at their defaults (auto, template default) —
     /// including a profile that carries sampling values — the config a node receives and the
     /// request bytes built from it equal what route_stream produced before the choices existed
-    /// (`model_config.clone()` with the node's model name, nothing else).
+    /// (`model_config.clone()` with the node's model name and the node's own window — here none,
+    /// the fake probe reports none — nothing else).
     #[tokio::test]
     async fn default_choices_leave_the_mlx_request_byte_identical() {
         let mut session_params = ModelConfig::new("swarm");
@@ -1769,6 +1783,7 @@ devices:
         for model_config in [ModelConfig::new("swarm"), session_params] {
             let mut before = model_config.clone();
             before.model_name = SERVED.to_string();
+            before.context_limit = None;
             for profile in [
                 goose_sidecar::engine::ModelProfile::default(),
                 goose_sidecar::engine::ModelProfile {
@@ -1793,6 +1808,43 @@ devices:
                 assert!(!request_bytes(&after).contains("chat_template_kwargs"));
             }
         }
+    }
+
+    /// Q-65's log (2026-09-25): the split's turns carried `context_limit: 128000` — the `swarm`
+    /// session's default for an unknown model name — while the node served 262,144. The routed call
+    /// carries the window the node's probe read at this pick.
+    #[tokio::test]
+    async fn the_routed_call_carries_the_nodes_own_window_not_the_sessions_default() {
+        let recorded = Arc::new(RecordingProviders::default());
+        let nodes = vec![mlx_node()];
+        let probe = FakeProbe(HashMap::from([("mlx".to_string(), window(262_144))]));
+        let messages = vec![Message::user().with_text("hi")];
+        let session_config = ModelConfig::new("swarm");
+        let stream = route_stream(
+            &Router::new(),
+            &nodes,
+            &probe,
+            &RecordingSource(recorded.clone()),
+            &SettingsKwargs(StdMutex::new(EngineSettings::default())),
+            &NoRouteLoad,
+            Turn {
+                model_config: &session_config,
+                system: "sys",
+                messages: &messages,
+                tools: &[],
+                session: &SessionTemplateKwargs::default(),
+            },
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        let configs = recorded.0.lock().unwrap();
+        assert_eq!(configs[0].context_limit, Some(262_144));
+        assert_eq!(configs[0].context_limit(), 262_144);
+        assert_eq!(
+            configs[0].max_tokens, None,
+            "goose still sends no max_tokens: the server's own budget applies"
+        );
     }
 
     #[tokio::test]
