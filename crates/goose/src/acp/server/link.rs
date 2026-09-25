@@ -54,7 +54,9 @@ use leanzero_link::manager::{
 };
 use leanzero_link::mesh::{MeshConfig, MeshStatus};
 use leanzero_link::state::SwarmStateSource;
-use leanzero_link::wire::{LinkEvent, NodeAllows, NodeState, NodeStatus, SessionSummary};
+use leanzero_link::wire::{
+    LeaveReason, LinkEvent, NodeAllows, NodeState, NodeStatus, SessionSummary,
+};
 use leanzero_link::worker_client::DEFAULT_WORKER_BASE_URL;
 use leanzero_link::{discovery, worker_client};
 
@@ -418,6 +420,7 @@ fn derive_node(
         last_poll_error: None,
         computer_name: computer_name(),
         allows: Some(allows),
+        leaving: None,
     }
 }
 
@@ -837,9 +840,20 @@ fn tracking_mesh_factory() -> Arc<dyn MeshFactory> {
     STARTED_MESHES.factory(Arc::new(RealMeshFactory))
 }
 
-/// `goose serve`'s exit path for the mesh; see [`MeshRegistry::shutdown_live`].
+/// `goose serve`'s exit path for the mesh: tell the linked peers this goose is quitting
+/// (`LinkManager::announce_leaving` — while the daemon still carries the notices; each is
+/// bounded by the Link's connect timeout), then stop the daemons ([`MeshRegistry::shutdown_live`]).
+/// goosed cannot tell a quit from the desktop's relaunch (both arrive as the same signal),
+/// so the reason it sends is `quitting`.
 pub(super) async fn shutdown_started_meshes() -> String {
-    STARTED_MESHES.shutdown_live().await
+    let told = match existing_link_manager() {
+        Some(manager) => match manager.announce_leaving(LeaveReason::Quitting).await {
+            Some(report) => report.to_string(),
+            None => "no peers told: LeanZero Link was not connected".to_string(),
+        },
+        None => "no peers told: LeanZero Link never started in this goosed".to_string(),
+    };
+    format!("{told}; {}", STARTED_MESHES.shutdown_live().await)
 }
 
 // ---------------------------------------------------------------------------

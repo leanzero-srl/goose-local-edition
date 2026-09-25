@@ -24,7 +24,7 @@ use leanzero_link::inference::{
 };
 use leanzero_link::manager::{AuthState, LinkError, LinkManager};
 use leanzero_link::state::{ChatServing, MlxOp};
-use leanzero_link::wire::NodeStatus;
+use leanzero_link::wire::{NodeState, NodeStatus};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::sync::Mutex as StdMutex;
@@ -259,14 +259,7 @@ impl PeerControl for LinkManager {
             .peer_nodes()
             .into_iter()
             .find(|node| node.node_id == peer || node.hostname == peer);
-        match node {
-            None => Some(link_refusal(&LinkError::UnknownPeer(peer.to_string())).message),
-            Some(node) if node.status == NodeStatus::Offline => Some(match node.last_poll_error {
-                Some(error) => format!("the LeanZero Link mesh cannot reach it ({error})"),
-                None => "the LeanZero Link mesh has not reached it since it listed it".to_string(),
-            }),
-            Some(_) => None,
-        }
+        fabric_verdict(node, peer)
     }
 
     async fn computer_name(&self, peer: &str) -> Option<String> {
@@ -293,6 +286,29 @@ impl PeerControl for LinkManager {
             }
         }
     }
+}
+
+/// The fabric's words for a peer row, or `None` while it reaches the peer. A peer that said it
+/// is going away on purpose (`leaving`, beside `Offline`) is named with its reason — "Work's Mac
+/// Studio quit goose" — from the moment its notice lands, before any poll could fail.
+fn fabric_verdict(node: Option<NodeState>, peer: &str) -> Option<String> {
+    let node = match node {
+        None => return Some(link_refusal(&LinkError::UnknownPeer(peer.to_string())).message),
+        Some(node) if node.status == NodeStatus::Offline => node,
+        Some(_) => return None,
+    };
+    Some(match (&node.leaving, &node.last_poll_error) {
+        (Some(leaving), _) => format!(
+            "{} {}",
+            node.computer_name
+                .as_deref()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or(&node.hostname),
+            leaving.reason.describe()
+        ),
+        (None, Some(error)) => format!("the LeanZero Link mesh cannot reach it ({error})"),
+        (None, None) => "the LeanZero Link mesh has not reached it since it listed it".to_string(),
+    })
 }
 
 /// A Link op's refusal, and whether the peer answered at all ([`peer_did_not_answer`]).
@@ -1918,6 +1934,86 @@ mod tests {
         let served = read(book, &peer, &route, &routed).await;
         assert_eq!(served.state, "ready", "{:?}", served.last_error);
         assert_eq!(served.last_error, None);
+    }
+
+    /// Q-51: a Mac that quits (or restarts) goose on purpose tells its peers first; the fabric
+    /// marks it `leaving` beside `Offline`, and the route reads `reconnecting` with the reason
+    /// named at once — no dial, no poll waited on.
+    #[tokio::test]
+    async fn a_peer_that_said_it_is_leaving_is_reconnecting_with_the_reason_named() {
+        use leanzero_link::wire::{LeaveReason, NodeLeaving};
+        let row = |status: NodeStatus, leaving: Option<LeaveReason>| NodeState {
+            node_id: "wh".to_string(),
+            hostname: "worksmacstudio-lan-6a972f".to_string(),
+            mesh_ip: Some("100.64.0.5".to_string()),
+            status,
+            sessions_active: 0,
+            updated_at: chrono::Utc::now(),
+            last_poll_error: leaving.map(|reason| format!("it said it {}", reason.describe())),
+            computer_name: Some("Work's Mac Studio".to_string()),
+            allows: None,
+            leaving: leaving.map(|reason| NodeLeaving {
+                reason,
+                since: chrono::Utc::now(),
+            }),
+        };
+        assert_eq!(
+            fabric_verdict(
+                Some(row(NodeStatus::Offline, Some(LeaveReason::Quitting))),
+                "wh"
+            )
+            .as_deref(),
+            Some("Work's Mac Studio quit goose")
+        );
+        assert_eq!(
+            fabric_verdict(
+                Some(row(NodeStatus::Offline, Some(LeaveReason::Restarting))),
+                "wh"
+            )
+            .as_deref(),
+            Some("Work's Mac Studio is restarting goose")
+        );
+        // Negative controls: an Offline row without a notice keeps the poll's words; a peer
+        // the fabric reaches is no verdict at all.
+        let mut polled_offline = row(NodeStatus::Offline, None);
+        polled_offline.last_poll_error = Some("connection refused".to_string());
+        assert_eq!(
+            fabric_verdict(Some(polled_offline), "wh").as_deref(),
+            Some("the LeanZero Link mesh cannot reach it (connection refused)")
+        );
+        assert_eq!(
+            fabric_verdict(Some(row(NodeStatus::Idle, None)), "wh"),
+            None
+        );
+
+        let peer = StandInPeer::new(serving_engine());
+        *peer.proxy_serves.lock().unwrap() = Some(QWEN.to_string());
+        let route = route_to(stand_in_relay(&peer).await);
+        let (book, routed) = (fresh_book(), Arc::new(AtomicBool::new(true)));
+        assert_eq!(read(book, &peer, &route, &routed).await.state, "ready");
+
+        let said = fabric_verdict(
+            Some(row(NodeStatus::Offline, Some(LeaveReason::Quitting))),
+            "wh",
+        )
+        .unwrap();
+        peer.fabric_notices(&said);
+        let ops = peer.ops();
+        let leaving = read(book, &peer, &route, &routed).await;
+        assert_eq!(leaving.state, "reconnecting", "{:?}", leaving.last_error);
+        assert_eq!(
+            leaving.last_error.as_deref(),
+            Some(
+                "Work's Mac Studio does not answer over LeanZero Link right now: \
+                 Work's Mac Studio quit goose"
+            )
+        );
+        assert_eq!(
+            peer.ops(),
+            ops,
+            "the notice's verdict costs no op on the peer"
+        );
+        assert_eq!(book.phase(&route), None, "a leaving peer starts no restore");
     }
 
     #[tokio::test]
