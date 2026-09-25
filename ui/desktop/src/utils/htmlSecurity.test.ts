@@ -266,4 +266,58 @@ Here's a link <https://example.com> and HTML <div>content</div>
       });
     });
   });
+  describe('wrapHTMLInCodeBlock reads fences the way CommonMark (GitHub) does', () => {
+    it('a ```` fence is not closed by an inner ``` line, so HTML inside it stays untouched', () => {
+      const input = ['````md', '```', '<div>shown as code</div>', '```', '````'].join('\n');
+      expect(wrapHTMLInCodeBlock(input)).toBe(input);
+    });
+
+    it('a ~~~ fence protects its HTML lines', () => {
+      const input = ['~~~', '<div>inside tildes</div>', '~~~'].join('\n');
+      expect(wrapHTMLInCodeBlock(input)).toBe(input);
+    });
+
+    it('a closing fence may be longer but not carry an info string', () => {
+      const input = [
+        '```',
+        '```python',
+        '<div>still inside</div>',
+        '`````',
+        '<div>outside</div>',
+      ].join('\n');
+      expect(wrapHTMLInCodeBlock(input)).toBe(
+        [
+          '```',
+          '```python',
+          '<div>still inside</div>',
+          '`````',
+          '```html',
+          '<div>outside</div>',
+          '```',
+        ].join('\n')
+      );
+    });
+
+    it('inline code at the start of a line is not a fence opener', () => {
+      const input = ['```js const x = 1```', '<div>after</div>'].join('\n');
+      expect(wrapHTMLInCodeBlock(input)).toBe(
+        ['```js const x = 1```', '```html', '<div>after</div>', '```'].join('\n')
+      );
+    });
+
+    it('an unclosed fence runs to the end of the text', () => {
+      const input = ['```python', 'class Ledger:', '<div>still code</div>'].join('\n');
+      expect(wrapHTMLInCodeBlock(input)).toBe(input);
+    });
+
+    it('a fence nested in a list item still counts', () => {
+      const input = ['1. step', '', '    ```html', '    <div>listed</div>', '    ```'].join('\n');
+      expect(wrapHTMLInCodeBlock(input)).toBe(input);
+    });
+
+    it('a wrapped line that itself holds a backtick run gets a longer fence', () => {
+      const input = '<div>```</div>';
+      expect(wrapHTMLInCodeBlock(input)).toBe('````html\n<div>```</div>\n````');
+    });
+  });
 });
