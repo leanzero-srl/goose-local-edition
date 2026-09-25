@@ -4005,7 +4005,7 @@
     "defaultMessage": "tok/s khi đọc, prompt gần nhất"
   },
   "mlxStateTile.readRateNone": {
-    "defaultMessage": "chưa đọc prompt nào"
+    "defaultMessage": "chưa đọc lời nhắc nào kể từ khi mở trang này"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Đang đọc số liệu trực tiếp…"
@@ -4101,7 +4101,7 @@
     "defaultMessage": "tok/s khi viết, lần chạy gần nhất"
   },
   "mlxStateTile.writeRateNone": {
-    "defaultMessage": "chưa viết gì"
+    "defaultMessage": "chưa viết gì kể từ khi mở trang này"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Tự động"

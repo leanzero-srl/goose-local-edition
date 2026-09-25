@@ -4005,7 +4005,7 @@
     "defaultMessage": "tok/s (okuma, son istem)"
   },
   "mlxStateTile.readRateNone": {
-    "defaultMessage": "henüz istem okunmadı"
+    "defaultMessage": "bu sayfa açıldığından beri istem okunmadı"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Canlı istatistikler okunuyor…"
@@ -4101,7 +4101,7 @@
     "defaultMessage": "tok/s (yazma, son çalıştırma)"
   },
   "mlxStateTile.writeRateNone": {
-    "defaultMessage": "henüz bir şey yazılmadı"
+    "defaultMessage": "bu sayfa açıldığından beri hiçbir şey yazılmadı"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Otomatik"

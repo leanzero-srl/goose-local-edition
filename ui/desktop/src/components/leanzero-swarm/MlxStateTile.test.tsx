@@ -181,9 +181,9 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
       live: parseMlxLiveStatus({ status: 'idle', generation_tps: 1048576.0, requests: [] }),
     });
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('—');
-    expect(screen.getByText('nothing written yet')).toBeInTheDocument();
+    expect(screen.getByText('nothing written since this page opened')).toBeInTheDocument();
     expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('—');
-    expect(screen.getByText('no prompt read yet')).toBeInTheDocument();
+    expect(screen.getByText('no prompt read since this page opened')).toBeInTheDocument();
   });
 
   it('serving: a chat, an external /v1 client, and the unexplained rest COUNTED beside the live swarm run', async () => {

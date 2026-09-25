@@ -92,10 +92,10 @@ const i18n = defineMessages({
   },
   writeRate: { id: 'mlxStateTile.writeRate', defaultMessage: 'tok/s writing' },
   writeRateLast: { id: 'mlxStateTile.writeRateLast', defaultMessage: 'tok/s writing, last run' },
-  writeRateNone: { id: 'mlxStateTile.writeRateNone', defaultMessage: 'nothing written yet' },
+  writeRateNone: { id: 'mlxStateTile.writeRateNone', defaultMessage: 'nothing written since this page opened' },
   readRate: { id: 'mlxStateTile.readRate', defaultMessage: 'tok/s reading this prompt' },
   readRateLast: { id: 'mlxStateTile.readRateLast', defaultMessage: 'tok/s reading, last prompt' },
-  readRateNone: { id: 'mlxStateTile.readRateNone', defaultMessage: 'no prompt read yet' },
+  readRateNone: { id: 'mlxStateTile.readRateNone', defaultMessage: 'no prompt read since this page opened' },
   promptSize: {
     id: 'mlxStateTile.promptSize',
     defaultMessage: 'prompt tokens, reading for {elapsed}',

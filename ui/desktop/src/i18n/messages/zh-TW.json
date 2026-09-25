@@ -4005,7 +4005,7 @@
     "defaultMessage": "tok/s（讀取，上一個提示詞）"
   },
   "mlxStateTile.readRateNone": {
-    "defaultMessage": "尚未讀取提示詞"
+    "defaultMessage": "自開啟此頁面以來未讀取任何提示"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "正在讀取即時統計…"
@@ -4101,7 +4101,7 @@
     "defaultMessage": "tok/s（生成，上一次）"
   },
   "mlxStateTile.writeRateNone": {
-    "defaultMessage": "尚未生成內容"
+    "defaultMessage": "自開啟此頁面以來未寫入任何內容"
   },
   "mlxThinking.auto": {
     "defaultMessage": "自動"

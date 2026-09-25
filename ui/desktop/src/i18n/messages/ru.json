@@ -4005,7 +4005,7 @@
     "defaultMessage": "tok/s при чтении, последний промпт"
   },
   "mlxStateTile.readRateNone": {
-    "defaultMessage": "промпты ещё не читались"
+    "defaultMessage": "ни один промпт не прочитан с открытия этой страницы"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Чтение живой статистики…"
@@ -4101,7 +4101,7 @@
     "defaultMessage": "tok/s при записи, последний запуск"
   },
   "mlxStateTile.writeRateNone": {
-    "defaultMessage": "пока ничего не записано"
+    "defaultMessage": "ничего не написано с открытия этой страницы"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Авто"

@@ -4005,7 +4005,7 @@
     "defaultMessage": "tok/s membaca, prompt terakhir"
   },
   "mlxStateTile.readRateNone": {
-    "defaultMessage": "belum ada prompt yang dibaca"
+    "defaultMessage": "belum ada prompt yang dibaca sejak halaman ini dibuka"
   },
   "mlxStateTile.readingLive": {
     "defaultMessage": "Membaca statistik langsung…"
@@ -4101,7 +4101,7 @@
     "defaultMessage": "tok/s menulis, proses terakhir"
   },
   "mlxStateTile.writeRateNone": {
-    "defaultMessage": "belum ada yang ditulis"
+    "defaultMessage": "belum ada yang ditulis sejak halaman ini dibuka"
   },
   "mlxThinking.auto": {
     "defaultMessage": "Otomatis"
