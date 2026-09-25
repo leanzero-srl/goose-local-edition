@@ -21,7 +21,9 @@ import { publishRestoreLine } from '../leanzero-swarm/mlxRestore';
 const mockStatus = vi.fn<() => Promise<MlxEngineStatus>>();
 const mockMount = vi.fn<(modelId: string) => Promise<void>>();
 const mockSettings = vi.fn<() => Promise<MlxEngineSettings>>();
+const mockUnmount = vi.fn<(nodeId?: string) => Promise<void>>();
 vi.mock('../../acp/mlx-engine', () => ({
+  mlxEngineUnmount: (nodeId?: string) => mockUnmount(nodeId),
   mlxEngineStatus: () => mockStatus(),
   mlxEngineMount: (modelId: string) => mockMount(modelId),
   mlxEngineSettingsRead: () => mockSettings(),
@@ -451,15 +453,18 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
     );
   });
 
-  it('"Run on this Mac instead" drops the route, then mounts this Mac’s model — the bar follows to this Mac’s mount', async () => {
+  it('"Run on this Mac instead" drops the route on THIS Mac and mounts here at once — never waiting on the Mac that is not answering', async () => {
     const calls: string[] = [];
-    mockExtMethod.mockImplementation(async (method: string) => {
+    mockExtMethod.mockImplementation(async (method: string, params: unknown) => {
       calls.push(method);
       if (method.endsWith('remoteSingleStop')) {
+        expect(params).toEqual({ keepMounted: true });
         return { unmounted: false, unmountError: null, status: { state: 'off' } };
       }
       return { status: { ...ROUTE, state: 'reconnecting' } };
     });
+    // The Studio never answers the request to free its engine.
+    mockUnmount.mockReturnValue(new Promise(() => undefined));
     mockMount.mockImplementation(async () => {
       calls.push('mount');
     });
@@ -470,15 +475,21 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
     const stop = calls.indexOf('_goose/unstable/mlxEngine/remoteSingleStop');
     expect(stop).toBeGreaterThanOrEqual(0);
     expect(calls.indexOf('mount')).toBeGreaterThan(stop);
-    expect(mockExtMethod).toHaveBeenCalledWith('_goose/unstable/mlxEngine/remoteSingleStop', {
-      keepMounted: false,
-    });
+    expect(mockUnmount).toHaveBeenCalledWith(ROUTE.peer);
     await waitFor(() =>
       expect(screen.getByTestId('composer-readiness')).toHaveAttribute(
         'data-readiness',
         'unmounted'
       )
     );
+    // The Mac that still holds the model is a quiet line, not an error.
+    const held = await screen.findByTestId('peer-held');
+    expect(held.textContent).toContain(
+      "Work's Mac Studio still holds the model — goose asked it to free it"
+    );
+    expect(held.className).not.toContain('bg-lz-phase-failed');
+    await userEvent.click(screen.getByTestId('peer-held-dismiss'));
+    expect(screen.queryByTestId('peer-held')).toBeNull();
   });
 
   it('a switch whose stop is refused says why in the bar and keeps the route’s state', async () => {

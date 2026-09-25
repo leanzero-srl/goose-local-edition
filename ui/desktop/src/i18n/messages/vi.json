@@ -740,9 +740,6 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Mở Engine"
   },
-  "composerReadiness.peerKeptModel": {
-    "defaultMessage": "{peer} vẫn giữ mô hình đã tải"
-  },
   "composerReadiness.reconnecting": {
     "defaultMessage": "Mất liên lạc với {peer} — đang kết nối lại…"
   },
@@ -4969,6 +4966,15 @@
   },
   "parameterInputModal.whatToDo": {
     "defaultMessage": "Bạn muốn làm gì?"
+  },
+  "peerHeld.asking": {
+    "defaultMessage": "{peer} vẫn giữ mô hình — goose đã yêu cầu giải phóng"
+  },
+  "peerHeld.dismiss": {
+    "defaultMessage": "Bỏ qua"
+  },
+  "peerHeld.held": {
+    "defaultMessage": "{peer} vẫn giữ mô hình — hãy dừng nó trên Mac đó khi kết nối lại"
   },
   "permissionModal.alwaysAllow": {
     "defaultMessage": "Luôn cho phép"

@@ -740,9 +740,6 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Buka Engine"
   },
-  "composerReadiness.peerKeptModel": {
-    "defaultMessage": "{peer} tetap memuat modelnya"
-  },
   "composerReadiness.reconnecting": {
     "defaultMessage": "Kontak dengan {peer} terputus — menyambungkan ulang…"
   },
@@ -4969,6 +4966,15 @@
   },
   "parameterInputModal.whatToDo": {
     "defaultMessage": "Apa yang ingin Anda lakukan?"
+  },
+  "peerHeld.asking": {
+    "defaultMessage": "{peer} masih memuat model — goose memintanya untuk melepaskannya"
+  },
+  "peerHeld.dismiss": {
+    "defaultMessage": "Tutup"
+  },
+  "peerHeld.held": {
+    "defaultMessage": "{peer} masih memuat model — hentikan di Mac itu setelah kembali"
   },
   "permissionModal.alwaysAllow": {
     "defaultMessage": "Selalu izinkan"

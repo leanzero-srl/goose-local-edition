@@ -740,9 +740,6 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "Открыть движок"
   },
-  "composerReadiness.peerKeptModel": {
-    "defaultMessage": "{peer} оставил модель загруженной"
-  },
   "composerReadiness.reconnecting": {
     "defaultMessage": "Связь с {peer} потеряна — переподключение…"
   },
@@ -4969,6 +4966,15 @@
   },
   "parameterInputModal.whatToDo": {
     "defaultMessage": "Что вы хотите сделать?"
+  },
+  "peerHeld.asking": {
+    "defaultMessage": "{peer} всё ещё держит модель — goose попросил её освободить"
+  },
+  "peerHeld.dismiss": {
+    "defaultMessage": "Скрыть"
+  },
+  "peerHeld.held": {
+    "defaultMessage": "{peer} всё ещё держит модель — остановите её на том Mac, когда он вернётся"
   },
   "permissionModal.alwaysAllow": {
     "defaultMessage": "Всегда разрешать"

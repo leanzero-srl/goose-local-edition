@@ -2,9 +2,9 @@ import { useCallback, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Hourglass, Laptop, Loader2, Network, ServerOff, Settings2 } from 'lucide-react';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
-import { mlxRemoteSingleStop } from '../../acp/mlx-remote-single';
-import { toastError } from '../../toasts';
 import { errorMessage } from '../../utils/conversionUtils';
+import { PeerHeldLine } from '../leanzero-swarm/PeerHeldLine';
+import { dropRouteForSwitch } from '../leanzero-swarm/routeSwitch';
 import { routePeerName } from '../leanzero-swarm/macs';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { compactTokens } from '../leanzero-swarm/mlxLiveStats';
@@ -87,10 +87,6 @@ const i18n = defineMessages({
     id: 'composerReadiness.switchFailed',
     defaultMessage: 'Could not move chat to this Mac: {error}',
   },
-  peerKeptModel: {
-    id: 'composerReadiness.peerKeptModel',
-    defaultMessage: '{peer} kept its model loaded',
-  },
   busy: {
     id: 'composerReadiness.busy',
     defaultMessage:
@@ -118,6 +114,15 @@ export const ENGINE_ROUTE = '/leanzero-swarm?tab=mlx';
  * It never blocks typing. Every fact comes from `serving` — the one derivation, never its own read.
  */
 export function ComposerReadinessStrip({ serving }: { serving: ChatServing }) {
+  return (
+    <>
+      <PeerHeldLine />
+      <ReadinessBar serving={serving} />
+    </>
+  );
+}
+
+function ReadinessBar({ serving }: { serving: ChatServing }) {
   const intl = useIntl();
   const { served, single, armed } = serving;
   const { readiness } = served;
@@ -127,21 +132,18 @@ export function ComposerReadinessStrip({ serving }: { serving: ChatServing }) {
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
 
-  // "Run on this Mac instead": the route's own Stop (the tray's and Run it's), then this Mac's Mount
-  // — the bar's Mount path. A peer that cannot be reached keeps its model, and goose says so.
+  // "Run on this Mac instead": the route withdrawn on this Mac without waiting on the Mac that is
+  // not answering (routeSwitch.ts — the one switch path), then this Mac's Mount at once. Whether
+  // that Mac frees its model is its own business: the quiet PeerHeldLine says so.
   const runHere = useCallback(
-    async (instead: RunHere, peer: string) => {
+    async (instead: RunHere) => {
       if (instead.kind !== 'switch') return;
       setSwitching(true);
       setSwitchError(null);
       try {
-        const { unmountError } = await mlxRemoteSingleStop(false);
-        if (unmountError) {
-          toastError({
-            title: intl.formatMessage(i18n.peerKeptModel, { peer }),
-            msg: unmountError,
-          });
-        }
+        const dropped = dropRouteForSwitch(true);
+        // The route record goes first inside the call; the peer is only asked afterwards.
+        await dropped.routeGone;
         if (instead.mount) await mount(STRIP_MOUNT_KEY, instead.mount);
       } catch (e) {
         setSwitchError(errorMessage(e, String(e)));
@@ -149,7 +151,7 @@ export function ComposerReadinessStrip({ serving }: { serving: ChatServing }) {
         setSwitching(false);
       }
     },
-    [intl, mount]
+    [mount]
   );
 
   // A relaunch bringing back what served: that is the line, not "No model is mounted" + Mount.
@@ -189,7 +191,7 @@ export function ComposerReadinessStrip({ serving }: { serving: ChatServing }) {
       onMount={(modelId) => void mount(STRIP_MOUNT_KEY, modelId)}
       switching={switching}
       switchError={switchError}
-      onRunHere={(instead, peer) => void runHere(instead, peer)}
+      onRunHere={(instead) => void runHere(instead)}
     />
   );
 }
@@ -268,7 +270,7 @@ function ReadinessStripBody({
   onMount: (modelId: string) => void;
   switching: boolean;
   switchError: string | null;
-  onRunHere: (instead: RunHere, peer: string) => void;
+  onRunHere: (instead: RunHere) => void;
 }) {
   const intl = useIntl();
 
@@ -299,7 +301,7 @@ function ReadinessStripBody({
           icon={switching ? <Loader2 className="animate-spin" /> : <Laptop />}
           disabled={switching}
           data-testid="composer-readiness-run-here"
-          onClick={() => onRunHere(instead, peer)}
+          onClick={() => onRunHere(instead)}
         >
           {intl.formatMessage(switching ? i18n.switchingHere : i18n.runHere)}
         </Button>

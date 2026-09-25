@@ -740,9 +740,6 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "打开引擎"
   },
-  "composerReadiness.peerKeptModel": {
-    "defaultMessage": "{peer} 保留了已加载的模型"
-  },
   "composerReadiness.reconnecting": {
     "defaultMessage": "与 {peer} 失去联系 — 正在重新连接…"
   },
@@ -4969,6 +4966,15 @@
   },
   "parameterInputModal.whatToDo": {
     "defaultMessage": "你想做什么？"
+  },
+  "peerHeld.asking": {
+    "defaultMessage": "{peer} 仍占用该模型 — goose 已请求它释放"
+  },
+  "peerHeld.dismiss": {
+    "defaultMessage": "关闭"
+  },
+  "peerHeld.held": {
+    "defaultMessage": "{peer} 仍占用该模型 — 等它恢复后请在那台 Mac 上停止"
   },
   "permissionModal.alwaysAllow": {
     "defaultMessage": "始终允许"

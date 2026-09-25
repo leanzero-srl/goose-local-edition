@@ -740,9 +740,6 @@
   "composerReadiness.openEngine": {
     "defaultMessage": "इंजन खोलें"
   },
-  "composerReadiness.peerKeptModel": {
-    "defaultMessage": "{peer} ने अपना मॉडल लोड रखा"
-  },
   "composerReadiness.reconnecting": {
     "defaultMessage": "{peer} से संपर्क टूट गया — फिर से जोड़ा जा रहा है…"
   },
@@ -4969,6 +4966,15 @@
   },
   "parameterInputModal.whatToDo": {
     "defaultMessage": "आप क्या करना चाहेंगे?"
+  },
+  "peerHeld.asking": {
+    "defaultMessage": "{peer} के पास अभी भी मॉडल है — goose ने उसे खाली करने को कहा है"
+  },
+  "peerHeld.dismiss": {
+    "defaultMessage": "हटाएँ"
+  },
+  "peerHeld.held": {
+    "defaultMessage": "{peer} के पास अभी भी मॉडल है — उसके वापस आने पर उसी Mac पर इसे रोकें"
   },
   "permissionModal.alwaysAllow": {
     "defaultMessage": "हमेशा अनुमति दें"
