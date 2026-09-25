@@ -51,7 +51,10 @@ function deps(answers: {
   remote?: MlxRemoteSingleStatus[];
   remoteStart?: Array<{ started: boolean; refusal?: { code: string; message: string } }>;
   distributed?: Array<MlxDistributedStatus | null>;
-  distributedStart?: Array<{ started: boolean; refusal?: { code: string; message: string } }>;
+  distributedStart?: Array<{
+    started: boolean;
+    refusal?: { code: string; message: string; node?: string; detail?: string };
+  }>;
   link?: Array<LinkState | null>;
   mount?: () => Promise<void>;
 }) {
@@ -249,6 +252,79 @@ describe('restoreServing — what served before the relaunch comes back the way 
     });
   });
 
+  // Q-77: after an update the previous split's ranks were still exiting when the restore's start
+  // ran, and the restore gave up at once with internals in the words.
+  const SHUTTING_DOWN = {
+    started: false,
+    refusal: {
+      code: 'previousSplitShuttingDown',
+      message:
+        'The previous split is still shutting down on Mihai Macbook — start it again when that finishes',
+      node: 'Mihai Macbook',
+      detail: 'Mihai Macbook: rank pid 9425 (its parent pid 4242 still runs: shutting down)',
+    },
+  };
+
+  it('the previous split still shutting down: the line says so and the start is asked again until it goes through', async () => {
+    const up = { mode: 'distributed', state: 'serving', modelId: FLASH } as MlxDistributedStatus;
+    const d = deps({
+      intent: [{ kind: 'split', modelId: FLASH }],
+      distributed: [{ mode: 'single', state: 'stopped' } as MlxDistributedStatus, up],
+      distributedStart: [SHUTTING_DOWN, SHUTTING_DOWN, { started: true }],
+    });
+    const onRestoring = vi.fn();
+    expect(await restoreServing(d, onRestoring)).toEqual({ phase: 'idle' });
+    expect(d.distributedStart).toHaveBeenCalledTimes(3);
+    const what = { kind: 'split', modelId: FLASH, peerName: null };
+    expect(onRestoring.mock.calls).toEqual([
+      [what],
+      [what, 'Mihai Macbook'],
+      [what],
+      [what, 'Mihai Macbook'],
+      [what],
+    ]);
+  });
+
+  it('a Stop while it waits for the previous split ends the wait quietly — nothing is started', async () => {
+    const d = deps({
+      intent: [{ kind: 'split', modelId: FLASH }, null],
+      distributed: [{ mode: 'single', state: 'stopped' } as MlxDistributedStatus],
+      distributedStart: [SHUTTING_DOWN],
+    });
+    expect(await restoreServing(d, vi.fn())).toEqual({ phase: 'idle' });
+    expect(d.distributedStart).toHaveBeenCalledTimes(1);
+  });
+
+  it('another MLX split (not goose’s): the refusal’s words, the pid only behind Details', async () => {
+    const d = deps({
+      intent: [{ kind: 'split', modelId: FLASH }],
+      distributed: [{ mode: 'single', state: 'stopped' } as MlxDistributedStatus],
+      distributedStart: [
+        {
+          started: false,
+          refusal: {
+            code: 'foreignSplit',
+            message:
+              'Another MLX split (not goose’s) is running on Mihai Macbook — stop it to start this one',
+            node: 'Mihai Macbook',
+            detail: 'pid 9425 `/Applications/Xcode.app/…/Python -c import base64,sys;exe`',
+          },
+        },
+      ],
+    });
+    const result = await restoreServing(d, vi.fn());
+    expect(result).toEqual({
+      phase: 'failed',
+      what: { kind: 'split', modelId: FLASH, peerName: null },
+      reason: {
+        code: 'said',
+        text: 'Another MLX split (not goose’s) is running on Mihai Macbook — stop it to start this one',
+        detail: 'pid 9425 `/Applications/Xcode.app/…/Python -c import base64,sys;exe`',
+      },
+    });
+    expect(d.distributedStart).toHaveBeenCalledTimes(1);
+  });
+
   it('the owner stops it while it comes up (the record is gone): that was a choice, no failure', async () => {
     const d = deps({
       intent: [{ kind: 'single', modelId: QWEN }, null],
@@ -304,6 +380,15 @@ describe('the restore’s one line, and what main is told', () => {
       'Could not restore Qwen3.8-27B-Atlassian-Q8-mlx on this Mac: LeanZero Link is not connected (loggedOut)'
     );
     expect(isMlxRestoreReport({ ...failed, phase: 'done' })).toBe(false);
+    const waiting = toRestoreReport({
+      phase: 'restoring',
+      what: { kind: 'split', modelId: QWEN, peerName: null },
+      waitingOn: 'Mihai Macbook',
+    })!;
+    expect(isMlxRestoreReport(waiting)).toBe(true);
+    expect(restoreTrayLine(waiting)).toBe(
+      'The previous split is still shutting down on Mihai Macbook — goose restores it when that finishes'
+    );
 
     const tray = buildMlxTrayModel(INITIAL_SNAPSHOT, {
       canAct: true,

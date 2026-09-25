@@ -3899,11 +3899,17 @@
   "mlxReplica.verifying": {
     "defaultMessage": "checking {file}"
   },
+  "mlxRestore.details": {
+    "defaultMessage": "Details"
+  },
   "mlxRestore.dismiss": {
     "defaultMessage": "Dismiss"
   },
   "mlxRestore.failed": {
     "defaultMessage": "{kind,select,single{Could not restore {model} on this Mac: {reason}} split{Could not restore {model} across your Macs: {reason}} other{Could not restore {model} on {peer}: {reason}}}"
+  },
+  "mlxRestore.hideDetails": {
+    "defaultMessage": "Hide details"
   },
   "mlxRestore.label": {
     "defaultMessage": "Restore"
@@ -3925,6 +3931,9 @@
   },
   "mlxRestore.unreadable": {
     "defaultMessage": "Could not read what served before the relaunch: {reason}"
+  },
+  "mlxRestore.waitingPrevious": {
+    "defaultMessage": "The previous split is still shutting down on {node} — goose restores it when that finishes"
   },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Writing"

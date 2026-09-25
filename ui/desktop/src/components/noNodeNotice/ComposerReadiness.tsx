@@ -19,7 +19,12 @@ import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { compactTokens } from '../leanzero-swarm/mlxLiveStats';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, PHASE_FILL, RADIUS, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
-import { RestoreActions, restoreLineText, useRestoreLine } from '../leanzero-swarm/MlxRestoreLine';
+import {
+  RestoreActions,
+  restoreLineText,
+  useRestoreDetails,
+  useRestoreLine,
+} from '../leanzero-swarm/MlxRestoreLine';
 import {
   servedReady,
   type ChatBusy,
@@ -157,6 +162,7 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
   const { requestingNodeId, mountErrors, mount } = useMlxMount(single);
   const restore = useRestoreLine();
   const restoreText = restoreLineText(intl, restore);
+  const restoreDetails = useRestoreDetails(restore);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
 
@@ -201,7 +207,13 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
         <span className={cx('min-w-0 flex-1 break-words text-lz-body', WEIGHT.semibold)}>
           {restoreText}
         </span>
-        {restore.phase === 'failed' && <RestoreActions />}
+        {restore.phase === 'failed' && (
+          <span className="flex shrink-0 items-center gap-2">
+            {restoreDetails.toggle}
+            <RestoreActions />
+          </span>
+        )}
+        {restoreDetails.panel}
       </div>
     );
   }

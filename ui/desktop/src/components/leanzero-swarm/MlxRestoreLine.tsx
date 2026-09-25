@@ -1,5 +1,5 @@
-import { useSyncExternalStore } from 'react';
-import { Loader2, RotateCcw, X } from 'lucide-react';
+import { useState, useSyncExternalStore } from 'react';
+import { ChevronDown, ChevronUp, Loader2, RotateCcw, X } from 'lucide-react';
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button } from '../lz';
@@ -42,8 +42,15 @@ const i18n = defineMessages({
   },
   stoppedEarly: { id: 'mlxRestore.stoppedEarly', defaultMessage: 'it stopped before it served' },
   otherMac: { id: 'mlxRestore.otherMac', defaultMessage: 'the other Mac' },
+  waitingPrevious: {
+    id: 'mlxRestore.waitingPrevious',
+    defaultMessage:
+      'The previous split is still shutting down on {node} — goose restores it when that finishes',
+  },
   tryAgain: { id: 'mlxRestore.tryAgain', defaultMessage: 'Try again' },
   dismiss: { id: 'mlxRestore.dismiss', defaultMessage: 'Dismiss' },
+  details: { id: 'mlxRestore.details', defaultMessage: 'Details' },
+  hideDetails: { id: 'mlxRestore.hideDetails', defaultMessage: 'Hide details' },
 });
 
 export function useRestoreLine(): RestoreLine {
@@ -73,12 +80,50 @@ function whereValues(intl: IntlShape, what: RestoreWhat) {
 export function restoreLineText(intl: IntlShape, line: RestoreLine): string | null {
   if (line.phase === 'idle') return null;
   if (line.phase === 'restoring') {
-    return intl.formatMessage(i18n.restoring, whereValues(intl, line.what));
+    return line.waitingOn
+      ? intl.formatMessage(i18n.waitingPrevious, { node: line.waitingOn })
+      : intl.formatMessage(i18n.restoring, whereValues(intl, line.what));
   }
   const reason = reasonText(intl, line.reason);
   return line.what
     ? intl.formatMessage(i18n.failed, { ...whereValues(intl, line.what), reason })
     : intl.formatMessage(i18n.unreadable, { reason });
+}
+
+/** What stands behind a failed line's words (pids, command lines) — shown only behind Details. */
+export function restoreLineDetail(line: RestoreLine): string | null {
+  if (line.phase !== 'failed' || line.reason.code !== 'said') return null;
+  return line.reason.detail ?? null;
+}
+
+/**
+ * Details / Hide details for a failed line that carries a detail, and the detail itself: the
+ * toggle sits with the line's actions, the text on its own full-width row below the words.
+ */
+export function useRestoreDetails(line: RestoreLine) {
+  const intl = useIntl();
+  const [open, setOpen] = useState(false);
+  const detail = restoreLineDetail(line);
+  const toggle =
+    detail == null ? null : (
+      <Button
+        size="sm"
+        variant="secondary"
+        icon={open ? <ChevronUp /> : <ChevronDown />}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        data-testid="mlx-restore-details"
+      >
+        {intl.formatMessage(open ? i18n.hideDetails : i18n.details)}
+      </Button>
+    );
+  const panel =
+    detail != null && open ? (
+      <p className="basis-full break-all font-mono text-lz-mono" data-testid="mlx-restore-detail">
+        {detail}
+      </p>
+    ) : null;
+  return { toggle, panel };
 }
 
 /** Try again / Dismiss under a failed restore. */
@@ -112,22 +157,29 @@ export function RestoreActions({ variant = 'secondary' }: { variant?: 'secondary
 export function MlxRestoreBanner() {
   const intl = useIntl();
   const line = useRestoreLine();
+  const { toggle, panel } = useRestoreDetails(line);
   const text = restoreLineText(intl, line);
   if (text == null) return null;
   return (
-    <ToneBanner
-      tone={line.phase === 'failed' ? 'err' : 'warn'}
-      live={line.phase === 'restoring'}
-      label={intl.formatMessage(i18n.label)}
-      text={text}
-      testId="mlx-restore"
-      action={
-        line.phase === 'failed' ? (
-          <RestoreActions />
-        ) : (
-          <Loader2 aria-hidden className="size-4 shrink-0 animate-spin" />
-        )
-      }
-    />
+    <div className="flex flex-col gap-2">
+      <ToneBanner
+        tone={line.phase === 'failed' ? 'err' : 'warn'}
+        live={line.phase === 'restoring'}
+        label={intl.formatMessage(i18n.label)}
+        text={text}
+        testId="mlx-restore"
+        action={
+          line.phase === 'failed' ? (
+            <span className="flex shrink-0 items-center gap-2">
+              {toggle}
+              <RestoreActions />
+            </span>
+          ) : (
+            <Loader2 aria-hidden className="size-4 shrink-0 animate-spin" />
+          )
+        }
+      />
+      {panel}
+    </div>
   );
 }
