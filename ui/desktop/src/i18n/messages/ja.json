@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "{mac} の再接続を待っています…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "このランについてAIセッションを開始"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "前回のマウントに失敗しました: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} が goose を再起動しています} other {{peer} が goose を終了しました}}{turn, select, yes { — この回答はここで止まります} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "戻り次第 goose が再接続します"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "{model} をここで読み込む{size, select, none {} other { ({size} GB)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "保存された MLX モデルは {served} を提供していますが、ノードは {wanted} を必要としています。"
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "{peer} との接続が切れました — 再接続中…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose は試行を続けます — 戻れば進行中の回答は続き、戻らなければ再試行ボタン付きで止まります"
+    "defaultMessage": "goose は試行を続けます。{peer} が応答したら、回答がまだあるか確認します"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer} のエンジンが停止しました — そこではメッセージに応答できません"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "代わりにこの Mac で実行"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "{peer} へのチャット送信をやめ、この Mac で実行します"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "チャットをこの Mac に移せませんでした: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "詳細"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} が回答の途中で LeanZero Link から切断されました — 上の回答はそこで終わっています。"
+    "defaultMessage": "{cause, select, quit {{mac} が回答の途中で goose を終了しました} restart {{mac} が回答の途中で goose を再起動しました} other {{mac} が回答の途中で応答しなくなりました}} — 上の回答はそこで終わっています。"
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} が LeanZero Link から切断されました — このターンには回答がありません。"
+    "defaultMessage": "{cause, select, quit {{mac} が goose を終了しました} restart {{mac} が goose を再起動しました} other {{mac} が応答しなくなりました}} — このターンには回答がありません。"
   },
   "linkDropNotice.retry": {
     "defaultMessage": "再試行"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "読み込んだプロンプトトークン"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "処理したリクエスト"
+    "defaultMessage": "{count, plural, other {件のリクエストを処理}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "エンジン稼働時間"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Gooseが{toolName}を実行しようとしています。許可しますか？"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "{mac} がまだ回答を保持しているか確認しています…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} がプロンプトを読んでいます ({tokens} トークン) — 経過 {elapsed}"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} がプロンプトを読んでいます ({tokens} トークン) — 計測値 {rate} トークン/秒で約 {expected} のうち {elapsed}"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} がプロンプトを読んでいます ({tokens} トークン) — {percent}%"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} がプロンプトを読んでいます ({tokens} トークン)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "{mac} の再接続を待っています…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "しばらく {mac} から出力がありません — 確認中…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "アップデートはバックグラウンドで自動的にダウンロードされます。"

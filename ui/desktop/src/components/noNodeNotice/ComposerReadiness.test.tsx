@@ -366,8 +366,11 @@ describe('ComposerReadinessStrip — a route to another Mac', () => {
     // one click away while it loads there (Q-57).
     expect(screen.getByTestId('composer-readiness-spinner')).toHaveAttribute('data-for', 'remote');
     expect(strip.firstElementChild).toBe(screen.getByTestId('composer-readiness-spinner'));
-    expect(await screen.findByTestId('composer-readiness-run-here')).toHaveTextContent(
-      'Load Qwen3.8-27B-Atlassian-Q8-mlx here (31.0 GB)'
+    // The size lands with this Mac's models list (read once the bar offers the load).
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-readiness-run-here')).toHaveTextContent(
+        'Load Qwen3.8-27B-Atlassian-Q8-mlx here (31.0 GB)'
+      )
     );
   });
 
@@ -433,8 +436,11 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
     expect(screen.getByTestId('composer-readiness-raw').textContent).toBe(
       'no answer from the Link peer'
     );
-    expect(await screen.findByTestId('composer-readiness-run-here')).toHaveTextContent(
-      'Load Qwen3.8-27B-Atlassian-Q8-mlx here (31.0 GB)'
+    // The size lands with this Mac's models list (read once the bar offers the load).
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-readiness-run-here')).toHaveTextContent(
+        'Load Qwen3.8-27B-Atlassian-Q8-mlx here (31.0 GB)'
+      )
     );
     assertStudioClean(container);
   });

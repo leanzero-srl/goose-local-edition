@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "Menunggu {mac} tersambung kembali…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Mulai sesi AI tentang run ini"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} sedang memulai ulang goose} other {{peer} keluar dari goose}}{turn, select, yes { — jawaban ini berhenti} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "goose menyambung kembali saat ia kembali"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "Muat {model} di sini{size, select, none {} other { ({size} GB)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "Model MLX tersimpan melayani {served}; node ini meminta {wanted}."
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "Kontak dengan {peer} terputus — menyambungkan ulang…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose terus mencoba — jawaban yang sedang berjalan berlanjut jika kembali, atau berhenti dengan Coba lagi"
+    "defaultMessage": "goose terus mencoba; setelah {peer} menjawab, goose memeriksa apakah jawaban Anda masih ada"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Engine di {peer} gagal — tidak ada yang bisa menjawab pesan di sana"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "Jalankan di Mac ini saja"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "Berhenti mengirim chat ke {peer} dan menjalankannya di Mac ini"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Tidak dapat memindahkan chat ke Mac ini: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "Detail"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} terputus dari LeanZero Link di tengah jawaban — jawaban di atas berhenti di sana."
+    "defaultMessage": "{cause, select, quit {{mac} keluar dari goose di tengah jawaban} restart {{mac} memulai ulang goose di tengah jawaban} other {{mac} berhenti menjawab di tengah balasan}} — jawaban di atas berhenti di sana."
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} terputus dari LeanZero Link — giliran ini tidak mendapat jawaban."
+    "defaultMessage": "{cause, select, quit {{mac} keluar dari goose} restart {{mac} memulai ulang goose} other {{mac} berhenti menjawab}} — giliran ini tidak mendapat jawaban."
   },
   "linkDropNotice.retry": {
     "defaultMessage": "Coba lagi"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "token prompt dibaca"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "permintaan dilayani"
+    "defaultMessage": "{count, plural, other {permintaan dilayani}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "waktu aktif mesin"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose ingin memanggil {toolName}. Izinkan?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "Memeriksa apakah {mac} masih menyimpan jawaban Anda…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} sedang membaca prompt Anda ({tokens} token) — {elapsed} sejauh ini"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} sedang membaca prompt Anda ({tokens} token) — {elapsed} dari sekitar {expected} pada {rate} tok/s terukur"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} sedang membaca prompt Anda ({tokens} token) — {percent}%"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} sedang membaca prompt Anda ({tokens} token)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "Menunggu {mac} tersambung kembali…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "Tidak ada kata dari {mac} sejenak — memeriksa…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose akan mengunduh pembaruan di latar belakang dan menginstalnya saat Anda keluar atau memulai ulang berikutnya."

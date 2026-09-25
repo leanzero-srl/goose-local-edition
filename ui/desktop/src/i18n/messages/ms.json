@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "Menunggu {mac} menyambung semula…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Mulakan sesi AI tentang larian ini"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} sedang memulakan semula goose} other {{peer} telah keluar dari goose}}{turn, select, yes { — jawapan ini berhenti} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "goose menyambung semula apabila ia kembali"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "Muatkan {model} di sini{size, select, none {} other { ({size} GB)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "Model MLX tersimpan melayani {served}; nod ini mahukan {wanted}."
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "Hubungan dengan {peer} terputus — menyambung semula…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose terus mencuba — jawapan yang sedang berjalan diteruskan jika ia kembali, atau berhenti dengan Cuba semula"
+    "defaultMessage": "goose terus mencuba; sebaik {peer} menjawab, goose menyemak sama ada jawapan anda masih ada"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Enjin di {peer} gagal — tiada apa di sana boleh menjawab mesej"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "Jalankan pada Mac ini sebaliknya"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "Berhenti menghantar sembang ke {peer} dan menjalankannya pada Mac ini"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Tidak dapat memindahkan sembang ke Mac ini: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "Butiran"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} terputus daripada LeanZero Link di tengah jawapan — jawapan di atas berhenti di situ."
+    "defaultMessage": "{cause, select, quit {{mac} keluar dari goose di tengah jawapan} restart {{mac} memulakan semula goose di tengah jawapan} other {{mac} berhenti menjawab di tengah balasan}} — jawapan di atas berhenti di situ."
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} terputus daripada LeanZero Link — giliran ini tidak mendapat jawapan."
+    "defaultMessage": "{cause, select, quit {{mac} keluar dari goose} restart {{mac} memulakan semula goose} other {{mac} berhenti menjawab}} — giliran ini tidak mendapat jawapan."
   },
   "linkDropNotice.retry": {
     "defaultMessage": "Cuba semula"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "token prompt dibaca"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "permintaan dilayan"
+    "defaultMessage": "{count, plural, other {permintaan dilayan}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "masa aktif enjin"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose ingin memanggil {toolName}. Benarkan?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "Menyemak sama ada {mac} masih menyimpan jawapan anda…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} sedang membaca prompt anda ({tokens} token) — {elapsed} setakat ini"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} sedang membaca prompt anda ({tokens} token) — {elapsed} daripada kira-kira {expected} pada {rate} tok/s terukur"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} sedang membaca prompt anda ({tokens} token) — {percent}%"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} sedang membaca prompt anda ({tokens} token)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "Menunggu {mac} menyambung semula…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "Tiada perkataan daripada {mac} seketika — menyemak…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose akan memuat turun kemas kini di latar belakang dan memasangnya pada kali seterusnya anda keluar atau mula semula."

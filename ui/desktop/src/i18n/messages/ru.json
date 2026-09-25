@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "Ожидание переподключения {mac}…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Начать ИИ-сессию об этом запуске"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "Последнее монтирование не удалось: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} перезапускает goose} other {{peer} закрыл goose}}{turn, select, yes { — этот ответ остановится} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "goose переподключится, когда он вернётся"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "Загрузить {model} здесь{size, select, none {} other { ({size} ГБ)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "Сохранённая модель MLX обслуживает {served}; узлу нужна {wanted}."
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "Связь с {peer} потеряна — переподключение…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose продолжает попытки — начатый ответ продолжится, если связь вернётся, или остановится с кнопкой «Повторить»"
+    "defaultMessage": "goose продолжает попытки; когда {peer} ответит, goose проверит, сохранился ли ваш ответ"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Движок на {peer} дал сбой — там никто не может ответить на сообщение"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "Запустить на этом Mac"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "Перестаёт отправлять чат на {peer} и запускает его на этом Mac"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Не удалось перенести чат на этот Mac: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "Подробности"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} отключился от LeanZero Link посреди ответа — ответ выше обрывается там."
+    "defaultMessage": "{cause, select, quit {{mac} закрыл goose посреди ответа} restart {{mac} перезапустил goose посреди ответа} other {{mac} перестал отвечать посреди ответа}} — ответ выше обрывается там."
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} отключился от LeanZero Link — этот ход остался без ответа."
+    "defaultMessage": "{cause, select, quit {{mac} закрыл goose} restart {{mac} перезапустил goose} other {{mac} перестал отвечать}} — этот ход остался без ответа."
   },
   "linkDropNotice.retry": {
     "defaultMessage": "Повторить"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "прочитано токенов промпта"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "обработано запросов"
+    "defaultMessage": "{count, plural, one {запрос обслужен} few {запроса обслужено} many {запросов обслужено} other {запроса обслужено}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "время работы движка"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose хочет вызвать {toolName}. Разрешить?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "Проверяем, сохранил ли {mac} ваш ответ…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} читает ваш промпт ({tokens} токенов) — прошло {elapsed}"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} читает ваш промпт ({tokens} токенов) — {elapsed} из примерно {expected} при измеренных {rate} ток/с"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} читает ваш промпт ({tokens} токенов) — {percent}%"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} читает ваш промпт ({tokens} токенов)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "Ожидание переподключения {mac}…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "От {mac} какое-то время нет слов — проверяем…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Обновление будет автоматически скачано в фоновом режиме."

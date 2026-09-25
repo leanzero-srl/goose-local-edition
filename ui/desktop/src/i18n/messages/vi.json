@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "Đang chờ {mac} kết nối lại…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Bắt đầu phiên AI về lượt chạy này"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "Lần gắn gần nhất thất bại: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} đang khởi động lại goose} other {{peer} đã thoát goose}}{turn, select, yes { — câu trả lời này dừng lại} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "goose sẽ kết nối lại khi nó quay lại"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "Tải {model} tại đây{size, select, none {} other { ({size} GB)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "Mô hình MLX đã lưu phục vụ {served}; nút cần {wanted}."
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "Mất liên lạc với {peer} — đang kết nối lại…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose vẫn đang thử — câu trả lời đang dở sẽ tiếp tục nếu kết nối trở lại, hoặc dừng lại kèm nút Thử lại"
+    "defaultMessage": "goose vẫn đang thử; khi {peer} trả lời, goose sẽ kiểm tra xem câu trả lời của bạn còn không"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Engine trên {peer} đã lỗi — không có gì ở đó trả lời được tin nhắn"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "Chạy trên Mac này thay thế"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "Ngừng gửi cuộc trò chuyện tới {peer} và chạy nó trên Mac này"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Không thể chuyển cuộc trò chuyện sang Mac này: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "Chi tiết"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} đã rời LeanZero Link giữa chừng câu trả lời — câu trả lời ở trên dừng tại đó."
+    "defaultMessage": "{cause, select, quit {{mac} đã thoát goose giữa chừng câu trả lời} restart {{mac} đã khởi động lại goose giữa chừng câu trả lời} other {{mac} ngừng trả lời giữa chừng}} — câu trả lời ở trên dừng tại đó."
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} đã rời LeanZero Link — lượt này không nhận được câu trả lời."
+    "defaultMessage": "{cause, select, quit {{mac} đã thoát goose} restart {{mac} đã khởi động lại goose} other {{mac} ngừng trả lời}} — lượt này không nhận được câu trả lời."
   },
   "linkDropNotice.retry": {
     "defaultMessage": "Thử lại"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "token prompt đã đọc"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "yêu cầu đã phục vụ"
+    "defaultMessage": "{count, plural, other {yêu cầu đã phục vụ}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "thời gian chạy của engine"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose muốn gọi {toolName}. Cho phép?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "Đang kiểm tra xem {mac} còn giữ câu trả lời của bạn không…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} đang đọc lời nhắc của bạn ({tokens} token) — đã {elapsed}"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} đang đọc lời nhắc của bạn ({tokens} token) — {elapsed} trên khoảng {expected} ở tốc độ đo được {rate} tok/s"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} đang đọc lời nhắc của bạn ({tokens} token) — {percent}%"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} đang đọc lời nhắc của bạn ({tokens} token)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "Đang chờ {mac} kết nối lại…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "Một lúc không có chữ nào từ {mac} — đang kiểm tra…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose sẽ tải bản cập nhật ở chế độ nền và cài đặt vào lần tiếp theo khi bạn thoát hoặc khởi động lại."

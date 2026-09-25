@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "{mac} yeniden bağlanması bekleniyor…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Bu çalıştırma hakkında bir AI oturumu başlat"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "Son takma başarısız oldu: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} goose’u yeniden başlatıyor} other {{peer} goose’dan çıktı}}{turn, select, yes { — bu yanıt burada durur} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "geri geldiğinde goose yeniden bağlanır"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "{model} modelini burada yükle{size, select, none {} other { ({size} GB)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "Kayıtlı MLX modeli {served} sunuyor; düğüm {wanted} istiyor."
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "{peer} ile bağlantı kesildi — yeniden bağlanıyor…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose denemeye devam ediyor — geri gelirse süren yanıt devam eder, gelmezse Yeniden dene ile durur"
+    "defaultMessage": "goose denemeye devam ediyor; {peer} yanıt verince goose yanıtınızın hâlâ olup olmadığını kontrol eder"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer} üzerindeki motor çöktü — orada hiçbir şey mesaja yanıt veremez"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "Bunun yerine bu Mac'te çalıştır"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "Sohbeti {peer} yerine bu Mac’te çalıştırır"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Sohbet bu Mac'e taşınamadı: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "Ayrıntılar"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} yanıtın ortasında LeanZero Link'ten düştü — yukarıdaki yanıt orada kesiliyor."
+    "defaultMessage": "{cause, select, quit {{mac} yanıtın ortasında goose’dan çıktı} restart {{mac} yanıtın ortasında goose’u yeniden başlattı} other {{mac} yanıtın ortasında yanıt vermeyi bıraktı}} — yukarıdaki yanıt orada kesiliyor."
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} LeanZero Link'ten düştü — bu tur yanıt almadı."
+    "defaultMessage": "{cause, select, quit {{mac} goose’dan çıktı} restart {{mac} goose’u yeniden başlattı} other {{mac} yanıt vermeyi bıraktı}} — bu tur yanıt almadı."
   },
   "linkDropNotice.retry": {
     "defaultMessage": "Yeniden dene"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "okunan istem tokenı"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "karşılanan istek"
+    "defaultMessage": "{count, plural, one {istek karşılandı} other {istek karşılandı}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "motor çalışma süresi"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose, {toolName}'yi aramak istiyor. İzin vermek?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "{mac} yanıtınızı hâlâ tutuyor mu diye bakılıyor…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} isteminizi okuyor ({tokens} token) — şu ana kadar {elapsed}"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} isteminizi okuyor ({tokens} token) — ölçülen {rate} tok/sn ile yaklaşık {expected} sürenin {elapsed} kadarı"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} isteminizi okuyor ({tokens} token) — %{percent}"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} isteminizi okuyor ({tokens} token)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "{mac} yeniden bağlanması bekleniyor…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "Bir süredir {mac} kaynağından kelime yok — kontrol ediliyor…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Güncelleme arka planda otomatik olarak indirilecektir."

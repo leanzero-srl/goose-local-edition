@@ -181,6 +181,7 @@ export default function GooseMessage({
 
   const linkDropNotice = linkDrop && (
     <LinkDropNotice
+      messageId={message.id ?? `${message.created}`}
       drop={linkDrop}
       hasAnswer={displayText.trim() !== '' || imagePaths.length > 0 || toolRequests.length > 0}
       live={live && !isStreaming}

@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "Aguardando {mac} se reconectar…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Iniciar uma sessão de IA sobre esta execução"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "A última montagem falhou: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} está reiniciando o goose} other {{peer} fechou o goose}}{turn, select, yes { — esta resposta para aqui} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "o goose reconecta quando ele voltar"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "Carregar {model} aqui{size, select, none {} other { ({size} GB)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "O modelo MLX salvo serve {served}; o nó quer {wanted}."
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "Contato perdido com {peer} — reconectando…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "O goose continua tentando — uma resposta em andamento continua se ele voltar, ou para com um Tentar novamente"
+    "defaultMessage": "O goose continua tentando; quando {peer} responder, o goose verifica se ainda tem sua resposta"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "O motor em {peer} falhou — nada lá pode responder a uma mensagem"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "Executar neste Mac em vez disso"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "Para de enviar o chat para {peer} e o executa neste Mac"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Não foi possível mover o chat para este Mac: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "Detalhes"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} saiu do LeanZero Link no meio da resposta — a resposta acima para aí."
+    "defaultMessage": "{cause, select, quit {{mac} fechou o goose no meio da resposta} restart {{mac} reiniciou o goose no meio da resposta} other {{mac} parou de responder no meio da resposta}} — a resposta acima para aí."
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} saiu do LeanZero Link — este turno não recebeu resposta."
+    "defaultMessage": "{cause, select, quit {{mac} fechou o goose} restart {{mac} reiniciou o goose} other {{mac} parou de responder}} — este turno não recebeu resposta."
   },
   "linkDropNotice.retry": {
     "defaultMessage": "Tentar novamente"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "tokens de prompt lidos"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "solicitações atendidas"
+    "defaultMessage": "{count, plural, one {solicitação atendida} other {solicitações atendidas}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "tempo ativo do motor"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "O Goose gostaria de invocar {toolName}. Permitir?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "Verificando se {mac} ainda tem sua resposta…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} está lendo seu prompt ({tokens} tokens) — {elapsed} até agora"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} está lendo seu prompt ({tokens} tokens) — {elapsed} de cerca de {expected} a {rate} tok/s medidos"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} está lendo seu prompt ({tokens} tokens) — {percent}%"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} está lendo seu prompt ({tokens} tokens)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "Aguardando {mac} se reconectar…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "Nenhuma palavra de {mac} há um momento — verificando…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "O Goose transferirá a atualização em segundo plano e instalá-la-á da próxima vez que sair ou reiniciar."

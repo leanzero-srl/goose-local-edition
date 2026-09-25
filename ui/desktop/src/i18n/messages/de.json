@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "Warten, bis {mac} wieder verbunden ist…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "KI-Sitzung über diesen Lauf starten"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "Das letzte Einbinden ist fehlgeschlagen: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} startet goose neu} other {{peer} hat goose beendet}}{turn, select, yes { — diese Antwort endet hier} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "goose verbindet sich wieder, sobald er zurück ist"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "{model} hier laden{size, select, none {} other { ({size} GB)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "Das gespeicherte MLX-Modell bedient {served}; der Knoten erwartet {wanted}."
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "Verbindung zu {peer} verloren — Verbindung wird wiederhergestellt…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose versucht es weiter — eine laufende Antwort geht weiter, wenn er zurückkommt, oder endet mit „Erneut versuchen“"
+    "defaultMessage": "goose versucht es weiter; sobald {peer} antwortet, prüft goose, ob deine Antwort noch da ist"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Die Engine auf {peer} ist ausgefallen — dort kann nichts auf eine Nachricht antworten"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "Stattdessen auf diesem Mac ausführen"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "Sendet den Chat nicht mehr an {peer}, sondern führt ihn auf diesem Mac aus"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Chat konnte nicht auf diesen Mac verlegt werden: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "Details"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} hat LeanZero Link mitten in der Antwort verlassen — die Antwort oben endet dort."
+    "defaultMessage": "{cause, select, quit {{mac} hat goose mitten in der Antwort beendet} restart {{mac} hat goose mitten in der Antwort neu gestartet} other {{mac} hat mitten in der Antwort aufgehört zu antworten}} — die Antwort oben endet dort."
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} hat LeanZero Link verlassen — dieser Durchgang hat keine Antwort erhalten."
+    "defaultMessage": "{cause, select, quit {{mac} hat goose beendet} restart {{mac} hat goose neu gestartet} other {{mac} antwortet nicht mehr}} — dieser Durchgang hat keine Antwort erhalten."
   },
   "linkDropNotice.retry": {
     "defaultMessage": "Erneut versuchen"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "gelesene Prompt-Tokens"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "beantwortete Anfragen"
+    "defaultMessage": "{count, plural, one {Anfrage bearbeitet} other {Anfragen bearbeitet}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "Laufzeit der Engine"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose möchte {toolName} aufrufen. Erlauben?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "Prüfe, ob {mac} deine Antwort noch hat…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} liest deinen Prompt ({tokens} Tokens) — bisher {elapsed}"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} liest deinen Prompt ({tokens} Tokens) — {elapsed} von etwa {expected} bei gemessenen {rate} Tok/s"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} liest deinen Prompt ({tokens} Tokens) — {percent} %"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} liest deinen Prompt ({tokens} Tokens)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "Warten, bis {mac} wieder verbunden ist…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "Keine Worte von {mac} seit einem Moment — prüfe…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose lädt das Update im Hintergrund herunter und installiert es beim nächsten Beenden oder Neustart."

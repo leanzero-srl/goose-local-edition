@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "Esperando a que {mac} se vuelva a conectar…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Iniciar una sesión de IA sobre esta ejecución"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "El último montaje falló: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} está reiniciando goose} other {{peer} cerró goose}}{turn, select, yes { — esta respuesta se detiene} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "goose se reconecta cuando vuelva"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "Cargar {model} aquí{size, select, none {} other { ({size} GB)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "El modelo MLX guardado sirve {served}; el nodo espera {wanted}."
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "Se perdió el contacto con {peer} — reconectando…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose sigue intentándolo — una respuesta en curso continúa si vuelve, o se detiene con un Reintentar"
+    "defaultMessage": "goose sigue intentándolo; cuando {peer} responda, goose comprobará si aún tiene tu respuesta"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "El motor en {peer} falló — nada allí puede responder un mensaje"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "Ejecutar en este Mac en su lugar"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "Deja de enviar el chat a {peer} y lo ejecuta en este Mac"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "No se pudo mover el chat a este Mac: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "Detalles"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} se desconectó de LeanZero Link a mitad de la respuesta — la respuesta de arriba termina ahí."
+    "defaultMessage": "{cause, select, quit {{mac} cerró goose a mitad de la respuesta} restart {{mac} reinició goose a mitad de la respuesta} other {{mac} dejó de responder a mitad de la respuesta}} — la respuesta de arriba termina ahí."
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} se desconectó de LeanZero Link — este turno no recibió respuesta."
+    "defaultMessage": "{cause, select, quit {{mac} cerró goose} restart {{mac} reinició goose} other {{mac} dejó de responder}} — este turno no recibió respuesta."
   },
   "linkDropNotice.retry": {
     "defaultMessage": "Reintentar"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "tokens de prompt leídos"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "solicitudes atendidas"
+    "defaultMessage": "{count, plural, one {solicitud atendida} other {solicitudes atendidas}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "tiempo activo del motor"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose quiere invocar {toolName}. ¿Permitir?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "Comprobando si {mac} aún tiene tu respuesta…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} está leyendo tu prompt ({tokens} tokens) — {elapsed} hasta ahora"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} está leyendo tu prompt ({tokens} tokens) — {elapsed} de unos {expected} a sus {rate} tok/s medidos"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} está leyendo tu prompt ({tokens} tokens) — {percent} %"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} está leyendo tu prompt ({tokens} tokens)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "Esperando a que {mac} se vuelva a conectar…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "Sin palabras de {mac} desde hace un momento — comprobando…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "La actualización se descargará automáticamente en segundo plano."

@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "{mac} के फिर से जुड़ने की प्रतीक्षा…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "इस रन के बारे में एआई सत्र शुरू करें"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "पिछला माउंट विफल रहा: {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} goose को फिर से शुरू कर रहा है} other {{peer} ने goose बंद कर दिया}}{turn, select, yes { — यह उत्तर यहीं रुकता है} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "उसके लौटते ही goose फिर से जुड़ जाएगा"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "{model} यहाँ लोड करें{size, select, none {} other { ({size} GB)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "सहेजा गया MLX मॉडल {served} सर्व करता है; नोड को {wanted} चाहिए।"
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "{peer} से संपर्क टूट गया — फिर से जोड़ा जा रहा है…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose कोशिश करता रहता है — चल रहा उत्तर उसके लौटने पर जारी रहता है, या फिर से प्रयास के विकल्प के साथ रुक जाता है"
+    "defaultMessage": "goose कोशिश करता रहता है; {peer} के उत्तर देते ही goose जाँचेगा कि आपका उत्तर अभी भी है या नहीं"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "{peer} पर इंजन विफल हो गया — वहाँ कुछ भी संदेश का जवाब नहीं दे सकता"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "इसके बजाय इस Mac पर चलाएँ"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "चैट को {peer} पर भेजना बंद करके इस Mac पर चलाता है"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "चैट को इस Mac पर नहीं ले जाया जा सका: {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "विवरण"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} उत्तर के बीच में LeanZero Link से हट गया — ऊपर का उत्तर वहीं रुक जाता है।"
+    "defaultMessage": "{cause, select, quit {{mac} ने उत्तर के बीच में goose बंद कर दिया} restart {{mac} ने उत्तर के बीच में goose फिर से शुरू किया} other {{mac} ने उत्तर के बीच में जवाब देना बंद कर दिया}} — ऊपर का उत्तर वहीं रुक जाता है।"
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} LeanZero Link से हट गया — इस बारी को कोई उत्तर नहीं मिला।"
+    "defaultMessage": "{cause, select, quit {{mac} ने goose बंद कर दिया} restart {{mac} ने goose फिर से शुरू किया} other {{mac} ने जवाब देना बंद कर दिया}} — इस बारी को कोई उत्तर नहीं मिला।"
   },
   "linkDropNotice.retry": {
     "defaultMessage": "फिर से प्रयास करें"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "पढ़े गए प्रॉम्प्ट टोकन"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "पूरे किए गए अनुरोध"
+    "defaultMessage": "{count, plural, one {अनुरोध पूरा हुआ} other {अनुरोध पूरे हुए}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "इंजन अपटाइम"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose {toolName} को कॉल करना चाहेंगे। अनुमति दें?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "जाँच रहे हैं कि {mac} के पास अभी भी आपका उत्तर है या नहीं…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} आपका प्रॉम्प्ट पढ़ रहा है ({tokens} टोकन) — अब तक {elapsed}"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} आपका प्रॉम्प्ट पढ़ रहा है ({tokens} टोकन) — मापी गई {rate} टोकन/से की दर पर लगभग {expected} में से {elapsed}"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} आपका प्रॉम्प्ट पढ़ रहा है ({tokens} टोकन) — {percent}%"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} आपका प्रॉम्प्ट पढ़ रहा है ({tokens} टोकन)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "{mac} के फिर से जुड़ने की प्रतीक्षा…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "कुछ देर से {mac} से कोई शब्द नहीं — जाँच रहे हैं…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "अपडेट बैकग्राउंड में अपने आप डाउनलोड हो जाएगा."

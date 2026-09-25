@@ -287,9 +287,6 @@
   "baseChat.promptFailedHint": {
     "defaultMessage": "Your conversation is safe. Send again to retry."
   },
-  "baseChat.waitingForReconnect": {
-    "defaultMessage": "En attente de la reconnexion de {mac}…"
-  },
   "benchmarkSection.askAbout": {
     "defaultMessage": "Démarrer une session IA à propos de cette exécution"
   },
@@ -725,6 +722,15 @@
   "composerReadiness.failed": {
     "defaultMessage": "Le dernier montage a échoué : {error}"
   },
+  "composerReadiness.leaving": {
+    "defaultMessage": "{cause, select, restart {{peer} redémarre goose} other {{peer} a quitté goose}}{turn, select, yes { — cette réponse s’arrête} other {}}"
+  },
+  "composerReadiness.leavingPlain": {
+    "defaultMessage": "goose se reconnecte dès son retour"
+  },
+  "composerReadiness.loadHere": {
+    "defaultMessage": "Charger {model} ici{size, select, none {} other { ({size} Go)}}"
+  },
   "composerReadiness.mismatch": {
     "defaultMessage": "Le modèle MLX enregistré sert {served} ; le nœud attend {wanted}."
   },
@@ -750,7 +756,7 @@
     "defaultMessage": "Contact perdu avec {peer} — reconnexion…"
   },
   "composerReadiness.reconnectingPlain": {
-    "defaultMessage": "goose continue d’essayer — une réponse en cours reprend s’il revient, ou s’arrête avec un Réessayer"
+    "defaultMessage": "goose continue d’essayer ; quand {peer} répondra, goose vérifiera s’il a encore votre réponse"
   },
   "composerReadiness.remoteFailed": {
     "defaultMessage": "Le moteur sur {peer} a échoué — rien là-bas ne peut répondre à un message"
@@ -763,6 +769,9 @@
   },
   "composerReadiness.runHere": {
     "defaultMessage": "Exécuter plutôt sur ce Mac"
+  },
+  "composerReadiness.runHereHint": {
+    "defaultMessage": "N’envoie plus le chat à {peer} et l’exécute sur ce Mac"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Impossible de déplacer le chat vers ce Mac : {error}"
@@ -2280,10 +2289,10 @@
     "defaultMessage": "Détails"
   },
   "linkDropNotice.midAnswer": {
-    "defaultMessage": "{mac} a quitté LeanZero Link en pleine réponse — la réponse ci-dessus s’arrête là."
+    "defaultMessage": "{cause, select, quit {{mac} a quitté goose en pleine réponse} restart {{mac} a redémarré goose en pleine réponse} other {{mac} a cessé de répondre en pleine réponse}} — la réponse ci-dessus s’arrête là."
   },
   "linkDropNotice.noAnswer": {
-    "defaultMessage": "{mac} a quitté LeanZero Link — ce tour n’a reçu aucune réponse."
+    "defaultMessage": "{cause, select, quit {{mac} a quitté goose} restart {{mac} a redémarré goose} other {{mac} a cessé de répondre}} — ce tour n’a reçu aucune réponse."
   },
   "linkDropNotice.retry": {
     "defaultMessage": "Réessayer"
@@ -3999,7 +4008,7 @@
     "defaultMessage": "jetons de prompt lus"
   },
   "mlxStateTile.fact.served": {
-    "defaultMessage": "requêtes servies"
+    "defaultMessage": "{count, plural, one {requête servie} other {requêtes servies}}"
   },
   "mlxStateTile.fact.uptime": {
     "defaultMessage": "durée de fonctionnement du moteur"
@@ -7579,6 +7588,27 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose souhaite appeler {toolName}. Autoriser ?"
+  },
+  "turnCue.checking": {
+    "defaultMessage": "Vérification que {mac} a encore votre réponse…"
+  },
+  "turnCue.readingElapsed": {
+    "defaultMessage": "{mac} lit votre prompt ({tokens} jetons) — {elapsed} jusqu’ici"
+  },
+  "turnCue.readingEta": {
+    "defaultMessage": "{mac} lit votre prompt ({tokens} jetons) — {elapsed} sur environ {expected} à ses {rate} jetons/s mesurés"
+  },
+  "turnCue.readingPercent": {
+    "defaultMessage": "{mac} lit votre prompt ({tokens} jetons) — {percent} %"
+  },
+  "turnCue.readingPlain": {
+    "defaultMessage": "{mac} lit votre prompt ({tokens} jetons)…"
+  },
+  "turnCue.reconnecting": {
+    "defaultMessage": "En attente de la reconnexion de {mac}…"
+  },
+  "turnCue.silent": {
+    "defaultMessage": "Aucun mot de {mac} depuis un moment — vérification…"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose téléchargera la mise à jour en arrière-plan et l'installera lors de votre prochaine fermeture ou redémarrage."
