@@ -7,8 +7,8 @@ screen / measured) or PLAUSIBLE (read in code).
 | id | date | track | surface | finding | scenario | verdict | status | note |
 |---|---|---|---|---|---|---|---|---|
 | Q-1 | 2026-09-25 | ux | Engine tile | headline "Running" over an idle tile; "Idle" only in the corner | 27B idle on the Studio | CONFIRMED (owner) | shipped 3.0.33 (5bd73e93b) | |
-| Q-2 | 2026-09-25 | ux | Engine tile | big number = last run only, not a median | a short fast answer shown as the model's rate | CONFIRMED (owner) | fixed 3cb0e0af8 + 06f58b25b · scheduled 3.0.35 | main's run book merged in |
-| Q-3 | 2026-09-25 | ux | composer | context always "0 / 128k" — a default, never measured, for a 262,144 model | chat routed to the Studio | CONFIRMED (owner) | fixed af06267e7 · scheduled 3.0.35 | |
+| Q-2 | 2026-09-25 | ux | Engine tile | big number = last run only, not a median | a short fast answer shown as the model's rate | CONFIRMED (owner) | shipped 3.0.35 (3cb0e0af8, 06f58b25b) | main's run book merged in |
+| Q-3 | 2026-09-25 | ux | composer | context always "0 / 128k" — a default, never measured, for a 262,144 model | chat routed to the Studio | CONFIRMED (owner) | shipped 3.0.35 (af06267e7) — '0 / 262k' seen | |
 | Q-4 | 2026-09-25 | ux | chat top | NODES strip says "unmounted" under a green "Serving from Work's Mac Studio · ready" bar; the strip has no click | chat routed to the Studio | CONFIRMED (screenshot v334/composer-full.png) | open | NodesStrip.tsx:69/92/110 knows no remote route |
 | Q-5 | 2026-09-25 | ux | composer | model chip reads "swarm" (a provider id); the served model is never named; changing where it runs is 2+ clicks into a provider modal | any swarm chat | CONFIRMED | open | ModelsBottomBar.tsx:152-162,207 |
 | Q-6 | 2026-09-25 | ux | composer | "Coding · Agent" toggle changes nothing — LEANZERO_PERSONA is read nowhere; its tooltip promises an autonomous loop | clicking Agent | CONFIRMED (grep: usePersona.ts:10 only) | open | since 691295198 (2026-07-10) |
