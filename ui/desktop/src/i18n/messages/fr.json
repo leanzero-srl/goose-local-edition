@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Le chat est servi par le moteur de {peer} — ses chiffres sont dans la tuile ci-dessus. Ces lignes sont celles du moteur de ce Mac."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Le chat est servi par la répartition sur vos Mac — ses chiffres sont dans la tuile ci-dessus. Ces lignes sont celles du moteur unique de ce Mac."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Distribué"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Le moteur distribué occupe ce Mac : le moteur unique ne peut pas être monté tant qu’il n’est pas arrêté dans la section Moteur distribué ci-dessous."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Détails du moteur"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Mémoire sur {mac}"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Impossible d’arrêter le service depuis l’autre Mac."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Moteur de ce Mac"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Moteur de ce Mac · arrêté"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode} : {bytes} Kio par jeton au lieu de {bf16} Kio — la même mémoire contient {ratio}× plus de contexte."

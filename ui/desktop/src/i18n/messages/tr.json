@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Sohbete {peer} üzerindeki motor yanıt veriyor; onun değerleri yukarıdaki kutuda. Bu satırlar bu Mac’in kendi motoruna ait."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Sohbete Mac’lerinize bölünmüş motor yanıt veriyor; onun değerleri yukarıdaki kutuda. Bu satırlar bu Mac’in kendi tekil motoruna ait."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Dağıtık"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Dağıtık motor bu Mac'i kullanıyor: tekli motor, aşağıdaki Dağıtık motor bölümünde durdurulana kadar bağlanamaz."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Motor ayrıntıları"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} üzerindeki bellek"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Diğer Mac üzerinden sunum durdurulamadı."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Bu Mac’in motoru"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Bu Mac’in motoru · çalışmıyor"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: token başına {bf16} KiB yerine {bytes} KiB — aynı bellek {ratio}× bağlam tutar."

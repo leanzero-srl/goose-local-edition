@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "채팅은 {peer}의 엔진이 응답합니다. 그 수치는 위 타일에 있습니다. 이 행들은 이 Mac 자체 엔진의 것입니다."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "채팅은 여러 Mac에 나눈 엔진이 응답합니다. 그 수치는 위 타일에 있습니다. 이 행들은 이 Mac 자체 단일 엔진의 것입니다."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "분산"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "분산 엔진이 이 Mac을 사용 중입니다. 아래의 분산 엔진 섹션에서 중지할 때까지 단일 엔진을 마운트할 수 없습니다."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "엔진 세부 정보"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac}의 메모리"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "다른 Mac에서의 제공을 중지할 수 없습니다."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "이 Mac의 엔진"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "이 Mac의 엔진 · 실행 중 아님"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: 토큰당 {bf16} KiB 대신 {bytes} KiB — 같은 메모리에 {ratio}×의 컨텍스트가 들어갑니다."

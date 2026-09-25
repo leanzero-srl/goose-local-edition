@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Sembang dilayan oleh enjin pada {peer} — angkanya dalam jubin di atas. Baris ini milik enjin Mac ini sendiri."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Sembang dilayan oleh pembahagian merentas Mac anda — angkanya dalam jubin di atas. Baris ini milik enjin tunggal Mac ini sendiri."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Teragih"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Enjin teragih menguasai Mac ini: enjin tunggal tidak boleh dilekapkan sehingga ia dihentikan dalam bahagian Enjin teragih di bawah."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Butiran enjin"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memori di {mac}"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Tidak dapat menghentikan penghidangan dari Mac lain."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Enjin Mac ini"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Enjin Mac ini · tidak berjalan"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB bagi setiap token dan bukan {bf16} KiB — memori yang sama memuatkan {ratio}× konteks."

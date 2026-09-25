@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Obrolan dilayani mesin di {peer} — angkanya ada di ubin di atas. Baris ini milik mesin Mac ini sendiri."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Obrolan dilayani pembagian di seluruh Mac Anda — angkanya ada di ubin di atas. Baris ini milik mesin tunggal Mac ini sendiri."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Terdistribusi"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Mesin terdistribusi menguasai Mac ini: mesin tunggal tidak bisa dipasang sampai mesin itu dihentikan di bagian Mesin terdistribusi di bawah."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Detail mesin"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memori di {mac}"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Tidak dapat menghentikan layanan dari Mac lain."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Mesin Mac ini"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Mesin Mac ini · tidak berjalan"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token, bukan {bf16} KiB — memori yang sama memuat {ratio}× konteks."

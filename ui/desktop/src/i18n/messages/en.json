@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Chat is served by the engine on {peer} — its figures are in the tile above. These rows are this Mac’s own engine."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Chat is served by the split across your Macs — its figures are in the tile above. These rows are this Mac’s own single engine."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Distributed"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "The distributed engine owns this Mac: the single engine cannot mount until it is stopped in the Distributed engine section below."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Engine details"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memory on {mac}"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Could not stop serving from the other Mac."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "This Mac’s engine"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "This Mac’s engine · not running"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token instead of {bf16} KiB — the same memory holds {ratio}× the context."

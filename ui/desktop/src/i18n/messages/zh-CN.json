@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "聊天由 {peer} 上的引擎提供——其数据在上方的卡片中。这些行是此 Mac 自己的引擎。"
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "聊天由跨多台 Mac 的拆分引擎提供——其数据在上方的卡片中。这些行是此 Mac 自己的单机引擎。"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "分布式"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "分布式引擎正占用这台 Mac：在下方“分布式引擎”部分停止它之前，单机引擎无法挂载。"
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "引擎详情"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} 的内存"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "无法停止由另一台 Mac 提供的服务。"
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "此 Mac 的引擎"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "此 Mac 的引擎 · 未运行"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}：每个 token {bytes} KiB，而不是 {bf16} KiB — 同样的内存可容纳 {ratio}× 的上下文。"

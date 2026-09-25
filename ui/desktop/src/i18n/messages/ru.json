@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Чат обслуживает движок на {peer} — его показатели в плитке выше. Эти строки относятся к движку этого Mac."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Чат обслуживает разделение между вашими Mac — его показатели в плитке выше. Эти строки относятся к одиночному движку этого Mac."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Распределённо"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Распределённый движок занимает этот Mac: одиночный движок нельзя загрузить, пока распределённый не остановлен в разделе «Распределённый движок» ниже."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Сведения о движке"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Память на {mac}"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Не удалось остановить обслуживание с другого Mac."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Движок этого Mac"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Движок этого Mac · не запущен"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} КиБ на токен вместо {bf16} КиБ — в той же памяти помещается в {ratio}× больше контекста."

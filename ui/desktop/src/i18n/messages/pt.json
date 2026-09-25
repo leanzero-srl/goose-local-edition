@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "O chat é atendido pelo motor em {peer}; os números dele estão no bloco acima. Estas linhas são do motor deste Mac."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "O chat é atendido pela divisão entre os seus Macs; os números dela estão no bloco acima. Estas linhas são do motor único deste Mac."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Distribuído"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "O mecanismo distribuído ocupa este Mac: o mecanismo único não pode ser montado até que ele seja parado na seção Mecanismo distribuído abaixo."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Detalhes do motor"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memória em {mac}"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Não foi possível parar o serviço a partir do outro Mac."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Motor deste Mac"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Motor deste Mac · parado"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB por token em vez de {bf16} KiB — a mesma memória comporta {ratio}× o contexto."

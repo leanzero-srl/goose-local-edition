@@ -151,6 +151,22 @@ const i18n = defineMessages({
     defaultMessage: 'Serving across Macs',
   },
   servingRemote: { id: 'mlxEngineView.servingRemote', defaultMessage: 'Serving on {peer}' },
+  engineDetails: { id: 'mlxEngineView.engineDetails', defaultMessage: 'Engine details' },
+  thisMacEngine: { id: 'mlxEngineView.thisMacEngine', defaultMessage: 'This Mac’s engine' },
+  thisMacEngineStopped: {
+    id: 'mlxEngineView.thisMacEngineStopped',
+    defaultMessage: 'This Mac’s engine · not running',
+  },
+  detailsElsewhereRemote: {
+    id: 'mlxEngineView.detailsElsewhereRemote',
+    defaultMessage:
+      'Chat is served by the engine on {peer} — its figures are in the tile above. These rows are this Mac’s own engine.',
+  },
+  detailsElsewhereSplit: {
+    id: 'mlxEngineView.detailsElsewhereSplit',
+    defaultMessage:
+      'Chat is served by the split across your Macs — its figures are in the tile above. These rows are this Mac’s own single engine.',
+  },
   memoryOn: { id: 'mlxEngineView.memoryOn', defaultMessage: 'Memory on {mac}' },
   memoryReading: { id: 'mlxEngineView.memoryReading', defaultMessage: 'Reading its memory…' },
   memoryPeerOffline: {
@@ -905,8 +921,22 @@ function EngineSection(props: EngineSectionProps) {
     },
   ];
 
+  // While a route or the split serves chat, every row above still reads THIS Mac's single engine —
+  // "Context length —" and "PID —" under a tile saying "Serving from Work's Mac Studio" read as the
+  // serving engine's facts (Q-43). The section says whose rows these are.
+  const servedElsewhere = remote != null || distributedOwns;
+  const detailsTitle = !servedElsewhere
+    ? intl.formatMessage(i18n.engineDetails)
+    : intl.formatMessage(running ? i18n.thisMacEngine : i18n.thisMacEngineStopped);
   const details = (
     <div className="flex flex-col gap-4">
+      {servedElsewhere && (
+        <p data-testid="mlx-details-elsewhere" className={cx('break-words', TYPE.meta)}>
+          {remote != null
+            ? intl.formatMessage(i18n.detailsElsewhereRemote, { peer: routePeerName(remote) })
+            : intl.formatMessage(i18n.detailsElsewhereSplit)}
+        </p>
+      )}
       <KeyValue items={facts} aria-label="Engine status" />
       {settings && (
         // Spawn command — visible, not editable here: the owner sees exactly what would run.
@@ -1138,10 +1168,10 @@ function EngineSection(props: EngineSectionProps) {
       {/* The running engine's facts are the point of the page once it runs; before that they are
           all "—", so they fold away under a disclosure instead of leading the page. */}
       {running ? (
-        <Panel title="Engine details">{details}</Panel>
+        <Panel title={detailsTitle}>{details}</Panel>
       ) : (
         <Disclosure
-          title="Engine details"
+          title={detailsTitle}
           open={detailsOpen}
           onOpenChange={setDetailsOpen}
           testId="mlx-engine-details"

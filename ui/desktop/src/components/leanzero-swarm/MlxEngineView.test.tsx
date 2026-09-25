@@ -2839,6 +2839,11 @@ describe('Engine tab — which engine owns this Mac is always said', () => {
     expect(screen.getByTestId('mlx-dist-tile-load')).toHaveTextContent('slots 0 of 2 · 0 waiting');
     // This Mac's own start waits for the split to stop.
     expect(screen.queryByTestId('placement-run-local')).toBeNull();
+    // Q-43: the details rows are this Mac's single engine, and they say so.
+    await userEvent.click(screen.getByRole('button', { name: 'This Mac’s engine · not running' }));
+    expect(screen.getByTestId('mlx-details-elsewhere')).toHaveTextContent(
+      'Chat is served by the split across your Macs'
+    );
   });
 
   it('a stopped distributed engine leaves the single engine in charge; the split is one way in Run it', async () => {
@@ -3101,6 +3106,34 @@ describe('MlxEngineView — the memory under "Serving on <peer>" is the peer’s
     unmount();
   });
 
+  /**
+   * Q-43: the tile said "Serving from Work's Mac Studio" while Engine details listed "Context length
+   * — · PID — · Base URL —" — this Mac's stopped engine, read as the serving one.
+   */
+  it('a route to the Studio: the details say they are this Mac’s engine, not running, and who serves', async () => {
+    withMesh([
+      peerNode({
+        node_id: STUDIO_ID,
+        hostname: 'WorksMacStudio.lan',
+        computer_name: "Work's Mac Studio",
+      }),
+    ]);
+    mockStatus.mockImplementation(async (nodeId?: string) =>
+      nodeId === STUDIO_ID
+        ? statusOf({ state: 'running', availableMemoryGb: 23, totalMemoryGb: 96 })
+        : statusOf({ state: 'stopped', availableMemoryGb: 63.9, totalMemoryGb: 128 })
+    );
+    remoteStore.publish(ROUTE);
+    const { unmount } = render(<MlxEngineView />);
+    const toggle = await screen.findByRole('button', { name: 'This Mac’s engine · not running' });
+    expect(screen.queryByRole('button', { name: 'Engine details' })).toBeNull();
+    await userEvent.click(toggle);
+    expect(screen.getByTestId('mlx-details-elsewhere')).toHaveTextContent(
+      "Chat is served by the engine on Work's Mac Studio — its figures are in the tile above. These rows are this Mac’s own engine."
+    );
+    unmount();
+  });
+
   it('no route: this Mac’s memory, unlabelled as before', async () => {
     mockStatus.mockResolvedValue(
       statusOf({ state: 'stopped', availableMemoryGb: 96.6, totalMemoryGb: 128 })
@@ -3109,6 +3142,8 @@ describe('MlxEngineView — the memory under "Serving on <peer>" is the peer’s
     const memory = await screen.findByTestId('mlx-serving-memory');
     expect(await within(memory).findByText('96.6 GB available of 128.0 GB')).toBeInTheDocument();
     expect(within(memory).queryByText(/Memory on/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Engine details' })).toBeInTheDocument();
+    expect(screen.queryByTestId('mlx-details-elsewhere')).toBeNull();
     unmount();
   });
 });

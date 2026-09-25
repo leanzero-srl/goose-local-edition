@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "チャットは {peer} のエンジンが応答しています。その数値は上のタイルにあります。ここに並ぶのはこの Mac 自身のエンジンです。"
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "チャットは複数の Mac にまたがる分割エンジンが応答しています。その数値は上のタイルにあります。ここに並ぶのはこの Mac 自身の単体エンジンです。"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "分散"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "分散エンジンがこの Mac を使用中です。下の「分散エンジン」セクションで停止するまで、単一エンジンはマウントできません。"
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "エンジンの詳細"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} のメモリ"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "もう一方の Mac からの提供を停止できませんでした。"
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "この Mac のエンジン"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "この Mac のエンジン · 停止中"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: 1 トークンあたり {bf16} KiB ではなく {bytes} KiB — 同じメモリに {ratio}× のコンテキストが入ります。"

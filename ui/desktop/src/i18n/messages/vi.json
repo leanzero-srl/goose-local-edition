@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "Cuộc trò chuyện do engine trên {peer} phục vụ — số liệu của nó ở ô phía trên. Các dòng này là engine của chính máy Mac này."
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "Cuộc trò chuyện do bản chia trên các máy Mac của bạn phục vụ — số liệu ở ô phía trên. Các dòng này là engine đơn của chính máy Mac này."
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "Phân tán"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "Engine phân tán đang chiếm máy Mac này: engine đơn không thể gắn cho đến khi nó được dừng trong mục Engine phân tán bên dưới."
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "Chi tiết engine"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Bộ nhớ trên {mac}"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Không thể dừng phục vụ từ Mac kia."
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "Engine của máy Mac này"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "Engine của máy Mac này · không chạy"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB mỗi token thay vì {bf16} KiB — cùng bộ nhớ chứa được {ratio}× ngữ cảnh."

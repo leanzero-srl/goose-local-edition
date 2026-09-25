@@ -3668,11 +3668,20 @@
   "mlxDistributedSetup.viaLink": {
     "defaultMessage": "LeanZero Link · {node}"
   },
+  "mlxEngineView.detailsElsewhereRemote": {
+    "defaultMessage": "चैट {peer} के इंजन से चल रही है — उसके आँकड़े ऊपर की टाइल में हैं। ये पंक्तियाँ इस Mac के अपने इंजन की हैं।"
+  },
+  "mlxEngineView.detailsElsewhereSplit": {
+    "defaultMessage": "चैट आपके Mac पर बँटे इंजन से चल रही है — उसके आँकड़े ऊपर की टाइल में हैं। ये पंक्तियाँ इस Mac के अपने एकल इंजन की हैं।"
+  },
   "mlxEngineView.distributedOwns": {
     "defaultMessage": "वितरित"
   },
   "mlxEngineView.distributedOwnsText": {
     "defaultMessage": "वितरित इंजन इस Mac पर है: जब तक इसे नीचे वितरित इंजन अनुभाग में रोका नहीं जाता, एकल इंजन माउंट नहीं हो सकता।"
+  },
+  "mlxEngineView.engineDetails": {
+    "defaultMessage": "इंजन विवरण"
   },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} पर मेमोरी"
@@ -3715,6 +3724,12 @@
   },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "दूसरे Mac से सर्विंग रोकी नहीं जा सकी।"
+  },
+  "mlxEngineView.thisMacEngine": {
+    "defaultMessage": "इस Mac का इंजन"
+  },
+  "mlxEngineView.thisMacEngineStopped": {
+    "defaultMessage": "इस Mac का इंजन · नहीं चल रहा"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: हर टोकन पर {bf16} KiB की जगह {bytes} KiB — उसी मेमोरी में {ratio}× संदर्भ आता है।"
