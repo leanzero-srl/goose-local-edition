@@ -96,6 +96,9 @@ pub(crate) fn append_checkpoint_parser_flags(dir: &Path, argv: &mut Vec<String>)
     if !xml_contract {
         return Ok(());
     }
+    // Not `qwen3_xml`: in Rapid-MLX that name registers the JSON-body parser
+    // (`<tool_call>{"name":…}`), which this template never emits. Residue after a parameter
+    // closes (Q-85) is refused at decode time by the engine's skeleton guard (lz.7), not here.
     argv.extend([
         "--enable-auto-tool-choice".into(),
         "--tool-call-parser".into(),
