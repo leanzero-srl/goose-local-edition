@@ -41,7 +41,7 @@ use crate::state::{
     SwarmStateSource,
 };
 use crate::token::node_token_from_secret;
-use crate::wire::NodeStatus;
+use crate::wire::{LeaveReason, NodeStatus, PeerLeavingNotice};
 use crate::worker_client::{
     RequestCodeResult, VerifyResult, WorkerClient, WorkerError, DEFAULT_WORKER_BASE_URL,
 };
@@ -274,6 +274,55 @@ pub enum LinkError {
         path: PathBuf,
         source: std::io::Error,
     },
+}
+
+/// What [`LinkManager::announce_leaving`] did, peer by peer (peers named by their
+/// ComputerName, else hostname). `Display` is the one line goosed's teardown logs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeavingReport {
+    pub reason: LeaveReason,
+    pub told: Vec<String>,
+    /// Peer name and why its notice did not land.
+    pub failed: Vec<(String, String)>,
+    /// Peers the fabric already read `Offline` (or with no mesh IP) — not dialed.
+    pub skipped_offline: Vec<String>,
+}
+
+impl std::fmt::Display for LeavingReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reason = match self.reason {
+            LeaveReason::Quitting => "quitting",
+            LeaveReason::Restarting => "restarting",
+        };
+        write!(
+            f,
+            "told {} peer(s) goose is {reason} [{}]",
+            self.told.len(),
+            self.told.join(", ")
+        )?;
+        if !self.failed.is_empty() {
+            let failed: Vec<String> = self
+                .failed
+                .iter()
+                .map(|(name, error)| format!("{name}: {error}"))
+                .collect();
+            write!(
+                f,
+                "; {} notice(s) failed [{}]",
+                failed.len(),
+                failed.join("; ")
+            )?;
+        }
+        if !self.skipped_offline.is_empty() {
+            write!(
+                f,
+                "; skipped {} Offline [{}]",
+                self.skipped_offline.len(),
+                self.skipped_offline.join(", ")
+            )?;
+        }
+        Ok(())
+    }
 }
 
 /// A live connection's owned resources. Torn down per-pid on logout / failure.
@@ -896,6 +945,110 @@ impl LinkManager {
             connect_timeout: self.core.config.control.connect_timeout,
             liveness_interval: self.core.config.control.poll_interval,
         })
+    }
+
+    /// Tell every linked peer this goose is going away ON PURPOSE, before its Link stops —
+    /// the embedding process calls it on its way out (goosed: `goose serve`'s exit path,
+    /// before the mesh daemon is stopped). Each peer that can be reached gets one `POST
+    /// /v1/swarm/peer-leaving`, all at once, each bounded as a whole by the control config's
+    /// `connect_timeout` (a quit never waits longer than that on a peer); a failure is logged
+    /// by name (`peer_leaving_notice_failed`) and never retried. A peer the fabric already
+    /// reads `Offline` is skipped — it could not be reached to hear it. This node's own
+    /// `/nodes` reports `leaving` from here on. `None` when not connected (no peer to tell).
+    pub async fn announce_leaving(&self, reason: LeaveReason) -> Option<LeavingReport> {
+        let (registry, token, mesh_ip) = {
+            let inner = self.core.inner.lock().await;
+            let active = inner.active.as_ref()?;
+            if let Some(control) = &active.control {
+                control.mark_leaving(reason);
+            }
+            (
+                active.registry.clone(),
+                active.node_token.clone(),
+                active.mesh_ip.clone(),
+            )
+        };
+        let me = self.core.source.local_node().await;
+        let notice = PeerLeavingNotice {
+            node_id: me.node_id,
+            hostname: me.hostname,
+            mesh_ip: Some(mesh_ip),
+            reason,
+        };
+
+        let mut report = LeavingReport {
+            reason,
+            told: Vec::new(),
+            failed: Vec::new(),
+            skipped_offline: Vec::new(),
+        };
+        let mut targets = Vec::new();
+        for (node, base_url) in registry.peer_nodes_with_urls() {
+            let name = node
+                .computer_name
+                .clone()
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| node.hostname.clone());
+            match base_url {
+                Some(base_url) if node.status != NodeStatus::Offline => {
+                    targets.push((name, base_url))
+                }
+                _ => report.skipped_offline.push(name),
+            }
+        }
+        if targets.is_empty() {
+            return Some(report);
+        }
+
+        let client = match peer_http_client(
+            registry.peer_proxy(),
+            PeerTimeout::Total(self.core.config.control.connect_timeout),
+        ) {
+            Ok(client) => client,
+            Err(err) => {
+                for (name, _) in targets {
+                    tracing::warn!(peer = %name, error = %err, "peer_leaving_notice_failed");
+                    report.failed.push((name, err.to_string()));
+                }
+                return Some(report);
+            }
+        };
+        let sends = targets.into_iter().map(|(name, base_url)| {
+            let client = &client;
+            let token = &token;
+            let notice = &notice;
+            async move {
+                let outcome = match client
+                    .post(format!("{base_url}/v1/swarm/peer-leaving"))
+                    .bearer_auth(token)
+                    .json(notice)
+                    .send()
+                    .await
+                {
+                    Ok(response) if response.status().is_success() => Ok(()),
+                    Ok(response) => {
+                        let status = response.status();
+                        let body = response
+                            .text()
+                            .await
+                            .unwrap_or_else(|e| format!("<body unreadable: {e}>"));
+                        Err(format!("answered {status}: {body}"))
+                    }
+                    Err(err) => Err(err.to_string()),
+                };
+                (name, outcome)
+            }
+        });
+        for (name, outcome) in futures::future::join_all(sends).await {
+            match outcome {
+                Ok(()) => report.told.push(name),
+                Err(error) => {
+                    tracing::warn!(peer = %name, %error, "peer_leaving_notice_failed");
+                    report.failed.push((name, error));
+                }
+            }
+        }
+        Some(report)
     }
 
     /// Tear down the connection (per-pid), clear the stored identity, and drop to

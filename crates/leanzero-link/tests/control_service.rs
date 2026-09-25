@@ -26,7 +26,7 @@ use leanzero_link::state::{
     RemoteExecutor, SwarmStateSource,
 };
 use leanzero_link::wire::{
-    LinkEvent, NodeState, NodeStatus, SessionDeltaKind, SessionSummary, StreamFrame,
+    LeaveReason, LinkEvent, NodeState, NodeStatus, SessionDeltaKind, SessionSummary, StreamFrame,
     SwarmNodesResponse,
 };
 use tokio::net::TcpStream;
@@ -64,6 +64,8 @@ struct FakeStateSource {
     /// unreadable right now. `local_node` keeps answering from the live set.
     store_error: StdMutex<Option<String>>,
     delta_tx: broadcast::Sender<LinkEvent>,
+    /// How many times `/nodes` read this node — a peer's polls, counted.
+    node_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl FakeStateSource {
@@ -76,6 +78,7 @@ impl FakeStateSource {
             sessions: StdMutex::new(Vec::new()),
             store_error: StdMutex::new(None),
             delta_tx,
+            node_reads: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -105,6 +108,7 @@ impl FakeStateSource {
 #[async_trait::async_trait]
 impl SwarmStateSource for FakeStateSource {
     async fn local_node(&self) -> NodeState {
+        self.node_reads.fetch_add(1, Ordering::SeqCst);
         let sessions = self.sessions.lock().unwrap().clone();
         NodeState {
             node_id: self.node_id.clone(),
@@ -116,6 +120,7 @@ impl SwarmStateSource for FakeStateSource {
             last_poll_error: None,
             computer_name: None,
             allows: None,
+            leaving: None,
         }
     }
 
@@ -795,6 +800,7 @@ async fn spawn_stub_peer(
             last_poll_error: None,
             computer_name: None,
             allows: None,
+            leaving: None,
         },
         unauthorized,
     };
@@ -1604,4 +1610,146 @@ fn mlx_control_error_status_mapping_is_exact() {
         mlx_control_error_status(&MlxControlError::Failed("boom".into())).as_u16(),
         500
     );
+}
+
+// ── Q-51: a peer that goes away ON PURPOSE says so; the receiver knows at once ──
+
+async fn post_leaving(
+    client: &reqwest::Client,
+    base: &str,
+    token: Option<&str>,
+    body: serde_json::Value,
+) -> (reqwest::StatusCode, String) {
+    let mut request = client
+        .post(format!("{base}/v1/swarm/peer-leaving"))
+        .json(&body);
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    let response = request.send().await.expect("request sends");
+    let status = response.status();
+    (status, response.text().await.unwrap_or_default())
+}
+
+/// A (the MacBook) polls B (the Studio). B's goose quits: it marks itself leaving and tells A.
+/// A's row for B is `Offline` + `leaving` in the very next read — no poll waited on — and the
+/// change is on A's `/stream`. While B's own report still says it is leaving, A's polls keep
+/// the mark; B's relaunched goose (a fresh service at the same mesh address, not leaving)
+/// clears it on A's next poll.
+#[tokio::test]
+async fn a_peer_leaving_on_purpose_is_marked_at_once_and_cleared_when_it_answers_again() {
+    let a = spawn_node(FakeStateSource::new("node-a"), mesh_v6()).await;
+    let source_b = FakeStateSource::new("node-b");
+    let b = spawn_node(source_b.clone(), mesh_v6()).await;
+    let base_a = base_url(&a);
+    let client = reqwest::Client::new();
+    let b_port = b.local_addr().port();
+    let b_ip = support::fake_tailnet().expose(b_port);
+    a.set_peers(vec![PeerTarget {
+        hostname: "node-b-host".to_string(),
+        mesh_ip: Some(b_ip.clone()),
+        port: b_port,
+    }]);
+    wait_until("A to see B Idle", || {
+        let (client, base_a) = (&client, &base_a);
+        async move {
+            let nodes = get_json(client, &format!("{base_a}/v1/swarm/nodes")).await;
+            peer_row(&nodes, "node-b")
+                .is_some_and(|p| p["status"] == serde_json::json!({"type": "Idle"}))
+        }
+    })
+    .await;
+    let mut ws_a = connect_stream(&a, None).await;
+
+    // The route's refusals first: no bearer 401, an unknown peer 404, a bad body 400.
+    let notice = serde_json::json!({
+        "node_id": "node-b", "hostname": "node-b-host", "mesh_ip": b_ip, "reason": "quitting"
+    });
+    let (status, _) = post_leaving(&client, &base_a, None, notice.clone()).await;
+    assert_eq!(status, 401);
+    let (status, body) = post_leaving(
+        &client,
+        &base_a,
+        Some(TOKEN),
+        serde_json::json!({"node_id": "node-z", "hostname": "z", "mesh_ip": null, "reason": "quitting"}),
+    )
+    .await;
+    assert_eq!(status, 404, "{body}");
+    assert!(body.contains("node-z"), "{body}");
+    let (status, _) = post_leaving(
+        &client,
+        &base_a,
+        Some(TOKEN),
+        serde_json::json!({"node_id": "node-b", "reason": "exploding"}),
+    )
+    .await;
+    assert_eq!(status, 400);
+    let nodes = get_json(&client, &format!("{base_a}/v1/swarm/nodes")).await;
+    assert!(
+        peer_row(&nodes, "node-b").unwrap().get("leaving").is_none(),
+        "a refused notice marks nothing"
+    );
+
+    // B leaves: its own report says so from here on, then it tells A.
+    b.mark_leaving(LeaveReason::Quitting);
+    let b_nodes = get_json(&client, &format!("{}/v1/swarm/nodes", base_url(&b))).await;
+    assert_eq!(b_nodes["self"]["leaving"]["reason"], "quitting");
+    let (status, body) = post_leaving(&client, &base_a, Some(TOKEN), notice).await;
+    assert_eq!(status, 204, "{body}");
+
+    let nodes = get_json(&client, &format!("{base_a}/v1/swarm/nodes")).await;
+    let row = peer_row(&nodes, "node-b").unwrap();
+    assert_eq!(
+        row["status"],
+        serde_json::json!({"type": "Offline"}),
+        "{row}"
+    );
+    assert_eq!(row["leaving"]["reason"], "quitting", "{row}");
+    assert_eq!(row["last_poll_error"], "it said it quit goose", "{row}");
+    tokio::time::timeout(DEADLINE, async {
+        loop {
+            if let LinkEvent::NodeStateChanged(node) = next_frame(&mut ws_a).await.event {
+                if node.node_id == "node-b" && node.leaving.is_some() {
+                    assert_eq!(node.status, NodeStatus::Offline);
+                    return;
+                }
+            }
+        }
+    })
+    .await
+    .expect("A's /stream carries B leaving");
+
+    // B still answers (its Link has not stopped yet), reporting itself leaving: A's polls —
+    // 100 ms apart — keep the mark.
+    let polls_before = source_b.node_reads.load(Ordering::SeqCst);
+    wait_until("A to poll B three more times after the notice", || async {
+        source_b.node_reads.load(Ordering::SeqCst) >= polls_before + 3
+    })
+    .await;
+    let nodes = get_json(&client, &format!("{base_a}/v1/swarm/nodes")).await;
+    let row = peer_row(&nodes, "node-b").unwrap();
+    assert_eq!(
+        row["status"],
+        serde_json::json!({"type": "Offline"}),
+        "{row}"
+    );
+    assert_eq!(row["leaving"]["reason"], "quitting", "{row}");
+
+    // B's goose comes back: a fresh service behind the same mesh address, not leaving.
+    b.shutdown();
+    let b2 = spawn_node(FakeStateSource::new("node-b"), mesh_v6()).await;
+    support::fake_tailnet().revive(&b_ip, b_port, b2.local_addr().port());
+    wait_until("A to clear B's mark once B answers as itself", || {
+        let (client, base_a) = (&client, &base_a);
+        async move {
+            let nodes = get_json(client, &format!("{base_a}/v1/swarm/nodes")).await;
+            peer_row(&nodes, "node-b").is_some_and(|p| {
+                p["status"] == serde_json::json!({"type": "Idle"}) && p.get("leaving").is_none()
+            })
+        }
+    })
+    .await;
+
+    b2.shutdown();
+    a.shutdown();
 }

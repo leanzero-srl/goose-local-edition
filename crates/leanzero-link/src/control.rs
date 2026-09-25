@@ -47,6 +47,16 @@
 //!   `502`. It never mounts. Separate from `allow_remote_execution` and from the distributed
 //!   switch: serving chat lets a peer neither run prompts here nor reshape the engine. Detail in
 //!   [`crate::inference`].
+//! - `POST /v1/swarm/peer-leaving` ← [`PeerLeavingNotice`] `{node_id, hostname, mesh_ip?,
+//!   reason: "quitting"|"restarting"}` → `204`: a same-account peer going away ON PURPOSE,
+//!   told before its Link stops. The peer's row turns `Offline` with
+//!   [`NodeState::leaving`](crate::wire::NodeState::leaving) set and a `NodeStateChanged` goes
+//!   out on `/stream` at once; the mark clears when a poll begun after it finds the peer
+//!   answering as itself again. `404` when no known peer matches (never a silent `204`),
+//!   `400` on an unparseable body. A crash sends nothing: that is still the poll's to notice.
+//!   While THIS node is leaving ([`ControlHandle::mark_leaving`]), its own `/nodes` `self`
+//!   carries `leaving` too, so a peer's poll landing in the last moments does not undo the
+//!   notice.
 //! - `GET /v1/swarm/inference/streams/{id}` → [`crate::inference::StreamLiveness`]
 //!   `{epoch, live}`: whether this control service is still serving the relay request `id`
 //!   (a requester's in-flight look — Q-32). `epoch` is random per [`ControlService::start`],
@@ -65,7 +75,7 @@
 //! with `peers: []` — loud, never an error dressed as an empty result.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -95,7 +105,9 @@ use crate::state::{
     MlxControlError, MlxOp, PeerRegistry, PeerRegistryConfig, PeerTarget, RemoteExecutor,
     SwarmStateSource,
 };
-use crate::wire::{NodeStatus, StreamFrame, SwarmNodesResponse};
+use crate::wire::{
+    LeaveReason, NodeLeaving, NodeStatus, PeerLeavingNotice, StreamFrame, SwarmNodesResponse,
+};
 
 /// Fixed high default for the control service; every node on a tailnet must
 /// serve the same port so peers can derive each other's URL from the mesh IP
@@ -221,6 +233,9 @@ struct Ctx {
     /// The relay requests this service is serving right now, under this start's epoch.
     streams: Arc<InflightStreams>,
     allow_remote_execution: bool,
+    /// Set once this node has begun going away ([`ControlHandle::mark_leaving`]); its
+    /// `/nodes` `self` then carries it.
+    leaving: Arc<StdMutex<Option<NodeLeaving>>>,
 }
 
 pub struct ControlService;
@@ -255,6 +270,7 @@ impl ControlService {
             pubsub.clone(),
         )?;
 
+        let leaving = Arc::new(StdMutex::new(None));
         let ctx = Ctx {
             source: source.clone(),
             pubsub: pubsub.clone(),
@@ -269,6 +285,7 @@ impl ControlService {
                 .map_err(ControlError::EngineClient)?,
             streams: Arc::new(InflightStreams::new()),
             allow_remote_execution: config.allow_remote_execution,
+            leaving: leaving.clone(),
         };
         let router = swarm_router(ctx, Arc::new(config.node_token));
 
@@ -340,6 +357,7 @@ impl ControlService {
             mesh_bind,
             registry,
             tasks,
+            leaving,
         })
     }
 }
@@ -349,6 +367,7 @@ pub struct ControlHandle {
     mesh_bind: MeshBind,
     registry: PeerRegistry,
     tasks: Vec<JoinHandle<()>>,
+    leaving: Arc<StdMutex<Option<NodeLeaving>>>,
 }
 
 impl ControlHandle {
@@ -362,6 +381,16 @@ impl ControlHandle {
 
     pub fn registry(&self) -> &PeerRegistry {
         &self.registry
+    }
+
+    /// This node has begun going away on purpose: from now on its `/nodes` `self` carries
+    /// `leaving`, so a peer's poll answered in the node's last moments keeps the peer's mark
+    /// instead of clearing it. The first mark stands.
+    pub fn mark_leaving(&self, reason: LeaveReason) {
+        self.leaving.lock().unwrap().get_or_insert(NodeLeaving {
+            reason,
+            since: chrono::Utc::now(),
+        });
     }
 
     /// Reconcile the peer fabric; call whenever `MeshStatus.peers` changes.
@@ -399,6 +428,7 @@ fn swarm_router(ctx: Ctx, token: Arc<String>) -> Router {
         .route("/v1/swarm/sessions", get(sessions))
         .route("/v1/swarm/stream", get(stream))
         .route("/v1/swarm/execute", post(execute))
+        .route("/v1/swarm/peer-leaving", post(peer_leaving))
         // One authenticated proxy route per mlxEngine op. `{op}` is validated against
         // `MlxOp` in the handler — an unknown op is a loud `404`, never a silent no-op.
         .route("/v1/swarm/mlx/{op}", post(mlx_proxy))
@@ -481,6 +511,7 @@ impl StreamScope {
 
 async fn nodes(State(ctx): State<Ctx>) -> Json<SwarmNodesResponse> {
     let mut self_node = ctx.source.local_node().await;
+    self_node.leaving = ctx.leaving.lock().unwrap().clone();
     match ctx.mesh_ip {
         Some(ip) => {
             self_node.mesh_ip = Some(ip.to_string());
@@ -497,6 +528,31 @@ async fn nodes(State(ctx): State<Ctx>) -> Json<SwarmNodesResponse> {
                 peers: Vec::new(),
             })
         }
+    }
+}
+
+/// `POST /v1/swarm/peer-leaving`: a peer says it is going away on purpose (see the module
+/// docs). Auth is the router's middleware, as for every route.
+async fn peer_leaving(
+    State(ctx): State<Ctx>,
+    body: Result<Json<PeerLeavingNotice>, JsonRejection>,
+) -> Response {
+    let notice = match body {
+        Ok(Json(notice)) => notice,
+        Err(rejection) => {
+            return (StatusCode::BAD_REQUEST, rejection.body_text()).into_response();
+        }
+    };
+    match ctx.registry.mark_peer_leaving(&notice).await {
+        Some(_) => StatusCode::NO_CONTENT.into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            format!(
+                "no known mesh peer matches node_id '{}' / mesh_ip {:?} / hostname '{}'",
+                notice.node_id, notice.mesh_ip, notice.hostname
+            ),
+        )
+            .into_response(),
     }
 }
 

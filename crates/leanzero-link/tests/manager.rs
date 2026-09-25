@@ -41,7 +41,7 @@ use leanzero_link::state::{
     MlxControl, MlxControlError, MlxOp, PeerTarget, RemoteExecutor, SwarmStateSource,
 };
 use leanzero_link::token::node_token_from_secret;
-use leanzero_link::wire::{LinkEvent, NodeState, NodeStatus, SessionSummary};
+use leanzero_link::wire::{LeaveReason, LinkEvent, NodeState, NodeStatus, SessionSummary};
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -263,6 +263,7 @@ impl SwarmStateSource for FakeStateSource {
             last_poll_error: None,
             computer_name: None,
             allows: None,
+            leaving: None,
         }
     }
     async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String> {
@@ -301,6 +302,7 @@ impl SwarmStateSource for NamedIdleSource {
             last_poll_error: None,
             computer_name: None,
             allows: None,
+            leaving: None,
         }
     }
     async fn local_sessions(&self) -> Result<Vec<SessionSummary>, String> {
@@ -415,6 +417,16 @@ impl Harness {
     }
 
     fn manager(&self, server: &MockServer, join_fails: bool) -> LinkManager {
+        self.manager_with(server, join_fails, |_| {})
+    }
+
+    /// [`Self::manager`] with the control template adjusted after the harness defaults.
+    fn manager_with(
+        &self,
+        server: &MockServer,
+        join_fails: bool,
+        adjust: impl FnOnce(&mut ControlConfig),
+    ) -> LinkManager {
         let mut mesh = MeshConfig::new(
             "/nonexistent/tailscaled".into(),
             "/nonexistent/tailscale".into(),
@@ -437,6 +449,7 @@ impl Harness {
         // The fabric's TOTAL poll timeout, deliberately short: a proxy POST that
         // (wrongly) shared it would fail against the slow peer below.
         control.request_timeout = Duration::from_millis(200);
+        adjust(&mut control);
 
         let config = LinkManagerConfig {
             worker_base_url: server.uri(),
@@ -2809,4 +2822,172 @@ async fn a_disconnect_during_the_supervisors_restart_stands() {
         Some(LinkIntent::Disconnected)
     );
     assert_eq!(h.start_count.load(Ordering::SeqCst), 2);
+}
+
+// ── Q-51: announce_leaving tells every linked peer before the Link stops ──
+
+/// A control service with no mesh IP reports itself `Offline` (loopback only); the stand-ins
+/// bind `::1` as theirs so they report themselves as the live nodes they stand in for.
+fn loopback_mesh_ip() -> std::net::IpAddr {
+    std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
+}
+
+/// A stand-in peer: a real control service that knows this manager's node as `self-host` (the
+/// FakeStateSource's hostname) at a mesh address nothing answers on, so its own polls of the
+/// manager fail and only the notice can mark it.
+async fn peer_knowing_self(node_id: &str) -> leanzero_link::control::ControlHandle {
+    let mut config = ControlConfig::new(node_token_from_secret(SECRET), Some(loopback_mesh_ip()));
+    config.port = 0;
+    config.poll_interval = Duration::from_secs(30);
+    config.peer_proxy = Some(support::fake_tailnet().proxy());
+    let handle = ControlService::start(
+        config,
+        Arc::new(NamedIdleSource {
+            node_id: node_id.to_string(),
+        }),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("stand-in peer starts");
+    handle.set_peers(vec![PeerTarget {
+        hostname: "self-host".to_string(),
+        mesh_ip: Some("100.64.254.254".to_string()),
+        port: 1,
+    }]);
+    handle
+}
+
+/// The manager going away tells each peer it can reach, all at once: two stand-ins record the
+/// notice (their rows for this node turn Offline + leaving), a peer that does not know this
+/// node answers 404 and is reported by name, a peer whose Link died mid-way is bounded by the
+/// connect timeout and reported by name, and a peer the fabric already reads Offline is never
+/// dialed. Not connected → nothing to announce.
+#[tokio::test]
+async fn announce_leaving_tells_each_reachable_peer_and_names_every_failure() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "POST",
+        "/v1/mesh/join-key",
+        200,
+        json!({"authKey": "tskey-auth-ok", "nodeSecret": SECRET, "expirySeconds": 600}),
+    )
+    .await;
+    let h = Harness::new(tempfile::tempdir().unwrap());
+    h.seed_identity("a@example.com", "good-token");
+    // One poll per peer (the first, at set_peers) so the fabric's view holds still while the
+    // test kills a peer; the notice's own bound is the connect timeout.
+    let connect_timeout = Duration::from_millis(400);
+    let manager = h.manager_with(&server, false, |control| {
+        control.poll_interval = Duration::from_secs(30);
+        control.request_timeout = Duration::from_secs(2);
+        control.connect_timeout = connect_timeout;
+    });
+    assert_eq!(
+        manager.announce_leaving(LeaveReason::Quitting).await,
+        None,
+        "not connected: no peer to tell"
+    );
+    manager.connect().await.expect("connects");
+    let registry = manager.active_registry().await.expect("registry");
+
+    let studio = peer_knowing_self("studio").await;
+    let mini = peer_knowing_self("mini").await;
+    let stranger = {
+        let mut config =
+            ControlConfig::new(node_token_from_secret(SECRET), Some(loopback_mesh_ip()));
+        config.port = 0;
+        ControlService::start(
+            config,
+            Arc::new(NamedIdleSource {
+                node_id: "stranger".to_string(),
+            }),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap()
+    };
+    let dying = peer_knowing_self("dying").await;
+    let target = |name: &str, handle: &leanzero_link::control::ControlHandle| PeerTarget {
+        hostname: format!("{name}-host"),
+        mesh_ip: Some(support::fake_tailnet().expose(handle.local_addr().port())),
+        port: handle.local_addr().port(),
+    };
+    let dead_port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let targets = vec![
+        target("studio", &studio),
+        target("mini", &mini),
+        target("stranger", &stranger),
+        target("dying", &dying),
+        PeerTarget {
+            hostname: "gone-host".to_string(),
+            mesh_ip: Some(support::fake_tailnet().expose(dead_port)),
+            port: dead_port,
+        },
+    ];
+    let dying_ip = targets[3].mesh_ip.clone().unwrap();
+    // The connect's first reconcile wipes hand-set peers once; re-seed until they hold.
+    wait_until("the fabric to reach the live peers", || {
+        let (registry, targets) = (&registry, &targets);
+        async move {
+            registry.set_peers(targets.clone());
+            let rows = registry.peer_nodes();
+            let reached = rows.iter().filter(|n| n.status == NodeStatus::Idle).count();
+            let gone = rows
+                .iter()
+                .any(|n| n.hostname == "gone-host" && n.status == NodeStatus::Offline);
+            reached == 4 && gone
+        }
+    })
+    .await;
+    support::fake_tailnet().kill(&dying_ip);
+
+    let started = tokio::time::Instant::now();
+    let report = manager
+        .announce_leaving(LeaveReason::Quitting)
+        .await
+        .expect("connected: a report");
+    let took = started.elapsed();
+
+    let mut told = report.told.clone();
+    told.sort();
+    assert_eq!(told, vec!["mini-host", "studio-host"], "{report}");
+    let failed: std::collections::HashMap<_, _> = report.failed.iter().cloned().collect();
+    assert_eq!(failed.len(), 2, "{report}");
+    assert!(
+        failed["stranger-host"].starts_with("answered 404"),
+        "{report}"
+    );
+    assert!(failed.contains_key("dying-host"), "{report}");
+    assert_eq!(report.skipped_offline, vec!["gone-host"], "{report}");
+    // The dying peer really hung (the notice waited out the bound) and the bound ended it.
+    assert!(
+        took >= connect_timeout && took < connect_timeout + Duration::from_millis(600),
+        "a dead peer holds the quit for the connect timeout and no longer: {took:?} ({report})"
+    );
+
+    for peer in [&studio, &mini] {
+        let row = peer
+            .registry()
+            .peer_nodes()
+            .into_iter()
+            .find(|n| n.hostname == "self-host")
+            .expect("the stand-in's row for this node");
+        assert_eq!(row.status, NodeStatus::Offline);
+        assert_eq!(row.leaving.map(|l| l.reason), Some(LeaveReason::Quitting));
+    }
+
+    for handle in [studio, mini, stranger, dying] {
+        handle.shutdown();
+    }
+    manager.logout(false).await.unwrap();
 }

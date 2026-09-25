@@ -37,6 +37,53 @@ pub struct NodeState {
     /// enforces it NOW. Absent from a node whose goose predates it — unknown, never "all off".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allows: Option<NodeAllows>,
+    /// The node said it is going away ON PURPOSE (its goose is quitting or restarting —
+    /// `POST /v1/swarm/peer-leaving`). On a PEER row the polling node sets it when the
+    /// notice lands, with `status` `Offline` beside it, and clears it the first time a poll
+    /// begun after the notice finds the peer answering without it — so every consumer that
+    /// reads `Offline` treats the peer as gone at once, and the reason rides here. On a
+    /// node's own `self` report it says the node has begun leaving (its Link is about to
+    /// stop). Omitted when `None`; absent from an older peer's JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leaving: Option<NodeLeaving>,
+}
+
+/// Why a node is going away on purpose. Wire: `"quitting"` | `"restarting"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaveReason {
+    Quitting,
+    Restarting,
+}
+
+impl LeaveReason {
+    /// What a surface says after the Mac's name: "Work's Mac Studio quit goose".
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Quitting => "quit goose",
+            Self::Restarting => "is restarting goose",
+        }
+    }
+}
+
+/// A node's going-away mark: why, and when it was recorded (by the node polling it, on a
+/// peer row; by the node itself, on its `self` report).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NodeLeaving {
+    pub reason: LeaveReason,
+    pub since: DateTime<Utc>,
+}
+
+/// Body of `POST /v1/swarm/peer-leaving`: a same-account node telling this one it is going
+/// away on purpose, sent before its Link stops. The receiver finds the peer by `node_id`,
+/// then by the mesh IP, then by hostname (the registry's key before a first poll).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerLeavingNotice {
+    pub node_id: String,
+    pub hostname: String,
+    #[serde(default)]
+    pub mesh_ip: Option<String>,
+    pub reason: LeaveReason,
 }
 
 /// The owner's three switches as a node reports them about itself.
@@ -209,6 +256,7 @@ mod tests {
             last_poll_error: None,
             computer_name: None,
             allows: None,
+            leaving: None,
         };
         let value = serde_json::to_value(LinkEvent::NodeStateChanged(node.clone())).unwrap();
         assert_eq!(value["type"], "NodeStateChanged");
@@ -233,6 +281,7 @@ mod tests {
             last_poll_error: None,
             computer_name: None,
             allows: None,
+            leaving: None,
         };
         let value = serde_json::to_value(&node).unwrap();
         assert!(
@@ -295,6 +344,54 @@ mod tests {
         assert_eq!(back, named);
     }
 
+    /// `leaving` is additive (omitted when `None`, absent from an older peer), and the
+    /// notice body is exactly `{node_id, hostname, mesh_ip?, reason}` with snake_case reasons.
+    #[test]
+    fn leaving_and_the_peer_leaving_notice_have_exact_wire_shapes() {
+        let older_peer_json = serde_json::json!({
+            "node_id": "node-b", "hostname": "b", "mesh_ip": null,
+            "status": {"type": "Idle"}, "sessions_active": 0,
+            "updated_at": "2023-11-14T22:13:20Z"
+        });
+        let parsed: NodeState = serde_json::from_value(older_peer_json).unwrap();
+        assert_eq!(parsed.leaving, None);
+        assert!(serde_json::to_value(&parsed)
+            .unwrap()
+            .get("leaving")
+            .is_none());
+
+        let leaving = NodeState {
+            status: NodeStatus::Offline,
+            leaving: Some(NodeLeaving {
+                reason: LeaveReason::Restarting,
+                since: ts(1_700_000_000),
+            }),
+            ..parsed
+        };
+        let value = serde_json::to_value(&leaving).unwrap();
+        assert_eq!(
+            value["leaving"],
+            serde_json::json!({"reason": "restarting", "since": "2023-11-14T22:13:20Z"})
+        );
+        assert_eq!(serde_json::from_value::<NodeState>(value).unwrap(), leaving);
+
+        let notice = PeerLeavingNotice {
+            node_id: "studio".to_string(),
+            hostname: "worksmacstudio".to_string(),
+            mesh_ip: Some("100.64.0.5".to_string()),
+            reason: LeaveReason::Quitting,
+        };
+        assert_eq!(
+            serde_json::to_value(&notice).unwrap(),
+            serde_json::json!({
+                "node_id": "studio", "hostname": "worksmacstudio",
+                "mesh_ip": "100.64.0.5", "reason": "quitting"
+            })
+        );
+        assert_eq!(LeaveReason::Quitting.describe(), "quit goose");
+        assert_eq!(LeaveReason::Restarting.describe(), "is restarting goose");
+    }
+
     #[test]
     fn nodes_response_uses_self_key() {
         let response = SwarmNodesResponse {
@@ -308,6 +405,7 @@ mod tests {
                 last_poll_error: None,
                 computer_name: None,
                 allows: None,
+                leaving: None,
             },
             peers: Vec::new(),
         };

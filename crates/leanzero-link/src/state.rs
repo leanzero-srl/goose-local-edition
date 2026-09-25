@@ -34,7 +34,8 @@ use crate::mesh::MeshPeer;
 use crate::peer_dial::{MeshProxy, PeerDialError, PeerTimeout};
 use crate::pubsub::{EventOrigin, PubSub};
 use crate::wire::{
-    LinkEvent, NodeState, NodeStatus, SessionSummary, StreamFrame, SwarmNodesResponse,
+    LinkEvent, NodeLeaving, NodeState, NodeStatus, PeerLeavingNotice, SessionSummary, StreamFrame,
+    SwarmNodesResponse,
 };
 
 /// What the control service needs from the process hosting it. goose-server will
@@ -389,6 +390,10 @@ struct PeerEntry {
     target: PeerTarget,
     state: NodeState,
     tasks: Vec<JoinHandle<()>>,
+    /// How many going-away notices this peer has sent. A poll reads it when it BEGINS and
+    /// may clear `state.leaving` only if no notice landed while it was in flight — an
+    /// answer the peer gave before it said it was leaving never undoes the notice.
+    leaving_notices: u64,
 }
 
 struct RegistryInner {
@@ -488,6 +493,7 @@ impl PeerRegistry {
                 last_poll_error: None,
                 computer_name: None,
                 allows: None,
+                leaving: None,
             };
             let mut tasks = Vec::new();
             match (target.base_url(), target.ws_base()) {
@@ -517,6 +523,7 @@ impl PeerRegistry {
                     target,
                     state,
                     tasks,
+                    leaving_notices: 0,
                 },
             );
         }
@@ -572,6 +579,74 @@ impl PeerRegistry {
                     || entry.state.hostname == node_id
             })
             .and_then(|entry| entry.target.base_url())
+    }
+
+    /// Every peer with the URL its control service answers on (`None` for a row with no mesh
+    /// IP), in [`Self::peer_nodes`] order — who a node going away tells first.
+    pub fn peer_nodes_with_urls(&self) -> Vec<(NodeState, Option<String>)> {
+        let peers = self.inner.peers.lock().unwrap();
+        let mut rows: Vec<(NodeState, Option<String>)> = peers
+            .values()
+            .map(|entry| (entry.state.clone(), entry.target.base_url()))
+            .collect();
+        rows.sort_by(|(a, _), (b, _)| {
+            a.hostname
+                .cmp(&b.hostname)
+                .then_with(|| a.node_id.cmp(&b.node_id))
+        });
+        rows
+    }
+
+    /// Record a peer's going-away notice: its row turns `Offline` with
+    /// [`NodeState::leaving`] set and the notice's words in `last_poll_error`, and the change
+    /// is published on the local stream at once. Returns the row, or `None` when no known
+    /// peer matches the notice (the route's `404`). The peer is found by its folded
+    /// `node_id`, then its mesh IP, then its hostname — a peer not yet polled is keyed by the
+    /// hostname the tailnet gave it.
+    pub async fn mark_peer_leaving(&self, notice: &PeerLeavingNotice) -> Option<NodeState> {
+        let state = {
+            let mut peers = self.inner.peers.lock().unwrap();
+            let key = peers
+                .iter()
+                .find(|(_, e)| e.state.node_id == notice.node_id)
+                .or_else(|| {
+                    notice.mesh_ip.as_deref().and_then(|ip| {
+                        peers
+                            .iter()
+                            .find(|(_, e)| e.target.mesh_ip.as_deref() == Some(ip))
+                    })
+                })
+                .or_else(|| {
+                    peers.iter().find(|(key, e)| {
+                        key.as_str() == notice.hostname || e.state.hostname == notice.hostname
+                    })
+                })
+                .map(|(key, _)| key.clone())?;
+            let entry = peers.get_mut(&key)?;
+            entry.leaving_notices += 1;
+            entry.state.status = NodeStatus::Offline;
+            entry.state.last_poll_error = Some(leaving_words(notice.reason));
+            entry.state.leaving = Some(NodeLeaving {
+                reason: notice.reason,
+                since: Utc::now(),
+            });
+            entry.state.updated_at = Utc::now();
+            tracing::info!(
+                hostname = %key,
+                node_id = %notice.node_id,
+                reason = ?notice.reason,
+                "peer_leaving_recorded"
+            );
+            entry.state.clone()
+        };
+        self.inner
+            .pubsub
+            .publish(
+                EventOrigin::Peer,
+                LinkEvent::NodeStateChanged(state.clone()),
+            )
+            .await;
+        Some(state)
     }
 
     /// The mesh proxy peer calls are dialed through (`None` when the service runs with
@@ -671,6 +746,12 @@ async fn poll_peer_once(
     target: &PeerTarget,
     base_url: &str,
 ) -> Result<Vec<LinkEvent>, PollFailure> {
+    let notices_at_start = inner
+        .peers
+        .lock()
+        .unwrap()
+        .get(&target.hostname)
+        .map(|entry| entry.leaving_notices);
     let nodes: SwarmNodesResponse = fetch_json(inner, format!("{base_url}/v1/swarm/nodes")).await?;
     match fetch_json::<Vec<SessionSummary>>(
         inner,
@@ -681,6 +762,7 @@ async fn poll_peer_once(
         Ok(sessions) => Ok(fold_peer_snapshot(
             inner,
             &target.hostname,
+            notices_at_start,
             nodes.self_node,
             Some(sessions),
             None,
@@ -692,6 +774,7 @@ async fn poll_peer_once(
         Err(PollFailure::Answered(error)) => Ok(fold_peer_snapshot(
             inner,
             &target.hostname,
+            notices_at_start,
             nodes.self_node,
             None,
             Some(error),
@@ -704,9 +787,15 @@ async fn poll_peer_once(
 /// the locks, published outside them). `last_poll_error` is the POLLER's field: it is
 /// set to `poll_error` whatever the peer put in its own report. `remote_sessions:
 /// None` folds the node state only and leaves the session mirror untouched.
+///
+/// A peer marked leaving stays leaving when a going-away notice landed while this poll was
+/// in flight (`notices_at_start` differs — its answer may predate the notice), and when its
+/// own report still says it is leaving; otherwise this answer is the peer seen online again
+/// and the mark is cleared.
 fn fold_peer_snapshot(
     inner: &Arc<RegistryInner>,
     hostname: &str,
+    notices_at_start: Option<u64>,
     mut remote_self: NodeState,
     remote_sessions: Option<Vec<SessionSummary>>,
     poll_error: Option<String>,
@@ -717,11 +806,22 @@ fn fold_peer_snapshot(
     let Some(entry) = peers.get_mut(hostname) else {
         return events;
     };
-    if entry.state != remote_self {
-        entry.state = remote_self.clone();
-        events.push(LinkEvent::NodeStateChanged(remote_self.clone()));
+    let notice_during_poll = notices_at_start != Some(entry.leaving_notices);
+    let remote_self = if entry.state.leaving.is_some() && notice_during_poll {
+        None
+    } else {
+        Some(fold_leaving(&entry.state, remote_self))
+    };
+    if let Some(remote_self) = &remote_self {
+        if entry.state != *remote_self {
+            if entry.state.leaving.is_some() && remote_self.leaving.is_none() {
+                tracing::info!(hostname, "peer_leaving_cleared: seen online again");
+            }
+            entry.state = remote_self.clone();
+            events.push(LinkEvent::NodeStateChanged(remote_self.clone()));
+        }
     }
-    let remote_id = remote_self.node_id;
+    let remote_id = entry.state.node_id.clone();
     let Some(remote_sessions) = remote_sessions else {
         return events;
     };
@@ -744,6 +844,24 @@ fn fold_peer_snapshot(
         }
     }
     events
+}
+
+/// The words a peer row carries in `last_poll_error` once the peer said it is going away.
+fn leaving_words(reason: crate::wire::LeaveReason) -> String {
+    format!("it said it {}", reason.describe())
+}
+
+/// A peer's own report folded against its row: a report that says the peer is leaving is
+/// `Offline` with the row's earlier mark kept (the first `since` stands) and the notice's
+/// words; a report without it is taken as is — the peer answering as itself again.
+fn fold_leaving(current: &NodeState, mut remote: NodeState) -> NodeState {
+    if let Some(reported) = remote.leaving.take() {
+        let leaving = current.leaving.clone().unwrap_or(reported);
+        remote.status = NodeStatus::Offline;
+        remote.last_poll_error = Some(leaving_words(leaving.reason));
+        remote.leaving = Some(leaving);
+    }
+    remote
 }
 
 /// A transport failure: the peer is unreachable → `Offline`, the error text on record.
@@ -878,6 +996,12 @@ fn fold_stream_event(
             let Some(entry) = peers.get_mut(hostname) else {
                 return Vec::new();
             };
+            // A stream frame cannot be ordered against the notice (another connection), so
+            // it never clears a leaving mark — only a poll begun after the notice does.
+            if entry.state.leaving.is_some() && node.leaving.is_none() {
+                return Vec::new();
+            }
+            let node = fold_leaving(&entry.state, node);
             if entry.state == node {
                 return Vec::new();
             }
@@ -893,5 +1017,155 @@ fn fold_stream_event(
             vec![LinkEvent::SessionUpserted(summary)]
         }
         delta @ LinkEvent::SessionDelta { .. } => vec![delta],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::LeaveReason;
+
+    fn registry_with_studio() -> PeerRegistry {
+        let registry = PeerRegistry::new(
+            PeerRegistryConfig {
+                node_token: "t".to_string(),
+                poll_interval: Duration::from_secs(3),
+                request_timeout: Duration::from_secs(5),
+                reconnect_backoff: Duration::from_secs(2),
+                peer_proxy: None,
+            },
+            Arc::new(PubSub::new()),
+        )
+        .unwrap();
+        // No mesh IP: the row exists and no poll task runs, so the test drives every fold.
+        registry.set_peers(vec![PeerTarget {
+            hostname: "studio".to_string(),
+            mesh_ip: None,
+            port: 41226,
+        }]);
+        registry
+    }
+
+    fn report(leaving: Option<LeaveReason>) -> NodeState {
+        NodeState {
+            node_id: "studio-id".to_string(),
+            hostname: "studio".to_string(),
+            mesh_ip: Some("100.64.0.5".to_string()),
+            status: NodeStatus::Idle,
+            sessions_active: 0,
+            updated_at: Utc::now(),
+            last_poll_error: None,
+            computer_name: Some("Work's Mac Studio".to_string()),
+            allows: None,
+            leaving: leaving.map(|reason| NodeLeaving {
+                reason,
+                since: Utc::now(),
+            }),
+        }
+    }
+
+    fn notice() -> PeerLeavingNotice {
+        PeerLeavingNotice {
+            node_id: "studio-id".to_string(),
+            hostname: "studio".to_string(),
+            mesh_ip: Some("100.64.0.5".to_string()),
+            reason: LeaveReason::Restarting,
+        }
+    }
+
+    fn notices(registry: &PeerRegistry) -> u64 {
+        registry.inner.peers.lock().unwrap()["studio"].leaving_notices
+    }
+
+    fn row(registry: &PeerRegistry) -> NodeState {
+        registry.peer_nodes().remove(0)
+    }
+
+    /// The race the notice counter exists for: a poll whose `/nodes` answered BEFORE the peer
+    /// said it was leaving must not undo the notice; the next poll, begun after it, may.
+    #[tokio::test]
+    async fn only_a_poll_begun_after_the_notice_clears_the_leaving_mark() {
+        let registry = registry_with_studio();
+        let inner = &registry.inner;
+        fold_peer_snapshot(inner, "studio", Some(0), report(None), None, None);
+        assert_eq!(row(&registry).status, NodeStatus::Idle);
+
+        let in_flight = Some(notices(&registry));
+        let marked = registry
+            .mark_peer_leaving(&notice())
+            .await
+            .expect("matched");
+        assert_eq!(marked.status, NodeStatus::Offline);
+        assert_eq!(
+            marked.last_poll_error.as_deref(),
+            Some("it said it is restarting goose")
+        );
+
+        // The in-flight poll lands with the pre-notice answer: the mark stands.
+        let events = fold_peer_snapshot(inner, "studio", in_flight, report(None), None, None);
+        assert!(events.is_empty(), "{events:?}");
+        assert!(row(&registry).leaving.is_some());
+
+        // A stream frame is not ordered against the notice either: ignored.
+        assert!(
+            fold_stream_event(inner, "studio", LinkEvent::NodeStateChanged(report(None)))
+                .is_empty()
+        );
+        assert!(row(&registry).leaving.is_some());
+
+        // A poll begun after the notice, answered by the peer still leaving: kept, Offline,
+        // the first `since` kept.
+        let since = row(&registry).leaving.unwrap().since;
+        let after = Some(notices(&registry));
+        fold_peer_snapshot(
+            inner,
+            "studio",
+            after,
+            report(Some(LeaveReason::Quitting)),
+            None,
+            None,
+        );
+        let kept = row(&registry);
+        assert_eq!(kept.status, NodeStatus::Offline);
+        assert_eq!(kept.leaving.unwrap().since, since);
+
+        // A transport failure keeps the mark (the poll's words replace the notice's).
+        mark_peer_offline(inner, "studio", "connection refused");
+        let offline = row(&registry);
+        assert!(offline.leaving.is_some());
+        assert_eq!(
+            offline.last_poll_error.as_deref(),
+            Some("connection refused")
+        );
+
+        // The relaunched peer answers as itself: cleared.
+        let events = fold_peer_snapshot(inner, "studio", after, report(None), None, None);
+        assert_eq!(events.len(), 1);
+        let back = row(&registry);
+        assert_eq!(back.status, NodeStatus::Idle);
+        assert_eq!(back.leaving, None);
+        assert_eq!(back.last_poll_error, None);
+    }
+
+    /// Matching: the folded node_id first, then the mesh IP, then the hostname key; nothing
+    /// matching is `None`, and a peer never polled is found by the tailnet hostname.
+    #[tokio::test]
+    async fn a_notice_finds_its_peer_by_id_then_mesh_ip_then_hostname() {
+        let registry = registry_with_studio();
+        let by_hostname = PeerLeavingNotice {
+            node_id: "not-yet-folded".to_string(),
+            mesh_ip: None,
+            ..notice()
+        };
+        assert!(registry.mark_peer_leaving(&by_hostname).await.is_some());
+
+        let stranger = PeerLeavingNotice {
+            node_id: "x".to_string(),
+            hostname: "y".to_string(),
+            mesh_ip: Some("100.64.9.9".to_string()),
+            reason: LeaveReason::Quitting,
+        };
+        assert!(registry.mark_peer_leaving(&stranger).await.is_none());
+        assert_eq!(notices(&registry), 1, "a stranger's notice marks nothing");
     }
 }
