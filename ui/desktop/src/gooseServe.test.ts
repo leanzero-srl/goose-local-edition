@@ -329,6 +329,32 @@ describe('buildGooseServeEnv — bundled tailscaled wiring', () => {
   });
 });
 
+describe('buildGooseServeEnv — the tool shim directory (Q-102)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('keeps the shims first on PATH for MCP launches and names their directory for the shell tool', () => {
+    vi.stubEnv('GOOSE_TOOL_SHIM_DIR', '');
+    const dir = makeTempDir();
+    const goose = path.join(dir, binaryName);
+    fs.writeFileSync(goose, 'x');
+    fs.writeFileSync(path.join(dir, 'goose-shim-common.sh'), 'x');
+    const env = buildGooseServeEnv('secret', goose, {});
+    expect((env.PATH ?? '').split(path.delimiter)[0]).toBe(dir);
+    expect(env.GOOSE_TOOL_SHIM_DIR).toBe(dir);
+  });
+
+  it('names nothing when the binary sits somewhere without the shims (a cargo target dir)', () => {
+    vi.stubEnv('GOOSE_TOOL_SHIM_DIR', '');
+    const dir = makeTempDir();
+    const goose = path.join(dir, binaryName);
+    fs.writeFileSync(goose, 'x');
+    const env = buildGooseServeEnv('secret', goose, {});
+    expect(env.GOOSE_TOOL_SHIM_DIR).toBeFalsy();
+  });
+});
+
 describe('stop — the SIGKILL fallback covers goosed\'s own teardown', () => {
   // goosed's teardown on SIGTERM is bounded only by its supervisors' per-pid grace windows:
   // the mesh daemon (one 50 × 100 ms leg), the engine sidecar (two: terminate + release_port)

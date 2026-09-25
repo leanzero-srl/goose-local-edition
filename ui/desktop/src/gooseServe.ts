@@ -335,6 +335,9 @@ const withStartupDiagnosticsPath = (
 // lsof from its known locations first; this keeps the PATH it inherits honest as well.
 const SYSTEM_SBIN_DIRS = ['/usr/sbin', '/sbin'];
 
+// Sourced by every bundled tool shim, so its presence marks goose's shim directory.
+const TOOL_SHIM_MARKER = 'goose-shim-common.sh';
+
 export const withSystemSbin = (
   pathValue: string,
   platform: NodeJS.Platform = process.platform
@@ -368,12 +371,19 @@ export const buildGooseServeEnv = (
     env.LOCALAPPDATA = process.env.LOCALAPPDATA || path.join(homeDir, 'AppData', 'Local');
   }
 
+  // The node/npx/uvx/jbang shims ride first on this PATH so an MCP server launched by name finds a
+  // runtime on a machine with none. Naming the directory lets the shell tool put the user's own
+  // runtimes (nvm, Homebrew, .nvmrc) ahead of it and keep these as the fallback (Q-102).
+  const binDir = path.dirname(binaryPath);
+  if (existingFile(path.join(binDir, TOOL_SHIM_MARKER))) {
+    env.GOOSE_TOOL_SHIM_DIR = binDir;
+  }
+
   // Point LeanZero Link at the tailscaled/tailscale binaries bundled next to goosed (same
   // bin dir, in dev and packaged alike), so the mesh works on a machine with no system
   // Tailscale install. Only set when the bundled file actually exists — the override is a
   // hard error in discovery if it points at nothing, so absence must fall through to the
   // PATH/known-location search. An explicit override already in the environment wins.
-  const binDir = path.dirname(binaryPath);
   const tailscaledName = process.platform === 'win32' ? 'tailscaled.exe' : 'tailscaled';
   const tailscaleName = process.platform === 'win32' ? 'tailscale.exe' : 'tailscale';
   const bundledTailscaled = path.join(binDir, tailscaledName);

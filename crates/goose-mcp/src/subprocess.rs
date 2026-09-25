@@ -63,6 +63,10 @@ fn resolve_login_shell_path() -> Option<String> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    if let (Some(dir), Ok(inherited)) = (tool_shim_dir(), std::env::var("PATH")) {
+        cmd.command_mut()
+            .env("PATH", path_without(&inherited, &dir));
+    }
 
     // Spawn in a new session so that interactive shell job-control setup
     // cannot steal the terminal foreground from the parent goose process.
@@ -84,6 +88,30 @@ fn resolve_login_shell_path() -> Option<String> {
         .filter(|path| !path.is_empty())
 }
 
+/// goose's bundled runtime shims (node, npx, uvx, jbang), which the desktop puts first on goose
+/// serve's PATH so MCP servers find a runtime. A script the user asks for must run the user's own
+/// runtime, so the shims are withheld from the login probe and merged last — the same rule as the
+/// developer shell tool (`crates/goose/src/agents/platform_extensions/developer/shell.rs`,
+/// `TOOL_SHIM_DIR_ENV`), which this crate cannot import (Q-102).
+#[cfg(not(windows))]
+const TOOL_SHIM_DIR_ENV: &str = "GOOSE_TOOL_SHIM_DIR";
+
+#[cfg(not(windows))]
+fn tool_shim_dir() -> Option<String> {
+    std::env::var(TOOL_SHIM_DIR_ENV)
+        .ok()
+        .filter(|dir| !dir.is_empty())
+}
+
+#[cfg(not(windows))]
+fn path_without(path: &str, dir: &str) -> String {
+    let dir = dir.trim_end_matches('/');
+    path.split(':')
+        .filter(|entry| entry.trim_end_matches('/') != dir)
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 /// Returns the user's full login shell PATH, resolved once and cached.
 ///
 /// Call this before spawning subprocesses to ensure they inherit the user's
@@ -103,17 +131,59 @@ pub fn user_login_path() -> Option<&'static str> {
 pub fn merged_path() -> Option<String> {
     let login = user_login_path()?;
     let current = std::env::var("PATH").unwrap_or_default();
-    if current.is_empty() {
-        return Some(login.to_string());
-    }
+    Some(merge_login_path(
+        login,
+        &current,
+        tool_shim_dir().as_deref(),
+    ))
+}
+
+#[cfg(not(windows))]
+fn merge_login_path(login: &str, current: &str, shim_dir: Option<&str>) -> String {
     // Deduplicate: login shell entries first, then any current entries not already present.
-    let login_entries: Vec<&str> = login.split(':').collect();
-    let mut seen: std::collections::HashSet<&str> = login_entries.iter().copied().collect();
-    let mut merged = login_entries;
-    for entry in current.split(':') {
-        if seen.insert(entry) {
-            merged.push(entry);
+    let mut seen = std::collections::HashSet::new();
+    let mut merged: Vec<&str> = login
+        .split(':')
+        .chain(current.split(':'))
+        .filter(|entry| !entry.is_empty() && seen.insert(*entry))
+        .collect();
+    if let Some(dir) = shim_dir {
+        let dir = dir.trim_end_matches('/');
+        let before = merged.len();
+        merged.retain(|entry| entry.trim_end_matches('/') != dir);
+        if merged.len() != before {
+            merged.push(dir);
         }
     }
-    Some(merged.join(":"))
+    merged.join(":")
+}
+
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn goose_tool_shims_merge_behind_the_users_path() {
+        let shims = "/Applications/Goose Swarm.app/Contents/Resources/bin";
+        assert_eq!(
+            merge_login_path(
+                "/Users/u/.nvm/versions/node/v22/bin:/usr/bin",
+                &format!("{shims}:/usr/bin:/bin"),
+                Some(shims)
+            ),
+            format!("/Users/u/.nvm/versions/node/v22/bin:/usr/bin:/bin:{shims}")
+        );
+        assert_eq!(
+            merge_login_path("/usr/bin", &format!("{shims}:/bin"), None),
+            format!("/usr/bin:{shims}:/bin")
+        );
+        assert_eq!(
+            merge_login_path("/usr/bin", "/bin", Some(shims)),
+            "/usr/bin:/bin"
+        );
+        assert_eq!(
+            path_without(&format!("{shims}/:/usr/bin"), shims),
+            "/usr/bin"
+        );
+    }
 }

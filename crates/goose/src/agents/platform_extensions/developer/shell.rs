@@ -203,16 +203,91 @@ pub struct ShellOutput {
     pub output_collection_error: Option<String>,
 }
 
+/// Names the directory of goose's bundled runtime shims (node, npx, uvx, jbang). The desktop puts
+/// it first on goose serve's PATH so an MCP server launched as `npx`/`uvx` finds a runtime on a
+/// machine that has none; the variable lets the shell tool put the user's own runtimes (nvm,
+/// Homebrew, .nvmrc) ahead of it, keeping goose's as the fallback (Q-102).
+#[cfg(not(windows))]
+pub(crate) const TOOL_SHIM_DIR_ENV: &str = "GOOSE_TOOL_SHIM_DIR";
+
+#[cfg(not(windows))]
+fn tool_shim_dir() -> Option<String> {
+    std::env::var(TOOL_SHIM_DIR_ENV)
+        .ok()
+        .filter(|dir| !dir.is_empty())
+}
+
+#[cfg(not(windows))]
+fn path_without(path: &str, dir: &str) -> String {
+    let dir = dir.trim_end_matches('/');
+    path.split(':')
+        .filter(|entry| entry.trim_end_matches('/') != dir)
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+/// `path` with `shim_dir` moved behind every other entry.
+#[cfg(not(windows))]
+fn with_tool_shims_last(path: &str, shim_dir: &str) -> String {
+    let rest = path_without(path, shim_dir);
+    if rest.is_empty() {
+        shim_dir.to_string()
+    } else {
+        format!("{rest}:{shim_dir}")
+    }
+}
+
+/// The shell whose login profile says what the user's PATH is. Commands run under `unix_shell()`
+/// (bash, for its POSIX dialect), but a macOS user's nvm/Homebrew setup lives in the zsh profile
+/// their terminal sources, so a POSIX `$SHELL` is probed rather than bash's profile.
+#[cfg(not(windows))]
+fn login_probe_shell() -> String {
+    if std::env::var_os("GOOSE_SHELL").is_some() || is_flatpak() {
+        return unix_shell();
+    }
+    std::env::var("SHELL")
+        .ok()
+        .filter(|shell| {
+            std::path::Path::new(shell).is_file()
+                && matches!(
+                    shell_basename(shell).as_str(),
+                    "bash" | "zsh" | "sh" | "dash" | "ksh"
+                )
+        })
+        .unwrap_or_else(unix_shell)
+}
+
 /// Resolve the user's full PATH by running a login shell.
 ///
 /// When goosed is launched from a desktop app (e.g. Electron), it may inherit
 /// a minimal PATH like `/usr/bin:/bin`. This function spawns a login shell to
-/// source the user's profile and recover the full PATH.
+/// source the user's profile and recover the full PATH. goose's own runtime shims
+/// are withheld from the profile and appended last, so they answer only for a
+/// runtime the user does not have.
 #[cfg(not(windows))]
 pub(crate) fn resolve_login_shell_path() -> Option<String> {
+    let shim_dir = tool_shim_dir();
+    let login_path = probe_login_shell_path(shim_dir.as_deref())?;
+    Some(match shim_dir {
+        Some(dir) => with_tool_shims_last(&login_path, &dir),
+        None => login_path,
+    })
+}
+
+/// The PATH the shell tool falls back to when the login probe fails: the inherited one, still with
+/// goose's shims behind the user's entries.
+#[cfg(not(windows))]
+fn inherited_path_with_tool_shims_last() -> Option<String> {
+    let dir = tool_shim_dir()?;
+    let path = std::env::var("PATH").ok()?;
+    Some(with_tool_shims_last(&path, &dir))
+}
+
+#[cfg(not(windows))]
+fn probe_login_shell_path(shim_dir: Option<&str>) -> Option<String> {
     use process_wrap::std::{CommandWrap, ProcessSession};
 
-    let shell = unix_shell();
+    let shell = login_probe_shell();
     let login_args = unix_login_shell_command_args(&shell);
 
     // Build the command, varying only the flatpak vs direct invocation.
@@ -230,6 +305,9 @@ pub(crate) fn resolve_login_shell_path() -> Option<String> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    if let (Some(dir), Ok(inherited)) = (shim_dir, std::env::var("PATH")) {
+        cmd.command_mut().env("PATH", path_without(&inherited, dir));
+    }
 
     // Spawn in a new session so that bash's interactive job-control setup
     // (TIOCSPGRP) cannot steal the terminal foreground from goose, which
@@ -285,7 +363,14 @@ struct LoginPath {
 #[cfg(not(windows))]
 impl LoginPath {
     fn spawn() -> Self {
-        let handle = tokio::task::spawn_blocking(resolve_login_shell_path);
+        let handle = tokio::task::spawn_blocking(|| {
+            resolve_login_shell_path().or_else(|| {
+                tracing::warn!(
+                    "login-shell PATH probe failed; shell commands run on the inherited PATH"
+                );
+                inherited_path_with_tool_shims_last()
+            })
+        });
         Self {
             cell: OnceCell::new(),
             handle: Mutex::new(Some(handle)),
@@ -987,6 +1072,113 @@ mod tests {
             .clone()
             .expect("expected structured content");
         serde_json::from_value(value).expect("expected shell output structured content")
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn tool_shims_move_behind_every_user_entry() {
+        let shims = "/Applications/Goose Swarm.app/Contents/Resources/bin";
+        assert_eq!(
+            with_tool_shims_last(&format!("{shims}:/usr/bin:/bin"), shims),
+            format!("/usr/bin:/bin:{shims}")
+        );
+        assert_eq!(
+            with_tool_shims_last(&format!("/a:{shims}/:/b:{shims}"), shims),
+            format!("/a:/b:{shims}")
+        );
+        assert_eq!(
+            with_tool_shims_last("/usr/bin", shims),
+            format!("/usr/bin:{shims}")
+        );
+        assert_eq!(with_tool_shims_last(shims, shims), shims);
+    }
+
+    /// The Q-102 path end to end: goose serve's PATH starts with the shim dir, the login profile
+    /// adds the user's runtime, and `node` in the shell tool must be the user's — or goose's when
+    /// the user has none. The fake login shell prints the PATH it was handed with the "profile"
+    /// entry prepended, so it also proves the probe never saw the shim dir.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shell_tool_prefers_the_users_node_and_falls_back_to_goose_shims() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let write_exe = |path: &std::path::Path, body: &str| {
+            std::fs::write(path, body).unwrap();
+            let mut perms = std::fs::metadata(path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(path, perms).unwrap();
+        };
+        let shims = tmp.path().join("goose-bin");
+        let user_bin = tmp.path().join("nvm-bin");
+        let empty_bin = tmp.path().join("no-node-bin");
+        for dir in [&shims, &user_bin, &empty_bin] {
+            std::fs::create_dir(dir).unwrap();
+        }
+        write_exe(&shims.join("node"), "#!/bin/sh\necho goose-node\n");
+        write_exe(&user_bin.join("node"), "#!/bin/sh\necho user-node\n");
+        let fake_shell = tmp.path().join("login-shell");
+        write_exe(
+            &fake_shell,
+            "#!/bin/sh\nif [ \"$1\" = -l ]; then printf '%s\\n' \"$PROFILE_BIN:$PATH\"; exit 0; fi\nexec /bin/sh \"$@\"\n",
+        );
+
+        let shims_s = shims.to_string_lossy().into_owned();
+        let inherited = format!("{shims_s}:/usr/bin:/bin");
+        let fake_shell_s = fake_shell.to_string_lossy().into_owned();
+        for (profile_bin, expected) in [(&user_bin, "user-node"), (&empty_bin, "goose-node")] {
+            let profile_bin_s = profile_bin.to_string_lossy().into_owned();
+            let _guard = env_lock::lock_env([
+                ("GOOSE_SHELL", Some(fake_shell_s.as_str())),
+                ("PROFILE_BIN", Some(profile_bin_s.as_str())),
+                (TOOL_SHIM_DIR_ENV, Some(shims_s.as_str())),
+                ("PATH", Some(inherited.as_str())),
+            ]);
+            let tool = ShellTool::new(true).unwrap();
+            let result = tool
+                .shell(ShellParams {
+                    command: "node; echo \"$PATH\"".to_string(),
+                    timeout_secs: None,
+                })
+                .await;
+            let output = extract_shell_output(&result);
+            assert_eq!(
+                output.stdout,
+                format!("{expected}\n{profile_bin_s}:/usr/bin:/bin:{shims_s}"),
+                "stderr: {}",
+                output.stderr
+            );
+        }
+    }
+
+    /// Live probe against THIS machine's real login shell and the repo's real shims: prints which
+    /// `node` the desktop shell tool resolves. Run with
+    /// `cargo test -p goose --lib live_shell_tool_node -- --ignored --nocapture`.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore]
+    async fn live_shell_tool_node_is_the_users() {
+        let shims = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../ui/desktop/src/bin")
+            .canonicalize()
+            .unwrap();
+        let shims = shims.to_string_lossy().into_owned();
+        let inherited = format!("{shims}:/usr/bin:/bin:/usr/sbin:/sbin");
+        let _guard = env_lock::lock_env([
+            ("GOOSE_SHELL", None),
+            (TOOL_SHIM_DIR_ENV, Some(shims.as_str())),
+            ("PATH", Some(inherited.as_str())),
+        ]);
+        let tool = ShellTool::new(true).unwrap();
+        let result = tool
+            .shell(ShellParams {
+                command: "command -v node; node -v".to_string(),
+                timeout_secs: None,
+            })
+            .await;
+        let output = extract_shell_output(&result);
+        println!("stdout:\n{}stderr:\n{}", output.stdout, output.stderr);
+        assert!(!output.stdout.starts_with(&shims), "{}", output.stdout);
     }
 
     #[tokio::test]
