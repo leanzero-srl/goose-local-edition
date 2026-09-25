@@ -159,16 +159,16 @@ impl PreflightReport {
         cluster.chain(nodes).collect()
     }
 
-    /// (planned bytes, prompt cache bytes) per rank for the launch.
-    pub fn launch_bytes(&self) -> Option<Vec<(u64, u64)>> {
-        self.nodes
+    /// Each tensor rank's launch figures, from its plan. A node without a plan, or ranks whose
+    /// prompt cache bounds differ, cannot be launched.
+    pub fn tensor_launches(&self) -> Result<Vec<super::launch::TensorLaunch>> {
+        let plans = self
+            .nodes
             .iter()
-            .map(|n| {
-                n.plan
-                    .as_ref()
-                    .map(|p| (p.planned_bytes, p.prompt_cache_bytes))
-            })
-            .collect()
+            .map(|n| n.plan.as_ref())
+            .collect::<Option<Vec<_>>>()
+            .context("the preflight produced no per-rank plan")?;
+        super::launch::TensorLaunch::for_ranks(&plans)
     }
 }
 

@@ -18,7 +18,7 @@ use std::collections::VecDeque;
 use std::process::Stdio;
 use std::sync::{Arc, Mutex as StdMutex};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
@@ -26,6 +26,7 @@ use tokio::process::{Child, Command};
 
 use super::config::{Backend, DistributedConfig, NodeConfig};
 use super::exec::{sh_quote, SSH_OPTIONS};
+use super::plan::RankPlan;
 
 /// The literal every goose rank carries on its command line, so `ps` can name a rank a previous
 /// goosed left behind (and `stop` can reclaim it per-pid).
@@ -51,7 +52,8 @@ const TAIL_LINES: usize = 200;
 pub enum RankProgram {
     /// `mlx_lm.server` under `rank_wrapper.py` (tensor split). Its in-process memory and wired
     /// limits sit at the node's own GPU ceiling (`max_recommended_working_set_size`, read on the
-    /// rank), the cache limit at the ceiling less the planned bytes.
+    /// rank), the cache limit at the ceiling less the planned bytes. The prompt cache's two bounds
+    /// are the same on every rank (see [`TensorLaunch`]).
     ///
     /// Tagged `mlxLmServerDoorbell` since the doorbell (Q-66): an idle worker parks in recv(1)
     /// instead of spinning in JACCL's all_sum, which needs every rank's wrapper to take part.
@@ -62,7 +64,19 @@ pub enum RankProgram {
     #[serde(rename = "mlxLmServerDoorbell", alias = "mlxLmServer")]
     MlxLmServer {
         context_window: u64,
-        prompt_cache_bytes: u64,
+        /// `--prompt-cache-bytes` and the prompt cache's own `max_bytes`
+        /// (`RankPlan::prompt_cache_limit_bytes`). Absent only in an older requester's spec.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_cache_limit_bytes: Option<u64>,
+        /// `--prompt-cache-size` (`RankPlan::prompt_cache_entries`), beside the limit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_cache_entries: Option<u64>,
+        /// An older requester's spec: the one number its own rank 0's wrapper hands mlx_lm as the
+        /// flag alone (no count, no max_bytes). A rank reading it runs that same policy, so both
+        /// ranks evict alike (each runs its own LRU cache over the same requests); goose itself
+        /// never writes it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_cache_bytes: Option<u64>,
         planned_bytes: u64,
         #[serde(default)]
         doorbell: bool,
@@ -96,20 +110,67 @@ pub struct RankSpec {
     pub program: RankProgram,
 }
 
+/// What preflight's plan hands one tensor rank's launch.
+///
+/// The prompt cache bounds must be identical on every rank: each tensor rank runs its own mlx_lm
+/// LRU prompt cache over the same requests, and a rank that evicts differently reuses a different
+/// prefix — its prefill then runs a different number of steps than its peers' and the collectives
+/// no longer pair up. [`TensorLaunch::for_ranks`] refuses plans whose bounds differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TensorLaunch {
+    pub planned_bytes: u64,
+    pub prompt_cache_limit_bytes: u64,
+    pub prompt_cache_entries: u64,
+}
+
+impl TensorLaunch {
+    pub fn from_plan(plan: &RankPlan) -> Self {
+        TensorLaunch {
+            planned_bytes: plan.planned_bytes,
+            prompt_cache_limit_bytes: plan.prompt_cache_limit_bytes(),
+            prompt_cache_entries: plan.prompt_cache_entries,
+        }
+    }
+
+    pub fn for_ranks(plans: &[&RankPlan]) -> Result<Vec<Self>> {
+        let launches: Vec<Self> = plans.iter().map(|plan| Self::from_plan(plan)).collect();
+        let bounds = |launch: &Self| (launch.prompt_cache_limit_bytes, launch.prompt_cache_entries);
+        if let Some(first) = launches.first() {
+            if let Some((rank, other)) = launches
+                .iter()
+                .enumerate()
+                .find(|(_, launch)| bounds(launch) != bounds(first))
+            {
+                bail!(
+                    "the ranks' prompt cache bounds differ (rank 0: {} bytes / {} entries, rank \
+                     {rank}: {} bytes / {} entries): every tensor rank must evict identically",
+                    first.prompt_cache_limit_bytes,
+                    first.prompt_cache_entries,
+                    other.prompt_cache_limit_bytes,
+                    other.prompt_cache_entries
+                );
+            }
+        }
+        Ok(launches)
+    }
+}
+
 /// The per-rank tensor specs. See [`base_specs`] for the backend env.
 pub fn rank_specs(
     config: &DistributedConfig,
     served_id: &str,
-    per_rank: &[(u64, u64)],
+    per_rank: &[TensorLaunch],
     context_window: u64,
     memory_report_seconds: f64,
 ) -> Vec<RankSpec> {
     base_specs(config, served_id, memory_report_seconds, |rank, _| {
-        let (planned_bytes, prompt_cache_bytes) = per_rank[rank];
+        let launch = per_rank[rank];
         RankProgram::MlxLmServer {
             context_window,
-            prompt_cache_bytes,
-            planned_bytes,
+            prompt_cache_limit_bytes: Some(launch.prompt_cache_limit_bytes),
+            prompt_cache_entries: Some(launch.prompt_cache_entries),
+            prompt_cache_bytes: None,
+            planned_bytes: launch.planned_bytes,
             doorbell: true,
         }
     })
@@ -439,10 +500,24 @@ mod tests {
     use super::*;
     use crate::distributed::config::tests::two_mac_config;
 
+    fn launch(planned_bytes: u64, prompt_cache_limit_bytes: u64) -> TensorLaunch {
+        TensorLaunch {
+            planned_bytes,
+            prompt_cache_limit_bytes,
+            prompt_cache_entries: 3,
+        }
+    }
+
     #[test]
     fn jaccl_specs_reproduce_the_proven_hostfile() {
         let config = two_mac_config();
-        let specs = rank_specs(&config, "node-alias", &[(20, 1), (21, 2)], 65_536, 2.0);
+        let specs = rank_specs(
+            &config,
+            "node-alias",
+            &[launch(20, 2), launch(21, 2)],
+            65_536,
+            2.0,
+        );
         // hostfile-jaccl.json: rdma [null,"rdma_en3"] / ["rdma_en3",null], coordinator hosts[0].ips[0].
         let devices = specs[0].ibv_devices.as_ref().unwrap();
         assert_eq!(devices[0], vec![None, Some("rdma_en3".to_string())]);
@@ -453,9 +528,11 @@ mod tests {
             specs[1].program,
             RankProgram::MlxLmServer {
                 planned_bytes: 21,
-                prompt_cache_bytes: 2,
+                prompt_cache_limit_bytes: Some(2),
+                prompt_cache_entries: Some(3),
+                prompt_cache_bytes: None,
                 context_window: 65_536,
-                ..
+                doorbell: true,
             }
         ));
         assert!(specs[0].ring_hosts.is_none());
@@ -470,7 +547,13 @@ mod tests {
     fn ring_specs_give_each_rank_its_own_port() {
         let mut config = two_mac_config();
         config.backend = Backend::Ring;
-        let specs = rank_specs(&config, "node-alias", &[(1, 1), (1, 1)], 8_192, 2.0);
+        let specs = rank_specs(
+            &config,
+            "node-alias",
+            &[launch(1, 1), launch(1, 1)],
+            8_192,
+            2.0,
+        );
         assert_eq!(
             specs[0].ring_hosts.as_ref().unwrap(),
             &vec![
@@ -484,7 +567,13 @@ mod tests {
     #[test]
     fn the_remote_command_prints_the_pid_then_execs_the_marked_rank() {
         let config = two_mac_config();
-        let spec = &rank_specs(&config, "node-alias", &[(1, 1), (1, 1)], 8_192, 2.0)[1];
+        let spec = &rank_specs(
+            &config,
+            "node-alias",
+            &[launch(1, 1), launch(1, 1)],
+            8_192,
+            2.0,
+        )[1];
         let args = python_args(spec).unwrap();
         let script = remote_script(&config.nodes[1].python, &args);
         assert!(script
@@ -604,7 +693,13 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("pipeline_python"), "{err}");
-        let tensor = &rank_specs(&config, "node-alias", &[(1, 1), (1, 1)], 8_192, 2.0)[1];
+        let tensor = &rank_specs(
+            &config,
+            "node-alias",
+            &[launch(1, 1), launch(1, 1)],
+            8_192,
+            2.0,
+        )[1];
         assert_eq!(
             tensor.interpreter(&config.nodes[1]).unwrap(),
             config.nodes[1].python
@@ -804,7 +899,13 @@ print("ok")
     #[test]
     fn the_tensor_program_carries_the_budget_and_the_launch_window() {
         let config = two_mac_config();
-        let specs = rank_specs(&config, "node-alias", &[(1, 2), (3, 4)], 262_144, 2.0);
+        let specs = rank_specs(
+            &config,
+            "node-alias",
+            &[launch(1, 2), launch(3, 2)],
+            262_144,
+            2.0,
+        );
         let args = python_args(&specs[1]).unwrap();
         let b64 = base64::engine::general_purpose::STANDARD;
         let program = String::from_utf8(b64.decode(&args[2]).unwrap()).unwrap();
@@ -828,21 +929,35 @@ print("ok")
     #[test]
     fn the_tensor_spec_asks_for_the_doorbell_and_an_older_peer_refuses_it() {
         let config = two_mac_config();
-        let spec = rank_specs(&config, "node-alias", &[(1, 2), (3, 4)], 8_192, 2.0).remove(1);
+        let spec = rank_specs(
+            &config,
+            "node-alias",
+            &[launch(1, 2), launch(3, 2)],
+            8_192,
+            2.0,
+        )
+        .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
         assert_eq!(json["program"], "mlxLmServerDoorbell");
         assert_eq!(json["doorbell"], true);
 
-        // An older requester's spec (no doorbell, the old tag) still starts a rank here, waiting
-        // the upstream way.
+        // An older requester's spec (no doorbell, the old tag, its one prompt cache number)
+        // still starts a rank here, waiting the upstream way.
         let mut older = json.clone();
         older["program"] = "mlxLmServer".into();
-        older.as_object_mut().unwrap().remove("doorbell");
+        let fields = older.as_object_mut().unwrap();
+        fields.remove("doorbell");
+        fields.remove("prompt_cache_limit_bytes");
+        fields.remove("prompt_cache_entries");
+        fields.insert("prompt_cache_bytes".into(), 4_715_872_256u64.into());
         let read: RankSpec = serde_json::from_value(older).unwrap();
         assert!(matches!(
             read.program,
             RankProgram::MlxLmServer {
                 doorbell: false,
+                prompt_cache_bytes: Some(4_715_872_256),
+                prompt_cache_limit_bytes: None,
+                prompt_cache_entries: None,
                 ..
             }
         ));
@@ -869,6 +984,163 @@ print("ok")
 
     fn link_control_refusal(error: &str) -> Option<&'static str> {
         super::super::link_control::older_peer_refusal(error)
+    }
+
+    /// The REAL tensor program, booted as a rank is (doorbell off: the stand-in has no peer),
+    /// against stand-in `mlx.core` and `mlx_lm` modules whose `run` builds its prompt cache
+    /// exactly as mlx_lm 0.31.3's does (`LRUPromptCache(cli_args.prompt_cache_size)`,
+    /// server.py:1743). Returns what that `run` saw: argv, the cache's max_size / max_bytes.
+    async fn boot_against_stand_ins(mut spec: RankSpec) -> serde_json::Value {
+        let root = tempfile::tempdir().unwrap();
+        let site = root.path();
+        std::fs::create_dir_all(site.join("mlx")).unwrap();
+        std::fs::create_dir_all(site.join("mlx_lm")).unwrap();
+        std::fs::write(site.join("mlx/__init__.py"), "").unwrap();
+        std::fs::write(
+            site.join("mlx/core.py"),
+            "import os\n\
+             __version__ = '0.32.2'\n\
+             class _G:\n\
+             \x20   def rank(self): return int(os.environ['MLX_RANK'])\n\
+             \x20   def size(self): return 2\n\
+             class _D:\n\
+             \x20   @staticmethod\n\
+             \x20   def init(strict=False, backend='any'): return _G()\n\
+             distributed = _D()\n\
+             def device_info(): return {'memory_size': 128, 'max_recommended_working_set_size': 100}\n\
+             def set_memory_limit(n): pass\n\
+             def set_wired_limit(n): pass\n\
+             def set_cache_limit(n): pass\n\
+             def get_active_memory(): return 1\n\
+             def get_peak_memory(): return 1\n\
+             def get_cache_memory(): return 0\n",
+        )
+        .unwrap();
+        std::fs::write(site.join("mlx_lm/__init__.py"), "__version__ = '0.31.3'\n").unwrap();
+        std::fs::write(
+            site.join("mlx_lm/server.py"),
+            "import argparse, json, sys\n\
+             class LRUPromptCache:\n\
+             \x20   def __init__(self, max_size=10, max_bytes=1 << 63):\n\
+             \x20       self.max_size, self.max_bytes = max_size, max_bytes\n\
+             class ResponseGenerator:\n\
+             \x20   def _next_request(self, timeout=None): pass\n\
+             \x20   def generate(self, request, args, progress_callback=None): pass\n\
+             \x20   def _tokenize(self, tokenizer, request, args): pass\n\
+             \x20   def _share_request(self, request): pass\n\
+             \x20   def _generate(self): pass\n\
+             class APIHandler:\n\
+             \x20   def do_GET(self): pass\n\
+             \x20   def do_POST(self): pass\n\
+             \x20   def validate_model_parameters(self): pass\n\
+             \x20   def _set_completion_headers(self, status): pass\n\
+             class ModelProvider:\n\
+             \x20   def __init__(self, cli_args): self.cli_args, self._model_map = cli_args, {}\n\
+             \x20   def load(self, *a): pass\n\
+             def run(host, port, model_provider):\n\
+             \x20   cache = LRUPromptCache(model_provider.cli_args.prompt_cache_size)\n\
+             \x20   print('GOOSE_STANDIN ' + json.dumps({'argv': sys.argv[1:], 'max_size': cache.max_size, \
+             'max_bytes': cache.max_bytes, 'served': model_provider._model_map}), flush=True)\n\
+             def main():\n\
+             \x20   p = argparse.ArgumentParser()\n\
+             \x20   p.add_argument('--model'); p.add_argument('--host'); p.add_argument('--port', type=int)\n\
+             \x20   p.add_argument('--prompt-cache-size', type=int, default=10)\n\
+             \x20   p.add_argument('--prompt-cache-bytes', type=int)\n\
+             \x20   args = p.parse_args()\n\
+             \x20   run(args.host, args.port, ModelProvider(args))\n",
+        )
+        .unwrap();
+        spec.memory_report_seconds = 0.05;
+        if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
+            *doorbell = false;
+        }
+        let out = tokio::process::Command::new("/usr/bin/python3")
+            .args(python_args(&spec).unwrap())
+            .env("PYTHONPATH", site)
+            .output()
+            .await
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_str(
+            stdout
+                .lines()
+                .find_map(|l| l.strip_prefix("GOOSE_STANDIN "))
+                .unwrap_or_else(|| panic!("{stdout}")),
+        )
+        .unwrap()
+    }
+
+    fn flag(served: &serde_json::Value, name: &str) -> Option<String> {
+        let argv: Vec<String> = serde_json::from_value(served["argv"].clone()).unwrap();
+        let at = argv.iter().position(|a| a == name)?;
+        Some(argv[at + 1].clone())
+    }
+
+    /// The server receives both flags from the spec (E2E #1's figures), and the cache it builds is
+    /// bounded by the same bytes, which mlx_lm itself never passes.
+    #[tokio::test]
+    async fn the_tensor_program_hands_mlx_lm_both_prompt_cache_bounds() {
+        let config = two_mac_config();
+        let e2e = TensorLaunch {
+            planned_bytes: 27_456_216_576,
+            prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_entries: 110,
+        };
+        let spec = rank_specs(&config, "node-alias", &[e2e, e2e], 141_568, 2.0).remove(1);
+        let served = boot_against_stand_ins(spec).await;
+        assert_eq!(flag(&served, "--prompt-cache-size").as_deref(), Some("110"));
+        assert_eq!(
+            flag(&served, "--prompt-cache-bytes").as_deref(),
+            Some("9431744512")
+        );
+        assert_eq!(served["max_size"], 110);
+        assert_eq!(
+            served["max_bytes"], 9_431_744_512u64,
+            "the cache mlx_lm builds is bounded between admissions too"
+        );
+        assert_eq!(
+            served["served"]["node-alias"],
+            config.nodes[1].model_dir.as_str()
+        );
+    }
+
+    /// An older requester's spec runs the policy its own rank 0 runs — its one number as the flag,
+    /// mlx_lm's default count, no max_bytes — so the two ranks evict alike.
+    #[tokio::test]
+    async fn an_older_requesters_spec_runs_its_own_prompt_cache_policy() {
+        let config = two_mac_config();
+        let mut spec = rank_specs(
+            &config,
+            "node-alias",
+            &[launch(1, 1), launch(1, 1)],
+            8_192,
+            2.0,
+        )
+        .remove(1);
+        if let RankProgram::MlxLmServer {
+            prompt_cache_limit_bytes,
+            prompt_cache_entries,
+            prompt_cache_bytes,
+            ..
+        } = &mut spec.program
+        {
+            *prompt_cache_limit_bytes = None;
+            *prompt_cache_entries = None;
+            *prompt_cache_bytes = Some(4_715_872_256);
+        }
+        let served = boot_against_stand_ins(spec).await;
+        assert_eq!(
+            flag(&served, "--prompt-cache-bytes").as_deref(),
+            Some("4715872256")
+        );
+        assert_eq!(flag(&served, "--prompt-cache-size"), None);
+        assert_eq!(served["max_size"], 10);
+        assert_eq!(served["max_bytes"], serde_json::json!(1u64 << 63));
     }
 
     /// The phases a pipeline rank walks, from its own lines (the 27B's figures as a reporter thread

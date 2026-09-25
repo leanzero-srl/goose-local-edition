@@ -73,8 +73,10 @@ pub const PIPELINE_DEFAULT_SLOTS: u32 = 2;
 pub const HANG_MEDIAN_MULTIPLE: f64 = 10.0;
 // ratio: the soak's rule held its verdict until 3 samples of the measure existed.
 pub const HANG_MIN_SAMPLES: usize = 3;
-// ratio: policy — the prompt cache may hold one full allowed context's worth of KV per rank on
-// top of the live request's, so the cache never outgrows what preflight charged it.
+// ratio: policy — preflight charges the prompt cache one full allowed context's worth of KV per
+// rank on top of the live request's; the launch hands mlx_lm the sum
+// (`RankPlan::prompt_cache_limit_bytes`): each admission trims cached + live to it, and the cache
+// alone never holds more than it.
 pub const PROMPT_CACHE_CONTEXTS: u64 = 1;
 // ratio: policy, not yet measured — a node whose available memory falls below 5% of its RAM is
 // treated as WARN even before the kernel's own pressure level says so. Overridable per run

@@ -1516,10 +1516,14 @@ fn launch_specs(
     let report_seconds = POLL_INTERVAL.as_secs_f64();
     let mut specs = match ctx.runner {
         Runner::MlxLmTensor => {
-            let bytes = preflight
-                .launch_bytes()
-                .ok_or_else(|| anyhow!("the preflight produced no per-rank plan"))?;
-            launch::rank_specs(&ctx.config, &ctx.served_id, &bytes, context, report_seconds)
+            let launches = preflight.tensor_launches()?;
+            launch::rank_specs(
+                &ctx.config,
+                &ctx.served_id,
+                &launches,
+                context,
+                report_seconds,
+            )
         }
         Runner::PipelineQwen4 => {
             let starts = preflight

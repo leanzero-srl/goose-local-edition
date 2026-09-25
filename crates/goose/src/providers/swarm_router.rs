@@ -2589,7 +2589,15 @@ devices:
     #[cfg(unix)]
     #[tokio::test]
     async fn the_distributed_engine_serves_the_nodes_id_and_the_router_accepts_it() {
-        use goose_sidecar::distributed::{launch::rank_specs, DistributedConfig};
+        use goose_sidecar::distributed::{
+            launch::{rank_specs, TensorLaunch},
+            DistributedConfig,
+        };
+        let launch = TensorLaunch {
+            planned_bytes: 1,
+            prompt_cache_limit_bytes: 1,
+            prompt_cache_entries: 1,
+        };
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         const HF: &str = "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx";
@@ -2612,7 +2620,7 @@ devices:
         }))
         .unwrap();
         let served = served_model_id(&settings, &config.model_id);
-        let specs = rank_specs(&config, &served, &[(1, 1), (1, 1)], 65_536, 2.0);
+        let specs = rank_specs(&config, &served, &[launch, launch], 65_536, 2.0);
         assert!(specs.iter().all(|s| s.served_id == NODE_MODEL), "{specs:?}");
 
         let wrapper = |id: &str| {
@@ -2678,7 +2686,7 @@ devices:
         };
         let flash_served = served_model_id(&settings, &flash_config.model_id);
         assert_eq!(flash_served, FLASH);
-        let flash_specs = rank_specs(&flash_config, &flash_served, &[(1, 1), (1, 1)], 65_536, 2.0);
+        let flash_specs = rank_specs(&flash_config, &flash_served, &[launch, launch], 65_536, 2.0);
         assert!(
             flash_specs.iter().all(|s| s.served_id == FLASH),
             "{flash_specs:?}"

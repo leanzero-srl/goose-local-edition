@@ -36,14 +36,34 @@ pub struct RankPlan {
     /// The fork's prefill workspace (pipeline only: 49× the chunk's stream bytes per layer,
     /// measured; 0 for tensor, where the measured overhead ratio carries the transients).
     pub workspace_bytes: u64,
-    /// The prompt cache's byte bound on this rank (tensor: `--prompt-cache-bytes`).
+    /// What the plan charges this rank for CACHED prompts, on top of the live request's
+    /// `state_bytes` (tensor: one allowed context; the launch hands mlx_lm the sum — see
+    /// [`RankPlan::prompt_cache_limit_bytes`]).
     pub prompt_cache_bytes: u64,
+    /// The prompt cache's entry bound (tensor: `--prompt-cache-size`): as many of the smallest
+    /// entries a request can leave as the byte bound holds, so the count never evicts before the
+    /// bytes do. 0 for pipeline (the fork's server keeps no prompt cache).
+    #[serde(default)]
+    pub prompt_cache_entries: u64,
     pub planned_bytes: u64,
     /// What is compared with the budget: tensor `planned × RUNTIME_OVERHEAD_RATIO`; pipeline the
     /// fork's total as planned (no multiplier — see `RUNTIME_OVERHEAD_RATIO`).
     pub with_overhead_bytes: u64,
     pub budget_bytes: u64,
     pub fits: bool,
+}
+
+impl RankPlan {
+    /// The bound handed to mlx_lm (`--prompt-cache-bytes`, and the prompt cache's own
+    /// `max_bytes`): the plan's whole KV charge, live and cached. mlx_lm 0.31.3 reads its flag as
+    /// cached + LIVE — each admission trims the cache to `flag − the batch's live KV`
+    /// (server.py:795-798) — so handing it `prompt_cache_bytes` alone left the cache one context
+    /// MINUS the live request, and a ~56k-token turn on the 27B split then held room for one
+    /// ~1.8 GB prefix: E2E #1 (2026-09-25) re-read 55,977 tokens cold at 21:11:43. The cache
+    /// itself never exceeds the same sum between admissions (the wrapper's `max_bytes`).
+    pub fn prompt_cache_limit_bytes(&self) -> u64 {
+        self.state_bytes + self.prompt_cache_bytes
+    }
 }
 
 /// The tensor runner's per-rank budget is the ONE fit rule's (`crate::fit`); the pipeline
@@ -305,9 +325,16 @@ impl TensorModelFacts {
             + self.linear_state_bytes(ranks)
     }
 
-    /// The prompt cache's byte bound, handed to `mlx_lm.server --prompt-cache-bytes`.
+    /// What the plan charges for cached prompts on top of the live request (`RankPlan::
+    /// prompt_cache_bytes`).
     pub fn prompt_cache_bytes(&self, ranks: u64, context: u64) -> u64 {
         PROMPT_CACHE_CONTEXTS * self.sequence_bytes(ranks, context)
+    }
+
+    /// The smallest entry any request leaves in mlx_lm's prompt cache on one rank: one KV step
+    /// and, on a hybrid model, the whole recurrent state (the 27B: 8 MiB + 73.4 MiB).
+    pub fn smallest_cache_entry_bytes(&self, ranks: u64) -> u64 {
+        self.sequence_bytes(ranks, 1)
     }
 
     pub fn rank_plan(&self, ranks: u64, rank: u64, context: u64, budget: u64) -> RankPlan {
@@ -316,7 +343,7 @@ impl TensorModelFacts {
         let prompt_cache = self.prompt_cache_bytes(ranks, context);
         let planned = weights + state + prompt_cache;
         let with_overhead = with_overhead(planned);
-        RankPlan {
+        let mut plan = RankPlan {
             layer_start: 0,
             layer_end: self.num_layers as u32,
             shard_index: Some(rank as u32),
@@ -325,11 +352,15 @@ impl TensorModelFacts {
             state_bytes: state,
             workspace_bytes: 0,
             prompt_cache_bytes: prompt_cache,
+            prompt_cache_entries: 0,
             planned_bytes: planned,
             with_overhead_bytes: with_overhead,
             budget_bytes: budget,
             fits: with_overhead <= budget,
-        }
+        };
+        plan.prompt_cache_entries =
+            plan.prompt_cache_limit_bytes() / self.smallest_cache_entry_bytes(ranks);
+        plan
     }
 
     /// The largest context (a multiple of the cache step, at most `max_position`) whose plan fits
@@ -496,6 +527,7 @@ impl PipelineStage {
             state_bytes: self.state_bytes,
             workspace_bytes: self.workspace_bytes,
             prompt_cache_bytes: 0,
+            prompt_cache_entries: 0,
             planned_bytes: self.total_bytes,
             with_overhead_bytes: self.total_bytes,
             budget_bytes: self.budget_bytes,
@@ -595,6 +627,63 @@ pub(crate) mod tests {
         assert!(
             (20_000_000_000..23_500_000_000).contains(&bounded),
             "{bounded}"
+        );
+    }
+
+    /// E2E #1's live split (2026-09-25, rank 0's spec): the 27B over 2 ranks at a derived 141,568
+    /// tokens, `prompt_cache_bytes` 4,715,872,256 — which mlx_lm reads as cached + LIVE. The launch
+    /// now hands it the plan's whole KV charge, and the entry count holds as many of the smallest
+    /// entries.
+    #[test]
+    fn the_e2e_split_hands_mlx_lm_the_plans_whole_kv_charge() {
+        let facts = qwen_27b();
+        let plan = facts.rank_plan(2, 0, 141_568, u64::MAX);
+        assert_eq!(plan.state_bytes, 4_715_872_256);
+        assert_eq!(
+            plan.prompt_cache_bytes, 4_715_872_256,
+            "the charge is unchanged"
+        );
+        assert_eq!(plan.prompt_cache_limit_bytes(), 9_431_744_512);
+        // 256 tokens × 32 KiB + the recurrent state (76,972,032 B): a helper's 170-token prompt.
+        assert_eq!(facts.smallest_cache_entry_bytes(2), 85_360_640);
+        assert_eq!(plan.prompt_cache_entries, 110);
+
+        // What the turn needed at the agent's admission: its own live copy of the 48,647-token
+        // system prefix plus that prefix and the previous call's 55,749-token entry cached.
+        let live = facts.sequence_bytes(2, 48_647);
+        let needed = facts.sequence_bytes(2, 48_647) + facts.sequence_bytes(2, 55_749);
+        assert!(
+            plan.prompt_cache_bytes - live < needed,
+            "the old flag's room"
+        );
+        assert!(plan.prompt_cache_limit_bytes() - live >= needed);
+    }
+
+    /// The ranks' budgets differ (the MacBook and the Studio), their cache bounds may not.
+    #[test]
+    fn every_tensor_rank_gets_the_same_prompt_cache_bounds() {
+        use crate::distributed::launch::TensorLaunch;
+        let facts = qwen_27b();
+        let macbook = budget_bytes(gib(92.7), gib(128.0), M4_MAX_CEILING);
+        let workhorse = budget_bytes(gib(61.6), gib(96.0), M3_ULTRA_CEILING);
+        let context = facts.max_context(2, macbook.min(workhorse));
+        let plans = [
+            facts.rank_plan(2, 0, context, macbook),
+            facts.rank_plan(2, 1, context, workhorse),
+        ];
+        let launches = TensorLaunch::for_ranks(&[&plans[0], &plans[1]]).unwrap();
+        assert_eq!(
+            launches[0].prompt_cache_limit_bytes,
+            launches[1].prompt_cache_limit_bytes
+        );
+        let mut skewed = plans[1].clone();
+        skewed.prompt_cache_entries += 1;
+        let refusal = TensorLaunch::for_ranks(&[&plans[0], &skewed])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refusal.contains("rank 1") && refusal.contains("evict identically"),
+            "{refusal}"
         );
     }
 

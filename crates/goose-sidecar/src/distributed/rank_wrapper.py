@@ -23,7 +23,20 @@
 #   rank 0 sleeps in queue.get, burned a whole core idle (Studio ~100%, MacBook 0.1%). With the
 #   doorbell, an idle rank 0 shares only a request that exists, ringing one byte per worker first,
 #   and an idle worker parks in recv(1) (kernel-blocking, no clock). While a batch runs every step
-#   is shared exactly as upstream. The fork's pipeline runner has done the same since 286ed77f7.
+#   is shared exactly as upstream. The fork's pipeline runner has done the same since 286ed77f7;
+# - the prompt cache's bounds (plan.rs RankPlan::prompt_cache_limit_bytes / prompt_cache_entries):
+#   mlx_lm 0.31.3 trims its LRU prompt cache to `--prompt-cache-bytes` MINUS the live batch's KV,
+#   and only when a request is admitted (server.py:795-798); `run` builds the cache without
+#   max_bytes (server.py:1743), so the inserts between admissions are unbounded, and the default
+#   `--prompt-cache-size` (10) evicts by entry count on its own. goose hands the flag the plan's
+#   whole KV charge (live + cached), builds the cache with the same `max_bytes`, and sizes the
+#   count so it never evicts before the bytes do. Every rank gets the same two numbers: each rank
+#   runs its own cache over the same requests, and one that evicted differently would reuse a
+#   different prefix than its peers (E2E #1, 2026-09-25: the agent's 48,647-token system prefix
+#   was evicted and a 55,977-token turn was read cold, ~2.5 min on the split). An older
+#   requester's spec (`prompt_cache_bytes` alone) runs its own wrapper's policy here unchanged:
+#   that one number as the flag, mlx_lm's default count, no max_bytes — so both ranks still evict
+#   alike.
 group = mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -105,6 +118,7 @@ for owner, name in (
     (server.ResponseGenerator, "_tokenize"),
     (server.ResponseGenerator, "_share_request"),
     (server.ResponseGenerator, "_generate"),
+    (server, "LRUPromptCache"),
 ):
     if not hasattr(owner, name):
         raise SystemExit(
@@ -156,6 +170,23 @@ def run(host, port, model_provider, *args, **kwargs):
 
 
 server.run = run
+
+if "prompt_cache_limit_bytes" in spec:
+    prompt_cache_limit = int(spec["prompt_cache_limit_bytes"])
+    prompt_cache_flags = [
+        "--prompt-cache-size",
+        str(int(spec["prompt_cache_entries"])),
+        "--prompt-cache-bytes",
+        str(prompt_cache_limit),
+    ]
+
+    class BoundedPromptCache(server.LRUPromptCache):
+        def __init__(self, max_size):
+            super().__init__(max_size, prompt_cache_limit)
+
+    server.LRUPromptCache = BoundedPromptCache
+else:
+    prompt_cache_flags = ["--prompt-cache-bytes", str(int(spec["prompt_cache_bytes"]))]
 
 original_next = server.ResponseGenerator._next_request
 
@@ -411,7 +442,6 @@ sys.argv = [
     "127.0.0.1",
     "--port",
     str(spec["port"]),
-    "--prompt-cache-bytes",
-    str(spec["prompt_cache_bytes"]),
+    *prompt_cache_flags,
 ]
 server.main()
