@@ -7478,6 +7478,9 @@
   "themeSelector.theme": {
     "defaultMessage": "Tema"
   },
+  "thinkingContent.label": {
+    "defaultMessage": "Düşünme"
+  },
   "toolApprovalButtons.allowOnce": {
     "defaultMessage": "Bir Kez İzin Ver"
   },

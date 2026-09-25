@@ -7478,6 +7478,9 @@
   "themeSelector.theme": {
     "defaultMessage": "Chủ đề"
   },
+  "thinkingContent.label": {
+    "defaultMessage": "Suy nghĩ"
+  },
   "toolApprovalButtons.allowOnce": {
     "defaultMessage": "Cho phép một lần"
   },

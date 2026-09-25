@@ -7478,6 +7478,9 @@
   "themeSelector.theme": {
     "defaultMessage": "佈景主題"
   },
+  "thinkingContent.label": {
+    "defaultMessage": "思考"
+  },
   "toolApprovalButtons.allowOnce": {
     "defaultMessage": "允許一次"
   },

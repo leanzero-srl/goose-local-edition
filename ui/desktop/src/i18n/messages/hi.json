@@ -7478,6 +7478,9 @@
   "themeSelector.theme": {
     "defaultMessage": "थीम"
   },
+  "thinkingContent.label": {
+    "defaultMessage": "सोचना"
+  },
   "toolApprovalButtons.allowOnce": {
     "defaultMessage": "एक बार अनुमति दें"
   },

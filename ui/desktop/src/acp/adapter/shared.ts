@@ -27,6 +27,9 @@ export interface GooseMessageMeta {
 export interface ToolIdentity {
   toolName?: string;
   extensionName?: string;
+  /** The update's title is the model's short label for the call, not the engine's
+   *  name-and-argument fallback (acp/server.rs `with_title_from_model_meta`). */
+  titleFromModel?: boolean;
 }
 
 export const DEFAULT_VISIBLE_MESSAGE_METADATA: Message['metadata'] = {
@@ -88,14 +91,19 @@ export function toolIdentity(update: ToolCall | ToolCallUpdate): ToolIdentity {
   }
 
   const goose = update._meta.goose;
-  if (!isRecord(goose) || !isRecord(goose.toolCall)) {
+  if (!isRecord(goose)) {
     return {};
+  }
+  const titleFromModel = goose.toolTitleFromModel === true ? { titleFromModel: true } : {};
+  if (!isRecord(goose.toolCall)) {
+    return titleFromModel;
   }
 
   return {
     toolName: typeof goose.toolCall.toolName === 'string' ? goose.toolCall.toolName : undefined,
     extensionName:
       typeof goose.toolCall.extensionName === 'string' ? goose.toolCall.extensionName : undefined,
+    ...titleFromModel,
   };
 }
 

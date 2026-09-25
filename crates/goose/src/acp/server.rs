@@ -732,19 +732,7 @@ fn tool_call_identity_meta(tool_request: &ToolRequest) -> Option<Meta> {
 /// [`tool_call_identity_meta`]).
 fn with_tool_chain_summary_meta(base: Option<Meta>, summary: &str, count: usize) -> Option<Meta> {
     let mut meta = base.unwrap_or_default();
-    let goose_entry = meta
-        .entry("goose".to_string())
-        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-    let goose_obj = match goose_entry {
-        serde_json::Value::Object(obj) => obj,
-        other => {
-            *other = serde_json::Value::Object(serde_json::Map::new());
-            match other {
-                serde_json::Value::Object(obj) => obj,
-                _ => unreachable!(),
-            }
-        }
-    };
+    let goose_obj = goose_namespace(&mut meta);
     let mut chain = serde_json::Map::new();
     chain.insert(
         "summary".to_string(),
@@ -757,6 +745,32 @@ fn with_tool_chain_summary_meta(base: Option<Meta>, summary: &str, count: usize)
     goose_obj.insert(
         "toolChainSummary".to_string(),
         serde_json::Value::Object(chain),
+    );
+    Some(meta)
+}
+
+fn goose_namespace(meta: &mut Meta) -> &mut serde_json::Map<String, serde_json::Value> {
+    let goose_entry = meta
+        .entry("goose".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if !goose_entry.is_object() {
+        *goose_entry = serde_json::Value::Object(serde_json::Map::new());
+    }
+    match goose_entry {
+        serde_json::Value::Object(obj) => obj,
+        _ => unreachable!(),
+    }
+}
+
+/// Add `goose.toolTitleFromModel = true`: the title this update carries is the model's short label
+/// for the call (TOOL_CALL_LABEL_SYSTEM), not `summarize_tool_call`'s name-and-argument fallback.
+/// The desktop prefers a model label over its own argument-derived one and needs to tell them apart
+/// (Q-99: without it the label was dropped and cards read "Ledger Append kind, text").
+fn with_title_from_model_meta(base: Option<Meta>) -> Option<Meta> {
+    let mut meta = base.unwrap_or_default();
+    goose_namespace(&mut meta).insert(
+        "toolTitleFromModel".to_string(),
+        serde_json::Value::Bool(true),
     );
     Some(meta)
 }
@@ -810,7 +824,10 @@ fn pending_tool_call_from_request(tool_request: &ToolRequest) -> PendingToolCall
         .and_then(|tc| tc.arguments.as_ref())
         .map(|a| serde_json::Value::Object(a.clone()));
     let fallback_title = summarize_tool_call(&tool_name, args_value.as_ref());
-    let identity_meta = tool_call_identity_meta(tool_request);
+    let identity_meta = match tool_request.persisted_title() {
+        Some(_) => with_title_from_model_meta(tool_call_identity_meta(tool_request)),
+        None => tool_call_identity_meta(tool_request),
+    };
 
     // Prefer the persisted LLM-generated title when available so replay (and
     // any subsequent live initial ToolCall after the title task has already
@@ -1557,11 +1574,15 @@ impl GooseAcpAgent {
                 };
 
                 let fields = ToolCallUpdateFields::new().title(title.clone());
+                let meta = if from_llm {
+                    with_title_from_model_meta(identity_meta)
+                } else {
+                    identity_meta
+                };
                 let _ = cx.send_notification(SessionNotification::new(
                     sid,
                     SessionUpdate::ToolCallUpdate(
-                        ToolCallUpdate::new(ToolCallId::new(request_id.clone()), fields)
-                            .meta(identity_meta),
+                        ToolCallUpdate::new(ToolCallId::new(request_id.clone()), fields).meta(meta),
                     ),
                 ));
 
@@ -1996,19 +2017,20 @@ fn forming_progress_text(
     if progress.tool_calls == 0 {
         return None;
     }
-    let chars = |n: usize| {
-        if n < 1000 {
-            format!("{n} chars")
-        } else {
-            format!("{:.1}k chars", n as f64 / 1000.0)
-        }
+    let chars = |n: usize| match n {
+        1 => "1 char".to_string(),
+        n if n < 1000 => format!("{n} chars"),
+        n => format!("{:.1}k chars", n as f64 / 1000.0),
     };
     let calls = if progress.tool_calls == 1 {
         "1 tool call".to_string()
     } else {
         format!("{} tool calls", progress.tool_calls)
     };
-    let mut parts = vec![format!("{} of arguments", chars(progress.argument_chars))];
+    let mut parts = Vec::new();
+    if progress.argument_chars > 0 {
+        parts.push(format!("{} of arguments", chars(progress.argument_chars)));
+    }
     if progress.reasoning_chars > 0 {
         parts.push(format!("{} of reasoning", chars(progress.reasoning_chars)));
     }
@@ -2017,6 +2039,9 @@ fn forming_progress_text(
             "{} of text not shown in the chat",
             chars(progress.unplaced_text_chars)
         ));
+    }
+    if parts.is_empty() {
+        return Some(format!("goose is writing {calls}"));
     }
     Some(format!("goose is writing {calls} — {}", parts.join(", ")))
 }
@@ -3156,6 +3181,32 @@ mod tests {
     use tempfile::NamedTempFile;
     use test_case::test_case;
 
+    /// Q-99: a replayed call whose model label was persisted says so, so the desktop shows the label
+    /// instead of an argument-derived one; a call without one carries no such flag.
+    #[test]
+    fn a_persisted_model_label_is_marked_on_replay() {
+        let request = |tool_meta| ToolRequest {
+            id: "call_1".to_string(),
+            tool_call: Ok(CallToolRequestParams::new("ledger__append")),
+            metadata: None,
+            tool_meta,
+        };
+        let flag = |pending: PendingToolCall| {
+            pending
+                .identity_meta
+                .as_ref()
+                .and_then(|m| m.get("goose"))
+                .and_then(|g| g.get("toolTitleFromModel"))
+                .cloned()
+        };
+        let labelled = pending_tool_call_from_request(&request(Some(serde_json::json!({
+            crate::conversation::message::TOOL_META_TITLE_KEY: "logging the kickoff decision",
+        }))));
+        assert_eq!(labelled.tool_call.title, "logging the kickoff decision");
+        assert_eq!(flag(labelled), Some(serde_json::Value::Bool(true)));
+        assert_eq!(flag(pending_tool_call_from_request(&request(None))), None);
+    }
+
     /// The measured response's end state (session 20260923_20): 36 calls, about 11k chars of arguments, and
     /// the rest of 28,035 tokens as text that never reached the chat. The line says each as a count.
     #[test]
@@ -3170,6 +3221,24 @@ mod tests {
             })
             .as_deref(),
             Some("goose is writing 1 tool call — 40 chars of arguments")
+        );
+        // Q-100: the first chunk of a call's arguments read "1 chars of arguments".
+        assert_eq!(
+            forming_progress_text(&FormingProgress {
+                tool_calls: 1,
+                argument_chars: 1,
+                ..Default::default()
+            })
+            .as_deref(),
+            Some("goose is writing 1 tool call — 1 char of arguments")
+        );
+        assert_eq!(
+            forming_progress_text(&FormingProgress {
+                tool_calls: 2,
+                ..Default::default()
+            })
+            .as_deref(),
+            Some("goose is writing 2 tool calls")
         );
         assert_eq!(
             forming_progress_text(&FormingProgress {

@@ -7487,6 +7487,9 @@
   "themeSelector.theme": {
     "defaultMessage": "Theme"
   },
+  "thinkingContent.label": {
+    "defaultMessage": "Thinking"
+  },
   "toolApprovalButtons.allowOnce": {
     "defaultMessage": "Allow Once"
   },

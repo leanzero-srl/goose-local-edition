@@ -7478,6 +7478,9 @@
   "themeSelector.theme": {
     "defaultMessage": "Тема"
   },
+  "thinkingContent.label": {
+    "defaultMessage": "Размышление"
+  },
   "toolApprovalButtons.allowOnce": {
     "defaultMessage": "Разрешить один раз"
   },

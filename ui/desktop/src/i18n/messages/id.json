@@ -7478,6 +7478,9 @@
   "themeSelector.theme": {
     "defaultMessage": "Tema"
   },
+  "thinkingContent.label": {
+    "defaultMessage": "Berpikir"
+  },
   "toolApprovalButtons.allowOnce": {
     "defaultMessage": "Izinkan Sekali"
   },

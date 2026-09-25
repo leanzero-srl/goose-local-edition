@@ -7478,6 +7478,9 @@
   "themeSelector.theme": {
     "defaultMessage": "테마"
   },
+  "thinkingContent.label": {
+    "defaultMessage": "사고"
+  },
   "toolApprovalButtons.allowOnce": {
     "defaultMessage": "한 번만 허용"
   },
