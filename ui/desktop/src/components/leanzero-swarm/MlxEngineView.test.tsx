@@ -1738,6 +1738,26 @@ describe('MlxEngineView models tab', () => {
     unmount();
   });
 
+  it('Q-45: the copy an engine holds is the filled chip; a copy on disk is quiet', async () => {
+    mockStatus.mockResolvedValue(statusOf({ state: 'running', modelId: QWEN }));
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    const loaded = await screen.findByTestId(`model-cell-self-${QWEN}`);
+    await waitFor(() => expect(loaded).toHaveTextContent('Loaded'));
+    const chip = within(loaded).getByText('Loaded').closest('[data-testid="lz-chip"]')!;
+    expect(chip).toHaveAttribute('data-phase', 'idle');
+    unmount();
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    const again = render(<MlxEngineView />);
+    await openModelsTab();
+    const onDisk = await screen.findByTestId(`model-cell-self-${QWEN}`);
+    await waitFor(() => expect(onDisk).toHaveTextContent('On disk'));
+    const quiet = within(onDisk).getByText('On disk').closest('[data-testid="lz-chip"]')!;
+    expect(quiet).not.toHaveAttribute('data-tone');
+    expect(quiet).not.toHaveAttribute('data-phase');
+    again.unmount();
+  });
+
   it('an incomplete model offers Resume (works for untracked residue), then shows its real bytes', async () => {
     const { unmount } = render(<MlxEngineView />);
     await openModelsTab();
