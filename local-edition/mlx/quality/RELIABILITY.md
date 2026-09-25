@@ -1,14 +1,28 @@
 # Reliability matrix — Goose MLX quality loop
 
 Each row's PASS criterion is written before it runs; a run's verdict goes in FINDINGS-LEDGER.md as a
-reliability row. Evidence: `~/goose-builds/quality/<R-id>-<date>/`. Method: the skill
-`goose-mlx-quality-loop`.
+reliability row. Evidence: `~/goose-builds/quality/<R-id>-<date>/`. Method: skill `goose-mlx-quality-loop`.
+Failure modes and sources: `RESEARCH-failure-modes.md` (ids D=MLX/exo, L=LM Link, T=Tailscale, S=single server).
 
-| id | scenario | pass criterion | how it runs | last run | verdict |
+## Detectors (every row, both Macs, sampled by the harness)
+- **census** `~/goose-builds/quality/harness/census.sh <label>` — engine/rank processes, model ports, free %, wired.
+- **canary** — a 1-token completion through the SAME path chat uses; judged instead of any health endpoint
+  (the invisible wedge: /v1/models 200 while generation is dead — S5, S8, D34, D36, T6).
+- **correctness ladder** — needle prompts at ~400 / 2.1k / 2.7k / 4.5k / 7.3k / 15k / 30k tokens, temperature 0,
+  answer checked (D33: tensor-parallel over JACCL returned garbage above ~2k prompt tokens while decode looked fine).
+- **panic/crash census** — new `/Library/Logs/DiagnosticReports/*.panic|*.ips`; `log show --last 1h --predicate
+  'eventMessage CONTAINS "panic"'`; match `IOGPUMemory.cpp:550`, `IOGPUGroupMemory`, `watchdog timeout`, `dlil_if_ref`,
+  `tbt_post_recv`, `ibv_reg_mr`, `Fence::wait`.
+- **rank spin** — a rank at ≥95% CPU with the token counter flat for 3 samples → `sample <pid> 5` (D: survivors spin
+  forever when a peer dies; mlx#4530 open).
+- **footprint** — `footprint <pid>` for the engine and tailscaled (RSS lies — S4); wired from `vm_stat`.
+- **path** — `tailscale status --json` per peer: direct (CurAddr) vs DERP (Relay); health warnings.
+
+| id | scenario | trigger | pass criterion | last run | verdict |
 |---|---|---|---|---|---|
-| R1 | Split long soak through goose: an agentic workflow on the tensor split for hours | no rank death, no hang (soak.py rule), wired memory flat after warm-up, no panic in `log show` on either Mac | goose session driven by the harness with tool use + growing context; mem sampler both Macs | — | — |
-| R2 | Remote single under heavy load over Link: concurrent turns + a model copy over Link | zero relay 5xx besides admission 503; tailscaled RSS flat; p95 first-token stable | relay load driver + Link replicate at the same time | — | — |
-| R3 | Link disconnect/reconnect, idle and mid-chat, each side | chat resumes without a click within a measured bound, or the UI names the break and the one action; never a silent hang | Link off/on in the UI; peer app relaunch; tailscaled pid killed | — | — |
-| R4 | Relaunch/restore races: relaunch during mount, during split start, both Macs relaunching together | ends serving; no false failure line | harness relaunch loop | partial: 3.0.31 race found and fixed (Q-10) | — |
-| R5 | Switch races: Run on another way while one mounts; Run twice; Stop during provisioning; two windows | exactly one engine serves; memory matches; no orphan processes on either Mac | harness click sequences + `pgrep` census both Macs | — | — |
-| R6 | Sleep/wake of the Studio mid-route | as R3 | `pmset` on the workhorse | — | — |
+| R1 | Split long soak through goose | correctness ladder before + hourly; an agentic goose session climbing 2k→50k+ tokens with tool calls until compaction fires; a 30-min idle then one turn; two sessions at once | every ladder answer right; no rank spin; no rank exit (read from the engine, not the launcher — D27); wired flat after the first hour; no panic/crash files | — | — |
+| R2 | Remote single under heavy load over Link | 2+ concurrent streams each with a UNIQUE 12–16k prompt (prefix-cache eviction churn — D3's panic recipe, 102–108 s on stock) ≥20 min; ~20% of streams aborted mid-body; a model copy over Link at the same time; one half-close run | no panic; engine running/admission counters back to 0 after clients stop (ghost slots — S8); relay 5xx only admission 503; tailscaled footprint flat; TTFT/inter-token p95 per level; path stays direct | — | — |
+| R3 | Link disconnect/reconnect, idle and mid-stream, each side | tailscaled pid killed; Link off/on in the UI; Wi-Fi off/on; UDP 41641 blocked (DERP) then restored; headscale restarted; the peer app quit; a turn after 10+ min idle | break → a named error at the client within a measured bound (never a silent hang); restore → first good token with no click; the UI never lists a dead peer as available; the orphaned request releases its slot | — | — |
+| R4 | Relaunch/restore races | relaunch during mount, during split start, both Macs together — 20×; SIGKILL one rank mid-generation then relaunch | ends serving (canary), no false failure line; wired back to the pre-mount baseline after teardown (D12/D13: 90+ GB left wired); restored split uses Thunderbolt; tok/s within 10% | partial — Q-10 (3.0.31) fixed | — |
+| R5 | Switch races | Run on B while A mounts; Run twice; Stop during provisioning; two windows; single↔split on different models 20× | exactly one engine and no orphan rank on either Mac after every step; wired/footprint match the mounted model; no jetsam; no "busy" once idle | — | — |
+| R6 | Sleep/wake | `pmset sleepnow` on the Studio idle and mid-stream, wake; MacBook lid mid-stream; the same during a split | in-flight stream ends with a named error within a bound; wake → first good token timed; path back to direct; prefill tok/s after wake vs baseline (S13: launchd-spawned servers ~100× slower prefill) | — | — |
