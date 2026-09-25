@@ -5,6 +5,7 @@ import { LeanZero } from '../icons';
 import { LoopModal, type NewLoopPayload } from '../loop/LoopModal';
 import { acpCreateSchedule, acpListSchedules, acpRunScheduleNow } from '../../acp/schedules';
 import { listSkillSources } from '../../acp/sources';
+import { readError } from '../skills/skillKinds';
 import RecipeWizard from './RecipeWizard';
 import RecipeChatWizard from './RecipeChatWizard';
 import { getInitialWorkingDir } from '../../utils/workingDir';
@@ -64,7 +65,7 @@ export function AgentSetupWizard({
     void (async () => {
       try {
         const sources = await listSkillSources(dir);
-        if (alive) setSkillCount(sources.length);
+        if (alive) setSkillCount(sources.filter((s) => !readError(s)).length);
       } catch {
         if (alive) setSkillCount(null);
       }

@@ -5,31 +5,127 @@
 use crate::config::paths::Paths;
 use crate::skills::{
     build_skill_md, discover_skills, infer_skill_name, is_global_skill_dir,
-    parse_skill_frontmatter, resolve_discoverable_skill_dir, resolve_skill_dir, skill_base_dir,
-    validate_skill_name,
+    parse_skill_frontmatter, resolve_discoverable_skill_dir, resolve_skill_dir, scan_skills,
+    skill_base_dir, validate_skill_name, UnreadableSkill,
 };
 use crate::source_roots::SourceRoot;
 use agent_client_protocol::Error;
 use fs_err as fs;
 use goose_sdk_types::custom_requests::{SourceEntry, SourceType};
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
-pub fn parse_frontmatter<T: for<'de> Deserialize<'de>>(
+/// Split a markdown source into its YAML frontmatter and body, and deserialize the frontmatter.
+///
+/// `Ok(None)` means the file has no frontmatter: it does not OPEN with a `---` line, or the block is never
+/// closed by one. The old split on every `---` in the file read a body's horizontal rule as a delimiter —
+/// ~/.agents/skills/talent-vault-skill has no frontmatter and a `---` rule after its intro, so its first
+/// section ("**Two parallel …**") was parsed as YAML and failed "while scanning an alias at line 3".
+///
+/// The YAML is read the way Claude Code reads the same files (2.1.280: `ts` → `Afr` → `M`): strictly
+/// first, then — only when that fails — once more with every top-level plain `key: value` whose value
+/// YAML would misread (it holds `: ` or any of ``{}[]*&#!|>%@` ``) quoted as the text it is, and leading
+/// tabs as two spaces. SKILL.md and agent files are shared with Claude Code, which accepts
+/// `description: … Use whenever: …`; measured 2026-09-25, goose dropped `chatwise-development`,
+/// `cognirunner-development`, `leanzero-newsroom` and two ~/.claude/agents files for exactly that.
+pub fn parse_frontmatter<T: DeserializeOwned>(
     content: &str,
 ) -> Result<Option<(T, String)>, serde_yaml::Error> {
-    let parts: Vec<&str> = content.split("---").collect();
-    if parts.len() < 3 {
+    let Some((yaml, body)) = split_frontmatter(content) else {
         return Ok(None);
+    };
+    let metadata = deserialize_frontmatter(yaml)?;
+    Ok(Some((metadata, body.trim().to_string())))
+}
+
+fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
+    let content = content
+        .strip_prefix('\u{feff}')
+        .unwrap_or(content)
+        .trim_start();
+    let (opening, rest) = content.split_once('\n')?;
+    if opening.trim_end() != "---" {
+        return None;
     }
+    let mut offset = 0;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end() == "---" {
+            return Some((&rest[..offset], &rest[offset + line.len()..]));
+        }
+        offset += line.len();
+    }
+    None
+}
 
-    let yaml_content = parts[1].trim();
-    let metadata: T = serde_yaml::from_str(yaml_content)?;
+fn deserialize_frontmatter<T: DeserializeOwned>(yaml: &str) -> Result<T, serde_yaml::Error> {
+    let yaml = if yaml.trim().is_empty() { "{}" } else { yaml };
+    let strict = match serde_yaml::from_str(yaml) {
+        Ok(metadata) => return Ok(metadata),
+        Err(e) => e,
+    };
+    let lenient = quote_misread_values(yaml);
+    if lenient == yaml {
+        return Err(strict);
+    }
+    serde_yaml::from_str(&lenient)
+}
 
-    let body = parts[2..].join("---").trim().to_string();
-    Ok(Some((metadata, body)))
+/// Claude Code's `M`: quote each top-level plain value YAML would misread, and expand leading tabs.
+fn quote_misread_values(yaml: &str) -> String {
+    yaml.split('\n')
+        .map(|line| {
+            let (text, cr) = match line.strip_suffix('\r') {
+                Some(text) => (text, "\r"),
+                None => (line, ""),
+            };
+            match quoted_value_line(text) {
+                Some(quoted) => format!("{quoted}{cr}"),
+                None => expand_leading_tabs(line),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn quoted_value_line(line: &str) -> Option<String> {
+    let (key, rest) = line.split_once(':')?;
+    if key.is_empty()
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_alphabetic() || c == '_' || c == '-')
+        || !rest.starts_with(char::is_whitespace)
+    {
+        return None;
+    }
+    let value = rest.trim_start();
+    if value.is_empty() {
+        return None;
+    }
+    let quoted_already = (value.starts_with('"') && value.ends_with('"'))
+        || (value.starts_with('\'') && value.ends_with('\''));
+    let flow_sequence = value.starts_with('[')
+        && value.ends_with(']')
+        && serde_yaml::from_str::<Vec<serde_yaml::Value>>(value).is_ok();
+    let misread = value.contains(": ")
+        || value.contains([
+            '{', '}', '[', ']', '*', '&', '#', '!', '|', '>', '%', '@', '`',
+        ]);
+    if quoted_already || flow_sequence || !misread {
+        return None;
+    }
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    Some(format!("{key}: \"{escaped}\""))
+}
+
+fn expand_leading_tabs(line: &str) -> String {
+    let tabs = line.len() - line.trim_start_matches('\t').len();
+    if tabs == 0 {
+        return line.to_string();
+    }
+    format!("{}{}", "  ".repeat(tabs), &line[tabs..])
 }
 
 fn require_mutable_type(source_type: SourceType) -> Result<(), Error> {
@@ -298,6 +394,29 @@ fn skill_source_entry(
         writable: true,
         supporting_files: Vec::new(),
         properties,
+    }
+}
+
+/// The Skills page's row for a SKILL.md goose cannot read: `properties.readError` carries the reason, the
+/// description says "couldn't read <file>: <why>". Never handed to the model — `discover_skills` omits it.
+fn unreadable_skill_entry(unreadable: &UnreadableSkill) -> SourceEntry {
+    let dir = unreadable.skill_md.parent().unwrap_or(&unreadable.skill_md);
+    SourceEntry {
+        source_type: SourceType::Skill,
+        name: dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| unreadable.skill_md.display().to_string()),
+        description: unreadable.message(),
+        content: String::new(),
+        path: dir.to_string_lossy().into_owned(),
+        global: unreadable.global,
+        writable: false,
+        supporting_files: Vec::new(),
+        properties: HashMap::from([(
+            "readError".to_string(),
+            serde_json::Value::String(unreadable.reason.clone()),
+        )]),
     }
 }
 
@@ -876,11 +995,13 @@ pub fn list_sources_with_roots(
                     .map(str::trim)
                     .filter(|p| !p.is_empty())
                     .map(PathBuf::from);
+                let scan = scan_skills(working_dir.as_deref());
                 sources.extend(
-                    discover_skills(working_dir.as_deref())
+                    scan.skills
                         .into_iter()
                         .filter(|s| s.source_type == SourceType::Skill),
                 );
+                sources.extend(scan.unreadable.iter().map(unreadable_skill_entry));
 
                 if include_project_sources {
                     let projects = read_project_dir()?;
@@ -901,7 +1022,14 @@ pub fn list_sources_with_roots(
                             if Some(wd_path.as_path()) == already_scanned {
                                 continue;
                             }
-                            for skill in discover_skills(Some(&wd_path)) {
+                            let scan = scan_skills(Some(&wd_path));
+                            sources.extend(
+                                scan.unreadable
+                                    .iter()
+                                    .filter(|u| !u.global)
+                                    .map(unreadable_skill_entry),
+                            );
+                            for skill in scan.skills {
                                 if skill.source_type != SourceType::Skill || skill.global {
                                     continue;
                                 }
@@ -1705,6 +1833,109 @@ mod tests {
         .unwrap();
         // Name is derived from the frontmatter written by create_source
         assert_eq!(updated.name, "my-dir");
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct NameDescription {
+        name: Option<String>,
+        description: String,
+    }
+
+    fn name_description(raw: &str) -> Option<(NameDescription, String)> {
+        parse_frontmatter::<NameDescription>(raw).expect("parses")
+    }
+
+    /// The four frontmatter shapes goose dropped on 2026-09-25 (session log 20260925_222121), each a file
+    /// Claude Code reads: an unquoted description holding ": " far into the line — "mapping values are
+    /// not allowed … at line 2 column 204" (chatwise-development) and "column 100" (leanzero-newsroom,
+    /// "(1) AI: specific") — and the agents' "coherence: options".
+    #[test]
+    fn an_unquoted_description_with_colons_is_text() {
+        for (raw, expected) in [
+            (
+                "---\nname: chatwise-development\ndescription: HOW to build ChatWise. Use whenever work involves more than a one-line edit: a new feature, a reported bug\n---\n\n# body\n",
+                "HOW to build ChatWise. Use whenever work involves more than a one-line edit: a new feature, a reported bug",
+            ),
+            (
+                "---\nname: leanzero-newsroom\ndescription: Research and draft articles — (1) AI: specific, technical; (2) FORGE: \"quoted\" and a \\ slash # not a comment\n---\nbody",
+                "Research and draft articles — (1) AI: specific, technical; (2) FORGE: \"quoted\" and a \\ slash # not a comment",
+            ),
+        ] {
+            assert!(serde_yaml::from_str::<serde_yaml::Value>(raw.split("---").nth(1).unwrap()).is_err(), "the fixture must be one strict YAML refuses");
+            let (meta, _) = name_description(raw).expect("has frontmatter");
+            assert_eq!(meta.description, expected);
+        }
+    }
+
+    #[test]
+    fn valid_yaml_is_read_strictly_and_left_alone() {
+        let raw = "---\nname: x\ndescription: >\n  folded: text\n  on two lines\n---\nbody";
+        let (meta, body) = name_description(raw).unwrap();
+        assert_eq!(meta.description, "folded: text on two lines\n");
+        assert_eq!(body, "body");
+    }
+
+    /// ~/.agents/skills/talent-vault-skill has no frontmatter and a `---` rule under its intro. The old split
+    /// on every `---` parsed the text between the rules as YAML: "while scanning an alias at line 3 column 1"
+    /// on `**Two parallel "employee" stores …`.
+    #[test]
+    fn a_horizontal_rule_in_a_body_is_not_frontmatter() {
+        let raw = "# TalentVault Technical Skill\n\n> Purpose: give any AI agent the map.\n\n---\n\n## 0. The one fact\n\n**Two parallel \"employee\" stores exist:**\n\n---\n\nmore";
+        assert!(name_description(raw).is_none());
+        let raw = "---\nname: x\ndescription: a---b\n---\nbody\n\n---\n\nafter the rule";
+        let (meta, body) = name_description(raw).unwrap();
+        assert_eq!(meta.description, "a---b");
+        assert_eq!(body, "body\n\n---\n\nafter the rule");
+    }
+
+    #[test]
+    fn a_frontmatter_strict_and_lenient_yaml_both_refuse_is_still_an_error() {
+        let raw = "---\nname: x\ndescription: fine\nmetadata:\n  - [unclosed\n---\nbody";
+        assert!(parse_frontmatter::<NameDescription>(raw).is_err());
+    }
+
+    #[test]
+    fn list_sources_names_a_skill_it_cannot_read() {
+        let tmp = TempDir::new().unwrap();
+        let skill_dir = tmp
+            .path()
+            .join(".agents")
+            .join("skills")
+            .join("broken-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: broken-skill\ndescription: fine\nmetadata:\n  - [unclosed\n---\nbody",
+        )
+        .unwrap();
+
+        let listed = list_sources(
+            Some(SourceType::Skill),
+            Some(tmp.path().to_str().unwrap()),
+            false,
+        )
+        .unwrap();
+        let row = listed
+            .iter()
+            .find(|source| source.path == skill_dir.to_string_lossy())
+            .expect("the unreadable skill is listed");
+        assert_eq!(row.name, "broken-skill");
+        assert!(!row.writable);
+        assert!(row.properties.contains_key("readError"), "{row:?}");
+        assert!(
+            row.description.starts_with(&format!(
+                "couldn't read {}: its frontmatter is not valid YAML",
+                skill_dir.join("SKILL.md").display()
+            )),
+            "{}",
+            row.description
+        );
+        assert!(
+            !discover_skills(Some(tmp.path()))
+                .iter()
+                .any(|s| s.path == skill_dir.to_string_lossy()),
+            "the model is never offered it"
+        );
     }
 
     #[test]

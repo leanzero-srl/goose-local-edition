@@ -1,6 +1,6 @@
 use anyhow::Result;
 use console::{measure_text_width, Term};
-use goose::skills::list_installed_skills;
+use goose::skills::{scan_skills, SkillScan};
 use goose::token_counter::create_token_counter;
 
 const DESCRIPTION_PREVIEW_CHARS: usize = 50;
@@ -33,7 +33,10 @@ pub async fn handle_skills_list() -> Result<()> {
     let cwd = std::env::current_dir()?;
     let terminal_width = terminal_width();
     let token_counter = create_token_counter().await.map_err(anyhow::Error::msg)?;
-    let mut skills = list_installed_skills(Some(&cwd));
+    let SkillScan {
+        mut skills,
+        unreadable,
+    } = scan_skills(Some(&cwd));
     skills.sort_by(|a, b| a.name.cmp(&b.name));
 
     let rows = skills
@@ -51,6 +54,9 @@ pub async fn handle_skills_list() -> Result<()> {
     println!("{}", header_line(&widths, terminal_width));
     for row in rows {
         println!("{}", skill_line(&row, &widths, terminal_width));
+    }
+    for skill in &unreadable {
+        println!("{}", skill.message());
     }
 
     Ok(())
