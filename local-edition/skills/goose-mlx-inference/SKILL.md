@@ -196,6 +196,15 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   (`Object.defineProperty(document,"visibilityState",{get:()=>"visible"}); document.dispatchEvent(new Event("visibilitychange"))`).
   MEASURED 27B single on the M4 Max (rapid-mlx lz.3, MTP, "Windows App" at 110–235% CPU beside it): 1,962 + 256 tokens,
   cold 165.6 / warm 226.6 tok/s reading, 16.7 tok/s writing both runs.
+- RUN IS A SWITCH (2026-09-25, 47c31c32e): Run on a way stops the way of THIS model that runs now (local unmount / peer
+  remoteSingleStop(unmount) / split followed until it no longer owns the Mac), each returns after the engine exits, then
+  starts. WHY: 3.0.29 started a second 31 GB copy on this Mac beside the Studio's; the route kept chat on the Studio, so the
+  copy sat idle. The plan credits the peer copy's memory to this model's placements: the peer engine's `/v1/status` through
+  the relay → `metal.active_memory_gb + cache_memory_gb` (DECIMAL GB, Rapid-MLX `/1e9`; measured 40.17 + 13.02 on the
+  Studio's idle 27B) added to that node's available in `plan_raw`, before goose's fit AND the fork planner. A running split's
+  ranks are still NOT credited (their per-rank footprint is unread) — a split → single switch can read "short" until then.
+- LIVE TRAP (harness): my Run-button finder returned -1 and `.nth(-1)` clicked the LAST Run on the page — it started the
+  27B on this Mac. Always `process.exit` when the index is < 0; never feed a -1 into nth().
 
 ## Thinking controls (2026-09-23 — per model, OFF by default = send nothing)
 - WHY: Rapid-MLX turns thinking OFF on every tool-bearing request (`service/helpers.py`
