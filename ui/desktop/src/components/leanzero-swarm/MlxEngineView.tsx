@@ -449,7 +449,7 @@ function RestartRequiredBanner({
   );
 }
 
-/** A solid used-fill on a surface-2 track: the accent, or warn when the headroom is tight. */
+/** A solid fill on a surface-2 track: the accent, or warn when the headroom is tight. */
 function UsageBar({ pct, tight, label }: { pct: number; tight: boolean; label: string }) {
   return (
     <div
@@ -492,17 +492,18 @@ function MemoryBar({ availableGb, totalGb }: { availableGb: number; totalGb: num
 }
 
 /**
- * Disk space on the models dir's volume: solid used-fill on a track, "{free} free of {total}"
- * beside it. Numbers come from the modelsList response (statvfs), never fabricated.
+ * Disk space on the models dir's volume: the FREE space as a solid fill on a track, "{free} free
+ * of {total}" beside it — the fill is the number printed next to it, as the folders' note says
+ * (Q-157: "139 GB free of 926 GB" was drawn 85% full, the used space). Numbers come from the
+ * modelsList response (statvfs), never fabricated.
  */
 function DiskBar({ availableBytes, totalBytes }: { availableBytes: number; totalBytes: number }) {
-  const usedBytes = Math.max(0, totalBytes - availableBytes);
-  const pct = totalBytes > 0 ? Math.min(100, (usedBytes / totalBytes) * 100) : 0;
+  const pct = totalBytes > 0 ? Math.min(100, (Math.max(0, availableBytes) / totalBytes) * 100) : 0;
   const tight = totalBytes > 0 && availableBytes / totalBytes < 0.1;
   return (
     <div className="flex min-w-0 items-center gap-3" data-testid="mlx-disk-bar">
       <HardDrive className={cx('size-4 shrink-0', tight ? TONE_TEXT.warn : 'text-lz-ink-3')} />
-      <UsageBar pct={pct} tight={tight} label="Disk space used on the models volume" />
+      <UsageBar pct={pct} tight={tight} label="Free space on the models volume" />
       <span
         className={cx(
           'shrink-0 text-lz-meta',

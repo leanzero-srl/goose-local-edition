@@ -1817,6 +1817,27 @@ describe('MlxEngineView models tab', () => {
     unmount();
   });
 
+  it('Q-157: the disk bar draws the FREE space its note names — 139 of 926 GB is 15% full, not 85%', async () => {
+    // The 3.0.52 live round: "139 GB free of 926 GB" drawn 85% full beside "the bar is the free
+    // space on its volume".
+    mockModelsList.mockResolvedValue({
+      models: MODELS,
+      diskAvailableBytes: 139 * GB,
+      diskTotalBytes: 926 * GB,
+    });
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    const folder = await screen.findByTestId('models-folder-self');
+    const bar = await within(folder).findByRole('progressbar', {
+      name: 'Free space on the models volume',
+    });
+    expect(bar).toHaveAttribute('aria-valuenow', '15');
+    expect((bar.firstElementChild as HTMLElement).style.width).toMatch(/^15\.0\d*%$/);
+    expect(within(folder).getByText('139 GB free')).toBeInTheDocument();
+    expect(screen.getByText(/the bar is the free space on its volume/)).toBeInTheDocument();
+    unmount();
+  });
+
   it('browses on open (top downloads, no cursor) and a row Download starts a tracked download', async () => {
     mockBrowse.mockResolvedValue({ hits: [HIT_A] });
     const { unmount } = render(<MlxEngineView />);
