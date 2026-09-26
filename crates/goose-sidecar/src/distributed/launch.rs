@@ -1280,6 +1280,9 @@ pub(crate) mod tests {
              class _Job:\n\
              \x20   row: object\n\
              \x20   produced: int = 0\n\
+             @dataclass\n\
+             class _State:\n\
+             \x20   waiting: list = None\n\
              class _Engine:\n\
              \x20   def _start(self, row): pass\n\
              \x20   def prefill(self, words): pass\n\
@@ -1564,8 +1567,12 @@ print("ok")
         std::fs::write(site.join("rapid_mlx/distributed/__init__.py"), "").unwrap();
         std::fs::write(
             site.join("rapid_mlx/distributed/pipeline_qwen4_serve.py"),
-            "class _Job:\n\
+            "from dataclasses import dataclass\n\
+             class _Job:\n\
              \x20   def __init__(self, row): self.row = row\n\
+             @dataclass\n\
+             class _State:\n\
+             \x20   waiting: list = None\n\
              class _Engine:\n\
              \x20   def _start(self, row): pass\n\
              \x20   def prefill(self, words): pass\n\
@@ -1941,12 +1948,16 @@ print("ok")
     /// with a module of the same names; here the fork's own seams are what goose patches: the
     /// attribute guard, `_Job` (a dataclass whose `produced` field LiveJob turns into a
     /// property), `_Engine._start`/`_Engine.prefill` (Q-134's continuous admission: a row
-    /// prefills alone, then joins the running batch) measured over the fork's own
-    /// `prefill_chunks`, `_Joining` and `_Row`, the fork's own argparse reading goose's serve
-    /// argv, and the fork's own `_build_app` serving `/v1/status` through goose's replacement
-    /// route (only the tokenizer — the model's — is a stand-in). Negative controls, measured
-    /// 2026-09-26: the same program under an env still on 2f02ac645 exits at the guard ("has no
-    /// prefill_chunks"); the 66ccd37a6 env's module has no `_Engine`, the guard's first new name.
+    /// prefills in its own cache, then joins the running batch; since Q-145 several rows may
+    /// prefill — `_Engine.prefilling`, and `_Engine.joining` is the read-only pick whose chunk
+    /// runs next) measured over the fork's own `prefill_chunks`, `_Joining` and `_Row`, the
+    /// fork's own argparse reading goose's serve argv, and the fork's own `_build_app` serving
+    /// `/v1/status` through goose's replacement route, which lists rank 0's `_State.waiting`
+    /// (Q-145; `held` is gone) and the queue (only the tokenizer — the model's — is a stand-in).
+    /// Negative controls, measured 2026-09-26: the same program under an env still on 2f02ac645
+    /// exits at the guard ("has no prefill_chunks"); the 66ccd37a6 env's module has no `_Engine`,
+    /// the guard's first new name; on 419306f70 the pre-Q-145 stand-in (`engine.joining = …`)
+    /// raised "property 'joining' of '_Engine' object has no setter".
     #[test]
     fn the_pipeline_program_patches_the_real_forks_seams() {
         let Some(python) = proven_env(&EnvSpec::pipeline(), "GOOSE_TEST_PIPELINE_PYTHON") else {
@@ -1983,7 +1994,7 @@ assert type(job) is LiveJob and jobs_by_row[id(row)] is job and job.produced == 
 # last one sampling its first token.
 def start(engine, row):
     ranges = serve.prefill_chunks(0, len(row.ids), engine.prefill_step, 0)
-    engine.joining = serve._Joining(row, None, None, None, None, ranges)
+    engine.prefilling.append(serve._Joining(row, None, None, None, None, ranges))
 def chunk(engine, words):
     engine.joining.ranges.pop(0)
     return (0 if not engine.joining.ranges else None), [0, 0]
@@ -2014,6 +2025,8 @@ def chat(model):
     return [answer.status_code, answer.json()["error"]]
 names = {name: chat(name) for name in ("node-alias", "Org/Model-HF", "other")}
 state.active = [job]
+# Q-145: rank 0 moves queued jobs to `waiting`; the queue holds what it has not taken yet.
+state.waiting = [serve._Job(serve._Row([2] * 6, 4, 0.0, 1.0), loop, asyncio.Queue())]
 state.jobs.put(serve._Job(serve._Row([1] * 5, 4, 0.0, 1.0), loop, asyncio.Queue()))
 status = client.get("/v1/status").json()
 print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "walked": walked,
@@ -2077,8 +2090,9 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
         assert_eq!(status["status"], "generating", "{status}");
         assert_eq!(
             (&status["num_running"], &status["num_waiting"]),
-            (&serde_json::json!(1), &serde_json::json!(1)),
-            "the fork's own counters ride under goose's table: {status}"
+            (&serde_json::json!(1), &serde_json::json!(2)),
+            "the fork's own counters (the queue + rank 0's waiting list, Q-145) ride under \
+             goose's table: {status}"
         );
         assert_eq!(
             status["prefix_cache"]["enabled"], false,
@@ -2090,7 +2104,11 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
             .iter()
             .map(|r| r["phase"].as_str().unwrap())
             .collect();
-        assert_eq!(phases, ["generation", "queued"]);
+        assert_eq!(
+            phases,
+            ["generation", "queued", "queued"],
+            "goose's table lists the waiting job and the queued one: {status}"
+        );
     }
 
     /// Q-135: the same request and the same setting render the SAME prompt on every way, through

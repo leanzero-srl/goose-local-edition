@@ -834,6 +834,9 @@ mod tests {
              class _Job:\n\
              \x20   row: object\n\
              \x20   produced: int = 0\n\
+             @dataclass\n\
+             class _State:\n\
+             \x20   waiting: list = None\n\
              class _Engine:\n\
              \x20   def _start(self, row): pass\n\
              \x20   def prefill(self, words): pass\n\
