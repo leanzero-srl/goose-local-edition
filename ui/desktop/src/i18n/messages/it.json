@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Lascia {model} per questa chat"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Chiamata di supporto di goose in corso"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Serve altro lavoro"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Condiviso con altro lavoro"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Occupato, non si sa per chi"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Cancella le impostazioni del modello e del provider selezionati per ricominciare da zero"
   },

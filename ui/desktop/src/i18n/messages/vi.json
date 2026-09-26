@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Rời {model} cho cuộc trò chuyện này"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Lệnh gọi phụ của goose đang chạy"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Đang phục vụ việc khác"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Dùng chung với việc khác"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Đang bận, không rõ việc của ai"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Xóa các cài đặt mô hình và nhà cung cấp đã chọn để bắt đầu lại từ đầu"
   },

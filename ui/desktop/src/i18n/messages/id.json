@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Meninggalkan {model} untuk obrolan ini"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Panggilan pembantu goose berjalan"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Melayani pekerjaan lain"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Dibagi dengan pekerjaan lain"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Sibuk, milik siapa tidak diketahui"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Bersihkan pengaturan model dan penyedia yang dipilih untuk memulai dari awal"
   },

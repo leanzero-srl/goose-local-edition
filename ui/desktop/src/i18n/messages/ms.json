@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Meninggalkan {model} untuk sembang ini"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Panggilan pembantu goose sedang berjalan"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Melayan kerja lain"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Dikongsi dengan kerja lain"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Sibuk, milik siapa tidak diketahui"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Kosongkan tetapan model dan penyedia yang anda pilih untuk bermula semula"
   },

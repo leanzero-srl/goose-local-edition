@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "このチャットでは {model} から切り替えます"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose の補助呼び出しを実行中"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "他の処理を実行中"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "他の処理と共有中"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "処理中（誰の処理か不明）"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "選択したモデルとプロバイダー設定をクリアして最初からやり直します"
   },

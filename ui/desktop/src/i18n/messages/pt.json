@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Deixa {model} nesta conversa"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Chamada auxiliar do goose em execução"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Atendendo outro trabalho"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Compartilhado com outro trabalho"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Ocupado, não se sabe para quem"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Limpe suas configurações de modelo e provedor selecionados para começar do zero"
   },

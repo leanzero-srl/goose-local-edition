@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Уходит с {model} в этом чате"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Идёт вспомогательный вызов goose"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Обслуживает другую работу"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Делит с другой работой"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Занят, чья работа — неизвестно"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Очистить выбранную модель и настройки провайдера, чтобы начать заново"
   },

@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Leaves {model} for this chat"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose helper running"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Serving other work"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Shared with other work"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Busy, whose work unknown"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Clear your selected model and provider settings to start fresh"
   },

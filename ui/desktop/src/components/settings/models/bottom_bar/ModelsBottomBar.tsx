@@ -32,7 +32,7 @@ import {
 } from '../../../lz';
 import { defineMessages, useIntl } from '../../../../i18n';
 import type { Message } from '../../../../types/message';
-import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
+import type { ChatServedBy, ChatWork } from '../../../chatServedBy/chatServedBy';
 import { splitStopReason } from '../../../chatServedBy/splitStopText';
 import { peerGoneOf, peerGoneText } from '../../../chatServedBy/peerGoneText';
 import { shortModelName } from '../../../noNodeNotice/mlxMount';
@@ -138,6 +138,13 @@ const i18n = defineMessages({
   phaseUnknown: { id: 'modelsBottomBar.phase.unknown', defaultMessage: 'State unknown' },
   phaseReconnecting: { id: 'modelsBottomBar.phase.reconnecting', defaultMessage: 'Reconnecting' },
   phaseSplitStopped: { id: 'modelsBottomBar.phase.splitStopped', defaultMessage: 'Split stopped' },
+  workHelper: { id: 'modelsBottomBar.work.helper', defaultMessage: 'goose helper running' },
+  workOthers: { id: 'modelsBottomBar.work.others', defaultMessage: 'Serving other work' },
+  workShared: { id: 'modelsBottomBar.work.shared', defaultMessage: 'Shared with other work' },
+  workUnattributed: {
+    id: 'modelsBottomBar.work.unattributed',
+    defaultMessage: 'Busy, whose work unknown',
+  },
   servedSplitStopped: {
     id: 'modelsBottomBar.servedSplitStopped',
     defaultMessage: 'Stopped on {where} — {reason}',
@@ -152,6 +159,17 @@ const PHASE_WORD: Record<EnginePhase, (typeof i18n)['phaseIdle']> = {
   writing: i18n.phaseWriting,
   held: i18n.phaseHeld,
   failed: i18n.phaseFailed,
+};
+
+/**
+ * The chip describes THIS chat's request (Q-124): when the engine works for anyone else, the word
+ * says whose — never "Reading a prompt" for goose's own title call after this chat's turn ended.
+ */
+const WORK_WORD: Record<Exclude<ChatWork, 'thisChat'>, (typeof i18n)['phaseIdle']> = {
+  helper: i18n.workHelper,
+  others: i18n.workOthers,
+  shared: i18n.workShared,
+  unattributed: i18n.workUnattributed,
 };
 
 interface ModelsBottomBarProps {
@@ -317,9 +335,11 @@ export default function ModelsBottomBar({
       ? intl.formatMessage(i18n.phaseReconnecting)
       : splitStop
         ? intl.formatMessage(i18n.phaseSplitStopped)
-        : served?.phase
-          ? intl.formatMessage(PHASE_WORD[served.phase])
-          : intl.formatMessage(i18n.phaseUnknown);
+        : served?.work && served.work !== 'thisChat'
+          ? intl.formatMessage(WORK_WORD[served.work])
+          : served?.phase
+            ? intl.formatMessage(PHASE_WORD[served.phase])
+            : intl.formatMessage(i18n.phaseUnknown);
   const chipLabel =
     servedModel == null
       ? null
@@ -345,6 +365,7 @@ export default function ModelsBottomBar({
                 {/* The dot's word, on screen — not only its aria-label (Q-56). */}
                 <span
                   data-testid="model-chip-phase"
+                  data-work={served.work ?? undefined}
                   title={goneWords ?? undefined}
                   className={cx(
                     'mr-1.5 text-lz-meta font-lz-semibold',

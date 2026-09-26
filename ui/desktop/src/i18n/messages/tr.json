@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Bu sohbet için {model} bırakılır"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose yardımcı çağrısı çalışıyor"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Başka bir işe hizmet ediyor"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Başka işle paylaşılıyor"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Meşgul, kimin işi bilinmiyor"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "Yeni bir başlangıç yapmak için seçtiğiniz model ve sağlayıcı ayarlarını temizleyin"
   },

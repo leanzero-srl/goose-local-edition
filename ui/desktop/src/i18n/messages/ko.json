@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "이 채팅에서 {model} 사용을 그만둡니다"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose 보조 호출 실행 중"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "다른 작업 처리 중"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "다른 작업과 공유 중"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "처리 중, 누구의 작업인지 알 수 없음"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "선택한 모델 및 제공업체 설정을 지우고 새로 시작합니다."
   },

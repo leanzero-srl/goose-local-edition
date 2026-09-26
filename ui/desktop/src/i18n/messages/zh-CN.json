@@ -4757,6 +4757,18 @@
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "此聊天将不再使用 {model}"
   },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose 辅助调用运行中"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "正在处理其他工作"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "与其他工作共用"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "忙碌中，不清楚是谁的工作"
+  },
   "modelsSection.resetDescription": {
     "defaultMessage": "清空已选的模型和提供商设置，重新开始"
   },

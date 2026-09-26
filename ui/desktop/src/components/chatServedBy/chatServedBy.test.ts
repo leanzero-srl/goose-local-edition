@@ -153,6 +153,7 @@ describe('deriveChatServedBy — the six moments', () => {
       contextWindow: 262144,
       phase: 'idle',
       activity: 'idle',
+      work: null,
       busyWithOthers: null,
       turnRequest: null,
       readTps: null,
@@ -172,8 +173,11 @@ describe('deriveChatServedBy — the six moments', () => {
       peerNodeId: 'worksmacstudio-lan-9c1e2a',
       foreign: false,
       contextWindow: 262144,
-      phase: 'writing',
+      // No turn of this chat is in flight: the Studio writing is someone else's (Q-124), so the
+      // chip is not green; the queued request behind it holds a new turn too.
+      phase: 'held',
       activity: 'generating',
+      work: 'others',
       busyWithOthers: null,
       turnRequest: null,
       readTps: null,
@@ -196,6 +200,7 @@ describe('deriveChatServedBy — the six moments', () => {
       contextWindow: null,
       phase: 'loading',
       activity: null,
+      work: null,
       busyWithOthers: null,
       turnRequest: null,
       readTps: null,
@@ -217,6 +222,7 @@ describe('deriveChatServedBy — the six moments', () => {
       contextFromFreeMemory: false,
       phase: 'idle',
       activity: null,
+      work: null,
       busyWithOthers: null,
       turnRequest: null,
       readTps: null,
@@ -235,6 +241,7 @@ describe('deriveChatServedBy — the six moments', () => {
       contextWindow: null,
       phase: 'idle',
       activity: null,
+      work: null,
       busyWithOthers: null,
       turnRequest: null,
       readTps: null,
@@ -260,6 +267,7 @@ describe('deriveChatServedBy — the six moments', () => {
       contextWindow: null,
       phase: 'unloaded',
       activity: null,
+      work: null,
       busyWithOthers: null,
       turnRequest: null,
       readTps: null,
@@ -287,7 +295,11 @@ describe('deriveChatServedBy — busy with others (Q-17)', () => {
         }),
       })
     );
-    expect(served.phase).toBe('reading');
+    // The engine reads ANOTHER client's prompt: not this chat's — the chip is held (a request waits),
+    // never "Reading a prompt" (Q-124); the engine's own activity stays for the Engine surfaces.
+    expect(served.phase).toBe('held');
+    expect(served.activity).toBe('prefill');
+    expect(served.work).toBe('others');
     expect(served.busyWithOthers).toEqual({
       requests: 1,
       readingTokens: PREFILL_STATUS.requests[0].prompt_tokens,
@@ -717,5 +729,137 @@ describe('THIS turn on the engine (Q-13) and the Mac that said it is leaving (Q-
     expect(leaveCause("Work's Mac Studio is restarting goose")).toBe('restart');
     expect(leaveCause('timeout: no answer within 1500 ms')).toBeNull();
     expect(leaveCause(null)).toBeNull();
+  });
+});
+
+/**
+ * Q-124 (critic, installed 3.0.47): a run log recorded the chip's "Reading a prompt" at the moment
+ * this chat's turn had ended — the engine was reading goose's own title/reviewer call, and the chip
+ * took ANY request's activity as this chat's. The chip describes THIS chat's request; whose work
+ * the engine is doing otherwise is said, and never coloured as this chat's.
+ */
+describe('deriveChatServedBy — the chip is THIS chat’s request (Q-124)', () => {
+  const request = (id: string, phase: string, prompt: number, status = 'running') => ({
+    request_id: id,
+    status,
+    phase,
+    prompt_tokens: prompt,
+    completion_tokens: phase === 'generation' ? 40 : 0,
+    tokens_per_second: phase === 'generation' ? 20.5 : null,
+    elapsed_s: 6,
+  });
+  const body = (...requests: ReturnType<typeof request>[]) => ({
+    status: 'generating',
+    uptime_s: 900,
+    requests,
+  });
+  const mine = {
+    key: 'chat:s-mine',
+    kind: 'chat' as const,
+    sessionId: 's-mine',
+    sessionName: 'story',
+    count: 1,
+  };
+  const titleCall = {
+    key: 'session:h1',
+    kind: 'session' as const,
+    sessionId: 'h1',
+    sessionName: null,
+    sessionType: 'hidden',
+    count: 1,
+  };
+  const otherChat = { ...mine, key: 'chat:s-other', sessionId: 's-other' };
+  const derive = (
+    turnInFlight: boolean,
+    engineBody: unknown,
+    clients: NonNullable<MlxEngineSnapshot['serving']>['clients'],
+    extra: Partial<NonNullable<MlxEngineSnapshot['serving']>> = {}
+  ) =>
+    deriveChatServedBy(
+      inputs({
+        remote: ROUTE,
+        turnInFlight,
+        main: snapshot('remote', engineBody, {
+          clients,
+          unattributed: 0,
+          swarmRuns: [],
+          error: null,
+          ...extra,
+        }),
+      })
+    );
+
+  it('the turn ENDED and goose reads its own title call: "helper", grey — never "Reading a prompt"', () => {
+    const served = derive(false, body(request('t1', 'prefill', 1400)), [titleCall]);
+    expect(served.activity).toBe('prefill');
+    expect(served.work).toBe('helper');
+    expect(served.phase).toBe('idle');
+    // This chat's own session leasing between turns (its title) is a helper too, never a turn.
+    expect(derive(false, body(request('t2', 'generation', 900)), [mine]).work).toBe('helper');
+  });
+
+  it('the turn ENDED and the engine serves requests goose cannot name (the omlx provider): "others"', () => {
+    const served = derive(false, body(request('x', 'prefill', 1400)), [], { unattributed: 1 });
+    expect(served.work).toBe('others');
+    expect(served.phase).toBe('idle');
+    // Even with goose's list unreadable: no turn of this chat is in flight, so it is not this chat's.
+    const unread = derive(false, body(request('x', 'prefill', 1400)), [], {
+      error: 'goose backend did not answer',
+    });
+    expect(unread.work).toBe('others');
+  });
+
+  it('this chat’s turn on the engine is THIS chat’s phase — reading, then writing — beside goose’s helper', () => {
+    const reading = derive(true, body(request('m', 'prefill', 32000)), [mine]);
+    expect(reading).toMatchObject({ work: 'thisChat', phase: 'reading' });
+    // The reviewer beside our turn writes; our 32k turn still reads: the chip says reading.
+    const beside = derive(
+      true,
+      body(request('m', 'prefill', 32000), request('r', 'generation', 140)),
+      [mine, titleCall]
+    );
+    expect(beside.activity).toBe('generating');
+    expect(beside).toMatchObject({ work: 'thisChat', phase: 'reading' });
+    expect(beside.turnRequest?.promptTokens).toBe(32000);
+  });
+
+  it('our turn still WAITING in the queue behind goose’s helper is held, not the helper’s "writing"', () => {
+    const served = derive(
+      true,
+      body(request('r', 'generation', 140), request('m', 'queued', 32000, 'waiting')),
+      [mine, titleCall]
+    );
+    // Ours is the largest prompt, running or not: the helper's running 140 tokens are not our turn.
+    expect(served.turnRequest?.promptTokens).toBe(32000);
+    expect(served.activity).toBe('generating');
+    expect(served).toMatchObject({ work: 'thisChat', phase: 'held' });
+  });
+
+  it('our turn beside ANOTHER chat’s cannot be told apart: "shared", the engine’s own colour', () => {
+    const served = derive(
+      true,
+      body(request('m', 'prefill', 32000), request('o', 'generation', 800)),
+      [mine, otherChat]
+    );
+    expect(served.turnRequest).toBeNull();
+    expect(served).toMatchObject({ work: 'shared', phase: 'writing' });
+  });
+
+  it('a turn in flight with goose’s list unreadable claims nothing: "unattributed"', () => {
+    const served = derive(true, body(request('m', 'prefill', 32000)), [], {
+      error: 'goose backend returned 500',
+    });
+    expect(served.work).toBe('unattributed');
+  });
+
+  it('a turn in flight whose request is NOT on the engine (a tool running here) is not the engine’s activity', () => {
+    const served = derive(true, body(request('o', 'generation', 800)), [otherChat]);
+    expect(served).toMatchObject({ work: 'others', phase: 'idle' });
+  });
+
+  it('an idle engine carries no work word', () => {
+    const served = derive(false, IDLE_STATUS, []);
+    expect(served.work).toBeNull();
+    expect(served.phase).toBe('idle');
   });
 });
