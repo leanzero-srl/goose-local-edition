@@ -10,7 +10,9 @@
 # /v1/status, /goose/progress, /goose/admission and /v1/chat/completions; SIGTERM on rank 0
 # broadcasts a shutdown every rank obeys. So this program only parses goose's argv with the fork's
 # OWN parser (the exact `pipeline_qwen4 serve` arguments, the split preflight approved included)
-# and hands the server goose's `emit`. It must NOT call mx.distributed.init: serve() does.
+# and hands the server goose's `emit`. It must NOT call mx.distributed.init: serve() does. Rank 0's
+# /v1/chat/completions is goose's too, only to resolve the thinking switch the way the single
+# engine does (rank_thinking.py, Q-135) before the fork's own handler reads the request.
 import argparse  # noqa: E402
 import traceback  # noqa: E402
 import weakref  # noqa: E402
@@ -109,15 +111,43 @@ def live_row(job, now):
     )
 
 
-def _build_app(state, *args, **kwargs):
-    app = fork_build_app(state, *args, **kwargs)
-    routes = [r for r in app.router.routes if getattr(r, "path", None) == "/v1/status"]
+def fork_route(app, path):
+    routes = [r for r in app.router.routes if getattr(r, "path", None) == path]
     if len(routes) != 1:
         raise SystemExit(
-            f"goose pipeline rank: the fork's app has {len(routes)} /v1/status routes, expected 1"
+            f"goose pipeline rank: the fork's app has {len(routes)} {path} routes, expected 1"
         )
-    fork_status = routes[0].endpoint
     app.router.routes.remove(routes[0])
+    return routes[0].endpoint
+
+
+def _build_app(state, tokenizer, *args, **kwargs):
+    # Imported where the fork imports them, inside its own _build_app.
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    app = fork_build_app(state, tokenizer, *args, **kwargs)
+    fork_status = fork_route(app, "/v1/status")
+    fork_chat = fork_route(app, "/v1/chat/completions")
+    reasons = template_reasons(getattr(tokenizer, "chat_template", None))
+
+    # rank_thinking.py (Q-135): the fork pops an absent `enable_thinking` as None, which its
+    # apply_chat_template renders ON; the single engine renders the same request OFF. The body is
+    # resolved in place before the fork reads it (Starlette caches `request.json()`).
+    @app.post("/v1/chat/completions")
+    async def chat(request: Request):
+        body = await request.json()
+        if isinstance(body, dict):
+            try:
+                body["chat_template_kwargs"] = resolved_template_kwargs(body, reasons)
+            except ThinkingRefused as refusal:
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": {"message": str(refusal), "type": "invalid_request_error",
+                                       "code": "unsupported_parameter"}},
+                )
+            body.pop("enable_thinking", None)
+        return await fork_chat(request)
 
     @app.get("/v1/status")
     async def status():

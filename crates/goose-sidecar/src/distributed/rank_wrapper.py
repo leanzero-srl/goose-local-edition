@@ -18,6 +18,9 @@
 #   OWN --model path (paths differ per node) and an alias is answered as the id, /goose/progress exposes the
 #   generation loop's step counter (the supervisor's liveness measure), /goose/admission lets the
 #   memory watchdog stop admitting new requests;
+# - the thinking switch (rank_thinking.py, Q-135): a chat request's `enable_thinking` resolved the
+#   way the single engine resolves it (off unless pinned or asked for), so "auto" renders the same
+#   prompt here as on Rapid-MLX instead of the template's own default (on, effort xhigh);
 # - the generation budget (rank_budget.py): a request with no max_tokens generates until the model
 #   stops or the launch's context window is full, never to mlx_lm's 512 default; an explicit one is
 #   held inside the window. Rank 0 settles it BEFORE the request is shared, so every rank receives
@@ -752,6 +755,18 @@ def validate_model_parameters(self):
         self.requested_model = served
     if self.adapter is not None or self.body.get("draft_model") not in (None, "default_model"):
         raise Refused(400, "adapters and draft models are not supported by the distributed engine")
+    if self.path in ("/v1/chat/completions", "/chat/completions"):
+        # rank_thinking.py: the single engine's thinking resolution. Set on rank 0 before the
+        # request is shared, so every rank renders the same prompt.
+        tokenizer = self.response_generator.model_provider.tokenizer
+        if tokenizer is None:
+            raise Refused(503, "the distributed engine has not loaded its tokenizer yet")
+        try:
+            self.chat_template_kwargs = resolved_template_kwargs(
+                self.body, template_reasons(tokenizer.chat_template)
+            )
+        except ThinkingRefused as refusal:
+            raise Refused(400, str(refusal), "unsupported_parameter")
 
 
 server.APIHandler.do_GET = do_GET
