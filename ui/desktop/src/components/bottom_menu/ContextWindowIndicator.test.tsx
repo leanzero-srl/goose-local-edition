@@ -37,7 +37,12 @@ describe('Q-153: the context counter grows with the answer being written', () =>
 
   it('colours by what the engine holds now, the written tokens included', () => {
     mount(
-      <ContextWindowIndicator totalTokens={70_000} tokenLimit={100_000} alerts={[]} liveTokens={10_000} />
+      <ContextWindowIndicator
+        totalTokens={70_000}
+        tokenLimit={100_000}
+        alerts={[]}
+        liveTokens={10_000}
+      />
     );
     expect(screen.getByTestId('context-window-indicator').className).toContain('text-lz-warn');
   });

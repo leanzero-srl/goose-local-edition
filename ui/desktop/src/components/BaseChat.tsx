@@ -27,11 +27,7 @@ import { RecipeWarningModal } from './ui/RecipeWarningModal';
 import { scanRecipe } from '../recipe';
 import type { Recipe } from '../recipe';
 import RecipeActivities from './recipes/RecipeActivities';
-import {
-  getTextAndImageContent,
-  type Message,
-  type UserInput,
-} from '../types/message';
+import { getTextAndImageContent, type Message, type UserInput } from '../types/message';
 import { substituteParameters } from '../utils/parameterSubstitution';
 import { useAutoSubmit } from '../hooks/useAutoSubmit';
 import { Goose, LeanZero } from './icons';

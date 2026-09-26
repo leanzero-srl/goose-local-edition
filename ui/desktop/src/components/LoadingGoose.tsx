@@ -93,7 +93,11 @@ const STATE_MESSAGE_KEYS: Record<ChatState, keyof typeof i18n> = {
   [ChatState.RestartingAgent]: 'restartingAgent',
 };
 
-const LoadingGoose = ({ message, chatState = ChatState.Idle, forming = null }: LoadingGooseProps) => {
+const LoadingGoose = ({
+  message,
+  chatState = ChatState.Idle,
+  forming = null,
+}: LoadingGooseProps) => {
   const intl = useIntl();
   const [open, setOpen] = useState(false);
   const displayMessage = message || intl.formatMessage(i18n[STATE_MESSAGE_KEYS[chatState]]);

@@ -646,7 +646,9 @@ describe('createAcpSessionNotificationAdapter', () => {
     it('keeps the forming calls and the text beside them on the live line (Q-151)', () => {
       const adapter = createAcpSessionNotificationAdapter();
       const forming = {
-        calls: [{ name: 'ledger__ledger_append', title: 'ledger: ledger append', argumentChars: 40 }],
+        calls: [
+          { name: 'ledger__ledger_append', title: 'ledger: ledger append', argumentChars: 40 },
+        ],
         argumentChars: 40,
         reasoningChars: 0,
         text: 'Let me record it.',
