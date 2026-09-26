@@ -785,10 +785,25 @@ async fn stub_sessions(
 }
 
 /// Serve the stub on an ephemeral loopback port; aborting the returned task closes it.
-async fn spawn_stub_peer(
-    node_id: &str,
-    unauthorized: Arc<AtomicBool>,
-) -> (u16, tokio::task::JoinHandle<()>) {
+/// Makes the stub vanish the way a quit peer does: the listener AND every open connection close. Aborting
+/// the serve task alone stops only the accept loop — axum serves each keep-alive connection on its own
+/// task, so the poller's pooled connection kept getting 401s and the "vanished" peer never went Offline
+/// (a CI flake on a loaded runner, 2026-09-26).
+struct StubPeerHandle {
+    shutdown: tokio::sync::oneshot::Sender<()>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl StubPeerHandle {
+    async fn vanish(self) {
+        let _ = self.shutdown.send(());
+        self.task
+            .await
+            .expect("the stub's server ends once its connections close");
+    }
+}
+
+async fn spawn_stub_peer(node_id: &str, unauthorized: Arc<AtomicBool>) -> (u16, StubPeerHandle) {
     let stub = StubPeer {
         node: NodeState {
             node_id: node_id.to_string(),
@@ -810,10 +825,16 @@ async fn spawn_stub_peer(
         .with_state(stub);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
+    let (shutdown, stopped) = tokio::sync::oneshot::channel::<()>();
     let task = tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
     });
-    (port, task)
+    (port, StubPeerHandle { shutdown, task })
 }
 
 fn peer_row(nodes: &serde_json::Value, node_id: &str) -> Option<serde_json::Value> {
@@ -833,7 +854,7 @@ async fn a_peer_answering_4xx_keeps_its_last_status_and_carries_the_error() {
     let client = reqwest::Client::new();
 
     let unauthorized = Arc::new(AtomicBool::new(false));
-    let (stub_port, stub_task) = spawn_stub_peer("node-stub", unauthorized.clone()).await;
+    let (stub_port, stub) = spawn_stub_peer("node-stub", unauthorized.clone()).await;
     handle.set_peers(vec![PeerTarget {
         hostname: "node-stub-host".to_string(),
         mesh_ip: Some(support::fake_tailnet().expose(stub_port)),
@@ -878,7 +899,7 @@ async fn a_peer_answering_4xx_keeps_its_last_status_and_carries_the_error() {
     );
 
     // Negative control: a TRANSPORT failure (the stub is gone) is Offline, text kept.
-    stub_task.abort();
+    stub.vanish().await;
     wait_until("the vanished stub to flip Offline", || {
         let client = &client;
         let base = &base;
