@@ -12,7 +12,7 @@
 //! every rank), `rank_formation.py` (a JACCL group's formation handshake, Q-136), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
 //! `rank_thinking.py` (a chat request's thinking switch, resolved as the single engine resolves it),
 //! then the runner's program — `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
-//! `rank_state.py` + `rank_boundary.py` + `rank_tool_stream.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
+//! `rank_state.py` + `rank_boundary.py` + `rank_tool_stream.py` + `rank_stream_watch.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
 //! what an absent max_tokens generates, the prefill modules what a step and a batch may hold, the
 //! boundary where a chat request's reusable prefix ends) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
 //! layer split, under `NodeConfig::pipeline_python`).
@@ -55,6 +55,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_state.py"),
     include_str!("rank_boundary.py"),
     include_str!("rank_tool_stream.py"),
+    include_str!("rank_stream_watch.py"),
     include_str!("rank_wrapper.py")
 );
 const PIPELINE_PROGRAM: &str = concat!(
@@ -1921,6 +1922,16 @@ print("ok")
         program: &str,
         spec: &RankSpec,
     ) -> serde_json::Value {
+        run_against_real_packages_printing(python, program, spec).0
+    }
+
+    /// The same, with every line the program printed (its GOOSE_* lines are what a rank's durable
+    /// log would hold).
+    fn run_against_real_packages_printing(
+        python: &str,
+        program: &str,
+        spec: &RankSpec,
+    ) -> (serde_json::Value, String) {
         let tmp = tempfile::tempdir().unwrap();
         let out = std::process::Command::new(python)
             .arg("-c")
@@ -1939,7 +1950,7 @@ print("ok")
             .lines()
             .find_map(|l| l.strip_prefix("GOOSE_TEST "))
             .unwrap_or_else(|| panic!("{stdout}{stderr}"));
-        serde_json::from_str(line).unwrap()
+        (serde_json::from_str(line).unwrap(), stdout.into_owned())
     }
 
     /// The pipeline program as shipped — the load lock, the env prelude, the live table and
@@ -2485,7 +2496,7 @@ print("GOOSE_TEST " + json.dumps({
 }))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}\
+            "{}{}{}{}{}{}{}{}{}{}{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
             include_str!("rank_load_lock.py"),
@@ -2498,6 +2509,7 @@ print("GOOSE_TEST " + json.dumps({
             include_str!("rank_state.py"),
             include_str!("rank_boundary.py"),
             include_str!("rank_tool_stream.py"),
+            include_str!("rank_stream_watch.py"),
             &wrapper[start..end],
             qwen = serde_json::to_string(QWEN38).unwrap(),
         );
@@ -2864,7 +2876,7 @@ print("GOOSE_TEST " + json.dumps({
 os._exit(0)
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}\
+            "{}{}{}{}{}{}{}{}{}{}{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
             include_str!("rank_load_lock.py"),
@@ -2877,6 +2889,7 @@ os._exit(0)
             include_str!("rank_state.py"),
             include_str!("rank_boundary.py"),
             include_str!("rank_tool_stream.py"),
+            include_str!("rank_stream_watch.py"),
             &wrapper[start..end],
             qwen = serde_json::to_string(QWEN38).unwrap(),
         );
@@ -2994,14 +3007,18 @@ def chunkings(text):
             i += n
         yield f"random{seed}", pieces
 
+strays = []
+
 def run(pieces, tools):
     stream = ToolCallStream(q._convert_param_value, q._get_arguments_config)
     opened, sent = [], ""
+    strays.clear()
     for piece in pieces:
         name, fragment = stream.feed(piece, tools)
         if name is not None:
             opened.append(name)
         sent += fragment
+        strays.append(stream.stray())
     rest, why = stream.close(q.parse_tool_call, tools)
     return opened, sent, rest, why
 
@@ -3011,6 +3028,8 @@ for case, (text, tools) in EXACT.items():
     for how, pieces in chunkings(text):
         assert "".join(pieces) == text
         opened, sent, rest, why = run(pieces, tools)
+        # Q-146: a call the parser reads is never reported as text the streamer cannot read.
+        assert strays == [None] * len(pieces), (case, how, [s for s in strays if s])
         assert why is None, (case, how, why)
         assert opened == [whole["name"]], (case, how, opened)
         assert sent + rest == expected, (case, how, sent + rest, expected)
@@ -3027,6 +3046,15 @@ for case, (text, tools) in REFUSED.items():
             pass
         else:
             raise AssertionError(f"{case}/{how}: the client could run {sent!r}")
+
+# Q-146: a call written as JSON inside <tool_call> reads as stray from its first character on, and
+# so does prose between two parameters.
+JSON_CALL = '\n{"name": "shell", "arguments": {"command": "ls"}}\n'
+run(list(JSON_CALL), TOOLS)
+assert all(s is not None for s in strays[1:]) and strays[-1].startswith('{"name"'), strays[-3:]
+PROSE = call("shell", ("command", "ls"))[:-len("</function>\n")] + "and now the timeout: 30\n"
+run(list(PROSE), TOOLS)
+assert strays[-1] == "and now the timeout: 30\n", strays[-1]
 print("ok")
 "#;
         let out = std::process::Command::new(&python)
@@ -3193,7 +3221,7 @@ print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "e
                                    "command": COMMAND}))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}\
+            "{}{}{}{}{}{}{}{}{}{}{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
             include_str!("rank_load_lock.py"),
@@ -3206,6 +3234,7 @@ print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "e
             include_str!("rank_state.py"),
             include_str!("rank_boundary.py"),
             include_str!("rank_tool_stream.py"),
+            include_str!("rank_stream_watch.py"),
             &wrapper[start..end],
             qwen = serde_json::to_string(QWEN38).unwrap(),
         );
@@ -3250,6 +3279,332 @@ print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "e
         assert_eq!(upstream["calls"][0]["arguments"], expected);
         assert_eq!(upstream["text"], streamed["text"]);
         assert_eq!(upstream["finish"], streamed["finish"]);
+    }
+
+    /// Q-146 through the REAL mlx_lm 0.31.3 handler: while a streamed chat answer writes a tool
+    /// call, rank 0's /v1/status row says what its client has and has not been sent, and a
+    /// GOOSE_RANK_WITHHELD line marks each span the handler withholds text in. Four answers, each
+    /// paused mid-call while /v1/status is read (the generation is a stand-in feeding mlx_lm's own
+    /// Response objects through its own control-token buffer):
+    /// - a clean call (a long string `command`, then an integer `timeout`): parser state `tool`,
+    ///   the streamer reading `command` as a string, sent characters, nothing withheld beyond the
+    ///   string's held tail, the words in the tail; its only withheld span is the typed value,
+    ///   entered and left with nothing unsent;
+    /// - the same parameter written twice (the streamer's `broken`): mode `tool_broken` naming why,
+    ///   the characters since the last frame growing with the call, and the leave line carrying
+    ///   the call's words and the characters that were never sent;
+    /// - JSON inside `<tool_call>` (a frame the streamer cannot read): mode `tool_unread`;
+    /// - NEGATIVE CONTROL: a non-streamed request, whose row carries `stream: null`.
+    #[test]
+    fn the_status_names_what_a_streamed_answer_withholds() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let tensor = TensorLaunch {
+            planned_bytes: 27_456_216_576,
+            prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_entries: 110,
+            mlx_cache_limit_bytes: 2_745_621_658,
+            prefill: e2e_prefill(),
+        };
+        let mut spec = rank_specs(
+            &config,
+            &ServedNames::only("node-alias"),
+            &[tensor, tensor],
+            141_568,
+            2.0,
+        )
+        .remove(0);
+        if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
+            *doorbell = false;
+        }
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let checks = r#"
+import argparse
+import http.server
+import types
+import urllib.request
+from queue import Queue
+
+mx.set_default_device(mx.cpu)
+
+class Parsed(Exception):
+    pass
+
+real_parse_args = argparse.ArgumentParser.parse_args
+
+def parse_and_stop(self, args=None, namespace=None):
+    raise Parsed(real_parse_args(self, args, namespace))
+
+argparse.ArgumentParser.parse_args = parse_and_stop
+try:
+    server.main()
+    raise SystemExit("mlx_lm's main() never parsed its argv")
+except Parsed as parsed:
+    cli = parsed.args[0]
+argparse.ArgumentParser.parse_args = real_parse_args
+
+TOOLS = [{"type": "function", "function": {"name": "shell", "parameters": {"type": "object",
+    "properties": {"command": {"type": "string"}, "timeout": {"type": "integer"}}}}}]
+COMMAND = "".join(f"echo row {i} ünï \U0001f9a2 >> /tmp/out.txt && " for i in range(40)) + "true"
+LEAD = ("I'll", " run", " it.\n")
+CLEAN = (f"\n<function=shell>\n<parameter=command>\n{COMMAND}\n</parameter>\n"
+         "<parameter=timeout>\n30\n</parameter>\n</function>\n")
+BROKEN = (f"\n<function=shell>\n<parameter=command>\necho first\n</parameter>\n"
+          f"<parameter=command>\n{COMMAND}\n</parameter>\n</function>\n")
+JSON_CALL = "\n" + json.dumps({"name": "shell", "arguments": {"command": COMMAND}}, ensure_ascii=False) + "\n"
+
+def pieces(text):
+    return [text[i:i + 3] for i in range(0, len(text), 3)]
+
+def pause_inside(text):
+    at = text.rindex(COMMAND) + len(COMMAND) // 2
+    return at // 3
+
+responses = server.ResponseGenerator.__new__(server.ResponseGenerator)
+responses.model_provider = types.SimpleNamespace(cli_args=cli, tokenizer=types.SimpleNamespace(chat_template=QWEN38))
+responses.requests = Queue()
+httpd = http.server.ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    lambda *args, **kwargs: server.APIHandler(responses, *args, system_fingerprint="test", **kwargs),
+)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+base = f"http://127.0.0.1:{httpd.server_address[1]}"
+scripts = Queue()
+paused = threading.Event()
+resume = threading.Event()
+
+def token(text, state, match=None, finish=None):
+    return server.Response(text, 7, state, match, 0.0, finish, ())
+
+def generation_thread():
+    while True:
+        rqueue, request, args = responses.requests.get()
+        text, pause_at = scripts.get()
+        rqueue.put(server.GenerationContext(
+            has_tool_calling=True, has_thinking=False, tool_parser=qwen3_coder.parse_tool_call,
+            sequences={(1,): "<tool_call>", (2,): "</tool_call>", (3,): "<|im_end|>"},
+            prompt=[0] * 8, prompt_cache_count=0,
+        ))
+        for piece in LEAD:
+            rqueue.put(token(piece, "normal"))
+        rqueue.put(token("<tool_call>", "tool", (1,)))
+        for piece in pieces(text)[:pause_at]:
+            rqueue.put(token(piece, "tool"))
+        paused.set()
+        resume.wait()
+        resume.clear()
+        for piece in pieces(text)[pause_at:]:
+            rqueue.put(token(piece, "tool"))
+        rqueue.put(token("</tool_call>", "normal", (2,)))
+        rqueue.put(token("<|im_end|>", None, (3,), "stop"))
+        rqueue.put(None)
+
+threading.Thread(target=generation_thread, daemon=True).start()
+
+def get(path):
+    with urllib.request.urlopen(base + path, timeout=30) as reply:
+        return json.loads(reply.read())
+
+def client(stream):
+    body = {"model": served, "stream": stream, "tools": TOOLS,
+            "messages": [{"role": "user", "content": "write the rows"}]}
+    request = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(body).encode())
+    with urllib.request.urlopen(request, timeout=60) as reply:
+        return reply.read().decode()
+
+def run_case(text, stream=True):
+    pause_at = pause_inside(text)
+    scripts.put((text, pause_at))
+    done = []
+    reader = threading.Thread(target=lambda: done.append(client(stream)))
+    reader.start()
+    assert paused.wait(30), "the generation never reached its pause"
+    paused.clear()
+    generated = sum(len(p) for p in LEAD) + sum(len(p) for p in pieces(text)[:pause_at])
+    tokens = len(LEAD) + 1 + pause_at
+    for _ in range(3000):
+        rows = get("/v1/status")["requests"]
+        row = rows[0] if rows else None
+        if row is not None and row["completion_tokens"] == tokens and (
+            row["stream"] is None or row["stream"]["generated_chars"] == generated
+        ):
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError(f"the status never reached the pause: {rows}")
+    resume.set()
+    reader.join(60)
+    written = text[:pause_at * 3]
+    return {"row": row, "generated": generated, "done": bool(done),
+            "after": get("/v1/status")["requests"], "last_words": written[-40:],
+            "after_last_header": len(written) - written.rfind("<parameter=command>")
+                - len("<parameter=command>")}
+
+cases = {
+    "clean": run_case(CLEAN),
+    "broken": run_case(BROKEN),
+    "json": run_case(JSON_CALL),
+    "not_streamed": run_case(CLEAN, stream=False),
+}
+print("GOOSE_TEST " + json.dumps({"cases": cases, "hold": ToolCallStream.HOLD, "piece": 3,
+                                   "command": COMMAND, "window": READER_TAIL_CHARS}))
+"#;
+        let program = format!(
+            "{}{}{}{}{}{}{}{}{}{}{}\
+             class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+             group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
+            include_str!("rank_load_lock.py"),
+            include_str!("rank_env.py"),
+            include_str!("rank_live.py"),
+            include_str!("rank_thinking.py"),
+            include_str!("rank_budget.py"),
+            include_str!("rank_prefill.py"),
+            include_str!("rank_batch.py"),
+            include_str!("rank_state.py"),
+            include_str!("rank_boundary.py"),
+            include_str!("rank_tool_stream.py"),
+            include_str!("rank_stream_watch.py"),
+            &wrapper[start..end],
+            qwen = serde_json::to_string(QWEN38).unwrap(),
+        );
+        let (seen, printed) = run_against_real_packages_printing(&python, &program, &spec);
+        let cases = &seen["cases"];
+        let command = seen["command"].as_str().unwrap();
+        let window = seen["window"].as_u64().unwrap();
+        let withheld = |request: &serde_json::Value| -> Vec<serde_json::Value> {
+            printed
+                .lines()
+                .filter_map(|l| l.strip_prefix("GOOSE_RANK_WITHHELD "))
+                .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+                .filter(|l| l["request_id"] == *request)
+                .collect()
+        };
+        for (case, case_seen) in cases.as_object().unwrap() {
+            assert_eq!(
+                case_seen["done"], true,
+                "{case}: the client read the whole answer"
+            );
+            assert_eq!(
+                case_seen["after"],
+                serde_json::json!([]),
+                "{case}: an answered request leaves the table"
+            );
+        }
+
+        let clean = &cases["clean"]["row"];
+        let stream = &clean["stream"];
+        assert_eq!(stream["parser_state"], "tool", "{clean}");
+        assert_eq!(stream["withholding"], serde_json::Value::Null, "{clean}");
+        assert_eq!(stream["generated_chars"], cases["clean"]["generated"]);
+        let call = &stream["tool_call"];
+        assert_eq!(call["streamed"], true, "{call}");
+        assert_eq!(call["name"], "shell");
+        assert_eq!(call["phase"], "value");
+        assert_eq!(call["parameter"], "command");
+        assert_eq!(call["string_value"], true);
+        assert_eq!(call["broken"], serde_json::Value::Null);
+        assert!(call["sent_chars"].as_u64().unwrap() > 100, "{call}");
+        assert!(
+            stream["since_sent_chars"].as_u64().unwrap()
+                <= seen["hold"].as_u64().unwrap() + seen["piece"].as_u64().unwrap(),
+            "a streaming string holds back only its possible close: {stream}"
+        );
+        let tail = stream["tail"].as_str().unwrap();
+        assert!(
+            tail.ends_with(cases["clean"]["last_words"].as_str().unwrap()),
+            "the tail ends on the last words written: {tail:?}"
+        );
+        assert!(
+            tail.contains("<tool_call>"),
+            "the control sequence the model wrote is shown"
+        );
+        assert!(tail.chars().count() as u64 <= window);
+        assert_eq!(stream["tail_window_chars"], window);
+        let lines = withheld(&clean["request_id"]);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[0]["event"], "enter");
+        assert_eq!(lines[0]["mode"], "tool_typed_value");
+        assert!(lines[0]["reason"].as_str().unwrap().contains("'timeout'"));
+        assert_eq!(lines[1]["event"], "leave");
+        assert_eq!(lines[1]["mode"], "tool_typed_value");
+        assert_eq!(
+            lines[1]["since_sent_chars"], 0,
+            "the typed value went out when it closed: {:?}",
+            lines[1]
+        );
+
+        let broken = &cases["broken"]["row"];
+        let stream = &broken["stream"];
+        assert_eq!(stream["parser_state"], "tool");
+        assert_eq!(stream["withholding"]["mode"], "tool_broken", "{broken}");
+        assert!(stream["withholding"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("'command' written twice"));
+        assert!(stream["tool_call"]["broken"]
+            .as_str()
+            .unwrap()
+            .contains("written twice"));
+        assert!(
+            stream["since_sent_chars"].as_u64().unwrap()
+                >= cases["broken"]["after_last_header"].as_u64().unwrap(),
+            "everything after the second header is unsent: {stream}"
+        );
+        let lines = withheld(&broken["request_id"]);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(
+            (&lines[0]["event"], &lines[0]["mode"]),
+            (&"enter".into(), &"tool_broken".into())
+        );
+        assert_eq!(lines[1]["event"], "leave");
+        assert!(
+            lines[1]["withheld_chars"].as_u64().unwrap() as usize >= command.chars().count(),
+            "{:?}",
+            lines[1]
+        );
+        assert!(
+            lines[1]["since_sent_chars"].as_u64().unwrap() as usize >= command.chars().count(),
+            "the rest of the call was never sent: {:?}",
+            lines[1]
+        );
+        let words = lines[1]["tail"].as_str().unwrap();
+        assert!(
+            words.contains("</tool_call>") && words.contains("echo row 39"),
+            "the log keeps the words that were withheld: {words:?}"
+        );
+        assert!(
+            printed.contains("GOOSE_RANK_TOOL_CALL_UNPARSED"),
+            "the unparsed call is still named"
+        );
+
+        let json_call = &cases["json"]["row"];
+        let stream = &json_call["stream"];
+        assert_eq!(stream["withholding"]["mode"], "tool_unread", "{json_call}");
+        assert_eq!(stream["tool_call"]["phase"], "head");
+        assert_eq!(stream["tool_call"]["sent_chars"], 0);
+        let lines = withheld(&json_call["request_id"]);
+        assert_eq!(
+            lines.iter().map(|l| l["event"].clone()).collect::<Vec<_>>(),
+            vec!["enter", "leave"],
+            "{lines:?}"
+        );
+        assert_eq!(lines[0]["mode"], "tool_unread");
+
+        let not_streamed = &cases["not_streamed"]["row"];
+        assert_eq!(
+            not_streamed["stream"],
+            serde_json::Value::Null,
+            "a request answered whole has no stream to watch: {not_streamed}"
+        );
+        assert!(withheld(&not_streamed["request_id"]).is_empty());
     }
 
     /// The tensor wrapper's own module prelude — its imports and both upstream-attribute checks,
@@ -3513,6 +3868,7 @@ print("ok")
                 include_str!("rank_state.py"),
                 include_str!("rank_boundary.py"),
                 include_str!("rank_tool_stream.py"),
+                include_str!("rank_stream_watch.py"),
                 include_str!("rank_wrapper.py")
             )
         );
@@ -4219,7 +4575,7 @@ threading.Thread(target=responses._next_request, args=(0.1,), daemon=True).start
 threading.Event().wait()
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{prelude}{}{steps}",
+            "{}{}{}{}{}{}{}{}{}{}{}{prelude}{}{steps}",
             include_str!("rank_load_lock.py"),
             include_str!("rank_env.py"),
             include_str!("rank_live.py"),
@@ -4230,6 +4586,7 @@ threading.Event().wait()
             include_str!("rank_state.py"),
             include_str!("rank_boundary.py"),
             include_str!("rank_tool_stream.py"),
+            include_str!("rank_stream_watch.py"),
             &wrapper[start..end]
         );
         let tmp = tempfile::tempdir().unwrap();

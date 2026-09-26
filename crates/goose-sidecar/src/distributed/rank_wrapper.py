@@ -69,6 +69,11 @@
 #   minutes of silence — so a relay sends the call's open frame and its arguments as OpenAI
 #   `tool_calls` deltas, the single engine's shape, and the call the client assembles is the one
 #   mlx_lm's parser reads from the whole text.
+# - what a streamed chat answer's client has not been sent is visible (Q-146, rank_stream_watch.py):
+#   E2E #3d's 10k-token agent call sent nothing for 17+ minutes and no one could read what the model
+#   wrote, so /v1/status carries each streamed request's parser state, the streamer's position and
+#   verdict, generated vs sent characters and the last words written, and a GOOSE_RANK_WITHHELD
+#   line marks each span the handler withholds text in.
 # - a chat request's stable prefix is kept (Q-142, rank_boundary.py): a spec that asks for it
 #   (`transient_tail_boundary`) declares `rapid_mlx_transient_tail` + `..._on_tool` on /v1/models as
 #   the single engine does, so goose names the turn-context block its request ends on; every rank
@@ -237,6 +242,9 @@ lock = threading.Lock()
 # the prompt progress (processed, total) and the tokens through the iterator the handler drains.
 live = {}
 live_ids = iter(range(1, 1 << 62))
+# The same requests' stream watches (rank_stream_watch.py, Q-146): None for a request that is not
+# a streamed chat answer — /v1/status's `stream: null`.
+watches = {}
 
 
 def apply_caps():
@@ -607,9 +615,12 @@ server.ResponseGenerator._next_request = _next_request
 original_generate = server.ResponseGenerator.generate
 
 
-def generate(self, request, generation_args, progress_callback=None):
+def generate(self, request, generation_args, progress_callback=None, watch=None):
+    # `watch` (rank_stream_watch.py): a streamed chat request's account of what its client has
+    # been sent, passed by the Q-141 relay below; None for every other request.
     with lock:
         request_id = f"req-{next(live_ids)}"
+        watches[request_id] = watch
         entry = {
             "arrived": time.monotonic(),
             "max_tokens": generation_args.max_tokens,
@@ -631,6 +642,7 @@ def generate(self, request, generation_args, progress_callback=None):
     def leave():
         with lock:
             live.pop(request_id, None)
+            watches.pop(request_id, None)
 
     try:
         ctx, tokens = original_generate(self, request, generation_args, progress)
@@ -649,17 +661,33 @@ def generate(self, request, generation_args, progress_callback=None):
     if ctx.prompt_cache_count >= 0:
         entry["cached_tokens"] = ctx.prompt_cache_count
 
+    if watch is not None:
+        watch.request_id = request_id
+        watch.sequences = ctx.sequences
+
     def counted():
         try:
-            for response in tokens:
+            pieces = iter(tokens)
+            while True:
+                # Resumed: the relay and the handler have done all they do with the last piece.
+                if watch is not None:
+                    watch.settle()
+                try:
+                    response = next(pieces)
+                except StopIteration:
+                    break
                 now = time.monotonic()
                 if entry["first_token"] is None:
                     entry["first_token"] = now
                     entry["prefilled"] = entry["prompt_tokens"]
                 entry["last_token"] = now
                 entry["completion"] += 1
+                if watch is not None:
+                    watch.take(response)
                 yield response
         finally:
+            if watch is not None:
+                watch.end()
             leave()
 
     return ctx, counted()
@@ -794,12 +822,17 @@ def do_GET(self):
         # Every accepted-and-unfinished request is counted in num_running; mlx_lm does not split
         # queued from batched, so num_waiting carries none of them (the sum is the busy fact). The
         # request table tells prefill from generation per request.
+        # A streamed chat request's row carries `stream` (rank_stream_watch.py, Q-146): what its
+        # client has and has not been sent, and the last words written; null for any other request.
         now = time.monotonic()
         with lock:
             rows = [
                 live_request(request_id, now=now, **entry)
                 for request_id, entry in live.items()
             ]
+            for row in rows:
+                watch = watches.get(row["request_id"])
+                row["stream"] = None if watch is None else watch.report()
         return send_json(
             self,
             200,
@@ -939,9 +972,10 @@ def delivered(tool_text, tools):
 class StreamedToolCalls:
     """The response generator as one streamed chat request's handler sees it."""
 
-    def __init__(self, handler, upstream):
+    def __init__(self, handler, upstream, watch):
         self.handler = handler
         self.upstream = upstream
+        self.watch = watch
         self.parse = None
         self.tools = None
         self.index = 0
@@ -950,7 +984,9 @@ class StreamedToolCalls:
         return getattr(self.upstream, name)
 
     def generate(self, request, generation_args, progress_callback=None):
-        ctx, tokens = self.upstream.generate(request, generation_args, progress_callback)
+        ctx, tokens = self.upstream.generate(
+            request, generation_args, progress_callback, watch=self.watch
+        )
         if not ctx.has_tool_calling:
             return ctx, tokens
         if ctx.tool_parser is not qwen3_coder.parse_tool_call:
@@ -958,6 +994,9 @@ class StreamedToolCalls:
             if parser not in tool_stream_refusals:
                 tool_stream_refusals.add(parser)
                 emit("RANK_TOOL_STREAM_UNSUPPORTED", {"parser": parser})
+            self.watch.unstreamed = (
+                f"the tool parser {parser} has no streamer: mlx_lm sends the call whole when it closes"
+            )
             return ctx, tokens
         self.parse = ctx.tool_parser
         self.tools = request.tools
@@ -975,6 +1014,7 @@ class StreamedToolCalls:
                         self.index,
                     ]
                     self.index += 1
+                    self.watch.streamer = call[0]
                 self.feed(call, gen.text)
             elif call is not None:
                 self.finish(call)
@@ -994,6 +1034,7 @@ class StreamedToolCalls:
 
     def finish(self, call):
         stream, call_id, index = call
+        self.watch.streamer = None
         rest, why = stream.close(self.parse, self.tools)
         if why is not None:
             emit(
@@ -1012,12 +1053,17 @@ class StreamedToolCalls:
 def handle_completion(self, request, stop_words):
     if not (self.stream and self.object_type.startswith("chat.completion")):
         return original_handle_completion(self, request, stop_words)
+    # rank_stream_watch.py (Q-146): every frame this handler builds is counted, and the request's
+    # /v1/status row reads what was generated against what was sent.
+    watch = StreamWatch(emit)
     upstream = self.response_generator
-    self.response_generator = StreamedToolCalls(self, upstream)
+    self.response_generator = StreamedToolCalls(self, upstream, watch)
+    self.generate_response = watch.counting(self.generate_response)
     try:
         return original_handle_completion(self, request, stop_words)
     finally:
         self.response_generator = upstream
+        del self.generate_response
 
 
 server.APIHandler.handle_completion = handle_completion

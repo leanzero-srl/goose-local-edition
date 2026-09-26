@@ -40,6 +40,7 @@ class ToolCallStream:
     FUNCTION_OPEN = "<function="
     PARAM_OPEN = "<parameter="
     PARAM_CLOSE = "</parameter>"
+    FUNCTION_CLOSE = "</function>"
     # A string value's last characters may still be its stripped trailing "\n" and the start of its
     # close tag: that many stay unsent until the close is seen.
     HOLD = len("\n</parameter>")
@@ -63,6 +64,9 @@ class ToolCallStream:
         self._string = False
         self._value_sent = 0
         self._keys = []
+        # Where the markup the streamer is waiting on starts: the call's first character, then the
+        # end of the function header or of the last `</parameter>` (Q-146's `stray`).
+        self._markup = 0
 
     def feed(self, piece, tools):
         """Append generated text; returns (name when the call just opened else None, fragment)."""
@@ -101,6 +105,43 @@ class ToolCallStream:
         self.sent = whole
         return rest, None
 
+    def position(self):
+        """Where the streamer is reading, for a reader of the running request (Q-146): the phase
+        (head: the function header; between: waiting for a parameter or `</function>`; key: a
+        parameter's name; value: its value), the open parameter, whether its value streams, and the
+        streamer's verdict when it stopped reading."""
+        value = self._phase == "value"
+        return {
+            "name": self.name,
+            "phase": self._phase,
+            "parameter": self._key if value else None,
+            "string_value": self._string if value else None,
+            "broken": self.broken,
+            "sent_chars": len(self.sent),
+        }
+
+    def typed_value_open(self):
+        """The open parameter whose value is sent only when it closes (a non-string type), or None."""
+        if self.broken is None and self._phase == "value" and not self._string:
+            return self._key
+        return None
+
+    def stray(self):
+        """Text where the streamer waits for the qwen3_coder frame (`<function=` at the head,
+        `<parameter=` or `</function>` between parameters) that is not that frame — a call written
+        another way (JSON inside `<tool_call>`, prose between parameters), of which the streamer
+        reads, and so sends, nothing. None while the text is the frame or a prefix of it."""
+        if self.broken is not None or self._phase not in ("head", "between"):
+            return None
+        waiting = self.text[self._markup :].lstrip()
+        if self._phase == "head":
+            frames = (self.FUNCTION_OPEN,)
+        else:
+            frames = (self.PARAM_OPEN, self.FUNCTION_CLOSE)
+        if not waiting or any(f.startswith(waiting) or waiting.startswith(f) for f in frames):
+            return None
+        return waiting
+
     def _step(self, tools):
         if self._phase == "head":
             return self._head(tools)
@@ -121,6 +162,7 @@ class ToolCallStream:
         self.name = self.text[start:end]
         self._config = self._arguments_config(self.name, tools)
         self._cursor = end + 1
+        self._markup = self._cursor
         self._phase = "between"
         return self.name, "{"
 
@@ -180,6 +222,7 @@ class ToolCallStream:
             fragment = self._key_prefix() + json.dumps(converted, ensure_ascii=False)
         self._keys.append(self._key)
         self._cursor = close + len(self.PARAM_CLOSE)
+        self._markup = self._cursor
         self._phase = "between"
         return None, fragment
 

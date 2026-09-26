@@ -130,6 +130,19 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   ("goose is writing a tool call to shell — 4.2k chars of arguments", FormingProgress.writing). Tests:
   `the_tool_stream_sends_exactly_what_mlx_lms_parser_reads`, `a_streamed_tool_call_reaches_the_client_while_it_is_written`
   (negative control: unpatched handler, 1 frame after the close).
+- READ WHAT A SPLIT ANSWER WITHHOLDS (Q-146 instrument 56e1487ba, 2026-09-26). E2E #3d's agent call generated 9,945+
+  tokens in 17 min and sent nothing. `curl -s localhost:<port>/v1/status | jq '.requests[].stream'` on rank 0 now shows
+  per streamed chat request: `parser_state`, `generated_chars` / `sent_chars` / `since_sent_chars` (since the last frame
+  with content), `withholding` {mode, reason, withheld_chars}, `tool_call` (the Q-141 streamer's phase, parameter,
+  string_value, broken), `tail` (last 2,000 chars, control sequences as written); `stream: null` = not a streamed chat.
+  Modes: tool_not_streamed · tool_broken · tool_unread (JSON inside <tool_call>, prose between parameters) ·
+  tool_typed_value (non-string values go out whole at their close). Rank log: `GOOSE_RANK_WITHHELD` enter/leave, the
+  leave carrying the words. rank_stream_watch.py (StreamWatch); `take` in the wrapper's counted(), frames counted by
+  wrapping the handler's generate_response. TRAP: /v1/status `completion_tokens` is counted in the HANDLER thread as it
+  consumes — a high count with nothing on the socket means the handler is withholding, not back-pressure. The full
+  withholding-path table (which paths Q-141 covers) is in FINDINGS-LEDGER Q-146. Test:
+  `the_status_names_what_a_streamed_answer_withholds`. Test runs against the live venv: prefix
+  `PYTHONDONTWRITEBYTECODE=1` so nothing is written into ~/.goose/distributed.
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
