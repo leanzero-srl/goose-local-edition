@@ -938,6 +938,9 @@
   "confirmationModal.processing": {
     "defaultMessage": "Memproses..."
   },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} token konteks + {live} sedang ditulis, dari jendela {limit} token"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Batas Percakapan"
   },

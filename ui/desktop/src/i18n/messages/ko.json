@@ -938,6 +938,9 @@
   "confirmationModal.processing": {
     "defaultMessage": "처리 중..."
   },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "컨텍스트 {context} 토큰 + 지금 작성 중 {live}, 창 {limit} 토큰 중"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "대화 제한"
   },

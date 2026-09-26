@@ -938,6 +938,9 @@
   "confirmationModal.processing": {
     "defaultMessage": "Elaborazione in corso..."
   },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} token di contesto + {live} in scrittura ora, su una finestra di {limit} token"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Limiti della conversazione"
   },

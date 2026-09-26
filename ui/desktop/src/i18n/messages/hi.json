@@ -938,6 +938,9 @@
   "confirmationModal.processing": {
     "defaultMessage": "प्रसंस्करण..."
   },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} टोकन संदर्भ + {live} अभी लिखे जा रहे, {limit}-टोकन विंडो में से"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "बातचीत की सीमाएँ"
   },

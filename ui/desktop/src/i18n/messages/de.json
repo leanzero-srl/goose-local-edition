@@ -938,6 +938,9 @@
   "confirmationModal.processing": {
     "defaultMessage": "Wird verarbeitet..."
   },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} Tokens Kontext + {live}, die gerade geschrieben werden, von einem Fenster mit {limit} Tokens"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Konversationslimits"
   },

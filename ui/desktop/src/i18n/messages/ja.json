@@ -938,6 +938,9 @@
   "confirmationModal.processing": {
     "defaultMessage": "処理中..."
   },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "コンテキスト {context} トークン + 現在書き込み中 {live}、ウィンドウ {limit} トークン中"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "会話制限"
   },

@@ -1844,6 +1844,7 @@ export default function ChatInput({
               totalTokens={shownTokens}
               tokenLimit={tokenLimit}
               alerts={alerts}
+              liveTokens={chatServing.served.turnRequest?.completionTokens ?? 0}
             />
 
             {/* Right: extension selector — hidden per pass E (SHOW_EXTENSIONS_SELECTOR) */}

@@ -938,6 +938,9 @@
   "confirmationModal.processing": {
     "defaultMessage": "正在處理…"
   },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} 個上下文 token + 正在寫入的 {live} 個，視窗共 {limit} 個 token"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "對話限制"
   },

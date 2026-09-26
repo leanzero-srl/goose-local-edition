@@ -938,6 +938,9 @@
   "confirmationModal.processing": {
     "defaultMessage": "Đang xử lý..."
   },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} token ngữ cảnh + {live} đang được viết, trên cửa sổ {limit} token"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Giới hạn cuộc trò chuyện"
   },

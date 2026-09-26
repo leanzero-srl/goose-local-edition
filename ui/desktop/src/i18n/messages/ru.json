@@ -938,6 +938,9 @@
   "confirmationModal.processing": {
     "defaultMessage": "Обработка..."
   },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} токенов контекста + {live} пишутся сейчас, из окна в {limit} токенов"
+  },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Ограничения разговора"
   },
