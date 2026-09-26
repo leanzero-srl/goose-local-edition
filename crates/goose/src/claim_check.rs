@@ -324,7 +324,7 @@ pub(crate) enum StepState {
     NeverRun {
         own_words: Vec<String>,
     },
-    /// Every call matched to it failed, and no call that carries its own words succeeded.
+    /// No successful call did it; the calls that carry its own words all failed.
     Failed {
         calls: usize,
     },
@@ -457,27 +457,33 @@ pub(crate) fn audit_steps(
         .collect();
     // Each step takes the call that fits it best while every other step does too — a README edit
     // whose `before` quotes step 4's command belongs to "add a line under Usage", because step 4
-    // has its own call. A call left over (a retry) goes with the step it fits best.
-    let assigned = best_assignment(&scores);
-    let mut matched: Vec<Vec<usize>> = vec![Vec::new(); steps.len()];
-    for (s, call) in assigned.iter().enumerate() {
-        if let Some(c) = call {
-            matched[s].push(*c);
-        }
-    }
-    for c in (0..calls.len()).filter(|c| !assigned.contains(&Some(*c))) {
+    // has its own call. What is DONE is decided among the calls that succeeded: census g2's failed
+    // README edit otherwise took step 9 and pushed the successful retry onto another step.
+    let succeeded_only: Vec<Vec<f64>> = scores
+        .iter()
+        .map(|row| {
+            row.iter()
+                .zip(tools)
+                .map(|(score, tool)| if tool.succeeded { *score } else { 0.0 })
+                .collect()
+        })
+        .collect();
+    let done = best_assignment(&succeeded_only);
+    let attempted = best_assignment(&scores);
+    let best_step = |c: usize| {
         let best = scores.iter().map(|row| row[c]).fold(0.0, f64::max);
-        if best > 0.0 {
-            if let Some(s) = scores.iter().position(|row| row[c] == best) {
-                matched[s].push(c);
-            }
-        }
-    }
+        (best > 0.0)
+            .then(|| scores.iter().position(|row| row[c] == best))
+            .flatten()
+    };
 
     let paths: Vec<Vec<String>> = steps.iter().map(|s| path_tokens(s)).collect();
     let arguments: Vec<&str> = tools.iter().map(|t| t.arguments.as_str()).collect();
     (0..steps.len())
         .map(|s| {
+            if done[s].is_some() {
+                return StepState::Done;
+            }
             let own_words: Vec<String> = words[s]
                 .iter()
                 .filter(|w| used_by[w.as_str()] == 1)
@@ -486,17 +492,19 @@ pub(crate) fn audit_steps(
             let carrying: Vec<usize> = (0..tools.len())
                 .filter(|&c| own_words.iter().any(|w| calls[c].contains(w)))
                 .collect();
-            if !matched[s].is_empty() {
-                let all_failed = matched[s].iter().all(|&c| !tools[c].succeeded);
-                return if all_failed && !carrying.iter().any(|&c| tools[c].succeeded) {
-                    StepState::Failed {
-                        calls: matched[s].len(),
-                    }
-                } else {
-                    StepState::Done
-                };
+            if carrying.iter().any(|&c| tools[c].succeeded) {
+                return StepState::Unclear;
             }
-            if own_words.is_empty() || !carrying.is_empty() {
+            // A failed call counts against a step only when it carries that step's own words: a
+            // stray retry the matching parked on an untouched step says nothing about it.
+            let failing = carrying
+                .iter()
+                .filter(|&&c| attempted[s] == Some(c) || best_step(c) == Some(s))
+                .count();
+            if failing > 0 {
+                return StepState::Failed { calls: failing };
+            }
+            if attempted[s].is_some() || own_words.is_empty() || !carrying.is_empty() {
                 return StepState::Unclear;
             }
             let own_files_on_disk = paths[s]
@@ -1012,6 +1020,34 @@ mod tests {
                 .iter()
                 .any(|s| matches!(s, StepState::NeverRun { .. }))
         );
+    }
+
+    /// Census g2: a failed call and its successful retry for one step; the matching may park the
+    /// failed one on an untouched step, which must not read as that step having failed.
+    #[test]
+    fn a_failed_retry_says_nothing_about_a_step_it_does_not_carry() {
+        let steps: Vec<String> = [
+            "shell: mkdir out",
+            "shell: cp a.txt out/",
+            "shell: wc -l out/a.txt",
+        ]
+        .map(String::from)
+        .to_vec();
+        let fact = |arguments: &str, succeeded: bool| ToolFact {
+            name: "shell".to_string(),
+            arguments: arguments.to_string(),
+            output: String::new(),
+            succeeded,
+        };
+        let tools = [
+            fact("mkdir out", true),
+            fact("cp a.txt out/", false),
+            fact("cp a.txt out/", true),
+        ];
+        let states = audit_steps(&steps, &tools, Path::new("/w"), &|_: &Path| false);
+        assert_eq!(states[0], StepState::Done);
+        assert_eq!(states[1], StepState::Done);
+        assert_eq!(states[2], StepState::Unclear, "{states:?}");
     }
 
     #[test]
