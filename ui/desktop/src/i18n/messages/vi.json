@@ -4235,14 +4235,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Yêu cầu đang xử lý"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Token đã viết so với giới hạn"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} từ cache"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "Đang xếp hàng"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "Đang đọc prompt"
@@ -4255,9 +4255,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} token"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} / {max} token"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "Đang đọc các lượt chạy goose đã đo…"

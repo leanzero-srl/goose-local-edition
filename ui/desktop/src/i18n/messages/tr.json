@@ -4235,14 +4235,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Süren istekler"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Sınıra göre yazılan token"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} önbellekten"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "Kuyrukta"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/sn"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "İstem okunuyor"
@@ -4255,9 +4255,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} token"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} / {max} token"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "goose'un ölçtüğü çalıştırmalar okunuyor…"

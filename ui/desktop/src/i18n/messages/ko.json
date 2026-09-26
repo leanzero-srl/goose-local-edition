@@ -4235,14 +4235,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "처리 중인 요청"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "한도 대비 작성한 토큰"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count}개는 캐시에서"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "대기열"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "프롬프트 읽는 중"
@@ -4255,9 +4255,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} 토큰"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} / {max} 토큰"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "goose가 측정한 실행을 읽는 중…"

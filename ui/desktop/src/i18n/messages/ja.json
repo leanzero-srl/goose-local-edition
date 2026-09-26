@@ -4235,14 +4235,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "処理中のリクエスト"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "上限に対する書き込み済みトークン"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} はキャッシュから"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "待機中"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "プロンプト読み込み中"
@@ -4255,9 +4255,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} トークン"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} / {max} トークン"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "goose の計測済みの実行を読み込み中…"

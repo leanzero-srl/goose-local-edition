@@ -4235,14 +4235,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Permintaan yang berjalan"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Token ditulis terhadap batas"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} dari cache"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "Dalam antrean"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/dtk"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "Membaca prompt"
@@ -4255,9 +4255,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} token"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} dari {max} token"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "Membaca run terukur goose…"

@@ -4235,14 +4235,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Запросы в работе"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Записанные токены относительно лимита"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} из кеша"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "В очереди"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} ток/с"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "Читает промпт"
@@ -4255,9 +4255,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} токенов"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} из {max} токенов"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "Читаем измеренные goose запуски…"

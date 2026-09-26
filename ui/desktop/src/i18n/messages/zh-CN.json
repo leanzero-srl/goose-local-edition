@@ -4235,14 +4235,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "处理中的请求"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "已生成 token 占上限的比例"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} 来自缓存"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "排队中"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "正在读取提示词"
@@ -4255,9 +4255,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} 个 token"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} / {max} 个 token"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "正在读取 goose 测得的运行记录…"

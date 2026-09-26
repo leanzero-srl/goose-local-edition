@@ -4235,14 +4235,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "चल रहे अनुरोध"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "सीमा की तुलना में लिखे गए टोकन"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} कैश से"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "कतार में"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "प्रॉम्प्ट पढ़ रहा है"
@@ -4255,9 +4255,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} टोकन"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{max} में से {written} टोकन"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "goose के मापे गए रन पढ़े जा रहे हैं…"

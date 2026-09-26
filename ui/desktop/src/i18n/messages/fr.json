@@ -4235,14 +4235,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Requêtes en cours"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Jetons écrits par rapport à la limite"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} depuis le cache"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "En file d’attente"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "Lit le prompt"
@@ -4255,9 +4255,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} jetons"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} sur {max} jetons"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "Lecture des exécutions mesurées par goose…"

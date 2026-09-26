@@ -124,9 +124,12 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     const rows = screen.getAllByTestId('mlx-live-request');
     // Running first (engine order), then the queue.
     expect(rows.map((r) => r.dataset.phase)).toEqual(['generation', 'prefill', 'queued']);
-    expect(rows[0]).toHaveTextContent('Writing · 28,035 of 32,768 tokens');
-    expect(rows[0]).toHaveTextContent('86%');
-    expect(within(rows[0]).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '86');
+    // Q-150: what it wrote, for how long, how fast — no share of max_tokens, no bar.
+    expect(rows[0]).toHaveTextContent('Writing · 28,035 tokens');
+    expect(rows[0]).toHaveTextContent('26m 14s · 19.9 tok/s');
+    expect(rows[0]).not.toHaveTextContent('32,768');
+    expect(rows[0]).not.toHaveTextContent('%');
+    expect(within(rows[0]).queryByRole('progressbar')).toBeNull();
     // The long silent pre-fill is visible, with the engine's own elapsed seconds and no fake bar.
     expect(rows[1]).toHaveTextContent('Reading prompt · 32.3K tokens');
     expect(rows[1]).toHaveTextContent('2m 45s');
@@ -506,6 +509,39 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
     expect(screen.queryByTestId('mlx-dist-tile-inflight')).toBeNull();
     expect(screen.getAllByTestId('mlx-dist-tile-node')).toHaveLength(2);
     await expectDesigned(container);
+  });
+
+  it('Q-150: the live split’s answer reads tokens · elapsed · tok/s — never “of 222,148 tokens · 9%”', () => {
+    // The 3.0.52 live round: 19,951 of a 222,148 max_tokens ceiling drew "9%" and a bar that read
+    // as ~6 h left on an answer that had no such target.
+    tile({
+      state: 'stopped',
+      modeLabel: 'x',
+      distributed: FLASH_SERVING,
+      live: parseMlxLiveStatus({
+        ...DIST_WRITING_STATUS,
+        requests: [
+          {
+            request_id: 'live-19',
+            status: 'running',
+            phase: 'generation',
+            elapsed_s: 2355,
+            prompt_tokens: 39996,
+            completion_tokens: 24228,
+            max_tokens: 222148,
+            tokens_per_second: 11,
+            ttft_s: 133,
+            cached_tokens: 0,
+          },
+        ],
+      }),
+    });
+    const [row] = screen.getAllByTestId('mlx-live-request');
+    expect(row).toHaveTextContent('Writing · 24,228 tokens');
+    expect(row).toHaveTextContent('39m 15s · 11.0 tok/s');
+    expect(row).not.toHaveTextContent('222,148');
+    expect(row).not.toHaveTextContent('%');
+    expect(within(row).queryByRole('progressbar')).toBeNull();
   });
 
   it('distributed WRITING: GREEN with the writing rate; the queue behind it rides the rows', () => {

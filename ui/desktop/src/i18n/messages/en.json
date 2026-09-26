@@ -4235,14 +4235,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Requests in flight"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Tokens written of the limit"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} from cache"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "Queued"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "Reading prompt"
@@ -4255,9 +4255,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} tokens"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} of {max} tokens"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "Reading goose's measured runs…"
