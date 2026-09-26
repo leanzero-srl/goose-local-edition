@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "iniciada {time}"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "Ativas agora"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "Sessão sem título"
+  },
   "addNode.addButton": {
     "defaultMessage": "Adicionar nó"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "Cliente externo via /v1 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "Abrir esta sessão — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "Sessão do goose ({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "Competências"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "Responder"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "O goose está trabalhando — você poderá responder quando este turno terminar."
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "Dispensar"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "Uma extensão precisa de informações"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "Não foi possível salvar: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "Ou escolha"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "Ou digite sua própria resposta…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} de {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "Recomendada"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "Precisa de você"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "O modelo salvo do motor MLX serve {served}; este nó quer {wanted}. Escolha o modelo em Providers."
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "Não foi possível iniciar uma sessão"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, one {# sessão ativa agora} other {# sessões ativas agora}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "Adicionar uma pasta de projeto"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "Copiar caminho"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "Sessão atual"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "Não foi possível eliminar a sessão"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "Ver JSON da sessão"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "Falhou"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "O último turno falhou: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "O último turno falhou"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "Precisa de você"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "Precisa de você · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, one {Aguardando sua resposta} other {# perguntas aguardam sua resposta}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "Em execução · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "Um turno está em execução há {elapsed}"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, one {# precisa de você} other {# precisam de você}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "Aguardando você"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} em execução"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "em execução · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "Em execução agora"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "Sessão sem título"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "A sessão encontrou um erro"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "Partilhar ligação Nostr encriptada"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "Ativas agora"
   },
   "sessions.cancel": {
     "defaultMessage": "Cancelar"

@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "{time} başladı"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "Şu an etkin"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "Başlıksız oturum"
+  },
   "addNode.addButton": {
     "defaultMessage": "Düğüm ekle"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "/v1 üzerinden harici istemci · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "Bu oturumu aç — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "goose oturumu ({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "Beceriler"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "Yanıtla"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose çalışıyor — bu tur bitince yanıtlayabilirsin."
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "Kapat"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "Bir uzantının bilgiye ihtiyacı var"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "Kaydedilemedi: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "Ya da seç"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "Ya da kendi yanıtını yaz…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} / {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "Önerilen"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "Sana ihtiyaç var"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX motorunun kayıtlı modeli {served} sunuyor; bu düğüm {wanted} istiyor. Modeli Providers’ta seçin."
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "Oturum başlatılamadı"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, one {# oturum şu an etkin} other {# oturum şu an etkin}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "Proje klasörü ekle"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "Yolu kopyala"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "Geçerli oturum"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "Oturum silinemedi"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "View session JSON"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "Başarısız"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "Son tur başarısız oldu: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "Son tur başarısız oldu"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "Sana ihtiyaç var"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "Sana ihtiyaç var · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, one {Yanıtını bekliyor} other {# soru yanıtını bekliyor}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "Çalışıyor · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "Bir tur {elapsed} süredir çalışıyor"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, one {# sana ihtiyaç duyuyor} other {# sana ihtiyaç duyuyor}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "Seni bekliyor"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} çalışıyor"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "çalışıyor · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "Şu an çalışanlar"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "Başlıksız oturum"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "Oturum bir hatayla karşılaştı"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "Şifrelenmiş Nostr bağlantısını paylaşın"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "Şu an etkin"
   },
   "sessions.cancel": {
     "defaultMessage": "İptal"

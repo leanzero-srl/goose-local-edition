@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "開始於 {time}"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "目前活動"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "未命名工作階段"
+  },
   "addNode.addButton": {
     "defaultMessage": "新增節點"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "經 /v1 的外部用戶端 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "開啟此工作階段 — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "goose 工作階段（{type}） · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "技能"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "回答"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose 正在工作——本輪結束後即可回答。"
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "略過"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "某個擴充功能需要資訊"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "無法儲存：{error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "或選擇"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "或輸入你自己的回答…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "第 {index} / {total} 個"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "推薦"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "需要你"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX 引擎儲存的模型提供 {served}；此節點需要 {wanted}。請在 Providers 中選擇模型。"
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "無法開始工作階段"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, other {# 個工作階段正在活動}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "新增專案資料夾"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "複製路徑"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "目前的工作階段"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "無法刪除該工作階段"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "檢視工作階段 JSON"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "失敗"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "上一輪失敗：{reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "上一輪失敗"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "需要你"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "需要你 · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, other {# 個問題等待你的回答}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "執行中 · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "本輪已執行 {elapsed}"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, other {# 個需要你}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "等待你"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} 個執行中"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "執行中 · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "正在執行"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "未命名工作階段"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "工作階段發生錯誤"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "分享加密的 Nostr 連結"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "目前活動"
   },
   "sessions.cancel": {
     "defaultMessage": "取消"

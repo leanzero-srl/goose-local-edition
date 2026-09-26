@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "bắt đầu {time}"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "Đang hoạt động"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "Phiên chưa đặt tên"
+  },
   "addNode.addButton": {
     "defaultMessage": "Thêm nút"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "Máy khách bên ngoài qua /v1 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "Mở phiên này — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "Phiên goose ({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "Kỹ năng"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "Trả lời"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose đang làm việc — bạn có thể trả lời khi lượt này kết thúc."
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "Bỏ qua"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "Một tiện ích mở rộng cần thông tin"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "Không thể lưu: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "Hoặc chọn"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "Hoặc nhập câu trả lời của bạn…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} / {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "Đề xuất"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "Cần bạn"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Mô hình đã lưu của công cụ MLX phục vụ {served}; nút này cần {wanted}. Hãy chọn mô hình trong Providers."
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "Không thể bắt đầu phiên"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, other {# phiên đang hoạt động}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "Thêm thư mục dự án"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "Sao chép đường dẫn"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "Phiên hiện tại"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "Không thể xóa phiên"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "Xem JSON của phiên"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "Thất bại"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "Lượt gần nhất thất bại: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "Lượt gần nhất thất bại"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "Cần bạn"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "Cần bạn · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, other {# câu hỏi đang chờ bạn trả lời}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "Đang chạy · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "Một lượt đang chạy được {elapsed}"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, other {# cần bạn}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "Đang chờ bạn"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} đang chạy"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "đang chạy · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "Đang chạy"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "Phiên chưa đặt tên"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "Phiên gặp lỗi"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "Chia sẻ liên kết Nostr được mã hóa"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "Đang hoạt động"
   },
   "sessions.cancel": {
     "defaultMessage": "Hủy"

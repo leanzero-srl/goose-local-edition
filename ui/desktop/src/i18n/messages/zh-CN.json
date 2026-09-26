@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "开始于 {time}"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "当前活动"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "未命名会话"
+  },
   "addNode.addButton": {
     "defaultMessage": "添加节点"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "经 /v1 的外部客户端 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "打开此会话 — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "goose 会话（{type}） · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "技能"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "回答"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose 正在工作——本轮结束后即可回答。"
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "忽略"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "某个扩展需要信息"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "无法保存：{error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "或选择"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "或输入你自己的回答…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "第 {index} / {total} 个"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "推荐"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "需要你"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX 引擎保存的模型提供 {served}；此节点需要 {wanted}。请在 Providers 中选择模型。"
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "无法开始会话"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, other {# 个会话正在活动}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "添加项目文件夹"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "复制路径"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "当前会话"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "无法删除该会话"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "View session JSON"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "失败"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "上一轮失败：{reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "上一轮失败"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "需要你"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "需要你 · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, other {# 个问题等待你的回答}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "运行中 · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "本轮已运行 {elapsed}"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, other {# 个需要你}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "等待你"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} 个运行中"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "运行中 · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "正在运行"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "未命名会话"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "会话发生错误"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "分享加密的 Nostr 链接"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "当前活动"
   },
   "sessions.cancel": {
     "defaultMessage": "取消"

@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "bermula {time}"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "Aktif sekarang"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "Sesi tanpa tajuk"
+  },
   "addNode.addButton": {
     "defaultMessage": "Tambah nod"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "Klien luaran melalui /v1 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "Buka sesi ini — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "Sesi goose ({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "Kemahiran"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "Jawab"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose sedang bekerja — anda boleh menjawab apabila giliran ini tamat."
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "Abaikan"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "Sebuah sambungan memerlukan maklumat"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "Tidak dapat menyimpan: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "Atau pilih"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "Atau taip jawapan anda sendiri…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} daripada {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "Disyorkan"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "Memerlukan anda"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Model tersimpan enjin MLX menyajikan {served}; nod ini mahukan {wanted}. Pilih model dalam Providers."
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "Tidak dapat memulakan sesi"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, other {# sesi aktif sekarang}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "Tambah folder projek"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "Salin laluan"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "Sesi semasa"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "Tidak dapat memadam sesi"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "Lihat JSON sesi"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "Giliran terakhir gagal: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "Giliran terakhir gagal"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "Memerlukan anda"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "Memerlukan anda · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, one {Menunggu jawapan anda} other {# soalan menunggu jawapan anda}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "Berjalan · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "Satu giliran sedang berjalan, selama {elapsed}"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, other {# memerlukan anda}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "Menunggu anda"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} berjalan"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "berjalan · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "Sedang berjalan"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "Sesi tanpa tajuk"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "Sesi mengalami ralat"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "Kongsi pautan Nostr tersulit"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "Aktif sekarang"
   },
   "sessions.cancel": {
     "defaultMessage": "Batal"

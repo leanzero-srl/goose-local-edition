@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "начат {time}"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "Активны сейчас"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "Сеанс без названия"
+  },
   "addNode.addButton": {
     "defaultMessage": "Добавить узел"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "Внешний клиент через /v1 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "Открыть этот сеанс — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "Сессия goose ({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "Навыки"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "Ответить"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose работает — ответить можно, когда этот ход закончится."
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "Закрыть"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "Расширению нужны данные"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "Не удалось сохранить: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "Или выберите"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "Или введите свой ответ…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} из {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "Рекомендуется"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "Нужен ваш ответ"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Сохранённая модель движка MLX обслуживает {served}; этому узлу нужна {wanted}. Выберите модель в Providers."
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "Не удалось начать сеанс"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, one {# сеанс активен сейчас} few {# сеанса активны сейчас} many {# сеансов активны сейчас} other {# сеанса активны сейчас}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "Добавить папку проекта"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "Скопировать путь"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "Текущая сессия"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "Не удалось удалить сессию"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "View session JSON"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "Сбой"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "Последний ход завершился сбоем: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "Последний ход завершился сбоем"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "Нужен ваш ответ"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "Нужен ваш ответ · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, one {Ждёт вашего ответа} few {# вопроса ждут вашего ответа} many {# вопросов ждут вашего ответа} other {# вопроса ждут вашего ответа}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "Идёт · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "Ход идёт уже {elapsed}"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, one {# ждёт вас} few {# ждут вас} many {# ждут вас} other {# ждут вас}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "Ждут вас"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "Идёт: {count}"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "идёт · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "Идут сейчас"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "Сеанс без названия"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "В сеансе возникла ошибка"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "Поделиться зашифрованной ссылкой Nostr"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "Активны сейчас"
   },
   "sessions.cancel": {
     "defaultMessage": "Отмена"

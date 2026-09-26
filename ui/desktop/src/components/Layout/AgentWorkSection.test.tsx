@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter } from 'react-router-dom';
 import { IntlProvider } from 'react-intl';
 import { AgentWorkSection, askAboutAgentPrompt, deskHref } from './AgentWorkSection';
+import { resetNowForTests } from '../sessionActivity/ActivityPills';
 
 const nav = vi.hoisted(() => ({ navigate: vi.fn(), startChat: vi.fn() }));
 vi.mock('react-router-dom', async (orig) => ({
@@ -109,6 +110,38 @@ describe('AgentWorkSection', () => {
     expect(m.agentWorkRemove).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('Confirm remove (keeps the folder)'));
     await waitFor(() => expect(m.agentWorkRemove).toHaveBeenCalledWith('/agents/public-web'));
+  });
+
+  it('a ticking desk and its tick in flight carry the solid Running pill with the live elapsed', async () => {
+    resetNowForTests(Date.now());
+    const startedAt = new Date(Date.now() - 27 * 60_000).toISOString();
+    const ticking = {
+      ...DESK,
+      state: {
+        status: 'ticking',
+        tick: 4,
+        phase: 'lanes',
+        phase_started_at: startedAt,
+        next_tick_at: null,
+      },
+      pid: 4242,
+      heartbeatMs: Date.now(),
+    };
+    Object.assign(window.electron, {
+      agentWorkList: vi.fn().mockResolvedValue([ticking]),
+      agentWorkRead: vi
+        .fn()
+        .mockResolvedValue({ ...ticking, ticks: [...TICKS, { tick: 4, started_at: startedAt }] }),
+      agentWorkRemove: vi.fn(),
+      revealInFinder: vi.fn(),
+    });
+    renderSection();
+    const row = await screen.findByRole('button', { name: /Public web research/ });
+    expect(within(row).getByTestId('session-running-pill').textContent).toBe('Running · 27m');
+    fireEvent.click(row);
+    const inFlight = await screen.findByTestId('tick-row-4');
+    expect(within(inFlight).getByTestId('session-running-pill').textContent).toBe('Running · 27m');
+    expect(within(screen.getByTestId('tick-row-3')).queryByTestId('session-running-pill')).toBeNull();
   });
 
   it('says so when there are no agents', async () => {

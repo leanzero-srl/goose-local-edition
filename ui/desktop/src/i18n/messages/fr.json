@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "démarrée {time}"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "Actives maintenant"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "Session sans titre"
+  },
   "addNode.addButton": {
     "defaultMessage": "Ajouter un nœud"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "Client externe via /v1 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "Ouvrir cette session — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "Session goose ({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "Compétences"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "Répondre"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose travaille — vous pourrez répondre à la fin de ce tour."
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "Ignorer"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "Une extension a besoin d’informations"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "Impossible d’enregistrer : {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "Ou choisissez"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "Ou saisissez votre propre réponse…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} sur {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "Recommandée"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "A besoin de vous"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Le modèle enregistré du moteur MLX sert {served} ; ce nœud attend {wanted}. Choisissez le modèle dans Providers."
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "Impossible de démarrer une session"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, one {# session active maintenant} other {# sessions actives maintenant}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "Ajouter un dossier de projet"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "Copier le chemin"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "Session en cours"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "Impossible de supprimer la session"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "Afficher le JSON de la session"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "Échec"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "Le dernier tour a échoué : {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "Le dernier tour a échoué"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "A besoin de vous"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "A besoin de vous · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, one {En attente de votre réponse} other {# questions attendent votre réponse}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "En cours · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "Un tour est en cours depuis {elapsed}"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, one {# a besoin de vous} other {# ont besoin de vous}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "Vous attendent"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} en cours"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "en cours · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "En cours maintenant"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "Session sans titre"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "La session a rencontré une erreur"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "Partager un lien Nostr chiffré"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "Actives maintenant"
   },
   "sessions.cancel": {
     "defaultMessage": "Annuler"

@@ -9,6 +9,11 @@ import { allClasses, assertStudioClean } from './lz/assertStudioClean';
 import { missingUtilities } from './lz/compileStudioCss';
 import { acpListRecentSessions, type SessionListItem } from '../acp/sessions';
 import { startNewSession } from '../sessions';
+import { resetNowForTests } from './sessionActivity/ActivityPills';
+import {
+  resetSessionActivityForTests,
+  seedSessionActivityForTests,
+} from './sessionActivity/sessionActivityStore';
 
 /**
  * "/" — a truly empty install (no session anywhere, no folder added) states that sessions start
@@ -297,5 +302,53 @@ describe('ProjectLanding — the continue page once anything exists', () => {
     expect(mocks.agentWorkRead).not.toHaveBeenCalledWith('/desks/gone');
     fireEvent.click(rows[0]);
     expect(screen.getByTestId('where').textContent).toBe('/agent-work?desk=%2Fdesks%2Fneedy');
+  });
+});
+
+describe('ProjectLanding — the recents carry each session state', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetNowForTests(Date.now());
+  });
+
+  it('a running session leads the recents with a live Running pill, a failed one says Failed, and same titles differ', async () => {
+    electronMocks();
+    vi.mocked(acpListRecentSessions).mockResolvedValue([
+      session('idle', 'Idle chat', '/proj/a', 1),
+      session('old', 'Notes', '/proj/a', 600),
+      session('fail', 'Cut short', '/proj/a', 30),
+      session('run', 'Notes', '/proj/a', 45),
+    ]);
+    seedSessionActivityForTests({
+      running: [
+        { sessionId: 'run', sessionName: 'Notes', workingDir: '/proj/a', startedAt: minutesAgo(27) },
+      ],
+      failed: [
+        {
+          sessionId: 'fail',
+          sessionName: 'Cut short',
+          workingDir: '/proj/a',
+          failedAt: minutesAgo(30),
+        },
+      ],
+    });
+    try {
+      renderLanding();
+      const list = await screen.findByTestId('landing-recent-sessions');
+      const rows = within(list).getAllByRole('button');
+      expect(rows[0].getAttribute('data-testid')).toBe('landing-session-run');
+      expect(rows[0].getAttribute('data-state')).toBe('running');
+      expect(rows[0].getAttribute('aria-busy')).toBe('true');
+      expect(within(rows[0]).getByTestId('session-running-pill').textContent).toBe(
+        'Running · 27m'
+      );
+      expect(within(rows[0]).getByText('Notes · 2')).toBeTruthy();
+      const fail = screen.getByTestId('landing-session-fail');
+      expect(fail.getAttribute('data-state')).toBe('failed');
+      expect(within(fail).getByTestId('session-failed-pill')).toBeTruthy();
+      expect(screen.getByTestId('landing-session-idle').getAttribute('data-state')).toBe('idle');
+    } finally {
+      resetSessionActivityForTests();
+    }
   });
 });

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { act, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MlxStateTile, type MlxStateTileProps } from './MlxStateTile';
 import { rememberLocalMlxEngineStatus } from '../../acp/mlx-engine-latest';
 import { rememberPlacementPlans, resetPlacementPlansSeen } from '../../acp/mlx-placement';
@@ -330,6 +330,13 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
       'Swarm run live: bench-r9',
     ]);
     await expectDesigned(container);
+
+    // The chat line opens THAT session by id — two same-title sessions must not be confused.
+    const open = screen.getByTestId('mlx-serving-open-session');
+    expect(open.textContent).toBe('Chat · Memory · verify recall');
+    fireEvent.click(open);
+    expect(window.location.hash).toBe('#/pair?resumeSessionId=20260923_7');
+    expect(screen.getAllByTestId('mlx-serving-open-session')).toHaveLength(1);
   });
 
   it('serving list unreadable: says so, never an empty "nobody"', () => {
