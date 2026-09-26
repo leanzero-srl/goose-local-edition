@@ -52,6 +52,16 @@ def one(kind, worker, content, max_tokens, abort_after):
                 # that is the stream's outcome, never a token.
                 if '"error"' in line[:40]:
                     err = line[5:].strip()[:200]; break
+                # Only a chunk that carries generated text is a token: the server's opening
+                # role-only chunk arrives before prefill ends and once made ttft read 0.1 s
+                # on requests that waited 350 s for their first word.
+                try:
+                    delta = (json.loads(line[5:]).get('choices') or [{}])[0].get('delta') or {}
+                except ValueError:
+                    delta = {}
+                if not (delta.get('content') or delta.get('reasoning_content') or delta.get('reasoning')
+                        or delta.get('tool_calls')):
+                    continue
                 now = time.time()
                 if ttft is None: ttft = now - t0
                 if last is not None: gap = max(gap, now - last)
