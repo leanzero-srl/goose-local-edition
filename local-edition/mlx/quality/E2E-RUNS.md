@@ -9,6 +9,10 @@
 | E2E #2b | 3.0.41 | Studio single over Link, 262,144, deferral | ″ | 0 | 300 | 27 (+2 load_tools) | 3 of 32 agent calls cold across turns 0–2 | — | kickoff.md ✓ |
 | E2E #2b | 3.0.41 | ″ | ″ | 1 | 43 | ″ | ″ | — | 2 memories saved — to ~/.goose/memory/working-agents.txt (category "working-agents") |
 | E2E #2b | 3.0.41 | ″ | ″ | 2 | 573 (split #1: 3207) | ″ | ″ | — | 4 web searches + 28 shell |
+| E2E #3 | 3.0.45 | split tensor, 262,144, deferral | jira-migration-readiness | 0 | 1021 — split DIED mid-answer | 32 | first call 30,735 cold, 7k+ thinking tokens at 11.5 tok/s (E2E #2's same call: 3,367) | — | none: at 10:07:37 both ranks stalled (rank 0 R spinning in a collective, rank 1 S 0% CPU), the hang rule killed both at 10:07:57 (Q-114); TB/GPU/memory/build refuted |
+| E2E #4 | 3.0.46 | Studio single over Link, 262,144, deferral | ″ | 0 | 170 (#2b: 300) | 27 | 31,552 / 32,428 cached | — | kickoff ✓ |
+| E2E #4 | 3.0.46 | ″ | ″ | 1 | 81 (#2b: 43) | ″ | ″ | — | 2 memories saved (global ISO+British rule; project zero-npm rule) |
+| E2E #4 | 3.0.46 | ″ | ″ | 2 | 1333 (#2b: 573) | ″ | 37,649 / 38,173 → 63,552 / 64,021 | — | 77 tool calls, no answer: web search returned empty results `serper-failed-no-fallback` (no key, browser engines off — Q-117); the model pip-installed a package and ran a 300 s find. Run stopped here for the 3.0.47 install (Q-115). Studio cache bounded 20.1/22.4 GB, footprint 45–66 GB |
 
 ## Tool-call failure census (2026-09-25, sessions.db)
 | run | engine | calls | failed | causes |
