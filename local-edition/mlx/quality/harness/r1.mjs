@@ -17,7 +17,7 @@ const out = `${dir}/turns.tsv`;
 writeFileSync(out, 'turn\tstart\tend\tsecs\tended\ttools\trecalled\tchip\tcounter\tnotice\n');
 // What THIS turn added: the messages after the send, never the whole page (the smoke run matched an older
 // session's notice). A failed turn is any goose notice or the engine's empty-response line.
-const FAIL = /empty response|stopped answering|quit goose mid|No node can|Ran into this error/;
+const FAIL = /empty response|stopped answering|quit goose mid|No node can|Ran into this error|split across your Macs stopped|stopped making progress/;
 const added = (n0) => p.evaluate((n0) => { const ms = [...document.querySelectorAll('.goose-message')].slice(n0).map((m) => m.innerText); const recalled = ms.join('\n').split('\n').filter((l) => /^recalled:/.test(l.trim())).join(' | '); const tools = [...document.querySelectorAll('.goose-message')].slice(n0).reduce((k, m) => k + m.querySelectorAll('[class*=tool i], details').length, 0); return { text: ms.join(' ').replace(/\s+/g, ' '), tools, recalled }; }, n0);
 const briefArg = process.argv.indexOf('--brief');
 const brief = briefArg > 0 ? JSON.parse(readFileSync(process.argv[briefArg + 1], 'utf8')) : null;
