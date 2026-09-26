@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Yapılandırmayı kaydet"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "{model} için kaydedilmiş kurulum — Çalıştır, seçilen model için yeniden planlar"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {Toplu işte # dizi} other {Toplu işte # dizi}}"
   },
@@ -5168,6 +5171,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {İki Mac’e de sığar} other {# Mac’in hepsine sığar}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · {models} durunca sığar{count, plural, other {}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name} üzerine sığar"
   },
@@ -5218,6 +5224,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Sığıp sığmadığı bilinmiyor"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "{model} durunca sığar — Çalıştır önce onu durdurur ({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Sohbet"
@@ -5378,6 +5387,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "Bölme durdurulsun mu?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "Çalıştır önce {model} modelini durdurur ({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Ölçüm deposunda okunamayan satırlar"
   },
@@ -5389,6 +5401,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "tensör bölmesi · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "bu Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "Hata payı içinde aynı hızda (~{mine} ile ~{best} tok/sn), ama daha fazla Mac gerekiyor"
@@ -5407,6 +5422,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/sn yazma"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "Mac’leriniz"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Hata türleri (ör. \"rate_limit\", \"auth\" - ayrıntı yok)"

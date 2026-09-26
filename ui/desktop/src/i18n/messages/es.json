@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Guardar configuración"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "Configuración guardada para {model} — Ejecutar vuelve a planificar para el modelo elegido"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {# secuencia en el lote} other {# secuencias en el lote}}"
   },
@@ -5168,6 +5171,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {Cabe en ambos Mac} other {Cabe en los # Mac}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · cabe cuando {models} se {count, plural, one {detenga} other {detengan}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Cabe en {name}"
   },
@@ -5218,6 +5224,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Encaje desconocido"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "Cabe cuando {model} se detenga — Ejecutar lo detiene primero ({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Chat"
@@ -5378,6 +5387,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "¿Detener la división?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "Ejecutar detiene primero {model} ({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Líneas ilegibles en el almacén de mediciones"
   },
@@ -5389,6 +5401,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "división de tensores · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "este Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "Igual de rápido dentro del error (~{mine} frente a ~{best} tok/s), pero necesita más Mac"
@@ -5407,6 +5422,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/s escribiendo"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "tus Macs"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Tipos de error (ej.: \"rate_limit\", \"auth\" - sin detalles)"

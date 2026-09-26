@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Lưu cấu hình"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "Thiết lập đã lưu cho {model} — Chạy sẽ lập kế hoạch lại cho mô hình đã chọn"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {# chuỗi trong lô}}"
   },
@@ -5168,6 +5171,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {Vừa cả hai máy Mac} other {Vừa cả # máy Mac}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · vừa khi {models} dừng{count, plural, other {}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Vừa với {name}"
   },
@@ -5218,6 +5224,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Chưa rõ có vừa không"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "Vừa khi {model} dừng — Chạy sẽ dừng nó trước ({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Trò chuyện"
@@ -5378,6 +5387,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "Dừng bản chia?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "Chạy sẽ dừng {model} trước ({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Có dòng không đọc được trong kho đo đạc"
   },
@@ -5389,6 +5401,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "chia tensor · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "máy Mac này"
   },
   "placementCard.tied": {
     "defaultMessage": "Nhanh ngang nhau trong sai số (~{mine} so với ~{best} tok/s), nhưng cần nhiều máy Mac hơn"
@@ -5407,6 +5422,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "ghi ~{value} tok/s"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "các Mac của bạn"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Loại lỗi (ví dụ: \"rate_limit\", \"auth\" - không có chi tiết)"

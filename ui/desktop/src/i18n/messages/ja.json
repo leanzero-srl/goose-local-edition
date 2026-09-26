@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "構成を保存"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "{model} 用に保存された設定 — 実行は選んだモデルで計画し直します"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {バッチ内 # シーケンス}}"
   },
@@ -5168,6 +5171,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {両方の Mac に収まる} other {# 台すべての Mac に収まる}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · {models} を停止すれば収まります{count, plural, other {}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name} に収まる"
   },
@@ -5218,6 +5224,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "収まるか不明"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "{model} を停止すれば収まります — 実行が先に停止します ({where})。"
   },
   "placementCard.goalChat": {
     "defaultMessage": "チャット"
@@ -5378,6 +5387,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "分割を停止しますか?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "実行は先に {model} を停止します ({where})。"
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "測定ストアに読み取れない行があります"
   },
@@ -5389,6 +5401,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "テンソル分割 · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "この Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "誤差の範囲で同じ速さ（~{mine} 対 ~{best} tok/s）ですが、より多くの Mac が必要"
@@ -5407,6 +5422,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "書き込み ~{value} tok/s"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "あなたの Mac"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "エラーの種類（例: 「rate_limit」「auth」— 詳細なし）"

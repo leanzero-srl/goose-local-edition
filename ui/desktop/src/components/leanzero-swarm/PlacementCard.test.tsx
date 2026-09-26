@@ -1026,7 +1026,12 @@ describe('Run it on the real 27B plan', () => {
 });
 
 describe('PlacementBadge', () => {
-  const only = (badge: PickerBadge['badge']): PickerBadge => ({ badge, fitsOn: [], macs: 0 });
+  const only = (badge: PickerBadge['badge']): PickerBadge => ({
+    badge,
+    fitsOn: [],
+    macs: 0,
+    afterStopping: [],
+  });
 
   it('says where a model fits, in solid tones', () => {
     render(
@@ -1084,6 +1089,27 @@ describe('PlacementBadge', () => {
     );
     expect(screen.getByText('Fits both Macs')).toBeInTheDocument();
     expect(screen.queryByText('Fits this Mac')).toBeNull();
+  });
+
+  /**
+   * Q-120 (3.0.47): Flash read "Too big, short 1.6 GB" while the 27B held ~30 GB on the Studio
+   * that stopping it frees. goose now counts that memory and names the model the fit waits on.
+   */
+  it('a fit that holds once the serving model stops says so — never "too big"', () => {
+    const picker = pickerBadgeOf({
+      ...PLAN_FLASH,
+      badge: { kind: 'needsBothMacs' },
+      badgeAfterStopping: [MODEL],
+    })!;
+    expect(picker.afterStopping).toEqual([MODEL]);
+    render(
+      <IntlTestWrapper>
+        <PlacementBadge badge={picker} />
+      </IntlTestWrapper>
+    );
+    const chip = screen.getByText('Needs both Macs · fits once Qwen3.8-27B-Atlassian-Q8-mlx stops');
+    expect(chip.closest('[data-tone]')).toHaveAttribute('data-tone', 'warn');
+    expect(screen.queryByText(/Too big/)).toBeNull();
   });
 
   it('a plan with no badge has no picker badge', () => {
@@ -1164,5 +1190,118 @@ describe('Run it follows the engine it started, in the engine-phase palette', ()
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
     await waitFor(() => expect(mockDistributedStop).toHaveBeenCalledTimes(1));
+  });
+});
+
+/**
+ * Q-119 (3.0.47, 2026-09-26): Flash picked while Work's Mac Studio served the 27B over Link, and
+ * Run it still showed the 27B's cards. Run it plans the PICKED model; each way that can start says
+ * what Run stops first, and Run does exactly that before it starts.
+ */
+describe('Run it for the picked model while another model is served', () => {
+  const FLASH = 'rapid-mlx/Qwen3.8-Flash-Next-4bit';
+  const SPLIT_ID = 'pipeline:jaccl:local+workhorse';
+  /** Flash as goose plans it with the 27B's ~30 GB on the Studio counted as free for the switch. */
+  const FLASH_SWITCH: PlacementPlan = {
+    ...PLAN_FLASH,
+    best: SPLIT_ID,
+    bestAvailable: SPLIT_ID,
+    badge: { kind: 'needsBothMacs' },
+    badgeAfterStopping: [MODEL],
+    candidates: (PLAN_FLASH.candidates ?? []).map((c) =>
+      c.id === SPLIT_ID
+        ? {
+            ...c,
+            fit: {
+              ...c.fit,
+              status: 'fits',
+              shortBytes: undefined,
+              shortNode: undefined,
+              context: 65_536,
+              afterStopping: [MODEL],
+            },
+            outcome: { code: 'best' },
+          }
+        : c.id === 'single:workhorse'
+          ? { ...c, id: 'single:link:wh', key: { ...c.key, nodes: ['link:wh'] } }
+          : c
+    ),
+  };
+
+  it('the cards are Flash’s: the Studio serving the 27B is not "Running" here, and the split says it stops the 27B first', async () => {
+    mockPlan.mockResolvedValue(answer(FLASH_SWITCH));
+    remoteLatest = {
+      state: 'ready',
+      peer: 'wh',
+      modelId: MODEL,
+      peerComputerName: 'Work’s Mac Studio',
+    };
+    renderCard({ modelId: FLASH });
+    const split = await screen.findByTestId('placement-way-split');
+    await waitFor(() => expect(mockPlan).toHaveBeenCalledWith('chat', FLASH));
+    expect(screen.queryByTestId('placement-live')).toBeNull();
+    expect(screen.queryByTestId('placement-stop-peer')).toBeNull();
+    expect(
+      await within(split).findByText(
+        'Fits once Qwen3.8-27B-Atlassian-Q8-mlx stops — Run stops it on Work’s Mac Studio first.'
+      )
+    ).toBeInTheDocument();
+    // The ways that cannot hold Flash offer no Run, so they carry no "stops first" line.
+    expect(screen.getAllByTestId(/placement-stops-first-/)).toHaveLength(1);
+    expect(screen.queryByTestId('placement-run-local')).toBeNull();
+  });
+
+  it('Run on the split stops the 27B’s route first, then starts the split for Flash', async () => {
+    mockPlan.mockResolvedValue(answer(FLASH_SWITCH));
+    remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
+    const order: string[] = [];
+    mockRemoteStop.mockImplementation(async (keepMounted: boolean) => {
+      order.push(`stop 27B route (keepMounted ${keepMounted})`);
+      remoteLatest = null;
+      return { unmounted: true, unmountError: null, status: { state: 'off' } };
+    });
+    mockDistributedStart.mockImplementation(async () => {
+      order.push('start split');
+      return { started: true };
+    });
+    renderCard({ modelId: FLASH, distributed: null });
+    await userEvent.click(
+      within(await screen.findByTestId('placement-way-split')).getByTestId('placement-run-split')
+    );
+    await waitFor(() =>
+      expect(order).toEqual(['stop 27B route (keepMounted false)', 'start split'])
+    );
+    expect(mockDistributedStart).toHaveBeenCalledWith(null);
+  });
+
+  it('Run on this Mac for the 27B while this Mac serves Flash: says so, unmounts Flash, then mounts', async () => {
+    const localFits: PlacementPlan = {
+      ...PLAN_LINK,
+      candidates: (PLAN_LINK.candidates ?? []).map((c) =>
+        c.id === 'single:local' ? { ...c, fit: { ...c.fit, status: 'fits' } } : c
+      ),
+    };
+    mockPlan.mockResolvedValue(answer(localFits));
+    const order: string[] = [];
+    mockUnmount.mockImplementation(async () => {
+      order.push('unmount Flash here');
+    });
+    const { onMountHere } = renderCard({
+      single: {
+        state: 'running',
+        modelId: FLASH,
+        restartRequired: false,
+        availableMemoryGb: 20,
+        totalMemoryGb: 128,
+      } as MlxEngineStatus,
+    });
+    onMountHere.mockImplementation(() => order.push('mount 27B here'));
+    const local = await screen.findByTestId('placement-way-local');
+    expect(
+      await within(local).findByText('Run stops Qwen3.8-Flash-Next-4bit on this Mac first.')
+    ).toBeInTheDocument();
+    expect(within(local).queryByTestId('placement-live')).toBeNull();
+    await userEvent.click(within(local).getByTestId('placement-run-local'));
+    await waitFor(() => expect(order).toEqual(['unmount Flash here', 'mount 27B here']));
   });
 });

@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "구성 저장"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "{model}용으로 저장된 설정 — 실행하면 선택한 모델로 다시 계획합니다"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {배치의 시퀀스 #개}}"
   },
@@ -5168,6 +5171,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {두 Mac 모두에 맞음} other {Mac # 대 모두에 맞음}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · {models} 중지 후 들어감{count, plural, other {}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name}에 들어감"
   },
@@ -5218,6 +5224,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "들어갈지 알 수 없음"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "{model}을(를) 중지하면 들어갑니다 — 실행이 먼저 중지합니다({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "채팅"
@@ -5378,6 +5387,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "분할을 중지할까요?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "실행하면 먼저 {model}을(를) 중지합니다({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "측정 저장소에 읽을 수 없는 줄이 있음"
   },
@@ -5389,6 +5401,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "텐서 분할 · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "이 Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "오차 범위 안에서 같은 속도(~{mine} 대 ~{best} tok/s)지만 Mac이 더 필요함"
@@ -5407,6 +5422,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "쓰기 ~{value} tok/s"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "내 Mac들"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "오류 유형(예: 'rate_limit', 'auth' - 세부정보 없음)"

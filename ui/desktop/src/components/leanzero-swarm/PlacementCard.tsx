@@ -63,7 +63,14 @@ import { distributedStateWord } from './mlxModeLabel';
 import { remotePhase, runPhase, singlePhase } from './mlxPhase';
 import { dropRoute } from './routeSwitch';
 import { formatGb } from './primitives';
-import { macForPlacementNode, minutesAt, peerRefuses, SELF_KEY, type Mac } from './macs';
+import {
+  macForPlacementNode,
+  minutesAt,
+  peerRefuses,
+  routePeerName,
+  SELF_KEY,
+  type Mac,
+} from './macs';
 import { WithMacs, copyKey, copyRunning, useMacs } from './useMacs';
 
 /**
@@ -239,6 +246,20 @@ const i18n = defineMessages({
   badgeBoth: { id: 'placementCard.badgeBoth', defaultMessage: 'Needs both Macs' },
   badgeTooBig: { id: 'placementCard.badgeTooBig', defaultMessage: 'Too big, short {gb}' },
   badgeUnknown: { id: 'placementCard.badgeUnknown', defaultMessage: 'Fit unknown' },
+  badgeOnceStops: {
+    id: 'placementCard.badgeOnceStops',
+    defaultMessage: '{badge} · fits once {models} {count, plural, one {stops} other {stop}}',
+  },
+  stopsFirst: {
+    id: 'placementCard.stopsFirst',
+    defaultMessage: 'Run stops {model} on {where} first.',
+  },
+  fitsOnceStops: {
+    id: 'placementCard.fitsOnceStops',
+    defaultMessage: 'Fits once {model} stops — Run stops it on {where} first.',
+  },
+  thisMac: { id: 'placementCard.thisMac', defaultMessage: 'this Mac' },
+  yourMacs: { id: 'placementCard.yourMacs', defaultMessage: 'your Macs' },
   actionFailed: { id: 'placementCard.actionFailed', defaultMessage: 'The action failed' },
   refusedUnnamed: {
     id: 'placementCard.refusedUnnamed',
@@ -401,6 +422,11 @@ function tps(value: number): string {
   return value >= 100 ? value.toFixed(0) : value.toFixed(1);
 }
 
+/** A model as the card names it: its folder name, without the publisher. */
+export function shortModel(modelId: string): string {
+  return modelId.split('/').pop() || modelId;
+}
+
 function linkWord(candidate: PlacementCandidate): string {
   return candidate.key.link === 'jaccl' ? 'JACCL' : (candidate.key.link ?? '');
 }
@@ -551,6 +577,8 @@ export interface PickerBadge {
   fitsOn: string[];
   /** How many Macs the plan judged alone — "both" / "all" only when every one fits. */
   macs: number;
+  /** The other models Run stops first for this fit to hold (goose's `badgeAfterStopping`). */
+  afterStopping: string[];
 }
 
 /** The picker's badge from one plan (`null` when goose sent none). */
@@ -560,15 +588,20 @@ export function pickerBadgeOf(plan: PlacementPlan): PickerBadge | null {
   const fitsOn = singles
     .filter((c) => c.supported && (c.fit.status === 'fits' || c.fit.status === 'smallerContext'))
     .flatMap((c) => (c.nodeNames[0] ? [c.nodeNames[0]] : []));
-  return { badge: plan.badge, fitsOn, macs: singles.length };
+  return {
+    badge: plan.badge,
+    fitsOn,
+    macs: singles.length,
+    afterStopping: plan.badgeAfterStopping ?? [],
+  };
 }
 
 /** The model picker's badge: where this model fits, measured just now — each Mac by its name. */
 export function PlacementBadge({ badge: picker }: { badge: PickerBadge }) {
   const intl = useIntl();
-  const { badge, fitsOn, macs } = picker;
+  const { badge, fitsOn, macs, afterStopping } = picker;
   const fitsAlone = badge.kind === 'fitsThisMac' || badge.kind === 'fitsPeer';
-  const text =
+  const fitText =
     fitsAlone && fitsOn.length >= 2 && fitsOn.length === macs
       ? intl.formatMessage(i18n.badgeEvery, { count: fitsOn.length })
       : fitsAlone && fitsOn.length > 0
@@ -584,6 +617,15 @@ export function PlacementBadge({ badge: picker }: { badge: PickerBadge }) {
               : badge.kind === 'tooBig'
                 ? intl.formatMessage(i18n.badgeTooBig, { gb: gb(badge.shortBytes) })
                 : intl.formatMessage(i18n.badgeUnknown);
+  // A fit that holds only once the model serving now stops says so — never "too big" (Q-120).
+  const text =
+    afterStopping.length > 0
+      ? intl.formatMessage(i18n.badgeOnceStops, {
+          badge: fitText,
+          models: intl.formatList(afterStopping.map(shortModel), { type: 'conjunction' }),
+          count: afterStopping.length,
+        })
+      : fitText;
   return (
     <Chip tone={badgeTone(badge)} title={badge.kind === 'unknown' ? badge.reason : undefined}>
       {text}
@@ -709,36 +751,104 @@ export function waysOf(
   return { ways, otherSplits: [] };
 }
 
-/** The engine a way IS right now, in the engine-phase palette; null = not this way. */
+/** The engine a way IS right now — whichever model it holds — in the engine-phase palette. */
+export function wayServing(
+  way: Way,
+  single: MlxEngineStatus | null,
+  distributed: MlxDistributedStatus | null
+): { phase: EnginePhase; state: string; modelId: string } | null {
+  if (way.kind === 'local') {
+    if (!single?.modelId) return null;
+    if (single.state !== 'mounting' && single.state !== 'running' && single.state !== 'failed') {
+      return null;
+    }
+    return {
+      phase: singlePhase(single.state, false, null),
+      state: single.state,
+      modelId: single.modelId,
+    };
+  }
+  if (way.kind === 'peer') {
+    const remote = latestMlxRemoteSingleStatus();
+    if (!way.peerNodeId || remote?.peer !== way.peerNodeId || !remote.modelId) return null;
+    if (remote.state === 'off') return null;
+    return {
+      phase: remotePhase(remote.state, null),
+      state: remote.state === 'ready' ? 'running' : remote.state,
+      modelId: remote.modelId,
+    };
+  }
+  if (!distributed?.modelId) return null;
+  if (!ownsTheMac(distributed) && distributed.state !== 'failed') return null;
+  return {
+    phase: runPhase(distributed.state, distributed.admissionOpen),
+    state: distributed.state,
+    modelId: distributed.modelId,
+  };
+}
+
+/** The engine a way IS right now for `modelId`; null = not this way, or another model. */
 export function wayLive(
   way: Way,
   modelId: string,
   single: MlxEngineStatus | null,
   distributed: MlxDistributedStatus | null
 ): { phase: EnginePhase; state: string } | null {
-  if (way.kind === 'local') {
-    if (single?.modelId !== modelId) return null;
-    if (single.state !== 'mounting' && single.state !== 'running' && single.state !== 'failed') {
-      return null;
-    }
-    return { phase: singlePhase(single.state, false, null), state: single.state };
-  }
-  if (way.kind === 'peer') {
-    const remote = latestMlxRemoteSingleStatus();
-    if (!way.peerNodeId || remote?.peer !== way.peerNodeId || remote.modelId !== modelId)
-      return null;
-    if (remote.state === 'off') return null;
-    return {
-      phase: remotePhase(remote.state, null),
-      state: remote.state === 'ready' ? 'running' : remote.state,
-    };
-  }
-  if (!distributed || distributed.modelId !== modelId) return null;
-  if (!ownsTheMac(distributed) && distributed.state !== 'failed') return null;
-  return {
-    phase: runPhase(distributed.state, distributed.admissionOpen),
-    state: distributed.state,
-  };
+  const serving = wayServing(way, single, distributed);
+  if (!serving || serving.modelId !== modelId) return null;
+  return { phase: serving.phase, state: serving.state };
+}
+
+/** A way serving chat now (not failed), whichever model — what Run stops before it starts. */
+export interface ServingWay {
+  way: Way;
+  modelId: string;
+}
+
+/**
+ * Every way serving now, found among the card's ways or — when the plan has no row for it (a Mac
+ * the plan could not measure) — built from what serves: Run is a SWITCH, so each of these stops
+ * first, whether it holds the picked model or another (Q-119: the 27B on the Studio while Flash is
+ * picked).
+ */
+export function servingWays(
+  ways: readonly Way[],
+  macs: readonly Mac[],
+  single: MlxEngineStatus | null,
+  distributed: MlxDistributedStatus | null
+): ServingWay[] {
+  const remote = latestMlxRemoteSingleStatus();
+  const candidates: Way[] = [
+    ways.find((w) => w.kind === 'local') ?? {
+      key: 'local',
+      kind: 'local',
+      candidate: null,
+      mac: null,
+      peerNodeId: null,
+    },
+    ...(remote?.peer
+      ? [
+          ways.find((w) => w.kind === 'peer' && w.peerNodeId === remote.peer) ?? {
+            key: `peer:${remote.peer}`,
+            kind: 'peer' as const,
+            candidate: null,
+            mac: macs.find((m) => m.nodeId === remote.peer) ?? null,
+            peerNodeId: remote.peer,
+          },
+        ]
+      : []),
+    ways.find((w) => w.kind === 'split') ?? {
+      key: 'split',
+      kind: 'split',
+      candidate: null,
+      mac: null,
+      peerNodeId: null,
+    },
+  ];
+  return candidates.flatMap((way) => {
+    const serving = wayServing(way, single, distributed);
+    return serving && serving.state !== 'failed' ? [{ way, modelId: serving.modelId }] : [];
+  });
 }
 
 function LiveChip({ live }: { live: { phase: EnginePhase; state: string } }) {
@@ -1030,30 +1140,33 @@ function PlacementCardBody({
    */
   const run = async (way: Way) => {
     setNotice(null);
-    const current = ways.find((w) => {
-      if (w.key === way.key) return false;
-      const live = wayLive(w, modelId, single, distributed);
-      return live != null && live.state !== 'failed';
-    });
-    if (!current && way.kind === 'local') {
+    // Whatever serves now stops first — the picked model on another way, or another model
+    // anywhere (Q-119: Run for Flash while the Studio served the 27B).
+    const current = serving;
+    if (current.length === 0 && way.kind === 'local') {
       onMountHere();
       return;
     }
     setBusy(`run:${way.key}`);
     try {
-      if (current) {
-        const model = modelId.split('/').pop() || modelId;
-        const where = title(current);
-        setNotice({ tone: 'accent', text: intl.formatMessage(i18n.switching, { model, where }) });
-        try {
-          await stopForSwitch(current, way);
-        } catch (e) {
-          const reason = mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed));
+      if (current.length > 0) {
+        for (const stopping of current) {
+          const model = shortModel(stopping.modelId);
+          const where = title(stopping.way);
           setNotice({
-            tone: 'err',
-            text: intl.formatMessage(i18n.switchStopFailed, { model, where, reason }),
+            tone: 'accent',
+            text: intl.formatMessage(i18n.switching, { model, where }),
           });
-          return;
+          try {
+            await stopForSwitch(stopping.way, way);
+          } catch (e) {
+            const reason = mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed));
+            setNotice({
+              tone: 'err',
+              text: intl.formatMessage(i18n.switchStopFailed, { model, where, reason }),
+            });
+            return;
+          }
         }
         if (way.kind === 'local') {
           onMountHere();
@@ -1188,6 +1301,33 @@ function PlacementCardBody({
 
   const { ways, otherSplits } = waysOf(plan, macs.macs, distributedCapability);
   const distributedOwns = ownsTheMac(distributed);
+  const serving = servingWays(ways, macs.macs, single, distributed);
+
+  /** Where a serving way runs, in the words the card's lines use. */
+  const servedWhere = (way: Way): string => {
+    if (way.kind === 'local') return intl.formatMessage(i18n.thisMac);
+    if (way.kind === 'peer') {
+      const remote = latestMlxRemoteSingleStatus();
+      return way.mac?.name ?? (remote ? routePeerName(remote) : '—');
+    }
+    const live = distributed?.nodes.map((n) => n.name).filter(Boolean) ?? [];
+    const names =
+      live.length > 0
+        ? live
+        : (distributed?.config?.nodes.map((n) => n.name).filter(Boolean) ?? []);
+    return names.length > 0
+      ? intl.formatList(names, { type: 'conjunction' })
+      : intl.formatMessage(i18n.yourMacs);
+  };
+
+  /** What pressing Run on `way` does first, in plain words — one line per engine it stops. */
+  const stopsFirstLines = (way: Way): string[] =>
+    serving.map((s) => {
+      const values = { model: shortModel(s.modelId), where: servedWhere(s.way) };
+      return way.candidate?.fit.afterStopping?.includes(s.modelId)
+        ? intl.formatMessage(i18n.fitsOnceStops, values)
+        : intl.formatMessage(i18n.stopsFirst, values);
+    });
 
   const title = (way: Way): string => {
     if (way.kind === 'local') return intl.formatMessage(i18n.runHere);
@@ -1285,6 +1425,16 @@ function PlacementCardBody({
             {why}
           </p>
         )}
+        {startable &&
+          stopsFirstLines(way).map((line) => (
+            <p
+              key={line}
+              data-testid={`placement-stops-first-${way.kind}`}
+              className={cx('break-words', TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}
+            >
+              {line}
+            </p>
+          ))}
         {way.kind === 'split' &&
           running &&
           distributed?.contextLimit != null &&

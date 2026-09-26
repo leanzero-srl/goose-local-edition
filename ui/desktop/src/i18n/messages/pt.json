@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Salvar configuração"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "Configuração salva para {model} — Executar replaneja para o modelo escolhido"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {# sequência no lote} other {# sequências no lote}}"
   },
@@ -5168,6 +5171,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {Cabe nos dois Macs} other {Cabe em todos os # Macs}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · cabe quando {models} {count, plural, one {parar} other {pararem}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Cabe em {name}"
   },
@@ -5218,6 +5224,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Encaixe desconhecido"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "Cabe quando {model} parar — Executar o para primeiro ({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Chat"
@@ -5378,6 +5387,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "Parar a divisão?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "Executar para {model} primeiro ({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Linhas ilegíveis no armazenamento de medições"
   },
@@ -5389,6 +5401,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "divisão de tensores · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "este Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "Tão rápido dentro da margem de erro (~{mine} contra ~{best} tok/s), mas precisa de mais Macs"
@@ -5407,6 +5422,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/s escrevendo"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "seus Macs"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Tipos de erro (ex.: \"rate_limit\", \"auth\" - sem detalhes)"

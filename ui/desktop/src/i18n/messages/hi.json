@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "कॉन्फ़िगरेशन सहेजें"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "{model} के लिए सहेजा गया सेटअप — चलाएँ चुने गए मॉडल के लिए फिर से योजना बनाता है"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {बैच में # अनुक्रम} other {बैच में # अनुक्रम}}"
   },
@@ -5168,6 +5171,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {दोनों Mac पर फ़िट} other {सभी # Mac पर फ़िट}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · {models} के रुकने पर फ़िट होता है{count, plural, other {}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "{name} में समाता है"
   },
@@ -5218,6 +5224,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "समाएगा या नहीं, अज्ञात"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "{model} के रुकने पर फ़िट होता है — चलाएँ पहले उसे रोकता है ({where})।"
   },
   "placementCard.goalChat": {
     "defaultMessage": "चैट"
@@ -5378,6 +5387,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "विभाजन रोकें?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "चलाएँ पहले {model} को रोकता है ({where})।"
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "माप भंडार में न पढ़ी जा सकने वाली पंक्तियाँ"
   },
@@ -5389,6 +5401,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "टेंसर विभाजन · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "यह Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "त्रुटि की सीमा में उतना ही तेज़ (~{mine} बनाम ~{best} tok/s), पर ज़्यादा Mac चाहिए"
@@ -5407,6 +5422,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "लिखना ~{value} tok/s"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "आपके Mac"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "त्रुटि प्रकार (उदाहरण के लिए, \"रेट_लिमिट\", \"ऑथ\" - कोई विवरण नहीं)"

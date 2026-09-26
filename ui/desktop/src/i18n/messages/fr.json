@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Enregistrer la configuration"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "Configuration enregistrée pour {model} — Exécuter replanifie pour le modèle choisi"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {# séquence dans le lot} other {# séquences dans le lot}}"
   },
@@ -5168,6 +5171,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {Tient sur les deux Mac} other {Tient sur les # Mac}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · tient une fois {models} {count, plural, one {arrêté} other {arrêtés}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Tient sur {name}"
   },
@@ -5218,6 +5224,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Encombrement inconnu"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "Tient une fois {model} arrêté — Exécuter l’arrête d’abord ({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Chat"
@@ -5378,6 +5387,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "Arrêter la répartition ?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "Exécuter arrête d’abord {model} ({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Lignes illisibles dans le stockage des mesures"
   },
@@ -5389,6 +5401,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "répartition des tenseurs · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "ce Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "Aussi rapide à l’erreur près (~{mine} contre ~{best} tok/s), mais demande plus de Mac"
@@ -5407,6 +5422,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/s en écriture"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "vos Mac"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Types d'erreurs (par ex. « rate_limit », « auth » - sans détails)"
