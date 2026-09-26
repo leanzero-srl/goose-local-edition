@@ -449,3 +449,16 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   IOGPUDeviceUserClient accumulatedGPUTime) — CPU time missed a stuck rank 0 that still answered our own polls (4 min
   19 s, no event). Any single rank stalled > ~5 s (e.g. `vmmap` on it) reaches the same deadlock or a GPU-Timeout death.
   Detail, tools (sample, the __cxa_throw logger) and traps: skill mlx-jaccl-cluster, section "Q-114 ROOT CAUSE".
+- 2026-09-26 Q-143 (fork 09f645526, tag lz-pipeline-qwen4.6; goose 5dbafb733): THE PIPELINE LINE OF THE FORK BRANCHED
+  AT lz.2 (42d207cfc). Every single-engine fix in `rapid_mlx/engine/batched.py` / `api/models.py` after lz.2 reaches
+  `pipeline_qwen4 serve` (which imports them) ONLY if cherry-picked — check before any pipeline pin bump:
+  `git -C ~/Projects/Rapid-MLX diff lz-pipeline-qwen4.<N> v0.14.3-lz.<M> --stat -- rapid_mlx/engine/batched.py rapid_mlx/api/models.py`.
+  Q-143 was exactly that: lz.6's `_on_tool` (8a15af575) was missing, /v1/models listed only the tail, goose posted the
+  turn-context block as its own user turn on Flash. MEASURED: that own-turn shape still reused 93.8–98.7% on the
+  pipeline (the stable-message rule drops a user turn that is only the block) — the defect was the SHAPE (Q-94), not
+  the cache. Offline method with no ranks: TestClient over the fork's `_build_app` + a real `_PrefixIndex` + a thread
+  that admits/stores/pushes ("done", …), fed logged llm_request inputs re-shaped the way formats/openai.rs
+  would for that tree's /v1/models, with the served model's own tokenizer — the fork test
+  `tests/test_pipeline_qwen4_serve_transient_tail.py` is the template. TRAP: a digit word-level test vocab ("w10") is split by
+  transformers 5's fast wrapper into "w1"+"0" — use letters-only words. Pipeline fork tags so far: .1 prefix cache,
+  .2 cache budget, .3 aliases, .4 refused_tool_calls, .5 continuous admission, .6 tail on tool.
