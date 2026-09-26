@@ -432,6 +432,16 @@ mod tests {
         );
         assert_eq!(declared_before.len(), tools.len(), "every tool is declared");
 
+        let mut plain_turn = after.clone();
+        plain_turn.push(Message::assistant().with_text("Searching now."));
+        plain_turn.push(Message::user().with_text("Also check JCMA support for 9.12."));
+        let (declared_later, prompt_later) = disclose(&tools, system, &deferrable);
+        let rendered_later = render_like_the_template(&declared_later, &prompt_later, &plain_turn);
+        assert!(
+            rendered_later.starts_with(&rendered_after),
+            "a plain turn after the load extends the prompt too"
+        );
+
         let (core, _) = split(&tools, &deferrable);
         let mut grown = core.clone();
         grown.extend(found.iter().map(|t| (*t).clone()));
