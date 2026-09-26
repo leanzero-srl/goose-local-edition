@@ -11,6 +11,7 @@ use super::*;
 use crate::config::ConfigError;
 use goose_sidecar::distributed::compaction::NodeCompaction;
 use goose_sidecar::distributed::provision::{self, EnvSpec};
+use goose_sidecar::distributed::runner_update;
 use goose_sidecar::distributed::{
     self, supervisor::Liveness, Backend, CheckVerdict, DistributedConfig, DistributedStatus,
     NodeConfig, PreflightReport, RankPlan, StartOutcome, StopReport,
@@ -25,7 +26,6 @@ use super::mlx_distributed_discover as discover;
 use super::mlx_distributed_link as link;
 use crate::providers::mlx_distributed_owner::{self as owner_record, OwnerRecord, PublishedEngine};
 use crate::providers::mlx_serving_intent::{IntentKind, ServingIntent};
-use goose_sidecar::distributed::link_control;
 
 const MLX_DISTRIBUTED_CONFIG_KEY: &str = "mlx_distributed";
 
@@ -133,8 +133,40 @@ fn checks_to_dto(checks: Vec<distributed::Check>) -> Vec<MlxDistributedCheckDto>
             }
             .to_string(),
             message: c.message,
+            detail: c.detail,
+            env: c.env.map(|e| MlxDistributedRunnerEnvDto {
+                env: e.env,
+                field: e.field,
+                python: e.python,
+                target: e.target,
+                managed: e.managed,
+            }),
         })
         .collect()
+}
+
+fn runner_update_to_dto(update: distributed::RunnerUpdate) -> MlxDistributedProvisionDto {
+    MlxDistributedProvisionDto {
+        state: update.state,
+        started_ms: update.started_ms,
+        finished_ms: update.finished_ms,
+        nodes: update
+            .rows
+            .into_iter()
+            .map(|row| MlxDistributedProvisionNodeDto {
+                rank: row.rank as u32,
+                name: row.node,
+                host: row.host,
+                python: row.python,
+                state: row.state,
+                step: row.step,
+                detail: row.detail,
+                lines: row.lines,
+                started_ms: row.started_ms,
+                finished_ms: row.finished_ms,
+            })
+            .collect(),
+    }
 }
 
 fn plan_to_dto(plan: RankPlan) -> MlxDistributedRankPlanDto {
@@ -316,6 +348,7 @@ fn status_to_dto(
         last_error: status.last_error,
         config: status.config.or(persisted).map(config_to_dto),
         provision: None,
+        runner_update: status.runner_update.map(runner_update_to_dto),
         owner: None,
         hosting: None,
         allow_distributed_node: false,
@@ -578,7 +611,7 @@ fn update_provision(index: usize, f: impl FnOnce(&mut MlxDistributedProvisionNod
 }
 
 async fn run_provision_job(index: usize, host: Option<String>, spec: EnvSpec) {
-    let on_line = |line: &str| {
+    let mut on_line = |line: &str| {
         let progress = provision::parse_progress(line);
         update_provision(index, |row| {
             row.lines.push(line.to_string());
@@ -588,35 +621,16 @@ async fn run_provision_job(index: usize, host: Option<String>, spec: EnvSpec) {
             }
         });
     };
-    // A LeanZero Link node builds the env itself from its own pins; ssh and this Mac run the script.
-    let result = match link_control::link_peer(host.as_deref()) {
-        Some(peer) => link_control::provision(peer, &spec, on_line).await,
-        None => {
-            let script = provision::provision_script(&spec);
-            provision::run_streaming(host.as_deref(), &script, on_line).await
-        }
-    };
+    let result = provision::provision_on(host.as_deref(), &spec, &mut on_line).await;
     update_provision(index, |row| {
-        let finished = goose_sidecar::distributed::preflight::now_ms();
-        row.finished_ms = Some(finished);
-        match (&result, row.step.as_deref()) {
-            (Ok(Some(0)), Some("done")) => row.state = "done".to_string(),
-            (Ok(code), _) => {
+        row.finished_ms = Some(goose_sidecar::distributed::preflight::now_ms());
+        match runner_update::provision_verdict(&result, row.step.as_deref()) {
+            Ok(()) => row.state = "done".to_string(),
+            Err(why) => {
                 row.state = "failed".to_string();
-                if row.step.as_deref() != Some("fail") {
-                    row.detail = format!(
-                        "the provisioning script exited {code:?} without finishing{}",
-                        if code == &Some(255) {
-                            " (ssh failed)"
-                        } else {
-                            ""
-                        }
-                    );
+                if row.step.as_deref() != Some("fail") || result.is_err() {
+                    row.detail = why;
                 }
-            }
-            (Err(e), _) => {
-                row.state = "failed".to_string();
-                row.detail = format!("{e:#}");
             }
         }
     });
@@ -696,11 +710,32 @@ impl GooseAcpAgent {
                 preflight: None,
             });
         }
+        // A start may rebuild goose-managed runner envs itself (Q-116); two builds of one env at
+        // once would race inside the same venv.
+        if PROVISION
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|p| p.state == "running")
+        {
+            return Ok(MlxEngineDistributedStartResponse {
+                started: false,
+                refusal: Some(MlxDistributedRefusalDto {
+                    code: "provisioning".to_string(),
+                    message: "goose is still building the split's Python on your Macs — start it \
+                              when that finishes"
+                        .to_string(),
+                    ..Default::default()
+                }),
+                preflight: None,
+            });
+        }
         let given = req.config.is_some();
         let config = resolve_config(req.config)?;
         if given {
             persist_config(&config)?;
         }
+        let asked = config.clone();
 
         // One naming rule for both engines: the swarm node that names this Mac's MLX engine
         // (`mihai-mlx` → `mihai-qwen3.8-…`) must find the SAME id whichever engine owns the Mac —
@@ -718,10 +753,17 @@ impl GooseAcpAgent {
             backend: config.backend.as_str().to_string(),
             node_names: config.nodes.iter().map(|n| n.name.clone()).collect(),
         };
-        let outcome = owned_manager()?
-            .start(config, served)
-            .await
-            .invalid_params_err()?;
+        let manager = owned_manager()?;
+        let outcome = manager.start(config, served).await.invalid_params_err()?;
+        // A rebuilt runner an earlier goose had named elsewhere is pointed at its new path: the
+        // saved setup follows, so the next start does not find the old directory again.
+        if let Some(ran) = manager
+            .status()
+            .config
+            .filter(|ran| runner_update::only_repointed(&asked, ran))
+        {
+            persist_config(&ran)?;
+        }
         if matches!(outcome, StartOutcome::Started { .. }) {
             // Every other goosed on this Mac (another window) finds the run through this record.
             if let Err(e) = owner_record::publish(&published) {
@@ -923,6 +965,16 @@ impl GooseAcpAgent {
     ) -> Result<MlxEngineDistributedProvisionResponse, agent_client_protocol::Error> {
         link::ensure_link_transport();
         let config = resolve_config(req.config)?;
+        if distributed::global_manager()
+            .status()
+            .runner_update
+            .is_some_and(|u| u.state == "running")
+        {
+            return Err(agent_client_protocol::Error::invalid_params().data(
+                "a start is updating the split's runner on your Macs; its progress is on \
+                 distributedStatus.runnerUpdate",
+            ));
+        }
         let jobs = provision_jobs(&config);
         let snapshot = {
             let mut guard = PROVISION.lock().unwrap();

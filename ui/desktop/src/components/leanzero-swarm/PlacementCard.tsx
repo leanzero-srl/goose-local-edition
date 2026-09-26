@@ -38,6 +38,7 @@ import {
   mlxDistributedStart,
   mlxDistributedStatus,
   mlxDistributedStop,
+  type MlxDistributedProvision,
   type MlxDistributedStatus,
 } from '../../acp/mlx-distributed';
 import {
@@ -50,6 +51,7 @@ import { mlxErrorMessage } from './mlxErrorMessage';
 import {
   cleanConfig,
   ownsTheMac,
+  runnerUpdateMacs,
   splitContextFromFreeMemory,
   splitConfigFor,
   splitPlan,
@@ -284,9 +286,77 @@ const i18n = defineMessages({
       'Every part on {nodes} is stopped and verified gone. Requests in flight are cut off.',
   },
   keepRunning: { id: 'placementCard.keepRunning', defaultMessage: 'Keep running' },
+  runnerUpdating: {
+    id: 'placementCard.runnerUpdating',
+    defaultMessage: 'Updating the split’s runner on {nodes}…',
+  },
+  runnerStep: {
+    id: 'placementCard.runnerStep',
+    defaultMessage:
+      '{step, select, check {checking} uv {finding uv} venv {making the env} install {installing} done {done} fail {failed} other {starting}}',
+  },
+  noticeDetails: { id: 'placementCard.noticeDetails', defaultMessage: 'Details' },
 });
 
 type NoticeTone = Exclude<Tone, 'secondary'>;
+
+/** Why a start did not happen: the words the card shows, and what stands behind them for Details. */
+interface StartRefusal {
+  text: string;
+  detail?: string | null;
+}
+
+const said = (text: string): StartRefusal => ({ text });
+
+/** A start's answer as the card shows it: `null` once it started, else its refusal and Details. */
+function startRefusal(
+  response: { started: boolean; refusal?: { message: string; detail?: string | null } | null },
+  refused: string
+): StartRefusal | null {
+  if (response.started) return null;
+  return { text: response.refusal?.message ?? refused, detail: response.refusal?.detail };
+}
+
+/**
+ * A start rebuilding goose's split runner on older-pin Macs (Q-116): which Macs, then each one's
+ * step and latest line as its node reports them.
+ */
+function RunnerUpdateNotice({ update }: { update: MlxDistributedProvision }) {
+  const intl = useIntl();
+  const nodes = intl.formatList(runnerUpdateMacs(update), { type: 'conjunction' });
+  return (
+    <div data-testid="placement-runner-update" className="flex flex-col gap-1.5">
+      <ToneBanner
+        tone="accent"
+        live
+        label={intl.formatMessage(i18n.title)}
+        text={intl.formatMessage(i18n.runnerUpdating, { nodes })}
+      />
+      <ul className="flex flex-col gap-1">
+        {update.nodes.map((n) => {
+          const last = n.lines.length > 0 ? n.lines[n.lines.length - 1] : null;
+          return (
+            <li
+              key={`${n.rank}|${n.python}`}
+              data-testid="placement-runner-node"
+              data-state={n.state}
+              className="flex min-w-0 items-center gap-2"
+            >
+              <Chip
+                tone={n.state === 'failed' ? 'err' : n.state === 'done' ? 'ok' : 'accent'}
+                icon={n.state === 'running' ? <Loader2 className="animate-spin" /> : undefined}
+              >
+                {intl.formatMessage(i18n.runnerStep, { step: n.step ?? 'start' })}
+              </Chip>
+              <span className={cx('shrink-0', TYPE.body, WEIGHT.semibold)}>{n.name}</span>
+              {last && <span className={cx('min-w-0 truncate', TYPE.meta)}>{last}</span>}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
 
 /** Details under the split: folded until the person opens it, and remembered for the session. */
 const SPLIT_DETAILS_KEY = 'placement-split-details-open';
@@ -727,9 +797,13 @@ function PlacementCardBody({
   const [busy, setBusy] = useState<string | null>(null);
   // `follows`: the way a "Starting — this card follows it." notice speaks for; it ends when that way
   // serves or fails (it stayed 25 min after a switch — Q-36).
-  const [notice, setNotice] = useState<{ tone: NoticeTone; text: string; follows?: string } | null>(
-    null
-  );
+  // `detail`: what stands behind a refusal (a node's output, pids) — under Details, never inline.
+  const [notice, setNotice] = useState<{
+    tone: NoticeTone;
+    text: string;
+    follows?: string;
+    detail?: string | null;
+  } | null>(null);
   const [othersOpen, setOthersOpen] = useState(false);
   const [detailsOpen, setDetailsOpenState] = useState(splitDetailsOpenAtFirst);
   const setDetailsOpen = useCallback((open: boolean) => {
@@ -820,6 +894,12 @@ function PlacementCardBody({
 
   const refused = intl.formatMessage(i18n.refusedUnnamed);
   const savedSplit = distributed?.config ?? null;
+  // A start rebuilding the split's runner (Q-116) speaks for itself while it runs: the Macs, and
+  // each one's step as its node reports it.
+  const runnerUpdate =
+    busy?.startsWith('run:') && distributed?.runnerUpdate?.state === 'running'
+      ? distributed.runnerUpdate
+      : null;
 
   /**
    * The split for a model the saved setup does not carry (or with nothing saved): goose detects
@@ -828,17 +908,17 @@ function PlacementCardBody({
    * genuinely missing piece stops it, named by Mac.
    */
   const startSplitFor = useCallback(
-    async (way: Way): Promise<string | null> => {
+    async (way: Way): Promise<StartRefusal | null> => {
       // The plan's Macs for this split; with no plan, the Macs the saved setup spans.
       const peers = way.candidate
         ? way.candidate.key.nodes.filter((node) => node !== 'local')
         : (savedSplit?.nodes ?? []).flatMap((node) => (node.ssh ? [node.ssh] : []));
-      if (peers.length === 0) return intl.formatMessage(i18n.splitNoPeers);
+      if (peers.length === 0) return said(intl.formatMessage(i18n.splitNoPeers));
       const targets = peers
         .map((id) => macForPlacementNode(macs.macs, id))
         .filter((m): m is Mac => m != null);
       const off = targets.find((mac) => peerRefuses(mac, 'split'));
-      if (off) return macs.offText(off, 'split');
+      if (off) return said(macs.offText(off, 'split'));
       const names = intl.formatList(
         way.candidate?.nodeNames ?? savedSplit?.nodes.map((n) => n.name) ?? [],
         { type: 'conjunction' }
@@ -855,7 +935,7 @@ function PlacementCardBody({
         if (plan.blocker.kind === 'modelMissing') {
           for (const mac of targets) void macs.refreshModels(mac.key);
         }
-        return splitBlockerText(intl, plan.blocker, modelId);
+        return said(splitBlockerText(intl, plan.blocker, modelId));
       }
       if (plan.provision.length > 0) {
         say(
@@ -873,30 +953,31 @@ function PlacementCardBody({
         }
         const failed = provision.nodes.find((n) => n.state === 'failed');
         if (provision.state === 'failed' || failed) {
-          return intl.formatMessage(i18n.splitBuildFailed, {
-            node: failed?.name ?? names,
-            reason: failed?.detail || failed?.lines[failed.lines.length - 1] || refused,
-          });
+          return said(
+            intl.formatMessage(i18n.splitBuildFailed, {
+              node: failed?.name ?? names,
+              reason: failed?.detail || failed?.lines[failed.lines.length - 1] || refused,
+            })
+          );
         }
       }
       say(intl.formatMessage(i18n.splitStarting, { nodes: names, model }));
-      const response = await mlxDistributedStart(config);
-      return response.started ? null : (response.refusal?.message ?? refused);
+      return startRefusal(await mlxDistributedStart(config), refused);
     },
     [intl, macs, modelId, refused, savedSplit]
   );
 
-  /** Start one way; the refusal/failure text, or null when it started. */
+  /** Start one way; the refusal/failure, or null when it started. */
   const startWay = useCallback(
-    async (way: Way): Promise<string | null> => {
+    async (way: Way): Promise<StartRefusal | null> => {
       if (way.kind === 'local') {
         onMountHere();
         return null;
       }
       if (way.kind === 'peer') {
-        if (!way.peerNodeId) return refused;
+        if (!way.peerNodeId) return said(refused);
         const response = await mlxRemoteSingleStart(way.peerNodeId, modelId);
-        return response.started ? null : (response.refusal?.message ?? refused);
+        return response.started ? null : said(response.refusal?.message ?? refused);
       }
       const action = way.candidate?.action;
       const setUpForThisModel =
@@ -904,8 +985,7 @@ function PlacementCardBody({
           ? action.setupMatches
           : savedSplit != null && savedSplit.modelId === modelId;
       if (!setUpForThisModel) return startSplitFor(way);
-      const response = await mlxDistributedStart(null);
-      return response.started ? null : (response.refusal?.message ?? refused);
+      return startRefusal(await mlxDistributedStart(null), refused);
     },
     [modelId, onMountHere, refused, savedSplit, startSplitFor]
   );
@@ -985,7 +1065,11 @@ function PlacementCardBody({
       setNotice(
         refusal == null
           ? { tone: 'accent', text: intl.formatMessage(i18n.started), follows: way.key }
-          : { tone: 'err', text: way.mac ? macs.describeError(way.mac, refusal) : refusal }
+          : {
+              tone: 'err',
+              text: way.mac ? macs.describeError(way.mac, refusal.text) : refusal.text,
+              detail: refusal.detail,
+            }
       );
     } catch (e) {
       const text = mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed));
@@ -1082,7 +1166,11 @@ function PlacementCardBody({
           setNotice(
             refusal == null
               ? { tone: 'accent', text: intl.formatMessage(i18n.started), follows: way.key }
-              : { tone: 'err', text: macs.describeError(to, refusal) }
+              : {
+                  tone: 'err',
+                  text: macs.describeError(to, refusal.text),
+                  detail: refusal.detail,
+                }
           )
         )
         .catch((e: unknown) =>
@@ -1377,8 +1465,27 @@ function PlacementCardBody({
         <ToneBanner tone="err" label={intl.formatMessage(i18n.planFailed)} text={plan.error} />
       )}
       {(error || plan?.error) && <p className={TYPE.meta}>{intl.formatMessage(i18n.noPlanWays)}</p>}
-      {notice && (
-        <ToneBanner tone={notice.tone} label={intl.formatMessage(i18n.title)} text={notice.text} />
+      {runnerUpdate ? (
+        <RunnerUpdateNotice update={runnerUpdate} />
+      ) : (
+        notice && (
+          <>
+            <ToneBanner
+              tone={notice.tone}
+              label={intl.formatMessage(i18n.title)}
+              text={notice.text}
+            />
+            {notice.detail && (
+              <Disclosure
+                variant="plain"
+                title={intl.formatMessage(i18n.noticeDetails)}
+                testId="placement-notice-detail"
+              >
+                <p className={cx('whitespace-pre-wrap break-all', TYPE.mono)}>{notice.detail}</p>
+              </Disclosure>
+            )}
+          </>
+        )
       )}
       {storeErrors.length > 0 && (
         <ToneBanner

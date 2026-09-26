@@ -3002,6 +3002,12 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "Annulla"
   },
+  "mlxDistributed.check.details": {
+    "defaultMessage": "Dettagli"
+  },
+  "mlxDistributed.check.useGooseRunner": {
+    "defaultMessage": "Usa il runner di goose"
+  },
   "mlxDistributed.checksPassed": {
     "defaultMessage": "{count,plural,one{# controllo superato} other{# controlli superati}}"
   },
@@ -3040,6 +3046,9 @@
   },
   "mlxDistributed.error.unmount": {
     "defaultMessage": "Errore di smontaggio"
+  },
+  "mlxDistributed.error.useGooseRunner": {
+    "defaultMessage": "Impossibile affidare questo runner a goose"
   },
   "mlxDistributed.event.admissionClosed": {
     "defaultMessage": "Ammissione chiusa"
@@ -3085,6 +3094,15 @@
   },
   "mlxDistributed.event.restart": {
     "defaultMessage": "Riavvio"
+  },
+  "mlxDistributed.event.runnerUpdateFailed": {
+    "defaultMessage": "Aggiornamento del runner non riuscito"
+  },
+  "mlxDistributed.event.runnerUpdated": {
+    "defaultMessage": "Runner aggiornato"
+  },
+  "mlxDistributed.event.runnerUpdating": {
+    "defaultMessage": "Aggiornamento del runner"
   },
   "mlxDistributed.event.startFailed": {
     "defaultMessage": "Avvio non riuscito"
@@ -3427,6 +3445,9 @@
   },
   "mlxDistributed.room.shortByNoApps": {
     "defaultMessage": "Mancano {gib} GiB — fai spazio o chiudi app"
+  },
+  "mlxDistributed.runnerUpdate.title": {
+    "defaultMessage": "Aggiornamento del runner dello split"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Salva configurazione"
@@ -5246,6 +5267,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Senza un piano non c’è una stima di velocità — ogni via si può comunque avviare."
   },
+  "placementCard.noticeDetails": {
+    "defaultMessage": "Dettagli"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# altra suddivisione} other{# altre suddivisioni}}"
   },
@@ -5290,6 +5314,12 @@
   },
   "placementCard.runOn": {
     "defaultMessage": "Esegui su {name}"
+  },
+  "placementCard.runnerStep": {
+    "defaultMessage": "{step, select, check {verifica} uv {ricerca di uv} venv {creazione dell’ambiente} install {installazione} done {fatto} fail {non riuscito} other {avvio}}"
+  },
+  "placementCard.runnerUpdating": {
+    "defaultMessage": "Aggiornamento del runner dello split su {nodes}…"
   },
   "placementCard.short": {
     "defaultMessage": "Non entra: mancano {gb} su {node}"

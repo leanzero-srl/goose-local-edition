@@ -2779,6 +2779,7 @@ export const zMlxMountFitDto = z.object({
     availableBytes: z.number().int().gte(0),
     totalBytes: z.number().int().gte(0),
     ceilingBytes: z.number().int().gte(0),
+    otherEnginesBytes: z.number().int().gte(0).optional().default(0),
     marginBytes: z.number().int().gte(0),
     marginRatio: z.number(),
     shortBytes: z.union([
@@ -2855,6 +2856,24 @@ export const zMlxServingIntentDto = z.object({
         z.null()
     ]).optional(),
     peerName: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Who holds this Mac's load lock (goose-sidecar `machine::LoadHolder`).
+ */
+export const zMlxMachineLoadDto = z.object({
+    pid: z.number().int().gte(0),
+    startedAt: z.number().int().gte(0),
+    since: z.number().int().gte(0),
+    what: z.string(),
+    port: z.union([
+        z.number().int().gte(0).lte(65535),
+        z.null()
+    ]).optional(),
+    group: z.union([
         z.string(),
         z.null()
     ]).optional()
@@ -2977,6 +2996,14 @@ export const zMlxEngineStatusDto = z.object({
     servingIntentError: z.union([
         z.string(),
         z.null()
+    ]).optional(),
+    machineLoad: z.union([
+        zMlxMachineLoadDto,
+        z.null()
+    ]).optional(),
+    machineLoadError: z.union([
+        z.string(),
+        z.null()
     ]).optional()
 });
 
@@ -2988,7 +3015,10 @@ export const zMlxEngineStatusResponse_unstable = z.object({
  * Mount a local model into the MLX engine. Returns once mounting has started; poll status for
  * running/failed. A memory-gate refusal is NOT an error: it is `refusal` (and status's
  * `gateVerdict: "block"` / `gateMessage` carry the same verdict) — one failure, one carrier of
- * its text. Every other failure (unknown or incomplete model, a foreign listener) is an error.
+ * its text. Every other failure (unknown or incomplete model, a foreign listener) is an error —
+ * including another load holding this Mac (one model loads at a time per Mac, Q-106): the error
+ * names the holder and says to wait (`mlxEngine/mountAfterLoad`) or stop it, and status's
+ * `machineLoad` carries the holder.
  */
 export const zMlxEngineMountRequest_unstable = z.object({
     modelId: z.string(),
@@ -3194,6 +3224,22 @@ export const zMlxPlacementBadgeDto = z.union([
 ]);
 
 /**
+ * Another MLX engine on this Mac (goose-sidecar `machine::OtherEngine`): its real footprint, and
+ * the identity `mlxEngine/stopOtherEngine` needs.
+ */
+export const zMlxOtherEngineDto = z.object({
+    pid: z.number().int().gte(0),
+    startedAt: z.number().int().gte(0),
+    kind: z.string(),
+    command: z.string(),
+    port: z.union([
+        z.number().int().gte(0).lte(65535),
+        z.null()
+    ]).optional(),
+    residentBytes: z.number().int().gte(0)
+});
+
+/**
  * The mount gate's refusal: the fit rule's verdict and, when the model fits somewhere else, the
  * placement that would work (the planner's own candidate — `action` says how to start it:
  * `startSplit` → "Start across both Macs", `remoteSingle`, or `unavailable` with the step first).
@@ -3211,7 +3257,8 @@ export const zMlxMountRefusalDto = z.object({
     alternativeError: z.union([
         z.string(),
         z.null()
-    ]).optional()
+    ]).optional(),
+    otherEngines: z.array(zMlxOtherEngineDto).optional()
 });
 
 export const zMlxEngineMountResponse_unstable = z.object({
@@ -3219,6 +3266,36 @@ export const zMlxEngineMountResponse_unstable = z.object({
         zMlxMountRefusalDto,
         z.null()
     ]).optional()
+});
+
+/**
+ * `mlxEngine/mount`, except that another load holding this Mac is WAITED for instead of refused:
+ * the call returns at once, status reads `mounting` with load phase `waitingForLoad` (and
+ * `machineLoad` naming the holder), and the mount — its gate judged on the memory the finished
+ * load left — starts when the holder lets go (a refusal then lands as status `failed` with
+ * `gateVerdict`/`gateMessage`). Unmount or another Mount ends the wait. A lock held by a process
+ * that is not its recorded holder is refused, never waited for. Local only (no `nodeId`).
+ */
+export const zMlxEngineMountAfterLoadRequest_unstable = z.object({
+    modelId: z.string()
+});
+
+/**
+ * Stop ANOTHER MLX engine on this Mac (not this goose's own — Unmount stops that), per-pid:
+ * SIGTERM, a grace window, then SIGKILL. Only the exact process the owner was shown is signalled
+ * — it must still be an MLX engine and still have started at `startedAt`; anything else is an
+ * error and nothing is signalled. Local only (no `nodeId`).
+ */
+export const zMlxEngineStopOtherEngineRequest_unstable = z.object({
+    pid: z.number().int().gte(0),
+    startedAt: z.number().int().gte(0)
+});
+
+export const zMlxEngineStopOtherEngineResponse_unstable = z.object({
+    pid: z.number().int().gte(0),
+    signal: z.string(),
+    residentBytes: z.number().int().gte(0),
+    message: z.string()
 });
 
 /**
@@ -3888,14 +3965,42 @@ export const zMlxDistributedNodeStatusDto = z.object({
 });
 
 /**
+ * A split runner's interpreter that fails the pin goose ships. `managed`: under the node's
+ * `~/.goose/distributed` — a FAIL goose rebuilds when Run is pressed (the start rebuilds it and
+ * preflights again when nothing else blocks). Not managed: the operator's own interpreter, a
+ * WARN goose never rebuilds; setting `field` to `target` on that node ("use goose's runner")
+ * hands it to goose.
+ */
+export const zMlxDistributedRunnerEnvDto = z.object({
+    env: z.string(),
+    field: z.string(),
+    python: z.string(),
+    target: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    managed: z.boolean()
+});
+
+/**
  * One preflight check. `verdict`: "pass" | "warn" | "fail". `id`: "reachable" |
  * "foreignEngines" | "memory" | "model" | "modelManifest" | "python" | "tbIpv4" | "ping" |
- * "rdmaGid" | "linkRepair" | "portRange" | "ports" | "runner" | "plan". `message` carries the numbers.
+ * "rdmaGid" | "linkRepair" | "portRange" | "ports" | "runner" | "runnerEnv" | "plan". `message`
+ * carries the numbers — except `runnerEnv`, which reads plainly and keeps paths, versions and
+ * commits in `detail`.
  */
 export const zMlxDistributedCheckDto = z.object({
     id: z.string(),
     verdict: z.string(),
-    message: z.string()
+    message: z.string(),
+    detail: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    env: z.union([
+        zMlxDistributedRunnerEnvDto,
+        z.null()
+    ]).optional()
 });
 
 /**
@@ -4281,6 +4386,10 @@ export const zMlxDistributedStatusDto = z.object({
         zMlxDistributedProvisionDto,
         z.null()
     ]).optional(),
+    runnerUpdate: z.union([
+        zMlxDistributedProvisionDto,
+        z.null()
+    ]).optional(),
     owner: z.union([
         zMlxDistributedOwnerDto,
         z.null()
@@ -4334,7 +4443,9 @@ export const zMlxEngineDistributedStartRequest_unstable = z.object({
  * "previousSplitShuttingDown" (this install's previous split still runs on `node` under a live
  * parent; nothing was signalled — a start once its pids are gone goes through) | "foreignSplit"
  * (a distributed MLX process this install did not launch runs on `node`; stop it first) |
- * "hostingRank" | "ownedByAnotherWindow".
+ * "modelLoading" | "runnerUpdateFailed" (the start rebuilt a stale goose-managed runner env and
+ * that failed on `node`; `detail` carries the node's output) | "provisioning" (a "Save and
+ * provision" build is still running) | "hostingRank" | "ownedByAnotherWindow".
  */
 export const zMlxDistributedRefusalDto = z.object({
     code: z.string(),
@@ -5739,6 +5850,8 @@ export const zExtRequest = z.object({
             zLocalInferenceBuiltinChatTemplatesListRequest_unstable,
             zMlxEngineStatusRequest_unstable,
             zMlxEngineMountRequest_unstable,
+            zMlxEngineMountAfterLoadRequest_unstable,
+            zMlxEngineStopOtherEngineRequest_unstable,
             zMlxEngineUnmountRequest_unstable,
             zMlxEngineSettingsReadRequest_unstable,
             zMlxEngineSettingsUpdateRequest_unstable,
@@ -5877,6 +5990,7 @@ export const zExtResponse = z.union([
                 zLocalInferenceBuiltinChatTemplatesListResponse_unstable,
                 zMlxEngineStatusResponse_unstable,
                 zMlxEngineMountResponse_unstable,
+                zMlxEngineStopOtherEngineResponse_unstable,
                 zMlxEngineSettingsResponse_unstable,
                 zMlxEngineModelsListResponse_unstable,
                 zMlxEngineHfSearchResponse_unstable,

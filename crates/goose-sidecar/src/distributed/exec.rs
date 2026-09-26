@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 
 use super::node_op::NodeOp;
+use super::provision::EnvSpec;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -85,6 +86,18 @@ pub trait NodeExec: Send + Sync {
             let script = op.script()?;
             self.run(host, &script).await
         })
+    }
+
+    /// Build one of goose's managed envs on `host`, every output line to `on_line`; the script's
+    /// exit code (`provision::provision_on`: a Link node builds it itself, ssh and this Mac run
+    /// the script).
+    fn provision<'a>(
+        &'a self,
+        host: Option<&'a str>,
+        spec: &'a EnvSpec,
+        on_line: &'a mut (dyn FnMut(&str) + Send),
+    ) -> BoxFuture<'a, Result<Option<i32>>> {
+        Box::pin(super::provision::provision_on(host, spec, on_line))
     }
 }
 

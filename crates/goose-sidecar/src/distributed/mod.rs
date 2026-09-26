@@ -23,6 +23,8 @@
 //!   peer's positive control.
 //! - [`provision`]: the ranks' Python, a goose-owned uv venv per node (pinned mlx + mlx_lm; the
 //!   fork pinned by commit for the pipeline runner).
+//! - [`runner_update`]: a start blocked only by stale goose-managed runner envs rebuilds them
+//!   (the same provisioning) and preflights again (Q-116).
 //! - [`launch`]: the rank processes (goose's own launcher — see its doc for why not mlx.launch)
 //!   and the embedded rank programs: `mlx_lm.server` under the tensor wrapper (in-process memory
 //!   caps, admission, progress counter), or the fork's `pipeline_qwen4_serve` (which carries the
@@ -45,13 +47,15 @@ pub mod preflight;
 pub mod probe;
 pub mod provision;
 pub mod rank_log;
+pub mod runner_update;
 pub mod supervisor;
 
 pub use compaction::{CompactionOutcome, CompactionRefusal, CompactionReport};
 pub use config::{Backend, DistributedConfig, NodeConfig, Runner};
 pub use exec::{ExecOutput, NodeExec, SystemExec};
 pub use plan::RankPlan;
-pub use preflight::{Check, CheckVerdict, NodePreflight, PreflightReport};
+pub use preflight::{Check, CheckVerdict, NodePreflight, PreflightReport, RunnerEnv};
+pub use runner_update::{RunnerUpdate, RunnerUpdateRow};
 pub use supervisor::{
     global_manager, DistributedManager, DistributedStatus, EngineEvent, EventKind, NodeState,
     NodeStatus, RefusalCode, RunState, StartOutcome, StopReport,

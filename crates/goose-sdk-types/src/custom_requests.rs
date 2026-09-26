@@ -3466,13 +3466,41 @@ pub struct MlxDistributedConfigDto {
 
 /// One preflight check. `verdict`: "pass" | "warn" | "fail". `id`: "reachable" |
 /// "foreignEngines" | "memory" | "model" | "modelManifest" | "python" | "tbIpv4" | "ping" |
-/// "rdmaGid" | "linkRepair" | "portRange" | "ports" | "runner" | "plan". `message` carries the numbers.
+/// "rdmaGid" | "linkRepair" | "portRange" | "ports" | "runner" | "runnerEnv" | "plan". `message`
+/// carries the numbers — except `runnerEnv`, which reads plainly and keeps paths, versions and
+/// commits in `detail`.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxDistributedCheckDto {
     pub id: String,
     pub verdict: String,
     pub message: String,
+    /// The raw evidence behind a plain `message`, for a Details disclosure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// `runnerEnv` only: the interpreter it is about and whether goose rebuilds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<MlxDistributedRunnerEnvDto>,
+}
+
+/// A split runner's interpreter that fails the pin goose ships. `managed`: under the node's
+/// `~/.goose/distributed` — a FAIL goose rebuilds when Run is pressed (the start rebuilds it and
+/// preflights again when nothing else blocks). Not managed: the operator's own interpreter, a
+/// WARN goose never rebuilds; setting `field` to `target` on that node ("use goose's runner")
+/// hands it to goose.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MlxDistributedRunnerEnvDto {
+    /// The env goose pins for it now (its directory name).
+    pub env: String,
+    /// The node config field naming the interpreter: "python" | "pipelinePython".
+    pub field: String,
+    /// The interpreter as configured.
+    pub python: String,
+    /// Where goose builds it on that node; absent when the node's home is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub managed: bool,
 }
 
 /// What one rank will hold, in bytes. Tensor split: every layer's shard (`shardIndex` of
@@ -3815,6 +3843,11 @@ pub struct MlxDistributedStatusDto {
     /// The last (or running) provisioning of the nodes' goose-managed Python.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provision: Option<MlxDistributedProvisionDto>,
+    /// The runner rebuild the last start ran by itself — goose-managed runner envs on an older
+    /// pin, rebuilt before the start preflights again (Q-116); live while `state` is "preflight".
+    /// Rows are per env, `python` the path built.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner_update: Option<MlxDistributedProvisionDto>,
     /// Set when ANOTHER goosed on this Mac (another desktop window) published a distributed run
     /// and this one supervises none: that run is read-only here — start and stop are refused with
     /// `ownedByAnotherWindow`, and `mode`/`state` above stay this goosed's own.
@@ -3905,7 +3938,9 @@ pub struct MlxEngineDistributedPreflightResponse {
 /// "previousSplitShuttingDown" (this install's previous split still runs on `node` under a live
 /// parent; nothing was signalled — a start once its pids are gone goes through) | "foreignSplit"
 /// (a distributed MLX process this install did not launch runs on `node`; stop it first) |
-/// "hostingRank" | "ownedByAnotherWindow".
+/// "modelLoading" | "runnerUpdateFailed" (the start rebuilt a stale goose-managed runner env and
+/// that failed on `node`; `detail` carries the node's output) | "provisioning" (a "Save and
+/// provision" build is still running) | "hostingRank" | "ownedByAnotherWindow".
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxDistributedRefusalDto {

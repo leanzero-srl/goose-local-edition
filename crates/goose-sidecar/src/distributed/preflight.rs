@@ -42,10 +42,34 @@ impl CheckVerdict {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Check {
     /// reachable | foreignEngines | memory | model | modelManifest | python | tbIpv4 | ping |
-    /// rdmaGid | portRange | ports | runner | plan | localNetworkPermission
+    /// rdmaGid | portRange | ports | runner | runnerEnv | plan | localNetworkPermission
     pub id: String,
     pub verdict: CheckVerdict,
     pub message: String,
+    /// The raw evidence behind a plain `message` (paths, versions, commits), for Details.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// `runnerEnv` only: the interpreter the check is about and whether goose rebuilds it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<RunnerEnv>,
+}
+
+/// A split runner's interpreter that fails the pin goose ships (`EnvSpec`'s proof).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnerEnv {
+    /// The env goose pins for it now (`EnvSpec::name`).
+    pub env: String,
+    /// The config field naming the interpreter: "python" | "pipelinePython".
+    pub field: String,
+    /// The interpreter as configured.
+    pub python: String,
+    /// Where goose builds this env on the node — and points the config at, once built. `None`
+    /// when the node's home is unknown (a peer whose goose predates the probe's `@@home`).
+    pub target: Option<String>,
+    /// Under the node's `~/.goose/distributed` (`EnvSpec::goose_managed`): goose rebuilds it when
+    /// Run finds it stale. `false` = an interpreter the operator chose, never rebuilt on its own.
+    pub managed: bool,
 }
 
 impl Check {
@@ -54,6 +78,8 @@ impl Check {
             id: id.to_string(),
             verdict,
             message: message.into(),
+            detail: None,
+            env: None,
         }
     }
     fn pass(id: &str, message: impl Into<String>) -> Self {
@@ -332,6 +358,9 @@ pub(crate) fn node_probe_script(
         script.push('\n');
     };
     add("echo; echo @@self; echo $$".into());
+    // Where goose builds this node's runner envs (`EnvSpec::python(home)`); its own section, so an
+    // older peer's answer keeps parsing and only loses the target.
+    add("echo; echo @@home; printf '%s\\n' \"$HOME\"".into());
     add("echo; echo @@vm; /usr/bin/vm_stat".into());
     add("echo; echo @@sysctl; /usr/sbin/sysctl -n hw.memsize kern.memorystatus_vm_pressure_level net.inet.ip.portrange.first".into());
     add("echo; echo @@ps; /bin/ps -axo pid=,command=".into());
@@ -828,6 +857,20 @@ fn read_answer(
         }
         Err(e) => answer.checks.push(Check::fail("python", format!("{e:#}"))),
     }
+    let home = sections
+        .get("home")
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty());
+    // The same proof the tensor env was provisioned with (`EnvSpec::tensor().check` prints what
+    // `@@python` prints): one rule for both runners' envs.
+    let tensor_answer = sections.get("python").map(|t| last_line(t));
+    answer.checks.extend(runner_env_check(
+        "python",
+        &node.python,
+        &EnvSpec::tensor(),
+        tensor_answer,
+        home,
+    ));
 
     if let Ok(values) = &sysctl {
         let first_ephemeral = values[2];
@@ -877,13 +920,95 @@ fn read_answer(
     }
 
     if runner == Some(Runner::PipelineQwen4) {
-        answer.checks.push(pipeline_runner_check(
+        answer.checks.extend(pipeline_runner_checks(
             node,
             sections.get("pipeline"),
             sections.get("pipelineenv"),
+            home,
         ));
     }
     answer
+}
+
+fn last_line(text: &str) -> &str {
+    text.lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .unwrap_or_default()
+}
+
+/// A runner env the node answered for, judged by the ONE rule for both runners: an interpreter
+/// that prints `spec.expect` is proven (`None`); a goose-managed one (`EnvSpec::goose_managed`)
+/// that does not — or that an earlier goose named — FAILs `runnerEnv`, and Run rebuilds it; an
+/// interpreter the operator chose is a WARN, never rebuilt. `answer` is the proof's last line,
+/// `None` when the node did not run it. The paths, versions and commits sit in `detail`.
+fn runner_env_check(
+    field: &str,
+    python: &str,
+    spec: &EnvSpec,
+    answer: Option<&str>,
+    home: Option<&str>,
+) -> Option<Check> {
+    let answer = answer.map(str::trim);
+    let managed = EnvSpec::goose_managed(python);
+    let target = managed
+        .as_ref()
+        .map(|m| m.target())
+        .or_else(|| home.map(|h| spec.python(h)));
+    let renamed = target.as_deref().is_some_and(|t| t != python) && managed.is_some();
+    if answer == Some(spec.expect.as_str()) && !renamed {
+        return None;
+    }
+    let legend = if spec.name == EnvSpec::pipeline().name {
+        "mlx, mlx_lm, fork commit"
+    } else {
+        "mlx, mlx_lm"
+    };
+    let imports = match answer {
+        Some(a) if !a.is_empty() => format!("{python} answers '{a}'"),
+        _ => format!("{python} gave no answer to the proof"),
+    };
+    let detail = if renamed {
+        format!(
+            "{imports}; it is the env an earlier goose built — goose now builds {} at {} ('{}': \
+             {legend})",
+            spec.name,
+            target.as_deref().unwrap_or_default(),
+            spec.expect
+        )
+    } else {
+        format!("{imports}; goose pins '{}' ({legend})", spec.expect)
+    };
+    let older = renamed
+        || answer
+            .and_then(|a| a.chars().next())
+            .is_some_and(|c| c.is_ascii_digit());
+    let env = RunnerEnv {
+        env: spec.name.clone(),
+        field: field.to_string(),
+        python: python.to_string(),
+        target,
+        managed: managed.is_some(),
+    };
+    let mut check = match (&managed, older) {
+        (Some(_), true) => Check::fail(
+            "runnerEnv",
+            "this Mac's split runner is from an older goose — goose updates it when you press Run",
+        ),
+        (Some(_), false) => Check::fail(
+            "runnerEnv",
+            "this Mac has no working split runner — goose builds it when you press Run",
+        ),
+        (None, _) => Check::warn(
+            "runnerEnv",
+            "this Mac runs the split on a Python you chose, which is not the runner goose pins — \
+             goose never rebuilds your own interpreter; switch this Mac to goose's runner to have \
+             goose keep it current",
+        ),
+    };
+    check.detail = Some(detail);
+    check.env = Some(env);
+    Some(check)
 }
 
 fn foreign_rows(
@@ -948,20 +1073,33 @@ fn foreign_engines_check(foreign: &[(u32, String, probe::ForeignKind)]) -> Check
 }
 
 /// The qwen4_exp split serves through the fork's `pipeline_qwen4 serve` (the rank program calls
-/// its `serve()`): the module must offer that subcommand, and a goose-managed fork env must be
-/// the pinned commit — an env built from an earlier pin could offer `serve` with another
-/// contract. An operator's own interpreter on another commit is a WARN naming both.
-fn pipeline_runner_check(
+/// its `serve()`). The fork env is judged first by the one runner-env rule
+/// ([`runner_env_check`]): a goose-managed env on another commit FAILs `runnerEnv` and nothing
+/// else is asked of it (Run rebuilds it, then the preflight asks again); an operator's own
+/// interpreter on another commit is a WARN. Then the module must offer `serve`.
+fn pipeline_runner_checks(
     node: &NodeConfig,
     help: Option<&String>,
     env_answer: Option<&String>,
-) -> Check {
+    home: Option<&str>,
+) -> Vec<Check> {
     let Some(python) = &node.pipeline_python else {
-        return Check::fail(
+        return vec![Check::fail(
             "runner",
             "the qwen4_exp pipeline runner needs pipeline_python (the fork's interpreter) on every node",
-        );
+        )];
     };
+    let answer = env_answer.map(|a| a.trim());
+    let env = runner_env_check("pipelinePython", python, &EnvSpec::pipeline(), answer, home);
+    if let Some(check) = env.as_ref().filter(|c| c.verdict == CheckVerdict::Fail) {
+        return vec![check.clone()];
+    }
+    let mut checks: Vec<Check> = env.into_iter().collect();
+    checks.push(serve_check(python, help, answer.unwrap_or_default()));
+    checks
+}
+
+fn serve_check(python: &str, help: Option<&String>, answer: &str) -> Check {
     let Some(help) = help else {
         return Check::fail(
             "runner",
@@ -978,45 +1116,22 @@ fn pipeline_runner_check(
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         });
-    let commands = match offered {
-        Some(commands) if commands.iter().any(|c| c == "serve") => commands,
-        Some(commands) => {
-            return Check::fail(
-                "runner",
-                format!(
-                    "{PIPELINE_MODULE} on {python} offers {commands:?}, not `serve` — this env \
-                     predates the pinned fork ({PIPELINE_FORK_COMMIT}); provision it again"
-                ),
-            )
-        }
-        None => {
-            return Check::fail(
-                "runner",
-                format!("{python} -m {PIPELINE_MODULE} --help: {}", help.trim()),
-            )
-        }
-    };
-    let pinned = EnvSpec::pipeline().expect;
-    let answer = env_answer.map(|a| a.trim()).unwrap_or_default();
-    if answer == pinned {
-        return Check::pass(
+    match offered {
+        Some(commands) if commands.iter().any(|c| c == "serve") => Check::pass(
             "runner",
             format!("{PIPELINE_MODULE} offers {commands:?}; {python} imports {answer}"),
-        );
-    }
-    let what = format!(
-        "{python} imports '{answer}', the pinned fork is '{pinned}' (mlx, mlx_lm, fork commit)"
-    );
-    if EnvSpec::managed_by(python).is_some() {
-        Check::fail(
+        ),
+        Some(commands) => Check::fail(
             "runner",
-            format!("{what} — the goose-managed env is stale; provision it again"),
-        )
-    } else {
-        Check::warn(
+            format!(
+                "{PIPELINE_MODULE} on {python} offers {commands:?}, not `serve` — this fork \
+                 predates the one goose pins ({PIPELINE_FORK_COMMIT})"
+            ),
+        ),
+        None => Check::fail(
             "runner",
-            format!("{what} — an operator's own interpreter, used as configured"),
-        )
+            format!("{python} -m {PIPELINE_MODULE} --help: {}", help.trim()),
+        ),
     }
 }
 
@@ -1983,31 +2098,154 @@ pub(crate) mod tests {
         // The fork's real usage at 272cb0643 (argparse wraps the subcommands to line 2).
         let help = "usage: python -m rapid_mlx.distributed.pipeline_qwen4 [-h]\n                                                      {plan,serve,run} ...\n".to_string();
         let pinned = EnvSpec::pipeline().expect;
-        let check = pipeline_runner_check(&node, Some(&help), Some(&pinned));
-        assert_eq!(check.verdict, CheckVerdict::Pass, "{}", check.message);
-        assert!(check.message.contains("[\"plan\", \"serve\", \"run\"]"));
+        let checks = pipeline_runner_checks(&node, Some(&help), Some(&pinned), Some("/Users/me"));
+        assert_eq!(checks.len(), 1, "{checks:?}");
+        assert_eq!(
+            checks[0].verdict,
+            CheckVerdict::Pass,
+            "{}",
+            checks[0].message
+        );
+        assert!(checks[0].message.contains("[\"plan\", \"serve\", \"run\"]"));
 
         // The fork before `serve` existed (lz/pipeline-qwen4 7a9b622a5): refused by name.
         let old = "usage: python -m rapid_mlx.distributed.pipeline_qwen4 [-h] {plan,run} ...\n"
             .to_string();
-        let check = pipeline_runner_check(&node, Some(&old), Some(&pinned));
-        assert_eq!(check.verdict, CheckVerdict::Fail);
+        let checks = pipeline_runner_checks(&node, Some(&old), Some(&pinned), Some("/Users/me"));
+        assert_eq!(checks[0].verdict, CheckVerdict::Fail);
         assert!(
-            check.message.contains("[\"plan\", \"run\"], not `serve`")
-                && check.message.contains(PIPELINE_FORK_COMMIT),
+            checks[0]
+                .message
+                .contains("[\"plan\", \"run\"], not `serve`")
+                && checks[0].message.contains(PIPELINE_FORK_COMMIT),
             "{}",
-            check.message
+            checks[0].message
         );
 
-        // `serve` offered, but a goose-managed env on another commit is stale: FAIL; an
-        // operator's own interpreter on another commit is used as configured: WARN.
+        // `serve` offered, but a goose-managed env on another commit: `runnerEnv` FAILs alone
+        // (Run rebuilds it); an operator's own interpreter on another commit is a WARN and the
+        // `serve` check still runs.
         let stale = "0.32.2 0.31.3 e7d49b355fe2692d54b04332c19fc541e5e120fd".to_string();
-        let check = pipeline_runner_check(&node, Some(&help), Some(&stale));
-        assert_eq!(check.verdict, CheckVerdict::Fail);
-        assert!(check.message.contains("stale"), "{}", check.message);
+        let checks = pipeline_runner_checks(&node, Some(&help), Some(&stale), Some("/Users/me"));
+        assert_eq!(checks.len(), 1, "{checks:?}");
+        assert_eq!(checks[0].id, "runnerEnv");
+        assert_eq!(checks[0].verdict, CheckVerdict::Fail);
+        assert!(checks[0].env.as_ref().unwrap().managed);
         let own = pipeline_node("/Users/me/Projects/Rapid-MLX/.venv/bin/python");
-        let check = pipeline_runner_check(&own, Some(&help), Some(&stale));
-        assert_eq!(check.verdict, CheckVerdict::Warn, "{}", check.message);
+        let checks = pipeline_runner_checks(&own, Some(&help), Some(&stale), Some("/Users/me"));
+        let ids: Vec<(&str, CheckVerdict)> =
+            checks.iter().map(|c| (c.id.as_str(), c.verdict)).collect();
+        assert_eq!(
+            ids,
+            [
+                ("runnerEnv", CheckVerdict::Warn),
+                ("runner", CheckVerdict::Pass)
+            ]
+        );
+    }
+
+    /// Q-116, the measured case: 3.0.46's pin is b7bd1afc2, both Macs' goose-managed fork envs
+    /// still answer the 2f02ac645 build. The check reads plainly — no commit, no path — and the
+    /// evidence rides `detail`; `env` names what Run rebuilds.
+    #[test]
+    fn a_goose_managed_runner_on_an_older_pin_fails_in_plain_words_and_is_goose_s_to_rebuild() {
+        let python =
+            "/Users/mihaiperdum/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python";
+        let answer = "0.32.2 0.31.3 2f02ac645a8d8a54bc184d008cfdcec855d09c80";
+        let check = runner_env_check(
+            "pipelinePython",
+            python,
+            &EnvSpec::pipeline(),
+            Some(answer),
+            Some("/Users/mihaiperdum"),
+        )
+        .unwrap();
+        assert_eq!(check.id, "runnerEnv");
+        assert_eq!(check.verdict, CheckVerdict::Fail);
+        assert_eq!(
+            check.message,
+            "this Mac's split runner is from an older goose — goose updates it when you press Run"
+        );
+        let detail = check.detail.as_deref().unwrap();
+        assert!(
+            detail.contains(python)
+                && detail.contains("2f02ac645a8d8a54bc184d008cfdcec855d09c80")
+                && detail.contains(PIPELINE_FORK_COMMIT),
+            "{detail}"
+        );
+        assert_eq!(
+            check.env,
+            Some(RunnerEnv {
+                env: "rapid-mlx-pipeline-qwen4-py3.12".to_string(),
+                field: "pipelinePython".to_string(),
+                python: python.to_string(),
+                target: Some(python.to_string()),
+                managed: true,
+            })
+        );
+
+        // Proven: no check at all (the `runner`/`python` checks carry the pass).
+        assert!(runner_env_check(
+            "pipelinePython",
+            python,
+            &EnvSpec::pipeline(),
+            Some(&EnvSpec::pipeline().expect),
+            None
+        )
+        .is_none());
+
+        // Absent (the shell's own words): goose BUILDS it.
+        let missing = runner_env_check(
+            "pipelinePython",
+            python,
+            &EnvSpec::pipeline(),
+            Some(&format!("sh: {python}: No such file or directory")),
+            None,
+        )
+        .unwrap();
+        assert_eq!(missing.verdict, CheckVerdict::Fail);
+        assert_eq!(
+            missing.message,
+            "this Mac has no working split runner — goose builds it when you press Run"
+        );
+    }
+
+    /// The same rule for the TENSOR env: its proof is what `@@python` prints. An older pin fails;
+    /// a directory an earlier goose named (a pin bump renames it) fails with the current path as
+    /// the target even while it imports; an interpreter the operator chose only warns, with
+    /// goose's path on that node as the switch's target.
+    #[test]
+    fn the_tensor_env_follows_the_same_rule() {
+        let home = "/Users/workhorse";
+        let current = EnvSpec::tensor().python(home);
+        let spec = EnvSpec::tensor();
+        assert!(
+            runner_env_check("python", &current, &spec, Some(&spec.expect), Some(home)).is_none()
+        );
+
+        let older =
+            runner_env_check("python", &current, &spec, Some("0.31.0 0.30.2"), None).unwrap();
+        assert_eq!(older.verdict, CheckVerdict::Fail);
+        assert!(older.message.contains("from an older goose"));
+
+        let renamed_path =
+            format!("{home}/.goose/distributed/mlx0.31.0-mlxlm0.30.2-py3.12/bin/python");
+        let renamed =
+            runner_env_check("python", &renamed_path, &spec, Some(&spec.expect), None).unwrap();
+        assert_eq!(renamed.verdict, CheckVerdict::Fail);
+        let env = renamed.env.unwrap();
+        assert!(env.managed);
+        assert_eq!(env.target.as_deref(), Some(current.as_str()));
+        assert!(renamed.detail.unwrap().contains("an earlier goose built"));
+
+        let own = "/tmp/jaccl-smoke/.venv/bin/python";
+        let warn =
+            runner_env_check("python", own, &spec, Some("0.31.0 0.30.2"), Some(home)).unwrap();
+        assert_eq!(warn.verdict, CheckVerdict::Warn);
+        let env = warn.env.unwrap();
+        assert!(!env.managed);
+        assert_eq!(env.target.as_deref(), Some(current.as_str()));
+        assert!(runner_env_check("python", own, &spec, Some(&spec.expect), Some(home)).is_none());
     }
 
     /// Answers the fork planner by the `--context` it was given; records every script.

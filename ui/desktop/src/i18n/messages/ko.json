@@ -3002,6 +3002,12 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "취소"
   },
+  "mlxDistributed.check.details": {
+    "defaultMessage": "세부 정보"
+  },
+  "mlxDistributed.check.useGooseRunner": {
+    "defaultMessage": "goose 러너 사용"
+  },
   "mlxDistributed.checksPassed": {
     "defaultMessage": "{count,plural,one{검사 #개 통과} other{검사 #개 통과}}"
   },
@@ -3040,6 +3046,9 @@
   },
   "mlxDistributed.error.unmount": {
     "defaultMessage": "마운트 해제 오류"
+  },
+  "mlxDistributed.error.useGooseRunner": {
+    "defaultMessage": "이 러너를 goose에 넘기지 못했습니다"
   },
   "mlxDistributed.event.admissionClosed": {
     "defaultMessage": "수락 중단"
@@ -3085,6 +3094,15 @@
   },
   "mlxDistributed.event.restart": {
     "defaultMessage": "재시작"
+  },
+  "mlxDistributed.event.runnerUpdateFailed": {
+    "defaultMessage": "러너 업데이트 실패"
+  },
+  "mlxDistributed.event.runnerUpdated": {
+    "defaultMessage": "러너 업데이트됨"
+  },
+  "mlxDistributed.event.runnerUpdating": {
+    "defaultMessage": "러너 업데이트 중"
   },
   "mlxDistributed.event.startFailed": {
     "defaultMessage": "시작 실패"
@@ -3427,6 +3445,9 @@
   },
   "mlxDistributed.room.shortByNoApps": {
     "defaultMessage": "{gib} GiB 부족 — 공간을 확보하거나 앱을 닫으세요"
+  },
+  "mlxDistributed.runnerUpdate.title": {
+    "defaultMessage": "분할 러너 업데이트 중"
   },
   "mlxDistributed.save": {
     "defaultMessage": "구성 저장"
@@ -5246,6 +5267,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "계획이 없어 속도 수치는 없지만, 어떤 방법이든 시작할 수 있습니다."
   },
+  "placementCard.noticeDetails": {
+    "defaultMessage": "세부 정보"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{다른 분할 #개} other{다른 분할 #개}}"
   },
@@ -5290,6 +5314,12 @@
   },
   "placementCard.runOn": {
     "defaultMessage": "{name}에서 실행"
+  },
+  "placementCard.runnerStep": {
+    "defaultMessage": "{step, select, check {확인 중} uv {uv 찾는 중} venv {환경 만드는 중} install {설치 중} done {완료} fail {실패} other {시작 중}}"
+  },
+  "placementCard.runnerUpdating": {
+    "defaultMessage": "{nodes}에서 분할 러너 업데이트 중…"
   },
   "placementCard.short": {
     "defaultMessage": "들어가지 않음: {node}에서 {gb} 부족"

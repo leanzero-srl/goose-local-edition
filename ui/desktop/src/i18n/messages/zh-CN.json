@@ -3002,6 +3002,12 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "取消"
   },
+  "mlxDistributed.check.details": {
+    "defaultMessage": "详细信息"
+  },
+  "mlxDistributed.check.useGooseRunner": {
+    "defaultMessage": "使用 goose 的运行器"
+  },
   "mlxDistributed.checksPassed": {
     "defaultMessage": "{count,plural,one{# 项检查通过} other{# 项检查通过}}"
   },
@@ -3040,6 +3046,9 @@
   },
   "mlxDistributed.error.unmount": {
     "defaultMessage": "卸载错误"
+  },
+  "mlxDistributed.error.useGooseRunner": {
+    "defaultMessage": "无法将此运行器交给 goose"
   },
   "mlxDistributed.event.admissionClosed": {
     "defaultMessage": "停止接收"
@@ -3085,6 +3094,15 @@
   },
   "mlxDistributed.event.restart": {
     "defaultMessage": "重启"
+  },
+  "mlxDistributed.event.runnerUpdateFailed": {
+    "defaultMessage": "运行器更新失败"
+  },
+  "mlxDistributed.event.runnerUpdated": {
+    "defaultMessage": "运行器已更新"
+  },
+  "mlxDistributed.event.runnerUpdating": {
+    "defaultMessage": "正在更新运行器"
   },
   "mlxDistributed.event.startFailed": {
     "defaultMessage": "启动失败"
@@ -3427,6 +3445,9 @@
   },
   "mlxDistributed.room.shortByNoApps": {
     "defaultMessage": "还差 {gib} GiB — 腾出空间，或关闭应用"
+  },
+  "mlxDistributed.runnerUpdate.title": {
+    "defaultMessage": "正在更新拆分的运行器"
   },
   "mlxDistributed.save": {
     "defaultMessage": "保存配置"
@@ -5246,6 +5267,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "没有计划就没有速度数字 — 但每种方式仍然可以启动。"
   },
+  "placementCard.noticeDetails": {
+    "defaultMessage": "详细信息"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{另外 # 种拆分} other{另外 # 种拆分}}"
   },
@@ -5290,6 +5314,12 @@
   },
   "placementCard.runOn": {
     "defaultMessage": "在 {name} 上运行"
+  },
+  "placementCard.runnerStep": {
+    "defaultMessage": "{step, select, check {检查中} uv {查找 uv} venv {创建环境} install {安装中} done {完成} fail {失败} other {启动中}}"
+  },
+  "placementCard.runnerUpdating": {
+    "defaultMessage": "正在 {nodes} 上更新拆分的运行器…"
   },
   "placementCard.short": {
     "defaultMessage": "放不下：{node} 上还差 {gb}"

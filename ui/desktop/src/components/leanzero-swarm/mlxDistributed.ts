@@ -3,7 +3,9 @@ import type {
   MlxDistributedConfigDto,
   MlxDistributedDiscoveryDto,
   MlxDistributedNodeConfigDto,
+  MlxDistributedProvisionDto,
   MlxDistributedRankPlanDto,
+  MlxDistributedRunnerEnvDto,
   MlxDistributedStatusDto,
 } from '@aaif/goose-sdk';
 import type { Tone } from '../lz/tokens';
@@ -230,6 +232,7 @@ const ALARM_EVENTS = new Set([
   'streamWithoutDone',
   'breakerOpen',
   'watchdogCritical',
+  'runnerUpdateFailed',
 ]);
 /** Events that mean the supervisor had to act or could not see (a restart, a repair, a hold). */
 const NOTICE_EVENTS = new Set([
@@ -240,8 +243,15 @@ const NOTICE_EVENTS = new Set([
   'admissionClosed',
   'orphanReclaimed',
   'compactionSkipped',
+  'runnerUpdating',
 ]);
-const GOOD_EVENTS = new Set(['ready', 'admissionOpened', 'launched', 'memoryCompacted']);
+const GOOD_EVENTS = new Set([
+  'ready',
+  'admissionOpened',
+  'launched',
+  'memoryCompacted',
+  'runnerUpdated',
+]);
 
 export function eventTone(kind: string): Tone {
   if (ALARM_EVENTS.has(kind)) return 'err';
@@ -542,4 +552,33 @@ export function withFreeMemory(
     ...config,
     nodes: config.nodes.map((n) => (n.name === node ? { ...n, freeMemoryAutomatically: on } : n)),
   };
+}
+
+// ---------------------------------------------------------------------------
+// The split's runner envs (Q-116)
+// ---------------------------------------------------------------------------
+
+/**
+ * `config` with the interpreter `env` is about handed to goose: the node whose `env.field` names
+ * `env.python` now names goose's own path there (`env.target`), which the next Run builds and keeps
+ * current. `null` when goose does not know that path or no node names the interpreter.
+ */
+export function withGooseRunner(
+  config: MlxDistributedConfigDto,
+  env: MlxDistributedRunnerEnvDto
+): MlxDistributedConfigDto | null {
+  const target = env.target;
+  if (!target) return null;
+  const field = env.field === 'pipelinePython' ? 'pipelinePython' : 'python';
+  const at = config.nodes.findIndex((n) => n[field] === env.python);
+  if (at < 0) return null;
+  return {
+    ...config,
+    nodes: config.nodes.map((n, i) => (i === at ? { ...n, [field]: target } : n)),
+  };
+}
+
+/** The Macs a runner rebuild runs on, each once, in the order the backend lists them. */
+export function runnerUpdateMacs(update: MlxDistributedProvisionDto): string[] {
+  return [...new Set(update.nodes.map((n) => n.name))];
 }

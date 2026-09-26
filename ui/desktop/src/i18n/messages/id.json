@@ -3002,6 +3002,12 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "Batal"
   },
+  "mlxDistributed.check.details": {
+    "defaultMessage": "Detail"
+  },
+  "mlxDistributed.check.useGooseRunner": {
+    "defaultMessage": "Gunakan runner goose"
+  },
   "mlxDistributed.checksPassed": {
     "defaultMessage": "{count,plural,one{# pemeriksaan lolos} other{# pemeriksaan lolos}}"
   },
@@ -3040,6 +3046,9 @@
   },
   "mlxDistributed.error.unmount": {
     "defaultMessage": "Galat saat melepas"
+  },
+  "mlxDistributed.error.useGooseRunner": {
+    "defaultMessage": "Runner ini tidak dapat diserahkan ke goose"
   },
   "mlxDistributed.event.admissionClosed": {
     "defaultMessage": "Penerimaan ditutup"
@@ -3085,6 +3094,15 @@
   },
   "mlxDistributed.event.restart": {
     "defaultMessage": "Restart"
+  },
+  "mlxDistributed.event.runnerUpdateFailed": {
+    "defaultMessage": "Pembaruan runner gagal"
+  },
+  "mlxDistributed.event.runnerUpdated": {
+    "defaultMessage": "Runner diperbarui"
+  },
+  "mlxDistributed.event.runnerUpdating": {
+    "defaultMessage": "Memperbarui runner"
   },
   "mlxDistributed.event.startFailed": {
     "defaultMessage": "Gagal memulai"
@@ -3427,6 +3445,9 @@
   },
   "mlxDistributed.room.shortByNoApps": {
     "defaultMessage": "Kurang {gib} GiB — kosongkan ruang, atau tutup aplikasi"
+  },
+  "mlxDistributed.runnerUpdate.title": {
+    "defaultMessage": "Memperbarui runner split"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Simpan konfigurasi"
@@ -5246,6 +5267,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Tanpa rencana tidak ada angka kecepatan — setiap cara tetap bisa dimulai."
   },
+  "placementCard.noticeDetails": {
+    "defaultMessage": "Detail"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# pembagian lain} other{# pembagian lain}}"
   },
@@ -5290,6 +5314,12 @@
   },
   "placementCard.runOn": {
     "defaultMessage": "Jalankan di {name}"
+  },
+  "placementCard.runnerStep": {
+    "defaultMessage": "{step, select, check {memeriksa} uv {mencari uv} venv {membuat lingkungan} install {memasang} done {selesai} fail {gagal} other {memulai}}"
+  },
+  "placementCard.runnerUpdating": {
+    "defaultMessage": "Memperbarui runner split di {nodes}…"
   },
   "placementCard.short": {
     "defaultMessage": "Tidak muat: kurang {gb} di {node}"
