@@ -426,3 +426,14 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   format at FOUR different points across rounds (after `</parameter>\n`, right after `</parameter>`, after `</function>` →
   an open call and 28 looping calls); the guard now pins all of them. Fork tags so far: lz.5 (32768 cap fix), lz.6
   (transient tail may end a tool message), lz.7 (the guard). Never create a tag another agent already pushed.
+- 2026-09-26 Q-114 ROOT CAUSE (goose branch q114-gdn-padding-leak b589e04f6, not merged): the 27B tensor split hung at
+  ~10.5k GENERATED tokens (10,447 / 10,522 / 10,537 — a step count, not a context width). mlx_lm 0.31.3's
+  `ArraysCache.advance` decrements `left_padding` lazily, one new Metal buffer per `-= N`; 47 of the 27B's 48
+  linear-attention caches are never read, so each decode step pins 47 buffers until MLX's `resource_limit` (499,000)
+  throws `[metal::malloc] Resource limit (499000) exceeded` inside async_eval — and MLX 0.32.2's eval_impl error path
+  deadlocks (synchronize behind an uncommitted fence signal), so nothing is raised: one rank sits `S` 0%, the peer spins
+  `R` in all_sum and its GPU logs a command-buffer timeout. Fix: rank_wrapper evaluates every counter a step advanced
+  (`settle_counters`); measured 21,074 tokens clean. The hang rule now reads per-rank GPU time (ioreg
+  IOGPUDeviceUserClient accumulatedGPUTime) — CPU time missed a stuck rank 0 that still answered our own polls (4 min
+  19 s, no event). Any single rank stalled > ~5 s (e.g. `vmmap` on it) reaches the same deadlock or a GPU-Timeout death.
+  Detail, tools (sample, the __cxa_throw logger) and traps: skill mlx-jaccl-cluster, section "Q-114 ROOT CAUSE".
