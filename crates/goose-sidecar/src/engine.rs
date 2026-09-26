@@ -22,7 +22,7 @@ use crate::machine::{
     self, LoadClaim, LoadHolder, LoadLock, LoadLockAttempt, LoadLockHeld, OtherEngine,
 };
 use crate::{
-    listening_pids, measure, port_has_listener, MemoryReading, Sidecar, SidecarConfig,
+    listening_pids, measure, port_has_listener, MemoryReading, Sidecar, SidecarConfig, StartCancel,
     StartupWatch, GIB,
 };
 
@@ -614,12 +614,39 @@ impl std::fmt::Display for UnsupervisedListenerError {
 
 impl std::error::Error for UnsupervisedListenerError {}
 
+/// A start in flight: how an Unmount ends it, and how the Unmount learns that it has let go of
+/// this Mac — its engine process gone and the load lock released.
+struct StartInFlight {
+    cancel: Arc<StartCancel>,
+    ended: tokio::sync::watch::Receiver<bool>,
+}
+
+/// A mount an Unmount overtook between taking this Mac's load lock and starting its engine (its
+/// gate was judging): nothing was started, and the lock is released with this error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountStopped {
+    pub model_id: String,
+}
+
+impl std::fmt::Display for MountStopped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the mount of '{}' was stopped by an Unmount before its engine started",
+            self.model_id
+        )
+    }
+}
+
+impl std::error::Error for MountStopped {}
+
 enum ManagerState {
     Stopped,
     Mounting {
         model_id: String,
         watch: Arc<StartupWatch>,
         weights_bytes: u64,
+        start: StartInFlight,
     },
     Running {
         model_id: String,
@@ -880,6 +907,12 @@ pub struct MlxEngineManager {
     /// The mount waiting for another load to leave this Mac (`mount_after_load`).
     waiting_for_load: StdMutex<Option<WaitingForLoad>>,
     wait_tickets: std::sync::atomic::AtomicU64,
+    /// Bumped by every Unmount: a mount that took the load lock under an earlier value was
+    /// overtaken while its gate judged, and starts nothing ([`MountStopped`]).
+    unmounts: std::sync::atomic::AtomicU64,
+    /// Read-held by a mount from its gate to its start's spawn; an Unmount write-takes it, so it
+    /// returns only once no overtaken mount still holds the Mac's load lock.
+    judging: tokio::sync::RwLock<()>,
     probe_client: reqwest::Client,
     /// The memory facts a unit test pins, so a mount's verdict never depends on what else this
     /// Mac is running (Q-105: four lifecycle tests failed whenever other engines held the RAM).
@@ -910,6 +943,8 @@ impl MlxEngineManager {
             making_room: StdMutex::new(None),
             waiting_for_load: StdMutex::new(None),
             wait_tickets: std::sync::atomic::AtomicU64::new(0),
+            unmounts: std::sync::atomic::AtomicU64::new(0),
+            judging: tokio::sync::RwLock::new(()),
             probe_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -1086,8 +1121,9 @@ impl MlxEngineManager {
     /// rather than started over it.
     pub async fn mount(&self, model_id: &str) -> Result<()> {
         *self.waiting_for_load.lock().unwrap() = None;
+        let unmounts = self.unmounts_seen();
         match self.try_claim_the_mac(model_id).await?.1 {
-            LoadLockAttempt::Acquired(lock) => self.mount_holding(model_id, lock).await,
+            LoadLockAttempt::Acquired(lock) => self.mount_holding(model_id, lock, unmounts).await,
             LoadLockAttempt::Held(held) => Err(self.load_in_progress(model_id, held).into()),
         }
     }
@@ -1100,9 +1136,12 @@ impl MlxEngineManager {
     /// such a holder lets go.
     pub async fn mount_after_load(&'static self, model_id: &str) -> Result<()> {
         *self.waiting_for_load.lock().unwrap() = None;
+        let unmounts = self.unmounts_seen();
         let (model, attempt) = self.try_claim_the_mac(model_id).await?;
         let held = match attempt {
-            LoadLockAttempt::Acquired(lock) => return self.mount_holding(model_id, lock).await,
+            LoadLockAttempt::Acquired(lock) => {
+                return self.mount_holding(model_id, lock, unmounts).await
+            }
             LoadLockAttempt::Held(held) => held,
         };
         if held.holder.is_none() || held.liveness != machine::Liveness::Alive {
@@ -1136,7 +1175,7 @@ impl MlxEngineManager {
                 return;
             }
             let outcome = match taken {
-                Ok(Ok(lock)) => self.mount_holding(&model_id, lock).await,
+                Ok(Ok(lock)) => self.mount_holding(&model_id, lock, unmounts).await,
                 Ok(Err(e)) => Err(e),
                 Err(e) => Err(anyhow::anyhow!("the load lock wait ended in a panic: {e}")),
             };
@@ -1189,9 +1228,15 @@ impl MlxEngineManager {
         }
     }
 
+    fn unmounts_seen(&self) -> u64 {
+        self.unmounts.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     /// The mount, with this Mac's load lock held; the lock moves into the start and is released
-    /// when the start ends (ready or failed), or here on any refusal.
-    async fn mount_holding(&self, model_id: &str, lock: LoadLock) -> Result<()> {
+    /// when the start ends (ready, failed, or cancelled by an Unmount), or here on any refusal.
+    /// `unmounts`: the Unmount count when the mount began — an Unmount since then overtook it.
+    async fn mount_holding(&self, model_id: &str, lock: LoadLock, unmounts: u64) -> Result<()> {
+        let _judging = self.judging.read().await;
         let settings = self.settings();
         let model = self.mountable_model(&settings, model_id)?;
 
@@ -1214,6 +1259,12 @@ impl MlxEngineManager {
 
         let argv = build_serve_command(&settings, model_id)?;
         let mut state = self.state.lock().await;
+        if self.unmounts_seen() != unmounts {
+            return Err(MountStopped {
+                model_id: model_id.to_string(),
+            }
+            .into());
+        }
         if let ManagerState::Mounting {
             model_id: current, ..
         } = &*state
@@ -1221,12 +1272,18 @@ impl MlxEngineManager {
             bail!("mount already in progress for '{current}'");
         }
         let watch = Arc::new(StartupWatch::default());
+        let cancel = Arc::new(StartCancel::default());
+        let (ended, ended_rx) = tokio::sync::watch::channel(false);
         let previous = std::mem::replace(
             &mut *state,
             ManagerState::Mounting {
                 model_id: model_id.to_string(),
                 watch: Arc::clone(&watch),
                 weights_bytes,
+                start: StartInFlight {
+                    cancel: Arc::clone(&cancel),
+                    ended: ended_rx,
+                },
             },
         );
         // The IDENTICAL configuration already has a supervisor: keep it and let its circuit
@@ -1263,14 +1320,18 @@ impl MlxEngineManager {
         let state_arc = Arc::clone(&self.state);
         let model_id = model_id.to_string();
         tokio::spawn(async move {
-            let _the_mac = lock;
+            let the_mac = lock;
             let started = match supervised {
-                Some(sidecar) => sidecar.ensure_running().await.map(|()| sidecar),
+                Some(sidecar) => sidecar
+                    .ensure_running_unless(&cancel)
+                    .await
+                    .map(|()| sidecar),
                 None => {
                     let mut config =
                         SidecarConfig::new("mlx-engine", argv.clone(), base_url, expected_model_id);
                     config.env = sidecar_spawn_env();
                     config.startup_watch = Some(watch);
+                    config.start_cancel = Some(cancel);
                     Sidecar::start(config).await.map(Box::new)
                 }
             };
@@ -1306,6 +1367,8 @@ impl MlxEngineManager {
                     }
                 }
             }
+            drop(the_mac);
+            ended.send_replace(true);
         });
         Ok(())
     }
@@ -1356,23 +1419,37 @@ impl MlxEngineManager {
         })
     }
 
-    /// Stop the engine if one is running; a mount still in flight sees the state change
-    /// and shuts its freshly started sidecar down on arrival. When the manager supervises
+    /// Stop the engine, running OR loading, and return once it has let go of this Mac: a running
+    /// engine is shut down; a start in flight is cancelled — its loading engine stopped the same
+    /// way, per pid then its proven own group — and waited for until its load lock is released;
+    /// a mount still judging its gate is overtaken and starts nothing. Q-112: an Unmount of a
+    /// loading 27B used to return at once while the load ran on to ready holding the Mac, and a
+    /// switch's split was refused by that very load. When the manager supervises
     /// nothing but the configured port is still occupied (an engine orphaned by a previous
     /// goosed — supervision state is in-memory only), unmount reclaims the port by
     /// terminating the listeners per-pid: SIGTERM, a grace window, then SIGKILL.
     pub async fn unmount(&self) {
         *self.waiting_for_load.lock().unwrap() = None;
-        let supervised = {
+        self.unmounts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (supervised, loading) = {
             let mut state = self.state.lock().await;
             match std::mem::replace(&mut *state, ManagerState::Stopped) {
                 ManagerState::Running { sidecar, .. } => {
                     sidecar.shutdown().await;
-                    true
+                    (true, None)
                 }
-                _ => false,
+                ManagerState::Mounting { start, .. } => (false, Some(start)),
+                _ => (false, None),
             }
         };
+        if let Some(mut start) = loading {
+            start.cancel.cancel();
+            // The start task owns the engine and the Mac's load lock; it reports once both are
+            // gone. A closed channel means the task ended without reporting — it held nothing.
+            let _ = start.ended.wait_for(|ended| *ended).await;
+        }
+        drop(self.judging.write().await);
         if !supervised {
             let port = self.settings().port;
             if port_has_listener(port) {
@@ -1432,6 +1509,7 @@ impl MlxEngineManager {
                     model_id,
                     watch,
                     weights_bytes,
+                    ..
                 } => {
                     status.state = "mounting".to_string();
                     status.model_id = Some(model_id.clone());
@@ -3311,6 +3389,171 @@ http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
         let status = manager.status().await;
         assert_eq!(status.state, "stopped", "{:?}", status.last_error);
         assert_eq!(status.gate_verdict, None, "the cancelled wait never judged");
+    }
+
+    /// An engine that never finishes loading: it writes a progress line to stderr every tick and
+    /// never listens — a 27B mid-load, as the start sees it. `argv` carries a marker the test
+    /// finds the process by.
+    #[cfg(target_os = "macos")]
+    const SLOW_LOADING_ENGINE: &str = r#"
+import sys, time
+while True:
+    print("Loading MLLM ... still loading", file=sys.stderr, flush=True)
+    time.sleep(0.2)
+"#;
+
+    #[cfg(target_os = "macos")]
+    fn pids_with(marker: &str) -> Vec<u32> {
+        let out = std::process::Command::new("/usr/bin/pgrep")
+            .args(["-f", marker])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .filter_map(|p| p.parse().ok())
+            .collect()
+    }
+
+    /// The node probe a split's preflight runs, pointed at `lock`, under /usr/bin/python3.
+    #[cfg(target_os = "macos")]
+    fn node_probe_of(
+        lock: &std::path::Path,
+    ) -> (crate::distributed::preflight::Check, Option<LoadHolder>) {
+        let probe = crate::distributed::preflight::load_lock_probe().replace(
+            "path = load_lock_path()",
+            &format!("path = {:?}", lock.display().to_string()),
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .args(["-c", &probe])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        crate::distributed::preflight::load_lock_check(&String::from_utf8_lossy(&out.stdout))
+    }
+
+    /// Q-112: Run is a SWITCH, and the way it replaces may still be LOADING. 3.0.44: the Studio
+    /// was 12 s into loading the route's 27B when Run across both Macs asked it to unmount; the
+    /// unmount returned at once, the load ran on holding the Mac's lock, and the split's preflight
+    /// read that lock and refused. Now the loading way stops the way a running one does: Unmount
+    /// cancels the start — its engine process stopped — and returns only once the Mac's lock is
+    /// released, so the preflight that follows it reads the node free and the split starts.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn an_unmount_stops_a_loading_engine_and_frees_the_mac_before_it_returns() {
+        let marker = format!("goose-q112-{}", std::process::id());
+        let port = {
+            let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            probe.local_addr().unwrap().port()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/slow");
+        let manager = test_manager();
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            port,
+            spawn_command: vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                SLOW_LOADING_ENGINE.to_string(),
+                marker.clone(),
+            ],
+            ..Default::default()
+        });
+        let lock = manager.load_lock_path().unwrap();
+
+        manager.mount("pub/slow").await.unwrap();
+        let loading = loop {
+            let pids = pids_with(&marker);
+            if let [pid] = pids[..] {
+                break pid;
+            }
+            tokio::time::sleep(crate::GRACE_TICK).await;
+        };
+        let status = manager.status().await;
+        assert_eq!(status.state, "mounting");
+        let (held, holder) = node_probe_of(&lock);
+        assert_eq!(
+            held.verdict,
+            crate::distributed::preflight::CheckVerdict::Fail,
+            "while it loads, the split's preflight sees the Mac held: {}",
+            held.message
+        );
+        let holder = holder.expect("the probe names the load");
+        assert_eq!(holder.pid, std::process::id(), "the holder is this goose");
+        assert_eq!(holder.port, Some(port));
+        assert_eq!(holder.model.as_deref(), Some("pub/slow"));
+
+        manager.unmount().await;
+
+        assert!(
+            pids_with(&marker).is_empty(),
+            "the loading engine (pid {loading}) was stopped before Unmount returned"
+        );
+        assert_eq!(
+            unsafe { libc::kill(loading as libc::pid_t, 0) },
+            -1,
+            "pid {loading} is gone, not a zombie of goosed"
+        );
+        let (free, holder) = node_probe_of(&lock);
+        assert_eq!(
+            free.verdict,
+            crate::distributed::preflight::CheckVerdict::Pass,
+            "the preflight right after the switch's stop reads the node free: {}",
+            free.message
+        );
+        assert_eq!(free.message, "no other model is loading on this node");
+        assert_eq!(holder, None);
+        assert!(matches!(
+            machine::try_acquire(&lock, &LoadClaim::single_engine("the split", 1, 0)).unwrap(),
+            LoadLockAttempt::Acquired(_)
+        ));
+        let status = manager.status().await;
+        assert_eq!(status.state, "stopped", "{:?}", status.last_error);
+        assert_eq!(status.last_error, None, "a cancelled load is not a failure");
+    }
+
+    /// A mount an Unmount overtook while its gate judged (it holds the Mac's lock, its engine not
+    /// yet spawned) starts nothing and lets go of the lock with a named error.
+    #[tokio::test]
+    async fn a_mount_overtaken_by_an_unmount_while_judging_starts_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        complete_small_model(tmp.path(), "pub/small");
+        let manager = test_manager();
+        manager.set_settings(EngineSettings {
+            models_dir: tmp.path().to_string_lossy().into_owned(),
+            ..Default::default()
+        });
+        let before = manager.unmounts_seen();
+        let LoadLockAttempt::Acquired(lock) =
+            manager.try_claim_the_mac("pub/small").await.unwrap().1
+        else {
+            panic!("the test manager's own lock is free")
+        };
+        manager.unmount().await;
+        let err = manager
+            .mount_holding("pub/small", lock, before)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<MountStopped>(),
+            Some(&MountStopped {
+                model_id: "pub/small".to_string()
+            }),
+            "{err:#}"
+        );
+        assert_eq!(manager.status().await.state, "stopped");
+        assert!(matches!(
+            machine::try_acquire(
+                &manager.load_lock_path().unwrap(),
+                &LoadClaim::single_engine("next", 1, 0)
+            )
+            .unwrap(),
+            LoadLockAttempt::Acquired(_)
+        ));
     }
 
     /// Q-106: the ceiling is the Mac's. Another engine holding the whole GPU ceiling leaves this

@@ -366,6 +366,12 @@ pub enum RefusalCode {
     PreviousSplitShuttingDown,
     /// A distributed MLX process this install did not launch runs on `node`; `detail` names it.
     ForeignSplit,
+    /// Another model is loading on `node` right now (it holds that Mac's load lock, its holder
+    /// proven alive): one load at a time per Mac. The message names the model and the Mac;
+    /// `detail` carries the holder's pid, port and elapsed load. A load of the way a switch
+    /// replaces is stopped by the switch before the split starts, so what reaches this is a load
+    /// the split does not own (another app's, a third party's, that Mac's own).
+    ModelLoading,
 }
 
 impl RefusalCode {
@@ -376,6 +382,7 @@ impl RefusalCode {
             RefusalCode::PreflightFailed => "preflightFailed",
             RefusalCode::PreviousSplitShuttingDown => "previousSplitShuttingDown",
             RefusalCode::ForeignSplit => "foreignSplit",
+            RefusalCode::ModelLoading => "modelLoading",
         }
     }
 }
@@ -955,6 +962,16 @@ enum RunOutcome {
 enum Finish {
     Stop,
     Critical(String),
+}
+
+/// The refusal for a load the split does not own, in plain words: the Mac and the model by name.
+/// Pids, ports and how long it has loaded stay in the refusal's `detail` (the Details layer).
+fn model_loading_words(node: &str, holder: &crate::machine::LoadHolder) -> String {
+    format!(
+        "{node} is loading {} right now, and a Mac loads one model at a time — two loads at once \
+         can wedge its GPU. Start the split once that load finishes, or stop it on {node} first",
+        holder.model_words()
+    )
 }
 
 fn sidecar_parity() -> SidecarConfig {
@@ -2534,8 +2551,13 @@ impl DistributedManager {
                 format!("preflight: {failures}"),
             );
             let foreign = report.nodes.iter().find(|n| !n.foreign_splits.is_empty());
-            return Ok(match foreign {
-                Some(node) => StartOutcome::Refused {
+            let loading = report.nodes.iter().find_map(|n| {
+                n.loading
+                    .as_ref()
+                    .map(|holder| (n.name.clone(), holder.clone()))
+            });
+            return Ok(match (foreign, loading) {
+                (Some(node), _) => StartOutcome::Refused {
                     code: RefusalCode::ForeignSplit,
                     message: format!(
                         "Another MLX split (not goose's) is running on {} — stop it to start this \
@@ -2546,7 +2568,14 @@ impl DistributedManager {
                     detail: Some(node.foreign_splits.join("; ")),
                     preflight: Some(report),
                 },
-                None => StartOutcome::Refused {
+                (None, Some((node, holder))) => StartOutcome::Refused {
+                    code: RefusalCode::ModelLoading,
+                    message: model_loading_words(&node, &holder),
+                    detail: Some(holder.describe(crate::machine::now_unix())),
+                    node: Some(node),
+                    preflight: Some(report),
+                },
+                (None, None) => StartOutcome::Refused {
                     code: RefusalCode::PreflightFailed,
                     message: failures,
                     preflight: Some(report),
@@ -2820,6 +2849,7 @@ mod tests {
             top_apps: Vec::new(),
             leftovers: Vec::new(),
             foreign_splits: Vec::new(),
+            loading: None,
         }
     }
 
@@ -3602,6 +3632,8 @@ mod tests {
     struct Nodes {
         rows: StdMutex<Vec<PsRow>>,
         scripts: StdMutex<Vec<String>>,
+        /// (host, the `@@loadlock` section that host's probe answers).
+        load_locks: StdMutex<Vec<(Option<String>, String)>>,
     }
 
     /// (host, pid, ppid, row) — host `None` = the MacBook Pro.
@@ -3616,7 +3648,15 @@ mod tests {
                         .collect(),
                 ),
                 scripts: StdMutex::new(Vec::new()),
+                load_locks: StdMutex::new(Vec::new()),
             })
+        }
+
+        fn load_lock(&self, host: Option<&str>, section: String) {
+            self.load_locks
+                .lock()
+                .unwrap()
+                .push((host.map(str::to_string), section));
         }
 
         fn kills(&self) -> Vec<String> {
@@ -3655,7 +3695,16 @@ mod tests {
                     .filter(|r| here(&r.0))
                     .map(|r| format!("{} {}", r.1, r.2))
                     .collect();
-                preflight::tests::probe_answer(&ps.join("\n"), Some(&parents.join("\n")))
+                let mut answer =
+                    preflight::tests::probe_answer(&ps.join("\n"), Some(&parents.join("\n")));
+                if let Some((_, section)) =
+                    self.load_locks.lock().unwrap().iter().find(|l| here(&l.0))
+                {
+                    answer.stdout = answer
+                        .stdout
+                        .replace("@@end\n", &format!("@@loadlock\n{section}\n@@end\n"));
+                }
+                answer
             } else if let Some(pid) = script
                 .strip_prefix("/bin/kill -")
                 .and_then(|rest| rest.split_whitespace().nth(1))
@@ -3804,6 +3853,86 @@ mod tests {
             .unwrap()
             .starts_with("pid 9425 `/x/bin/python -c import base64"));
         assert!(nodes.kills().is_empty());
+    }
+
+    /// Q-112, the refusal that stays: a load the split does not own — here the Studio's own
+    /// single engine loading the 27B, the 3.0.44 record with its model named — still refuses the
+    /// start. The words name the Mac and the model; the pid, the port and how long it has loaded
+    /// sit only in `detail` (Details). Nothing is signalled.
+    #[tokio::test]
+    async fn a_load_the_split_does_not_own_is_refused_naming_the_model_and_the_mac() {
+        let nodes = Nodes::new(Vec::new());
+        let holder = crate::machine::LoadHolder {
+            pid: 35308,
+            started_at: 1_790_375_000,
+            since: crate::machine::now_unix() - 12,
+            what: "goose (pid 35308) is loading Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx \
+                   (30.5 GB of weights) as a single engine on port 8090"
+                .to_string(),
+            port: Some(8090),
+            group: None,
+            model: Some("Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string()),
+        };
+        nodes.load_lock(Some("workhorse"), format!("held\n{}", holder.to_record()));
+        let (manager, outcome) = start_on(&nodes).await;
+        let StartOutcome::Refused {
+            code,
+            message,
+            node,
+            detail,
+            ..
+        } = outcome
+        else {
+            panic!("{outcome:?}")
+        };
+        assert_eq!(code, RefusalCode::ModelLoading);
+        assert_eq!(code.as_str(), "modelLoading");
+        assert_eq!(node.as_deref(), Some("workhorse"));
+        assert_eq!(
+            message,
+            "workhorse is loading Qwen3.8-27B-Atlassian-Q8-mlx right now, and a Mac loads one \
+             model at a time — two loads at once can wedge its GPU. Start the split once that \
+             load finishes, or stop it on workhorse first"
+        );
+        assert!(
+            !message.contains("pid") && !message.contains("8090"),
+            "pids and ports stay behind Details: {message}"
+        );
+        let detail = detail.unwrap();
+        assert!(
+            detail.starts_with("pid 35308 — goose (pid 35308) is loading")
+                && detail.contains("single engine on port 8090")
+                && detail.contains("loading for 1"),
+            "{detail}"
+        );
+        assert!(nodes.kills().is_empty(), "{:?}", nodes.kills());
+        assert_eq!(manager.status().state, RunState::Stopped);
+
+        // A record from a goose before `model=` still refuses, and says it cannot name the model.
+        let older = Nodes::new(Vec::new());
+        let unnamed = crate::machine::LoadHolder {
+            model: None,
+            ..holder
+        };
+        older.load_lock(None, format!("held\n{}", unnamed.to_record()));
+        let (_, outcome) = start_on(&older).await;
+        let StartOutcome::Refused {
+            code,
+            message,
+            node,
+            ..
+        } = outcome
+        else {
+            panic!("{outcome:?}")
+        };
+        assert_eq!(code, RefusalCode::ModelLoading);
+        assert_eq!(node.as_deref(), Some("MacBook Pro"));
+        assert!(
+            message.starts_with(
+                "MacBook Pro is loading a model its load record does not name right now"
+            ),
+            "{message}"
+        );
     }
 
     /// The no-run Stop sweep signals only ranks carrying this install's token — judged on the

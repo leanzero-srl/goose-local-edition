@@ -341,6 +341,16 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   prefill is stamped when the context comes back. TRAP: the fork's _Job dataclass has no __post_init__, so a subclass's
   __post_init__ never runs (500 on /v1/status) — extend __init__. HARNESS: 2 local ring ranks (ring_hosts 127.0.0.1:55xx,
   distinct ports) for the 27B tensor; the Flash pipeline via a test-only `load_stage(layer_limit=4)` shim.
+- UNMOUNT STOPS A LOADING ENGINE (Q-112, 2026-09-26). Before: `unmount()` on `Mounting` flipped the state and
+  returned at once; the start task loaded on to ready HOLDING the Mac's load lock, then shut the engine down.
+  Measured on 3.0.44: Studio got `unmount` 05:53:49.106, "sidecar ready" 05:53:51.315 — the MacBook's split
+  preflight between them read the lock held and refused. Now: `SidecarConfig.start_cancel` (`StartCancel`) ends
+  `await_ready` — terminate (SIGTERM pid → grace → proven-group SIGKILL), release_port, `StartCancelled` — and
+  `unmount` waits the start task's `ended` watch (sent AFTER the lock is dropped). A mount overtaken while its
+  gate judged → `MountStopped` (unmount counter + `judging` RwLock). Run it's switch to the SPLIT also awaits
+  `dropRoute().settled` (the peer's unmount answered) — the 3.0.44 split start began before the Studio even got
+  the unmount. A load the split does NOT own refuses with code `modelLoading`: "<Mac> is loading <model> right
+  now…", pid/port/elapsed only in `detail`; the lock record carries `model=` (single engine AND ranks).
 
 ## Available memory on macOS (2026-09-23 — the measure under the mount gate and the page)
 - `memory::measure()` on macOS = `host_statistics64(HOST_VM_INFO64)`: (free_count − speculative_count) +

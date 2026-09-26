@@ -5,7 +5,7 @@
 # before MLX is imported and releases it when the rank reports RANK_CAPS — its weights are in. It is
 # the lock goose's single engine takes (goose-sidecar machine.rs): an exclusive flock on
 # `~/.local/state/goose/mlx-load.lock` under the account's home, whose text is the holder's record
-# (`key=value` lines: pid, started, since, what, [port], [group]). A rank:
+# (`key=value` lines: pid, started, since, what, [port], [group], [model]). A rank:
 # - takes the lock when nobody holds it; a recorded holder is displaced only when PROVEN gone (no
 #   such pid, a zombie, or the pid started at another time — a reused pid);
 # - joins the hold when a rank of the SAME split holds it (`group`): a split's ranks on one Mac are
@@ -115,8 +115,9 @@ def refuse(path, holder):
     raise SystemExit(f"goose rank: {message}")
 
 
-def take_load_lock(path, group, what):
-    """The lock's fd when this rank took it; None when a rank of its own split holds it."""
+def take_load_lock(path, group, what, model=None):
+    """The lock's fd when this rank took it; None when a rank of its own split holds it. `model`:
+    the id a refusal names in plain words (`model=` in the record, as goose's single engine writes)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
     while True:
@@ -155,6 +156,8 @@ def take_load_lock(path, group, what):
         f"pid={os.getpid()}\nstarted={start[0]}\nsince={int(time.time())}\n"
         f"what={' '.join(what.splitlines())}\ngroup={group}\n"
     )
+    if model:
+        record += f"model={' '.join(str(model).splitlines())}\n"
     os.ftruncate(fd, 0)
     os.lseek(fd, 0, os.SEEK_SET)
     os.write(fd, record.encode())
