@@ -1,10 +1,10 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-26 23:40 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
+Updated: 2026-09-26 23:50 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
 
 ## Live
 - Installed on both Macs: 3.0.53 (+ Q-139, Q-143/144/145; pipeline fork 419306f70 on both). Flash pipeline smoke: up in 57 s.
-- LOAD 26d (Q-145): canaries 1–2 at 3.3 / 1.5 s (was 347 s) — then canary 3 stuck 290+ s at the queue head: the aging
+- LOAD 26d (Q-145): canaries 1–2 at 3.3 / 1.5 s (was 347 s) — then canaries 3–4 at 353 / 297 s: the aging
   bound counts FIFO wait, so in steady state nothing can jump. Q-145 REOPENED, fork agent on the aging rule → 26e.
 - CI green; the one red (developer_client_uses_working_dir_for_shell_tool) passed on re-run — a flake, watched.
 - lz-ppm session adopted the live method: first live round found 5 defects (B-119..B-125); its trap is in quality-hunt-loop.
@@ -28,7 +28,9 @@ Updated: 2026-09-26 23:40 · heartbeat: session cron 90b0083a (:04/:14/…/:54, 
 - LIVE critic round 1 DONE: 14 rows → Q-148..Q-158 + Q-147 reach; Q-146 reframed (tool deltas reach goose; ~80% of
   tokens do not; one answer holds 41 tool calls). Test node mihai-flash-mlx removed from config (backup .bak-2026-09-26-2330).
 - Engine-surfaces agent: Q-148 (Run/tray Stop cut a live answer, no confirm), Q-149, Q-150, Q-154..Q-157.
-- Q-159 agents: split sampling defaults (sidecar + pipeline fork) · goose duplicate-tool-call guard + ledger dedupe.
+- Q-159 split part MERGED 5b2a1d264 (tensor + pipeline both were greedy; fork lz-pipeline-qwen4.9; /v1/status `sampling`).
+  goose part (duplicate-tool-call guard + ledger dedupe) agent still running.
+- Building 3.0.54 from 5b2a1d264 (Q-146 instrument + Q-159 split) · watcher bmu384eed → install → 27B tensor → E2E #3d rerun.
 - Chat-surfaces agent: Q-151 (live progress line), Q-152, Q-153, Q-158.
 - Q-146 instrument: parser state + withheld chars + text tail in /v1/status, withholding-path table.
 - NEEDS-YOU + Q-147 RUNNING state (owner asks 22:3x / 22:5x) in ONE agent (same sidebar files): ask_user tool + persistent card above composer + sidebar marker + app-wide count;
