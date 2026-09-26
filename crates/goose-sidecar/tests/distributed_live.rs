@@ -1327,7 +1327,7 @@ async fn live_q114_a_transient_rank_stall_ends_loudly() {
     let seen = Arc::new(AtomicUsize::new(0));
     let stream = tokio::spawn(stream_completion(
         base.clone(),
-        model.clone(),
+        model.id.clone(),
         3000,
         Arc::clone(&seen),
     ));
