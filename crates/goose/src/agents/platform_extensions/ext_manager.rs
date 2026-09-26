@@ -64,7 +64,7 @@ pub struct ListResourcesParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LoadToolsParams {
-    /// Exact tool names from the "Deferred tools" list, e.g. "playwright__browser_navigate".
+    /// Exact names of deferred tools from your tool list, e.g. "playwright__browser_navigate".
     #[serde(default)]
     pub names: Vec<String>,
     /// Or words describing what the tool should do, e.g. "open a web page".
@@ -383,11 +383,11 @@ impl ExtensionManagerClient {
                     "no deferred tool's name and summary carry half of the words of {query:?} \
                      (names asked: {:?}). A query finds a tool by what it DOES — \"search the web\", \
                      \"read one web page\", \"create a PDF\" — not by the subject you are working on; \
-                     the names and summaries are listed under \"Deferred tools\" in your instructions",
+                     the names and summaries are in your tool list",
                     params.names
                 ),
                 None => format!(
-                    "no deferred tool matches names {:?}; the names are listed under \"Deferred tools\" in your instructions",
+                    "no deferred tool matches names {:?}; the names are in your tool list",
                     params.names
                 ),
             };
@@ -451,10 +451,10 @@ impl ExtensionManagerClient {
                 Tool::new(
                     crate::agents::tool_deferral::LOAD_TOOLS_TOOL_NAME.to_string(),
                     indoc! {r#"
-            Read the parameters of tools listed under "Deferred tools" in your instructions. Pass
+            Read the full description and parameter notes of the tools your instructions name under
+            "Deferred tools" (their tool-list entries carry one sentence and bare parameters). Pass
             their exact `names`, or a `query` describing what you need; the result is each tool's
-            description and JSON Schema, and the tool joins your tool list. Then call it by its
-            exact name, as any other tool.
+            description and JSON Schema. Then call it by its exact name, as any other tool.
         "#}
                     .to_string(),
                     Arc::new(

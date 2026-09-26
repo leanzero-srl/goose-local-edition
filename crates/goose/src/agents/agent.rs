@@ -2205,7 +2205,7 @@ impl Agent {
                 }
 
                 let (disclosed_tools, disclosed_prompt) =
-                    self.disclose_tools(&tools, &system_prompt, conversation.messages()).await;
+                    self.disclose_tools(&tools, &system_prompt).await;
                 let provider_call_started_ms = chrono::Utc::now().timestamp_millis();
                 let mut stream = Self::stream_response_from_provider(
                     self.provider().await?,
