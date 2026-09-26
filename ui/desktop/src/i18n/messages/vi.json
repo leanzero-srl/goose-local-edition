@@ -3000,7 +3000,7 @@
     "defaultMessage": "Dừng"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "đang dùng {gb} GiB"
+    "defaultMessage": "đang dùng {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Thêm node"
@@ -3024,7 +3024,7 @@
     "defaultMessage": "Áp dụng"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "Còn {available} trên {total} GiB"
+    "defaultMessage": "Còn {available} trên {total} GB"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · RDMA qua Thunderbolt 5"
@@ -3252,7 +3252,7 @@
     "defaultMessage": "Một mô hình được chia trên nhiều máy Mac qua Thunderbolt. Máy Mac này là rank 0: nó phục vụ API và giám sát mọi rank."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "KV đã giữ so với ngân sách"
@@ -3264,7 +3264,7 @@
     "defaultMessage": "{count, plural, other {Lớp {first}–{last} · # lớp}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Giới hạn: bộ nhớ {memory} · wired {wired} · cache {cache} GiB"
+    "defaultMessage": "Giới hạn: bộ nhớ {memory} · wired {wired} · cache {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Chưa báo cáo giới hạn"
@@ -3366,10 +3366,10 @@
     "defaultMessage": "Bộ nhớ đỉnh so với ngân sách"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB đỉnh · chưa báo cáo ngân sách"
+    "defaultMessage": "GB đỉnh · chưa báo cáo ngân sách"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB đỉnh trên ngân sách {budget} GiB"
+    "defaultMessage": "GB đỉnh trên ngân sách bản chia {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3378,13 +3378,13 @@
     "defaultMessage": "Bộ nhớ dự kiến so với ngân sách"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "trọng số {weights} · trạng thái {state} · vùng làm việc {workspace} · cache prompt {cache} GiB"
+    "defaultMessage": "trọng số {weights} · trạng thái {state} · vùng làm việc {workspace} · cache prompt {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB dự kiến kèm chi phí phụ, trên ngân sách {budget} GiB"
+    "defaultMessage": "GB dự kiến kèm chi phí phụ, trên ngân sách bản chia {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "dự kiến {gb} GiB kèm chi phí phụ"
+    "defaultMessage": "dự kiến {gb} GB kèm chi phí phụ"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Chưa chạy preflight nào. Một lần chạy thử kiểm tra từng node (khả năng kết nối, bộ nhớ, mô hình, Python, liên kết Thunderbolt, cổng) và lập kế hoạch lớp cho từng node mà không khởi chạy gì cả."
@@ -3450,10 +3450,10 @@
     "defaultMessage": "xử lý"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Ngân sách {budget} GiB (giới hạn GPU {ceiling} · khả dụng {available})"
+    "defaultMessage": "Ngân sách bản chia {budget} GB (giới hạn GPU {ceiling} · khả dụng {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Ngân sách {budget} GiB (giới hạn GPU {ceiling} · khả dụng sau khi nén {available})"
+    "defaultMessage": "Ngân sách bản chia {budget} GB (giới hạn GPU {ceiling} · khả dụng sau khi nén {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Giải phóng bộ nhớ thất bại"
@@ -3462,10 +3462,10 @@
     "defaultMessage": "Tự động giải phóng bộ nhớ"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "Đã giải phóng {gib} GiB"
+    "defaultMessage": "Đã giải phóng {gib} GB"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Không giải phóng được gì (ít hơn {gib} GiB)"
+    "defaultMessage": "Không giải phóng được gì (ít hơn {gib} GB)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "Yêu cầu macOS thu hồi bộ nhớ: ứng dụng nhàn rỗi được nén và bộ nhớ đệm bị bỏ. Không có gì bị đóng."
@@ -3477,10 +3477,10 @@
     "defaultMessage": "Giải phóng bộ nhớ không chạy"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "Thiếu {gib} GiB — giải phóng bộ nhớ, hoặc đóng ứng dụng: {apps}"
+    "defaultMessage": "Thiếu {gib} GB — giải phóng bộ nhớ, hoặc đóng ứng dụng: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "Thiếu {gib} GiB — giải phóng bộ nhớ, hoặc đóng ứng dụng"
+    "defaultMessage": "Thiếu {gib} GB — giải phóng bộ nhớ, hoặc đóng ứng dụng"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Đang cập nhật runner của bản chia"
@@ -3720,7 +3720,7 @@
     "defaultMessage": "SHA256SUMS khác nhau"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{available} trên {total} GiB khả dụng"
+    "defaultMessage": "{available} trên {total} GB khả dụng"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "thiếu trên {nodes}"
@@ -4110,13 +4110,16 @@
     "defaultMessage": "chưa có mức đỉnh"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} trên {budget} GiB đỉnh"
+    "defaultMessage": "đỉnh {peak} trên ngân sách bản chia {budget} GB"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Bộ nhớ đỉnh so với ngân sách"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB đỉnh"
+    "defaultMessage": "đỉnh {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "Bộ nhớ nhiều nhất bản chia đã dùng trên {node}, so với {budget} GB nó được dùng ở đó: phần trống khi khởi động, trừ dự phòng, trong giới hạn GPU."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slot {used} / {slots}"
@@ -4899,7 +4902,7 @@
     "defaultMessage": "Bộ nhớ"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "Trống {free} GB / {total} GB"
+    "defaultMessage": "Khả dụng {free} GB / {total} GB"
   },
   "myMacs.mesh": {
     "defaultMessage": "Mạng lưới"

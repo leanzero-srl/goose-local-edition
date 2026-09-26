@@ -3000,7 +3000,7 @@
     "defaultMessage": "Ferma"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "attiva {gb} GiB"
+    "defaultMessage": "attiva {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Aggiungi nodo"
@@ -3024,7 +3024,7 @@
     "defaultMessage": "Applica"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{available} di {total} GiB disponibili"
+    "defaultMessage": "{available} di {total} GB disponibili"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · RDMA su Thunderbolt 5"
@@ -3252,7 +3252,7 @@
     "defaultMessage": "Un modello suddiviso su più Mac via Thunderbolt. Questo Mac è il rank 0: serve l’API e supervisiona ogni rank."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} di {budget} GiB"
+    "defaultMessage": "KV {reserved} di {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "KV riservato rispetto al budget"
@@ -3264,7 +3264,7 @@
     "defaultMessage": "{count, plural, one {Strati {first}–{last} · # strato} other {Strati {first}–{last} · # strati}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Limiti: memoria {memory} · wired {wired} · cache {cache} GiB"
+    "defaultMessage": "Limiti: memoria {memory} · wired {wired} · cache {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Limiti non ancora comunicati"
@@ -3366,10 +3366,10 @@
     "defaultMessage": "Memoria di picco rispetto al budget"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB di picco · nessun budget comunicato"
+    "defaultMessage": "GB di picco · nessun budget comunicato"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB di picco su un budget di {budget} GiB"
+    "defaultMessage": "GB di picco su un budget di suddivisione di {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3378,13 +3378,13 @@
     "defaultMessage": "Memoria pianificata rispetto al budget"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "pesi {weights} · stato {state} · area di lavoro {workspace} · cache dei prompt {cache} GiB"
+    "defaultMessage": "pesi {weights} · stato {state} · area di lavoro {workspace} · cache dei prompt {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB pianificati con overhead, su un budget di {budget} GiB"
+    "defaultMessage": "GB pianificati con overhead, su un budget di suddivisione di {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "pianificati {gb} GiB con overhead"
+    "defaultMessage": "pianificati {gb} GB con overhead"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Nessun preflight è stato ancora eseguito. Una prova a secco controlla ogni nodo (raggiungibilità, memoria, il modello, Python, il collegamento Thunderbolt, le porte) e pianifica gli strati per nodo senza avviare nulla."
@@ -3450,10 +3450,10 @@
     "defaultMessage": "esecutore"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Budget {budget} GiB (limite GPU {ceiling} · disponibile {available})"
+    "defaultMessage": "Budget di suddivisione {budget} GB (limite GPU {ceiling} · disponibile {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Budget {budget} GiB (limite GPU {ceiling} · disponibile dopo la compattazione {available})"
+    "defaultMessage": "Budget di suddivisione {budget} GB (limite GPU {ceiling} · disponibile dopo la compattazione {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Fai spazio non è riuscito"
@@ -3462,10 +3462,10 @@
     "defaultMessage": "Libera memoria automaticamente"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "Liberati {gib} GiB"
+    "defaultMessage": "Liberati {gib} GB"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Nulla liberato ({gib} GiB in meno)"
+    "defaultMessage": "Nulla liberato ({gib} GB in meno)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "Chiede a macOS di recuperare memoria: le app inattive vengono compresse e le cache svuotate. Non si chiude nulla."
@@ -3477,10 +3477,10 @@
     "defaultMessage": "Fai spazio non è stato eseguito"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "Mancano {gib} GiB — fai spazio o chiudi app: {apps}"
+    "defaultMessage": "Mancano {gib} GB — fai spazio o chiudi app: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "Mancano {gib} GiB — fai spazio o chiudi app"
+    "defaultMessage": "Mancano {gib} GB — fai spazio o chiudi app"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Aggiornamento del runner dello split"
@@ -3720,7 +3720,7 @@
     "defaultMessage": "SHA256SUMS diversi"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{available} di {total} GiB disponibili"
+    "defaultMessage": "{available} di {total} GB disponibili"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "manca su {nodes}"
@@ -4110,13 +4110,16 @@
     "defaultMessage": "ancora nessun picco"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} di {budget} GiB di picco"
+    "defaultMessage": "picco {peak} su {budget} GB di budget di suddivisione"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Memoria di picco rispetto al budget"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB di picco"
+    "defaultMessage": "picco {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "La memoria massima usata dalla suddivisione su {node}, rispetto ai {budget} GB che può usare lì: ciò che era libero all’avvio, meno la riserva, entro il limite della GPU."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slot {used} di {slots}"
@@ -4899,7 +4902,7 @@
     "defaultMessage": "Memoria"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{free} GB liberi su {total} GB"
+    "defaultMessage": "{free} GB disponibili su {total} GB"
   },
   "myMacs.mesh": {
     "defaultMessage": "Mesh"

@@ -3000,7 +3000,7 @@
     "defaultMessage": "Arrêter"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "active {gb} Gio"
+    "defaultMessage": "active {gb} Go"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Ajouter un nœud"
@@ -3024,7 +3024,7 @@
     "defaultMessage": "Appliquer"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{available} Gio disponibles sur {total}"
+    "defaultMessage": "{available} Go disponibles sur {total}"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · RDMA sur Thunderbolt 5"
@@ -3252,7 +3252,7 @@
     "defaultMessage": "Un modèle réparti sur plusieurs Mac via Thunderbolt. Ce Mac est le rank 0 : il sert l’API et supervise chaque rank."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} sur {budget} Gio"
+    "defaultMessage": "KV {reserved} sur {budget} Go"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "KV réservé par rapport au budget"
@@ -3264,7 +3264,7 @@
     "defaultMessage": "{count, plural, one {Couches {first}–{last} · # couche} other {Couches {first}–{last} · # couches}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Plafonds : mémoire {memory} · wired {wired} · cache {cache} Gio"
+    "defaultMessage": "Plafonds : mémoire {memory} · wired {wired} · cache {cache} Go"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Plafonds pas encore signalés"
@@ -3366,10 +3366,10 @@
     "defaultMessage": "Pic mémoire par rapport au budget"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "Gio de pic · aucun budget signalé"
+    "defaultMessage": "Go de pic · aucun budget signalé"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "Gio de pic sur un budget de {budget} Gio"
+    "defaultMessage": "Go de pic sur un budget de répartition de {budget} Go"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3378,13 +3378,13 @@
     "defaultMessage": "Mémoire planifiée par rapport au budget"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "poids {weights} · état {state} · espace de travail {workspace} · cache de prompts {cache} Gio"
+    "defaultMessage": "poids {weights} · état {state} · espace de travail {workspace} · cache de prompts {cache} Go"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "Gio planifiés avec surcoût, sur un budget de {budget} Gio"
+    "defaultMessage": "Go planifiés avec surcoût, sur un budget de répartition de {budget} Go"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "planifié {gb} Gio avec surcoût"
+    "defaultMessage": "planifié {gb} Go avec surcoût"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Aucun preflight n’a encore été lancé. Un essai à blanc vérifie chaque nœud (joignabilité, mémoire, modèle, Python, liaison Thunderbolt, ports) et planifie les couches par nœud sans rien lancer."
@@ -3450,10 +3450,10 @@
     "defaultMessage": "travailleur"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Budget {budget} Gio (limite GPU {ceiling} · disponible {available})"
+    "defaultMessage": "Budget de répartition {budget} Go (limite GPU {ceiling} · disponible {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Budget {budget} Gio (limite GPU {ceiling} · disponible après compaction {available})"
+    "defaultMessage": "Budget de répartition {budget} Go (limite GPU {ceiling} · disponible après compaction {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Faire de la place a échoué"
@@ -3462,10 +3462,10 @@
     "defaultMessage": "Libérer la mémoire automatiquement"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} Gio libérés"
+    "defaultMessage": "{gib} Go libérés"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Rien de libéré ({gib} Gio de moins)"
+    "defaultMessage": "Rien de libéré ({gib} Go de moins)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "Demande à macOS de récupérer de la mémoire : les apps inactives sont compressées et les caches vidés. Rien n’est quitté."
@@ -3477,10 +3477,10 @@
     "defaultMessage": "Faire de la place n’a pas été lancé"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "Il manque {gib} Gio — faites de la place ou fermez des apps : {apps}"
+    "defaultMessage": "Il manque {gib} Go — faites de la place ou fermez des apps : {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "Il manque {gib} Gio — faites de la place ou fermez des apps"
+    "defaultMessage": "Il manque {gib} Go — faites de la place ou fermez des apps"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Mise à jour du runner du split"
@@ -3720,7 +3720,7 @@
     "defaultMessage": "SHA256SUMS diffèrent"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{available} Gio disponibles sur {total}"
+    "defaultMessage": "{available} Go disponibles sur {total}"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "absent sur {nodes}"
@@ -4110,13 +4110,16 @@
     "defaultMessage": "pas encore de pic"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} sur {budget} Gio de pic"
+    "defaultMessage": "pic {peak} sur {budget} Go de budget de répartition"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Pic mémoire par rapport au budget"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} Gio de pic"
+    "defaultMessage": "pic {peak} Go"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "Le plus de mémoire que la répartition a utilisé sur {node}, face aux {budget} Go qu’elle peut y utiliser : ce qui était libre à son démarrage, moins la réserve, dans la limite du GPU."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slots {used} sur {slots}"
@@ -4899,7 +4902,7 @@
     "defaultMessage": "Mémoire"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{free} Go libres sur {total} Go"
+    "defaultMessage": "{free} Go disponibles sur {total} Go"
   },
   "myMacs.mesh": {
     "defaultMessage": "Maillage"

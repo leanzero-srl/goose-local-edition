@@ -3000,7 +3000,7 @@
     "defaultMessage": "Durdur"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "etkin {gb} GiB"
+    "defaultMessage": "etkin {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Düğüm ekle"
@@ -3024,7 +3024,7 @@
     "defaultMessage": "Uygula"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{total} GiB'ın {available} GiB'ı kullanılabilir"
+    "defaultMessage": "{total} GB'ın {available} GB'ı kullanılabilir"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · Thunderbolt 5 üzerinden RDMA"
@@ -3252,7 +3252,7 @@
     "defaultMessage": "Thunderbolt üzerinden birkaç Mac'e bölünmüş tek bir model. Bu Mac rank 0'dır: API'yi sunar ve her rank'ı denetler."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "Bütçeye göre ayrılmış KV"
@@ -3264,7 +3264,7 @@
     "defaultMessage": "{count, plural, one {Katman {first}–{last} · # katman} other {Katman {first}–{last} · # katman}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Sınırlar: bellek {memory} · wired {wired} · önbellek {cache} GiB"
+    "defaultMessage": "Sınırlar: bellek {memory} · wired {wired} · önbellek {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Sınırlar henüz bildirilmedi"
@@ -3366,10 +3366,10 @@
     "defaultMessage": "Bütçeye göre tepe bellek"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB tepe · bütçe bildirilmedi"
+    "defaultMessage": "GB tepe · bütçe bildirilmedi"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB tepe, {budget} GiB bütçeden"
+    "defaultMessage": "GB tepe, {budget} GB bölme bütçesinden"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3378,13 +3378,13 @@
     "defaultMessage": "Bütçeye göre planlanan bellek"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "ağırlıklar {weights} · durum {state} · çalışma alanı {workspace} · istem önbelleği {cache} GiB"
+    "defaultMessage": "ağırlıklar {weights} · durum {state} · çalışma alanı {workspace} · istem önbelleği {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB ek yükle planlandı, {budget} GiB bütçeden"
+    "defaultMessage": "GB ek yükle planlandı, {budget} GB bölme bütçesinden"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "planlanan {gb} GiB (ek yük dahil)"
+    "defaultMessage": "planlanan {gb} GB (ek yük dahil)"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Henüz preflight çalıştırılmadı. Deneme çalıştırması her düğümü (erişilebilirlik, bellek, model, Python, Thunderbolt bağlantısı, bağlantı noktaları) denetler ve hiçbir şey başlatmadan katmanları düğümlere göre planlar."
@@ -3450,10 +3450,10 @@
     "defaultMessage": "işçi"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Bütçe {budget} GiB (GPU sınırı {ceiling} · kullanılabilir {available})"
+    "defaultMessage": "Bölme bütçesi {budget} GB (GPU sınırı {ceiling} · kullanılabilir {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Bütçe {budget} GiB (GPU sınırı {ceiling} · sıkıştırma sonrası kullanılabilir {available})"
+    "defaultMessage": "Bölme bütçesi {budget} GB (GPU sınırı {ceiling} · sıkıştırma sonrası kullanılabilir {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Yer açma başarısız oldu"
@@ -3462,10 +3462,10 @@
     "defaultMessage": "Belleği otomatik boşalt"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB boşaltıldı"
+    "defaultMessage": "{gib} GB boşaltıldı"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Hiçbir şey boşaltılmadı ({gib} GiB daha az)"
+    "defaultMessage": "Hiçbir şey boşaltılmadı ({gib} GB daha az)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "macOS’tan belleği geri almasını ister: boştaki uygulamalar sıkıştırılır, önbellekler bırakılır. Hiçbir şey kapatılmaz."
@@ -3477,10 +3477,10 @@
     "defaultMessage": "Yer açma çalışmadı"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "{gib} GiB eksik — yer açın veya uygulamaları kapatın: {apps}"
+    "defaultMessage": "{gib} GB eksik — yer açın veya uygulamaları kapatın: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "{gib} GiB eksik — yer açın veya uygulamaları kapatın"
+    "defaultMessage": "{gib} GB eksik — yer açın veya uygulamaları kapatın"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Bölmenin çalıştırıcısı güncelleniyor"
@@ -3720,7 +3720,7 @@
     "defaultMessage": "SHA256SUMS farklı"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{total} GiB'ın {available} GiB'ı kullanılabilir"
+    "defaultMessage": "{total} GB'ın {available} GB'ı kullanılabilir"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "{nodes} üzerinde yok"
@@ -4110,13 +4110,16 @@
     "defaultMessage": "henüz tepe yok"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} / {budget} GiB tepe"
+    "defaultMessage": "tepe {peak} / {budget} GB bölme bütçesi"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Bütçeye göre tepe bellek"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB tepe"
+    "defaultMessage": "tepe {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "Bölmenin {node} üzerinde kullandığı en yüksek bellek, orada kullanabileceği {budget} GB'a karşı: başladığında boş olan, yedek düşülmüş, GPU sınırı içinde."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slotlar {used} / {slots}"
@@ -4899,7 +4902,7 @@
     "defaultMessage": "Bellek"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{total} GB içinde {free} GB boş"
+    "defaultMessage": "{total} GB içinde {free} GB kullanılabilir"
   },
   "myMacs.mesh": {
     "defaultMessage": "Ağ örgüsü"

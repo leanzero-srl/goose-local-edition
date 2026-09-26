@@ -3000,7 +3000,7 @@
     "defaultMessage": "停止"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "活跃 {gb} GiB"
+    "defaultMessage": "活跃 {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "添加节点"
@@ -3024,7 +3024,7 @@
     "defaultMessage": "应用"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{total} GiB 中可用 {available} GiB"
+    "defaultMessage": "{total} GB 中可用 {available} GB"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · 经 Thunderbolt 5 的 RDMA"
@@ -3252,7 +3252,7 @@
     "defaultMessage": "通过 Thunderbolt 将一个模型拆分到多台 Mac 上。这台 Mac 是 rank 0：它提供 API 并监督每个 rank。"
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "已预留 KV 占预算比例"
@@ -3264,7 +3264,7 @@
     "defaultMessage": "{count, plural, other {第 {first}–{last} 层 · 共 # 层}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "上限：内存 {memory} · wired {wired} · 缓存 {cache} GiB"
+    "defaultMessage": "上限：内存 {memory} · wired {wired} · 缓存 {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "尚未报告上限"
@@ -3366,10 +3366,10 @@
     "defaultMessage": "峰值内存与预算之比"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB 峰值 · 未报告预算"
+    "defaultMessage": "GB 峰值 · 未报告预算"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB 峰值，预算 {budget} GiB"
+    "defaultMessage": "GB 峰值，拆分预算 {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3378,13 +3378,13 @@
     "defaultMessage": "计划内存与预算之比"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "权重 {weights} · 状态 {state} · 工作区 {workspace} · 提示缓存 {cache} GiB"
+    "defaultMessage": "权重 {weights} · 状态 {state} · 工作区 {workspace} · 提示缓存 {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB 含开销的计划用量，预算 {budget} GiB"
+    "defaultMessage": "GB 含开销的计划用量，拆分预算 {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "计划 {gb} GiB（含开销）"
+    "defaultMessage": "计划 {gb} GB（含开销）"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "尚未运行预检。试运行会检查每个节点（可达性、内存、模型、Python、Thunderbolt 链路、端口），并在不启动任何东西的情况下规划各节点的层。"
@@ -3450,10 +3450,10 @@
     "defaultMessage": "工作节点"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "预算 {budget} GiB（GPU 上限 {ceiling} · 可用 {available}）"
+    "defaultMessage": "拆分预算 {budget} GB（GPU 上限 {ceiling} · 可用 {available}）"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "预算 {budget} GiB（GPU 上限 {ceiling} · 压缩后可用 {available}）"
+    "defaultMessage": "拆分预算 {budget} GB（GPU 上限 {ceiling} · 压缩后可用 {available}）"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "腾出空间失败"
@@ -3462,10 +3462,10 @@
     "defaultMessage": "自动释放内存"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "已释放 {gib} GiB"
+    "defaultMessage": "已释放 {gib} GB"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "未释放内存（减少 {gib} GiB）"
+    "defaultMessage": "未释放内存（减少 {gib} GB）"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "请求 macOS 回收内存：闲置应用会被压缩，缓存会被丢弃。不会退出任何应用。"
@@ -3477,10 +3477,10 @@
     "defaultMessage": "腾出空间未运行"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "还差 {gib} GiB — 腾出空间，或关闭应用：{apps}"
+    "defaultMessage": "还差 {gib} GB — 腾出空间，或关闭应用：{apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "还差 {gib} GiB — 腾出空间，或关闭应用"
+    "defaultMessage": "还差 {gib} GB — 腾出空间，或关闭应用"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "正在更新拆分的运行器"
@@ -3720,7 +3720,7 @@
     "defaultMessage": "SHA256SUMS 不一致"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{total} GiB 中可用 {available} GiB"
+    "defaultMessage": "{total} GB 中可用 {available} GB"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "{nodes} 上缺失"
@@ -4110,13 +4110,16 @@
     "defaultMessage": "尚无峰值"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "峰值 {peak} / {budget} GiB"
+    "defaultMessage": "峰值 {peak} / 拆分预算 {budget} GB"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "峰值内存与预算之比"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "峰值 {peak} GiB"
+    "defaultMessage": "峰值 {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "拆分在 {node} 上用过的最大内存，对比它在那里可用的 {budget} GB：启动时的空闲内存减去预留，并在 GPU 上限之内。"
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "槽位 {used} / {slots}"

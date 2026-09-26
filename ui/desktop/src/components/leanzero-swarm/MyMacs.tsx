@@ -43,7 +43,8 @@ const i18n = defineMessages({
   },
   thisMac: { id: 'myMacs.thisMac', defaultMessage: 'This Mac' },
   memory: { id: 'myMacs.memory', defaultMessage: 'Memory' },
-  memoryFree: { id: 'myMacs.memoryFree', defaultMessage: '{free} GB free of {total} GB' },
+  // The Engine card's words for the same number: one unit, one verb (Q-156).
+  memoryFree: { id: 'myMacs.memoryFree', defaultMessage: '{free} GB available of {total} GB' },
   disk: { id: 'myMacs.disk', defaultMessage: 'Disk' },
   diskFree: { id: 'myMacs.diskFree', defaultMessage: '{free} free of {total}' },
   models: { id: 'myMacs.models', defaultMessage: 'Models' },
@@ -144,7 +145,7 @@ function FactsGrid({ mac, facts }: { mac: Mac; facts: MacFacts }) {
         : status
           ? intl.formatMessage(i18n.memoryFree, {
               free: status.availableMemoryGb.toFixed(1),
-              total: status.totalMemoryGb.toFixed(0),
+              total: status.totalMemoryGb.toFixed(1),
             })
           : facts.statusError
             ? cantRead(facts.statusError)

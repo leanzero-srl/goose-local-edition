@@ -230,8 +230,16 @@ const i18n = defineMessages({
   },
   distSlots: { id: 'mlxStateTile.dist.slots', defaultMessage: 'slots {used} of {slots}' },
   distWaiting: { id: 'mlxStateTile.dist.waiting', defaultMessage: '{count} waiting' },
-  distPeak: { id: 'mlxStateTile.dist.peak', defaultMessage: '{peak} of {budget} GiB peak' },
-  distPeakNoBudget: { id: 'mlxStateTile.dist.peakNoBudget', defaultMessage: '{peak} GiB peak' },
+  distPeak: {
+    id: 'mlxStateTile.dist.peak',
+    defaultMessage: 'peak {peak} of {budget} GB split budget',
+  },
+  distPeakTitle: {
+    id: 'mlxStateTile.dist.peakTitle',
+    defaultMessage:
+      'The most memory the split has used on {node}, against the {budget} GB it may use there: what was free when it started, less the reserve, within the GPU limit.',
+  },
+  distPeakNoBudget: { id: 'mlxStateTile.dist.peakNoBudget', defaultMessage: 'peak {peak} GB' },
   distNoPeak: { id: 'mlxStateTile.dist.noPeak', defaultMessage: 'no peak yet' },
   distPeakBar: {
     id: 'mlxStateTile.dist.peakBar',
@@ -1146,7 +1154,18 @@ function DistributedInstrument({
                 <span className={cx('min-w-0 truncate', WEIGHT.semibold)}>
                   {span ? `${node.name} · ${span}` : node.name}
                 </span>
-                <span className="shrink-0">
+                <span
+                  className="shrink-0"
+                  data-testid="mlx-dist-tile-peak"
+                  title={
+                    budget != null
+                      ? intl.formatMessage(i18n.distPeakTitle, {
+                          node: node.name,
+                          budget: gb1(budget),
+                        })
+                      : undefined
+                  }
+                >
                   {peak == null
                     ? intl.formatMessage(i18n.distNoPeak)
                     : budget != null

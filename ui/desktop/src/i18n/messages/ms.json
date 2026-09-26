@@ -3000,7 +3000,7 @@
     "defaultMessage": "Henti"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "aktif {gb} GiB"
+    "defaultMessage": "aktif {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Tambah nod"
@@ -3024,7 +3024,7 @@
     "defaultMessage": "Guna"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{available} daripada {total} GiB tersedia"
+    "defaultMessage": "{available} daripada {total} GB tersedia"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · RDMA melalui Thunderbolt 5"
@@ -3252,7 +3252,7 @@
     "defaultMessage": "Satu model dibahagikan merentas beberapa Mac melalui Thunderbolt. Mac ini ialah rank 0: ia menyediakan API dan menyelia setiap rank."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} daripada {budget} GiB"
+    "defaultMessage": "KV {reserved} daripada {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "KV yang ditempah berbanding bajet"
@@ -3264,7 +3264,7 @@
     "defaultMessage": "{count, plural, other {Lapisan {first}–{last} · # lapisan}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Had: memori {memory} · wired {wired} · cache {cache} GiB"
+    "defaultMessage": "Had: memori {memory} · wired {wired} · cache {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Had belum dilaporkan"
@@ -3366,10 +3366,10 @@
     "defaultMessage": "Memori puncak berbanding bajet"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB puncak · tiada bajet dilaporkan"
+    "defaultMessage": "GB puncak · tiada bajet dilaporkan"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB puncak daripada bajet {budget} GiB"
+    "defaultMessage": "GB puncak daripada bajet pembahagian {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3378,13 +3378,13 @@
     "defaultMessage": "Memori yang dirancang berbanding bajet"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "pemberat {weights} · keadaan {state} · ruang kerja {workspace} · cache prompt {cache} GiB"
+    "defaultMessage": "pemberat {weights} · keadaan {state} · ruang kerja {workspace} · cache prompt {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB dirancang dengan overhed, daripada bajet {budget} GiB"
+    "defaultMessage": "GB dirancang dengan overhed, daripada bajet pembahagian {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "dirancang {gb} GiB dengan overhed"
+    "defaultMessage": "dirancang {gb} GB dengan overhed"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Belum ada preflight dijalankan. Larian kering menyemak setiap nod (kebolehcapaian, memori, model, Python, pautan Thunderbolt, port) dan merancang lapisan bagi setiap nod tanpa melancarkan apa-apa."
@@ -3450,10 +3450,10 @@
     "defaultMessage": "pekerja"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Bajet {budget} GiB (had GPU {ceiling} · tersedia {available})"
+    "defaultMessage": "Bajet pembahagian {budget} GB (had GPU {ceiling} · tersedia {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Bajet {budget} GiB (had GPU {ceiling} · tersedia selepas pemadatan {available})"
+    "defaultMessage": "Bajet pembahagian {budget} GB (had GPU {ceiling} · tersedia selepas pemadatan {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Kosongkan ruang gagal"
@@ -3462,10 +3462,10 @@
     "defaultMessage": "Kosongkan memori secara automatik"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB dikosongkan"
+    "defaultMessage": "{gib} GB dikosongkan"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Tiada yang dikosongkan ({gib} GiB kurang)"
+    "defaultMessage": "Tiada yang dikosongkan ({gib} GB kurang)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "Meminta macOS menuntut semula memori: apl terbiar dimampatkan dan cache dibuang. Tiada apa yang ditutup."
@@ -3477,10 +3477,10 @@
     "defaultMessage": "Kosongkan ruang tidak dijalankan"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "Kurang {gib} GiB — kosongkan ruang, atau tutup apl: {apps}"
+    "defaultMessage": "Kurang {gib} GB — kosongkan ruang, atau tutup apl: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "Kurang {gib} GiB — kosongkan ruang, atau tutup apl"
+    "defaultMessage": "Kurang {gib} GB — kosongkan ruang, atau tutup apl"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Mengemas kini runner split"
@@ -3720,7 +3720,7 @@
     "defaultMessage": "SHA256SUMS berbeza"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{available} daripada {total} GiB tersedia"
+    "defaultMessage": "{available} daripada {total} GB tersedia"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "tiada pada {nodes}"
@@ -4110,13 +4110,16 @@
     "defaultMessage": "belum ada puncak"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} daripada {budget} GiB puncak"
+    "defaultMessage": "puncak {peak} daripada bajet pembahagian {budget} GB"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Memori puncak berbanding bajet"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB puncak"
+    "defaultMessage": "puncak {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "Memori paling banyak yang digunakan pembahagian pada {node}, berbanding {budget} GB yang boleh digunakannya di sana: yang kosong semasa ia bermula, tolak rizab, dalam had GPU."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slot {used} daripada {slots}"
@@ -4899,7 +4902,7 @@
     "defaultMessage": "Memori"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{free} GB kosong daripada {total} GB"
+    "defaultMessage": "{free} GB tersedia daripada {total} GB"
   },
   "myMacs.mesh": {
     "defaultMessage": "Mesh"

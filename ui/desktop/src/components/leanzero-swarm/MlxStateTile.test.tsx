@@ -460,9 +460,16 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
     expect(screen.getByTestId('mlx-dist-tile-load')).toHaveTextContent('slots 0 of 2 · 0 waiting');
     const nodes = screen.getAllByTestId('mlx-dist-tile-node');
     expect(nodes[0]).toHaveTextContent('MacBook Pro · L0–19');
-    expect(nodes[0]).toHaveTextContent('61.0 of 83.4 GiB peak');
+    expect(nodes[0]).toHaveTextContent('peak 61.0 of 83.4 GB split budget');
     expect(nodes[1]).toHaveTextContent('workhorse · L20–47');
-    expect(nodes[1]).toHaveTextContent('42.5 of 55.4 GiB peak');
+    expect(nodes[1]).toHaveTextContent('peak 42.5 of 55.4 GB split budget');
+    // Q-156: one unit with the rest of the app (My Macs, the memory beside the tile say GB), and
+    // the budget says what it is where a person hovers it.
+    expect(t).not.toHaveTextContent('GiB');
+    expect(within(nodes[0]).getByTestId('mlx-dist-tile-peak')).toHaveAttribute(
+      'title',
+      'The most memory the split has used on MacBook Pro, against the 83.4 GB it may use there: what was free when it started, less the reserve, within the GPU limit.'
+    );
     // The stopped single engine's "what a mount costs" is not drawn while the run owns the Mac.
     expect(screen.queryByTestId('mlx-mount-cost')).toBeNull();
     await expectDesigned(container);

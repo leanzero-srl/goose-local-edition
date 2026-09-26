@@ -3000,7 +3000,7 @@
     "defaultMessage": "रोकें"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "सक्रिय {gb} GiB"
+    "defaultMessage": "सक्रिय {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "नोड जोड़ें"
@@ -3024,7 +3024,7 @@
     "defaultMessage": "लागू करें"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{total} GiB में से {available} GiB उपलब्ध"
+    "defaultMessage": "{total} GB में से {available} GB उपलब्ध"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · Thunderbolt 5 पर RDMA"
@@ -3252,7 +3252,7 @@
     "defaultMessage": "Thunderbolt के ज़रिए कई Mac में बँटा एक मॉडल। यह Mac रैंक 0 है: यह API परोसता है और हर रैंक की निगरानी करता है।"
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "बजट के मुकाबले आरक्षित KV"
@@ -3264,7 +3264,7 @@
     "defaultMessage": "{count, plural, one {परतें {first}–{last} · # परत} other {परतें {first}–{last} · # परतें}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "सीमाएँ: मेमोरी {memory} · wired {wired} · कैश {cache} GiB"
+    "defaultMessage": "सीमाएँ: मेमोरी {memory} · wired {wired} · कैश {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "सीमाएँ अभी रिपोर्ट नहीं हुईं"
@@ -3366,10 +3366,10 @@
     "defaultMessage": "बजट के मुकाबले शिखर मेमोरी"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB शिखर · बजट रिपोर्ट नहीं हुआ"
+    "defaultMessage": "GB शिखर · बजट रिपोर्ट नहीं हुआ"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB शिखर, {budget} GiB बजट में से"
+    "defaultMessage": "GB शिखर, {budget} GB विभाजन बजट में से"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3378,13 +3378,13 @@
     "defaultMessage": "बजट के मुकाबले नियोजित मेमोरी"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "वेट {weights} · स्थिति {state} · वर्कस्पेस {workspace} · प्रॉम्प्ट कैश {cache} GiB"
+    "defaultMessage": "वेट {weights} · स्थिति {state} · वर्कस्पेस {workspace} · प्रॉम्प्ट कैश {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB ओवरहेड सहित नियोजित, {budget} GiB बजट में से"
+    "defaultMessage": "GB ओवरहेड सहित नियोजित, {budget} GB विभाजन बजट में से"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "नियोजित {gb} GiB ओवरहेड सहित"
+    "defaultMessage": "नियोजित {gb} GB ओवरहेड सहित"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "अभी कोई प्रीफ़्लाइट नहीं चला। ड्राई रन हर नोड (पहुँच, मेमोरी, मॉडल, Python, Thunderbolt लिंक, पोर्ट) जाँचता है और कुछ भी लॉन्च किए बिना प्रति नोड परतों की योजना बनाता है।"
@@ -3450,10 +3450,10 @@
     "defaultMessage": "वर्कर"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "बजट {budget} GiB (GPU सीमा {ceiling} · उपलब्ध {available})"
+    "defaultMessage": "विभाजन बजट {budget} GB (GPU सीमा {ceiling} · उपलब्ध {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "बजट {budget} GiB (GPU सीमा {ceiling} · संघनन के बाद उपलब्ध {available})"
+    "defaultMessage": "विभाजन बजट {budget} GB (GPU सीमा {ceiling} · संघनन के बाद उपलब्ध {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "जगह बनाना विफल रहा"
@@ -3462,10 +3462,10 @@
     "defaultMessage": "मेमोरी अपने-आप खाली करें"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB खाली हुई"
+    "defaultMessage": "{gib} GB खाली हुई"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "कुछ खाली नहीं हुआ ({gib} GiB कम)"
+    "defaultMessage": "कुछ खाली नहीं हुआ ({gib} GB कम)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "macOS से मेमोरी वापस लेने को कहता है: निष्क्रिय ऐप्स संपीड़ित होते हैं और कैश हटाए जाते हैं। कुछ भी बंद नहीं होता।"
@@ -3477,10 +3477,10 @@
     "defaultMessage": "जगह बनाना नहीं चला"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "{gib} GiB कम — जगह बनाएं, या ऐप्स बंद करें: {apps}"
+    "defaultMessage": "{gib} GB कम — जगह बनाएं, या ऐप्स बंद करें: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "{gib} GiB कम — जगह बनाएं, या ऐप्स बंद करें"
+    "defaultMessage": "{gib} GB कम — जगह बनाएं, या ऐप्स बंद करें"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "स्प्लिट का रनर अपडेट हो रहा है"
@@ -3720,7 +3720,7 @@
     "defaultMessage": "SHA256SUMS अलग हैं"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{total} GiB में से {available} GiB उपलब्ध"
+    "defaultMessage": "{total} GB में से {available} GB उपलब्ध"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "{nodes} पर नहीं है"
@@ -4110,13 +4110,16 @@
     "defaultMessage": "अभी कोई शिखर नहीं"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} / {budget} GiB शिखर"
+    "defaultMessage": "शिखर {peak} / {budget} GB विभाजन बजट"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "बजट के मुकाबले शिखर मेमोरी"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB शिखर"
+    "defaultMessage": "शिखर {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "{node} पर विभाजन ने अब तक सबसे अधिक जितनी मेमोरी ली, उन {budget} GB के मुकाबले जो वह वहाँ ले सकता है: शुरू होते समय जो खाली था, रिज़र्व घटाकर, GPU सीमा के भीतर।"
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "स्लॉट {used} / {slots}"
@@ -4899,7 +4902,7 @@
     "defaultMessage": "मेमोरी"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{total} GB में से {free} GB खाली"
+    "defaultMessage": "{total} GB में से {free} GB उपलब्ध"
   },
   "myMacs.mesh": {
     "defaultMessage": "मेश"

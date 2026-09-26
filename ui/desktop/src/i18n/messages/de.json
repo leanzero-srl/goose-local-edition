@@ -3000,7 +3000,7 @@
     "defaultMessage": "Stoppen"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "aktiv {gb} GiB"
+    "defaultMessage": "aktiv {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Node hinzufügen"
@@ -3024,7 +3024,7 @@
     "defaultMessage": "Übernehmen"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{available} von {total} GiB verfügbar"
+    "defaultMessage": "{available} von {total} GB verfügbar"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · RDMA über Thunderbolt 5"
@@ -3252,7 +3252,7 @@
     "defaultMessage": "Ein Modell, über Thunderbolt auf mehrere Macs verteilt. Dieser Mac ist Rank 0: Er stellt die API bereit und überwacht jeden Rank."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} von {budget} GiB"
+    "defaultMessage": "KV {reserved} von {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "Reservierter KV im Verhältnis zum Budget"
@@ -3264,7 +3264,7 @@
     "defaultMessage": "{count, plural, one {Schichten {first}–{last} · # Schicht} other {Schichten {first}–{last} · # Schichten}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Grenzen: Speicher {memory} · wired {wired} · Cache {cache} GiB"
+    "defaultMessage": "Grenzen: Speicher {memory} · wired {wired} · Cache {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Grenzen noch nicht gemeldet"
@@ -3366,10 +3366,10 @@
     "defaultMessage": "Spitzenspeicher gegenüber dem Budget"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB Spitze · kein Budget gemeldet"
+    "defaultMessage": "GB Spitze · kein Budget gemeldet"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB Spitze von {budget} GiB Budget"
+    "defaultMessage": "GB Spitze von {budget} GB Split-Budget"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "PID {pid}"
@@ -3378,13 +3378,13 @@
     "defaultMessage": "Geplanter Speicher gegenüber dem Budget"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "Gewichte {weights} · Zustand {state} · Arbeitsbereich {workspace} · Prompt-Cache {cache} GiB"
+    "defaultMessage": "Gewichte {weights} · Zustand {state} · Arbeitsbereich {workspace} · Prompt-Cache {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB geplant mit Overhead, von {budget} GiB Budget"
+    "defaultMessage": "GB geplant mit Overhead, von {budget} GB Split-Budget"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "geplant {gb} GiB mit Overhead"
+    "defaultMessage": "geplant {gb} GB mit Overhead"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Es lief noch kein Preflight. Ein Probelauf prüft jeden Node (Erreichbarkeit, Speicher, das Modell, Python, die Thunderbolt-Verbindung, Ports) und plant die Schichten pro Node, ohne etwas zu starten."
@@ -3450,10 +3450,10 @@
     "defaultMessage": "Worker"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Budget {budget} GiB (GPU-Grenze {ceiling} · verfügbar {available})"
+    "defaultMessage": "Split-Budget {budget} GB (GPU-Grenze {ceiling} · verfügbar {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Budget {budget} GiB (GPU-Grenze {ceiling} · verfügbar nach Verdichtung {available})"
+    "defaultMessage": "Split-Budget {budget} GB (GPU-Grenze {ceiling} · verfügbar nach Verdichtung {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Platz schaffen fehlgeschlagen"
@@ -3462,10 +3462,10 @@
     "defaultMessage": "Speicher automatisch freigeben"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB freigegeben"
+    "defaultMessage": "{gib} GB freigegeben"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Nichts freigegeben ({gib} GiB weniger)"
+    "defaultMessage": "Nichts freigegeben ({gib} GB weniger)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "Bittet macOS, Speicher zurückzuholen: ruhende Apps werden komprimiert und Caches verworfen. Nichts wird beendet."
@@ -3477,10 +3477,10 @@
     "defaultMessage": "Platz schaffen lief nicht"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "Es fehlen {gib} GiB — Platz schaffen oder Apps schließen: {apps}"
+    "defaultMessage": "Es fehlen {gib} GB — Platz schaffen oder Apps schließen: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "Es fehlen {gib} GiB — Platz schaffen oder Apps schließen"
+    "defaultMessage": "Es fehlen {gib} GB — Platz schaffen oder Apps schließen"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Runner des Splits wird aktualisiert"
@@ -3720,7 +3720,7 @@
     "defaultMessage": "SHA256SUMS weichen ab"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{available} von {total} GiB verfügbar"
+    "defaultMessage": "{available} von {total} GB verfügbar"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "fehlt auf {nodes}"
@@ -4110,13 +4110,16 @@
     "defaultMessage": "noch keine Spitze"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} von {budget} GiB Spitze"
+    "defaultMessage": "Spitze {peak} von {budget} GB Split-Budget"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Spitzenspeicher gegenüber dem Budget"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB Spitze"
+    "defaultMessage": "Spitze {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "Der höchste Speicherverbrauch des Splits auf {node}, verglichen mit den {budget} GB, die er dort nutzen darf: was beim Start frei war, abzüglich der Reserve, innerhalb der GPU-Grenze."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "Slots {used} von {slots}"
@@ -4899,7 +4902,7 @@
     "defaultMessage": "Arbeitsspeicher"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{free} GB frei von {total} GB"
+    "defaultMessage": "{free} GB verfügbar von {total} GB"
   },
   "myMacs.mesh": {
     "defaultMessage": "Mesh"

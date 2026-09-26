@@ -3000,7 +3000,7 @@
     "defaultMessage": "Detener"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "activa {gb} GiB"
+    "defaultMessage": "activa {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Añadir nodo"
@@ -3024,7 +3024,7 @@
     "defaultMessage": "Aplicar"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{available} de {total} GiB disponibles"
+    "defaultMessage": "{available} de {total} GB disponibles"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · RDMA sobre Thunderbolt 5"
@@ -3252,7 +3252,7 @@
     "defaultMessage": "Un modelo repartido entre varios Mac por Thunderbolt. Este Mac es el rank 0: sirve la API y supervisa cada rank."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} de {budget} GiB"
+    "defaultMessage": "KV {reserved} de {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "KV reservado frente al presupuesto"
@@ -3264,7 +3264,7 @@
     "defaultMessage": "{count, plural, one {Capas {first}–{last} · # capa} other {Capas {first}–{last} · # capas}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Límites: memoria {memory} · wired {wired} · caché {cache} GiB"
+    "defaultMessage": "Límites: memoria {memory} · wired {wired} · caché {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Límites aún no informados"
@@ -3366,10 +3366,10 @@
     "defaultMessage": "Memoria pico frente al presupuesto"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB de pico · sin presupuesto informado"
+    "defaultMessage": "GB de pico · sin presupuesto informado"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB de pico de un presupuesto de {budget} GiB"
+    "defaultMessage": "GB de pico de un presupuesto de la división de {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3378,13 +3378,13 @@
     "defaultMessage": "Memoria planificada frente al presupuesto"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "pesos {weights} · estado {state} · espacio de trabajo {workspace} · caché de prompts {cache} GiB"
+    "defaultMessage": "pesos {weights} · estado {state} · espacio de trabajo {workspace} · caché de prompts {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB planificados con sobrecarga, de un presupuesto de {budget} GiB"
+    "defaultMessage": "GB planificados con sobrecarga, de un presupuesto de la división de {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "planificado {gb} GiB con sobrecarga"
+    "defaultMessage": "planificado {gb} GB con sobrecarga"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Todavía no se ha ejecutado ningún preflight. Una prueba en seco comprueba cada nodo (accesibilidad, memoria, el modelo, Python, el enlace Thunderbolt, puertos) y planifica las capas por nodo sin lanzar nada."
@@ -3450,10 +3450,10 @@
     "defaultMessage": "trabajador"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Presupuesto {budget} GiB (límite de GPU {ceiling} · disponible {available})"
+    "defaultMessage": "Presupuesto de la división {budget} GB (límite de GPU {ceiling} · disponible {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Presupuesto {budget} GiB (límite de GPU {ceiling} · disponible tras compactar {available})"
+    "defaultMessage": "Presupuesto de la división {budget} GB (límite de GPU {ceiling} · disponible tras compactar {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Liberar espacio falló"
@@ -3462,10 +3462,10 @@
     "defaultMessage": "Liberar memoria automáticamente"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB liberados"
+    "defaultMessage": "{gib} GB liberados"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "No se liberó nada ({gib} GiB menos)"
+    "defaultMessage": "No se liberó nada ({gib} GB menos)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "Pide a macOS que recupere memoria: las apps inactivas se comprimen y se descartan cachés. No se cierra nada."
@@ -3477,10 +3477,10 @@
     "defaultMessage": "Liberar espacio no se ejecutó"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "Faltan {gib} GiB — libera espacio o cierra apps: {apps}"
+    "defaultMessage": "Faltan {gib} GB — libera espacio o cierra apps: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "Faltan {gib} GiB — libera espacio o cierra apps"
+    "defaultMessage": "Faltan {gib} GB — libera espacio o cierra apps"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Actualizando el runner del split"
@@ -3720,7 +3720,7 @@
     "defaultMessage": "SHA256SUMS difieren"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{available} de {total} GiB disponibles"
+    "defaultMessage": "{available} de {total} GB disponibles"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "falta en {nodes}"
@@ -4110,13 +4110,16 @@
     "defaultMessage": "aún sin pico"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} de {budget} GiB de pico"
+    "defaultMessage": "pico {peak} de {budget} GB de presupuesto de la división"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Memoria pico frente al presupuesto"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB de pico"
+    "defaultMessage": "pico {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "La mayor memoria que la división ha usado en {node}, frente a los {budget} GB que puede usar allí: lo que estaba libre al arrancar, menos la reserva, dentro del límite de la GPU."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slots {used} de {slots}"
@@ -4899,7 +4902,7 @@
     "defaultMessage": "Memoria"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{free} GB libres de {total} GB"
+    "defaultMessage": "{free} GB disponibles de {total} GB"
   },
   "myMacs.mesh": {
     "defaultMessage": "Malla"

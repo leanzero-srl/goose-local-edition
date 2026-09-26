@@ -199,14 +199,14 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     );
     expect(within(macbook).getByTestId('mlx-dist-node-peak')).toHaveTextContent('61.0');
     expect(within(macbook).getByTestId('mlx-dist-node-budget')).toHaveTextContent(
-      'GiB peak of 83.4 GiB budget'
+      'GB peak of 83.4 GB split budget'
     );
     expect(within(macbook).getByText('coordinator · rank 0')).toBeInTheDocument();
     expect(within(macbook).getByTestId('mlx-dist-node-link')).toHaveTextContent(
       'JACCL · 192.168.0.1 · en3 · 80 Gb/s'
     );
     expect(
-      within(macbook).getByText('Caps: memory 96.0 · wired 76.8 · cache 8.0 GiB')
+      within(macbook).getByText('Caps: memory 96.0 · wired 76.8 · cache 8.0 GB')
     ).toBeInTheDocument();
 
     expect(within(workhorse).getByTestId('mlx-dist-node-layers')).toHaveTextContent(
@@ -215,7 +215,7 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     expect(within(workhorse).getByTestId('mlx-dist-node-peak')).toHaveTextContent('42.5');
     // 61.6 GiB available × 0.90 = 55.44 GiB — the budget the planner printed, to one decimal.
     expect(within(workhorse).getByTestId('mlx-dist-node-budget')).toHaveTextContent(
-      'GiB peak of 55.4 GiB budget'
+      'GB peak of 55.4 GB split budget'
     );
     const bars = within(workhorse).getAllByRole('progressbar', {
       name: 'Peak memory against the budget',
@@ -283,10 +283,10 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     const plans = within(report).getAllByTestId('mlx-dist-plan');
     expect(within(plans[0]).getByTestId('mlx-dist-plan-planned')).toHaveTextContent('63.6');
     expect(plans[0]).toHaveTextContent('Layers 0–19 · 20 layers');
-    expect(plans[0]).toHaveTextContent('GiB planned with overhead, of 83.4 GiB budget');
-    expect(plans[1]).toHaveTextContent('GiB planned with overhead, of 55.4 GiB budget');
+    expect(plans[0]).toHaveTextContent('GB planned with overhead, of 83.4 GB split budget');
+    expect(plans[1]).toHaveTextContent('GB planned with overhead, of 55.4 GB split budget');
     expect(plans[1]).toHaveTextContent(
-      'weights 38.4 · state 0.2 · workspace 0.4 · prompt cache 0.0 GiB'
+      'weights 38.4 · state 0.2 · workspace 0.4 · prompt cache 0.0 GB'
     );
     expect(
       within(report).getByText('92.70 GiB available of 128.00 GiB, pressure normal')
@@ -380,11 +380,11 @@ describe('DistributedEngineSection — Make room', () => {
       .getAllByTestId('mlx-dist-preflight-node')
       .find((c) => c.getAttribute('data-node') === 'workhorse')!;
     expect(within(card).getByTestId('mlx-dist-short')).toHaveTextContent(
-      'Short by 3.8 GiB — Make room, or close apps: Google Chrome (6.1 GiB), Slack (1.2 GiB)'
+      'Short by 3.8 GB — Make room, or close apps: Google Chrome (6.1 GB), Slack (1.2 GB)'
     );
-    expect(within(card).getByText('Freed 5.6 GiB')).toHaveAttribute('data-tone', 'ok');
+    expect(within(card).getByText('Freed 5.6 GB')).toHaveAttribute('data-tone', 'ok');
     expect(within(card).getByTestId('mlx-dist-budget-line')).toHaveTextContent(
-      'Budget 35.1 GiB (GPU limit 77.8 · available after compaction 39.0)'
+      'Split budget 35.1 GB (GPU limit 77.8 · available after compaction 39.0)'
     );
     // The MacBook has no compaction and no short line.
     const macbook = screen
@@ -561,10 +561,8 @@ describe('DistributedEngineSection — pipeline slots (rank 0’s /v1/status)', 
     expect(screen.getByTestId('mlx-dist-waiting')).toHaveTextContent('Waiting 0');
     expect(screen.getByTestId('mlx-dist-waiting').className).not.toContain('text-lz-warn');
     const [macbook, workhorse] = screen.getAllByTestId('mlx-dist-node');
-    expect(within(macbook).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.0 of 0.5 GiB');
-    expect(within(workhorse).getByTestId('mlx-dist-node-kv')).toHaveTextContent(
-      'KV 0.0 of 0.5 GiB'
-    );
+    expect(within(macbook).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.0 of 0.5 GB');
+    expect(within(workhorse).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.0 of 0.5 GB');
     expect(
       within(macbook).getByRole('progressbar', { name: 'KV reserved against the budget' })
     ).toHaveAttribute('aria-valuenow', '0');
@@ -582,7 +580,7 @@ describe('DistributedEngineSection — pipeline slots (rank 0’s /v1/status)', 
     expect(waiting).toHaveTextContent('Waiting 1');
     expect(waiting.className).toContain('text-lz-warn');
     const [macbook] = screen.getAllByTestId('mlx-dist-node');
-    expect(within(macbook).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.5 of 0.5 GiB');
+    expect(within(macbook).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.5 of 0.5 GB');
     expect(
       within(macbook).getByRole('progressbar', { name: 'KV reserved against the budget' })
     ).toHaveAttribute('aria-valuenow', '100');

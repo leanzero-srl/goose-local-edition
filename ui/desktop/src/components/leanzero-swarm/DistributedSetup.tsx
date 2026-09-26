@@ -96,7 +96,7 @@ const i18n = defineMessages({
   unreachable: { id: 'mlxDistributedSetup.unreachable', defaultMessage: 'not reachable' },
   memory: {
     id: 'mlxDistributedSetup.memory',
-    defaultMessage: '{available} of {total} GiB available',
+    defaultMessage: '{available} of {total} GB available',
   },
   tbInterface: { id: 'mlxDistributedSetup.field.tbInterface', defaultMessage: 'Interface' },
   tbIp: { id: 'mlxDistributedSetup.field.tbIp', defaultMessage: 'Link IPv4' },
@@ -308,7 +308,7 @@ function modelChips(
       {model.manifest === 'differ' && (
         <Chip tone="err">{intl.formatMessage(i18n.manifestDiffer)}</Chip>
       )}
-      <Chip>{`${gb1(gib(model.weightsBytes))} GiB · ${model.runner}`}</Chip>
+      <Chip>{`${gb1(gib(model.weightsBytes))} GB · ${model.runner}`}</Chip>
     </>
   );
 }

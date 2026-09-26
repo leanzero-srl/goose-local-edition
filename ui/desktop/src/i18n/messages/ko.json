@@ -3000,7 +3000,7 @@
     "defaultMessage": "중지"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "사용 중 {gb} GiB"
+    "defaultMessage": "사용 중 {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "노드 추가"
@@ -3024,7 +3024,7 @@
     "defaultMessage": "적용"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{total} GiB 중 {available} GiB 사용 가능"
+    "defaultMessage": "{total} GB 중 {available} GB 사용 가능"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · Thunderbolt 5를 통한 RDMA"
@@ -3252,7 +3252,7 @@
     "defaultMessage": "Thunderbolt로 여러 Mac에 나눈 하나의 모델입니다. 이 Mac은 랭크 0으로, API를 제공하고 모든 랭크를 감독합니다."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "예산 대비 예약된 KV"
@@ -3264,7 +3264,7 @@
     "defaultMessage": "{count, plural, other {레이어 {first}–{last} · #개 레이어}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "한도: 메모리 {memory} · wired {wired} · 캐시 {cache} GiB"
+    "defaultMessage": "한도: 메모리 {memory} · wired {wired} · 캐시 {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "한도가 아직 보고되지 않음"
@@ -3366,10 +3366,10 @@
     "defaultMessage": "예산 대비 최고 메모리"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB 최고치 · 예산 미보고"
+    "defaultMessage": "GB 최고치 · 예산 미보고"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB 최고치 / 예산 {budget} GiB"
+    "defaultMessage": "GB 최고치 / 분할 예산 {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3378,13 +3378,13 @@
     "defaultMessage": "예산 대비 계획 메모리"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "가중치 {weights} · 상태 {state} · 작업 공간 {workspace} · 프롬프트 캐시 {cache} GiB"
+    "defaultMessage": "가중치 {weights} · 상태 {state} · 작업 공간 {workspace} · 프롬프트 캐시 {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB(오버헤드 포함 계획) / 예산 {budget} GiB"
+    "defaultMessage": "GB(오버헤드 포함 계획) / 분할 예산 {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "계획 {gb} GiB(오버헤드 포함)"
+    "defaultMessage": "계획 {gb} GB(오버헤드 포함)"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "아직 프리플라이트를 실행하지 않았습니다. 시험 실행은 각 노드(연결 가능 여부, 메모리, 모델, Python, Thunderbolt 링크, 포트)를 점검하고 아무것도 실행하지 않고 노드별 레이어를 계획합니다."
@@ -3450,10 +3450,10 @@
     "defaultMessage": "워커"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "예산 {budget} GiB (GPU 한도 {ceiling} · 사용 가능 {available})"
+    "defaultMessage": "분할 예산 {budget} GB (GPU 한도 {ceiling} · 사용 가능 {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "예산 {budget} GiB (GPU 한도 {ceiling} · 압축 후 사용 가능 {available})"
+    "defaultMessage": "분할 예산 {budget} GB (GPU 한도 {ceiling} · 압축 후 사용 가능 {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "공간 확보 실패"
@@ -3462,10 +3462,10 @@
     "defaultMessage": "메모리 자동 확보"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB 확보됨"
+    "defaultMessage": "{gib} GB 확보됨"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "확보된 메모리 없음 ({gib} GiB 감소)"
+    "defaultMessage": "확보된 메모리 없음 ({gib} GB 감소)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "macOS에 메모리 회수를 요청합니다. 유휴 앱은 압축되고 캐시는 비워집니다. 아무것도 종료되지 않습니다."
@@ -3477,10 +3477,10 @@
     "defaultMessage": "공간 확보가 실행되지 않음"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "{gib} GiB 부족 — 공간을 확보하거나 앱을 닫으세요: {apps}"
+    "defaultMessage": "{gib} GB 부족 — 공간을 확보하거나 앱을 닫으세요: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "{gib} GiB 부족 — 공간을 확보하거나 앱을 닫으세요"
+    "defaultMessage": "{gib} GB 부족 — 공간을 확보하거나 앱을 닫으세요"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "분할 러너 업데이트 중"
@@ -3720,7 +3720,7 @@
     "defaultMessage": "SHA256SUMS 불일치"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{total} GiB 중 {available} GiB 사용 가능"
+    "defaultMessage": "{total} GB 중 {available} GB 사용 가능"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "{nodes}에 없음"
@@ -4110,13 +4110,16 @@
     "defaultMessage": "아직 최고치 없음"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "최고 {peak} / {budget} GiB"
+    "defaultMessage": "최고 {peak} / 분할 예산 {budget} GB"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "예산 대비 최고 메모리"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "최고 {peak} GiB"
+    "defaultMessage": "최고 {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "{node}에서 분할이 사용한 최대 메모리와 그곳에서 사용할 수 있는 {budget} GB(시작 시 여유 메모리에서 예비분을 빼고 GPU 한도 안에서 정한 값)의 비교입니다."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "슬롯 {used} / {slots}"
@@ -4899,7 +4902,7 @@
     "defaultMessage": "메모리"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{total} GB 중 {free} GB 여유"
+    "defaultMessage": "{total} GB 중 {free} GB 사용 가능"
   },
   "myMacs.mesh": {
     "defaultMessage": "메시"

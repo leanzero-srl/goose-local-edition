@@ -560,10 +560,10 @@ export function distributedNodeLine(node: MlxDistributedReportNode, runState: st
       : null,
     node.peakGb != null
       ? node.budgetGb != null
-        ? `peak ${gb1(node.peakGb)} of ${gb1(node.budgetGb)} GiB budget`
-        : `peak ${gb1(node.peakGb)} GiB`
+        ? `peak ${gb1(node.peakGb)} of ${gb1(node.budgetGb)} GB split budget`
+        : `peak ${gb1(node.peakGb)} GB`
       : node.availableGb != null
-        ? `${gb1(node.availableGb)} GiB available`
+        ? `${gb1(node.availableGb)} GB available`
         : null,
     node.pressure && node.pressure !== 'normal' ? `pressure ${node.pressure}` : null,
   ].filter(Boolean);

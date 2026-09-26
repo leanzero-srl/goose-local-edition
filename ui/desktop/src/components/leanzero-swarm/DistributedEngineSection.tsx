@@ -208,10 +208,10 @@ const i18n = defineMessages({
   },
   shard: { id: 'mlxDistributed.shard', defaultMessage: 'Shard {index} of {count}' },
   noLayers: { id: 'mlxDistributed.noLayers', defaultMessage: 'Layers not reported' },
-  peakOf: { id: 'mlxDistributed.peakOf', defaultMessage: 'GiB peak of {budget} GiB budget' },
+  peakOf: { id: 'mlxDistributed.peakOf', defaultMessage: 'GB peak of {budget} GB split budget' },
   peakNoBudget: {
     id: 'mlxDistributed.peakNoBudget',
-    defaultMessage: 'GiB peak · no budget reported',
+    defaultMessage: 'GB peak · no budget reported',
   },
   noPeak: { id: 'mlxDistributed.noPeak', defaultMessage: 'No peak reported yet' },
   loadBytes: { id: 'mlxDistributed.load.bytes', defaultMessage: 'Loaded {done} of {total} GB' },
@@ -219,18 +219,18 @@ const i18n = defineMessages({
   makingRoom: { id: 'mlxDistributed.node.makingRoom', defaultMessage: 'Making room' },
   warming: { id: 'mlxDistributed.node.warming', defaultMessage: 'Warming up' },
   peakBar: { id: 'mlxDistributed.peakBar', defaultMessage: 'Peak memory against the budget' },
-  active: { id: 'mlxDistributed.active', defaultMessage: 'active {gb} GiB' },
-  planned: { id: 'mlxDistributed.planned', defaultMessage: 'planned {gb} GiB with overhead' },
+  active: { id: 'mlxDistributed.active', defaultMessage: 'active {gb} GB' },
+  planned: { id: 'mlxDistributed.planned', defaultMessage: 'planned {gb} GB with overhead' },
   available: {
     id: 'mlxDistributed.available',
-    defaultMessage: '{available} of {total} GiB available',
+    defaultMessage: '{available} of {total} GB available',
   },
   limits: {
     id: 'mlxDistributed.limits',
-    defaultMessage: 'Caps: memory {memory} · wired {wired} · cache {cache} GiB',
+    defaultMessage: 'Caps: memory {memory} · wired {wired} · cache {cache} GB',
   },
   limitsNone: { id: 'mlxDistributed.limitsNone', defaultMessage: 'Caps not reported yet' },
-  kv: { id: 'mlxDistributed.kv', defaultMessage: 'KV {reserved} of {budget} GiB' },
+  kv: { id: 'mlxDistributed.kv', defaultMessage: 'KV {reserved} of {budget} GB' },
   kvBar: { id: 'mlxDistributed.kvBar', defaultMessage: 'KV reserved against the budget' },
   pressureNormal: { id: 'mlxDistributed.pressure.normal', defaultMessage: 'Pressure normal' },
   pressureWarn: { id: 'mlxDistributed.pressure.warn', defaultMessage: 'Pressure warn' },
@@ -268,12 +268,12 @@ const i18n = defineMessages({
   noFit: { id: 'mlxDistributed.noFit', defaultMessage: 'does not fit' },
   planLine: {
     id: 'mlxDistributed.planLine',
-    defaultMessage: 'GiB planned with overhead, of {budget} GiB budget',
+    defaultMessage: 'GB planned with overhead, of {budget} GB split budget',
   },
   planBreakdown: {
     id: 'mlxDistributed.planBreakdown',
     defaultMessage:
-      'weights {weights} · state {state} · workspace {workspace} · prompt cache {cache} GiB',
+      'weights {weights} · state {state} · workspace {workspace} · prompt cache {cache} GB',
   },
   planBar: { id: 'mlxDistributed.planBar', defaultMessage: 'Planned memory against the budget' },
   noPlan: { id: 'mlxDistributed.noPlan', defaultMessage: 'No plan for this rank' },
@@ -454,12 +454,12 @@ const i18n = defineMessages({
 const ROOM = defineMessages({
   budgetLine: {
     id: 'mlxDistributed.room.budgetLine',
-    defaultMessage: 'Budget {budget} GiB (GPU limit {ceiling} · available {available})',
+    defaultMessage: 'Split budget {budget} GB (GPU limit {ceiling} · available {available})',
   },
   budgetLineCompacted: {
     id: 'mlxDistributed.room.budgetLineCompacted',
     defaultMessage:
-      'Budget {budget} GiB (GPU limit {ceiling} · available after compaction {available})',
+      'Split budget {budget} GB (GPU limit {ceiling} · available after compaction {available})',
   },
   freeMemory: { id: 'mlxDistributed.room.freeMemory', defaultMessage: 'Free memory automatically' },
   makeRoom: { id: 'mlxDistributed.room.makeRoom', defaultMessage: 'Make room' },
@@ -468,20 +468,20 @@ const ROOM = defineMessages({
     defaultMessage:
       'Asks macOS to reclaim memory: idle apps are compressed and caches dropped. Nothing is quit.',
   },
-  freed: { id: 'mlxDistributed.room.freed', defaultMessage: 'Freed {gib} GiB' },
+  freed: { id: 'mlxDistributed.room.freed', defaultMessage: 'Freed {gib} GB' },
   freedNothing: {
     id: 'mlxDistributed.room.freedNothing',
-    defaultMessage: 'Nothing freed ({gib} GiB less)',
+    defaultMessage: 'Nothing freed ({gib} GB less)',
   },
   refused: { id: 'mlxDistributed.room.refused', defaultMessage: 'Make room did not run' },
   failed: { id: 'mlxDistributed.room.failed', defaultMessage: 'Make room failed' },
   shortBy: {
     id: 'mlxDistributed.room.shortBy',
-    defaultMessage: 'Short by {gib} GiB — Make room, or close apps: {apps}',
+    defaultMessage: 'Short by {gib} GB — Make room, or close apps: {apps}',
   },
   shortByNoApps: {
     id: 'mlxDistributed.room.shortByNoApps',
-    defaultMessage: 'Short by {gib} GiB — Make room, or close apps',
+    defaultMessage: 'Short by {gib} GB — Make room, or close apps',
   },
   memoryCompacted: { id: 'mlxDistributed.event.memoryCompacted', defaultMessage: 'Memory freed' },
   compactionSkipped: {
@@ -809,7 +809,7 @@ function RoomBlock({ node, room }: { node: MlxDistributedNodePreflight; room: Ro
   const free = room.freeMemory(node.name);
   const compaction = room.compaction(node.name);
   const making = room.making === node.name;
-  const apps = (node.topApps ?? []).map((a) => `${a.name} (${gb1(gib(a.rssBytes))} GiB)`);
+  const apps = (node.topApps ?? []).map((a) => `${a.name} (${gb1(gib(a.rssBytes))} GB)`);
   return (
     <div data-testid="mlx-dist-room" className="flex flex-col gap-2">
       {node.shortBytes != null && (

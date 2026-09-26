@@ -293,8 +293,8 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
       'LeanZero MLX: split across 2 Macs, ready',
       'Split across MacBook Pro + workhorse · JACCL',
       'Model: rapid-mlx/Qwen3.8-Flash-Next-4bit',
-      'MacBook Pro: L0–19 · peak 61.0 of 83.4 GiB budget',
-      'workhorse: L20–47 · peak 42.5 of 55.4 GiB budget',
+      'MacBook Pro: L0–19 · peak 61.0 of 83.4 GB split budget',
+      'workhorse: L20–47 · peak 42.5 of 55.4 GB split budget',
       'In flight: 0',
       'Restarts: 1',
       'Last: restart — restart 1 of the breaker window',
@@ -360,7 +360,9 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
       ],
     });
     const lines = labels(buildMlxTrayModel(INITIAL_SNAPSHOT, fresh(report)).items);
-    expect(lines).toContain('MacBook Pro: L0–19 · peak 61.0 of 83.4 GiB budget · pressure warn');
+    expect(lines).toContain(
+      'MacBook Pro: L0–19 · peak 61.0 of 83.4 GB split budget · pressure warn'
+    );
     expect(lines).toContain('workhorse (failed): memory unread — ssh workhorse: timed out');
   });
 
@@ -489,10 +491,10 @@ describe('the tray in the engine-phase palette', () => {
     expect(phases(model.items)).toEqual([
       ['LeanZero MLX: split across 2 Macs, starting', 'loading'],
       [
-        'MacBook Pro (loading): L0–19 · loaded 12.0 of 48.0 GB · peak 61.0 of 83.4 GiB b…',
+        'MacBook Pro (loading): L0–19 · loaded 12.0 of 48.0 GB · peak 61.0 of 83.4 GB sp…',
         'loading',
       ],
-      ['workhorse (ready): L20–47 · peak 42.5 of 55.4 GiB budget', 'idle'],
+      ['workhorse (ready): L20–47 · peak 42.5 of 55.4 GB split budget', 'idle'],
     ]);
     const held = buildMlxTrayModel(INITIAL_SNAPSHOT, {
       ...OPTS,
@@ -520,7 +522,7 @@ describe('the tray in the engine-phase palette', () => {
       distributed: { report, ageMs: 0 },
     });
     expect(phases(model.items)[2]).toEqual([
-      'workhorse (making room): L20–47 · peak 42.5 of 55.4 GiB budget',
+      'workhorse (making room): L20–47 · peak 42.5 of 55.4 GB split budget',
       'loading',
     ]);
   });
