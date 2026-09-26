@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Simpan konfigurasi"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "Penyiapan tersimpan untuk {model} — Jalankan merencanakan ulang untuk model yang dipilih"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {# urutan dalam batch}}"
   },
@@ -5174,6 +5177,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {Muat di kedua Mac} other {Muat di semua # Mac}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · muat setelah {models} berhenti{count, plural, other {}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Muat di {name}"
   },
@@ -5224,6 +5230,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Muat atau tidak belum diketahui"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "Muat setelah {model} berhenti — Jalankan menghentikannya dulu ({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Obrolan"
@@ -5384,6 +5393,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "Hentikan pembagian?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "Jalankan menghentikan {model} dulu ({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Baris yang tidak terbaca di penyimpanan pengukuran"
   },
@@ -5395,6 +5407,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "pembagian tensor · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "Mac ini"
   },
   "placementCard.tied": {
     "defaultMessage": "Sama cepat dalam batas galat (~{mine} vs ~{best} tok/dtk), tetapi perlu lebih banyak Mac"
@@ -5413,6 +5428,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "menulis ~{value} tok/dtk"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "Mac Anda"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Jenis kesalahan (mis., \"rate_limit\", \"auth\" - tanpa detail)"

@@ -839,11 +839,12 @@ function EngineSection(props: EngineSectionProps) {
   // Starting and stopping belong to Run it; the one thing left here is reclaiming an engine a
   // previous goose left listening on the port.
   const offerReclaim = strayPort != null;
-  // What Run it is about: the split's model while the split owns this Mac, the model a linked Mac
-  // serves this Mac's chat with while that route is up, else the picked one.
-  const runModelId = distributedOwns
-    ? (distributed?.modelId ?? null)
-    : (remote?.modelId ?? mountModelId);
+  // What Run it is about: the PICKED model, always. The picker defaults to what serves (the split's
+  // model, the route's, the mounted one) until the person picks another; then Run it plans that
+  // one and each way says what Run stops first. Q-119 (3.0.47): with Flash picked while the Studio
+  // served the 27B, Run it kept the 27B's cards — and "Run on this Mac" would have mounted Flash
+  // under the 27B's figures.
+  const runModelId = mountModelId;
   const failedError =
     state === 'failed' && status?.lastError && status.lastError !== mountError
       ? status.lastError
@@ -1133,7 +1134,7 @@ function EngineSection(props: EngineSectionProps) {
                 models={models}
                 value={mountModelId}
                 onChange={setMountModelId}
-                disabled={engineBusy || state === 'mounting' || distributedOwns}
+                disabled={engineBusy || state === 'mounting'}
                 badges={badges}
               />
             </div>
@@ -2614,8 +2615,16 @@ function MlxEngineViewBody() {
   // window opened onto an already-running engine reads the live model, never a stale pick.
   // An explicit user selection is never overridden. With the engine down, the picker defaults
   // once to the persisted model.
+  const splitModelId = ownsTheMac(distributed.status)
+    ? (distributed.status?.modelId ?? null)
+    : null;
   useEffect(() => {
     if (userPickedModel.current) return;
+    if (splitModelId) {
+      defaultedPicker.current = true;
+      setMountModelId(splitModelId);
+      return;
+    }
     if (remote?.modelId) {
       defaultedPicker.current = true;
       setMountModelId(remote.modelId);
@@ -2632,7 +2641,7 @@ function MlxEngineViewBody() {
       defaultedPicker.current = true;
       setMountModelId(candidate);
     }
-  }, [status?.state, status?.modelId, settings?.modelId, remote?.modelId]);
+  }, [status?.state, status?.modelId, settings?.modelId, remote?.modelId, splitModelId]);
 
   // The Mac whose sampling profiles the Sampling tab edits: its settings, models and engine.
   const samplingMacObj = macsCtx.macByKey(samplingMac) ?? macsCtx.self;
@@ -2857,6 +2866,7 @@ function MlxEngineViewBody() {
       models={models}
       singleStatus={status}
       onSingleChanged={() => void refreshStatus()}
+      pickedModelId={mountModelId}
     />
   ) : null;
 

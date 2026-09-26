@@ -346,6 +346,10 @@ const i18n = defineMessages({
   },
   nodesField: { id: 'mlxDistributed.field.nodes', defaultMessage: 'at least 2 nodes' },
   thisMac: { id: 'mlxDistributed.thisMac', defaultMessage: 'this Mac' },
+  savedForOther: {
+    id: 'mlxDistributed.savedForOther',
+    defaultMessage: 'Saved setup for {model} — Run re-plans for the picked model',
+  },
   addNode: { id: 'mlxDistributed.addNode', defaultMessage: 'Add node' },
   editNode: { id: 'mlxDistributed.editNode', defaultMessage: 'Edit {name}' },
   removeNode: { id: 'mlxDistributed.removeNode', defaultMessage: 'Remove {name}' },
@@ -1789,15 +1793,37 @@ function ProvisionPanel({
   );
 }
 
-/** The saved configuration at a glance: backend, model, and each node where it runs. */
-function ConfigSummary({ config }: { config: MlxDistributedConfig }) {
+/**
+ * The saved configuration at a glance: backend, model, and each node where it runs. A setup saved
+ * for another model than the picked one says so, and that Run plans the picked one (Q-125: the
+ * split's Details showed the Flash setup under Run it for the 27B, with nothing tying them).
+ */
+function ConfigSummary({
+  config,
+  pickedModelId,
+}: {
+  config: MlxDistributedConfig;
+  pickedModelId: string | null;
+}) {
   const intl = useIntl();
+  const savedForOther =
+    config.modelId !== '' && pickedModelId != null && config.modelId !== pickedModelId;
   return (
     <div data-testid="mlx-dist-config-summary" className="flex flex-col gap-1.5">
       <span className="flex flex-wrap items-center gap-2">
         {backendName(config.backend) && <Chip tone="accent">{backendName(config.backend)}</Chip>}
         <span className={cx('min-w-0 break-all', TYPE.mono)}>{config.modelId || '—'}</span>
       </span>
+      {savedForOther && (
+        <p
+          data-testid="mlx-dist-saved-for-other"
+          className={cx('break-words', TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}
+        >
+          {intl.formatMessage(i18n.savedForOther, {
+            model: config.modelId.split('/').pop() || config.modelId,
+          })}
+        </p>
+      )}
       <ul className="flex flex-col gap-1">
         {config.nodes.map((n, rank) => (
           <li key={rank} className={cx('break-all', TYPE.meta)}>
@@ -1840,6 +1866,8 @@ export interface DistributedEngineSectionProps {
   singleStatus: MlxEngineStatus | null;
   /** The single engine changed (it was unmounted here) — the view re-reads it. */
   onSingleChanged: () => void;
+  /** The model picked in the Engine view: Run it plans it, whatever the saved setup names. */
+  pickedModelId?: string | null;
 }
 
 type Busy = 'preflight' | 'start' | 'stop' | 'save' | 'unmount' | 'room' | null;
@@ -1877,6 +1905,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
     onRefresh,
     models,
     singleStatus,
+    pickedModelId = null,
   } = props;
 
   const [draft, setDraft] = useState<MlxDistributedConfig | null>(null);
@@ -2325,7 +2354,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
             />
           ) : config ? (
             <>
-              <ConfigSummary config={config} />
+              <ConfigSummary config={config} pickedModelId={pickedModelId} />
               <Disclosure
                 testId="mlx-dist-advanced"
                 title={intl.formatMessage(i18n.advanced)}

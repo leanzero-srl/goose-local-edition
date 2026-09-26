@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Salva configurazione"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "Configurazione salvata per {model} — Esegui ripianifica per il modello scelto"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {# sequenza nel batch} other {# sequenze nel batch}}"
   },
@@ -5174,6 +5177,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {Sta su entrambi i Mac} other {Sta su tutti i # Mac}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · ci sta quando {models} si {count, plural, one {ferma} other {fermano}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Entra in {name}"
   },
@@ -5224,6 +5230,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Spazio sconosciuto"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "Ci sta quando {model} si ferma — Esegui lo ferma prima ({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Chat"
@@ -5384,6 +5393,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "Fermare la suddivisione?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "Esegui ferma prima {model} ({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Righe illeggibili nell’archivio delle misure"
   },
@@ -5395,6 +5407,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "suddivisione dei tensori · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "questo Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "Veloce uguale entro l’errore (~{mine} contro ~{best} tok/s), ma servono più Mac"
@@ -5413,6 +5428,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/s in scrittura"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "i tuoi Mac"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Tipi di errore (es. \"rate_limit\", \"auth\" - nessun dettaglio)"

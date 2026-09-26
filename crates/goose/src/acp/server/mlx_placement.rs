@@ -28,7 +28,7 @@ mod imp {
     use goose_sidecar::placement::chip::{self, ChipIdentity};
     use goose_sidecar::placement::model::{read_model_facts, ModelFacts};
     use goose_sidecar::placement::planner::{
-        self, ClusterInput, Goal, NodeInput, NodeMemory, PipelineFitInput, PlanInput,
+        self, ClusterInput, Goal, NodeInput, NodeMemory, PipelineFitInput, PlanInput, SwitchFrees,
     };
     use goose_sidecar::placement::predict::Calibration;
     use goose_sidecar::placement::store::{
@@ -70,11 +70,13 @@ mod imp {
         }
     }
 
-    /// Why this Mac's figures count another mounted model's memory as free, in plain words.
-    pub(super) fn mounted_here_note(mounted: &str, bytes: u64) -> String {
+    /// Why a Mac's figures count another serving model's memory as free, in plain words: Run
+    /// stops what serves before it starts anything (Q-120 — only a switch to the SAME model used
+    /// to count it, so Flash read "too big" beside the 27B).
+    pub(super) fn replaced_note(serving: &str, bytes: u64, mac: &str) -> String {
         format!(
-            "Starting it here frees the {} {mounted} holds on this Mac: Run replaces that model, it \
-             never adds a second one",
+            "Run stops {serving} on {mac} first, so the {} it holds there counts as free: Run \
+             replaces that model, it never adds a second one",
             gb_words(bytes)
         )
     }
@@ -174,6 +176,7 @@ mod imp {
                 total_bytes: m.total_bytes,
                 available_bytes: m.available_bytes,
                 ceiling_bytes: chip::local_gpu_ceiling().map_err(|e| format!("{e:#}")),
+                freed_by_switch: None,
             })
             .map_err(|e| format!("{e:#}"));
         let input = NodeInput {
@@ -215,6 +218,7 @@ mod imp {
                     total_bytes: probe.memory.total_bytes,
                     available_bytes: probe.memory.available_bytes,
                     ceiling_bytes: ceiling,
+                    freed_by_switch: None,
                 });
                 (chip, memory, Some(Ok(probe.models)))
             }
@@ -274,6 +278,7 @@ mod imp {
                         )
                     })
                 }),
+                freed_by_switch: None,
             })
         });
         let unprobed = format!("not probed — {why}");
@@ -489,7 +494,7 @@ mod imp {
                 Err(e) => return Some(Err(format!("{}: GPU ceiling unknown — {e}", node.name))),
             };
             figures.push(NodeFigures::new(
-                memory.available_bytes,
+                memory.available_after_switch(),
                 memory.total_bytes,
                 ceiling,
             ));
@@ -684,10 +689,13 @@ mod imp {
                 .notes
                 .push(format!("no other Mac could be asked: {why}"));
         }
-        if let Some((_, bytes)) = &serving.single_footprint {
+        if let Some((model, bytes)) = &serving.single_footprint {
             if let Some(local) = measured.iter_mut().find(|m| m.input.id == LOCAL) {
                 if let Ok(memory) = local.input.memory.as_mut() {
-                    memory.available_bytes += bytes;
+                    memory.freed_by_switch = Some(SwitchFrees {
+                        model_id: model.clone(),
+                        bytes: *bytes,
+                    });
                 }
             }
         }
@@ -727,17 +735,19 @@ mod imp {
             }
             nodes.push(input);
         }
-        // The linked Mac's copy of THIS model is what Run replaces there (a switch, never a second
-        // copy), so every placement of it — the fork planner's included — sees that memory free.
+        // The engine the linked Mac serves this Mac's chat with is what Run stops there first —
+        // this model (a move) or another (a replacement), never a second copy beside it — so every
+        // placement — the fork planner's included — sees that memory free (Q-120).
         if let Some((node_id, model, bytes, _)) = &ctx.serving.peer_footprint {
-            if model == model_id {
-                if let Some(Ok(memory)) = nodes
-                    .iter_mut()
-                    .find(|n| &n.id == node_id)
-                    .map(|n| n.memory.as_mut())
-                {
-                    memory.available_bytes += bytes;
-                }
+            if let Some(Ok(memory)) = nodes
+                .iter_mut()
+                .find(|n| &n.id == node_id)
+                .map(|n| n.memory.as_mut())
+            {
+                memory.freed_by_switch = Some(SwitchFrees {
+                    model_id: model.clone(),
+                    bytes: *bytes,
+                });
             }
         }
         let runner = Runner::for_model_type(&facts.model_type).ok();
@@ -815,6 +825,7 @@ mod imp {
                     best: None,
                     best_available: None,
                     badge: None,
+                    badge_after_stopping: Vec::new(),
                     notes: Vec::new(),
                     error: Some(error),
                 })
@@ -823,13 +834,15 @@ mod imp {
         let mut dto: MlxPlacementPlanDto = mirror(&plan)?;
         if let Some((mounted, bytes)) = &ctx.serving.single_footprint {
             if mounted != model_id {
-                dto.notes.push(mounted_here_note(mounted, *bytes));
+                dto.notes.push(replaced_note(mounted, *bytes, "this Mac"));
             }
         }
         if let Some((_, served, bytes, mac)) = &ctx.serving.peer_footprint {
-            if served == model_id {
-                dto.notes.push(moved_from_peer_note(mac, *bytes));
-            }
+            dto.notes.push(if served == model_id {
+                moved_from_peer_note(mac, *bytes)
+            } else {
+                replaced_note(served, *bytes, mac)
+            });
         }
         dto.notes.extend(ctx.serving.notes.iter().cloned());
         Ok(dto)
@@ -1221,13 +1234,13 @@ mod tests {
             "Moving it frees its 31 GB on Work's Mac Studio: Run moves the model, it never adds \
              a second copy"
         );
-        let here = imp::mounted_here_note("Qwen3.8-Flash", 18 * goose_sidecar::GIB);
+        let here = imp::replaced_note("Qwen3.8-Flash", 18 * goose_sidecar::GIB, "this Mac");
         assert_eq!(
             here,
-            "Starting it here frees the 18 GB Qwen3.8-Flash holds on this Mac: Run replaces that \
-             model, it never adds a second one"
+            "Run stops Qwen3.8-Flash on this Mac first, so the 18 GB it holds there counts as \
+             free: Run replaces that model, it never adds a second one"
         );
-        assert!(!here.contains("GiB") && !here.contains("count as free"));
+        assert!(!here.contains("GiB"));
     }
 
     #[test]

@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Save configuration"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "Saved setup for {model} — Run re-plans for the picked model"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count,plural,one{# sequence in the batch} other{# sequences in the batch}}"
   },
@@ -5174,6 +5177,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count,plural,=2{Fits both Macs} other{Fits all # Macs}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{count,plural,one{{badge} · fits once {models} stops} other{{badge} · fits once {models} stop}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Fits {name}"
   },
@@ -5224,6 +5230,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Fit unknown"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "Fits once {model} stops — Run stops it on {where} first."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Chat"
@@ -5384,6 +5393,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "Stop the split?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "Run stops {model} on {where} first."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Unreadable lines in the measurement store"
   },
@@ -5395,6 +5407,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "tensor split · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "this Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "As fast within the error (~{mine} vs ~{best} tok/s), but needs more Macs"
@@ -5413,6 +5428,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} tok/s writing"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "your Macs"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Error types (e.g., \"rate_limit\", \"auth\" - no details)"

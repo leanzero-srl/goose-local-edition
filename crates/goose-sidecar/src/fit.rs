@@ -71,6 +71,12 @@ pub struct NodeMemoryFacts {
     /// of the Mac: the placement planner, which recommends and never admits a load (the gates that
     /// admit one — the single engine's mount and the split's preflight — always measure it).
     pub other_engines_bytes: u64,
+    /// The resident bytes of the engine a SWITCH stops on this Mac before the load: Run replaces
+    /// the way that serves now, it never adds a second one, so what that engine holds is available
+    /// to the switch. Measured by the caller (the engine's own footprint); 0 = nothing is replaced
+    /// here. Q-120 (2026-09-26): with the 27B served from Work's Mac Studio (~30 GB there), Flash
+    /// read "Too big, short 1.6 GB" because only a switch to the SAME model counted that memory.
+    pub freed_by_switch_bytes: u64,
 }
 
 impl NodeMemoryFacts {
@@ -83,7 +89,22 @@ impl NodeMemoryFacts {
         self.ceiling_bytes.saturating_sub(self.other_engines_bytes)
     }
 
+    /// Available once the switch has stopped the engine it replaces.
+    pub fn available_after_switch_bytes(&self) -> u64 {
+        self.available_bytes
+            .saturating_add(self.freed_by_switch_bytes)
+    }
+
     pub fn budget_bytes(&self) -> u64 {
+        budget_bytes(
+            self.available_after_switch_bytes(),
+            self.total_bytes,
+            self.ceiling_left_bytes(),
+        )
+    }
+
+    /// The budget while the replaced engine still holds its memory.
+    pub fn budget_before_switch_bytes(&self) -> u64 {
         budget_bytes(
             self.available_bytes,
             self.total_bytes,
@@ -188,6 +209,13 @@ impl FitVerdict {
             .then(|| self.budget_bytes.saturating_sub(self.need.total_bytes()))
     }
 
+    /// A fit that holds only once the switch has stopped the engine it replaces: "fits once the
+    /// 27B stops", never "too big".
+    pub fn needs_switch(&self) -> bool {
+        self.verdict != Verdict::Block
+            && self.need.total_bytes() > self.facts.budget_before_switch_bytes()
+    }
+
     /// Whether ANY amount of reclaimed memory could turn this refusal into a fit.
     pub fn could_ever_fit(&self) -> bool {
         self.need.total_bytes() <= self.facts.best_case_budget_bytes()
@@ -209,10 +237,17 @@ pub fn judge(need: Need, facts: NodeMemoryFacts) -> FitVerdict {
             gb(other)
         ),
     };
+    let available = match facts.freed_by_switch_bytes {
+        0 => format!("available {}", gb(facts.available_bytes)),
+        freed => format!(
+            "available {} + {} the switch frees",
+            gb(facts.available_bytes),
+            gb(freed)
+        ),
+    };
     let rule = format!(
-        "budget {} = min(available {} − the {:.1}% margin {}, {ceiling})",
+        "budget {} = min({available} − the {:.1}% margin {}, {ceiling})",
         gb(budget),
-        gb(facts.available_bytes),
         AVAILABLE_MARGIN_RATIO * 100.0,
         gb(facts.margin_bytes()),
     );
@@ -290,6 +325,7 @@ mod tests {
             total_bytes: M4_TOTAL,
             ceiling_bytes: M4_CEILING,
             other_engines_bytes: 0,
+            freed_by_switch_bytes: 0,
         };
         let v = judge(weights_only(gib_f(97.5)), facts);
         assert_eq!(v.verdict, Verdict::Block);
@@ -320,6 +356,7 @@ mod tests {
             total_bytes: M3_TOTAL,
             ceiling_bytes: M3_CEILING,
             other_engines_bytes: 0,
+            freed_by_switch_bytes: 0,
         };
         // Available 90 − 8.9 margin = 81.1, but Metal's ceiling is 77.8 GiB.
         assert_eq!(facts.budget_bytes(), M3_CEILING);
@@ -341,6 +378,7 @@ mod tests {
             total_bytes: M4_TOTAL,
             ceiling_bytes: M4_CEILING,
             other_engines_bytes: 0,
+            freed_by_switch_bytes: 0,
         };
         let budget = facts.budget_bytes();
         let tight = judge(weights_only(budget - gib_f(1.0)), facts);
@@ -366,6 +404,7 @@ mod tests {
             total_bytes: M4_TOTAL,
             ceiling_bytes: M4_CEILING,
             other_engines_bytes: 0,
+            freed_by_switch_bytes: 0,
         };
         let v = judge(gap, facts);
         assert!(
@@ -373,6 +412,58 @@ mod tests {
             "{}",
             v.message
         );
+    }
+
+    /// Q-120 (3.0.47, 2026-09-26): Work's Mac Studio read 44.2 GB available of 96 while the 27B
+    /// it served held ~30 GB. A need 1.6 GB over the budget that memory leaves is refused while
+    /// nothing is replaced — and fits once the switch counts what stopping the 27B frees, with the
+    /// verdict saying it holds only once it stops. The GPU ceiling still binds: freed RAM never
+    /// raises Metal's working set.
+    #[test]
+    fn memory_a_switch_frees_counts_and_the_fit_says_it_needs_the_switch() {
+        let held = NodeMemoryFacts {
+            available_bytes: gib_f(44.2),
+            total_bytes: M3_TOTAL,
+            ceiling_bytes: M3_CEILING,
+            other_engines_bytes: 0,
+            freed_by_switch_bytes: 0,
+        };
+        let need = weights_only(held.budget_bytes() + gib_f(1.6));
+        let refused = judge(need.clone(), held);
+        assert_eq!(refused.verdict, Verdict::Block, "{}", refused.message);
+        assert!(!refused.needs_switch());
+
+        let switching = NodeMemoryFacts {
+            freed_by_switch_bytes: gib_f(30.0),
+            ..held
+        };
+        assert_eq!(switching.budget_before_switch_bytes(), held.budget_bytes());
+        assert_eq!(
+            switching.budget_bytes(),
+            budget_bytes(gib_f(74.2), M3_TOTAL, M3_CEILING)
+        );
+        let fits = judge(need, switching);
+        assert_ne!(fits.verdict, Verdict::Block, "{}", fits.message);
+        assert!(fits.needs_switch(), "it fits only once the 27B stops");
+        assert!(
+            fits.message
+                .contains("available 44.2 GB + 30.0 GB the switch frees"),
+            "{}",
+            fits.message
+        );
+
+        let small = judge(weights_only(gib_f(10.0)), switching);
+        assert!(
+            !small.needs_switch(),
+            "a need the Mac holds beside the running engine does not wait on the switch"
+        );
+
+        let over_ceiling = NodeMemoryFacts {
+            available_bytes: gib_f(60.0),
+            freed_by_switch_bytes: gib_f(36.0),
+            ..held
+        };
+        assert_eq!(over_ceiling.budget_bytes(), M3_CEILING);
     }
 
     /// Q-106: the ceiling is the Mac's, not one process's. On the M3 Ultra with another engine
@@ -386,6 +477,7 @@ mod tests {
             total_bytes: M3_TOTAL,
             ceiling_bytes: M3_CEILING,
             other_engines_bytes: 0,
+            freed_by_switch_bytes: 0,
         };
         let need = weights_only(gib_f(38.5));
         assert_ne!(judge(need.clone(), alone).verdict, Verdict::Block);

@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Сохранить конфигурацию"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "Сохранённая настройка для {model} — «Запустить» заново планирует для выбранной модели"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {# последовательность в пакете} few {# последовательности в пакете} many {# последовательностей в пакете} other {# последовательности в пакете}}"
   },
@@ -5174,6 +5177,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {Помещается на оба Mac} other {Помещается на все # Mac}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · поместится, когда {models} {count, plural, one {остановится} other {остановятся}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Помещается на {name}"
   },
@@ -5224,6 +5230,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Помещается ли — неизвестно"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "Поместится, когда {model} остановится — «Запустить» сначала остановит её ({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Чат"
@@ -5384,6 +5393,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "Остановить разделение?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "«Запустить» сначала остановит {model} ({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Нечитаемые строки в хранилище измерений"
   },
@@ -5395,6 +5407,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "тензорное разделение · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "этот Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "Так же быстро в пределах погрешности (~{mine} против ~{best} ток/с), но нужно больше Mac"
@@ -5413,6 +5428,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} ток/с на запись"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "ваши Mac"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Типы ошибок (например, «rate_limit», «auth» - без подробностей)"

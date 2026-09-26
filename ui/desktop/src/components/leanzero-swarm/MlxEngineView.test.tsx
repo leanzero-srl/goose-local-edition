@@ -3154,6 +3154,34 @@ describe('MlxEngineView — the memory under "Serving on <peer>" is the peer’s
     unmount();
   });
 
+  /**
+   * Q-119 (3.0.47): Flash picked while the Studio served the 27B over Link — Run it kept the 27B's
+   * cards under "Pick a model, then start it in Run it below". Run it is about the PICKED model.
+   */
+  it('a route serving one model and another picked: Run it plans the picked one', async () => {
+    withMesh([
+      peerNode({
+        node_id: STUDIO_ID,
+        hostname: 'WorksMacStudio.lan',
+        computer_name: "Work's Mac Studio",
+      }),
+    ]);
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    mockModelsList.mockResolvedValue(listOf(COMPLETE_MODELS));
+    remoteStore.publish(ROUTE);
+    const { unmount } = render(<MlxEngineView />);
+    // The picker starts on what serves: the route's model.
+    await waitFor(() => expect(mockPlacementPlan).toHaveBeenCalledWith('chat', QWEN));
+    await userEvent.click(screen.getAllByRole('combobox')[0]);
+    await userEvent.click(await screen.findByRole('option', { name: /Other-Model-4bit/ }));
+    await waitFor(() => expect(mockPlacementPlan).toHaveBeenCalledWith('chat', OTHER_MODEL));
+    // The hero still says what serves; Run it is about the pick.
+    const hero = screen.getByTestId('mlx-engine-hero');
+    expect(within(hero).getByText("Serving on Work's Mac Studio")).toBeInTheDocument();
+    expect(screen.queryByTestId('placement-live')).toBeNull();
+    unmount();
+  });
+
   it('no route: this Mac’s memory, unlabelled as before', async () => {
     mockStatus.mockResolvedValue(
       statusOf({ state: 'stopped', availableMemoryGb: 96.6, totalMemoryGb: 128 })

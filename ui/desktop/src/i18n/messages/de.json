@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Konfiguration speichern"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "Gespeichertes Setup für {model} — Ausführen plant für das gewählte Modell neu"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, one {# Sequenz im Batch} other {# Sequenzen im Batch}}"
   },
@@ -5174,6 +5177,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {Passt auf beide Macs} other {Passt auf alle # Macs}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · passt, sobald {models} {count, plural, one {stoppt} other {stoppen}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Passt auf {name}"
   },
@@ -5224,6 +5230,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Passung unbekannt"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "Passt, sobald {model} stoppt — Ausführen stoppt es zuerst ({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Chat"
@@ -5384,6 +5393,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "Split stoppen?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "Ausführen stoppt zuerst {model} ({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Unlesbare Zeilen im Messspeicher"
   },
@@ -5395,6 +5407,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "Tensor-Split · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "dieser Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "Im Rahmen der Messungenauigkeit gleich schnell (~{mine} gegenüber ~{best} Tok/s), braucht aber mehr Macs"
@@ -5413,6 +5428,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "~{value} Tok/s schreiben"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "deine Macs"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Fehlertypen (z. B. \"rate_limit\", \"auth\" – keine Details)"

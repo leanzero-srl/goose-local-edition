@@ -7484,6 +7484,13 @@
             "null"
           ]
         },
+        "afterStopping": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The OTHER models whose engines Run stops first, when this fit holds only with the memory\nthey give back (\"fits once the 27B stops\"). Empty = it fits beside whatever serves now."
+        },
         "nodes": {
           "type": "array",
           "items": {
@@ -11928,6 +11935,13 @@
               "type": "null"
             }
           ]
+        },
+        "badgeAfterStopping": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The OTHER models Run stops first for the badge's fit to hold: the picker says \"fits once\n<model> stops\" instead of \"too big\"."
         },
         "notes": {
           "type": "array",

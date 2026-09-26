@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "Simpan konfigurasi"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "Persediaan disimpan untuk {model} — Jalankan merancang semula untuk model yang dipilih"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {# jujukan dalam kelompok}}"
   },
@@ -5174,6 +5177,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {Muat pada kedua-dua Mac} other {Muat pada semua # Mac}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · muat selepas {models} berhenti{count, plural, other {}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "Muat dalam {name}"
   },
@@ -5224,6 +5230,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "Muat atau tidak belum diketahui"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "Muat selepas {model} berhenti — Jalankan menghentikannya dahulu ({where})."
   },
   "placementCard.goalChat": {
     "defaultMessage": "Sembang"
@@ -5384,6 +5393,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "Hentikan pembahagian?"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "Jalankan menghentikan {model} dahulu ({where})."
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "Baris tidak boleh dibaca dalam storan pengukuran"
   },
@@ -5395,6 +5407,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "pembahagian tensor · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "Mac ini"
   },
   "placementCard.tied": {
     "defaultMessage": "Sama laju dalam julat ralat (~{mine} lwn ~{best} tok/s), tetapi perlu lebih banyak Mac"
@@ -5413,6 +5428,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "menulis ~{value} tok/s"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "Mac anda"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "Jenis ralat (cth., \"rate_limit\", \"auth\" - tanpa butiran)"

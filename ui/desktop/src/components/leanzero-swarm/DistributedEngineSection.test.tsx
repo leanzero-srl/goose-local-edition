@@ -697,6 +697,29 @@ describe('DistributedEngineSection — configuration', () => {
       'rank 1 · workhorse · workhorse · 192.168.0.2'
     );
   });
+
+  /**
+   * Q-125 (3.0.47): under Run it for the 27B, the split's Details showed the setup saved for
+   * rapid-mlx/Qwen3.8-Flash-Next-4bit with nothing tying the two together.
+   */
+  it('a setup saved for another model than the picked one says so, and that Run plans the picked one', () => {
+    section({
+      embedded: true,
+      status: STOPPED_WITH_CONFIG,
+      pickedModelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+    });
+    const label = screen.getByTestId('mlx-dist-saved-for-other');
+    expect(label).toHaveTextContent(
+      'Saved setup for Qwen3.8-Flash-Next-4bit — Run re-plans for the picked model'
+    );
+    expect(label.className).toContain('text-lz-warn');
+  });
+
+  it('the setup saved for the picked model carries no such label', () => {
+    section({ embedded: true, status: STOPPED_WITH_CONFIG, pickedModelId: FLASH_MODEL });
+    expect(screen.getByTestId('mlx-dist-config-summary')).toBeInTheDocument();
+    expect(screen.queryByTestId('mlx-dist-saved-for-other')).toBeNull();
+  });
 });
 
 describe('DistributedEngineSection — Set up detects everything from one peer name', () => {

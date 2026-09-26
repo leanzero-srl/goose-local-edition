@@ -3452,6 +3452,9 @@
   "mlxDistributed.save": {
     "defaultMessage": "保存配置"
   },
+  "mlxDistributed.savedForOther": {
+    "defaultMessage": "为 {model} 保存的设置 — 运行会为所选模型重新规划"
+  },
   "mlxDistributed.sequencesInFlight": {
     "defaultMessage": "{count, plural, other {批次中 # 个序列}}"
   },
@@ -5174,6 +5177,9 @@
   "placementCard.badgeEvery": {
     "defaultMessage": "{count, plural, =2 {两台 Mac 都放得下} other {全部 # 台 Mac 都放得下}}"
   },
+  "placementCard.badgeOnceStops": {
+    "defaultMessage": "{badge} · {models} 停止后可容纳{count, plural, other {}}"
+  },
   "placementCard.badgePeer": {
     "defaultMessage": "可放入 {name}"
   },
@@ -5224,6 +5230,9 @@
   },
   "placementCard.fitUnknown": {
     "defaultMessage": "能否放入未知"
+  },
+  "placementCard.fitsOnceStops": {
+    "defaultMessage": "{model} 停止后可容纳 — 运行会先停止它（{where}）。"
   },
   "placementCard.goalChat": {
     "defaultMessage": "聊天"
@@ -5384,6 +5393,9 @@
   "placementCard.stopSplitTitle": {
     "defaultMessage": "停止拆分？"
   },
+  "placementCard.stopsFirst": {
+    "defaultMessage": "运行会先停止 {model}（{where}）。"
+  },
   "placementCard.storeErrors": {
     "defaultMessage": "测量存储中有无法读取的行"
   },
@@ -5395,6 +5407,9 @@
   },
   "placementCard.tensorKind": {
     "defaultMessage": "张量拆分 · {link}"
+  },
+  "placementCard.thisMac": {
+    "defaultMessage": "这台 Mac"
   },
   "placementCard.tied": {
     "defaultMessage": "在误差范围内同样快（~{mine} 对 ~{best} tok/s），但需要更多 Mac"
@@ -5413,6 +5428,9 @@
   },
   "placementCard.writes": {
     "defaultMessage": "写入 ~{value} tok/s"
+  },
+  "placementCard.yourMacs": {
+    "defaultMessage": "你的多台 Mac"
   },
   "privacyInfoModal.collectErrors": {
     "defaultMessage": "错误类型（例如“rate_limit”“auth”——不含详情）"
