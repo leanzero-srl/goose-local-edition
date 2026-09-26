@@ -4867,6 +4867,48 @@ pub struct LeanzeroLinkStateResponse {
     /// The launch reconnect's outcome.
     #[serde(default)]
     pub reconnect: LeanzeroLinkReconnectDto,
+    /// How Link last reached its auth worker and its mesh's control plane.
+    #[serde(default)]
+    pub routes: LeanzeroLinkRoutesDto,
+}
+
+/// The road Link last took to each of its two servers — the auth worker and the mesh's
+/// control plane. A server with a Tailscale `*.ts.net` name is reached at its tailnet
+/// address when this Mac is on its tailnet, and through Tailscale Funnel otherwise; the
+/// choice and its reason are shown, never switched silently. Absent = no request yet.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkRoutesDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<LeanzeroLinkRouteDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control: Option<LeanzeroLinkRouteDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum LeanzeroLinkRoutePathDto {
+    /// Dialed at the node's tailnet address (`ip`); the name stays the TLS name.
+    Tailnet,
+    /// Resolved by public DNS — for a `*.ts.net` name, Tailscale Funnel. `reason` says
+    /// why the tailnet road was not taken.
+    Public,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LeanzeroLinkRouteDto {
+    pub host: String,
+    pub path: LeanzeroLinkRoutePathDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// RFC3339.
+    pub decided_at: String,
+    /// The last request on this road failed with this; absent once one succeeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failure: Option<String>,
 }
 
 /// The swarm node view (`self` + peers). Proxies the local control service's

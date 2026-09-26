@@ -49,11 +49,12 @@ use leanzero_link::control::{ControlConfig, DEFAULT_CONTROL_PORT};
 use leanzero_link::identity;
 use leanzero_link::intent::{IntentCause, IntentRecord, LinkIntent};
 use leanzero_link::manager::{
-    AuthState, LinkError, LinkManager, LinkManagerConfig, LinkState, Mesh, MeshFactory,
+    AuthState, LinkError, LinkManager, LinkManagerConfig, LinkRoutes, LinkState, Mesh, MeshFactory,
     RealMeshFactory, ReconnectState,
 };
 use leanzero_link::mesh::{MeshConfig, MeshStatus};
 use leanzero_link::state::SwarmStateSource;
+use leanzero_link::tailnet_route::{RoutePath, RouteReport};
 use leanzero_link::wire::{
     LeaveReason, LinkEvent, NodeAllows, NodeState, NodeStatus, SessionSummary,
 };
@@ -1073,6 +1074,32 @@ fn reconnect_to_dto(reconnect: ReconnectState) -> LeanzeroLinkReconnectDto {
     }
 }
 
+fn route_to_dto(report: RouteReport) -> LeanzeroLinkRouteDto {
+    let (path, ip, reason) = match report.path {
+        RoutePath::Tailnet { ip } => (
+            LeanzeroLinkRoutePathDto::Tailnet,
+            Some(ip.to_string()),
+            None,
+        ),
+        RoutePath::Public { reason } => (LeanzeroLinkRoutePathDto::Public, None, Some(reason)),
+    };
+    LeanzeroLinkRouteDto {
+        host: report.host,
+        path,
+        ip,
+        reason,
+        decided_at: report.decided_at.to_rfc3339(),
+        last_failure: report.last_failure,
+    }
+}
+
+fn routes_to_dto(routes: LinkRoutes) -> LeanzeroLinkRoutesDto {
+    LeanzeroLinkRoutesDto {
+        worker: routes.worker.map(route_to_dto),
+        control: routes.control.map(route_to_dto),
+    }
+}
+
 fn mesh_status_to_dto(mesh: MeshStatus) -> LeanzeroLinkMeshStatusDto {
     LeanzeroLinkMeshStatusDto {
         self_ip: mesh.self_ip,
@@ -1123,6 +1150,7 @@ fn link_state_to_dto(state: LinkState, view: &HolderView) -> LeanzeroLinkStateRe
         intent: state.intent.map(intent_to_dto),
         intent_error: state.intent_error,
         reconnect: reconnect_to_dto(state.reconnect),
+        routes: routes_to_dto(state.routes),
     }
 }
 
@@ -1861,8 +1889,40 @@ mod tests {
                 reason: "mesh join failed".to_string(),
                 at: Utc::now(),
             }),
+            routes: routes_to_dto(LinkRoutes {
+                worker: Some(RouteReport {
+                    host: "worksmacstudio.tailfc4700.ts.net".to_string(),
+                    path: RoutePath::Tailnet {
+                        ip: std::net::Ipv4Addr::new(100, 122, 51, 13),
+                    },
+                    decided_at: Utc::now(),
+                    last_failure: None,
+                }),
+                control: Some(RouteReport {
+                    host: "worksmacstudio.tailfc4700.ts.net".to_string(),
+                    path: RoutePath::Public {
+                        reason: "MagicDNS did not answer".to_string(),
+                    },
+                    decided_at: Utc::now(),
+                    last_failure: Some("closed without a byte".to_string()),
+                }),
+            }),
         };
         let value = serde_json::to_value(&state).unwrap();
+        // The desktop's `LinkRoute` reads exactly these keys (ui/desktop/src/acp/leanzero-link.ts).
+        assert_eq!(value["routes"]["worker"]["path"], "tailnet");
+        assert_eq!(value["routes"]["worker"]["ip"], "100.122.51.13");
+        assert!(value["routes"]["worker"].get("lastFailure").is_none());
+        assert_eq!(value["routes"]["control"]["path"], "public");
+        assert_eq!(
+            value["routes"]["control"]["reason"],
+            "MagicDNS did not answer"
+        );
+        assert_eq!(
+            value["routes"]["control"]["lastFailure"],
+            "closed without a byte"
+        );
+        assert!(value["routes"]["control"]["decidedAt"].is_string());
         assert_eq!(value["intent"]["intent"], "disconnected");
         assert_eq!(value["intent"]["cause"], "userDisconnect");
         assert!(value["intent"]["updatedAt"].is_string());
@@ -1918,6 +1978,7 @@ mod tests {
                 intent: None,
                 intent_error: None,
                 reconnect: ReconnectState::Idle,
+                routes: LinkRoutes::default(),
             },
             &view,
         );
@@ -1960,6 +2021,7 @@ mod tests {
                 intent: None,
                 intent_error: None,
                 reconnect: ReconnectState::Idle,
+                routes: LinkRoutes::default(),
             },
             &view,
         );

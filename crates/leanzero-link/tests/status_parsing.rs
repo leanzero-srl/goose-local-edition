@@ -25,6 +25,7 @@ fn test_config() -> MeshConfig {
         startup_timeout: Duration::from_secs(30),
         join_timeout: Duration::from_secs(90),
         cli_timeout: Duration::from_secs(15),
+        control_route: Default::default(),
     }
 }
 

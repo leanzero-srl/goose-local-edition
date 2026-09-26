@@ -10,6 +10,11 @@
 //! machine. [`mesh::MeshConfig::validate`] enforces this by refusing system paths, and
 //! every daemon it spawns is terminated per-pid — never by process group.
 //!
+//! The one contact with the personal tailnet is DATA-PLANE only ([`tailnet_route`]): a DNS
+//! query to MagicDNS (`100.100.100.100`) for a `*.ts.net` server name, and a TCP dial of
+//! the tailnet address it answers — the packets any app on this Mac sends when MagicDNS
+//! is wired. Its socket, state, CLI and lifecycle stay untouched.
+//!
 //! Auth keys are injected strings minted elsewhere (the LeanZero Link worker); the node
 //! token is derived locally ([`token::node_token_from_secret`]) from the per-account
 //! secret the worker issues with the join key. This crate never talks to any auth
@@ -23,6 +28,7 @@
 //! loopback SOCKS5 listener via [`peer_dial`] — never a direct dial.
 
 pub mod control;
+pub mod control_proxy;
 pub mod discovery;
 pub mod identity;
 pub mod inference;
@@ -35,6 +41,7 @@ pub mod pubsub;
 pub mod replica;
 pub mod state;
 mod subprocess;
+pub mod tailnet_route;
 pub mod token;
 pub mod wire;
 pub mod worker_client;

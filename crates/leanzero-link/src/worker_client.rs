@@ -7,11 +7,22 @@
 //! worker's response body verbatim — nothing is flattened or swallowed (loud absence).
 //! The base URL is injected; it defaults to the LeanZero-hosted deployment but is ALWAYS
 //! overridable (tests point it at a mock server).
+//!
+//! The road to a `*.ts.net` worker is decided per request ([`crate::tailnet_route`]): at
+//! the node's tailnet address when this Mac is on its tailnet, through Tailscale Funnel
+//! otherwise — recorded in [`WorkerClient::last_route`] and named in every transport
+//! error, never switched silently. A Funnel that stops answering is
+//! [`WorkerError::FunnelUnreachable`], which says so plainly (Q-137).
 
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use serde::Deserialize;
 use thiserror::Error;
+
+use crate::tailnet_route::{
+    is_tailnet_hostname, machine_label, RoutePath, RouteReport, RouteSlot, TailnetResolver,
+};
 
 /// The live LeanZero Link auth worker — the self-hosted Node deployment on the Mac
 /// Studio, reachable over Tailscale Funnel at this path on `:443`. A different
@@ -87,8 +98,32 @@ pub struct Capabilities {
 pub enum WorkerError {
     #[error("cannot build the worker HTTP client: {source}")]
     BuildClient { source: reqwest::Error },
-    #[error("worker request to {url} failed to send: {source}")]
-    Transport { url: String, source: reqwest::Error },
+    /// `route` is how the request travelled ([`RoutePath`]'s text); `detail` is the whole
+    /// error chain — reqwest's own line ("error sending request for url") names no cause.
+    #[error("worker request to {url} {route} failed: {detail}")]
+    Transport {
+        url: String,
+        route: String,
+        detail: String,
+    },
+    /// The worker is a `*.ts.net` name this Mac could only reach through Tailscale Funnel,
+    /// and Funnel did not answer. Measured 2026-09-26: a Funnel ingress that died after a
+    /// LAN change failed every TLS handshake while the node itself stayed healthy on its
+    /// tailnet — so the step is on that node, not here.
+    #[error(
+        "the public Tailscale Funnel address of {node} ({host}) did not answer {what}: \
+         {detail}. This Mac cannot use {node}'s tailnet address instead ({why_public}), so \
+         Funnel is the only way in — restart Tailscale on {node}, or join this Mac to \
+         {node}'s tailnet",
+        node = machine_label(.host)
+    )]
+    FunnelUnreachable {
+        what: &'static str,
+        url: String,
+        host: String,
+        why_public: String,
+        detail: String,
+    },
     #[error("worker response for {what} at {url} was not valid JSON: {source}")]
     Decode {
         what: &'static str,
@@ -186,6 +221,11 @@ impl ErrorEnvelope {
 pub struct WorkerClient {
     http: reqwest::Client,
     base_url: String,
+    timeout: Duration,
+    /// The base URL's host when it is a `*.ts.net` name — the only case with two roads.
+    tailnet_host: Option<String>,
+    resolver: TailnetResolver,
+    route: RouteSlot,
 }
 
 impl WorkerClient {
@@ -203,11 +243,92 @@ impl WorkerClient {
             .build()
             .map_err(|source| WorkerError::BuildClient { source })?;
         let base_url = base_url.into().trim_end_matches('/').to_string();
-        Ok(Self { http, base_url })
+        let tailnet_host = url::Url::parse(&base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_string))
+            .filter(|host| is_tailnet_hostname(host));
+        Ok(Self {
+            http,
+            base_url,
+            timeout,
+            tailnet_host,
+            resolver: TailnetResolver::default(),
+            route: RouteSlot::default(),
+        })
+    }
+
+    /// Replace the MagicDNS resolver (tests run a fake DNS server on loopback).
+    pub fn with_resolver(mut self, resolver: TailnetResolver) -> Self {
+        self.resolver = resolver;
+        self
     }
 
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// The road the last request took to a `*.ts.net` worker, and whether it failed.
+    /// `None` for a worker that is not a Tailscale name (one road) or before any request.
+    pub fn last_route(&self) -> Option<RouteReport> {
+        self.route.get()
+    }
+
+    /// Decide the road for one request, send it, and name the road on failure.
+    async fn send(
+        &self,
+        what: &'static str,
+        url: &str,
+        request: impl FnOnce(&reqwest::Client) -> reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, WorkerError> {
+        let Some(host) = &self.tailnet_host else {
+            return request(&self.http)
+                .send()
+                .await
+                .map_err(|err| WorkerError::Transport {
+                    url: url.to_string(),
+                    route: "by public DNS".to_string(),
+                    detail: error_chain(&err),
+                });
+        };
+        let route = self.resolver.route(host).await;
+        self.route.record("worker", host, &route);
+        let pinned;
+        let client = match &route {
+            RoutePath::Tailnet { ip } => {
+                // Port 0 keeps the URL's port; the name stays the TLS SNI and `Host`.
+                pinned = reqwest::Client::builder()
+                    .timeout(self.timeout)
+                    .resolve(host, SocketAddr::new((*ip).into(), 0))
+                    .build()
+                    .map_err(|source| WorkerError::BuildClient { source })?;
+                &pinned
+            }
+            RoutePath::Public { .. } => &self.http,
+        };
+        match request(client).send().await {
+            Ok(response) => {
+                self.route.record_outcome(None);
+                Ok(response)
+            }
+            Err(err) => {
+                let detail = error_chain(&err);
+                self.route.record_outcome(Some(detail.clone()));
+                Err(match route {
+                    RoutePath::Public { reason } => WorkerError::FunnelUnreachable {
+                        what,
+                        url: url.to_string(),
+                        host: host.clone(),
+                        why_public: reason,
+                        detail,
+                    },
+                    tailnet => WorkerError::Transport {
+                        url: url.to_string(),
+                        route: tailnet.to_string(),
+                        detail,
+                    },
+                })
+            }
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -217,16 +338,10 @@ impl WorkerClient {
     /// `POST /v1/auth/request-code` — email a fresh OTP.
     pub async fn request_code(&self, email: &str) -> Result<RequestCodeResult, WorkerError> {
         let url = self.url("/v1/auth/request-code");
+        let body = serde_json::json!({ "email": email });
         let response = self
-            .http
-            .post(&url)
-            .json(&serde_json::json!({ "email": email }))
-            .send()
-            .await
-            .map_err(|source| WorkerError::Transport {
-                url: url.clone(),
-                source,
-            })?;
+            .send("request-code", &url, |http| http.post(&url).json(&body))
+            .await?;
         let status = response.status().as_u16();
         if response.status().is_success() {
             return decode("request-code", &url, response).await;
@@ -253,16 +368,10 @@ impl WorkerClient {
     /// `POST /v1/auth/verify` — exchange the OTP for an identity token.
     pub async fn verify(&self, email: &str, code: &str) -> Result<VerifyResult, WorkerError> {
         let url = self.url("/v1/auth/verify");
+        let body = serde_json::json!({ "email": email, "code": code });
         let response = self
-            .http
-            .post(&url)
-            .json(&serde_json::json!({ "email": email, "code": code }))
-            .send()
-            .await
-            .map_err(|source| WorkerError::Transport {
-                url: url.clone(),
-                source,
-            })?;
+            .send("verify", &url, |http| http.post(&url).json(&body))
+            .await?;
         let status = response.status().as_u16();
         if response.status().is_success() {
             return decode("verify", &url, response).await;
@@ -295,15 +404,8 @@ impl WorkerClient {
     pub async fn join_key(&self, token: &str) -> Result<JoinKeyResult, WorkerError> {
         let url = self.url("/v1/mesh/join-key");
         let response = self
-            .http
-            .post(&url)
-            .bearer_auth(token)
-            .send()
-            .await
-            .map_err(|source| WorkerError::Transport {
-                url: url.clone(),
-                source,
-            })?;
+            .send("join-key", &url, |http| http.post(&url).bearer_auth(token))
+            .await?;
         let status = response.status().as_u16();
         if response.status().is_success() {
             return decode("join-key", &url, response).await;
@@ -336,15 +438,7 @@ impl WorkerClient {
     /// `GET /v1/health` — what the deployment supports.
     pub async fn health(&self) -> Result<Health, WorkerError> {
         let url = self.url("/v1/health");
-        let response =
-            self.http
-                .get(&url)
-                .send()
-                .await
-                .map_err(|source| WorkerError::Transport {
-                    url: url.clone(),
-                    source,
-                })?;
+        let response = self.send("health", &url, |http| http.get(&url)).await?;
         let status = response.status().as_u16();
         if response.status().is_success() {
             return decode("health", &url, response).await;
@@ -367,15 +461,31 @@ async fn decode<T: serde::de::DeserializeOwned>(
     let text = response
         .text()
         .await
-        .map_err(|source| WorkerError::Transport {
+        .map_err(|err| WorkerError::Transport {
             url: url.to_string(),
-            source,
+            route: "while reading the response body".to_string(),
+            detail: error_chain(&err),
         })?;
     serde_json::from_str(&text).map_err(|source| WorkerError::Decode {
         what,
         url: url.to_string(),
         source,
     })
+}
+
+/// The error and every `source()` below it, joined — the cause reqwest's top line omits.
+fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = err.to_string();
+    let mut source = err.source();
+    while let Some(cause) = source {
+        let cause_text = cause.to_string();
+        if !text.contains(&cause_text) {
+            text.push_str(": ");
+            text.push_str(&cause_text);
+        }
+        source = cause.source();
+    }
+    text
 }
 
 async fn error_envelope(response: reqwest::Response) -> ErrorEnvelope {

@@ -5500,6 +5500,46 @@ export const zLeanzeroLinkReconnectDto = z.union([
     })
 ]);
 
+export const zLeanzeroLinkRoutePathDto = z.union([
+    z.literal('tailnet'),
+    z.literal('public')
+]);
+
+export const zLeanzeroLinkRouteDto = z.object({
+    host: z.string(),
+    path: zLeanzeroLinkRoutePathDto,
+    ip: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    reason: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    decidedAt: z.string(),
+    lastFailure: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * The road Link last took to each of its two servers — the auth worker and the mesh's
+ * control plane. A server with a Tailscale `*.ts.net` name is reached at its tailnet
+ * address when this Mac is on its tailnet, and through Tailscale Funnel otherwise; the
+ * choice and its reason are shown, never switched silently. Absent = no request yet.
+ */
+export const zLeanzeroLinkRoutesDto = z.object({
+    worker: z.union([
+        zLeanzeroLinkRouteDto,
+        z.null()
+    ]).optional(),
+    control: z.union([
+        zLeanzeroLinkRouteDto,
+        z.null()
+    ]).optional()
+});
+
 /**
  * What goosed surfaces for the Link tab: auth + live mesh + total node count
  * (self + reachable peers) + the last error (never swallowed).
@@ -5533,7 +5573,8 @@ export const zLeanzeroLinkStateResponse_unstable = z.object({
         z.string(),
         z.null()
     ]).optional(),
-    reconnect: zLeanzeroLinkReconnectDto.optional().default({ state: 'idle' })
+    reconnect: zLeanzeroLinkReconnectDto.optional().default({ state: 'idle' }),
+    routes: zLeanzeroLinkRoutesDto.optional().default({})
 });
 
 /**

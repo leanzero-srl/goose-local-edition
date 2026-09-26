@@ -26,8 +26,10 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
+use crate::control_proxy::ControlProxy;
 use crate::peer_dial::{MeshProxy, SOCKS5_LISTENING_MARKER};
 use crate::subprocess::configure_subprocess;
+use crate::tailnet_route::{is_tailnet_hostname, RoutePath, RouteSlot, TailnetResolver};
 
 pub const DEFAULT_LOGIN_SERVER: &str = "https://controlplane.tailscale.com";
 
@@ -132,6 +134,11 @@ pub enum MeshError {
     /// known: the engine holds no live daemon, or the daemon reported an unusable address.
     #[error("no mesh peer proxy: {reason}")]
     NoPeerProxy { reason: String },
+    #[error("cannot start the control-plane proxy for '{host}': {source}")]
+    ControlProxy {
+        host: String,
+        source: std::io::Error,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +155,9 @@ pub struct MeshConfig {
     pub startup_timeout: Duration,
     pub join_timeout: Duration,
     pub cli_timeout: Duration,
+    /// The road the daemon's control-plane connections take ([`crate::control_proxy`]).
+    /// Clones share the slot, so the manager's template reports every connect's road.
+    pub control_route: RouteSlot,
 }
 
 impl MeshConfig {
@@ -172,7 +182,19 @@ impl MeshConfig {
             startup_timeout: Duration::from_secs(30),
             join_timeout: Duration::from_secs(90),
             cli_timeout: Duration::from_secs(15),
+            control_route: RouteSlot::default(),
         })
+    }
+
+    /// The login server's host when it is a Tailscale `*.ts.net` name — the case where the
+    /// daemon's control connections go through a [`ControlProxy`] so a node on the same
+    /// tailnet is reached at its tailnet address instead of only through Funnel.
+    pub fn tailnet_control_host(&self) -> Option<String> {
+        let host = url::Url::parse(&self.login_server)
+            .ok()?
+            .host_str()?
+            .to_string();
+        is_tailnet_hostname(&host).then_some(host)
     }
 
     /// The isolation gate: refuses any socket/state path that belongs to a system or
@@ -479,6 +501,8 @@ impl ChildHandle {
 pub struct MeshEngine {
     config: MeshConfig,
     state: Mutex<Option<ChildHandle>>,
+    /// Lives exactly as long as the engine: the daemon's `HTTPS_PROXY` points at it.
+    control_proxy: Option<ControlProxy>,
 }
 
 impl MeshEngine {
@@ -506,9 +530,37 @@ impl MeshEngine {
             });
         }
 
+        let control_proxy = match config.tailnet_control_host() {
+            Some(host) => Some(
+                ControlProxy::start(
+                    host.clone(),
+                    TailnetResolver::default(),
+                    config.control_route.clone(),
+                )
+                .await
+                .map_err(|source| MeshError::ControlProxy { host, source })?,
+            ),
+            None => {
+                let host = url::Url::parse(&config.login_server)
+                    .ok()
+                    .and_then(|url| url.host_str().map(str::to_string))
+                    .unwrap_or_else(|| config.login_server.clone());
+                config.control_route.record(
+                    "control",
+                    &host,
+                    &RoutePath::Public {
+                        reason: format!(
+                            "{host} is not a Tailscale *.ts.net name — the daemon resolves it itself"
+                        ),
+                    },
+                );
+                None
+            }
+        };
         let engine = Self {
             config,
             state: Mutex::new(None),
+            control_proxy,
         };
         let mut handle = engine.spawn_daemon()?;
 
@@ -808,6 +860,15 @@ impl MeshEngine {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if let Some(proxy) = &self.control_proxy {
+            // The one proxy variable the daemon's control dial reads (see
+            // control_proxy.rs); inherited proxy settings that could bypass it or send the
+            // control host elsewhere are removed so the road is the one recorded.
+            cmd.env("HTTPS_PROXY", proxy.proxy_url())
+                .env_remove("https_proxy")
+                .env_remove("NO_PROXY")
+                .env_remove("no_proxy");
+        }
         configure_subprocess(&mut cmd);
         let mut child = cmd.spawn().map_err(|source| MeshError::Spawn {
             program: argv[0].clone(),

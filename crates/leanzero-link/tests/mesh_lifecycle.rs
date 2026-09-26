@@ -20,7 +20,8 @@ const NEEDS_LOGIN_JSON: &str = include_str!("fixtures/status_needs_login.json");
 /// listener, so the engine's peer-credential proof sees THIS process as the owner), THEN
 /// opens a kernel-chosen loopback TCP listener and reports it on stderr exactly as
 /// tailscaled 1.98.8 does (`SOCKS5 listening on 127.0.0.1:<port>` — socket first, proxy
-/// second, the real order), removes the socket on SIGTERM. Hooks in the state dir:
+/// second, the real order), removes the socket on SIGTERM. It records the `HTTPS_PROXY` it
+/// was given in `<statedir>/https-proxy.seen` (`<unset>` when absent). Hooks in the state dir:
 /// `no-proxy-report` (never report the listener), `proxy-report-wildcard` (report
 /// `0.0.0.0:<port>`).
 const FAKE_TAILSCALED: &str = r#"#!/usr/bin/env python3
@@ -41,6 +42,8 @@ if "--no-logs-no-support" not in args:
 if flag("--socks5-server") != "127.0.0.1:0":
     print("fake tailscaled: want --socks5-server=127.0.0.1:0: %r" % (args,), file=sys.stderr)
     sys.exit(2)
+with open(os.path.join(statedir, "https-proxy.seen"), "w") as f:
+    f.write(os.environ.get("HTTPS_PROXY", "<unset>"))
 print("fake tailscaled starting", file=sys.stderr)
 sys.stderr.flush()
 time.sleep(0.3)
@@ -261,6 +264,7 @@ fn fake_config(root: &Path) -> MeshConfig {
         startup_timeout: Duration::from_secs(15),
         join_timeout: Duration::from_secs(10),
         cli_timeout: Duration::from_secs(5),
+        control_route: Default::default(),
     }
 }
 
@@ -307,6 +311,44 @@ async fn starts_reports_needs_login_and_shuts_down_without_orphans() {
     let stopped = engine.status().await.unwrap();
     assert_eq!(stopped.backend_state, BackendState::Stopped);
     assert!(stopped.peers.is_empty());
+}
+
+/// Q-137: a `*.ts.net` login server (Headscale behind the node's Funnel) gets the
+/// control-plane proxy as the daemon's `HTTPS_PROXY`, alive for the engine's life; any
+/// other login server gets no proxy, and the road says why. Nothing here dials the
+/// control host, so MagicDNS is never asked.
+#[tokio::test]
+async fn a_tailnet_login_server_hands_the_daemon_the_control_proxy() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = fake_config(root.path());
+    config.login_server = "https://studio.tailtest.ts.net".to_string();
+    let seen = config.state_dir.join("https-proxy.seen");
+    let engine = MeshEngine::start(config).await.unwrap();
+    let proxy = std::fs::read_to_string(&seen).unwrap();
+    let addr = proxy
+        .strip_prefix("http://127.0.0.1:")
+        .unwrap_or_else(|| panic!("HTTPS_PROXY must be our loopback proxy, got {proxy:?}"));
+    let port: u16 = addr.parse().unwrap();
+    tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("the proxy listens while the engine lives");
+    engine.shutdown().await;
+
+    let root = tempfile::tempdir().unwrap();
+    let config = fake_config(root.path());
+    let route = config.control_route.clone();
+    let seen = config.state_dir.join("https-proxy.seen");
+    let engine = MeshEngine::start(config).await.unwrap();
+    assert_eq!(std::fs::read_to_string(&seen).unwrap(), "<unset>");
+    let report = route
+        .get()
+        .expect("the road is recorded even without a proxy");
+    assert_eq!(report.host, "controlplane.tailscale.com");
+    let leanzero_link::tailnet_route::RoutePath::Public { reason } = report.path else {
+        panic!("a non-tailnet login server has only the public road");
+    };
+    assert!(reason.contains("not a Tailscale"), "{reason}");
+    engine.shutdown().await;
 }
 
 #[tokio::test]
