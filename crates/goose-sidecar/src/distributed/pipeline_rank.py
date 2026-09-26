@@ -44,6 +44,14 @@ for name in ("_start", "prefill"):
             f"goose pipeline rank: the fork's _Engine has no {name}; the live request table "
             "was written against fork c8d6d5faf"
         )
+# Q-145 (fork c24f6b55e): rank 0's queued requests live in `_State.waiting` (arrival order,
+# replaced whole) instead of one `held` head; several rows may prefill, and `_Engine.joining` is
+# the one whose chunk `prefill` runs next.
+if "waiting" not in pipeline_qwen4_serve._State.__dataclass_fields__:
+    raise SystemExit(
+        "goose pipeline rank: the fork's _State has no waiting list; the live request table "
+        "was written against fork c24f6b55e (Q-145)"
+    )
 
 jobs_by_row = weakref.WeakValueDictionary()
 
@@ -159,9 +167,8 @@ def _build_app(state, tokenizer, *args, **kwargs):
         now = time.monotonic()
         with state.jobs.mutex:
             queued = [job for job in state.jobs.queue if job is not None]
-        held = [state.held] if state.held is not None else []
         rows = [live_row(job, now) for job in list(state.active) if not job.finished]
-        rows += [live_row(job, now) for job in held + queued if not job.cancelled]
+        rows += [live_row(job, now) for job in state.waiting + queued if not job.cancelled]
         return live_status(base, rows)
 
     return app
