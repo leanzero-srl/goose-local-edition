@@ -1679,7 +1679,7 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
         };
         let spec = pipeline_rank_specs(
             &pipeline_config(),
-            "node-alias",
+            &ServedNames::only("node-alias"),
             32_768,
             "19",
             2_048,
@@ -2128,7 +2128,7 @@ print("GOOSE_TEST " + json.dumps({
         );
         assert_eq!(
             seen["shared_kwargs"],
-            serde_json::json!([{"enable_thinking": false}]),
+            serde_json::json!([{"enable_thinking": false}, {"enable_thinking": false}]),
             "auto reaches every rank as the single engine's answer, set before the request is shared"
         );
         assert_eq!(seen["untranslated"][0], 400);
