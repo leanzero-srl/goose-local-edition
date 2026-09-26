@@ -36,6 +36,7 @@ use super::node_op::{NodeOp, Signal};
 use super::preflight::{self, now_ms, PreflightReport};
 use super::probe::{self, Pressure, SseVerdict};
 use super::runner_update::{self, Preflighted, RunnerUpdate};
+use super::sampling::SamplingDefaults;
 use super::{HANG_MEDIAN_MULTIPLE, HANG_MIN_SAMPLES};
 use crate::model_identity::ServedNames;
 use crate::{SidecarConfig, GIB, GRACE_TICK, GRACE_TICKS};
@@ -988,6 +989,8 @@ struct RunContext {
     config: DistributedConfig,
     /// Every name the split answers to; `served.id` is the one it advertises and chat names.
     served: ServedNames,
+    /// goose's sampling profile for the model, handed to rank 0 at every launch (Q-159).
+    sampling: SamplingDefaults,
     runner: Runner,
     /// This install's owner token, written on every rank this run launches.
     owner: Option<String>,
@@ -2069,6 +2072,7 @@ fn launch_specs(
     for (spec, node) in specs.iter_mut().zip(&preflight.nodes) {
         spec.planned_weight_bytes = node.plan.as_ref().map(|p| p.weights_bytes);
         spec.owner = ctx.owner.clone();
+        spec.set_sampling_defaults(ctx.sampling);
     }
     Ok(specs)
 }
@@ -2637,14 +2641,23 @@ impl DistributedManager {
     /// with a code the UI acts on — while the single engine is mounted, while a run is live, or
     /// when a preflight check fails. `served` is `ServedNames::of(settings, config.model_id,
     /// pool nodes)` — the SPLIT's model, never the single engine's — the caller reads them.
+    /// `sampling` is `SamplingDefaults::of(settings, config.model_id)`: the per-model profile the
+    /// single engine would mount the same model with (Q-159).
     pub async fn start(
         &self,
         config: DistributedConfig,
         served: ServedNames,
+        sampling: SamplingDefaults,
     ) -> Result<StartOutcome> {
         let single = crate::engine::global_manager().status().await;
-        self.start_with_single_state(config, served, &single.state, single.model_id.as_deref())
-            .await
+        self.start_with_single_state(
+            config,
+            served,
+            sampling,
+            &single.state,
+            single.model_id.as_deref(),
+        )
+        .await
     }
 
     /// This install's previous ranks first: an orphan is reclaimed per pid and the preflight runs
@@ -2680,6 +2693,7 @@ impl DistributedManager {
         &self,
         mut config: DistributedConfig,
         served: ServedNames,
+        sampling: SamplingDefaults,
         single_state: &str,
         single_model: Option<&str>,
     ) -> Result<StartOutcome> {
@@ -2936,6 +2950,7 @@ impl DistributedManager {
                 .expect("reqwest client with static configuration"),
             config,
             served,
+            sampling,
             runner,
             owner,
         };
@@ -3561,6 +3576,7 @@ mod tests {
             stream_http: reqwest::Client::new(),
             config: two_mac_config(),
             served: ServedNames::only("node-alias"),
+            sampling: SamplingDefaults::default(),
             runner: Runner::PipelineQwen4,
             owner: None,
         };
@@ -3613,6 +3629,7 @@ mod tests {
             stream_http: reqwest::Client::new(),
             config,
             served: ServedNames::only("node-alias"),
+            sampling: SamplingDefaults::default(),
             runner: Runner::MlxLmTensor,
             owner: None,
         };
@@ -4114,6 +4131,7 @@ mod tests {
             .start_with_single_state(
                 two_mac_config(),
                 ServedNames::only("node-alias"),
+                SamplingDefaults::default(),
                 "running",
                 Some("org/model"),
             )
@@ -4245,6 +4263,7 @@ mod tests {
             .start_with_single_state(
                 two_mac_config(),
                 ServedNames::only("node-alias"),
+                SamplingDefaults::default(),
                 "stopped",
                 None,
             )

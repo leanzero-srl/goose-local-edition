@@ -48,6 +48,7 @@ pub mod probe;
 pub mod provision;
 pub mod rank_log;
 pub mod runner_update;
+pub mod sampling;
 pub mod supervisor;
 
 pub use compaction::{CompactionOutcome, CompactionRefusal, CompactionReport};
@@ -56,6 +57,7 @@ pub use exec::{ExecOutput, NodeExec, SystemExec};
 pub use plan::RankPlan;
 pub use preflight::{Check, CheckVerdict, NodePreflight, PreflightReport, RunnerEnv};
 pub use runner_update::{RunnerUpdate, RunnerUpdateRow};
+pub use sampling::SamplingDefaults;
 pub use supervisor::{
     global_manager, DistributedManager, DistributedStatus, EngineEvent, EventKind, NodeState,
     NodeStatus, RefusalCode, RunState, StartOutcome, StopReport,

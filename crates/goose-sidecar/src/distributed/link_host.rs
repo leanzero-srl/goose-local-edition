@@ -837,6 +837,9 @@ mod tests {
              @dataclass\n\
              class _State:\n\
              \x20   waiting: list = None\n\
+             @dataclass\n\
+             class _Row:\n\
+             \x20   sampling: object = None\n\
              class _Engine:\n\
              \x20   def _start(self, row): pass\n\
              \x20   def prefill(self, words): pass\n\
