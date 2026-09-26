@@ -32,11 +32,17 @@ pub struct AgentManagerGetResult {
     pub extension_results: Vec<ExtensionLoadResult>,
 }
 
+/// One in-flight reply: its cancel token and when the turn began.
+struct BusyRun {
+    token: CancellationToken,
+    since: chrono::DateTime<chrono::Utc>,
+}
+
 pub struct AgentManager {
     sessions: Arc<RwLock<LruCache<String, Arc<Agent>>>>,
     agent_config: AgentConfig,
     default_provider: Arc<RwLock<Option<Arc<dyn crate::providers::base::Provider>>>>,
-    cancel_tokens: Arc<RwLock<HashMap<String, CancellationToken>>>,
+    cancel_tokens: Arc<RwLock<HashMap<String, BusyRun>>>,
     /// Per-session creation locks.  When `get_or_create_agent` misses the
     /// `sessions` cache it acquires the per-session lock before doing the
     /// expensive work (provider restore, MCP extension initialization) so
@@ -104,6 +110,16 @@ impl AgentManager {
     /// so a reply that is running stays visible while either of those is unreadable.
     pub async fn busy_session_ids(&self) -> Vec<String> {
         self.cancel_tokens.read().await.keys().cloned().collect()
+    }
+
+    /// The busy set with when each turn began — what the app shows as "running · 27m".
+    pub async fn busy_sessions(&self) -> Vec<(String, chrono::DateTime<chrono::Utc>)> {
+        self.cancel_tokens
+            .read()
+            .await
+            .iter()
+            .map(|(id, run)| (id.clone(), run.since))
+            .collect()
     }
 
     pub fn scheduler(&self) -> Arc<dyn SchedulerTrait> {
@@ -325,8 +341,8 @@ impl AgentManager {
     }
 
     pub async fn remove_session(&self, session_id: &str) -> Result<()> {
-        if let Some(token) = self.cancel_tokens.write().await.remove(session_id) {
-            token.cancel();
+        if let Some(run) = self.cancel_tokens.write().await.remove(session_id) {
+            run.token.cancel();
         }
         let mut sessions = self.sessions.write().await;
         sessions
@@ -344,8 +360,8 @@ impl AgentManager {
 
     /// Drops an in-memory agent when one is loaded for `session_id`.
     pub async fn remove_session_if_loaded(&self, session_id: &str) -> Result<()> {
-        if let Some(token) = self.cancel_tokens.write().await.remove(session_id) {
-            token.cancel();
+        if let Some(run) = self.cancel_tokens.write().await.remove(session_id) {
+            run.token.cancel();
         }
         let mut sessions = self.sessions.write().await;
         if sessions.pop(session_id).is_none() {
@@ -375,7 +391,13 @@ impl AgentManager {
         if tokens.contains_key(session_id) {
             anyhow::bail!("Session '{}' is currently busy", session_id);
         }
-        tokens.insert(session_id.to_string(), token);
+        tokens.insert(
+            session_id.to_string(),
+            BusyRun {
+                token,
+                since: chrono::Utc::now(),
+            },
+        );
         Ok(())
     }
 
@@ -389,6 +411,7 @@ impl AgentManager {
         let tokens = self.cancel_tokens.read().await;
         let token = tokens
             .get(session_id)
+            .map(|run| &run.token)
             .ok_or_else(|| anyhow::anyhow!("No active operation for session {}", session_id))?;
         token.cancel();
         Ok(())

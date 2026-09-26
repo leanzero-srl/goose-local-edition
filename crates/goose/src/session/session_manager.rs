@@ -4,7 +4,7 @@ use crate::conversation::message::{Message, TokenState};
 use crate::conversation::Conversation;
 use crate::providers::base::Provider;
 use crate::recipe::Recipe;
-use crate::session::extension_data::ExtensionData;
+use crate::session::extension_data::{ExtensionData, ExtensionState};
 use crate::session::session_naming::{
     generate_session_name, user_prompt_count, MSG_COUNT_FOR_SESSION_NAME_GENERATION,
 };
@@ -344,6 +344,32 @@ fn message_keyword_clause(keyword_count: usize) -> String {
 }
 
 #[derive(Debug, Clone)]
+pub struct SessionExtensionState<S> {
+    pub session_id: String,
+    pub name: String,
+    pub working_dir: PathBuf,
+    pub session_type: SessionType,
+    pub state: S,
+}
+
+struct ExtensionStateRow {
+    session_id: String,
+    name: String,
+    working_dir: PathBuf,
+    session_type: SessionType,
+    value: serde_json::Value,
+}
+
+fn extension_state_key<S: ExtensionState>() -> String {
+    format!("{}.{}", S::EXTENSION_NAME, S::VERSION)
+}
+
+/// The keys carry a dot (`todo.v0`), so the JSON path quotes the label.
+fn extension_state_json_path(key: &str) -> String {
+    format!("$.\"{key}\"")
+}
+
+#[derive(Debug, Clone)]
 pub struct SessionNameUpdate {
     pub session_id: String,
     pub name: String,
@@ -422,6 +448,59 @@ impl SessionManager {
 
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         self.storage.delete_session(id).await
+    }
+
+    /// Read-modify-write ONE extension's state inside a `BEGIN IMMEDIATE` transaction, leaving every
+    /// other key of `extension_data` untouched. The whole-map `update().extension_data(..)` path is a
+    /// read-then-overwrite: two writers in one tool batch (todo_write beside ask_user) each write
+    /// back the copy they read, and the later one erases the earlier one's key.
+    pub async fn update_extension_state<S, T>(
+        &self,
+        id: &str,
+        modify: impl FnOnce(Option<S>) -> Result<(S, T)>,
+    ) -> Result<T>
+    where
+        S: ExtensionState,
+    {
+        let key = extension_state_key::<S>();
+        self.storage
+            .modify_extension_state_value(id, &key, |current| {
+                let current = current.as_ref().map(S::from_value).transpose()?;
+                let (next, out) = modify(current)?;
+                Ok((next.to_value()?, out))
+            })
+            .await
+    }
+
+    /// Overwrite ONE extension's state; the previous value is not read, so a stale shape stored by an
+    /// older build cannot block the write.
+    pub async fn set_extension_state<S: ExtensionState>(&self, id: &str, state: &S) -> Result<()> {
+        let value = state.to_value()?;
+        self.storage
+            .modify_extension_state_value(id, &extension_state_key::<S>(), |_| Ok((value, ())))
+            .await
+    }
+
+    /// Every session (any type) whose `extension_data` carries this extension's state, parsed. A
+    /// row whose state does not parse is an error, never a silent skip.
+    pub async fn sessions_with_extension_state<S: ExtensionState>(
+        &self,
+    ) -> Result<Vec<SessionExtensionState<S>>> {
+        let key = extension_state_key::<S>();
+        self.storage
+            .sessions_with_extension_state_value(&key)
+            .await?
+            .into_iter()
+            .map(|row| {
+                Ok(SessionExtensionState {
+                    session_id: row.session_id,
+                    name: row.name,
+                    working_dir: row.working_dir,
+                    session_type: row.session_type,
+                    state: S::from_value(&row.value)?,
+                })
+            })
+            .collect()
     }
 
     pub async fn get_insights(&self) -> Result<SessionInsights> {
@@ -1862,6 +1941,74 @@ impl SessionStorage {
     async fn list_sessions(&self) -> Result<Vec<Session>> {
         self.list_sessions_by_types(Some(&[SessionType::User, SessionType::Scheduled]))
             .await
+    }
+
+    async fn modify_extension_state_value<T>(
+        &self,
+        session_id: &str,
+        key: &str,
+        modify: impl FnOnce(Option<serde_json::Value>) -> Result<(serde_json::Value, T)>,
+    ) -> Result<T> {
+        let pool = self.pool().await?;
+        let path = extension_state_json_path(key);
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+
+        let row: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT CASE WHEN json_valid(extension_data) THEN extension_data -> ? END FROM sessions WHERE id = ?",
+        )
+        .bind(&path)
+        .bind(session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((current,)) = row else {
+            return Err(anyhow::anyhow!("Session not found: {session_id}"));
+        };
+        let current = current
+            .map(|text| serde_json::from_str::<serde_json::Value>(&text))
+            .transpose()?;
+
+        let (next, out) = modify(current)?;
+
+        sqlx::query(
+            "UPDATE sessions SET extension_data = json_set(CASE WHEN json_valid(extension_data) THEN extension_data ELSE '{}' END, ?, json(?)), updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(&path)
+        .bind(serde_json::to_string(&next)?)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(out)
+    }
+
+    async fn sessions_with_extension_state_value(
+        &self,
+        key: &str,
+    ) -> Result<Vec<ExtensionStateRow>> {
+        let pool = self.pool().await?;
+        let path = extension_state_json_path(key);
+        let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
+            "SELECT id, name, working_dir, session_type, extension_data -> ? FROM sessions WHERE json_valid(extension_data) AND json_type(extension_data, ?) IS NOT NULL",
+        )
+        .bind(&path)
+        .bind(&path)
+        .fetch_all(pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|(session_id, name, working_dir, session_type, value)| {
+                Ok(ExtensionStateRow {
+                    session_id,
+                    name,
+                    working_dir: PathBuf::from(working_dir),
+                    session_type: session_type.parse().map_err(|_| {
+                        anyhow::anyhow!("Unknown session type in sessions row: {session_type}")
+                    })?,
+                    value: serde_json::from_str(&value)?,
+                })
+            })
+            .collect()
     }
 
     async fn delete_session(&self, session_id: &str) -> Result<()> {

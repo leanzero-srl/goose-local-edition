@@ -164,6 +164,10 @@ impl Extension {
 pub struct ExtensionManagerCapabilities {
     pub mcpui: bool,
     pub host_info: Option<GooseMcpHostInfo>,
+    /// The host shows the person what the agent needs from them and takes the answer: the desktop
+    /// (`goose serve --platform desktop`). CLI hosts — `goose run`, the swarm's workers, subagents,
+    /// the benchmark's children — are not, and never register a `requires_human` extension.
+    pub human_host: bool,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -923,6 +927,7 @@ impl ExtensionManager {
             ExtensionManagerCapabilities {
                 mcpui: false,
                 host_info: None,
+                human_host: false,
             },
             false,
         )
@@ -1036,6 +1041,15 @@ impl ExtensionManager {
                         {
                             context.session = Some(Arc::new(session));
                         }
+                    }
+                    if def.requires_human
+                        && !crate::needs_you::session_accepts_questions(
+                            self.capabilities.human_host,
+                            self.knowledge_blind(),
+                            context.session.as_ref().map(|session| session.session_type),
+                        )
+                    {
+                        return Ok(());
                     }
                     (def.client_factory)(context)
                 } else {

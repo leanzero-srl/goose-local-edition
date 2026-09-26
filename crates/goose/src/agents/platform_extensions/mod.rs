@@ -6,6 +6,7 @@ pub mod code_execution;
 pub mod developer;
 pub mod ext_manager;
 pub mod ledger;
+pub mod needs_you;
 pub mod orchestrator;
 pub mod recall;
 pub mod summarize;
@@ -42,6 +43,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: true,
                 unprefixed_tools: true,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(analyze::AnalyzeClient::new(ctx).unwrap()),
             },
         );
@@ -56,6 +58,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: true,
                 unprefixed_tools: false,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(todo::TodoClient::new(ctx).unwrap()),
             },
         );
@@ -70,7 +73,23 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: true,
                 unprefixed_tools: false,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(apps::AppsManagerClient::new(ctx).unwrap()),
+            },
+        );
+
+        map.insert(
+            needs_you::EXTENSION_NAME,
+            PlatformExtensionDef {
+                name: needs_you::EXTENSION_NAME,
+                display_name: "Needs you",
+                description:
+                    "Lets goose ask you a question it cannot answer itself, pinned until you answer, with a recommended answer to accept in one click",
+                default_enabled: true,
+                unprefixed_tools: true,
+                hidden: false,
+                requires_human: true,
+                client_factory: |ctx| Box::new(needs_you::NeedsYouClient::new(ctx).unwrap()),
             },
         );
 
@@ -84,6 +103,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: false,
                 unprefixed_tools: false,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(chatrecall::ChatRecallClient::new(ctx).unwrap()),
             },
         );
@@ -98,6 +118,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: true,
                 unprefixed_tools: false,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(ledger::LedgerClient::new(ctx).unwrap()),
             },
         );
@@ -112,6 +133,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: true,
                 unprefixed_tools: false,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(recall::RecallClient::new(ctx).unwrap()),
             },
         );
@@ -126,6 +148,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: true,
                 unprefixed_tools: false,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(ext_manager::ExtensionManagerClient::new(ctx).unwrap()),
             },
         );
@@ -139,6 +162,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: true,
                 unprefixed_tools: true,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(summon::SummonClient::new(ctx).unwrap()),
             },
         );
@@ -152,6 +176,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: false,
                 unprefixed_tools: false,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(summarize::SummarizeClient::new(ctx).unwrap()),
             },
         );
@@ -167,6 +192,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: false,
                 unprefixed_tools: true,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| {
                     Box::new(
                         code_execution::CodeExecutionClient::new(
@@ -188,6 +214,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: true,
                 unprefixed_tools: true,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(developer::DeveloperClient::new(ctx).unwrap()),
             },
         );
@@ -202,6 +229,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: false,
                 unprefixed_tools: false,
                 hidden: true,
+                requires_human: false,
                 client_factory: |ctx| Box::new(orchestrator::OrchestratorClient::new(ctx).unwrap()),
             },
         );
@@ -216,6 +244,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: true,
                 unprefixed_tools: false,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(tom::TomClient::new(ctx).unwrap()),
             },
         );
@@ -229,6 +258,7 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 default_enabled: true,
                 unprefixed_tools: true,
                 hidden: false,
+                requires_human: false,
                 client_factory: |ctx| Box::new(crate::skills::SkillsClient::new(ctx).unwrap()),
             },
         );
@@ -310,5 +340,8 @@ pub struct PlatformExtensionDef {
     pub unprefixed_tools: bool,
     /// If true, the extension is not shown in the UI or discoverable via search_available_extensions.
     pub hidden: bool,
+    /// Its tools put work in front of a PERSON. Registered only for sessions a person answers
+    /// (`needs_you::session_accepts_questions`); every other session never has the tools at all.
+    pub requires_human: bool,
     pub client_factory: fn(PlatformExtensionContext) -> Box<dyn McpClientTrait>,
 }

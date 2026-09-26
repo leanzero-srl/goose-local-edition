@@ -1332,6 +1332,22 @@ impl GooseAcpAgent {
         self.on_answer_memory_proposal(req).await
     }
 
+    #[custom_method(SessionActivityRequest)]
+    async fn dispatch_session_activity(
+        &self,
+        req: SessionActivityRequest,
+    ) -> Result<SessionActivityResponse, agent_client_protocol::Error> {
+        self.on_session_activity(req).await
+    }
+
+    #[custom_method(ResolveNeedsYouRequest)]
+    async fn dispatch_resolve_needs_you(
+        &self,
+        req: ResolveNeedsYouRequest,
+    ) -> Result<ResolveNeedsYouResponse, agent_client_protocol::Error> {
+        self.on_resolve_needs_you(req).await
+    }
+
     #[custom_method(LeanzeroLinkRemoteExecuteRequest)]
     async fn dispatch_leanzero_link_remote_execute(
         &self,
