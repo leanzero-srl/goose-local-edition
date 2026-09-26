@@ -72,8 +72,15 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// fallback, the plan carries top_k and min_p beside temperature and top_p, a missing or
 /// unreadable config is named on `/v1/status` (`sampling_defaults.generation_config_error`), and
 /// each row keeps its resolved fields (`_Row.sampling`, which pipeline_rank.py's status rows read).
+/// And Q-145's STARVATION BOUND COUNTS ONLY JUMPERS (f8a2461a5, branch lz/pipeline-srpf-jumpers,
+/// tag lz-pipeline-qwen4.10): 419306f70 aged a queued request by EVERY chunk prefilled while it
+/// waited, so under steady load each long request was protected by the prefills it was behind
+/// anyway and SRPF fell back to FIFO (LOAD-2026-09-26d canaries 3/4: 353.41 / 297.16 s). Now only a
+/// LATER arrival's chunk ages a request, and a later request goes ahead of an earlier one only by
+/// taking at most half its slack (its own prefill less the jumpers' tokens), so a canary is
+/// prefilled at the next chunk boundary unless both slots are held (the 26d replay: 4.2 / 11.3 s).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "71214c7006abad0932e5b0eb3a1f35aa8a77454d";
+pub const PIPELINE_FORK_COMMIT: &str = "f8a2461a53301eb55fc859d415a5e90c2b4250cc";
 /// The newest single-engine tag (`v*-lz.*`) whose fixes the pipeline fork at
 /// [`PIPELINE_FORK_COMMIT`] carries or has reviewed as not applying — the fork's
 /// `tests/pipeline_single_line_ports.json` `reviewed_through`. The pipeline line branched from the
@@ -83,7 +90,7 @@ pub const PIPELINE_FORK_COMMIT: &str = "71214c7006abad0932e5b0eb3a1f35aa8a77454d
 pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.9";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@71214c7006abad0932e5b0eb3a1f35aa8a77454d";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@f8a2461a53301eb55fc859d415a5e90c2b4250cc";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.
