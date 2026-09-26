@@ -25,8 +25,11 @@ import {
   distributedServedId,
   distributedServes,
   distributedSummary,
+  chatNodeOf,
   engineFact,
+  nodeServedId,
   resolveMountTarget,
+  singleServedId,
   type EngineFact,
   type MountLookup,
   type MountTarget,
@@ -195,7 +198,10 @@ export function swarmReadiness(
   if (enabled.length === 0) return { kind: 'no-nodes' };
   if (!enabled.every(isLocalMlx)) return UNKNOWN;
   if (distributed && (ownsTheMac(distributed) || foreignOwner(distributed))) {
-    if (enabled.some((d) => distributedFact(distributed, d.model_id) === 'up')) {
+    const served = distributedServedId(distributed);
+    if (
+      enabled.some((d) => distributedFact(distributed, nodeServedId(lookup, d, served)) === 'up')
+    ) {
       return { kind: 'ready' };
     }
     return {
@@ -207,7 +213,9 @@ export function swarmReadiness(
   }
   if (!statusIsKnowable(status)) return UNKNOWN;
   const targets = enabled.map((d) => resolveMountTarget(d.id, lookup.devices, lookup.settings));
-  const facts = enabled.map((d) => engineFact(status, d.model_id));
+  const facts = enabled.map((d) =>
+    engineFact(status, nodeServedId(lookup, d, singleServedId(status)))
+  );
   if (facts.includes('up')) return { kind: 'ready' };
   const target = targets.find((t) => t.kind === 'ok') ?? targets[0];
   const fact = facts.includes('mounting')
@@ -638,7 +646,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
 
 /**
  * Chat was on the split: the omlx provider follows whatever the split serves; a swarm pool's local
- * MLX node is served by it only when the node names the id the ranks serve (`distributedFact`).
+ * MLX node is served by it when the pool gives a node that engine (`chatNodeOf`, the router's rule).
  */
 function splitServedThisChat(
   distributed: MlxDistributedStatus,
@@ -648,7 +656,7 @@ function splitServedThisChat(
   if (!isSwarm) return true;
   const served = distributed.servedModelId;
   if (served == null || lookup.state !== 'ready') return false;
-  return lookup.devices.some((d) => d.enabled === true && isLocalMlx(d) && d.model_id === served);
+  return chatNodeOf(lookup.devices, lookup.settings, lookup.intent, served) != null;
 }
 
 /**

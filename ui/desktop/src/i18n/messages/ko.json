@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "이 노드의 모든 슬롯이 사용 중입니다."
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "{model}와(과) 채팅"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "이 노드는 이제 {model}와(과) 채팅합니다 — 메시지를 보내려면 다시 시도하세요."
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "이 노드를 {model}(으)로 지정하지 못했습니다: {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "세부 정보"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "마운트된 모델이 없습니다"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "채팅이 실행한 모델을 따릅니다: {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "이 Mac에서 {served}을(를) 시작했으므로 이 노드의 채팅은 그쪽으로 갑니다. swarm 빌드와 벤치마크에는 노드가 {set}(으)로 유지됩니다."
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "채팅: {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "엔진이 {model}을(를) 제공 중"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "이 Mac에 일치하는 모델이 없습니다."
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "{node}의 모델"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "저장되지 않음: {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "지금 제공 중"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "서버가 시작 중이거나 일시적으로 사용할 수 없습니다."

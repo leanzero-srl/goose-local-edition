@@ -57,10 +57,16 @@ vi.mock('../../acp/providers', () => ({
 const mockMlxModelsList = vi.fn();
 const mockMlxSettingsRead = vi.fn();
 const mockMlxSettingsUpdate = vi.fn();
+const mockMlxStatus = vi.fn();
 vi.mock('../../acp/mlx-engine', () => ({
   mlxEngineModelsList: (...a: unknown[]) => mockMlxModelsList(...a),
   mlxEngineSettingsRead: (...a: unknown[]) => mockMlxSettingsRead(...a),
   mlxEngineSettingsUpdate: (...a: unknown[]) => mockMlxSettingsUpdate(...a),
+  mlxEngineStatus: (...a: unknown[]) => mockMlxStatus(...a),
+}));
+const mockIntent = vi.fn();
+vi.mock('../../acp/mlx-serving-intent', () => ({
+  mlxServingIntent: () => mockIntent(),
 }));
 
 const mockSwarmCloud = vi.fn();
@@ -141,6 +147,13 @@ beforeEach(() => {
     modelProfiles: {},
   });
   mockMlxSettingsUpdate.mockImplementation(async (s: unknown) => s);
+  mockMlxStatus.mockResolvedValue({
+    state: 'stopped',
+    restartRequired: false,
+    availableMemoryGb: 40,
+    totalMemoryGb: 64,
+  });
+  mockIntent.mockResolvedValue({ intent: null, error: null });
   mockSwarmCloud.mockResolvedValue({ ok: true, stdout: '{}', stderr: '', error: null });
   mockFleetMachines.mockResolvedValue([
     { machine: 'workhorse', local: true },
@@ -573,6 +586,88 @@ describe('the Nodes tab — LeanZero Studio register', () => {
     const classes = allClasses(container).filter((c) => !c.startsWith('lucide'));
     expect(await missingUtilities(classes)).toEqual([]);
   }, 30_000);
+
+  /**
+   * Q-128: the Model cell of a local MLX node was plain text, so the only way to change what a
+   * node chats with was Remove + Add node. It now says what this Mac serves and whether chat
+   * goes there on this node, and changes the node's model through the one node-model writer.
+   */
+  it('a local MLX node’s Model cell names what serves, that chat follows the owner’s Run, and changes the model', async () => {
+    const user = userEvent.setup();
+    const FLASH = 'rapid-mlx/Qwen3.8-Flash-Next-4bit';
+    mockMlxModelsList.mockResolvedValue({
+      models: [
+        { id: HF, sizeBytes: 5e9, complete: true, missingFiles: 0 },
+        { id: FLASH, sizeBytes: 4e10, complete: true, missingFiles: 0 },
+        { id: 'org/Half-Downloaded', sizeBytes: 1, complete: false, missingFiles: 3 },
+      ],
+      diskAvailableBytes: 0,
+      diskTotalBytes: 0,
+    });
+    mockMlxStatus.mockResolvedValue({
+      state: 'running',
+      restartRequired: false,
+      availableMemoryGb: 40,
+      totalMemoryGb: 64,
+      modelId: FLASH,
+      servedModelId: FLASH,
+    });
+    mockIntent.mockResolvedValue({ intent: { kind: 'single', modelId: FLASH }, error: null });
+    render();
+    const chip = await screen.findByTestId('node-model-chat-workhorse-mlx');
+    expect(chip).toHaveTextContent('Chat follows your Run: Qwen3.8-Flash-Next-4bit');
+    expect(within(chip).getByTestId('lz-chip')).toHaveAttribute('data-tone', 'warn');
+    // the cloud row has no model picker
+    expect(screen.queryByTestId('node-model-zai-glm')).toBeNull();
+
+    const picker = within(screen.getByTestId('node-model-workhorse-mlx')).getByRole('combobox');
+    expect(picker).toHaveValue('workhorse-qwen3.5-9b-4bit-mlx');
+    await user.click(picker);
+    const options = screen.getAllByRole('option').map((o) => o.textContent);
+    expect(options).toEqual(['Qwen3.5-9B-MLX-4bit', 'Qwen3.8-Flash-Next-4bitserving now']);
+    mockRead.mockResolvedValue({
+      ...BASE_CFG,
+      devices: (BASE_CFG.devices as SwarmDeviceRow[]).map((d) =>
+        d.id === 'workhorse-mlx' ? { ...d, model_id: FLASH } : d
+      ),
+    });
+    await user.click(screen.getAllByRole('option')[1]);
+    await waitFor(() => expect(mockUpsert).toHaveBeenCalledTimes(1));
+    const written = lastUpsertPayload();
+    expect(written.devices?.find((d) => d.id === 'workhorse-mlx')?.model_id).toBe(FLASH);
+    // every other field — the row's own and the block's — rides through untouched
+    expect(written.devices?.find((d) => d.id === 'workhorse-mlx')).toMatchObject({
+      future_row_field: 'keep-me',
+      weight: 2,
+    });
+    expect(written.devices?.find((d) => d.id === 'zai-glm')).toEqual(
+      (BASE_CFG.devices as SwarmDeviceRow[])[1]
+    );
+    expect((written as Record<string, unknown>).worker_extensions).toEqual(['developer']);
+    // now the node names what serves: chat goes to it, no longer "follows"
+    await waitFor(() =>
+      expect(screen.getByTestId('node-model-chat-workhorse-mlx')).toHaveTextContent(
+        'Chat: Qwen3.8-Flash-Next-4bit'
+      )
+    );
+  });
+
+  it('a model nobody here started is said as what the engine serves — chat does not follow it', async () => {
+    mockMlxStatus.mockResolvedValue({
+      state: 'running',
+      restartRequired: false,
+      availableMemoryGb: 40,
+      totalMemoryGb: 64,
+      modelId: 'rapid-mlx/Qwen3.8-Flash-Next-4bit',
+      servedModelId: 'rapid-mlx/Qwen3.8-Flash-Next-4bit',
+    });
+    render();
+    expect(await screen.findByTestId('node-model-serves-workhorse-mlx')).toHaveTextContent(
+      'Engine serves Qwen3.8-Flash-Next-4bit'
+    );
+    expect(screen.queryByTestId('node-model-chat-workhorse-mlx')).toBeNull();
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
 
   it('with no nodes the table renders the EmptyState under a header counting 0', async () => {
     mockRead.mockResolvedValue({ ...BASE_CFG, devices: [] });

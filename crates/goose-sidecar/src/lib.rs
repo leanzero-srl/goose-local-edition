@@ -36,6 +36,7 @@ pub mod hf;
 pub mod kv_cache;
 pub mod machine;
 mod memory;
+pub mod model_identity;
 mod model_parsers;
 #[cfg(unix)]
 pub mod placement;

@@ -1,0 +1,113 @@
+{
+  "tags": [
+    ["Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx", "qwen3.8-27b-atlassian-q8"],
+    ["rapid-mlx/Qwen3.8-Flash-Next-4bit", "qwen3.8-flash-next-4bit"],
+    ["mlx-community/Qwen3.5-9B-MLX-4bit", "qwen3.5-9b-4bit"]
+  ],
+  "cases": [
+    {
+      "way": "single",
+      "nodeId": "mihai-mlx",
+      "nodeModelId": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "served": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "repo": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "names": true
+    },
+    {
+      "way": "single",
+      "nodeId": "mihai-mlx",
+      "nodeModelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "served": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "repo": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "names": true
+    },
+    {
+      "way": "single",
+      "nodeId": "mihai-flash-mlx",
+      "nodeModelId": "mihai-flash-qwen3.8-flash-next-4bit-mlx",
+      "served": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+      "repo": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+      "names": true
+    },
+    {
+      "way": "single",
+      "nodeId": "mihai-mlx",
+      "nodeModelId": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "served": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+      "repo": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+      "names": false
+    },
+    {
+      "way": "remote",
+      "nodeId": "mihai-mlx",
+      "nodeModelId": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "served": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "repo": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "names": true
+    },
+    {
+      "way": "remote",
+      "nodeId": "mihai-flash-mlx",
+      "nodeModelId": "mihai-flash-qwen3.8-flash-next-4bit-mlx",
+      "served": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "repo": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "names": false
+    },
+    {
+      "way": "tensor",
+      "nodeId": "mihai-mlx",
+      "nodeModelId": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "served": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "repo": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "names": true
+    },
+    {
+      "way": "tensor",
+      "nodeId": "mihai-mlx",
+      "nodeModelId": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "served": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "repo": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "names": true
+    },
+    {
+      "way": "tensor",
+      "nodeId": "studio-mlx",
+      "nodeModelId": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "served": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "repo": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "names": true
+    },
+    {
+      "way": "tensor",
+      "nodeId": "mihai-flash-mlx",
+      "nodeModelId": "mihai-flash-qwen3.8-flash-next-4bit-mlx",
+      "served": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "repo": "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+      "names": false
+    },
+    {
+      "way": "pipeline",
+      "nodeId": "mihai-flash-mlx",
+      "nodeModelId": "mihai-flash-qwen3.8-flash-next-4bit-mlx",
+      "served": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+      "repo": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+      "names": true
+    },
+    {
+      "way": "pipeline",
+      "nodeId": "mihai-mlx",
+      "nodeModelId": "mihai-qwen3.8-27b-atlassian-q8-mlx",
+      "served": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+      "repo": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+      "names": false
+    },
+    {
+      "way": "pipeline",
+      "nodeId": "mihai-mlx",
+      "nodeModelId": "mihai-deepseek-r1-distill-qwen3.8-flash-next-4bit-mlx",
+      "served": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+      "repo": "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+      "names": false
+    }
+  ]
+}

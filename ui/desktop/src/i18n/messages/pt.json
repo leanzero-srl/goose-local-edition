@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Todas as vagas deste nó estão ocupadas."
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "Conversar com {model}"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "Este nó agora conversa com {model} — tente novamente para enviar sua mensagem."
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "Não foi possível apontar este nó para {model}: {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Detalhes"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Nenhum modelo montado"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "O chat segue sua execução: {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "Você iniciou {served} neste Mac, então o chat vai para ele neste nó. O nó continua definido como {set} para builds do swarm e benchmarks."
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "Chat: {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "O motor serve {model}"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "Nenhum modelo deste Mac corresponde."
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "Modelo para {node}"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "Não salvo: {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "servindo agora"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "O servidor pode estar a iniciar ou temporariamente indisponível."

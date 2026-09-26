@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Bu düğümdeki tüm yuvalar dolu."
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "{model} ile sohbet et"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "Bu düğüm artık {model} ile sohbet ediyor — mesajını göndermek için yeniden dene."
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "Bu düğüm {model} modeline yönlendirilemedi: {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Ayrıntılar"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Takılı model yok"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "Sohbet çalıştırdığın modeli izliyor: {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "Bu Mac’te {served} başlattın, bu yüzden bu düğümde sohbet ona gidiyor. Düğüm swarm derlemeleri ve kıyaslamalar için {set} olarak kalıyor."
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "Sohbet: {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "Motor {model} sunuyor"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "Bu Mac’te eşleşen model yok."
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "{node} için model"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "Kaydedilmedi: {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "şu an sunuluyor"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Sunucu başlatılıyor veya geçici olarak kullanılamıyor olabilir."

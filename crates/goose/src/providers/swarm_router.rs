@@ -29,6 +29,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use super::base::{MessageStream, Provider};
 use super::mlx_distributed_owner;
 use super::mlx_remote::{self, PublishedRoute, RouteRecord};
+use super::mlx_serving_intent::{self, IntentRecord, ServingIntent};
 use crate::config::{Config, ConfigError};
 use crate::conversation::message::Message;
 use goose_providers::errors::ProviderError;
@@ -260,10 +261,15 @@ pub(crate) fn load_pool() -> Result<PoolConfig, ProviderError> {
 /// What a probe learns about a SERVABLE node at pick time: the engine's own in-flight count when
 /// it reports one (the MLX sidecar's `/v1/status`, cross-process truth) and the loaded context
 /// window when the catalog carries it. Both `None` when the source did not say — never a default.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// An MLX sidecar node also carries the id its engine serves (`serves`, what the routed call must
+/// name), and `follows` = the model the node is set to when it serves the owner's own start of a
+/// different model instead (see [`mlx_node_verdict`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Servable {
     pub live_in_flight: Option<u32>,
     pub context_window: Option<u64>,
+    pub serves: Option<String>,
+    pub follows: Option<String>,
 }
 
 /// `Ok(facts)` = servable; `Err(reason)` = not a candidate, and the reason is what the operator reads.
@@ -447,8 +453,8 @@ impl LiveProbe {
             }
         }
         Ok(Servable {
-            live_in_flight: None,
             context_window,
+            ..Servable::default()
         })
     }
 
@@ -458,7 +464,7 @@ impl LiveProbe {
     /// "MLX engine is stopped". So the decision comes from probing the engine's own HTTP surface at
     /// the base URL the local manager reports when it is the one running it, else the configured
     /// port; the local manager only enriches the reason when nothing listens.
-    async fn probe_mlx(&self, model_id: &str) -> Result<Servable, String> {
+    async fn probe_mlx(&self, node: &Node) -> Result<Servable, String> {
         if let Some(reason) = sidecar_routed_away(&mlx_remote::read()) {
             return Err(reason);
         }
@@ -467,7 +473,7 @@ impl LiveProbe {
             mlx_distributed_owner::read(),
         )? {
             DistributedTarget::At { base, diagnostic } => {
-                return self.probe_mlx_at(&base, model_id, &diagnostic).await;
+                return judge_mlx_node(node, self.probe_mlx_at(&base, &diagnostic).await?);
             }
             DistributedTarget::None { stale } => stale,
         };
@@ -484,15 +490,12 @@ impl LiveProbe {
             diagnostic.push_str("; ");
             diagnostic.push_str(&stale);
         }
-        self.probe_mlx_at(&base, model_id, &diagnostic).await
+        judge_mlx_node(node, self.probe_mlx_at(&base, &diagnostic).await?)
     }
 
-    async fn probe_mlx_at(
-        &self,
-        base: &str,
-        model_id: &str,
-        local_diagnostic: &str,
-    ) -> Result<Servable, String> {
+    /// The engine at `base` as it answers: servable facts with `serves` = the id `/v1/models`
+    /// lists. Whether a node may take it is [`judge_mlx_node`]'s.
+    async fn probe_mlx_at(&self, base: &str, local_diagnostic: &str) -> Result<Servable, String> {
         let models_url = format!("{base}/v1/models");
         let resp = self.http.get(&models_url).send().await.map_err(|e| {
             format!(
@@ -509,19 +512,9 @@ impl LiveProbe {
             .map_err(|e| format!("GET {models_url} body unreadable ({e})"))?;
         let (served, context_window, _parser) =
             goose_sidecar::engine::parse_model_info(&body).map_err(|e| format!("{e:#}"))?;
-        match served.as_deref() {
-            Some(served) if served == model_id => {}
-            Some(served) => {
-                return Err(format!(
-                    "MLX engine serves '{served}', the device wants '{model_id}'"
-                ))
-            }
-            None => {
-                return Err(format!(
-                    "MLX engine on {base} lists a model without an id in {models_url}"
-                ))
-            }
-        }
+        let served = served.ok_or_else(|| {
+            format!("MLX engine on {base} lists a model without an id in {models_url}")
+        })?;
         let status_url = format!("{base}/v1/status");
         let live_in_flight = match self.http.get(&status_url).send().await {
             Ok(resp) => match resp.text().await {
@@ -546,6 +539,8 @@ impl LiveProbe {
         Ok(Servable {
             live_in_flight,
             context_window,
+            serves: Some(served),
+            follows: None,
         })
     }
 
@@ -611,7 +606,74 @@ impl LiveProbe {
         Ok(Servable {
             live_in_flight,
             context_window,
+            ..Servable::default()
         })
+    }
+}
+
+/// The node against what its engine serves, read against this Mac's live `mlx_engine` block and
+/// serving intent (see [`mlx_node_verdict`]).
+fn judge_mlx_node(node: &Node, mut facts: Servable) -> Result<Servable, String> {
+    if let Some(served) = &facts.serves {
+        let repo = goose_sidecar::model_identity::served_repo(&mlx_settings()?, served);
+        facts.follows = mlx_node_verdict(
+            &node.id,
+            &node.model_id,
+            served,
+            &repo,
+            &mlx_serving_intent::read(),
+        )?;
+    }
+    Ok(facts)
+}
+
+/// The `mlx_engine` block the served id is read against: its alias names ONE model. No block =
+/// no alias; an unreadable block is a named reason — which model the alias names is unknown.
+fn mlx_settings() -> Result<EngineSettings, String> {
+    match Config::global().get_param::<EngineSettings>(MLX_ENGINE_CONFIG_KEY) {
+        Ok(settings) => Ok(settings),
+        Err(ConfigError::NotFound(_)) => Ok(EngineSettings::default()),
+        Err(e) => Err(format!(
+            "the `{MLX_ENGINE_CONFIG_KEY}` config block is unreadable ({e}); which model the engine's served id names is unknown"
+        )),
+    }
+}
+
+/// How an MLX sidecar node stands to the model its engine serves as `served` (loaded from `repo`):
+/// `Ok(None)` = the node names that model, in any of its forms (`model_identity`); `Ok(Some(set))`
+/// = it does not, but this Mac's owner STARTED that model through goose (the single engine's
+/// Mount, the split's start — every way, the tray and the relaunch restore included, records the
+/// serving intent), so chat follows the owner's start and `set` — the node's `model_id`, the swarm
+/// build pool's and the benchmark's pin — is left exactly as the user wrote it; `Err` = a model
+/// nobody started here (a Link peer's Mount on this Mac, a build's mount), which the node was not
+/// set to: a real mismatch, said in the words the desktop's notice parses.
+///
+/// Why the router follows rather than the start rewriting `swarm.devices` (Q-128): the device
+/// list is the build pool a `goose swarm` run and a benchmark export read, and a chat model switch
+/// must not silently change what the next benchmark measures. Following is never silent either —
+/// the routed call and its usage name the served model, which is what the chat chip shows.
+fn mlx_node_verdict(
+    node_id: &str,
+    node_model: &str,
+    served: &str,
+    repo: &str,
+    intent: &IntentRecord,
+) -> Result<Option<String>, String> {
+    if goose_sidecar::model_identity::node_names_model(node_id, node_model, served, repo) {
+        return Ok(None);
+    }
+    let mismatch = format!("MLX engine serves '{served}', the device wants '{node_model}'");
+    match intent {
+        IntentRecord::Present(
+            ServingIntent::Single { model_id } | ServingIntent::Split { model_id },
+        ) if model_id == repo || model_id == served => Ok(Some(node_model.to_string())),
+        IntentRecord::Unreadable { path, error } => Err(format!(
+            "{mismatch} — whether this Mac's owner started it is unknown: the serving record {} is unreadable ({error})",
+            path.display()
+        )),
+        _ => Err(format!(
+            "{mismatch} — it was not started from this Mac's goose, so chat does not follow it"
+        )),
     }
 }
 
@@ -693,7 +755,7 @@ impl NodeProbe for LiveProbe {
     async fn probe(&self, node: &Node) -> Result<Servable, String> {
         match &node.kind {
             NodeKind::LmStudio { endpoint } => self.probe_lmstudio(endpoint, &node.model_id).await,
-            NodeKind::MlxSidecar => self.probe_mlx(&node.model_id).await,
+            NodeKind::MlxSidecar => self.probe_mlx(node).await,
             NodeKind::MlxRemote(target) => self.probe_remote(target, &node.model_id).await,
             NodeKind::Cloud { .. } => self
                 .providers
@@ -777,25 +839,41 @@ impl Router {
         saturated: &HashSet<String>,
     ) -> Result<Lease, ProviderError> {
         let probes = futures::future::join_all(nodes.iter().map(|n| probe.probe(n))).await;
-        let mut servable: Vec<(&Node, Arc<Semaphore>, u32, Option<u64>)> = Vec::new();
+        let mut candidates: Vec<(&Node, Servable)> = Vec::new();
         let mut reasons: Vec<String> = Vec::new();
-        let mut smallest_window: Option<u64> = None;
         for (node, outcome) in nodes.iter().zip(probes) {
             match outcome {
                 Ok(_) if saturated.contains(&node.id) => {
                     reasons.push(format!("{}: refused admission this turn", node.id));
                 }
-                Ok(facts) => {
-                    let sem = self.semaphore(node);
-                    let leased = node.capacity.saturating_sub(sem.available_permits() as u32);
-                    let used = facts.live_in_flight.map_or(leased, |l| l.max(leased));
-                    let free = node.capacity.saturating_sub(used);
-                    servable.push((node, sem, free, facts.context_window));
-                    if let Some(window) = facts.context_window {
-                        smallest_window = Some(smallest_window.map_or(window, |w| w.min(window)));
-                    }
-                }
+                Ok(facts) => candidates.push((node, facts)),
                 Err(reason) => reasons.push(format!("{}: {reason}", node.id)),
+            }
+        }
+        one_node_per_engine(&mut candidates, &mut reasons);
+        let mut servable: Vec<(Node, Arc<Semaphore>, u32, Option<u64>)> = Vec::new();
+        let mut smallest_window: Option<u64> = None;
+        for (node, facts) in candidates {
+            let sem = self.semaphore(node);
+            let leased = node.capacity.saturating_sub(sem.available_permits() as u32);
+            let used = facts.live_in_flight.map_or(leased, |l| l.max(leased));
+            let free = node.capacity.saturating_sub(used);
+            let mut node = node.clone();
+            if let Some(served) = facts.serves {
+                if let Some(set) = &facts.follows {
+                    tracing::info!(
+                        target: "swarm_router",
+                        node = %node.id,
+                        set_to = %set,
+                        serves = %served,
+                        "chat follows the model this Mac's owner started; the node's model_id is left as written"
+                    );
+                }
+                node.model_id = served;
+            }
+            servable.push((node, sem, free, facts.context_window));
+            if let Some(window) = facts.context_window {
+                smallest_window = Some(smallest_window.map_or(window, |w| w.min(window)));
             }
         }
         if !servable.is_empty() {
@@ -903,6 +981,43 @@ impl Router {
             context_window,
         }
     }
+}
+
+/// This Mac's MLX engine serves ONE model, so at most one sidecar node follows it: none when a node
+/// names the served model (that node is the engine's), else the heaviest follower (the first on a
+/// tie). Every follower set aside says which node chat goes to instead.
+fn one_node_per_engine(candidates: &mut Vec<(&Node, Servable)>, reasons: &mut Vec<String>) {
+    let named = candidates
+        .iter()
+        .find(|(n, f)| n.kind == NodeKind::MlxSidecar && f.follows.is_none())
+        .map(|(n, _)| n.id.clone());
+    let kept = match &named {
+        Some(id) => id.clone(),
+        None => match candidates
+            .iter()
+            .filter(|(_, f)| f.follows.is_some())
+            .rev()
+            .max_by_key(|(n, _)| n.weight)
+        {
+            Some((n, _)) => n.id.clone(),
+            None => return,
+        },
+    };
+    let instead = if named.is_some() {
+        format!("chat goes to {kept}, which names it")
+    } else {
+        format!("chat follows it on {kept}")
+    };
+    candidates.retain(|(node, facts)| match (&facts.follows, &facts.serves) {
+        (Some(set), Some(served)) if named.is_some() || node.id != kept => {
+            reasons.push(format!(
+                "{}: MLX engine serves '{served}', the device wants '{set}' — {instead}",
+                node.id
+            ));
+            false
+        }
+        _ => true,
+    });
 }
 
 static ROUTER: LazyLock<Router> = LazyLock::new(Router::new);
@@ -1297,14 +1412,14 @@ mod tests {
     fn busy(live: u32) -> Result<Servable, String> {
         Ok(Servable {
             live_in_flight: Some(live),
-            context_window: None,
+            ..Servable::default()
         })
     }
 
     fn window(context_window: u64) -> Result<Servable, String> {
         Ok(Servable {
-            live_in_flight: None,
             context_window: Some(context_window),
+            ..Servable::default()
         })
     }
 
@@ -1560,6 +1675,178 @@ mod tests {
         assert!(err.contains("no node can serve this turn"), "{err}");
         assert!(err.contains("mlx: MLX engine is stopped"), "{err}");
         assert!(err.contains("lm: model 'lm-model' is not listed"), "{err}");
+    }
+
+    const PINNED_27B: &str = "mihai-qwen3.8-27b-atlassian-q8-mlx";
+    const FLASH: &str = "rapid-mlx/Qwen3.8-Flash-Next-4bit";
+    const FLASH_ALIAS: &str = "mihai-flash-qwen3.8-flash-next-4bit-mlx";
+
+    fn sidecar(id: &str, model_id: &str, weight: u32) -> Node {
+        Node {
+            id: id.to_string(),
+            model_id: model_id.to_string(),
+            weight,
+            capacity: 2,
+            kind: NodeKind::MlxSidecar,
+        }
+    }
+
+    fn engine_serves(served: &str, follows: Option<&str>) -> Result<Servable, String> {
+        Ok(Servable {
+            serves: Some(served.to_string()),
+            follows: follows.map(str::to_string),
+            ..Servable::default()
+        })
+    }
+
+    /// Q-128, 11:50: the device is pinned to the 27B, the owner ran Flash across both Macs. The
+    /// verdict against the live words: no form of the 27B names Flash, and only the owner's own
+    /// start is followed — never a Link peer's Mount, never an unreadable record.
+    #[test]
+    fn a_pinned_node_follows_only_the_owners_own_start() {
+        let pinned =
+            |intent: &IntentRecord| mlx_node_verdict("mihai-mlx", PINNED_27B, FLASH, FLASH, intent);
+        let started = |intent| IntentRecord::Present(intent);
+        assert_eq!(
+            pinned(&started(ServingIntent::Split {
+                model_id: FLASH.to_string()
+            })),
+            Ok(Some(PINNED_27B.to_string()))
+        );
+        assert_eq!(
+            pinned(&started(ServingIntent::Single {
+                model_id: FLASH.to_string()
+            })),
+            Ok(Some(PINNED_27B.to_string()))
+        );
+        let words = format!("MLX engine serves '{FLASH}', the device wants '{PINNED_27B}'");
+        for (intent, why) in [
+            (IntentRecord::Absent, "not started from this Mac's goose"),
+            (
+                started(ServingIntent::Split {
+                    model_id: "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string(),
+                }),
+                "not started from this Mac's goose",
+            ),
+            (
+                started(ServingIntent::RemoteSingle {
+                    peer: "studio".to_string(),
+                    peer_name: "Studio".to_string(),
+                    model_id: FLASH.to_string(),
+                }),
+                "not started from this Mac's goose",
+            ),
+            (
+                IntentRecord::Unreadable {
+                    path: "/state/mlx-serving-intent.json".into(),
+                    error: "expected value".to_string(),
+                },
+                "/state/mlx-serving-intent.json is unreadable (expected value)",
+            ),
+        ] {
+            let err = pinned(&intent).unwrap_err();
+            assert!(err.starts_with(&words), "{err}");
+            assert!(err.contains(why), "{err}");
+            assert!(
+                !err.contains("; "),
+                "the notice splits reasons on '; ': {err}"
+            );
+        }
+        assert_eq!(
+            mlx_node_verdict(
+                "mihai-flash-mlx",
+                FLASH_ALIAS,
+                FLASH,
+                FLASH,
+                &IntentRecord::Absent
+            ),
+            Ok(None),
+            "11:57: the Add-node alias names the pipeline's HF id"
+        );
+    }
+
+    /// 11:50 through the router: the pinned node takes the turn, the routed call and its usage
+    /// name the served model (the chip's name), and the pool's node keeps its pin.
+    #[tokio::test]
+    async fn the_followed_start_is_what_the_call_names_and_the_pin_is_kept() {
+        let nodes = vec![sidecar("mihai-mlx", PINNED_27B, 1)];
+        let probe = FakeProbe(HashMap::from([(
+            "mihai-mlx".to_string(),
+            engine_serves(FLASH, Some(PINNED_27B)),
+        )]));
+        let lease = Router::new()
+            .pick(&nodes, &probe, 1, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(lease.node.id, "mihai-mlx");
+        assert_eq!(lease.node.model_id, FLASH);
+        assert_eq!(nodes[0].model_id, PINNED_27B);
+    }
+
+    /// 11:57: both nodes are in the pool and the split serves Flash. The one engine is ONE node:
+    /// the node that names Flash takes it even when the pinned 27B node is heavier, and the 27B
+    /// node says where chat went.
+    #[tokio::test]
+    async fn a_node_that_names_the_served_model_is_the_engines_node() {
+        let nodes = vec![
+            sidecar("mihai-mlx", PINNED_27B, 5),
+            sidecar("mihai-flash-mlx", FLASH_ALIAS, 1),
+        ];
+        let probe = FakeProbe(HashMap::from([
+            (
+                "mihai-mlx".to_string(),
+                engine_serves(FLASH, Some(PINNED_27B)),
+            ),
+            ("mihai-flash-mlx".to_string(), engine_serves(FLASH, None)),
+        ]));
+        let lease = Router::new()
+            .pick(&nodes, &probe, 1, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(lease.node.id, "mihai-flash-mlx");
+        assert_eq!(lease.node.model_id, FLASH);
+
+        let mut candidates = nodes
+            .iter()
+            .zip([
+                engine_serves(FLASH, Some(PINNED_27B)).unwrap(),
+                engine_serves(FLASH, None).unwrap(),
+            ])
+            .collect::<Vec<_>>();
+        let mut reasons = Vec::new();
+        one_node_per_engine(&mut candidates, &mut reasons);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0.id, "mihai-flash-mlx");
+        assert_eq!(
+            reasons,
+            [format!(
+                "mihai-mlx: MLX engine serves '{FLASH}', the device wants '{PINNED_27B}' — chat goes to mihai-flash-mlx, which names it"
+            )]
+        );
+    }
+
+    #[test]
+    fn two_followers_of_one_engine_leave_it_to_the_heavier() {
+        let nodes = [
+            sidecar("a-mlx", "a-model", 1),
+            sidecar("b-mlx", "b-model", 3),
+            sidecar("c-mlx", "c-model", 3),
+        ];
+        let mut candidates = nodes
+            .iter()
+            .map(|n| (n, engine_serves(FLASH, Some(&n.model_id)).unwrap()))
+            .collect::<Vec<_>>();
+        let mut reasons = Vec::new();
+        one_node_per_engine(&mut candidates, &mut reasons);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0.id, "b-mlx", "the first of the heaviest");
+        assert_eq!(reasons.len(), 2);
+        assert!(
+            reasons
+                .iter()
+                .all(|r| r.ends_with("chat follows it on b-mlx")),
+            "{reasons:?}"
+        );
     }
 
     #[test]
@@ -2329,34 +2616,21 @@ devices:
             http: reqwest::Client::new(),
             providers: Arc::new(LiveProviders::new()),
         };
-        let facts = probe
-            .probe_mlx_at(&engine.uri(), "workhorse-qwen3.5-9b-4bit-mlx", "stopped")
-            .await
-            .unwrap();
+        let facts = probe.probe_mlx_at(&engine.uri(), "stopped").await.unwrap();
         assert_eq!(facts.live_in_flight, Some(3));
         assert_eq!(facts.context_window, Some(262_144));
-
-        let mismatch = probe
-            .probe_mlx_at(&engine.uri(), "some-other-model", "stopped")
-            .await
-            .unwrap_err();
-        assert!(
-            mismatch.contains(
-                "serves 'workhorse-qwen3.5-9b-4bit-mlx', the device wants 'some-other-model'"
-            ),
-            "{mismatch}"
+        assert_eq!(
+            facts.serves.as_deref(),
+            Some("workhorse-qwen3.5-9b-4bit-mlx")
         );
+        assert_eq!(facts.follows, None);
 
         let dead = {
             let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             format!("http://127.0.0.1:{}", l.local_addr().unwrap().port())
         };
         let down = probe
-            .probe_mlx_at(
-                &dead,
-                "workhorse-qwen3.5-9b-4bit-mlx",
-                "this process's manager: stopped",
-            )
+            .probe_mlx_at(&dead, "this process's manager: stopped")
             .await
             .unwrap_err();
         assert!(down.contains("MLX engine is not listening on"), "{down}");
@@ -2656,39 +2930,39 @@ devices:
             )
             .mount(&engine)
             .await;
-        let facts = probe
-            .probe_mlx_at(
-                &engine.uri(),
-                NODE_MODEL,
-                "the distributed MLX engine owns this Mac",
-            )
-            .await
-            .unwrap();
+        const OWNER: &str = "the distributed MLX engine owns this Mac";
+        let verdict = |served: &str, intent: &IntentRecord| {
+            let repo = goose_sidecar::model_identity::served_repo(&settings, served);
+            mlx_node_verdict("mihai-mlx", NODE_MODEL, served, &repo, intent)
+        };
+        let facts = probe.probe_mlx_at(&engine.uri(), OWNER).await.unwrap();
         assert_eq!(facts.context_window, Some(65_536));
         assert_eq!(facts.live_in_flight, Some(0));
+        let served = facts.serves.unwrap();
+        assert_eq!(served, NODE_MODEL);
+        assert_eq!(verdict(&served, &IntentRecord::Absent), Ok(None));
 
+        // An older wrapper that served the 27B's HF id: the same model on disk, so the node named
+        // by its Add-node alias takes it (Q-128's one identity) instead of being refused.
         let before = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/models"))
             .respond_with(ResponseTemplate::new(200).set_body_string(wrapper(HF)))
             .mount(&before)
             .await;
-        let refused = probe
-            .probe_mlx_at(
-                &before.uri(),
-                NODE_MODEL,
-                "the distributed MLX engine owns this Mac",
-            )
+        let served = probe
+            .probe_mlx_at(&before.uri(), OWNER)
             .await
-            .unwrap_err();
-        assert!(
-            refused.contains(&format!("serves '{HF}', the device wants '{NODE_MODEL}'")),
-            "{refused}"
-        );
+            .unwrap()
+            .serves
+            .unwrap();
+        assert_eq!(served, HF);
+        assert_eq!(verdict(&served, &IntentRecord::Absent), Ok(None));
 
         // Live 2026-09-24 (3.0.26): a Flash split served under the 27B's alias. The alias is the
         // 27B's own, so a split of ANOTHER model serves that model's HF id, and the node named for
-        // the 27B is refused by name instead of routed to Flash.
+        // the 27B is never mistaken for it: it follows only the owner's own start of the split
+        // (Q-128), and is refused by name for a split nobody started here.
         const FLASH: &str = "rapid-mlx/Qwen3.8-Flash-Next-4bit";
         let flash_config = DistributedConfig {
             model_id: FLASH.to_string(),
@@ -2707,20 +2981,24 @@ devices:
             .respond_with(ResponseTemplate::new(200).set_body_string(wrapper(FLASH)))
             .mount(&flash)
             .await;
-        let refused = probe
-            .probe_mlx_at(
-                &flash.uri(),
-                NODE_MODEL,
-                "the distributed MLX engine owns this Mac",
-            )
+        let served = probe
+            .probe_mlx_at(&flash.uri(), OWNER)
             .await
-            .unwrap_err();
+            .unwrap()
+            .serves
+            .unwrap();
+        assert_eq!(served, FLASH);
+        let refused = verdict(&served, &IntentRecord::Absent).unwrap_err();
         assert!(
             refused.contains(&format!(
                 "serves '{FLASH}', the device wants '{NODE_MODEL}'"
             )),
             "{refused}"
         );
+        let started = IntentRecord::Present(ServingIntent::Split {
+            model_id: FLASH.to_string(),
+        });
+        assert_eq!(verdict(&served, &started), Ok(Some(NODE_MODEL.to_string())));
     }
 
     /// A second desktop window runs its own goosed, whose distributed manager supervises nothing:

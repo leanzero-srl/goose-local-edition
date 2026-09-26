@@ -17,7 +17,12 @@ import { MLX_STATUS_POLL_MS } from '../leanzero-swarm/mlxLiveStats';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmConfig } from '../settings/swarm/golden';
-import { useLatestMlxDistributedStatus, useMountLookup } from '../noNodeNotice/mlxMount';
+import {
+  distributedServedId,
+  singleServedId,
+  useLatestMlxDistributedStatus,
+  useMountLookup,
+} from '../noNodeNotice/mlxMount';
 import { deriveChatServedBy, type ChatServedBy } from './chatServedBy';
 
 const i18n = defineMessages({
@@ -110,7 +115,10 @@ export function useChatServedBy(
     return () => window.removeEventListener('focus', onFocus);
   }, [armed]);
 
-  const lookup = useMountLookup(armed, readSwarm, `${provider}:${focusEpoch}`);
+  // ...and when what this Mac serves changes: a Run writes the serving intent the pool's chat rule
+  // follows (`chatNodeOf`), so the lookup that carries it is read again.
+  const [servedKey, setServedKey] = useState('|');
+  const lookup = useMountLookup(armed, readSwarm, `${provider}:${focusEpoch}:${servedKey}`);
   const pollsEngine =
     lookup.state === 'ready' &&
     (isMlx ||
@@ -124,6 +132,8 @@ export function useChatServedBy(
     latestMlxRemoteSingleReadError
   );
   const main = useMainEngineSnapshot(armed);
+  const nowServed = `${singleServedId(status) ?? ''}|${distributed ? (distributedServedId(distributed) ?? '') : ''}`;
+  useEffect(() => setServedKey(nowServed), [nowServed]);
 
   // The Mac answers main again while the route's last word is still "reconnecting" (or its last
   // read failed): read the route now, so the bar clears with main's read instead of the next poll.

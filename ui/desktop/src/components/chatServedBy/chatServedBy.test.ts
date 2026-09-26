@@ -50,7 +50,7 @@ const MLX_NODE: SwarmDeviceRow = {
   enabled: true,
   engine: 'mlx-sidecar',
 };
-const POOL: MountLookup = { state: 'ready', devices: [MLX_NODE], settings: SETTINGS };
+const POOL: MountLookup = { state: 'ready', devices: [MLX_NODE], settings: SETTINGS, intent: null };
 const STOPPED: MlxEngineStatus = {
   state: 'stopped',
   restartRequired: false,

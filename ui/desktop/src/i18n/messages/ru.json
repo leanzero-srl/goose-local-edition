@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Все слоты этого узла заняты."
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "Чат с {model}"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "Этот узел теперь общается с {model} — повторите, чтобы отправить сообщение."
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "Не удалось назначить этому узлу {model}: {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Подробности"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Модель не смонтирована"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "Чат следует за вашим запуском: {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "Вы запустили {served} на этом Mac, поэтому чат на этом узле идёт туда. Для сборок swarm и бенчмарков узел остаётся настроен на {set}."
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "Чат: {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "Движок обслуживает {model}"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "На этом Mac нет подходящей модели."
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "Модель для {node}"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "Не сохранено: {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "обслуживается сейчас"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Сервер может запускаться или быть временно недоступен."

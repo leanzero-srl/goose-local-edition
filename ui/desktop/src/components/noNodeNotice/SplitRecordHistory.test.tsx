@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { IntlProvider } from 'react-intl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
+import type { MlxServingIntentRead } from '../../acp/mlx-serving-intent';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { mlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 import { createUserMessage, type Message } from '../../types/message';
@@ -28,6 +29,12 @@ vi.mock('../../acp/acpConnection', () => ({
 const mockRead = vi.fn();
 vi.mock('../ConfigContext', () => ({
   useConfig: () => ({ read: mockRead }),
+}));
+const mockIntent = vi.fn(
+  async (): Promise<MlxServingIntentRead> => ({ intent: null, error: null })
+);
+vi.mock('../../acp/mlx-serving-intent', () => ({
+  mlxServingIntent: () => mockIntent(),
 }));
 
 const HF = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';

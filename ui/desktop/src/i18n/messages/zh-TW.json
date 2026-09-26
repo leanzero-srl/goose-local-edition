@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "此節點的所有槽位都已佔用。"
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "與 {model} 聊天"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "此節點現在與 {model} 聊天 — 重試以傳送你的訊息。"
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "無法將此節點指向 {model}：{error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "詳細資訊"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "沒有已掛載的模型"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "聊天跟隨你的執行：{model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "你在這台 Mac 上啟動了 {served}，所以此節點的聊天會送往它。對於 swarm 建置與基準測試，此節點仍設為 {set}。"
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "聊天：{model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "引擎正在提供 {model}"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "這台 Mac 上沒有相符的模型。"
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "{node} 的模型"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "未儲存：{error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "正在提供"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "伺服器可能正在啟動或暫時無法使用。"

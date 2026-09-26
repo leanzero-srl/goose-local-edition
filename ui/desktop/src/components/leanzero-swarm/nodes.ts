@@ -113,3 +113,36 @@ export function addableMlxMachines(
     .filter(([name]) => !machineHasMlxNode(name, devices))
     .map(([machine, local]) => ({ machine, local }));
 }
+
+export interface NodeConfigAccess {
+  read: (key: string, isSecret: boolean, options?: { throwOnError?: boolean }) => Promise<unknown>;
+  upsert: (key: string, value: unknown, isSecret: boolean) => Promise<void>;
+}
+
+/**
+ * The ONE writer of a pool node's model once it was added: the no-node notice's "Chat with …" and
+ * the Nodes table's model picker both land here. It is the user's own pick, so it is written as
+ * they chose it; the swarm block is read fresh (a concurrent edit is kept), and a node that is no
+ * longer in the pool is an error, never a silent add.
+ */
+export async function setNodeModel(
+  config: NodeConfigAccess,
+  nodeId: string,
+  modelId: string
+): Promise<void> {
+  const raw = (await config.read('swarm', false, { throwOnError: true })) as {
+    devices?: SwarmDeviceRow[];
+  } | null;
+  const devices = Array.isArray(raw?.devices) ? raw.devices : [];
+  if (!devices.some((d) => d.id === nodeId)) {
+    throw new Error(`${nodeId} is no longer in the swarm pool — its model was not changed`);
+  }
+  await config.upsert(
+    'swarm',
+    {
+      ...raw,
+      devices: devices.map((d) => (d.id === nodeId ? { ...d, model_id: modelId } : d)),
+    },
+    false
+  );
+}

@@ -18,6 +18,8 @@ import {
   type MlxModeSummary,
 } from '../leanzero-swarm/mlxDistributed';
 import type { SwarmConfig, SwarmDeviceRow } from '../settings/swarm/golden';
+import { mlxServingIntent, type MlxServingIntent } from '../../acp/mlx-serving-intent';
+import { mlxModelShort } from '../leanzero-swarm/nodes';
 import type { IntlShape } from 'react-intl';
 import { defineMessages } from '../../i18n';
 import { distributedStateWord } from '../leanzero-swarm/mlxModeLabel';
@@ -54,6 +56,86 @@ export function resolveMountTarget(
     return { kind: 'mismatch', served, wanted: device.model_id };
   }
   return { kind: 'ok', modelId: settings.modelId, servedId: served };
+}
+
+/**
+ * One model on disk, three names (Q-128): its HF id, the alias `mlx_engine.servedModelName` gives the
+ * ONE model `mlx_engine.modelId` names, and the Add-node alias `<label>-<tag>-mlx` beside the device
+ * id `<label>-mlx`. The mirror of goose-sidecar `model_identity::node_names_model` — both are pinned
+ * to model_identity.fixture.json, so the router and this window cannot disagree.
+ */
+export function nodeNamesModel(
+  nodeId: string,
+  nodeModelId: string,
+  served: string,
+  repo: string
+): boolean {
+  if (nodeModelId === served || nodeModelId === repo) return true;
+  const label = nodeId.endsWith('-mlx') ? nodeId.slice(0, -'-mlx'.length) : '';
+  return label !== '' && nodeModelId === `${label}-${mlxModelShort(repo)}-mlx`;
+}
+
+/** The HF directory an engine serving `served` loaded — `model_identity::served_repo`. */
+export function servedRepo(settings: MlxEngineSettings, served: string): string {
+  return settings.servedModelName === served && settings.modelId ? settings.modelId : served;
+}
+
+/** A swarm device the router probes as this Mac's MLX engine (`nodes_from_config`). */
+function isSidecarNode(d: SwarmDeviceRow): boolean {
+  return (
+    d.enabled === true &&
+    d.engine === 'mlx-sidecar' &&
+    (d.provider == null || d.provider.toLowerCase() === 'lmstudio')
+  );
+}
+
+export interface ChatNode {
+  nodeId: string;
+  /** The node is set to another model and follows the owner's own start (its model_id is kept). */
+  follows: boolean;
+}
+
+/**
+ * Which pool node takes chat while this Mac's MLX engine serves `served` — the router's
+ * `mlx_node_verdict` + `one_node_per_engine`: the first node that names the model in any form;
+ * else, only when the owner STARTED that model through goose (the serving intent), the heaviest
+ * node (the first on a tie) follows it; else none.
+ */
+export function chatNodeOf(
+  devices: SwarmDeviceRow[],
+  settings: MlxEngineSettings,
+  intent: MlxServingIntent | null,
+  served: string
+): ChatNode | null {
+  const repo = servedRepo(settings, served);
+  const nodes = devices.filter(isSidecarNode);
+  const named = nodes.find((d) => nodeNamesModel(d.id, d.model_id, served, repo));
+  if (named) return { nodeId: named.id, follows: false };
+  const started =
+    intent != null &&
+    (intent.kind === 'single' || intent.kind === 'split') &&
+    (intent.modelId === repo || intent.modelId === served);
+  if (!started) return null;
+  const heaviest = nodes.reduce<SwarmDeviceRow | null>(
+    (best, d) => (best == null || d.weight > best.weight ? d : best),
+    null
+  );
+  return heaviest ? { nodeId: heaviest.id, follows: true } : null;
+}
+
+/**
+ * The id a device is served under while `served` answers: `served` when the pool gives this node
+ * the engine (it names the model or follows the owner's start), else the node's own model_id —
+ * what `engineFact` / `distributedFact` compare against. `null` served = nothing answers.
+ */
+export function nodeServedId(
+  lookup: Extract<MountLookup, { state: 'ready' }>,
+  device: SwarmDeviceRow,
+  served: string | null
+): string {
+  if (served == null) return device.model_id;
+  const chat = chatNodeOf(lookup.devices, lookup.settings, lookup.intent, served);
+  return chat?.nodeId === device.id ? served : device.model_id;
 }
 
 /** An HF repo id reads by its last path segment ("org/Qwen3.8-27B-mlx" → "Qwen3.8-27B-mlx"). */
@@ -161,6 +243,11 @@ export function useLatestMlxDistributedStatus(): MlxDistributedStatus | null {
   return useSyncExternalStore(subscribeMlxDistributedStatus, latestMlxDistributedStatus);
 }
 
+/** The id this Mac's single engine answers under while it runs; null otherwise. */
+export function singleServedId(status: MlxEngineStatus | null): string | null {
+  return status?.state === 'running' ? (status.servedModelId ?? status.modelId ?? null) : null;
+}
+
 /** The live SINGLE engine against the id a node needs served. No status is `down` — the caller
  *  decides whether "no status" is knowable (a poll that has not answered yet is not a fact). Callers
  *  ask `distributedFact` first: while the distributed engine owns the Mac this status is moot. */
@@ -176,10 +263,16 @@ export function engineFact(status: MlxEngineStatus | null, servedId: string | nu
 export type MountLookup =
   | { state: 'loading' }
   | { state: 'failed'; error: string }
-  | { state: 'ready'; devices: SwarmDeviceRow[]; settings: MlxEngineSettings };
+  | {
+      state: 'ready';
+      devices: SwarmDeviceRow[];
+      settings: MlxEngineSettings;
+      /** What the owner last started (the serving intent); null = nothing, or an unreadable record. */
+      intent: MlxServingIntent | null;
+    };
 
 /**
- * Reads the swarm devices and the MLX engine's saved settings while `armed`. `refreshKey` re-reads
+ * Reads the swarm devices, the MLX engine's saved settings and the serving intent while `armed`. `refreshKey` re-reads
  * (the composer bumps it when the window regains focus — the operator may have changed a device in
  * Providers meanwhile). A failed read is a state the caller renders, never an empty pool.
  */
@@ -197,9 +290,13 @@ export function useMountLookup(
     let alive = true;
     void (async () => {
       try {
-        const [raw, settings] = await Promise.all([readRef.current(), mlxEngineSettingsRead()]);
+        const [raw, settings, started] = await Promise.all([
+          readRef.current(),
+          mlxEngineSettingsRead(),
+          mlxServingIntent(),
+        ]);
         const devices = Array.isArray(raw?.devices) ? raw.devices : [];
-        if (alive) setLookup({ state: 'ready', devices, settings });
+        if (alive) setLookup({ state: 'ready', devices, settings, intent: started.intent });
       } catch (e) {
         if (alive) setLookup({ state: 'failed', error: errorMessage(e, String(e)) });
       }

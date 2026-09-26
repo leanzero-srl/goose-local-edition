@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Semua slot di node ini sedang sibuk."
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "Chat dengan {model}"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "Node ini sekarang chat dengan {model} — coba lagi untuk mengirim pesanmu."
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "Tidak dapat mengarahkan node ini ke {model}: {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Detail"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Tidak ada model yang terpasang"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "Chat mengikuti Run kamu: {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "Kamu memulai {served} di Mac ini, jadi chat menuju ke sana di node ini. Node tetap disetel ke {set} untuk build swarm dan benchmark."
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "Chat: {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "Engine menyajikan {model}"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "Tidak ada model di Mac ini yang cocok."
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "Model untuk {node}"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "Tidak disimpan: {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "sedang disajikan"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Server mungkin sedang dimulai atau tidak tersedia untuk sementara."

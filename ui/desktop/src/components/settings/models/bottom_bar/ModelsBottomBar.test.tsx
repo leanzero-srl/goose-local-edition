@@ -466,6 +466,7 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
           spawnCommand: [],
           modelProfiles: {},
         },
+        intent: null,
       },
       single: {
         state: 'stopped',

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
+import type { MlxServingIntentRead } from '../../acp/mlx-serving-intent';
 import { IntlProvider } from 'react-intl';
 import { createUserMessage, type Message } from '../../types/message';
 import { assertStudioClean } from '../lz/assertStudioClean';
@@ -29,8 +30,15 @@ vi.mock('../../acp/acpConnection', () => ({
 }));
 
 const mockRead = vi.fn();
+const mockUpsert = vi.fn();
 vi.mock('../ConfigContext', () => ({
-  useConfig: () => ({ read: mockRead }),
+  useConfig: () => ({ read: mockRead, upsert: mockUpsert }),
+}));
+const mockIntent = vi.fn(
+  async (): Promise<MlxServingIntentRead> => ({ intent: null, error: null })
+);
+vi.mock('../../acp/mlx-serving-intent', () => ({
+  mlxServingIntent: () => mockIntent(),
 }));
 
 /** The owner's screenshot, 2026-09-23, verbatim as the agent loop wraps it. */
@@ -47,6 +55,7 @@ const SETTINGS: MlxEngineSettings = {
   spawnCommand: [],
   modelProfiles: {},
 };
+const FLASH = 'rapid-mlx/Qwen3.8-Flash-Next-4bit';
 const DEVICE = {
   id: 'mihai-mlx',
   model_id: ALIAS,
@@ -80,6 +89,7 @@ beforeEach(() => {
   mockMount.mockResolvedValue(undefined);
   mockSettings.mockResolvedValue(SETTINGS);
   mockRead.mockResolvedValue({ devices: [DEVICE] });
+  mockUpsert.mockResolvedValue(undefined);
 });
 
 describe('parseNoNodeError', () => {
@@ -298,12 +308,21 @@ describe('NoNodeNotice', () => {
     await user.click(screen.getByTestId('no-node-retry'));
     expect(onRetry).toHaveBeenCalledWith('hello');
 
+    // Q-128 (12:1x): the split serving the node's model under its HF id is the node's model — no
+    // "wants another model" line. Only a different model is.
     mockExtMethod.mockResolvedValue({ status: { ...starting, state: 'ready', servedModelId: HF } });
     await act(async () => {
       await mlxDistributedStatus();
     });
+    expect(screen.queryByText(/this node wants/)).toBeNull();
+    mockExtMethod.mockResolvedValue({
+      status: { ...starting, state: 'ready', modelId: FLASH, servedModelId: FLASH },
+    });
+    await act(async () => {
+      await mlxDistributedStatus();
+    });
     expect(
-      screen.getByText(`The distributed engine serves ${HF}; this node wants ${ALIAS}.`)
+      screen.getByText(`The distributed engine serves ${FLASH}; this node wants ${ALIAS}.`)
     ).toBeInTheDocument();
 
     mockExtMethod.mockRejectedValue(new Error('gone'));
@@ -311,6 +330,65 @@ describe('NoNodeNotice', () => {
       await mlxDistributedStatus().catch(() => undefined);
     });
     expect(await screen.findByTestId('no-node-mount-mihai-mlx')).toBeInTheDocument();
+  });
+
+  /**
+   * Q-128: the engine serves a model this node is not set to and nobody here started it (the
+   * router's own words, e.g. a Link peer's Mount). One click points the node at what serves —
+   * the swarm block is written through the one node-model writer — and Retry becomes the move.
+   */
+  it('a real mismatch offers "Chat with <served>" and one click writes the node to it', async () => {
+    const user = userEvent.setup();
+    const text = `Ran into this error: Execution error: swarm chat: no node can serve this turn — mihai-mlx: MLX engine serves '${FLASH}', the device wants '${ALIAS}' — it was not started from this Mac's goose, so chat does not follow it.`;
+    const wrong = parseNoNodeError(text)!;
+    expect(wrong.map((r) => r.reason)).toEqual([
+      { kind: 'mlx-wrong-model', served: FLASH, wanted: ALIAS },
+    ]);
+    const other = { id: 'studio-lm', model_id: 'qwen', weight: 1, enabled: true };
+    mockRead.mockResolvedValue({ endpoint: 'http://localhost:1234', devices: [DEVICE, other] });
+    const onRetry = vi.fn();
+    wrap(<NoNodeNotice rows={wrong} live retryText="hi" onRetry={onRetry} />);
+    expect(screen.getByTestId('no-node-retry').getAttribute('data-variant')).toBe('secondary');
+    const fix = screen.getByTestId('no-node-chat-with-mihai-mlx');
+    expect(fix.textContent).toBe('Chat with Qwen3.8-Flash-Next-4bit');
+    await user.click(fix);
+    await waitFor(() => expect(mockUpsert).toHaveBeenCalledTimes(1));
+    expect(mockUpsert).toHaveBeenCalledWith(
+      'swarm',
+      {
+        endpoint: 'http://localhost:1234',
+        devices: [{ ...DEVICE, model_id: FLASH }, other],
+      },
+      false
+    );
+    expect(await screen.findByTestId('no-node-chat-with-done-mihai-mlx')).toHaveTextContent(
+      'This node now chats with Qwen3.8-Flash-Next-4bit — retry to send your message.'
+    );
+    expect(screen.getByTestId('no-node-retry').getAttribute('data-variant')).toBe('primary');
+    await user.click(screen.getByTestId('no-node-retry'));
+    expect(onRetry).toHaveBeenCalledWith('hi');
+  });
+
+  it('the one-click fix names a failed write and writes nothing for a node gone from the pool', async () => {
+    const user = userEvent.setup();
+    const wrong = parseNoNodeError(
+      `swarm chat: no node can serve this turn — mihai-mlx: MLX engine serves '${FLASH}', the device wants '${ALIAS}'`
+    )!;
+    mockRead.mockResolvedValue({ devices: [] });
+    wrap(<NoNodeNotice rows={wrong} live retryText="hi" onRetry={vi.fn()} />);
+    await user.click(screen.getByTestId('no-node-chat-with-mihai-mlx'));
+    expect(await screen.findByTestId('no-node-chat-with-error-mihai-mlx')).toHaveTextContent(
+      'mihai-mlx is no longer in the swarm pool'
+    );
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
+  it('a record of the refusal (not live) offers no fix', () => {
+    const wrong = parseNoNodeError(
+      `swarm chat: no node can serve this turn — mihai-mlx: MLX engine serves '${FLASH}', the device wants '${ALIAS}'`
+    )!;
+    wrap(<NoNodeNotice rows={wrong} live={false} retryText="hi" onRetry={vi.fn()} />);
+    expect(screen.queryByTestId('no-node-chat-with-mihai-mlx')).toBeNull();
   });
 
   it('a config read failure is stated, not hidden', async () => {

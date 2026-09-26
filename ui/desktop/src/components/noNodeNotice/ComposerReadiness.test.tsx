@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IntlProvider, createIntl } from 'react-intl';
 import type { MlxEngineSettings, MlxEngineStatus } from '../../acp/mlx-engine';
+import type { MlxServingIntentRead } from '../../acp/mlx-serving-intent';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import { assertStudioClean } from '../lz/assertStudioClean';
 import { ComposerReadinessStrip } from './ComposerReadiness';
@@ -38,6 +39,12 @@ vi.mock('../../acp/acpConnection', () => ({
 const mockReadConfig = vi.fn();
 vi.mock('../../acp/config', () => ({
   acpReadConfig: (key: string) => mockReadConfig(key),
+}));
+const mockIntent = vi.fn(
+  async (): Promise<MlxServingIntentRead> => ({ intent: null, error: null })
+);
+vi.mock('../../acp/mlx-serving-intent', () => ({
+  mlxServingIntent: () => mockIntent(),
 }));
 
 /** The audit's machine (2026-09-23): the swarm's only node, mihai-mlx, on the local MLX engine. */
@@ -115,6 +122,7 @@ const ready = (devices: SwarmDeviceRow[]): MountLookup => ({
   state: 'ready',
   devices,
   settings: SETTINGS,
+  intent: null,
 });
 
 describe('swarmReadiness — only what the renderer can know', () => {
@@ -207,10 +215,33 @@ describe('swarmReadiness — the distributed engine owns this Mac', () => {
       status: DIST_STARTING,
       wanted: ALIAS,
     });
-    expect(swarmReadiness(ready([MLX_NODE]), STOPPED, DIST_HF_ID)).toMatchObject({
+    const flash = 'rapid-mlx/Qwen3.8-Flash-Next-4bit';
+    const other: MlxDistributedStatus = { ...DIST_READY, modelId: flash, servedModelId: flash };
+    expect(swarmReadiness(ready([MLX_NODE]), STOPPED, other)).toMatchObject({
       kind: 'distributed',
       wanted: ALIAS,
     });
+  });
+
+  /**
+   * Q-128 (installed 3.0.48): the split's served id depends on how it was started — the alias,
+   * or the HF id once the alias is bound elsewhere (12:1x) — and the node pinned to the 27B met a
+   * Flash split the owner ran (11:50). The pool's rule (`chatNodeOf`, the router's) decides.
+   */
+  it('the 27B served under its HF id is the node’s model; the owner’s own Flash run is followed', () => {
+    expect(swarmReadiness(ready([MLX_NODE]), STOPPED, DIST_HF_ID)).toEqual({ kind: 'ready' });
+    const flash = 'rapid-mlx/Qwen3.8-Flash-Next-4bit';
+    const split: MlxDistributedStatus = { ...DIST_READY, modelId: flash, servedModelId: flash };
+    const ran: MountLookup = {
+      ...(ready([MLX_NODE]) as Extract<MountLookup, { state: 'ready' }>),
+      intent: { kind: 'split', modelId: flash },
+    };
+    expect(swarmReadiness(ran, STOPPED, split)).toEqual({ kind: 'ready' });
+    const peerMounted: MountLookup = {
+      ...(ready([MLX_NODE]) as Extract<MountLookup, { state: 'ready' }>),
+      intent: { kind: 'remoteSingle', modelId: flash, peer: 'studio', peerName: 'Studio' },
+    };
+    expect(swarmReadiness(peerMounted, STOPPED, split)).toMatchObject({ kind: 'distributed' });
   });
 
   it('a distributed status that does not own the Mac leaves the single engine in charge', () => {

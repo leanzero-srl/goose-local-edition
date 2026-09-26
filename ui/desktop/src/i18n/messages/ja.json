@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "このノードのスロットはすべて使用中です。"
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "{model} とチャット"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "このノードは {model} とチャットするようになりました — 再試行してメッセージを送信してください。"
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "このノードを {model} に切り替えられませんでした: {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "詳細"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "マウントされたモデルがありません"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "チャットは実行したモデルに従います: {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "この Mac で {served} を起動したため、このノードのチャットはそちらに送られます。swarm のビルドとベンチマーク用には {set} のままです。"
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "チャット: {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "エンジンは {model} を提供中"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "この Mac に一致するモデルはありません。"
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "{node} のモデル"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "保存されていません: {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "提供中"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "サーバーの起動中、または一時的に利用できない可能性があります。"

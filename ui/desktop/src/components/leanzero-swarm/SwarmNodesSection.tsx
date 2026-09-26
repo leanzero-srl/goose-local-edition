@@ -29,6 +29,19 @@ import {
 } from '../lz';
 import { ToneBanner, WeightStepper, nodeHue } from './studio';
 import { defineMessages, useIntl } from '../../i18n';
+import { mlxEngineModelsList, type MlxLocalModel } from '../../acp/mlx-engine';
+import { foreignOwner } from '../../acp/mlx-distributed';
+import {
+  distributedServedId,
+  singleServedId,
+  useLatestMlxDistributedStatus,
+  useMountLookup,
+} from '../noNodeNotice/mlxMount';
+import { useMlxEngineStatusPoll } from './useMlxEngineStatus';
+import { MLX_STATUS_POLL_MS } from './mlxLiveStats';
+import { ownsTheMac } from './mlxDistributed';
+import { setNodeModel } from './nodes';
+import { NodeModelCell } from './NodeModelCell';
 
 const i18nMsg = defineMessages({
   nodesTitle: { id: 'swarmSettings.nodesTitle', defaultMessage: 'Nodes' },
@@ -259,6 +272,41 @@ export default function SwarmNodesSection({
   );
 
   const configuredDevices: SwarmDeviceRow[] = Array.isArray(cfg.devices) ? cfg.devices : [];
+
+  // A local LeanZero MLX node's Model cell reads what this Mac's engine serves and the models on
+  // this Mac, and changes the node's model through the one node-model writer (`setNodeModel`).
+  const isLocalMlxRow = (d: { engine?: string | null; host?: string | null; provider?: string | null }) =>
+    d.engine === 'mlx-sidecar' && d.host == null && d.provider == null;
+  const hasLocalMlx = configuredDevices.some(isLocalMlxRow);
+  const readSwarmStrict = useCallback(
+    () => read('swarm', false, { throwOnError: true }) as Promise<SwarmConfig | null>,
+    [read]
+  );
+  const mlxLookup = useMountLookup(hasLocalMlx, readSwarmStrict, cfg);
+  const { status: mlxStatus } = useMlxEngineStatusPoll(hasLocalMlx, MLX_STATUS_POLL_MS);
+  const distributed = useLatestMlxDistributedStatus();
+  const mlxServed =
+    distributed && (ownsTheMac(distributed) || foreignOwner(distributed))
+      ? distributedServedId(distributed)
+      : singleServedId(mlxStatus);
+  const [localModels, setLocalModels] = useState<MlxLocalModel[]>([]);
+  useEffect(() => {
+    if (!hasLocalMlx) return undefined;
+    let alive = true;
+    mlxEngineModelsList()
+      .then((list) => alive && setLocalModels(list.models))
+      .catch((e: unknown) => alive && setNodeError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      alive = false;
+    };
+  }, [hasLocalMlx]);
+  const pickNodeModel = useCallback(
+    async (nodeId: string, modelId: string) => {
+      await setNodeModel({ read, upsert }, nodeId, modelId);
+      await reloadSwarm();
+    },
+    [read, upsert, reloadSwarm]
+  );
   // EVERY node the swarm would actually run, in one list. `nodeRows` (golden.ts) owns the union so
   // the test exercises the shipped rule rather than a copy of it.
   const rows = nodeRows(configuredDevices, fleet.models);
@@ -339,14 +387,29 @@ export default function SwarmNodesSection({
     {
       key: 'model',
       header: 'Model',
-      cell: ({ row }) =>
-        row.provider != null ? (
+      cell: ({ row }) => {
+        const device = row.configured ? configuredDevices.find((d) => d.id === row.id) : undefined;
+        if (device && isLocalMlxRow(device)) {
+          return (
+            <NodeModelCell
+              device={device}
+              devices={configuredDevices}
+              settings={mlxLookup.state === 'ready' ? mlxLookup.settings : null}
+              intent={mlxLookup.state === 'ready' ? mlxLookup.intent : null}
+              served={mlxServed}
+              models={localModels}
+              onPick={(modelId) => pickNodeModel(device.id, modelId)}
+            />
+          );
+        }
+        return row.provider != null ? (
           <span className="text-lz-ink-4">—</span>
         ) : (
           <span className="block max-w-[28ch] truncate font-mono text-lz-mono text-lz-ink-3" title={row.modelId}>
             {row.modelId}
           </span>
-        ),
+        );
+      },
     },
     {
       key: 'share',

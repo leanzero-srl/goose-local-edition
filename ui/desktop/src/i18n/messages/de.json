@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Alle Plätze auf diesem Knoten sind belegt."
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "Mit {model} chatten"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "Dieser Knoten chattet jetzt mit {model} — sende deine Nachricht erneut."
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "{model} konnte diesem Knoten nicht zugewiesen werden: {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Details"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Kein Modell eingebunden"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "Chat folgt deinem Start: {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "Du hast {served} auf diesem Mac gestartet, daher geht der Chat auf diesem Knoten dorthin. Der Knoten bleibt für Swarm-Builds und Benchmarks auf {set} eingestellt."
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "Chat: {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "Engine stellt {model} bereit"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "Kein Modell auf diesem Mac passt."
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "Modell für {node}"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "Nicht gespeichert: {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "läuft gerade"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Der Server startet möglicherweise gerade oder ist vorübergehend nicht verfügbar."

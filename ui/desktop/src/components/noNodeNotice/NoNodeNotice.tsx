@@ -1,6 +1,6 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, RotateCcw, ServerOff, Settings2 } from 'lucide-react';
+import { ArrowLeftRight, Loader2, RotateCcw, ServerOff, Settings2 } from 'lucide-react';
 import { useConfig } from '../ConfigContext';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
 import type { SwarmConfig } from '../settings/swarm/golden';
@@ -25,6 +25,8 @@ import { ENGINE_ROUTE } from './ComposerReadiness';
 import type { NoNodeRow, NodeReason } from './parseNoNodeError';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { routePeerName } from '../leanzero-swarm/macs';
+import { setNodeModel } from '../leanzero-swarm/nodes';
+import { errorMessage } from '../../utils/conversionUtils';
 import {
   latestMlxRemoteSingleStatus,
   subscribeMlxRemoteSingleStatus,
@@ -37,6 +39,7 @@ import {
   distributedStateLabel,
   distributedSummary,
   engineFact,
+  nodeServedId,
   resolveMountTarget,
   shortModelName,
   useLatestMlxDistributedStatus,
@@ -106,6 +109,15 @@ const i18n = defineMessages({
     defaultMessage: 'Could not read which model this node mounts: {error}',
   },
   openProviders: { id: 'noNodeNotice.openProviders', defaultMessage: 'Open Providers' },
+  chatWith: { id: 'noNodeNotice.chatWith', defaultMessage: 'Chat with {model}' },
+  chatWithDone: {
+    id: 'noNodeNotice.chatWithDone',
+    defaultMessage: 'This node now chats with {model} — retry to send your message.',
+  },
+  chatWithFailed: {
+    id: 'noNodeNotice.chatWithFailed',
+    defaultMessage: 'Could not point this node at {model}: {error}',
+  },
   retry: { id: 'noNodeNotice.retry', defaultMessage: 'Retry' },
   ready: {
     id: 'noNodeNotice.ready',
@@ -330,7 +342,25 @@ export default function NoNodeNotice({
 }) {
   const intl = useIntl();
   const navigate = useNavigate();
-  const { read } = useConfig();
+  const { read, upsert } = useConfig();
+  const [repointed, setRepointed] = useState<
+    Record<string, { state: 'writing' | 'done' } | { state: 'failed'; error: string }>
+  >({});
+  const chatWith = useCallback(
+    async (nodeId: string, served: string) => {
+      setRepointed((prev) => ({ ...prev, [nodeId]: { state: 'writing' } }));
+      try {
+        await setNodeModel({ read, upsert }, nodeId, served);
+        setRepointed((prev) => ({ ...prev, [nodeId]: { state: 'done' } }));
+      } catch (e) {
+        setRepointed((prev) => ({
+          ...prev,
+          [nodeId]: { state: 'failed', error: errorMessage(e, String(e)) },
+        }));
+      }
+    },
+    [read, upsert]
+  );
   const mlxDown = rows.some((r) => r.reason.kind === 'mlx-down' && r.nodeId != null);
   const armed = live && mlxDown;
 
@@ -346,10 +376,13 @@ export default function NoNodeNotice({
 
   const targetOf = (nodeId: string): MountTarget | null =>
     lookup.state === 'ready' ? resolveMountTarget(nodeId, lookup.devices, lookup.settings) : null;
-  const nodeModelOf = (nodeId: string): string | null =>
-    lookup.state === 'ready'
-      ? (lookup.devices.find((d) => d.id === nodeId)?.model_id ?? null)
-      : null;
+  /** The id the node is served under while the split answers — the router's chat rule. */
+  const nodeModelOf = (nodeId: string): string | null => {
+    if (lookup.state !== 'ready') return null;
+    const device = lookup.devices.find((d) => d.id === nodeId);
+    if (!device) return null;
+    return nodeServedId(lookup, device, distributed ? distributedServedId(distributed) : null);
+  };
 
   const liveFactOf = (row: NoNodeRow): EngineFact | null => {
     if (!armed || row.reason.kind !== 'mlx-down' || row.nodeId == null) return null;
@@ -362,7 +395,11 @@ export default function NoNodeNotice({
   const anyMounting = requestingNodeId != null || mlxFacts.includes('mounting');
   const allUp = mlxFacts.length > 0 && mlxFacts.every((f) => f === 'up');
   const routeReady = routeServesChat(route, distributed) && route.state === 'ready';
-  const retryPrimary = !mlxDown || allUp || routeReady;
+  const anyRepointed = Object.values(repointed).some((r) => r.state === 'done');
+  // A node set to another model than the engine serves refuses a plain retry the same way: its
+  // "Chat with …" is the move until it is taken.
+  const wrongModel = rows.some((r) => r.reason.kind === 'mlx-wrong-model' && r.nodeId != null);
+  const retryPrimary = (!mlxDown && !wrongModel) || allUp || routeReady || anyRepointed;
 
   // Chat was on the split and the split had stopped (or stopped under this very answer): that is
   // the fact, not "no model is mounted" (Q-81). The message's time is floored to the second. The
@@ -500,6 +537,55 @@ export default function NoNodeNotice({
     );
   };
 
+  /**
+   * A real mismatch the router left standing — the engine serves a model this node is not set to
+   * and nobody here started it — fixed in one click: the node is pointed at what serves, through
+   * the same writer as the Nodes table's model picker. The router's word, the served id, is what
+   * is written, so the next turn's probe names it exactly.
+   */
+  const renderWrongModelAction = (row: NoNodeRow) => {
+    if (!live || row.nodeId == null || row.reason.kind !== 'mlx-wrong-model') return null;
+    const nodeId = row.nodeId;
+    const { served } = row.reason;
+    const model = shortModelName(served);
+    const state = repointed[nodeId];
+    if (state?.state === 'done') {
+      return (
+        <p
+          data-testid={`no-node-chat-with-done-${nodeId}`}
+          className={cx(TYPE.meta, TONE_TEXT.ok, 'break-words text-right')}
+        >
+          {intl.formatMessage(i18n.chatWithDone, { model })}
+        </p>
+      );
+    }
+    return (
+      <div className="flex min-w-0 flex-col items-end gap-1.5">
+        <Button
+          variant="primary"
+          size="sm"
+          icon={
+            state?.state === 'writing' ? <Loader2 className="animate-spin" /> : <ArrowLeftRight />
+          }
+          disabled={state?.state === 'writing'}
+          data-testid={`no-node-chat-with-${nodeId}`}
+          title={served}
+          onClick={() => void chatWith(nodeId, served)}
+        >
+          {intl.formatMessage(i18n.chatWith, { model })}
+        </Button>
+        {state?.state === 'failed' && (
+          <p
+            data-testid={`no-node-chat-with-error-${nodeId}`}
+            className={cx(TYPE.meta, TONE_TEXT.err, 'break-words text-right')}
+          >
+            {intl.formatMessage(i18n.chatWithFailed, { model, error: state.error })}
+          </p>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div
       data-testid="no-node-notice"
@@ -540,6 +626,11 @@ export default function NoNodeNotice({
               </div>
               {isMlx && (
                 <div className="flex max-w-[45%] shrink-0 justify-end">{renderMlxAction(row)}</div>
+              )}
+              {row.reason.kind === 'mlx-wrong-model' && live && (
+                <div className="flex max-w-[45%] shrink-0 justify-end">
+                  {renderWrongModelAction(row)}
+                </div>
               )}
             </li>
           );

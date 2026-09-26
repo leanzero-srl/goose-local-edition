@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Toutes les places de ce nœud sont occupées."
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "Discuter avec {model}"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "Ce nœud discute maintenant avec {model} — réessaie pour envoyer ton message."
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "Impossible d’associer {model} à ce nœud : {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Détails"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Aucun modèle n’est monté"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "Le chat suit ton lancement : {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "Tu as lancé {served} sur ce Mac, donc le chat y va sur ce nœud. Le nœud reste réglé sur {set} pour les builds du swarm et les benchmarks."
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "Chat : {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "Le moteur sert {model}"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "Aucun modèle de ce Mac ne correspond."
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "Modèle pour {node}"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "Non enregistré : {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "en service"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Le serveur est peut-être en cours de démarrage ou temporairement indisponible."

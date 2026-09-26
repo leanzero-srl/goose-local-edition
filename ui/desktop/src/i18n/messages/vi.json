@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Mọi vị trí trên nút này đều đang bận."
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "Trò chuyện với {model}"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "Nút này giờ trò chuyện với {model} — thử lại để gửi tin nhắn của bạn."
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "Không thể trỏ nút này tới {model}: {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Chi tiết"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "Chưa gắn mô hình nào"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "Trò chuyện theo lần chạy của bạn: {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "Bạn đã khởi chạy {served} trên Mac này, nên trò chuyện ở nút này đi tới đó. Nút vẫn được đặt là {set} cho các bản dựng swarm và benchmark."
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "Trò chuyện: {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "Engine đang phục vụ {model}"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "Không có mô hình nào trên Mac này khớp."
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "Mô hình cho {node}"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "Chưa lưu: {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "đang phục vụ"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Máy chủ có thể đang khởi động hoặc tạm thời không khả dụng."

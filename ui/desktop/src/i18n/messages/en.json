@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "Every slot on this node is busy."
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "Chat with {model}"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "This node now chats with {model} — retry to send your message."
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "Could not point this node at {model}: {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "Details"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "No model is mounted"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "Chat follows your Run: {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "You started {served} on this Mac, so chat goes to it on this node. The node stays set to {set} for swarm builds and benchmarks."
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "Chat: {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "Engine serves {model}"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "No model on this Mac matches."
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "Model for {node}"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "Not saved: {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "serving now"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "The server may be starting up or temporarily unavailable."

@@ -4889,6 +4889,15 @@
   "noNodeNotice.busy": {
     "defaultMessage": "इस नोड के सभी स्लॉट व्यस्त हैं।"
   },
+  "noNodeNotice.chatWith": {
+    "defaultMessage": "{model} के साथ चैट करें"
+  },
+  "noNodeNotice.chatWithDone": {
+    "defaultMessage": "यह नोड अब {model} के साथ चैट करता है — अपना संदेश भेजने के लिए फिर से प्रयास करें।"
+  },
+  "noNodeNotice.chatWithFailed": {
+    "defaultMessage": "{model} को इस नोड पर सेट नहीं किया जा सका: {error}"
+  },
   "noNodeNotice.details": {
     "defaultMessage": "विवरण"
   },
@@ -4972,6 +4981,30 @@
   },
   "noNodeNotice.titleUnmounted": {
     "defaultMessage": "कोई मॉडल माउंट नहीं है"
+  },
+  "nodeModelCell.chatFollows": {
+    "defaultMessage": "चैट आपके Run का अनुसरण करता है: {model}"
+  },
+  "nodeModelCell.chatFollowsTitle": {
+    "defaultMessage": "आपने इस Mac पर {served} शुरू किया, इसलिए इस नोड पर चैट उसी पर जाता है। swarm बिल्ड और बेंचमार्क के लिए नोड {set} पर ही रहता है।"
+  },
+  "nodeModelCell.chatHere": {
+    "defaultMessage": "चैट: {model}"
+  },
+  "nodeModelCell.engineServes": {
+    "defaultMessage": "इंजन {model} सर्व करता है"
+  },
+  "nodeModelCell.noModels": {
+    "defaultMessage": "इस Mac पर कोई मॉडल मेल नहीं खाता।"
+  },
+  "nodeModelCell.pickAria": {
+    "defaultMessage": "{node} के लिए मॉडल"
+  },
+  "nodeModelCell.saveFailed": {
+    "defaultMessage": "सहेजा नहीं गया: {error}"
+  },
+  "nodeModelCell.servingNow": {
+    "defaultMessage": "अभी सर्व हो रहा है"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "सर्वर चालू हो सकता है या अस्थायी रूप से अनुपलब्ध हो सकता है।"
