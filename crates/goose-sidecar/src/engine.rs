@@ -228,8 +228,11 @@ pub struct ModelProfile {
     /// checkpoint whose config.json declares no vision.
     pub text_only: Option<bool>,
     /// Request-side reasoning switch, sent as `chat_template_kwargs.enable_thinking` on every turn
-    /// of a session routed to this model. `None` = auto: nothing is sent and the engine decides
-    /// (Rapid-MLX turns thinking OFF whenever a request carries tools). No argv effect.
+    /// of a session routed to this model. `None` = auto: nothing is sent and the engine decides —
+    /// OFF for every request goose makes on Rapid-MLX (a tool-bearing request, or a tool-less one
+    /// to a model with a reasoning parser, unless the request pins the switch). The split's ranks
+    /// resolve it the same way (`distributed/rank_thinking.py`, Q-135): an absent switch reaching
+    /// the template directly renders Qwen3.8 ON at effort xhigh. No argv effect.
     pub thinking: Option<ThinkingMode>,
     /// A level from the template's own effort vocabulary (`thinking::ThinkingCapabilities::
     /// effort_levels`), sent as `chat_template_kwargs.reasoning_effort`. `None` = the template's

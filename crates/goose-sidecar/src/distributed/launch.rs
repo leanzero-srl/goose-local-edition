@@ -10,6 +10,7 @@
 //! The program is embedded here and passed base64 on the command line, so a node needs nothing
 //! installed beyond its interpreter: `rank_env.py` (the backend env, `emit`, the memory reporter —
 //! every rank), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
+//! `rank_thinking.py` (a chat request's thinking switch, resolved as the single engine resolves it),
 //! then the runner's program — `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
 //! `rank_state.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
 //! what an absent max_tokens generates, the prefill modules what a step and a batch may hold) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
@@ -44,6 +45,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_load_lock.py"),
     include_str!("rank_env.py"),
     include_str!("rank_live.py"),
+    include_str!("rank_thinking.py"),
     include_str!("rank_budget.py"),
     include_str!("rank_prefill.py"),
     include_str!("rank_batch.py"),
@@ -54,6 +56,7 @@ const PIPELINE_PROGRAM: &str = concat!(
     include_str!("rank_load_lock.py"),
     include_str!("rank_env.py"),
     include_str!("rank_live.py"),
+    include_str!("rank_thinking.py"),
     include_str!("pipeline_rank.py")
 );
 const BOOT: &str = "import base64,sys;exec(base64.b64decode(sys.argv[1]))";
@@ -763,6 +766,8 @@ pub(crate) mod tests {
     use crate::distributed::config::tests::two_mac_config;
     use crate::distributed::provision::EnvSpec;
 
+    const QWEN38: &str = include_str!("../../tests/fixtures/chat_templates/qwen3.8.jinja");
+
     /// One launch's own load lock: a test's stand-in ranks never take this Mac's, nor each other's.
     pub(crate) fn launch_load_lock() -> String {
         static LAUNCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1019,6 +1024,7 @@ pub(crate) mod tests {
                 include_str!("rank_load_lock.py"),
                 include_str!("rank_env.py"),
                 include_str!("rank_live.py"),
+                include_str!("rank_thinking.py"),
                 include_str!("pipeline_rank.py")
             )
         );
@@ -1279,6 +1285,60 @@ print("ok")
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
+    /// rank_thinking.py under a real interpreter, on Q-135's request (2026-09-26): goose's first
+    /// agent call of the Jira brief — 27 tools, no chat_template_kwargs because the 27B's profile
+    /// leaves thinking on auto. The single engine rendered it with thinking OFF; the split's
+    /// mlx_lm.server rendered it ON at effort xhigh and thought 7k–10.4k+ tokens. Every rank now
+    /// resolves it as the single engine does.
+    #[test]
+    fn a_rank_resolves_the_thinking_switch_as_the_single_engine_does() {
+        let checks = format!(
+            "QWEN38 = {}\n{}",
+            serde_json::to_string(QWEN38).unwrap(),
+            r#"
+tools = [{"type": "function", "function": {"name": "shell"}}]
+assert template_reasons(QWEN38), "Qwen3.8 carries the XML tool and think contracts"
+assert not template_reasons("{{ messages }}") and not template_reasons(None)
+agent = {"messages": [], "tools": tools}
+assert resolved_template_kwargs(agent, True) == {"enable_thinking": False}, "auto + tools: off"
+assert resolved_template_kwargs({"messages": []}, True) == {"enable_thinking": False}, "auto, no tools: off"
+assert resolved_template_kwargs({"messages": []}, False) == {}, "no reasoning parser: the template decides"
+on = {"messages": [], "tools": tools, "chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "low"}}
+assert resolved_template_kwargs(on, True) == {"enable_thinking": True, "reasoning_effort": "low"}
+effort_only = {"messages": [], "tools": tools, "chat_template_kwargs": {"reasoning_effort": "low"}}
+assert resolved_template_kwargs(effort_only, True) == {"enable_thinking": False, "reasoning_effort": "low"}, \
+    "an effort alone is no pin: the single engine turns thinking off and the level is inert"
+assert resolved_template_kwargs({"messages": [], "chat_template_kwargs": {"enable_thinking": "false"}}, True) \
+    == {"enable_thinking": False}, "the string form becomes the boolean the template tests"
+assert resolved_template_kwargs({"messages": [], "enable_thinking": True, "tools": tools}, True) \
+    == {"enable_thinking": True}, "a top-level pin reaches mlx_lm, which reads only the kwargs"
+assert resolved_template_kwargs({"messages": [], "tools": tools, "tool_choice": "none"}, True) == {}, \
+    "tool_choice none: prose on tool definitions keeps the template's default"
+assert resolved_template_kwargs({"messages": [], "tools": tools, "reasoning_effort": "none"}, True) \
+    == {"enable_thinking": False}
+for asked in ({"reasoning_effort": "high"}, {"reasoning_max_tokens": 512}, {"reasoning": {"effort": "low"}}):
+    try:
+        resolved_template_kwargs({"messages": [], **asked}, True)
+    except ThinkingRefused as refusal:
+        assert "does not translate" in str(refusal) and list(asked)[0] in str(refusal), refusal
+    else:
+        raise AssertionError(f"{asked} would be dropped silently")
+print("ok")
+"#
+        );
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_thinking.py")))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
     /// rank_prefill.py under a real interpreter, on E2E #2's plan (the 27B over 2 ranks at
     /// 262,144 tokens: KV charge 17,333,813,248 B, workspace one row's 2,048-token chunk) and
     /// Q-104's repro (turn 6: a ~51k-token turn with four summaries raised a rank 35 → 44.8 GB in
@@ -1442,10 +1502,11 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
       "first_token": job.first_token is not None, "prefilled": job.prefilled, "status": status}))
 "#;
         let program = format!(
-            "{}{}{}{}{checks}",
+            "{}{}{}{}{}{checks}",
             include_str!("rank_load_lock.py"),
             include_str!("rank_env.py"),
             include_str!("rank_live.py"),
+            include_str!("rank_thinking.py"),
             &rank[..serves]
         );
         let seen = run_against_real_packages(&python, &program, &spec);
@@ -1487,6 +1548,209 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
             .map(|r| r["phase"].as_str().unwrap())
             .collect();
         assert_eq!(phases, ["generation", "queued"]);
+    }
+
+    /// Q-135: the same request and the same setting render the SAME prompt on every way, through
+    /// each way's own code, on the Qwen3.8 template the 27B ships (CPU, a stand-in vocabulary — only
+    /// the template renders): the single engine's /v1/chat/completions resolution (Rapid-MLX's own
+    /// helpers — byte-identical at the pinned fork commit and the single engine's tag, measured
+    /// 2026-09-26) into its apply_chat_template; mlx_lm 0.31.3's own `_tokenize` with the kwargs
+    /// rank_wrapper.py hands it; and goose's pipeline route over the fork's own handler. Negative
+    /// control: the kwargs as goose sends them, unresolved, render the split's pre-fix prompt — ON
+    /// at effort xhigh where the single engine renders OFF.
+    #[test]
+    fn every_way_renders_the_same_prompt_for_the_same_setting() {
+        let Some(python) = proven_env(&EnvSpec::pipeline(), "GOOSE_TEST_PIPELINE_PYTHON") else {
+            return;
+        };
+        let spec = pipeline_rank_specs(
+            &pipeline_config(),
+            "node-alias",
+            32_768,
+            "19",
+            2_048,
+            &[0, 0],
+            2.0,
+        )
+        .remove(0);
+        let rank = include_str!("pipeline_rank.py");
+        let serves = rank
+            .find("threading.Thread(target=report_memory")
+            .expect("the program starts the reporter, then serve()");
+        let checks = r#"
+import copy
+import types
+
+import mlx_lm.server as mlx_server
+from fastapi.testclient import TestClient
+from rapid_mlx.api.models import ChatCompletionRequest
+from rapid_mlx.api.tool_calling import convert_tools_for_template
+from rapid_mlx.config.server_config import get_config
+from rapid_mlx.service import helpers
+from rapid_mlx.utils.chat_template import apply_chat_template
+from tokenizers import Tokenizer, models
+from transformers import PreTrainedTokenizerFast
+
+SERVED = options.served_model_name
+
+
+def qwen38_tokenizer():
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=Tokenizer(models.WordLevel({"[UNK]": 0}, unk_token="[UNK]"))
+    )
+    tokenizer.chat_template = QWEN38
+    return tokenizer
+
+
+hf = qwen38_tokenizer()
+
+
+def single(body):
+    # routes/chat.py: effort translation, the tools gate, the casual gate, then the resolved switch
+    # into the engine's apply_chat_template. goose's model_parsers.rs gives this template the
+    # deepseek_r1 reasoning parser.
+    get_config().reasoning_parser_name = "deepseek_r1"
+    request = ChatCompletionRequest(**copy.deepcopy(body))
+    helpers.maybe_apply_reasoning_effort(request, chat_template=QWEN38)
+    helpers.maybe_auto_disable_thinking_for_tools(request)
+    helpers.maybe_auto_disable_thinking_for_casual_chat(request)
+    return apply_chat_template(
+        hf,
+        [m.model_dump(exclude_none=True) for m in request.messages],
+        tools=convert_tools_for_template(body.get("tools")),
+        enable_thinking=helpers._resolve_enable_thinking(request),
+        model_name=SERVED,
+        chat_template_kwargs=request.chat_template_kwargs or None,
+    )
+
+
+class Recording:
+    has_chat_template = True
+    has_tool_calling = True
+    has_thinking = False
+
+    def __init__(self):
+        self.prompts = []
+
+    def apply_chat_template(self, messages, **kwargs):
+        text = hf.apply_chat_template(messages, **{**kwargs, "tokenize": False})
+        if kwargs.get("add_generation_prompt"):
+            self.prompts.append(text)
+        return [ord(c) for c in text]
+
+
+def tensor(body, kwargs):
+    # mlx_lm's own _tokenize under goose's argv (no --chat-template-args: its parser's "{}").
+    responses = mlx_server.ResponseGenerator.__new__(mlx_server.ResponseGenerator)
+    responses.model_provider = types.SimpleNamespace(
+        cli_args=types.SimpleNamespace(chat_template_args=json.loads("{}"))
+    )
+    request = mlx_server.CompletionRequest(
+        "chat", "", copy.deepcopy(body["messages"]), body.get("tools") or None, None
+    )
+    recording = Recording()
+    responses._tokenize(recording, request, types.SimpleNamespace(chat_template_kwargs=kwargs))
+    return recording.prompts[0]
+
+
+class Rendered(Exception):
+    pass
+
+
+pipe_tokenizer = qwen38_tokenizer()
+rendered = []
+
+
+def encode(text, *args, **kwargs):
+    rendered.append(text)
+    raise Rendered()
+
+
+pipe_tokenizer.encode = encode
+state = pipeline_qwen4_serve._State(served=SERVED, context=options.context, max_batch=options.max_batch)
+client = TestClient(pipeline_qwen4_serve._build_app(state, pipe_tokenizer, {0}), raise_server_exceptions=False)
+
+
+def pipeline(body):
+    rendered.clear()
+    reply = client.post("/v1/chat/completions", json=body)
+    return rendered[0] if rendered else [reply.status_code, reply.json()]
+
+
+tools = [{"type": "function", "function": {"name": "shell", "description": "Run a command",
+          "parameters": {"type": "object", "properties": {"command": {"type": "string"}},
+                         "required": ["command"]}}}]
+messages = [{"role": "system", "content": "You are goose."},
+            {"role": "user", "content": "Write notes/kickoff.md from the kickoff notes."}]
+cases = {
+    "auto_tools": {},
+    "auto_no_tools": {"tools": None},
+    "on": {"chat_template_kwargs": {"enable_thinking": True}},
+    "off": {"chat_template_kwargs": {"enable_thinking": False}},
+    "on_low": {"chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "low"}},
+    "auto_low": {"chat_template_kwargs": {"reasoning_effort": "low"}},
+    "string_false": {"chat_template_kwargs": {"enable_thinking": "false"}},
+    "tool_choice_none": {"tool_choice": "none"},
+    "effort_none": {"reasoning_effort": "none"},
+}
+seen = {}
+reasons = template_reasons(QWEN38)
+for name, extra in cases.items():
+    body = {"model": SERVED, "messages": messages, "tools": tools, **extra}
+    if body["tools"] is None:
+        del body["tools"]
+    reference = single(body)
+    seen[name] = {
+        "tensor": tensor(body, resolved_template_kwargs(body, reasons)) == reference,
+        "pipeline": pipeline(body) == reference,
+        "unresolved_tensor": tensor(body, body.get("chat_template_kwargs")) == reference,
+        "thinks": reference.endswith("<|im_start|>assistant\n<think>\n"),
+        "xhigh": "Reasoning effort is set to xhigh" in reference,
+    }
+seen["untranslated"] = pipeline({"model": SERVED, "messages": messages, "reasoning_max_tokens": 512})
+print("GOOSE_TEST " + json.dumps(seen))
+"#;
+        let program = format!(
+            "{}{}{}{}{}QWEN38 = {}\n{checks}",
+            include_str!("rank_load_lock.py"),
+            include_str!("rank_env.py"),
+            include_str!("rank_live.py"),
+            include_str!("rank_thinking.py"),
+            &rank[..serves],
+            serde_json::to_string(QWEN38).unwrap(),
+        );
+        let seen = run_against_real_packages(&python, &program, &spec);
+        // (thinks, xhigh, the split's pre-fix prompt was already the single engine's)
+        let expected = [
+            ("auto_tools", false, false, false),
+            ("auto_no_tools", false, false, false),
+            ("on", true, true, true),
+            ("off", false, false, true),
+            ("on_low", true, false, true),
+            ("auto_low", false, false, false),
+            ("string_false", false, false, false),
+            ("tool_choice_none", true, true, true),
+            ("effort_none", false, false, false),
+        ];
+        for (case, thinks, xhigh, unresolved_matched) in expected {
+            let row = &seen[case];
+            assert_eq!(
+                row["tensor"], true,
+                "{case}: mlx_lm renders the single engine's prompt"
+            );
+            assert_eq!(
+                row["pipeline"], true,
+                "{case}: the pipeline renders the single engine's prompt"
+            );
+            assert_eq!(row["thinks"], thinks, "{case}");
+            assert_eq!(row["xhigh"], xhigh, "{case}");
+            assert_eq!(row["unresolved_tensor"], unresolved_matched, "{case}");
+        }
+        assert_eq!(seen["untranslated"][0], 400, "{}", seen["untranslated"]);
+        assert_eq!(
+            seen["untranslated"][1]["error"]["code"],
+            "unsupported_parameter"
+        );
     }
 
     /// The tensor program past its prelude — every class and patch rank_wrapper.py lays over
@@ -1600,17 +1864,20 @@ beside_batch = [len(cache), cache.nbytes]
 live_batch.clear()
 
 responses = server.ResponseGenerator.__new__(server.ResponseGenerator)
-responses.model_provider, responses.requests = types.SimpleNamespace(cli_args=cli), Queue()
+responses.model_provider = types.SimpleNamespace(cli_args=cli, tokenizer=types.SimpleNamespace(chat_template=QWEN38))
+responses.requests = Queue()
 httpd = http.server.ThreadingHTTPServer(
     ("127.0.0.1", 0),
     lambda *args, **kwargs: server.APIHandler(responses, *args, system_fingerprint="test", **kwargs),
 )
 threading.Thread(target=httpd.serve_forever, daemon=True).start()
 shared = []
+shared_kwargs = []
 
 def generation_thread():
     rqueue, request, args = responses.requests.get()
     shared.append(args.max_tokens)
+    shared_kwargs.append(args.chat_template_kwargs)
     rqueue.put(ContextFull("no room"))
 
 threading.Thread(target=generation_thread, daemon=True).start()
@@ -1635,23 +1902,27 @@ print("GOOSE_TEST " + json.dumps({
     "beside_batch": beside_batch,
     "models": call("/v1/models"),
     "wrong_model": call("/v1/chat/completions", {"model": "other", "messages": messages}),
+    "untranslated": call("/v1/chat/completions", {"model": served, "messages": messages, "reasoning_max_tokens": 512}),
     "no_room": call("/v1/chat/completions", {"model": served, "messages": messages}),
     "shared_max_tokens": shared,
+    "shared_kwargs": shared_kwargs,
     "status": call("/v1/status"),
 }))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}\
+            "{}{}{}{}{}{}{}{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
-             group = _Group()\n{}{checks}",
+             group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
             include_str!("rank_load_lock.py"),
             include_str!("rank_env.py"),
             include_str!("rank_live.py"),
+            include_str!("rank_thinking.py"),
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
             include_str!("rank_state.py"),
-            &wrapper[start..end]
+            &wrapper[start..end],
+            qwen = serde_json::to_string(QWEN38).unwrap(),
         );
         let seen = run_against_real_packages(&python, &program, &spec);
         let cli = &seen["cli"];
@@ -1699,6 +1970,17 @@ print("GOOSE_TEST " + json.dumps({
             seen["shared_max_tokens"],
             serde_json::json!([null]),
             "an absent max_tokens stays absent through mlx_lm's own validation"
+        );
+        assert_eq!(
+            seen["shared_kwargs"],
+            serde_json::json!([{"enable_thinking": false}]),
+            "auto reaches every rank as the single engine's answer, set before the request is shared"
+        );
+        assert_eq!(seen["untranslated"][0], 400);
+        assert_eq!(
+            seen["untranslated"][1]["error"]["code"], "unsupported_parameter",
+            "{}",
+            seen["untranslated"]
         );
         assert_eq!(seen["status"][1]["status"], "idle");
     }
@@ -1869,6 +2151,7 @@ print("ok")
                 include_str!("rank_load_lock.py"),
                 include_str!("rank_env.py"),
                 include_str!("rank_live.py"),
+                include_str!("rank_thinking.py"),
                 include_str!("rank_budget.py"),
                 include_str!("rank_prefill.py"),
                 include_str!("rank_batch.py"),
@@ -2467,10 +2750,11 @@ threading.Thread(target=responses._next_request, args=(0.1,), daemon=True).start
 threading.Event().wait()
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{prelude}{}{steps}",
+            "{}{}{}{}{}{}{}{}{prelude}{}{steps}",
             include_str!("rank_load_lock.py"),
             include_str!("rank_env.py"),
             include_str!("rank_live.py"),
+            include_str!("rank_thinking.py"),
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),

@@ -285,6 +285,17 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   captured per SESSION (SwarmProvider field) so a mid-session edit never voids the prefix cache. The bare `omlx`
   provider and goose-cli swarm lanes do NOT get it. Defaults = byte-identical request (test
   `default_choices_leave_the_mlx_request_byte_identical`).
+- AUTO MUST MEAN THE SAME ON EVERY WAY (Q-135, 2026-09-26). Only Rapid-MLX has the auto-disable; mlx_lm.server
+  (tensor) and the fork's `pipeline_qwen4 serve` hand an absent switch to the template, and Qwen3.8 reads
+  undefined as ON at effort xhigh (+209-char "Reasoning effort is set to xhigh…" system line, `<think>\n` instead
+  of `<think>\n\n</think>\n\n`). Measured: split turn 0 of the Jira brief 1021 s / 1195+ s, first agent call 7k /
+  10.4k+ thinking tokens; single 170–178 s, 65–817 tokens, none thinking. Fix: `distributed/rank_thinking.py`
+  (port of chat.py's effort-none → tools gate → casual gate → `_extract_thinking_from_request`), applied by
+  rank_wrapper.py (`validate_model_parameters`, rank 0, before the request is shared) and pipeline_rank.py (goose's
+  /v1/chat/completions over the fork's). Top-level graded `reasoning_effort` / `reasoning_max_tokens` /
+  `reasoning{effort}` are REFUSED 400 `unsupported_parameter` on the split (the single engine translates them).
+  Proof: `every_way_renders_the_same_prompt_for_the_same_setting` (launch.rs, pipeline env). Offline render
+  recipe: tokenizer from the model dir on CPU (transformers, no weights) + `git archive <tag> rapid_mlx`.
 
 ## Live state: the tile, the tray, and "who is using it" (2026-09-23)
 - Rapid-MLX `/v1/status` cannot tell clients apart and has NO per-request prefill progress
