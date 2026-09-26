@@ -101,6 +101,7 @@ pub fn reap_session(session_id: &str) -> Vec<i32> {
         });
         taken
     };
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut killed = Vec::new();
     #[cfg(unix)]
     {

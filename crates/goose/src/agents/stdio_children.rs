@@ -394,7 +394,7 @@ fn process_table() -> Vec<ProcessRow> {
         .map(|(pid, process)| ProcessRow {
             pid: pid.as_u32(),
             parent: process.parent().map(|p| p.as_u32()),
-            uid: process.user_id().map(|uid| **uid),
+            uid: owner_uid(process),
             start_time: process.start_time(),
             argv: process
                 .cmd()
@@ -403,6 +403,18 @@ fn process_table() -> Vec<ProcessRow> {
                 .collect(),
         })
         .collect()
+}
+
+/// The numeric owner of a process. Only Unix has one (sysinfo gives Windows a SID); the reaper
+/// that compares it is Unix-only, so elsewhere there is nothing to compare.
+#[cfg(unix)]
+fn owner_uid(process: &sysinfo::Process) -> Option<u32> {
+    process.user_id().map(|uid| **uid)
+}
+
+#[cfg(not(unix))]
+fn owner_uid(_process: &sysinfo::Process) -> Option<u32> {
+    None
 }
 
 /// The orphan still is what the scan saw: same pid, still PPID 1, same start time.
