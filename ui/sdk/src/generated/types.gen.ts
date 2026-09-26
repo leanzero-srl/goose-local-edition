@@ -5598,7 +5598,36 @@ export type StatusMessage = {
     type: 'notice';
 } | {
     message: string;
+    /**
+     * A response still forming tool calls, as received so far — what the chat lists behind
+     * its status line. Absent for every other progress status.
+     */
+    forming?: FormingStatus | null;
     type: 'progress';
+};
+
+/**
+ * What the decoder has received of a response whose tool calls are still forming (Q-151): each
+ * call with its tool and argument characters, and the text that arrived beside them, which the
+ * chat does not place in the conversation.
+ */
+export type FormingStatus = {
+    calls: Array<FormingCallStatus>;
+    argumentChars: number;
+    reasoningChars: number;
+    text: string;
+};
+
+export type FormingCallStatus = {
+    /**
+     * The tool as goose names it (`extension__tool`).
+     */
+    name: string;
+    /**
+     * The tool as the chat names it (goose's `extension: tool`).
+     */
+    title: string;
+    argumentChars: number;
 };
 
 /**

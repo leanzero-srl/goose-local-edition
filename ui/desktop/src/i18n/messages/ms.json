@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose sedang memadatkan perbualan..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} aksara"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {# panggilan alat sedang terbentuk}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Diterima setakat ini: {arguments} aksara argumen{reasoning, select, none {} other {, {reasoning} aksara penaakulan}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Teks yang ditulis di sebelah panggilan ({chars} aksara) — bukan sebahagian daripada jawapan"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Sembunyikan"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose sedang mengusahakannya…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "memulakan semula sesi..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Tunjukkan apa yang sedang terbentuk"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose sedang mengusahakannya…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Tiada perkataan daripada {mac} seketika — menyemak…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Menulis selama {elapsed} · {tokens} token · {rate} tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Menulis selama {elapsed} · {tokens} token"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {satu panggilan ke {tool}} other {# panggilan alat, yang terkini ke {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "swarm dijeda — tiada apa berjalan sehingga anda sambung semula"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose akan memuat turun kemas kini di latar belakang dan memasangnya pada kali seterusnya anda keluar atau mula semula."

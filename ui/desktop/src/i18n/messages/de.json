@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose komprimiert die Unterhaltung..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} Zeichen"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, one {# Tool-Aufruf entsteht} other {# Tool-Aufrufe entstehen}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Bisher empfangen: {arguments} Zeichen Argumente{reasoning, select, none {} other {, {reasoning} Zeichen Denkprozess}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Text neben den Aufrufen ({chars} Zeichen) — nicht Teil der Antwort"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Ausblenden"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose arbeitet daran…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "Sitzung wird neu gestartet..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Zeigen, was entsteht"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose arbeitet daran…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Keine Worte von {mac} seit einem Moment — prüfe…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Schreibt seit {elapsed} · {tokens} Tokens · {rate} Tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Schreibt seit {elapsed} · {tokens} Tokens"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {ein Tool-Aufruf an {tool}} other {# Tool-Aufrufe, der letzte an {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "Schwarm pausiert — nichts läuft, bis du fortsetzt"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose lädt das Update im Hintergrund herunter und installiert es beim nächsten Beenden oder Neustart."

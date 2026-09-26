@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose가 대화를 압축하고 있습니다..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars}자"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {작성 중인 도구 호출 #개}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "지금까지 받음: 인수 {arguments}자{reasoning, select, none {} other {, 추론 {reasoning}자}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "호출 옆에 작성된 텍스트 ({chars}자) — 답변에 포함되지 않음"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "숨기기"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose가 작업 중…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "세션 다시 시작 중..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "작성 중인 내용 보기"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose가 작업 중…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "잠시 {mac}에서 출력이 없습니다 — 확인 중…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "{elapsed} 동안 작성 중 · 토큰 {tokens}개 · {rate} 토큰/초"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "{elapsed} 동안 작성 중 · 토큰 {tokens}개"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {{tool} 도구 호출 1개} other {도구 호출 #개, 최근 호출은 {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "스웜 일시 중지됨 — 다시 시작할 때까지 아무것도 실행되지 않음"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "업데이트는 백그라운드에서 자동으로 다운로드됩니다."

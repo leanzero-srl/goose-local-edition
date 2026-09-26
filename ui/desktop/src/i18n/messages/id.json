@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose sedang meringkas percakapan..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} karakter"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {# panggilan alat sedang terbentuk}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Diterima sejauh ini: {arguments} karakter argumen{reasoning, select, none {} other {, {reasoning} karakter penalaran}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Teks yang ditulis di samping panggilan ({chars} karakter) — bukan bagian dari jawaban"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Sembunyikan"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose sedang mengerjakannya…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "memulai ulang sesi..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Tampilkan yang sedang terbentuk"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose sedang mengerjakannya…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Tidak ada kata dari {mac} sejenak — memeriksa…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Menulis selama {elapsed} · {tokens} token · {rate} tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Menulis selama {elapsed} · {tokens} token"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {satu panggilan ke {tool}} other {# panggilan alat, yang terbaru ke {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "swarm dijeda — tidak ada yang berjalan sampai Anda melanjutkan"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose akan mengunduh pembaruan di latar belakang dan menginstalnya saat Anda keluar atau memulai ulang berikutnya."

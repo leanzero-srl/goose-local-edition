@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose 正在壓縮對話…"
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} 個字元"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {正在產生 # 個工具呼叫}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "目前已收到：{arguments} 個參數字元{reasoning, select, none {} other {，{reasoning} 個推理字元}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "與呼叫一同寫出的文字（{chars} 個字元）— 不屬於回答"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "隱藏"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose 正在處理…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "正在重新啟動工作階段…"
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "顯示正在產生的內容"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose 正在處理…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "{mac} 已有一會兒沒有輸出 — 正在檢查…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "已寫 {elapsed} · {tokens} 個 token · {rate} token/秒"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "已寫 {elapsed} · {tokens} 個 token"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {對 {tool} 的一個工具呼叫} other {# 個工具呼叫，最新的是 {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "叢集已暫停 — 在你繼續之前不會執行任何內容"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose 會在背景下載更新，並於您下次結束或重新啟動時安裝。"

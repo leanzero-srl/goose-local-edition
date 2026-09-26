@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose बातचीत को संक्षिप्त कर रहा है..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} अक्षर"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, one {# टूल कॉल बन रही है} other {# टूल कॉल बन रही हैं}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "अब तक प्राप्त: {arguments} अक्षर आर्ग्युमेंट{reasoning, select, none {} other {, {reasoning} अक्षर तर्क}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "कॉल के साथ लिखा गया टेक्स्ट ({chars} अक्षर) — उत्तर का हिस्सा नहीं"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "छिपाएँ"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose इस पर काम कर रहा है..."
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "सत्र पुनः प्रारंभ हो रहा है..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "जो बन रहा है वह दिखाएँ"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose इस पर काम कर रहा है..."
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "कुछ देर से {mac} से कोई शब्द नहीं — जाँच रहे हैं…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "{elapsed} से लिख रहा है · {tokens} टोकन · {rate} टोकन/से"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "{elapsed} से लिख रहा है · {tokens} टोकन"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {{tool} को एक टूल कॉल} other {# टूल कॉल, नवीनतम {tool} को}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "स्वार्म रुका हुआ है — जब तक आप फिर से शुरू नहीं करते, कुछ नहीं चल रहा"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "अपडेट बैकग्राउंड में अपने आप डाउनलोड हो जाएगा."

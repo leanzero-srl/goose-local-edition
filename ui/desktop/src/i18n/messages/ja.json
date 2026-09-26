@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "gooseが会話を圧縮しています..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} 文字"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {作成中のツール呼び出し # 件}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "これまでに受信: 引数 {arguments} 文字{reasoning, select, none {} other {、推論 {reasoning} 文字}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "呼び出しと並んで書かれたテキスト ({chars} 文字) — 回答には含まれません"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "閉じる"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "gooseが処理中です…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "セッションを再起動中..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "作成中の内容を表示"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "gooseが処理中です…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "しばらく {mac} から出力がありません — 確認中…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "{elapsed} 書き込み中 · {tokens} トークン · {rate} トークン/秒"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "{elapsed} 書き込み中 · {tokens} トークン"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {{tool} へのツール呼び出し 1 件} other {ツール呼び出し # 件、最新は {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "スウォームは一時停止中 — 再開するまで何も実行されません"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "アップデートはバックグラウンドで自動的にダウンロードされます。"

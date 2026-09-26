@@ -65,7 +65,35 @@ pub enum StatusMessage {
     #[serde(rename_all = "camelCase")]
     Notice { message: String },
     #[serde(rename_all = "camelCase")]
-    Progress { message: String },
+    Progress {
+        message: String,
+        /// A response still forming tool calls, as received so far — what the chat lists behind
+        /// its status line. Absent for every other progress status.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        forming: Option<FormingStatus>,
+    },
+}
+
+/// What the decoder has received of a response whose tool calls are still forming (Q-151): each
+/// call with its tool and argument characters, and the text that arrived beside them, which the
+/// chat does not place in the conversation.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FormingStatus {
+    pub calls: Vec<FormingCallStatus>,
+    pub argument_chars: u64,
+    pub reasoning_chars: u64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FormingCallStatus {
+    /// The tool as goose names it (`extension__tool`).
+    pub name: String,
+    /// The tool as the chat names it (goose's `extension: tool`).
+    pub title: String,
+    pub argument_chars: u64,
 }
 
 fn notification_schema<T>(generator: &mut SchemaGenerator) -> CustomMethodSchema

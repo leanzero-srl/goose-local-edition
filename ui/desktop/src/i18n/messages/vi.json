@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose đang nén cuộc trò chuyện..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} ký tự"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {# lệnh gọi công cụ đang hình thành}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Đã nhận: {arguments} ký tự đối số{reasoning, select, none {} other {, {reasoning} ký tự suy luận}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Văn bản viết bên cạnh các lệnh gọi ({chars} ký tự) — không thuộc câu trả lời"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Ẩn"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose đang xử lý…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "đang khởi động lại phiên..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Hiện nội dung đang hình thành"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose đang xử lý…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Một lúc không có chữ nào từ {mac} — đang kiểm tra…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Đang viết được {elapsed} · {tokens} token · {rate} token/giây"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Đang viết được {elapsed} · {tokens} token"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {một lệnh gọi tới {tool}} other {# lệnh gọi công cụ, mới nhất tới {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "swarm đang tạm dừng — không có gì chạy cho tới khi bạn tiếp tục"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose sẽ tải bản cập nhật ở chế độ nền và cài đặt vào lần tiếp theo khi bạn thoát hoặc khởi động lại."

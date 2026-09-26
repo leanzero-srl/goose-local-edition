@@ -39,6 +39,14 @@ const i18n = defineMessages({
     id: 'turnCue.readingPlain',
     defaultMessage: '{mac} is reading your prompt ({tokens} tokens)…',
   },
+  writing: {
+    id: 'turnCue.writing',
+    defaultMessage: 'Writing for {elapsed} · {tokens} tokens · {rate} tok/s',
+  },
+  writingNoRate: {
+    id: 'turnCue.writingNoRate',
+    defaultMessage: 'Writing for {elapsed} · {tokens} tokens',
+  },
 });
 
 /** The status line's words for a turn cue (turnStatus.ts). */
@@ -82,6 +90,15 @@ export function turnCueText(intl: IntlShape, cue: TurnCue): string {
         case 'plain':
           return intl.formatMessage(i18n.readingPlain, { mac: cue.mac, tokens });
       }
+    }
+    case 'writing': {
+      const values = {
+        elapsed: formatElapsed(cue.elapsedS),
+        tokens: compactTokens(cue.tokens),
+      };
+      return cue.tps != null && cue.tps > 0
+        ? intl.formatMessage(i18n.writing, { ...values, rate: formatRate(cue.tps, intl.locale) })
+        : intl.formatMessage(i18n.writingNoRate, values);
     }
   }
 }

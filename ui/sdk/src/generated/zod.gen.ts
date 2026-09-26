@@ -5716,6 +5716,24 @@ export const zSessionUsageUpdate = z.object({
     ]).optional()
 });
 
+export const zFormingCallStatus = z.object({
+    name: z.string(),
+    title: z.string(),
+    argumentChars: z.number().int().gte(0)
+});
+
+/**
+ * What the decoder has received of a response whose tool calls are still forming (Q-151): each
+ * call with its tool and argument characters, and the text that arrived beside them, which the
+ * chat does not place in the conversation.
+ */
+export const zFormingStatus = z.object({
+    calls: z.array(zFormingCallStatus),
+    argumentChars: z.number().int().gte(0),
+    reasoningChars: z.number().int().gte(0),
+    text: z.string()
+});
+
 export const zStatusMessage = z.union([
     z.object({
         message: z.string(),
@@ -5723,6 +5741,10 @@ export const zStatusMessage = z.union([
     }),
     z.object({
         message: z.string(),
+        forming: z.union([
+            zFormingStatus,
+            z.null()
+        ]).optional(),
         type: z.literal('progress')
     })
 ]);

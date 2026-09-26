@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose sta compattando la conversazione..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} caratteri"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, one {# chiamata a strumento in formazione} other {# chiamate a strumenti in formazione}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Ricevuto finora: {arguments} caratteri di argomenti{reasoning, select, none {} other {, {reasoning} caratteri di ragionamento}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Testo scritto accanto alle chiamate ({chars} caratteri) — non fa parte della risposta"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Nascondi"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose ci sta lavorando…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "riavvio della sessione..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Mostra cosa si sta formando"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose ci sta lavorando…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Nessuna parola da {mac} da un momento — verifico…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Scrive da {elapsed} · {tokens} token · {rate} tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Scrive da {elapsed} · {tokens} token"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {una chiamata a {tool}} other {# chiamate a strumenti, l’ultima a {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "sciame in pausa — nulla è in esecuzione finché non riprendi"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose scaricherà l'aggiornamento in background e lo installerà al prossimo arresto o riavvio."

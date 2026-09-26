@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose konuşmayı sıkıştırıyor..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} karakter"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {# araç çağrısı oluşuyor}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Şu ana kadar alınan: {arguments} karakter argüman{reasoning, select, none {} other {, {reasoning} karakter akıl yürütme}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Çağrıların yanına yazılan metin ({chars} karakter) — yanıtın parçası değil"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Gizle"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose bunun üzerinde çalışıyor…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "oturum yeniden başlatılıyor..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Oluşmakta olanı göster"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose bunun üzerinde çalışıyor…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Bir süredir {mac} kaynağından kelime yok — kontrol ediliyor…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "{elapsed} süredir yazıyor · {tokens} token · {rate} tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "{elapsed} süredir yazıyor · {tokens} token"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {{tool} için bir araç çağrısı} other {# araç çağrısı, sonuncusu {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "sürü duraklatıldı — siz devam ettirene kadar hiçbir şey çalışmıyor"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Güncelleme arka planda otomatik olarak indirilecektir."

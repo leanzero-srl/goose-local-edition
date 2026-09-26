@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose está compactando la conversación..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} caracteres"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, one {# llamada a herramienta en formación} other {# llamadas a herramientas en formación}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Recibido hasta ahora: {arguments} caracteres de argumentos{reasoning, select, none {} other {, {reasoning} caracteres de razonamiento}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Texto escrito junto a las llamadas ({chars} caracteres) — no forma parte de la respuesta"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Ocultar"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose está trabajando en ello…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "reiniciando sesión..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Mostrar lo que se está formando"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose está trabajando en ello…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Sin palabras de {mac} desde hace un momento — comprobando…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Escribiendo desde hace {elapsed} · {tokens} tokens · {rate} tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Escribiendo desde hace {elapsed} · {tokens} tokens"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {una llamada a {tool}} other {# llamadas a herramientas, la última a {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "enjambre en pausa — nada se ejecuta hasta que lo reanudes"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "La actualización se descargará automáticamente en segundo plano."

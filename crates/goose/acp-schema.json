@@ -13447,6 +13447,17 @@
             "message": {
               "type": "string"
             },
+            "forming": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FormingStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A response still forming tool calls, as received so far — what the chat lists behind\nits status line. Absent for every other progress status."
+            },
             "type": {
               "type": "string",
               "const": "progress"
@@ -13457,6 +13468,57 @@
             "message"
           ]
         }
+      ]
+    },
+    "FormingStatus": {
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FormingCallStatus"
+          }
+        },
+        "argumentChars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoningChars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "calls",
+        "argumentChars",
+        "reasoningChars",
+        "text"
+      ],
+      "description": "What the decoder has received of a response whose tool calls are still forming (Q-151): each\ncall with its tool and argument characters, and the text that arrived beside them, which the\nchat does not place in the conversation."
+    },
+    "FormingCallStatus": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The tool as goose names it (`extension__tool`)."
+        },
+        "title": {
+          "type": "string",
+          "description": "The tool as the chat names it (goose's `extension: tool`)."
+        },
+        "argumentChars": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "title",
+        "argumentChars"
       ]
     },
     "StatusMessageUpdate": {

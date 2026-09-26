@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose is compacting the conversation..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} chars"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count,plural,one{# tool call forming} other{# tool calls forming}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "{reasoning,select,none{Received so far: {arguments} chars of arguments} other{Received so far: {arguments} chars of arguments, {reasoning} chars of reasoning}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Text written beside the calls ({chars} chars) — not part of the answer"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Hide"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose is working on it…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "restarting session..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Show what is forming"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose is working on it…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "No words from {mac} for a moment — checking…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Writing for {elapsed} · {tokens} tokens · {rate} tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Writing for {elapsed} · {tokens} tokens"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count,plural,one{a tool call to {tool}} other{# tool calls, the latest to {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "swarm paused — nothing is running until you resume"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose will download the update in the background and install it the next time you quit or restart."

@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose сжимает разговор..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} симв."
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, one {Формируется # вызов инструмента} few {Формируется # вызова инструментов} other {Формируется # вызовов инструментов}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Получено: {arguments} символов аргументов{reasoning, select, none {} other {, {reasoning} символов рассуждений}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Текст рядом с вызовами ({chars} симв.) — не входит в ответ"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Скрыть"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose работает над этим…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "перезапуск сеанса..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Показать, что формируется"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose работает над этим…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "От {mac} какое-то время нет слов — проверяем…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Пишет уже {elapsed} · {tokens} токенов · {rate} ток/с"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Пишет уже {elapsed} · {tokens} токенов"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {# вызов инструмента, последний — {tool}} few {# вызова инструментов, последний — {tool}} other {# вызовов инструментов, последний — {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "рой на паузе — ничего не выполняется, пока вы не продолжите"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Обновление будет автоматически скачано в фоновом режиме."

@@ -2339,6 +2339,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "o goose está compactando a conversa..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} caracteres"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, one {# chamada de ferramenta em formação} other {# chamadas de ferramentas em formação}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Recebido até agora: {arguments} caracteres de argumentos{reasoning, select, none {} other {, {reasoning} caracteres de raciocínio}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Texto escrito junto às chamadas ({chars} caracteres) — não faz parte da resposta"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Ocultar"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "o goose está trabalhando nisso…"
   },
@@ -2347,6 +2362,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "reiniciando sessão..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Mostrar o que está se formando"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "o goose está trabalhando nisso…"
@@ -7849,6 +7867,21 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Nenhuma palavra de {mac} há um momento — verificando…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Escrevendo há {elapsed} · {tokens} tokens · {rate} tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Escrevendo há {elapsed} · {tokens} tokens"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {uma chamada a {tool}} other {# chamadas de ferramentas, a última a {tool}}}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "enxame pausado — nada está em execução até você retomar"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "O Goose transferirá a atualização em segundo plano e instalá-la-á da próxima vez que sair ou reiniciar."
