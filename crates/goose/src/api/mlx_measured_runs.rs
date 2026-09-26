@@ -6,9 +6,16 @@
 //! the same figures from the plan. The runs live in goose's measurement store under its data dir,
 //! so a relaunch loses none of them (Q-129: the tray kept its own in-memory book and lost them all).
 
-use axum::{http::StatusCode, routing::get, Json, Router};
+use axum::{http::StatusCode, routing::get, Router};
+
+// `goose_sidecar::placement` compiles only on Unix, so the response it shapes does too; on any
+// other platform the route answers 501 by name (`measured_runs` below).
+#[cfg(unix)]
+use axum::Json;
+#[cfg(unix)]
 use serde::Serialize;
 
+#[cfg(unix)]
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeasuredWay {
@@ -19,6 +26,7 @@ pub struct MeasuredWay {
     pub node_names: Vec<String>,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BucketFigure {
@@ -27,6 +35,7 @@ pub struct BucketFigure {
     pub figure: goose_sidecar::placement::planner::Figure,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MeasuredRunsResponse {
@@ -103,11 +112,11 @@ async fn measured_runs() -> Result<Json<MeasuredRunsResponse>, (StatusCode, Stri
 }
 
 #[cfg(not(unix))]
-async fn measured_runs() -> Result<Json<MeasuredRunsResponse>, (StatusCode, String)> {
-    Err((
+async fn measured_runs() -> (StatusCode, String) {
+    (
         StatusCode::NOT_IMPLEMENTED,
         "the MLX measurement store requires macOS".to_string(),
-    ))
+    )
 }
 
 pub fn routes() -> Router {

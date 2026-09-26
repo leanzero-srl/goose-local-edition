@@ -785,7 +785,8 @@ mod tests {
 
     /// Gate 4 through the real `/bin/ps`: a pid ps cannot answer for (`process id too large`,
     /// exit 1 with stderr) is refused by name and nothing is signalled — the failed proof never
-    /// reads as "no such process".
+    /// reads as "no such process". macOS only: Linux procps answers the same pid as absent.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_signal_whose_pid_ps_cannot_answer_for_is_refused_unsent() {
         let err = dispatch(
@@ -809,6 +810,9 @@ mod tests {
     /// holding it is a process global nothing drops, so a test that fails before its stop used to
     /// leave a `/usr/bin/python3 … goose-distributed-rank` orphan behind — the shape of the pid
     /// 9425 found on 2026-09-25, which then blocked a real split's restore as a foreign rank.
+    /// macOS only, with the tests that host it: the rank program takes the load lock through
+    /// libproc (`rank_load_lock.py`), which Linux does not have.
+    #[cfg(target_os = "macos")]
     fn stand_in_node(home: &std::path::Path) -> crate::distributed::NodeConfig {
         let site = home.join("site");
         std::fs::create_dir_all(site.join("mlx")).unwrap();
@@ -870,6 +874,7 @@ mod tests {
         node
     }
 
+    #[cfg(target_os = "macos")]
     fn start_request(node: &crate::distributed::NodeConfig) -> RankStartRequest {
         let mut config = crate::distributed::config::tests::two_mac_config();
         config.nodes[1] = node.clone();
@@ -893,8 +898,10 @@ mod tests {
     }
 
     /// The host is one per process: the tests that hold a rank take turns.
+    #[cfg(target_os = "macos")]
     static HOSTING_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_hosted_rank_is_spawned_here_mirrored_refused_twice_and_stopped_verified() {
         let _turn = HOSTING_TESTS.lock().await;
@@ -988,10 +995,12 @@ mod tests {
 
     /// The mesh, replaced by a loopback into THIS process's host; `down` makes every call fail
     /// the way an unreachable peer does.
+    #[cfg(target_os = "macos")]
     struct Loopback {
         down: std::sync::atomic::AtomicBool,
     }
 
+    #[cfg(target_os = "macos")]
     impl crate::distributed::link_control::LinkTransport for Loopback {
         fn call<'a>(
             &'a self,
@@ -1038,6 +1047,7 @@ mod tests {
     /// relay mirrors the peer rank, a mesh outage is a named control event (never the rank's
     /// death), and the stop is the peer's verified per-pid stop, after which the local session
     /// process exits with the rank's own code.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_link_rank_is_relayed_survives_a_control_outage_and_stops_verified() {
         use crate::distributed::link_control::{self, ControlEvent};

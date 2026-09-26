@@ -30,6 +30,12 @@ const SHELL_TEST_CONTENT: &str = "test-shell-content-98765";
 fn user_then_turn_context(prompt: &str) -> String {
     format!(r#"{prompt}\n<turn-context>"#)
 }
+/// The request that carries a tool's result back. Its content is matched WITHOUT the closing
+/// quote: a chat request ending on tool results carries the turn-context block joined to that
+/// tool message ("\n" + block, Q-94), so the result is a prefix of the content, not all of it.
+pub fn tool_result_body(result: &str) -> String {
+    format!(r#""content":"{result}"#)
+}
 const OPENAI_SESSION_NAME_RESPONSE: &str = r#"data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":1766229303,"model":"gpt-5-nano","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
 
 data: {"id":"chatcmpl-test","object":"chat.completion.chunk","created":1766229303,"model":"gpt-5-nano","choices":[{"index":0,"delta":{"content":"Generated Test Title"},"finish_reason":null}]}
@@ -249,7 +255,7 @@ pub async fn run_config_mcp<C: Connection>() {
                 include_str!("../acp_test_data/openai_tool_call.txt"),
             ),
             (
-                format!(r#""content":"{FAKE_CODE}""#),
+                tool_result_body(FAKE_CODE),
                 include_str!("../acp_test_data/openai_tool_result.txt"),
             ),
         ],
@@ -300,7 +306,7 @@ pub async fn run_fs_read_text_file_true<C: Connection>() {
                 include_str!("../acp_test_data/openai_fs_read_tool_call.txt"),
             ),
             (
-                r#""content":"test-read-content-12345""#.into(),
+                tool_result_body("test-read-content-12345"),
                 include_str!("../acp_test_data/openai_fs_read_tool_result.txt"),
             ),
         ],
@@ -468,7 +474,7 @@ pub async fn run_load_mode<C: Connection>() {
                 include_str!("../acp_test_data/openai_tool_call.txt"),
             ),
             (
-                format!(r#""content":"{FAKE_CODE}""#),
+                tool_result_body(FAKE_CODE),
                 include_str!("../acp_test_data/openai_tool_result.txt"),
             ),
         ],
@@ -564,7 +570,7 @@ pub async fn run_load_session_mcp<C: Connection>() {
                 include_str!("../acp_test_data/openai_tool_call.txt"),
             ),
             (
-                format!(r#""content":"{FAKE_CODE}""#),
+                tool_result_body(FAKE_CODE),
                 include_str!("../acp_test_data/openai_tool_result.txt"),
             ),
             (
@@ -572,7 +578,7 @@ pub async fn run_load_session_mcp<C: Connection>() {
                 include_str!("../acp_test_data/openai_tool_call.txt"),
             ),
             (
-                format!(r#""content":"{FAKE_CODE}""#),
+                tool_result_body(FAKE_CODE),
                 include_str!("../acp_test_data/openai_tool_result.txt"),
             ),
         ],
@@ -759,7 +765,7 @@ async fn run_mode_set_impl<C: Connection>(via: SetModeVia) {
                 include_str!("../acp_test_data/openai_tool_call.txt"),
             ),
             (
-                format!(r#""content":"{FAKE_CODE}""#),
+                tool_result_body(FAKE_CODE),
                 include_str!("../acp_test_data/openai_tool_result.txt"),
             ),
         ],
@@ -1102,7 +1108,7 @@ pub async fn run_permission_persistence<C: Connection>() {
                 include_str!("../acp_test_data/openai_tool_call.txt"),
             ),
             (
-                format!(r#""content":"{FAKE_CODE}""#),
+                tool_result_body(FAKE_CODE),
                 include_str!("../acp_test_data/openai_tool_result.txt"),
             ),
         ],
@@ -1296,7 +1302,7 @@ pub async fn run_prompt_mcp<C: Connection>() {
                 include_str!("../acp_test_data/openai_tool_call.txt"),
             ),
             (
-                format!(r#""content":"{FAKE_CODE}""#),
+                tool_result_body(FAKE_CODE),
                 include_str!("../acp_test_data/openai_tool_result.txt"),
             ),
         ],

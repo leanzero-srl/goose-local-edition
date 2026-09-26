@@ -968,7 +968,8 @@ mod tests {
     }
 
     /// The Python ranks write and read the same record, and `pbi_start_tvsec` through ctypes is
-    /// the start time sysinfo reads.
+    /// the start time sysinfo reads. macOS only: that ctypes call is libproc, which Linux lacks.
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_rank_and_goose_share_one_lock() {
         let dir = tempfile::tempdir().unwrap();
@@ -1039,6 +1040,7 @@ mod tests {
 
     /// Two ranks of ONE split on one Mac are one load: the second joins the first's hold instead of
     /// refusing it (a refusal there would deadlock the group's own collectives).
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_splits_sibling_rank_joins_its_hold() {
         let dir = tempfile::tempdir().unwrap();

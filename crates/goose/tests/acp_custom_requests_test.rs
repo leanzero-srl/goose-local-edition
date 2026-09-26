@@ -1078,7 +1078,7 @@ fn test_developer_fs_requests_use_acp_session_id() {
                     include_str!("acp_test_data/openai_fs_read_tool_call.txt"),
                 ),
                 (
-                    r#""content":"test-read-content-12345""#.into(),
+                    common_tests::tool_result_body("test-read-content-12345"),
                     include_str!("acp_test_data/openai_fs_read_tool_result.txt"),
                 ),
             ],
