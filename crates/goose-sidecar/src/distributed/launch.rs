@@ -1159,6 +1159,47 @@ print("ok")
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
+    /// The tensor wrapper's own module prelude — its imports and both upstream-attribute checks,
+    /// exactly as shipped — run against the REAL mlx_lm 0.31.3. The stubbed tests never executed
+    /// these lines, so 3.0.44 shipped `import mlx_lm.generate as mlx_generate`, which binds the
+    /// re-exported `generate` function, and every split died at startup.
+    #[test]
+    fn the_wrapper_prelude_binds_real_mlx_lm_modules() {
+        let python = dirs::home_dir()
+            .unwrap()
+            .join(".goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python");
+        if !python.exists() {
+            eprintln!("skipped: {} absent", python.display());
+            return;
+        }
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import mlx_lm  # noqa")
+            .expect("the wrapper imports mlx_lm");
+        let end = start
+            + wrapper[start..]
+                .find("\nserved = spec[")
+                .expect("the prelude ends where the spec is read");
+        let program = format!(
+            "import types\nfrom mlx_lm.models.cache import BatchKVCache\n\
+             spec = {{\"prefill\": {{}}, \"prompt_cache_limit_bytes\": 1}}\n{}\n\
+             assert isinstance(mlx_generate, types.ModuleType), mlx_generate\n\
+             assert isinstance(server, types.ModuleType), server\nprint(\"ok\")\n",
+            &wrapper[start..end]
+        );
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(program)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("ok"),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     /// rank_batch.py against the REAL mlx_lm 0.31.3 (goose's provisioned tensor venv, when this
     /// Mac has one): the split that moves every row leaves exactly what upstream's deep copy
     /// leaves — uids, tokens, samplers, caches, offsets, the shared left padding dropped — while

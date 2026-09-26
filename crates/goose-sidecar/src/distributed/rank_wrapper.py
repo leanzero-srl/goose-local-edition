@@ -120,7 +120,11 @@ import traceback  # noqa: E402
 RANK_FATAL_EXIT = 70
 
 import mlx_lm  # noqa: E402
-import mlx_lm.generate as mlx_generate  # noqa: E402
+import importlib  # noqa: E402
+# NOT `import mlx_lm.generate as ...`: mlx_lm/__init__.py re-exports the `generate` FUNCTION under the
+# same name, and `import a.b as c` binds getattr(a, "b") — the function, not the module (3.0.44's
+# split died at startup on it: 'function' object has no attribute 'PromptProcessingBatch').
+mlx_generate = importlib.import_module("mlx_lm.generate")  # noqa: E402
 import mlx_lm.server as server  # noqa: E402
 from collections import deque  # noqa: E402
 
