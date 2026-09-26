@@ -1046,8 +1046,9 @@ fn rank_exit(
         (Some(_), false) => "its ssh session ended",
     };
     let message = format!(
-        "rank {} {what}{when} ({status}){after} Last output:\n{tail}",
-        rank.rank
+        "rank {} {what}{when} ({status}){after} {} Last output:\n{tail}",
+        rank.rank,
+        rank_evidence(rank)
     );
     if (rank.host.is_none() || link) && local_network::names_host_unreachable(&tail) {
         let whose = if link {
@@ -1067,6 +1068,30 @@ fn rank_exit(
     } else {
         (EventKind::RankDied, message)
     }
+}
+
+/// One rank's last account of its loop and where its whole output is kept — on the Mac whose
+/// goosed read it: this one, or the Link peer that hosted it (Q-114: the stalled split's rank 1
+/// left neither, and its position could not be told).
+fn rank_evidence(rank: &RankProcess) -> String {
+    let whose = if rank.host.is_some() {
+        format!(" (on {})", rank.node)
+    } else {
+        String::new()
+    };
+    format!(
+        "Rank {}{whose}: {}.",
+        rank.rank,
+        rank.live.lock().unwrap().evidence()
+    )
+}
+
+fn ranks_evidence(ranks: &[RankProcess]) -> String {
+    ranks
+        .iter()
+        .map(rank_evidence)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Memory's hand in a rank's death, quoted: the rank's own words — the wrapper's `RANK_FATAL`
@@ -1679,13 +1704,14 @@ async fn monitor(
                 format!(
                     "progress-ratio rule: samples {}, median {} ms, bound {} ms ({HANG_MEDIAN_MULTIPLE}× \
                      median), silent {} ms — the rank-0 step counter (last {:?}) and every rank's CPU \
-                     time stood still; rank ps stats {:?}",
+                     time stood still; rank ps stats {:?}; {}",
                     meter.intervals.len(),
                     reading.median.unwrap_or_default().as_millis(),
                     reading.bound.unwrap_or_default().as_millis(),
                     reading.silent_for.as_millis(),
                     progress.as_ref().map(|p| p.steps),
                     stats,
+                    ranks_evidence(ranks),
                 ),
             );
         }

@@ -564,6 +564,8 @@ async fn rank_poll(request: RankPollRequest) -> Result<RankSnapshot, HostError> 
             memory: live.memory,
             ready: live.ready,
             exit: hosted.exit.clone(),
+            state: live.state.clone(),
+            log: live.log.clone(),
         }
     };
     publish(&guard);

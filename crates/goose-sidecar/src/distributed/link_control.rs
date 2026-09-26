@@ -285,6 +285,13 @@ pub struct RankSnapshot {
     #[serde(default)]
     pub ready: bool,
     pub exit: Option<RankExit>,
+    /// The rank's last `GOOSE_RANK_STATE` (Q-114; absent from a peer whose rank prints none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<serde_json::Value>,
+    /// Where the peer keeps the rank's whole output (its path there, or why there is none);
+    /// absent from a peer whose goosed keeps no durable rank log.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -717,6 +724,12 @@ fn mirror(live: &StdMutex<RankLive>, snapshot: &RankSnapshot) {
     if snapshot.memory.is_some() {
         live.memory = snapshot.memory;
     }
+    if snapshot.state.is_some() {
+        live.state = snapshot.state.clone();
+    }
+    if snapshot.log.is_some() {
+        live.log = snapshot.log.clone();
+    }
     if let Some(tail) = &snapshot.tail {
         live.tail = tail.iter().cloned().collect();
     }
@@ -903,6 +916,42 @@ pub async fn stop_link_rank(rank: &RankProcess, follow_rank0: bool) -> (String, 
 mod tests {
     use super::*;
     use crate::distributed::exec::SSH_OPTIONS;
+
+    /// Q-114: the peer that hosts a rank keeps its whole output and reports where, beside the
+    /// rank's last loop state; the requester mirrors both into what a hang names. A peer whose
+    /// goosed predates them sends neither, and the requester says so instead of guessing.
+    #[test]
+    fn a_hosted_ranks_state_and_log_ride_the_snapshot_and_an_older_peer_reads_as_unreported() {
+        let older = serde_json::json!({
+            "rankId": "rank-1", "pid": 56172, "lines": 9, "tail": null, "groupJoined": true,
+            "caps": null, "memory": null, "ready": false, "exit": null
+        });
+        let snapshot: RankSnapshot = serde_json::from_value(older).unwrap();
+        let live = StdMutex::new(RankLive::default());
+        mirror(&live, &snapshot);
+        assert_eq!(
+            live.lock().unwrap().evidence(),
+            "no loop state reported; log not reported (its goosed keeps no durable rank log)"
+        );
+
+        let newer = RankSnapshot {
+            state: Some(
+                serde_json::json!({"steps": 1520, "at": "doorbell", "mode": "idle",
+                "rows": 0, "rings": 41}),
+            ),
+            log: Some("/Users/workhorse/.local/state/goose/logs/distributed/rank1-x.log".into()),
+            ..snapshot
+        };
+        let wire = serde_json::to_value(&newer).unwrap();
+        assert_eq!(wire["state"]["at"], "doorbell");
+        assert!(wire["log"].as_str().unwrap().ends_with("rank1-x.log"));
+        mirror(&live, &serde_json::from_value(wire).unwrap());
+        assert_eq!(
+            live.lock().unwrap().evidence(),
+            "steps 1520, at doorbell, mode idle, rows 0, rings 41; log \
+             /Users/workhorse/.local/state/goose/logs/distributed/rank1-x.log"
+        );
+    }
 
     #[test]
     fn a_link_host_is_named_and_an_ssh_alias_is_not() {

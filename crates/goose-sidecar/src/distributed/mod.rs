@@ -27,6 +27,8 @@
 //!   and the embedded rank programs: `mlx_lm.server` under the tensor wrapper (in-process memory
 //!   caps, admission, progress counter), or the fork's `pipeline_qwen4_serve` (which carries the
 //!   same HTTP surface itself).
+//! - [`rank_log`]: every rank's output on disk under goose's state dir, bounded by a share of the
+//!   volume's free space (Q-114).
 //! - [`supervisor`]: readiness, liveness (the soak's hang rule), the memory watchdog, the
 //!   verified stop sequence and the restart policy.
 
@@ -42,6 +44,7 @@ pub mod plan;
 pub mod preflight;
 pub mod probe;
 pub mod provision;
+pub mod rank_log;
 pub mod supervisor;
 
 pub use compaction::{CompactionOutcome, CompactionRefusal, CompactionReport};
@@ -102,3 +105,10 @@ pub const WATCHDOG_WARN_RESERVE_RATIO: f64 = 0.05;
 // if the kernel has not raised its own level yet (the kernel's CRITICAL always stops it too).
 // Overridable per run (`DistributedConfig::watchdog_critical_ratio`).
 pub const WATCHDOG_CRITICAL_RESERVE_RATIO: f64 = 0.02;
+// ratio: policy — the rank logs' directory keeps at most this share of the free space its volume
+// has when a launch opens a log (rank_log.rs: half history, half the launch in two generations).
+// Receipt: a tensor rank prints one GOOSE_RANK_MEM (~85 B) and one GOOSE_RANK_STATE (~300-700 B,
+// the trails' checkpoints included) per 2 s report, ~15-30 MB a day; this MacBook had 123 GiB free
+// and the Studio 197 GiB on 2026-09-26 (df), so a launch keeps ~61 / ~98 MB, days of output —
+// and a nearly full disk keeps proportionally less instead of filling.
+pub const RANK_LOG_SHARE_OF_FREE_SPACE: f64 = 1.0 / 1024.0;

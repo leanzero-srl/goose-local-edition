@@ -49,6 +49,11 @@
 #   prompt into generation without mlx_lm's deep copy of the whole padded KV, charges the live
 #   batch at its PROJECTED padded KV when the prompt cache yields room, and rank 0 holds a request
 #   the batch it would join cannot fit inside the plan's KV charge until the batch drains enough.
+# - the rank's own account of its loop (Q-114, rank_state.py): its step count, where the loop waits
+#   (poll / doorbell / share / batch), the rings, the batch's rows and each generating row's token
+#   trail, published at every step and printed by the reporter; and, on SIGTERM, every thread's
+#   Python stack. Both land in the rank's durable log (goosed's rank_log.rs), so a stall leaves each
+#   rank's position behind — Q-114's could not be told apart for want of rank 1's.
 group = mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -62,8 +67,16 @@ if group.rank() != spec["rank"] or group.size() != spec["size"]:
     )
 
 
+import faulthandler  # noqa: E402
+import signal  # noqa: E402
 import socket  # noqa: E402
 from queue import Empty as QueueEmpty  # noqa: E402
+
+# goosed stops a rank with SIGTERM (a hang, a stop, a memory death). The rank first writes every
+# thread's Python stack to stderr — its durable log — then dies of the signal as before (`chain`:
+# the default action runs after the dump, so the exit status still names SIGTERM). Q-114's rank 1
+# sat at 0% CPU for 20 s before its SIGTERM and nothing said which line it was blocked on.
+faulthandler.register(signal.SIGTERM, all_threads=True, chain=True)
 
 
 def rank0_host():
@@ -145,6 +158,7 @@ for owner, name in (
     (server.LRUPromptCache, "trim_to"),
     (server, "BatchGenerator"),
     (server.BatchGenerator, "close"),
+    (server.BatchGenerator, "remove"),
     (server.BatchGenerator, "prompt_cache_nbytes"),
 ):
     if not hasattr(owner, name):
@@ -175,6 +189,8 @@ if prefill is not None:
 
 served = spec["served_id"]
 state = {"steps": 0, "inflight": 0, "admission_open": True, "admission_reason": None}
+# Where this rank's generation loop is (rank_state.py), published at each step for the reporter.
+loop = LoopState(group.rank())
 lock = threading.Lock()
 # Rank 0's live request table (rank_live.py): the instants each request was measured at, keyed by
 # a per-process counter. `generate` returns once the request is tokenized; mlx_lm then delivers
@@ -268,6 +284,11 @@ class TrackedBatchGenerator(server.BatchGenerator):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         live_batch[:] = [self]
+        loop.new_batch()
+
+    def remove(self, uids, *args, **kwargs):
+        loop.drop(uids)
+        return super().remove(uids, *args, **kwargs)
 
     def close(self):
         if live_batch and live_batch[0] is self:
@@ -286,6 +307,8 @@ class TrackedBatchGenerator(server.BatchGenerator):
 
     def next(self):
         responses = super().next()
+        for response in responses[1]:
+            loop.fold(response.uid, response.token, response.finish_reason)
         # Generation grows every row one token a step, past what the last admission charged: the
         # cache yields before the batch outgrows the plan's KV charge. Every rank holds the same
         # batch and the same cache, so every rank evicts alike.
@@ -449,27 +472,45 @@ def _next_request(self, timeout=None):
     # `timeout` is None exactly while a batch runs (mlx_lm's `_generate`), and every rank's loop
     # state is the same, so every rank takes the same branch here. With a prefill plan rank 0
     # decides which request is shared (rank0_request); the workers receive exactly what it shares.
+    # Each wait is published before it is entered (rank_state.py), so a rank that stops inside one
+    # has already said which.
+    loop.mode = "busy" if timeout is None else "idle"
+    loop.rows, loop.width = batch_shape(live_batch[0]) if live_batch else (0, 0)
+    loop.held = len(held)
     if prefill is not None and group.rank() == 0:
+        loop.publish("poll")
         request = rank0_request(self, timeout)
         if doorbell is None or timeout is None:
+            loop.publish("share")
             request = original_share_request(self, request)
         elif request is not None:
             doorbell.ring()
+            loop.rings += 1
+            loop.publish("share")
             request = original_share_request(self, request)
     elif doorbell is None or timeout is None:
+        loop.publish("share")
         request = original_next(self, timeout)
     elif group.rank() == 0:
+        loop.publish("poll")
         try:
             request = self.requests.get(timeout=timeout)
         except QueueEmpty:
             request = None
         if request is not None:
             doorbell.ring()
+            loop.rings += 1
+            loop.publish("share")
             request = self._share_request(request)
     else:
+        loop.publish("doorbell")
         doorbell.wait()
+        loop.rings += 1
+        loop.publish("share")
         request = self._share_request(None)
     state["steps"] += 1
+    loop.steps = state["steps"]
+    loop.publish("batch" if timeout is None or request is not None else "idle")
     return request
 
 

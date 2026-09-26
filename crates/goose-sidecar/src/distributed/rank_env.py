@@ -13,7 +13,8 @@
 # - HF_HUB_OFFLINE=1: a rank never downloads;
 # - `emit(tag, payload)`: one `GOOSE_<tag> <json>` line the supervisor reads;
 # - `report_memory()`: MLX's own active/peak/cache counters as GOOSE_RANK_MEM, every
-#   `memory_report_seconds` (the program starts the thread when it is ready to).
+#   `memory_report_seconds` (the program starts the thread when it is ready to), and beside it the
+#   program's published loop state as GOOSE_RANK_STATE (`published_state`, tensor ranks only).
 # - the Mac's load lock (rank_load_lock.py, embedded in front of this file), taken before MLX is
 #   imported and released by the RANK_CAPS report (both programs send it once the weights are in):
 #   one model load at a time per Mac, beside goose's single engine and every other split's ranks.
@@ -59,6 +60,11 @@ else:
 
 import mlx.core as mx  # noqa: E402
 
+# Where the program's own loop is (the tensor wrapper publishes it, rank_state.py): printed beside
+# every memory report as GOOSE_RANK_STATE, so a rank whose loop stops keeps saying where it stopped
+# into its durable log (Q-114). A program that publishes nothing prints no such line.
+published_state = [None]
+
 
 def report_memory():
     while True:
@@ -70,4 +76,6 @@ def report_memory():
                 "cache": mx.get_cache_memory(),
             },
         )
+        if published_state[0] is not None:
+            emit("RANK_STATE", published_state[0])
         time.sleep(spec["memory_report_seconds"])

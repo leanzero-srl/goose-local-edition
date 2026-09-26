@@ -11,7 +11,7 @@
 //! installed beyond its interpreter: `rank_env.py` (the backend env, `emit`, the memory reporter —
 //! every rank), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
 //! then the runner's program — `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
-//! `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
+//! `rank_state.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
 //! what an absent max_tokens generates, the prefill modules what a step and a batch may hold) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
 //! layer split, under `NodeConfig::pipeline_python`).
 
@@ -47,6 +47,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_budget.py"),
     include_str!("rank_prefill.py"),
     include_str!("rank_batch.py"),
+    include_str!("rank_state.py"),
     include_str!("rank_wrapper.py")
 );
 const PIPELINE_PROGRAM: &str = concat!(
@@ -466,6 +467,11 @@ pub struct RankLive {
     pub memory: Option<RankMemory>,
     /// The rank printed its `GOOSE_READY` (the pipeline server, after its warm-up batch).
     pub ready: bool,
+    /// The rank's last `GOOSE_RANK_STATE`: where its generation loop was (rank_state.py).
+    pub state: Option<serde_json::Value>,
+    /// Where the rank's whole output is kept on the Mac whose goosed reads it (rank_log.rs) —
+    /// the file's path, or why there is none.
+    pub log: Option<String>,
 }
 
 /// Where a rank's start is, from its own reports. Both rank programs report `RANK_CAPS` once the
@@ -523,6 +529,11 @@ impl RankLive {
                 self.memory = Some(memory);
             }
             return;
+        } else if let Some(state) = line.strip_prefix("GOOSE_RANK_STATE ") {
+            if let Ok(state) = serde_json::from_str(state) {
+                self.state = Some(state);
+                return;
+            }
         }
         if self.tail.len() == TAIL_LINES {
             self.tail.pop_front();
@@ -554,13 +565,131 @@ impl RankProcess {
     }
 }
 
-fn read_lines<R: AsyncRead + Unpin + Send + 'static>(reader: R, live: Arc<StdMutex<RankLive>>) {
+impl RankLive {
+    /// Where this rank's whole output is, and its last account of its loop (rank_state.py), in
+    /// one line — what a hang or a death names for the post-mortem.
+    pub fn evidence(&self) -> String {
+        let state = match &self.state {
+            Some(state) => {
+                let field = |key: &str| match state.get(key) {
+                    Some(serde_json::Value::String(text)) => text.clone(),
+                    Some(value) => value.to_string(),
+                    None => "?".to_string(),
+                };
+                format!(
+                    "steps {}, at {}, mode {}, rows {}, rings {}",
+                    field("steps"),
+                    field("at"),
+                    field("mode"),
+                    field("rows"),
+                    field("rings")
+                )
+            }
+            None => "no loop state reported".to_string(),
+        };
+        let log = self
+            .log
+            .as_deref()
+            .unwrap_or("not reported (its goosed keeps no durable rank log)");
+        format!("{state}; log {log}")
+    }
+}
+
+/// The durable log both of a rank's streams append to, or `None` once it failed (the failure is
+/// then in the rank's tail and `RankLive::log`).
+type SharedLog = Arc<StdMutex<Option<super::rank_log::RankLog>>>;
+
+/// Opens `rank`'s durable log on this Mac. A log that cannot be opened is said, in the tail and in
+/// `RankLive::log` — never a silent absence.
+fn open_rank_log(rank: usize, node: &str, live: &StdMutex<RankLive>) -> SharedLog {
+    let opened = super::rank_log::rank_log_dir()
+        .and_then(|dir| super::rank_log::RankLog::open(&dir, rank, node));
+    let mut live = live.lock().unwrap();
+    match opened {
+        Ok(log) => {
+            live.log = Some(log.path().display().to_string());
+            Arc::new(StdMutex::new(Some(log)))
+        }
+        Err(e) => {
+            let why = format!("unavailable: {e:#}");
+            tracing::warn!(rank, node, "distributed engine: rank log {why}");
+            live.take_line(&format!("goose: this rank's durable log is {why}"));
+            live.log = Some(why);
+            Arc::new(StdMutex::new(None))
+        }
+    }
+}
+
+fn record(live: &StdMutex<RankLive>, log: &SharedLog, stream: &str, line: &str) {
+    let failed = {
+        let mut log = log.lock().unwrap();
+        let failed = log.as_mut().and_then(|l| {
+            l.append(stream, line)
+                .err()
+                .map(|e| (l.path().to_owned(), e))
+        });
+        if failed.is_some() {
+            *log = None;
+        }
+        failed
+    };
+    let mut live = live.lock().unwrap();
+    if let Some((path, e)) = failed {
+        let why = format!(
+            "stopped: {e:#} (the output up to here is in {})",
+            path.display()
+        );
+        tracing::warn!("distributed engine: rank log {why}");
+        live.take_line(&format!("goose: this rank's durable log {why}"));
+        live.log = Some(why);
+    }
+    live.take_line(line);
+}
+
+/// Drains one of a rank's streams to EOF: every line into the durable log, then the live view.
+/// Bytes that are not UTF-8 are read lossily rather than ending the drain — a reader that stopped
+/// would leave the rank blocked on a full pipe at 0% CPU, the very state a hang shows.
+fn read_lines<R: AsyncRead + Unpin + Send + 'static>(
+    reader: R,
+    stream: &'static str,
+    live: Arc<StdMutex<RankLive>>,
+    log: SharedLog,
+) {
     tokio::spawn(async move {
-        let mut lines = BufReader::new(reader).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            live.lock().unwrap().take_line(line.trim_end_matches('\r'));
+        let mut reader = BufReader::new(reader);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    let text = String::from_utf8_lossy(&buf);
+                    let line = text.trim_end_matches('\n').trim_end_matches('\r');
+                    record(&live, &log, stream, line);
+                }
+                Err(e) => {
+                    record(
+                        &live,
+                        &log,
+                        stream,
+                        &format!("goose: reading the rank's std{stream} failed: {e}"),
+                    );
+                    break;
+                }
+            }
         }
     });
+}
+
+/// Attaches the drains, and the durable log, to a spawned rank's two streams.
+fn drain_rank_output(child: &mut Child, rank: usize, node: &str, live: &Arc<StdMutex<RankLive>>) {
+    let log = open_rank_log(rank, node, live);
+    if let Some(stdout) = child.stdout.take() {
+        read_lines(stdout, "out", Arc::clone(live), Arc::clone(&log));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        read_lines(stderr, "err", Arc::clone(live), log);
+    }
 }
 
 pub fn spawn_rank(node: &NodeConfig, spec: &RankSpec) -> Result<RankProcess> {
@@ -601,12 +730,7 @@ pub fn spawn_rank(node: &NodeConfig, spec: &RankSpec) -> Result<RankProcess> {
         pid: if node.is_local() { child.id() } else { None },
         ..Default::default()
     }));
-    if let Some(stdout) = child.stdout.take() {
-        read_lines(stdout, Arc::clone(&live));
-    }
-    if let Some(stderr) = child.stderr.take() {
-        read_lines(stderr, Arc::clone(&live));
-    }
+    drain_rank_output(&mut child, spec.rank, &node.name, &live);
     Ok(RankProcess {
         rank: spec.rank,
         node: node.name.clone(),
@@ -1356,7 +1480,7 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
         }
         let wrapper = include_str!("rank_wrapper.py");
         let start = wrapper
-            .find("import socket  # noqa")
+            .find("import faulthandler  # noqa")
             .expect("the wrapper's body starts after the group check");
         let end = wrapper
             .find("server.main()")
@@ -1477,7 +1601,7 @@ print("GOOSE_TEST " + json.dumps({
 }))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}\
+            "{}{}{}{}{}{}{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}{checks}",
             include_str!("rank_load_lock.py"),
@@ -1486,6 +1610,7 @@ print("GOOSE_TEST " + json.dumps({
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
+            include_str!("rank_state.py"),
             &wrapper[start..end]
         );
         let seen = run_against_real_packages(&python, &program, &spec);
@@ -1707,6 +1832,7 @@ print("ok")
                 include_str!("rank_budget.py"),
                 include_str!("rank_prefill.py"),
                 include_str!("rank_batch.py"),
+                include_str!("rank_state.py"),
                 include_str!("rank_wrapper.py")
             )
         );
@@ -1927,6 +2053,7 @@ print("ok")
              \x20       self._generation_batch, self._prompt_batch = _Rows(), _Rows()\n\
              \x20       self._unprocessed_sequences, self._currently_processing = [], []\n\
              \x20   def close(self): pass\n\
+             \x20   def remove(self, uids): pass\n\
              \x20   def next(self): return [], []\n\
              class ResponseGenerator:\n\
              \x20   def _next_request(self, timeout=None): pass\n\
@@ -2137,6 +2264,264 @@ print("ok")
         assert_eq!(live.phase(), RankPhase::Warming);
         live.take_line("GOOSE_READY {\"rank\": 1, \"pid\": 7, \"layers\": [20, 48]}");
         assert_eq!(live.phase(), RankPhase::Ready);
+    }
+
+    /// rank_state.py under a real interpreter: a row's token trail checkpoints at every power of
+    /// two, so two ranks' trails bracket where their samples diverged; a published snapshot never
+    /// changes after the reporter may hold it; a row that ended — sampled to a stop, or removed —
+    /// stays visible as `ended`.
+    #[test]
+    fn a_ranks_loop_state_says_where_it_is_and_what_it_sampled() {
+        let checks = r#"
+import json
+t, u = TokenTrail(), TokenTrail()
+for token in (5, 7, 9, 11, 13):
+    t.fold(token)
+for token in (5, 7, 9, 12, 13):
+    u.fold(token)
+assert t.generated == 5 and sorted(t.checkpoints) == ["1", "2", "4"], t.checkpoints
+assert t.checkpoints["2"] == u.checkpoints["2"], "the same first two tokens, the same checkpoint"
+assert t.checkpoints["4"] != u.checkpoints["4"], "the fourth token differs: the bracket is (2, 4]"
+loop = LoopState(1)
+loop.fold(0, 5, None)
+loop.publish("batch")
+first = published_state[0]
+loop.fold(0, 7, "stop")
+loop.steps = 2
+loop.publish("idle")
+assert first["trails"][0]["generated"] == 1 and first["at"] == "batch", first
+now = published_state[0]
+assert now["trails"] == [] and now["ended"]["how"] == "stop" and now["ended"]["generated"] == 2, now
+loop.new_batch()
+loop.fold(0, 3, None)
+loop.drop([0])
+loop.publish("doorbell")
+assert published_state[0]["ended"]["how"] == "removed" and published_state[0]["at"] == "doorbell"
+json.dumps(published_state[0])
+print("ok")
+"#;
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!(
+                "published_state = [None]\n{}{checks}",
+                include_str!("rank_state.py")
+            ))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    async fn wait_for<T>(what: &str, mut probe: impl FnMut() -> Option<T>) -> T {
+        for _ in 0..600 {
+            if let Some(found) = probe() {
+                return found;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        panic!("never saw {what}");
+    }
+
+    /// The drain never stops before EOF: a line that is not UTF-8 is read lossily. The old
+    /// `lines()` loop ended at the first such line, and a rank whose pipe nobody drains blocks on
+    /// its next write at 0% CPU — Q-114's rank 1 state. Every line also lands in the durable log,
+    /// the memory and state reports the tail leaves out included, tagged with its stream.
+    #[tokio::test]
+    async fn a_rank_line_that_is_not_utf8_never_ends_the_drain() {
+        let mut child = tokio::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                r#"printf 'first\n\377\376 torn\nGOOSE_RANK_STATE {"steps": 7, "at": "doorbell"}\n'; printf 'on stderr\n' >&2"#,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let live = Arc::new(StdMutex::new(RankLive::default()));
+        drain_rank_output(&mut child, 1, "studio", &live);
+        assert!(child.wait().await.unwrap().success());
+        wait_for("four lines", || {
+            (live.lock().unwrap().lines == 4).then_some(())
+        })
+        .await;
+        let live = live.lock().unwrap();
+        assert_eq!(live.state.as_ref().unwrap()["steps"], 7);
+        let tail = live.tail_text();
+        assert!(
+            tail.contains("first") && tail.contains("\u{FFFD}\u{FFFD} torn"),
+            "{tail}"
+        );
+        assert!(
+            tail.contains("on stderr") && !tail.contains("GOOSE_RANK_STATE"),
+            "{tail}"
+        );
+        let log = std::fs::read_to_string(live.log.as_deref().unwrap()).unwrap();
+        assert_eq!(log.lines().count(), 4, "{log}");
+        assert!(log.contains(" out GOOSE_RANK_STATE {\"steps\": 7"), "{log}");
+        assert!(log.contains(" err on stderr"), "{log}");
+    }
+
+    /// Q-114's missing evidence, reproduced on the REAL tensor wrapper against the real mlx_lm
+    /// 0.31.3 (CPU, no model, MLX's group the one stand-in): a worker rank takes three steps while
+    /// a batch runs, then its loop asks with a timeout — the batch is over on this rank — and it
+    /// parks on the doorbell of a rank 0 that never rings. goosed's drain keeps its output in the
+    /// durable log; the rank's last GOOSE_RANK_STATE there says it is parked at the doorbell after
+    /// step 3 with no ring received, and the SIGTERM goosed sends a hung pair leaves every thread's
+    /// stack there too — Doorbell.wait under _next_request — before the rank dies of the signal as
+    /// before. On 3.0.45 the same stall left nothing: no state line, no stack, no file.
+    #[tokio::test]
+    async fn a_parked_worker_leaves_its_step_and_doorbell_state_in_its_durable_log() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let mut spec = rank_specs(
+            &config,
+            "node-alias",
+            &[launch(1, 1), launch(1, 1)],
+            8_192,
+            2.0,
+        )
+        .remove(1);
+        spec.memory_report_seconds = 0.05;
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let prelude = r#"
+import socket
+mx.set_default_device(mx.cpu)
+
+class _Group:
+    def rank(self): return 1
+    def size(self): return 2
+
+group = _Group()
+# MLX's own collectives run in a group of one here (no JACCL devices): an all_sum is the identity.
+os.environ.pop("MLX_IBV_DEVICES")
+os.environ.pop("MLX_RANK")
+# Rank 0's side of the doorbell, played here: it accepts the worker and never rings.
+rank0 = socket.create_server(("127.0.0.1", 0))
+os.environ["MLX_JACCL_COORDINATOR"] = "127.0.0.1:1"
+peers = []
+threading.Thread(target=lambda: peers.append(rank0.accept()), daemon=True).start()
+real_all_sum = mx.distributed.all_sum
+mx.distributed.all_sum = lambda x, *a, **k: real_all_sum(x, *a, **k) + rank0.getsockname()[1]
+"#;
+        let steps = r#"
+mx.distributed.all_sum = real_all_sum
+assert doorbell is not None and doorbell.link is not None
+responses = server.ResponseGenerator.__new__(server.ResponseGenerator)
+responses._is_distributed, responses._rank = True, 1
+threading.Thread(target=report_memory, daemon=True).start()
+for _ in range(3):
+    assert responses._next_request(None) is None
+threading.Thread(target=responses._next_request, args=(0.1,), daemon=True).start()
+threading.Event().wait()
+"#;
+        let program = format!(
+            "{}{}{}{}{}{}{}{prelude}{}{steps}",
+            include_str!("rank_load_lock.py"),
+            include_str!("rank_env.py"),
+            include_str!("rank_live.py"),
+            include_str!("rank_budget.py"),
+            include_str!("rank_prefill.py"),
+            include_str!("rank_batch.py"),
+            include_str!("rank_state.py"),
+            &wrapper[start..end]
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let mut child = tokio::process::Command::new(&python)
+            .arg("-c")
+            .arg(program)
+            .arg("goose-sidecar-test")
+            .arg(
+                base64::engine::general_purpose::STANDARD
+                    .encode(serde_json::to_vec(&spec).unwrap()),
+            )
+            .env("TMPDIR", tmp.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let live = Arc::new(StdMutex::new(RankLive::default()));
+        drain_rank_output(&mut child, 1, "Work’s Mac Studio", &live);
+        let parked = wait_for("the worker parked at the doorbell", || {
+            let live = live.lock().unwrap();
+            live.state
+                .clone()
+                .filter(|state| state["at"] == "doorbell")
+                .or_else(|| {
+                    assert!(
+                        !live.tail_text().contains("Traceback"),
+                        "{}",
+                        live.tail_text()
+                    );
+                    None
+                })
+        })
+        .await;
+        assert_eq!(parked["rank"], 1);
+        assert_eq!(
+            parked["steps"], 3,
+            "its own step count: three busy steps, then parked"
+        );
+        assert_eq!(parked["mode"], "idle", "{parked}");
+        assert_eq!(parked["rings"], 0, "no ring ever came");
+        let evidence = live.lock().unwrap().evidence();
+        assert!(
+            evidence.contains("steps 3, at doorbell, mode idle, rows 0, rings 0; log /"),
+            "{evidence}"
+        );
+
+        let pid = child.id().unwrap() as libc::pid_t;
+        // SAFETY: the test's own child, signalled by its pid alone.
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+        let status = child.wait().await.unwrap();
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(
+            status.signal(),
+            Some(libc::SIGTERM),
+            "the rank still dies of the signal"
+        );
+        let path = live.lock().unwrap().log.clone().unwrap();
+        let log = wait_for("the SIGTERM stack dump in the durable log", || {
+            let log = std::fs::read_to_string(&path).unwrap();
+            log.contains("in _next_request").then_some(log)
+        })
+        .await;
+        assert!(
+            log.contains(" err Thread 0x") || log.contains(" err Current thread 0x"),
+            "{log}"
+        );
+        let lines: Vec<&str> = log.lines().collect();
+        let caller = lines
+            .iter()
+            .position(|l| l.ends_with(" in _next_request"))
+            .unwrap_or_else(|| panic!("{log}"));
+        assert!(
+            lines[caller - 1].ends_with(" in wait"),
+            "most recent call first: Doorbell.wait under _next_request: {log}"
+        );
+        let last_state = log
+            .lines()
+            .filter_map(|l| l.split_once(" out GOOSE_RANK_STATE ").map(|(_, json)| json))
+            .next_back()
+            .unwrap_or_else(|| panic!("{log}"));
+        let last_state: serde_json::Value = serde_json::from_str(last_state).unwrap();
+        assert_eq!(
+            (&last_state["at"], &last_state["steps"]),
+            (&serde_json::json!("doorbell"), &serde_json::json!(3))
+        );
     }
 
     #[test]
