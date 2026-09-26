@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "確認中…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "閉じる"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "モデルを読み込み中..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "ローカルモデル設定"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "{elapsed} 書き込み中 · {tokens} トークン"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "このチャットを確認中…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {{tool} へのツール呼び出し 1 件} other {ツール呼び出し # 件、最新は {tool}}}"

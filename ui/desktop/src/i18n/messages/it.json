@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Controllo…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Chiudi"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Caricamento modello..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Impostazioni modello locale"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "Scrive da {elapsed} · {tokens} token"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "controllo di questa chat…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {una chiamata a {tool}} other {# chiamate a strumenti, l’ultima a {tool}}}"

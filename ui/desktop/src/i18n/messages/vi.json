@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Đang kiểm tra…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Đóng"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Đang tải mô hình..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Cài đặt mô hình cục bộ"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "Đang viết được {elapsed} · {tokens} token"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "đang kiểm tra cuộc trò chuyện này…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {một lệnh gọi tới {tool}} other {# lệnh gọi công cụ, mới nhất tới {tool}}}"

@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "जाँच हो रही है…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "बंद करें"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "मॉडल लोड हो रहा है..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "स्थानीय मॉडल Settings"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "{elapsed} से लिख रहा है · {tokens} टोकन"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "यह चैट जाँची जा रही है…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {{tool} को एक टूल कॉल} other {# टूल कॉल, नवीनतम {tool} को}}"

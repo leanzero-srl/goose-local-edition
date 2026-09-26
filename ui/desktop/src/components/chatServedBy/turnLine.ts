@@ -7,6 +7,10 @@ import { turnCueText } from './turnCueText';
 import type { TurnCue } from './turnStatus';
 
 const i18n = defineMessages({
+  checking: {
+    id: 'turnLine.checking',
+    defaultMessage: 'checking this chat…',
+  },
   swarmHeld: {
     id: 'turnLine.swarmHeld',
     defaultMessage: 'swarm paused — nothing is running until you resume',
@@ -61,7 +65,11 @@ export function turnLine(
   cue: TurnCue | null,
   last: Message | undefined
 ): TurnLine {
-  if (chatState === ChatState.LoadingConversation) return { message: undefined, forming: null };
+  // Until the session's first read nothing is known about a turn (Q-158): one neutral word, never
+  // "loading" beside a Stop square and a "0 /" counter while the model may be serving elsewhere.
+  if (chatState === ChatState.LoadingConversation) {
+    return { message: intl.formatMessage(i18n.checking), forming: null };
+  }
   if (held) return { message: intl.formatMessage(i18n.swarmHeld), forming: null };
   const forming = formingOf(last);
   if (!cue) return { message: getThinkingMessage(last), forming };

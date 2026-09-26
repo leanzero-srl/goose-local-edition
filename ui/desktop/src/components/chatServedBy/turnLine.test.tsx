@@ -52,7 +52,8 @@ const served = (over: Partial<ChatServedBy> = {}): ChatServedBy => ({
   ...over,
 });
 
-const TEXT = 'Now I have the decisions. Let me append each one to the ledger, then write the notes.';
+const TEXT =
+  'Now I have the decisions. Let me append each one to the ledger, then write the notes.';
 const FORMING: FormingStatus = {
   calls: [
     ...Array.from({ length: 40 }, () => ({
@@ -92,9 +93,11 @@ describe('Q-151: the status line leads with the engine’s own time, tokens and 
   });
 
   it('no rate before two tokens (a rate needs an interval) and no cue while the request waits', () => {
-    expect(writingProgress({ ...WRITING, completionTokens: 1, tokensPerSecond: 1048576 })).toEqual(
-      { elapsedS: 2355, tokens: 1, tps: null }
-    );
+    expect(writingProgress({ ...WRITING, completionTokens: 1, tokensPerSecond: 1048576 })).toEqual({
+      elapsedS: 2355,
+      tokens: 1,
+      tps: null,
+    });
     expect(writingProgress({ ...WRITING, status: 'waiting' })).toBeNull();
     expect(writingProgress({ ...WRITING, phase: 'prefill' })).toBeNull();
   });
@@ -126,6 +129,15 @@ describe('Q-151: the status line leads with the engine’s own time, tokens and 
     expect(
       turnLine(intl, ChatState.Streaming, false, cue, progressMessage(undefined)).message
     ).toBe('Writing for 39m 15s · 24k tokens · 11.0 tok/s');
+  });
+});
+
+describe('Q-158: opening a chat says one neutral word until the first read', () => {
+  it('"checking this chat…" — whatever the last message or the engine held', () => {
+    const cue = pickTurnCue({ served: served(), inFlight: true, lostTo: null, silent: false });
+    expect(
+      turnLine(intl, ChatState.LoadingConversation, false, cue, progressMessage(FORMING))
+    ).toEqual({ message: 'checking this chat…', forming: null });
   });
 });
 

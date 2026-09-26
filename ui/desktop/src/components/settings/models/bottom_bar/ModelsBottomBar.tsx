@@ -48,9 +48,9 @@ const i18n = defineMessages({
     id: 'modelsBottomBar.currentModel',
     defaultMessage: 'Current model',
   },
-  loadingModel: {
-    id: 'modelsBottomBar.loadingModel',
-    defaultMessage: 'Loading model...',
+  checking: {
+    id: 'modelsBottomBar.checking',
+    defaultMessage: 'Checking…',
   },
   changeModel: {
     id: 'modelsBottomBar.changeModel',
@@ -255,8 +255,8 @@ export default function ModelsBottomBar({
   const [isLocalModelSettingsOpen, setIsLocalModelSettingsOpen] = useState(false);
   const [providerDefaultModel, setProviderDefaultModel] = useState<string | null>(null);
 
-  // Show a visible loading placeholder while session metadata is still being fetched,
-  // rather than flashing the config default or leaving the footer blank.
+  // Until the session's first read, a neutral "Checking…" — never the config default, a blank, or
+  // "Loading model…", which read as a model load while the engine served another chat (Q-158).
   const isModelLoading = Boolean(sessionId && !sessionLoaded);
   const displayModel = currentModel || providerDefaultModel || displayModelName;
   const resolvedModel = latestInference?.resolvedModel ?? null;
@@ -267,9 +267,9 @@ export default function ModelsBottomBar({
     latestInference?.requestedModel === currentModel &&
     resolvedModel !== currentModel
   );
-  const loadingModelLabel = intl.formatMessage(i18n.loadingModel);
-  const triggerLabel = isModelLoading ? loadingModelLabel : displayModel;
-  const menuModelLabel = isModelLoading ? loadingModelLabel : displayModelName;
+  const checkingLabel = intl.formatMessage(i18n.checking);
+  const triggerLabel = isModelLoading ? checkingLabel : displayModel;
+  const menuModelLabel = isModelLoading ? checkingLabel : displayModelName;
 
   useEffect(() => {
     if (!currentProvider) return;

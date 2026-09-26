@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Vérification…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Fermer"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Chargement du modèle..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Paramètres du modèle local"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "Écrit depuis {elapsed} · {tokens} jetons"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "vérification de cette discussion…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {un appel à {tool}} other {# appels d’outils, le dernier à {tool}}}"

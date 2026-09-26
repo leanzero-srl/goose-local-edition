@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "확인 중…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "닫기"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "모델 로드 중..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "로컬 모델 설정"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "{elapsed} 동안 작성 중 · 토큰 {tokens}개"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "이 채팅을 확인하는 중…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {{tool} 도구 호출 1개} other {도구 호출 #개, 최근 호출은 {tool}}}"

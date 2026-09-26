@@ -115,7 +115,7 @@ describe('ModelsBottomBar', () => {
     mockChangeModel.mockResolvedValue(true);
   });
 
-  it('shows a loading placeholder while the active session model is still loading', async () => {
+  it('Q-158: a neutral "Checking…" until the session is read — never "Loading model…"', async () => {
     renderWithIntl(
       <ModelsBottomBar
         sessionId="session-123"
@@ -126,7 +126,8 @@ describe('ModelsBottomBar', () => {
       />
     );
 
-    expect(screen.getByTestId('model-loading-state')).toHaveTextContent('Loading model...');
+    expect(screen.getByTestId('model-loading-state')).toHaveTextContent('Checking…');
+    expect(screen.queryByText(/Loading model/)).toBeNull();
   });
 
   it('shows the active session model once the session has loaded', async () => {

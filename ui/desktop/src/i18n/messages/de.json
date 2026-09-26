@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Prüfe…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Schließen"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Modell wird geladen..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Lokale Modelleinstellungen"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "Schreibt seit {elapsed} · {tokens} Tokens"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "prüfe diesen Chat…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {ein Tool-Aufruf an {tool}} other {# Tool-Aufrufe, der letzte an {tool}}}"

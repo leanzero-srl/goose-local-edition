@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Проверка…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Закрыть"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Загрузка модели..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Настройки локальной модели"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "Пишет уже {elapsed} · {tokens} токенов"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "проверяю этот чат…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {# вызов инструмента, последний — {tool}} few {# вызова инструментов, последний — {tool}} other {# вызовов инструментов, последний — {tool}}}"

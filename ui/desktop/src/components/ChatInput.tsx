@@ -334,7 +334,10 @@ export default function ChatInput({
   const effectiveProvider = modelOverride?.provider ?? sessionProvider ?? configProvider;
   const isSwarmProvider = effectiveProvider === 'swarm';
   // Where chat goes — ONE derivation for the chip, the readiness bar and the counter's MLX window.
-  const chatServing = useChatServedBy(effectiveProvider, sessionId, isLoading);
+  // Before the session's first read there is no turn — only a chat being opened (Q-158): nothing
+  // here may say a turn runs (no Stop, no "0 /" counter, no turn attributed on the engine).
+  const checkingSession = chatState === ChatState.LoadingConversation;
+  const chatServing = useChatServedBy(effectiveProvider, sessionId, isLoading && !checkingSession);
   const servedRef = useRef(chatServing.served);
   servedRef.current = chatServing.served;
   useEffect(() => {
@@ -1840,12 +1843,14 @@ export default function ChatInput({
             )}
 
             {/* Right: context window indicator (its own chip) */}
-            <ContextWindowIndicator
-              totalTokens={shownTokens}
-              tokenLimit={tokenLimit}
-              alerts={alerts}
-              liveTokens={chatServing.served.turnRequest?.completionTokens ?? 0}
-            />
+            {!checkingSession && (
+              <ContextWindowIndicator
+                totalTokens={shownTokens}
+                tokenLimit={tokenLimit}
+                alerts={alerts}
+                liveTokens={chatServing.served.turnRequest?.completionTokens ?? 0}
+              />
+            )}
 
             {/* Right: extension selector — hidden per pass E (SHOW_EXTENSIONS_SELECTOR) */}
             {SHOW_EXTENSIONS_SELECTOR && (
@@ -1942,7 +1947,7 @@ export default function ChatInput({
         )}
 
         {/* Right: send = the one primary (accent) Button in the bar; stop = a secondary Button */}
-        {isLoading && !hasSubmittableContent ? (
+        {isLoading && !checkingSession && !hasSubmittableContent ? (
           <StudioButton
             variant="secondary"
             size="sm"

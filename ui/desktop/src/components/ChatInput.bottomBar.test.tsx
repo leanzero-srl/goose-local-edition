@@ -99,6 +99,52 @@ const mount = (provider: string) =>
     </IntlTestWrapper>
   );
 
+/**
+ * Q-158, round live-1: for ~1 s after opening an idle chat the composer showed a Stop square and
+ * "0 / 262k" while the session was still being read (and the engine served another chat).
+ */
+describe('ChatInput while the session is first read (Q-158)', () => {
+  it('no Stop square and no counter — nothing is running here yet', async () => {
+    render(
+      <IntlTestWrapper>
+        <ChatInput
+          sessionId="sess-1"
+          handleSubmit={vi.fn()}
+          chatState={ChatState.LoadingConversation}
+          setView={vi.fn()}
+          sessionModel="test-model"
+          sessionProvider="anthropic"
+          sessionLoaded={false}
+          workingDir="/tmp"
+        />
+      </IntlTestWrapper>
+    );
+    await waitFor(() => expect(screen.getByTestId('models-bottom-bar')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.queryByTestId('context-indicator')).toBeNull();
+  });
+
+  it('a turn in flight keeps its Stop and its counter', async () => {
+    render(
+      <IntlTestWrapper>
+        <ChatInput
+          sessionId="sess-1"
+          handleSubmit={vi.fn()}
+          chatState={ChatState.Streaming}
+          setView={vi.fn()}
+          sessionModel="test-model"
+          sessionProvider="anthropic"
+          sessionLoaded
+          workingDir="/tmp"
+        />
+      </IntlTestWrapper>
+    );
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument());
+    expect(screen.getByTestId('context-indicator')).toBeInTheDocument();
+  });
+});
+
 const chipAround = (testId: string) =>
   screen.getByTestId(testId).closest<HTMLElement>('[data-testid="lz-chip"]');
 

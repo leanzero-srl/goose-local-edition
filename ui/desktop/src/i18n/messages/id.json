@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Memeriksa…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Tutup"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Memuat model..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Pengaturan Model Lokal"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "Menulis selama {elapsed} · {tokens} token"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "memeriksa obrolan ini…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {satu panggilan ke {tool}} other {# panggilan alat, yang terbaru ke {tool}}}"

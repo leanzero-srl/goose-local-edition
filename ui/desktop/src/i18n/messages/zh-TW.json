@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "正在檢查…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "關閉"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "正在載入模型…"
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "本機模型設定"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "已寫 {elapsed} · {tokens} 個 token"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "正在檢查此聊天…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {對 {tool} 的一個工具呼叫} other {# 個工具呼叫，最新的是 {tool}}}"

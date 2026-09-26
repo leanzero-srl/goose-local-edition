@@ -4703,6 +4703,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Kontrol ediliyor…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Kapat"
   },
@@ -4711,9 +4714,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Model yükleniyor..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Yerel Model Ayarları"
@@ -7888,6 +7888,9 @@
   },
   "turnCue.writingNoRate": {
     "defaultMessage": "{elapsed} süredir yazıyor · {tokens} token"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "bu sohbet kontrol ediliyor…"
   },
   "turnLine.formingCalls": {
     "defaultMessage": "{count, plural, one {{tool} için bir araç çağrısı} other {# araç çağrısı, sonuncusu {tool}}}"
