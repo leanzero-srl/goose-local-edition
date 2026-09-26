@@ -1440,8 +1440,23 @@ mod tests {
         );
 
         drop(listener);
+
+        // The leftover file is made by a child that binds and exits, never by this process:
+        // a sibling test forking between this test's bind and drop inherits the listener fd
+        // until its exec, so an in-process bind can still be "held" (CI run 36253567063 read
+        // this test's own pid behind the dropped socket).
+        let leftover = dir.path().join("leftover.sock");
+        let status = std::process::Command::new("python3")
+            .args([
+                "-c",
+                "import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])",
+            ])
+            .arg(&leftover)
+            .status()
+            .expect("python3 binds the leftover socket");
+        assert!(status.success() && leftover.exists());
         assert_eq!(
-            super::socket_holder(&socket).unwrap(),
+            super::socket_holder(&leftover).unwrap(),
             None,
             "a leftover socket file with nobody behind it (ECONNREFUSED) is nobody"
         );
