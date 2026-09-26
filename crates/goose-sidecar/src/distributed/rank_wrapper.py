@@ -64,6 +64,11 @@
 # - the group's formation handshake (Q-136, rank_formation.py) before the doorbell's port all_sum:
 #   after an abnormal end the next group's first message could go nowhere and every collective
 #   then paired one message off.
+# - a streamed chat answer's tool calls stream as they are written (Q-141, rank_tool_stream.py):
+#   mlx_lm sends nothing while a call is written — E2E #3c's 12,556-token call reached goose as 18
+#   minutes of silence — so a relay sends the call's open frame and its arguments as OpenAI
+#   `tool_calls` deltas, the single engine's shape, and the call the client assembles is the one
+#   mlx_lm's parser reads from the whole text.
 group = mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -153,6 +158,8 @@ import importlib  # noqa: E402
 # split died at startup on it: 'function' object has no attribute 'PromptProcessingBatch').
 mlx_generate = importlib.import_module("mlx_lm.generate")  # noqa: E402
 import mlx_lm.server as server  # noqa: E402
+from mlx_lm.tool_parsers import qwen3_coder  # noqa: E402
+import uuid  # noqa: E402
 from collections import deque  # noqa: E402
 
 for owner, name in (
@@ -162,6 +169,11 @@ for owner, name in (
     (server.APIHandler, "do_POST"),
     (server.APIHandler, "validate_model_parameters"),
     (server.APIHandler, "_set_completion_headers"),
+    (server.APIHandler, "handle_completion"),
+    (server.APIHandler, "generate_response"),
+    (qwen3_coder, "parse_tool_call"),
+    (qwen3_coder, "_convert_param_value"),
+    (qwen3_coder, "_get_arguments_config"),
     (server.ModelProvider, "load"),
     (server.ResponseGenerator, "generate"),
     (server.ResponseGenerator, "_tokenize"),
@@ -832,6 +844,107 @@ def validate_model_parameters(self):
 server.APIHandler.do_GET = do_GET
 server.APIHandler.do_POST = do_POST
 server.APIHandler.validate_model_parameters = validate_model_parameters
+
+# Q-141 (rank_tool_stream.py): a streamed chat answer's tool calls reach the client as the model
+# writes them. mlx_lm's own handle_completion runs unchanged around a relay of its token stream:
+# while a call is written the relay sends its open frame and argument fragments, in the handler's
+# thread, between mlx_lm's own frames; when the call ends it sends the remainder of the parser's own
+# serialization. The formatter mlx_lm then runs on the same text is handed a parser that answers
+# "already delivered" (no calls), so no call is ever sent twice; finish_reason, text, reasoning and
+# usage stay mlx_lm's.
+original_handle_completion = server.APIHandler.handle_completion
+tool_stream_refusals = set()
+
+
+def delivered(tool_text, tools):
+    return []
+
+
+class StreamedToolCalls:
+    """The response generator as one streamed chat request's handler sees it."""
+
+    def __init__(self, handler, upstream):
+        self.handler = handler
+        self.upstream = upstream
+        self.parse = None
+        self.tools = None
+        self.index = 0
+
+    def __getattr__(self, name):
+        return getattr(self.upstream, name)
+
+    def generate(self, request, generation_args, progress_callback=None):
+        ctx, tokens = self.upstream.generate(request, generation_args, progress_callback)
+        if not ctx.has_tool_calling:
+            return ctx, tokens
+        if ctx.tool_parser is not qwen3_coder.parse_tool_call:
+            parser = getattr(ctx.tool_parser, "__module__", repr(ctx.tool_parser))
+            if parser not in tool_stream_refusals:
+                tool_stream_refusals.add(parser)
+                emit("RANK_TOOL_STREAM_UNSUPPORTED", {"parser": parser})
+            return ctx, tokens
+        self.parse = ctx.tool_parser
+        self.tools = request.tools
+        ctx.tool_parser = delivered
+        return ctx, self.relay(tokens)
+
+    def relay(self, tokens):
+        call = None
+        for gen in tokens:
+            if gen.state == "tool":
+                if call is None:
+                    call = [
+                        ToolCallStream(qwen3_coder._convert_param_value, qwen3_coder._get_arguments_config),
+                        str(uuid.uuid4()),
+                        self.index,
+                    ]
+                    self.index += 1
+                self.feed(call, gen.text)
+            elif call is not None:
+                self.finish(call)
+                call = None
+            yield gen
+        if call is not None:
+            self.finish(call)
+
+    def feed(self, call, text):
+        stream, call_id, index = call
+        opened, fragment = stream.feed(text, self.tools)
+        if opened is not None:
+            self.send({"index": index, "id": call_id, "type": "function",
+                       "function": {"name": opened, "arguments": fragment}})
+        elif fragment:
+            self.send({"index": index, "function": {"arguments": fragment}})
+
+    def finish(self, call):
+        stream, call_id, index = call
+        rest, why = stream.close(self.parse, self.tools)
+        if why is not None:
+            emit(
+                "RANK_TOOL_CALL_UNPARSED",
+                {"name": stream.name, "why": why, "chars": len(stream.text), "sent_chars": len(stream.sent)},
+            )
+            return
+        self.send({"index": index, "function": {"arguments": rest}})
+
+    def send(self, tool_call):
+        frame = self.handler.generate_response("", None, tool_calls=[tool_call])
+        self.handler.wfile.write(f"data: {json.dumps(frame)}\n\n".encode())
+        self.handler.wfile.flush()
+
+
+def handle_completion(self, request, stop_words):
+    if not (self.stream and self.object_type.startswith("chat.completion")):
+        return original_handle_completion(self, request, stop_words)
+    upstream = self.response_generator
+    self.response_generator = StreamedToolCalls(self, upstream)
+    try:
+        return original_handle_completion(self, request, stop_words)
+    finally:
+        self.response_generator = upstream
+
+
+server.APIHandler.handle_completion = handle_completion
 
 sys.argv = [
     "mlx_lm.server",

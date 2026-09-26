@@ -90,10 +90,13 @@ fn notify_tool_forming(event: ToolFormingEvent) {
 /// tool calls the response ended with; the rest arrived as `content` while the calls were forming.
 /// This reports the counts as they arrive — cumulative for the response, each value a fact from the
 /// stream — with no change to what the decoder yields.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FormingProgress {
     /// Tool calls opened so far.
     pub tool_calls: usize,
+    /// The tool the call opened last names: the one being written now (Q-141: the chat said only
+    /// "Writing" through 12,556 tokens of one call). Empty until a call opens.
+    pub writing: String,
     /// Characters of `function.arguments` received across them.
     pub argument_chars: usize,
     /// Characters of reasoning received while the calls formed (yielded with the calls).
@@ -1503,6 +1506,7 @@ where
                         if let (Some(id), Some(name)) = (&tool_call.id, &tool_call.function.name) {
                             let index = tool_call.index.unwrap_or(position as i32);
                             forming.tool_calls += 1;
+                            forming.writing.clone_from(name);
                             forming.argument_chars += tool_call.function.arguments.chars().count();
                             tool_call_data.insert(index, (id.clone(), name.clone(), tool_call.function.arguments.clone(), tool_call.extra.clone()));
                             notify_tool_forming(ToolFormingEvent::Forming {
@@ -1520,7 +1524,7 @@ where
                     }
                 }
 
-                notify_forming_progress(forming);
+                notify_forming_progress(forming.clone());
 
                 let is_complete = chunk.choices[0].finish_reason == Some("tool_calls".to_string());
 
@@ -1591,6 +1595,7 @@ where
                                                     }
                                                 } else if let (Some(id), Some(name)) = (&delta_call.id, &delta_call.function.name) {
                                                     forming.tool_calls += 1;
+                                                    forming.writing.clone_from(name);
                                                     forming.argument_chars += delta_call.function.arguments.chars().count();
                                                     tool_call_data.insert(index, (id.clone(), name.clone(), delta_call.function.arguments.clone(), delta_call.extra.clone()));
                                                     notify_tool_forming(ToolFormingEvent::Forming {
@@ -1608,7 +1613,7 @@ where
                                             }
                                         }
                                     }
-                                    notify_forming_progress(forming);
+                                    notify_forming_progress(forming.clone());
                                     if tool_chunk.choices[0].finish_reason.is_some() {
                                         done = true;
                                     }
@@ -3660,9 +3665,10 @@ data: [DONE]
 
         let seen = seen.lock().unwrap();
         assert_eq!(
-            seen.first().copied(),
+            seen.first().cloned(),
             Some(FormingProgress {
                 tool_calls: 1,
+                writing: "memory__remember_memory".to_string(),
                 argument_chars: "{\"category\":".chars().count(),
                 reasoning_chars: 0,
                 unplaced_text_chars: 0,
@@ -3670,9 +3676,10 @@ data: [DONE]
             "the open frame is reported the moment it arrives"
         );
         assert_eq!(
-            seen.last().copied(),
+            seen.last().cloned(),
             Some(FormingProgress {
                 tool_calls: 2,
+                writing: "memory__remember_memory".to_string(),
                 argument_chars: "{\"category\":\"releases\"}".chars().count() * 2,
                 reasoning_chars: 0,
                 unplaced_text_chars: "Let me verify it landed.Done.".chars().count(),
@@ -3717,6 +3724,109 @@ data: [DONE]
             .filter(|c| matches!(c, MessageContent::ToolRequest(_)))
             .count();
         assert_eq!(calls, 2);
+        Ok(())
+    }
+
+    /// Q-141: the tensor split's rank 0 (goose-sidecar rank_tool_stream.py) now streams a tool call
+    /// the way Rapid-MLX does. The frames here have the shape it wrote in its test against the real
+    /// mlx_lm 0.31.3 handler: `role` in every delta, the open frame carrying id, name and `{`, then
+    /// one fragment per token (inside a string the JSON escapes, split wherever the token ends), `}`,
+    /// an empty delta at `</tool_call>` and finish_reason `tool_calls` on a delta of its own. The
+    /// forming line names the tool from the open frame and grows with every fragment, and the call
+    /// goose runs is the one the fragments spell.
+    #[tokio::test]
+    async fn test_a_tool_call_streamed_by_the_tensor_split_forms_live_and_decodes_whole(
+    ) -> anyhow::Result<()> {
+        let command =
+            "printf \"%s\\n\" \"row 0: \u{fc}n\u{ef} \u{1f9a2} \\\\\" >> /tmp/out.txt\nls -la";
+        let arguments = serde_json::to_string(&json!({ "command": command }))?;
+        let frame = |delta: serde_json::Value, finish: Option<&str>| {
+            format!(
+                "data: {}",
+                json!({
+                    "id": "chatcmpl-split", "system_fingerprint": "test",
+                    "object": "chat.completion.chunk", "model": "node-alias", "created": 1,
+                    "choices": [{"index": 0, "finish_reason": finish, "delta": delta}],
+                })
+            )
+        };
+        let mut lines = vec![
+            frame(
+                json!({"role": "assistant", "content": "I'll write it.\n"}),
+                None,
+            ),
+            frame(
+                json!({"role": "assistant", "tool_calls": [{"index": 0, "id": "91ed7de4",
+                    "type": "function", "function": {"name": "shell", "arguments": "{"}}]}),
+                None,
+            ),
+        ];
+        let body: Vec<char> = arguments.chars().skip(1).collect();
+        for piece in body.chunks(3) {
+            let fragment: String = piece.iter().collect();
+            lines.push(frame(
+                json!({"role": "assistant", "tool_calls": [{"index": 0,
+                    "function": {"arguments": fragment}}]}),
+                None,
+            ));
+        }
+        lines.push(frame(json!({"role": "assistant"}), None));
+        lines.push(frame(json!({"role": "assistant"}), Some("tool_calls")));
+        lines.push("data: [DONE]".to_string());
+        let fragments = body.chunks(3).count();
+
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<FormingProgress>::new()));
+        let sink = seen.clone();
+        let observer: FormingProgressObserver =
+            std::sync::Arc::new(move |progress| sink.lock().unwrap().push(progress));
+        let decoded = FORMING_PROGRESS_OBSERVER
+            .scope(observer, decode_all(lines))
+            .await?;
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen.first().cloned(),
+            Some(FormingProgress {
+                tool_calls: 1,
+                writing: "shell".to_string(),
+                argument_chars: 1,
+                ..Default::default()
+            }),
+            "the open frame names the tool the moment it arrives"
+        );
+        assert!(
+            seen.len() > fragments,
+            "one report per fragment: {} for {fragments}",
+            seen.len()
+        );
+        assert!(
+            seen.windows(2)
+                .all(|w| w[0].argument_chars <= w[1].argument_chars),
+            "the size only grows"
+        );
+        assert_eq!(
+            seen.last().map(|p| p.argument_chars),
+            Some(arguments.chars().count())
+        );
+
+        let contents: Vec<&MessageContent> = decoded
+            .iter()
+            .filter_map(|(m, _)| m.as_ref())
+            .flat_map(|m| m.content.iter())
+            .collect();
+        let text: String = contents.iter().filter_map(|c| c.as_text()).collect();
+        assert_eq!(text, "I'll write it.\n");
+        let requests: Vec<_> = contents
+            .iter()
+            .filter_map(|c| match c {
+                MessageContent::ToolRequest(request) => Some(request),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(requests.len(), 1);
+        let call = requests[0].tool_call.as_ref().expect("the call parses");
+        assert_eq!(call.name, "shell");
+        assert_eq!(call.arguments, Some(object!({ "command": command })));
         Ok(())
     }
 
