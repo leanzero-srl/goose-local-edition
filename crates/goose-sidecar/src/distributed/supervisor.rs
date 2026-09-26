@@ -481,15 +481,36 @@ impl Shared {
 }
 
 /// The soak's hang rule over the supervisor's own measure. Progress on a poll = the rank-0 step
-/// counter advanced OR every rank's CPU time advanced (a long prefill chunk freezes the counter but
-/// not the ranks; a frozen rank or a blocked collective freezes both). A HANG is no progress for
-/// longer than `HANG_MEDIAN_MULTIPLE` × the running median of the intervals between progress —
-/// held until `HANG_MIN_SAMPLES` intervals exist.
+/// counter advanced OR every rank's own work advanced (a long prefill chunk freezes the counter but
+/// not the ranks; a frozen rank or a blocked collective freezes both). A rank's work is its GPU
+/// time while every rank's node reports one, else its CPU time. CPU alone let a hang through (Q-114
+/// repro B1, 4 min 19 s until stopped by hand): rank 0 stuck at 0% still spends CPU answering the
+/// supervisor's own `/v1/status` and `/goose/progress` polls, and its peer spins in the collective,
+/// so "every rank's CPU advanced" held on every poll. Neither rank's GPU runs in that state. A HANG
+/// is no progress for longer than `HANG_MEDIAN_MULTIPLE` × the running median of the intervals
+/// between progress — held until `HANG_MIN_SAMPLES` intervals exist.
 pub struct ProgressMeter {
     last_progress: Instant,
     intervals: VecDeque<Duration>,
     last_steps: Option<u64>,
     last_cpu: Vec<Option<u64>>,
+    last_gpu: Vec<Option<u64>>,
+}
+
+/// Which per-rank measure a poll's work arm read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkSignal {
+    Gpu,
+    Cpu,
+}
+
+impl WorkSignal {
+    fn described(self) -> &'static str {
+        match self {
+            WorkSignal::Gpu => "every rank's GPU time",
+            WorkSignal::Cpu => "every rank's CPU time (a node answers no GPU time)",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -499,6 +520,7 @@ pub struct MeterReading {
     pub median: Option<Duration>,
     pub bound: Option<Duration>,
     pub hang: bool,
+    pub signal: WorkSignal,
 }
 
 impl ProgressMeter {
@@ -508,6 +530,7 @@ impl ProgressMeter {
             intervals: VecDeque::new(),
             last_steps: None,
             last_cpu: vec![None; ranks],
+            last_gpu: vec![None; ranks],
         }
     }
 
@@ -525,22 +548,38 @@ impl ProgressMeter {
         now: Instant,
         steps: Option<u64>,
         cpu: &[Option<u64>],
+        gpu: &[Option<u64>],
     ) -> MeterReading {
+        fn all_advanced(now: &[Option<u64>], before: &[Option<u64>]) -> bool {
+            now.len() == before.len()
+                && now
+                    .iter()
+                    .zip(before)
+                    .all(|(now, before)| matches!((before, now), (Some(a), Some(b)) if b > a))
+        }
+        fn remember(slots: &mut [Option<u64>], values: &[Option<u64>]) {
+            for (slot, value) in slots.iter_mut().zip(values) {
+                if value.is_some() {
+                    *slot = *value;
+                }
+            }
+        }
         let steps_advanced = matches!((self.last_steps, steps), (Some(a), Some(b)) if b > a);
-        let cpu_advanced = cpu.len() == self.last_cpu.len()
-            && cpu
-                .iter()
-                .zip(&self.last_cpu)
-                .all(|(now, before)| matches!((before, now), (Some(a), Some(b)) if b > a));
-        let progressed = steps_advanced || cpu_advanced;
+        let signal = if gpu.iter().all(Option::is_some) {
+            WorkSignal::Gpu
+        } else {
+            WorkSignal::Cpu
+        };
+        let work_advanced = match signal {
+            WorkSignal::Gpu => all_advanced(gpu, &self.last_gpu),
+            WorkSignal::Cpu => all_advanced(cpu, &self.last_cpu),
+        };
+        let progressed = steps_advanced || work_advanced;
         if steps.is_some() {
             self.last_steps = steps;
         }
-        for (slot, value) in self.last_cpu.iter_mut().zip(cpu) {
-            if value.is_some() {
-                *slot = *value;
-            }
-        }
+        remember(&mut self.last_cpu, cpu);
+        remember(&mut self.last_gpu, gpu);
         if progressed {
             let interval = now.saturating_duration_since(self.last_progress);
             if self.intervals.len() == MEDIAN_WINDOW {
@@ -558,6 +597,7 @@ impl ProgressMeter {
             median,
             bound,
             hang: bound.is_some_and(|b| silent_for > b),
+            signal,
         }
     }
 }
@@ -1423,16 +1463,30 @@ pub(crate) fn sample_script(pid: Option<u32>) -> String {
         script.push_str(&format!(
             "echo; echo @@ps; /bin/ps -o pid=,stat=,time= -p {pid}\n"
         ));
+        // The rank's own GPU time: every Metal client of the process (IOGPUDeviceUserClient, one
+        // `{…}` block each) carries `AppUsage` with `accumulatedGPUTime` in ns; only the blocks
+        // whose `IOUserClientCreator` is this pid are printed.
+        script.push_str(&format!(
+            "echo; echo @@gputime; /usr/sbin/ioreg -r -c IOGPUDeviceUserClient -l -w0 | /usr/bin/awk \
+             -v p='\"pid {pid},' '/^ *[{{]/{{u=\"\";c=0}} /\"AppUsage\" =/{{u=$0}} \
+             /\"IOUserClientCreator\" = /{{if (index($0, p)) c=1}} /^ *[}}]/{{if (c) print u}}'\n"
+        ));
     }
     script.push_str("echo; echo @@end\n");
     script
 }
 
-/// One node's `NodeOp::Sample` answer: its memory, the kernel's pressure level, and the rank's
-/// ps row when a pid was asked for.
-fn parse_sample(
-    out: super::ExecOutput,
-) -> Result<(crate::MemoryReading, Pressure, Option<probe::ProcSample>)> {
+/// One node's `NodeOp::Sample` answer: its memory, the kernel's pressure level, the rank's ps
+/// row when a pid was asked for, and the rank's GPU time — `None` when the answer carries no
+/// `@@gputime` section (a Link peer whose goose builds the older sample script).
+struct NodeSample {
+    reading: crate::MemoryReading,
+    pressure: Pressure,
+    row: Option<probe::ProcSample>,
+    gpu_ns: Option<u64>,
+}
+
+fn parse_sample(out: super::ExecOutput) -> Result<NodeSample> {
     anyhow::ensure!(!out.ssh_failed(), "ssh failed: {}", out.stderr.trim());
     let sections = probe::sections(&out.stdout);
     let values = probe::parse_sysctl_values(probe::section(&sections, "sysctl")?, 2)?;
@@ -1442,7 +1496,16 @@ fn parse_sample(
         Some(text) => probe::parse_ps_row(text)?,
         None => None,
     };
-    Ok((reading, pressure, row))
+    let gpu_ns = sections
+        .get("gputime")
+        .map(|text| probe::parse_gpu_ns(text))
+        .transpose()?;
+    Ok(NodeSample {
+        reading,
+        pressure,
+        row,
+        gpu_ns,
+    })
 }
 
 /// The busy stretch's own growth measured against what is left on the node: `consumed` is what
@@ -1471,6 +1534,7 @@ async fn monitor(
     let mut meter = ProgressMeter::new(Instant::now(), ranks.len());
     let mut admission_closed = false;
     let mut blind_reported = vec![false; ranks.len()];
+    let mut gpu_blind_reported = vec![false; ranks.len()];
     // Per node: its available memory the last time the engine was idle (the busy stretch's start).
     let mut idle_available: Vec<Option<u64>> = vec![None; ranks.len()];
     let mut over_plan = vec![false; ranks.len()];
@@ -1530,6 +1594,7 @@ async fn monitor(
         .await;
 
         let mut cpu: Vec<Option<u64>> = vec![None; ranks.len()];
+        let mut gpu: Vec<Option<u64>> = vec![None; ranks.len()];
         let mut stats: Vec<Option<String>> = vec![None; ranks.len()];
         let mut worst = (Watchdog::Normal, EventKind::WatchdogWarn, String::new());
         let busy_now = progress.as_ref().map(|p| p.inflight > 0);
@@ -1537,7 +1602,12 @@ async fn monitor(
         for (rank, sample) in samples.into_iter().enumerate() {
             let node_name = ctx.config.nodes[rank].name.clone();
             let parsed = sample.and_then(parse_sample);
-            let (reading, pressure, row) = match parsed {
+            let NodeSample {
+                reading,
+                pressure,
+                row,
+                gpu_ns,
+            } = match parsed {
                 Ok(parsed) => parsed,
                 Err(e) => {
                     let message = format!("{e:#}");
@@ -1555,6 +1625,19 @@ async fn monitor(
             };
             blind_reported[rank] = false;
             if pids[rank].is_some() {
+                gpu[rank] = gpu_ns;
+                if gpu_ns.is_none() && !gpu_blind_reported[rank] {
+                    gpu_blind_reported[rank] = true;
+                    ctx.event(
+                        EventKind::WatchdogBlind,
+                        Some(&node_name),
+                        format!(
+                            "rank {rank}'s node answers no GPU time (its goose builds the older \
+                             sample): while it does, the hang rule reads every rank's CPU time \
+                             instead, which a rank stuck beside a spinning peer can still advance"
+                        ),
+                    );
+                }
                 match &row {
                     None => {
                         return RunOutcome::Failed(
@@ -1686,7 +1769,7 @@ async fn monitor(
         }
 
         let now = Instant::now();
-        let mut reading = meter.observe(now, progress.as_ref().map(|p| p.steps), &cpu);
+        let mut reading = meter.observe(now, progress.as_ref().map(|p| p.steps), &cpu, &gpu);
         let busy = progress.as_ref().is_none_or(|p| p.inflight > 0);
         judge_silence(&mut meter, now, busy, &mut reading);
         for rank in ranks.iter() {
@@ -1723,13 +1806,16 @@ async fn monitor(
                 None,
                 format!(
                     "progress-ratio rule: samples {}, median {} ms, bound {} ms ({HANG_MEDIAN_MULTIPLE}× \
-                     median), silent {} ms — the rank-0 step counter (last {:?}) and every rank's CPU \
-                     time stood still; rank ps stats {:?}; {}",
+                     median), silent {} ms — the rank-0 step counter (last {:?}) and {} stood \
+                     still (GPU ns {:?}, CPU centiseconds {:?}); rank ps stats {:?}; {}",
                     meter.intervals.len(),
                     reading.median.unwrap_or_default().as_millis(),
                     reading.bound.unwrap_or_default().as_millis(),
                     reading.silent_for.as_millis(),
                     progress.as_ref().map(|p| p.steps),
+                    reading.signal.described(),
+                    gpu,
+                    cpu,
                     stats,
                     ranks_evidence(ranks),
                 ),
@@ -1805,7 +1891,9 @@ async fn wait_memory_recovered(
         let mut recovered = Vec::new();
         for (node, sample) in ctx.config.nodes.iter().zip(samples) {
             match sample.and_then(parse_sample) {
-                Ok((reading, pressure, _)) => {
+                Ok(NodeSample {
+                    reading, pressure, ..
+                }) => {
                     let line = format!(
                         "{}: kernel {}, available {} of {} (WARN below {})",
                         node.name,
@@ -2911,6 +2999,9 @@ mod tests {
     use crate::distributed::exec::{BoxFuture, ExecOutput};
     use crate::distributed::launch::RankLive;
 
+    /// A node whose goose builds the older sample: no GPU time, so the meter reads CPU time.
+    const NO_GPU: &[Option<u64>] = &[None, None];
+
     fn at(start: Instant, ms: u64) -> Instant {
         start + Duration::from_millis(ms)
     }
@@ -2922,16 +3013,16 @@ mod tests {
     fn an_idle_engine_is_never_a_hang_and_work_after_idle_is_timed_from_its_start() {
         let start = Instant::now();
         let mut meter = ProgressMeter::new(start, 2);
-        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)]);
+        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], NO_GPU);
         for i in 1..=39u64 {
-            let r = meter.observe(at(start, i * 2_016), Some(i), &[Some(i), Some(i)]);
+            let r = meter.observe(at(start, i * 2_016), Some(i), &[Some(i), Some(i)], NO_GPU);
             assert!(r.progressed);
         }
         let last = 39 * 2_016;
         // Idle for 5 minutes: counter and CPU frozen, nothing in flight.
         for poll in 1..=150u64 {
             let now = at(start, last + poll * 2_016);
-            let mut r = meter.observe(now, Some(39), &[Some(39), Some(39)]);
+            let mut r = meter.observe(now, Some(39), &[Some(39), Some(39)], NO_GPU);
             judge_silence(&mut meter, now, false, &mut r);
             assert!(!r.hang, "idle poll {poll} read as a hang");
         }
@@ -2940,7 +3031,7 @@ mod tests {
         let mut caught = None;
         for poll in 1..=20u64 {
             let now = at(start, resumed + poll * 2_016);
-            let mut r = meter.observe(now, Some(39), &[Some(39), Some(39)]);
+            let mut r = meter.observe(now, Some(39), &[Some(39), Some(39)], NO_GPU);
             judge_silence(&mut meter, now, true, &mut r);
             if r.hang {
                 caught = Some(poll);
@@ -3058,20 +3149,25 @@ mod tests {
         // First poll only sets the baselines.
         assert!(
             !meter
-                .observe(at(start, 2_000), Some(10), &[Some(100), Some(100)])
+                .observe(at(start, 2_000), Some(10), &[Some(100), Some(100)], NO_GPU)
                 .progressed
         );
         // Healthy: the counter advances every 2 s poll.
         for i in 1..=5u64 {
-            let r = meter.observe(at(start, 2_000 + i * 2_000), Some(10 + i), &[None, None]);
+            let r = meter.observe(
+                at(start, 2_000 + i * 2_000),
+                Some(10 + i),
+                &[None, None],
+                NO_GPU,
+            );
             assert!(r.progressed && !r.hang);
         }
         assert_eq!(meter.median(), Some(Duration::from_millis(2_000)));
         // Silent (counter frozen, CPU unknown): 19.9 s is inside 10 × 2 s, 20.1 s is a hang.
         let last = 12_000;
-        let r = meter.observe(at(start, last + 19_900), Some(15), &[None, None]);
+        let r = meter.observe(at(start, last + 19_900), Some(15), &[None, None], NO_GPU);
         assert!(!r.hang, "{r:?}");
-        let r = meter.observe(at(start, last + 20_100), Some(15), &[None, None]);
+        let r = meter.observe(at(start, last + 20_100), Some(15), &[None, None], NO_GPU);
         assert!(r.hang, "{r:?}");
         assert_eq!(r.bound, Some(Duration::from_millis(20_000)));
     }
@@ -3080,9 +3176,9 @@ mod tests {
     fn a_long_prefill_chunk_is_not_a_hang_while_every_rank_computes() {
         let start = Instant::now();
         let mut meter = ProgressMeter::new(start, 2);
-        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)]);
+        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], NO_GPU);
         for i in 1..=4u64 {
-            meter.observe(at(start, i * 2_000), Some(i), &[Some(i), Some(i)]);
+            meter.observe(at(start, i * 2_000), Some(i), &[Some(i), Some(i)], NO_GPU);
         }
         // A 60 s chunk: the counter stands still, both ranks' CPU keeps moving.
         for i in 1..=30u64 {
@@ -3090,6 +3186,7 @@ mod tests {
                 at(start, 8_000 + i * 2_000),
                 Some(4),
                 &[Some(4 + i * 50), Some(4 + i * 50)],
+                NO_GPU,
             );
             assert!(!r.hang, "poll {i}: {r:?}");
         }
@@ -3099,9 +3196,9 @@ mod tests {
     fn a_frozen_rank_stalls_progress_even_when_its_peer_spins() {
         let start = Instant::now();
         let mut meter = ProgressMeter::new(start, 2);
-        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)]);
+        meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], NO_GPU);
         for i in 1..=4u64 {
-            meter.observe(at(start, i * 2_000), Some(i), &[Some(i), Some(i)]);
+            meter.observe(at(start, i * 2_000), Some(i), &[Some(i), Some(i)], NO_GPU);
         }
         // Rank 1 frozen (CPU flat), rank 0 spinning in the collective: not progress.
         let mut hang_at = None;
@@ -3110,6 +3207,7 @@ mod tests {
                 at(start, 8_000 + i * 2_000),
                 Some(4),
                 &[Some(100 + i * 100), Some(4)],
+                NO_GPU,
             );
             if r.hang {
                 hang_at = Some(i * 2_000);
@@ -3117,6 +3215,98 @@ mod tests {
             }
         }
         assert_eq!(hang_at, Some(22_000), "first poll past 10 × 2 s");
+    }
+
+    /// Q-114 repro B1 (2026-09-26 15:47:26, installed 3.0.49): rank 0 stuck in MLX's eval error
+    /// path, ps `S` at 0%, still spent CPU answering the supervisor's own polls (+2 centiseconds
+    /// over the capture's 2 s), while rank 1 spun in the step's collective (`R`, 99%) — "every
+    /// rank's CPU advanced" held on every poll, and the pair sat 4 min 19 s until stopped by hand.
+    /// Neither rank's GPU ran. With GPU time reported the stall is a hang one bound after it began;
+    /// the same polls without GPU time are the blind spot this closes (negative control).
+    #[test]
+    fn a_rank_stuck_beside_a_spinning_peer_is_a_hang_by_gpu_time() {
+        let run = |reports_gpu: bool| {
+            let start = Instant::now();
+            let mut meter = ProgressMeter::new(start, 2);
+            let gpu = |ns: u64| {
+                if reports_gpu {
+                    [Some(ns), Some(ns)]
+                } else {
+                    [None, None]
+                }
+            };
+            meter.observe(at(start, 0), Some(0), &[Some(0), Some(0)], &gpu(0));
+            for i in 1..=4u64 {
+                meter.observe(
+                    at(start, i * 2_000),
+                    Some(i),
+                    &[Some(i * 10), Some(i * 10)],
+                    &gpu(i * 1_000_000_000),
+                );
+            }
+            (1..=150u64)
+                .find(|i| {
+                    meter
+                        .observe(
+                            at(start, 8_000 + i * 2_000),
+                            Some(4),
+                            &[Some(40 + 2 * i), Some(40 + 200 * i)],
+                            &gpu(4_000_000_000),
+                        )
+                        .hang
+                })
+                .map(|i| i * 2_000)
+        };
+        assert_eq!(run(true), Some(22_000), "first poll past 10 × 2 s");
+        assert_eq!(run(false), None, "CPU time alone never calls it");
+    }
+
+    #[test]
+    fn a_long_prefill_chunk_is_not_a_hang_while_every_rank_computes_on_its_gpu() {
+        let start = Instant::now();
+        let mut meter = ProgressMeter::new(start, 2);
+        meter.observe(
+            at(start, 0),
+            Some(0),
+            &[Some(0), Some(0)],
+            &[Some(0), Some(0)],
+        );
+        for i in 1..=4u64 {
+            meter.observe(
+                at(start, i * 2_000),
+                Some(i),
+                &[Some(i), Some(i)],
+                &[Some(i), Some(i)],
+            );
+        }
+        // A 60 s chunk: the counter stands still and the slower rank's CPU barely moves (it sleeps
+        // on its GPU), but both GPUs keep working.
+        for i in 1..=30u64 {
+            let r = meter.observe(
+                at(start, 8_000 + i * 2_000),
+                Some(4),
+                &[Some(4), Some(4 + i * 150)],
+                &[Some(4 + i * 1_900_000_000), Some(4 + i * 1_200_000_000)],
+            );
+            assert!(!r.hang && r.signal == WorkSignal::Gpu, "poll {i}: {r:?}");
+        }
+    }
+
+    /// The `@@gputime` section as the shell runs it: this test process has no Metal client, so its
+    /// section exists and sums to zero (the awk selects by `"pid N,` and prints nothing).
+    #[test]
+    fn a_sample_carries_the_ranks_gpu_time_section() {
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(sample_script(Some(std::process::id())))
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let sections = probe::sections(&stdout);
+        let gpu = sections
+            .get("gputime")
+            .expect("the sample prints a gputime section");
+        assert_eq!(probe::parse_gpu_ns(gpu).unwrap(), 0, "{stdout}");
     }
 
     #[test]
