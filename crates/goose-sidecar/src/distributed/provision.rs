@@ -39,15 +39,19 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// scores goose charges (`serve --attention-scores-bytes`; 66ccd37a6, branch
 /// lz/pipeline-cache-budget, tag lz-pipeline-qwen4.2, Q-127 — it was the GPU ceiling less the
 /// plan, and the Flash split's rank 0 cached 49.5 GB beside ~60 GB active on a 81.4 GB budget),
-/// `serve --served-model-alias` (a863c60c5, tag lz-pipeline-qwen4.3, Q-131), and a tool call the
-/// parser refused for an undeclared name named on the final choice as `refused_tool_calls`
-/// (b21382223, branch lz/pipeline-toolcall-q133, tag lz-pipeline-qwen4.4, Q-133 — Flash called
-/// `bash` where the request declared `shell`, and goose showed the XML as the reply).
+/// `--served-model-alias` (a863c60c5, tag lz-pipeline-qwen4.3, Q-131), `refused_tool_calls` on
+/// the final choice (b21382223, tag lz-pipeline-qwen4.4, Q-133), and CONTINUOUS ADMISSION
+/// (c8d6d5faf, branch lz/pipeline-continuous-admission, tag lz-pipeline-qwen4.5, Q-134): a queued
+/// request joins the running batch between decode steps when a slot is free and its KV fits
+/// every rank's budget — it prefills alone in its own cache, its chunks sharing the pipeline's
+/// time equally with the running rows' decode — instead of waiting for the whole batch to end
+/// (a 69-token canary queued 308 s beside a free slot on 3.0.49). pipeline_rank.py measures the
+/// live table at the fork's `_Engine._start`/`_Engine.prefill` seams since.
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "b213822236deb9826d2eb704a1ad5caf94e0997e";
+pub const PIPELINE_FORK_COMMIT: &str = "c8d6d5faf80ece7e2988a11e7692d328cee48942";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@b213822236deb9826d2eb704a1ad5caf94e0997e";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@c8d6d5faf80ece7e2988a11e7692d328cee48942";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.

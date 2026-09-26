@@ -18,21 +18,28 @@ import weakref  # noqa: E402
 from rapid_mlx.distributed import pipeline_qwen4_serve  # noqa: E402
 
 # Rank 0's live request table (rank_live.py) over the fork's own jobs, measured at the fork's own
-# seams (pinned commit, provision.rs): a job's arrival (`_Job`), its batch's prefill start
-# (`run_batch`), each prefill chunk's collective (`_step` with sample=False — an all_sum every rank
-# joins, so a chunk is done on EVERY stage when it returns), its tokens (`produced`), and the
-# `/v1/status` route `_build_app` registers, answered with the request table added. The prefill's
-# ranges are the fork's own `prefill_chunks` (b7bd1afc2): a restored prefix-cache entry starts the
-# prefill past the prompt's head (`row.cached`) and a snapshot ends one range at `row.store_at`.
-for name in ("_Job", "run_batch", "_step", "_build_app", "prefill_chunks"):
+# seams (pinned commit, provision.rs): a job's arrival (`_Job`), the moment its row starts
+# prefilling (`_Engine._start` — rank 0's plan admitted it, Q-134's continuous admission,
+# c8d6d5faf), each prefill chunk's collective (`_Engine.prefill`: an all_sum every rank joins, so
+# the chunk is done on EVERY stage when it returns), its tokens (`produced`), and the `/v1/status`
+# route `_build_app` registers, answered with the request table added. A row prefills alone in its
+# own cache before it joins the running batch: its ranges are the fork's own `prefill_chunks`, from
+# `row.cached` (a restored prefix-cache entry) to the prompt's end, one ending at `row.store_at`,
+# so the prompt position after a chunk is that chunk's end — no batch padding to subtract.
+for name in ("_Job", "_Engine", "_build_app", "prefill_chunks"):
     if not hasattr(pipeline_qwen4_serve, name):
         raise SystemExit(
             f"goose pipeline rank: the fork's pipeline_qwen4_serve has no {name}; the live "
-            "request table was written against fork b7bd1afc2"
+            "request table was written against fork c8d6d5faf"
+        )
+for name in ("_start", "prefill"):
+    if not hasattr(pipeline_qwen4_serve._Engine, name):
+        raise SystemExit(
+            f"goose pipeline rank: the fork's _Engine has no {name}; the live request table "
+            "was written against fork c8d6d5faf"
         )
 
 jobs_by_row = weakref.WeakValueDictionary()
-batch_now = {"current": None}
 
 
 class LiveJob(pipeline_qwen4_serve._Job):
@@ -60,46 +67,28 @@ class LiveJob(pipeline_qwen4_serve._Job):
 
 
 pipeline_qwen4_serve._Job = LiveJob
-fork_run_batch = pipeline_qwen4_serve.run_batch
-fork_step = pipeline_qwen4_serve._step
+fork_engine = pipeline_qwen4_serve._Engine
+fork_start = fork_engine._start
+fork_prefill = fork_engine.prefill
 fork_build_app = pipeline_qwen4_serve._build_app
 
 
-def run_batch(stage, guard, rows, prefill_step, *args, **kwargs):
-    jobs = [jobs_by_row.get(id(row)) for row in rows] if stage.is_first else []
-    if jobs and all(job is not None for job in jobs):
-        width = max(len(row.ids) for row in rows)
-        head = rows[0]
-        one = len(rows) == 1
-        start = head.cached if one and head.reuse_id else 0
-        split = head.store_at if one and head.store_id else 0
-        ranges = pipeline_qwen4_serve.prefill_chunks(start, width - 1, prefill_step, split)
-        now = time.monotonic()
-        for job in jobs:
-            job.prefill_started = now
-            job.prefilled = start
-        batch_now["current"] = {
-            "jobs": jobs,
-            "pads": [width - len(row.ids) for row in rows],
-            "ends": [end for _, end in ranges],
-            "start": start,
-            "chunks": 0,
-        }
-    try:
-        return fork_run_batch(stage, guard, rows, prefill_step, *args, **kwargs)
-    finally:
-        batch_now["current"] = None
+def _start(engine, row):
+    fork_start(engine, row)
+    # Rank 0 admits the row object its job carries; other ranks rebuild rows from the plan.
+    job = jobs_by_row.get(id(row)) if engine.stage.is_first else None
+    if job is not None:
+        job.prefill_started = time.monotonic()
+        job.prefilled = row.cached if row.reuse_id else 0
 
 
-def _step(*args, sample, **kwargs):
-    result = fork_step(*args, sample=sample, **kwargs)
-    current = batch_now["current"]
-    if current is not None and not sample:
-        current["chunks"] += 1
-        for job, pad in zip(current["jobs"], current["pads"]):
-            job.prefilled = prefill_position(
-                current["ends"], current["chunks"], current["start"], pad
-            )
+def prefill(engine, words):
+    joining = engine.joining
+    stop = joining.ranges[0][1]
+    job = jobs_by_row.get(id(joining.row)) if engine.stage.is_first else None
+    result = fork_prefill(engine, words)
+    if job is not None:
+        job.prefilled = max(job.prefilled, stop)
     return result
 
 
@@ -109,7 +98,7 @@ def live_row(job, now):
         job.arrived,
         now,
         prompt_tokens=len(job.row.ids),
-        # Rank 0 decides the restore when the job's batch forms: unknown (None) until then.
+        # Rank 0 decides the restore when its plan admits the job: unknown (None) until then.
         cached_tokens=job.row.cached if job.prefill_started is not None else None,
         max_tokens=job.row.max_tokens,
         prefill_started=job.prefill_started,
@@ -144,8 +133,8 @@ def _build_app(state, *args, **kwargs):
     return app
 
 
-pipeline_qwen4_serve.run_batch = run_batch
-pipeline_qwen4_serve._step = _step
+fork_engine._start = _start
+fork_engine.prefill = prefill
 pipeline_qwen4_serve._build_app = _build_app
 
 parser = argparse.ArgumentParser(prog="python -m rapid_mlx.distributed.pipeline_qwen4 serve")

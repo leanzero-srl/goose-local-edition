@@ -1161,9 +1161,10 @@ pub(crate) mod tests {
              class _Job:\n\
              \x20   row: object\n\
              \x20   produced: int = 0\n\
-             def run_batch(stage, guard, rows, prefill_step, on_tokens=None, control_fn=None): pass\n\
+             class _Engine:\n\
+             \x20   def _start(self, row): pass\n\
+             \x20   def prefill(self, words): pass\n\
              def prefill_chunks(start, end, step, split=0): return []\n\
-             def _step(stage, out, cache, rows, guard, control, *, sample): pass\n\
              def _build_app(state, tokenizer, eos_ids, vision=None): pass\n\
              def add_arguments(parser):\n\
              \x20   parser.add_argument('--model', required=True)\n\
@@ -1287,13 +1288,7 @@ assert busy["status"] == "generating" and busy["generation_tps"] == writing["tok
 assert busy["num_running"] == 1 and len(busy["requests"]) == 2
 idle = live_status({"num_running": 0, "num_waiting": 0}, [])
 assert (idle["status"], idle["generation_tps"], idle["requests"]) == ("idle", None, [])
-assert prefill_position([2048, 4096, 5000], 0) == 0
-assert prefill_position([2048, 4096, 5000], 2, pad=96) == 4000
-assert prefill_position([2048, 4096, 5000], 9) == 5000, "past the last range: the whole prefix"
-# A restored 48,647-token prefix: the prefill starts there and one range ends at the snapshot.
-restored = [50695, 50800, 52000]
-assert prefill_position(restored, 0, start=48647) == 48647
-assert prefill_position(restored, 1, start=48647) == 50695
+# A restored 48,647-token prefix: the prefill starts there and one range ends at 50,695.
 cached = live_request("r", 0.0, 10.52, prompt_tokens=52001, cached_tokens=48647,
                       prefill_started=0.52, prefilled=50695)
 assert cached["prompt_tokens_per_second"] == round(2048 / 10.0, 2), "only the read tokens count"
@@ -1456,11 +1451,13 @@ print("ok")
     /// the pinned commit (`EnvSpec::pipeline()`'s proof). Its stand-in test replaced the whole fork
     /// with a module of the same names; here the fork's own seams are what goose patches: the
     /// attribute guard, `_Job` (a dataclass whose `produced` field LiveJob turns into a
-    /// property), `run_batch`/`_step` measured over the fork's own `prefill_chunks` and `_Row`,
-    /// the fork's own argparse reading goose's serve argv, and the fork's own `_build_app`
-    /// serving `/v1/status` through goose's replacement route (only the tokenizer — the model's
-    /// — is a stand-in). Negative control, measured 2026-09-26: the same program under an env
-    /// still on 2f02ac645 exits at the guard ("has no prefill_chunks").
+    /// property), `_Engine._start`/`_Engine.prefill` (Q-134's continuous admission: a row
+    /// prefills alone, then joins the running batch) measured over the fork's own
+    /// `prefill_chunks`, `_Joining` and `_Row`, the fork's own argparse reading goose's serve
+    /// argv, and the fork's own `_build_app` serving `/v1/status` through goose's replacement
+    /// route (only the tokenizer — the model's — is a stand-in). Negative controls, measured
+    /// 2026-09-26: the same program under an env still on 2f02ac645 exits at the guard ("has no
+    /// prefill_chunks"); the 66ccd37a6 env's module has no `_Engine`, the guard's first new name.
     #[test]
     fn the_pipeline_program_patches_the_real_forks_seams() {
         let Some(python) = proven_env(&EnvSpec::pipeline(), "GOOSE_TEST_PIPELINE_PYTHON") else {
@@ -1482,8 +1479,9 @@ import asyncio
 from fastapi.testclient import TestClient
 
 serve = pipeline_qwen4_serve
-assert serve._Job is LiveJob and serve.run_batch is run_batch, "the job and batch seams are goose's"
-assert serve._step is _step and serve._build_app is _build_app, "the step and app seams are goose's"
+assert serve._Job is LiveJob, "the job seam is goose's"
+assert serve._Engine._start is _start and serve._Engine.prefill is prefill, "the engine seams"
+assert serve._build_app is _build_app, "the app seam is goose's"
 starts = serve.pipe._parse_starts(options.split)
 
 loop = asyncio.new_event_loop()
@@ -1491,18 +1489,24 @@ row = serve._Row(list(range(10)), 8, 0.0, 1.0)
 job = serve._Job(row, loop, asyncio.Queue())
 assert type(job) is LiveJob and jobs_by_row[id(row)] is job and job.produced == 0, job
 
-# The fork's batch, reduced to what goose measures: its prefill ranges, one sample=False step per
-# range, then a sampled step and a token.
+# The fork's engine, reduced to what goose measures: the row starts prefilling in its own cache
+# (its ranges the fork's own prefill_chunks, to the prompt's end), one collective per range, the
+# last one sampling its first token.
+def start(engine, row):
+    ranges = serve.prefill_chunks(0, len(row.ids), engine.prefill_step, 0)
+    engine.joining = serve._Joining(row, None, None, None, None, ranges)
+def chunk(engine, words):
+    engine.joining.ranges.pop(0)
+    return (0 if not engine.joining.ranges else None), [0, 0]
+fork_start, fork_prefill = start, chunk
+engine = serve._Engine(type("Stage", (), {"is_first": True})(), None, 4)
+serve._Engine._start(engine, row)
+assert job.prefill_started is not None and job.prefilled == 0, vars(job)
 walked = []
-def walk(stage, guard, rows, prefill_step, *args, **kwargs):
-    for _ in serve.prefill_chunks(0, len(rows[0].ids) - 1, prefill_step, 0):
-        serve._step(stage, None, None, rows, guard, 0, sample=False)
-        walked.append(job.prefilled)
-    serve._step(stage, None, None, rows, guard, 0, sample=True)
-    job.produced += 1
-fork_run_batch = walk
-fork_step = lambda *args, sample, **kwargs: None
-serve.run_batch(type("Stage", (), {"is_first": True})(), None, [row], 4)
+while engine.joining.ranges:
+    serve._Engine.prefill(engine, None)
+    walked.append(job.prefilled)
+job.produced += 1
 
 class Tokenizer:
     chat_template = ""
@@ -1573,8 +1577,9 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
         );
         assert_eq!(
             seen["walked"],
-            serde_json::json!([4, 8, 9]),
-            "each prefill range's end, read from the fork's own prefill_chunks"
+            serde_json::json!([4, 8, 10]),
+            "each prefill range's end, read from the fork's own prefill_chunks — to the prompt's \
+             end, the last range sampling the first token (Q-134)"
         );
         assert_eq!(seen["first_token"], true);
         assert_eq!(seen["prefilled"], 10);

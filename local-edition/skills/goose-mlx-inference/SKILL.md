@@ -336,8 +336,11 @@ place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
   distributedStatus and mlxEngine/status; its `state` said "serving" at group join (before any weight) — fixed.
   Layers-loaded is NOT measurable (the fork evals a stage in one mx.eval).
 - Rank 0 `/v1/status` = Rapid-MLX shape + `prefilled_tokens`, `prompt_tokens_per_second` (rank_live.py builds it;
-  rank_wrapper.py wraps ResponseGenerator.generate; pipeline_rank.py extends the fork's _Job/run_batch/_step/_build_app —
-  no fork change). TRAP: mlx_lm's first prompt-progress report comes after its first chunks (30 s on a 15k prompt) —
+  rank_wrapper.py wraps ResponseGenerator.generate; pipeline_rank.py extends the fork's
+  _Job/_Engine._start/_Engine.prefill/_build_app — no fork change; since Q-134 (fork c8d6d5faf, lz-pipeline-qwen4.5)
+  the pipeline admits CONTINUOUSLY: a queued request joins between decode steps when a slot is free and its KV fits,
+  prefilling alone in its own cache — run_batch/_step-as-seam are gone, so a pin bump that renames a seam must move
+  pipeline_rank.py and launch.rs's real-fork test with it (run it: GOOSE_TEST_PIPELINE_PYTHON=<a venv at the pin>). TRAP: mlx_lm's first prompt-progress report comes after its first chunks (30 s on a 15k prompt) —
   prefill is stamped when the context comes back. TRAP: the fork's _Job dataclass has no __post_init__, so a subclass's
   __post_init__ never runs (500 on /v1/status) — extend __init__. HARNESS: 2 local ring ranks (ring_hosts 127.0.0.1:55xx,
   distinct ports) for the 27B tensor; the Flash pipeline via a test-only `load_stage(layer_limit=4)` shim.
