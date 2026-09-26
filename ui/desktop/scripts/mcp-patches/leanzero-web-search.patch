@@ -1,3 +1,16 @@
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -77,5 +77,8 @@
+     "tsx": "^4.7.0",
+     "typescript": "^5.8.3",
+     "vitest": "^4.1.2"
++  },
++  "overrides": {
++    "qs": "6.16.0"
+   }
+ }
+diff --git a/src/browser-engine.ts b/src/browser-engine.ts
 --- a/src/browser-engine.ts
 +++ b/src/browser-engine.ts
 @@ -53,6 +53,12 @@
@@ -13,17 +26,7 @@
    const effectiveOptions = { ...DEFAULT_ENGINE_OPTIONS, ...options };
    const engineType = effectiveOptions.engineType || 'webkit';
    
---- a/package.json
-+++ b/package.json
-@@ -77,5 +77,8 @@
-     "tsx": "^4.7.0",
-     "typescript": "^5.8.3",
-     "vitest": "^4.1.2"
-+  },
-+  "overrides": {
-+    "qs": "6.16.0"
-   }
- }
+diff --git a/src/openapi-extractor.ts b/src/openapi-extractor.ts
 --- a/src/openapi-extractor.ts
 +++ b/src/openapi-extractor.ts
 @@ -315,7 +315,7 @@
@@ -36,7 +39,6 @@
  
        if (contentType.includes('yaml') || url.toLowerCase().endsWith('.yaml')) {
 diff --git a/src/progressive-search-engine.ts b/src/progressive-search-engine.ts
-index d9425f0..035f4ee 100644
 --- a/src/progressive-search-engine.ts
 +++ b/src/progressive-search-engine.ts
 @@ -3,7 +3,7 @@
@@ -48,7 +50,7 @@ index d9425f0..035f4ee 100644
  import { SearchResult } from './types.js';
  import { StandardIntentDetector, QueryIntent, generateIntentBasedExpansions } from './query-intent-detector.js';
  import { SemanticExpander, HeuristicSemanticExpander } from './semantic-expander.js';
-@@ -321,6 +321,9 @@ export class ProgressiveSearchEngine implements IProgressiveSearchEngine {
+@@ -321,6 +321,9 @@
          return result.results;
        }
      } catch (error) {
@@ -58,7 +60,7 @@ index d9425f0..035f4ee 100644
        console.warn(`[ProgressiveSearchEngine] Primary engine failed, trying fallbacks:`, error);
      }
      
-@@ -364,6 +367,7 @@ export class ProgressiveSearchEngine implements IProgressiveSearchEngine {
+@@ -364,6 +367,7 @@
            return result.results;
          }
        } catch (error) {
@@ -67,17 +69,16 @@ index d9425f0..035f4ee 100644
        }
      }
 diff --git a/src/search-engine.ts b/src/search-engine.ts
-index d979c9d..17f5cb2 100644
 --- a/src/search-engine.ts
 +++ b/src/search-engine.ts
-@@ -18,6 +18,48 @@ import { requestDeduplicator } from './request-deduplicator.js';
+@@ -18,6 +18,78 @@
  // Per-request context: a caller-supplied Serper key overrides the process env.
  import { requestContext } from './request-context.js';
  
 +/**
-+ * No search ran, and the reason is the setup or the provider, never the query.
-+ * Serper-only mode has no other search path, so an empty list here would read to
-+ * the agent as "nothing matched" and send it rewording a query that never ran.
++ * No search ran, and the reason is the setup, the provider or the browser engine,
++ * never the query. An empty list here would read to the agent as "nothing matched"
++ * and send it rewording a query that never ran.
 + */
 +export class SearchUnavailableError extends Error {
 +  constructor(message: string) {
@@ -93,6 +94,25 @@ index d979c9d..17f5cb2 100644
 +  'into "Search API key" and save; new chats pick it up. In other clients: set SERPER_API_KEY in ' +
 +  "this server's environment. Without a key, get-single-web-page-content still reads a page " +
 +  'whose URL you already know.';
++
++export const HOSTED_SEARCH_NOT_CONFIGURED_MESSAGE =
++  'Web search is not set up for this request: no Serper key was sent (X-Serper-Key header or ' +
++  '?serper_key=), so no search ran. This is a setup problem, not a problem with the query; ' +
++  'rewording it will not help. get-single-web-page-content still reads a page whose URL you already know.';
++
++export function keylessEngineName(engine: string): string {
++  return `${engine} in the browser (no Serper key)`;
++}
++
++export function keylessFailureMessage(reason: string): string {
++  return (
++    `Web search has no Serper key and the browser engines failed: ${reason}. No search ran to completion, ` +
++    'so this says nothing about the query; rewording it will not help. ' +
++    'Page extraction still works: get-single-web-page-content reads a page whose URL you already know. ' +
++    'To search through Serper instead: in goose open MCPs in the sidebar, then LeanZero Web Search, ' +
++    'then paste a key from serper.dev into "Search API key" and save.'
++  );
++}
 +
 +export function serperFailureMessage(reason: string): string {
 +  return (
@@ -116,17 +136,39 @@ index d979c9d..17f5cb2 100644
 +  return error instanceof Error ? error.message : String(error);
 +}
 +
++interface KeylessEngine {
++  name: string;
++  url: (query: string) => string;
++  /** Present once the results have rendered. */
++  ready: string;
++  parse: (engine: SearchEngine, html: string, maxResults: number) => SearchResult[];
++}
++
++/** Brave's rate-limit page is a `.captcha-wrapper` (seen 2026-09-26); Mojeek's is titled "Captcha". */
++const CHALLENGE_SELECTOR = '[class*="captcha" i], [id*="captcha" i]';
++
  export interface SearchEngineConfig {
    maxRequestsPerMinute?: number;
    resetIntervalMs?: number;
-@@ -89,23 +131,13 @@ export class SearchEngine {
+@@ -79,7 +151,8 @@
+    * primary path):
+    *   - `USE_SERPER_ONLY=false` ⇒ enable browser fallbacks
+    *   - `ENABLE_BROWSER_FALLBACKS=true` ⇒ enable browser fallbacks (legacy alias)
+-   *   - otherwise ⇒ Serper only (skip Playwright launches entirely)
++   *   - otherwise ⇒ Serper when a key is set; with no key, Brave in the browser
++   *     (stdio) or a named "send a key" error (HTTP)
+    */
+   private async executeSearch(query: string, numResults: number, timeout: number): Promise<SearchResultWithMetadata> {
+     const serperOnlyEnv = process.env.USE_SERPER_ONLY;
+@@ -89,23 +162,20 @@
  
      console.log(`[SearchEngine] Serper-only mode: ${useSerperOnly} (USE_SERPER_ONLY=${serperOnlyEnv ?? 'unset'}, ENABLE_BROWSER_FALLBACKS=${process.env.ENABLE_BROWSER_FALLBACKS ?? 'unset'})`);
  
 -    // Fast path: Skip browser engines entirely for maximum performance
-+    // Serper is the only search path in this mode: a missing key or a failed call
-+    // is raised as SearchUnavailableError; only a call that ran and matched
-+    // nothing returns an empty list.
++    // Default mode. With a key, Serper is the only search path: a failed call is
++    // raised as SearchUnavailableError, and only a call that ran and matched nothing
++    // returns an empty list. Without a key, a local (stdio) server searches Brave in
++    // the browser; a hosted request without a key is told to send one.
      if (useSerperOnly) {
 -      try {
 -        // Skip rate limiter for cache hits, but still use it for actual API calls
@@ -134,10 +176,14 @@ index d979c9d..17f5cb2 100644
 -        if (results.length > 0) {
 -          console.log(`[SearchEngine] ✓ Serper returned ${results.length} results directly`);
 -          return { results, engine: 'serper-only' };
--        }
++      if (!SearchEngine.serperKey()) {
++        if (requestContext.getStore()) {
++          throw new SearchUnavailableError(HOSTED_SEARCH_NOT_CONFIGURED_MESSAGE);
+         }
 -      } catch (error) {
 -        console.error('[SearchEngine] Serper API failed:', error instanceof Error ? error.message : 'Unknown');
--      }
++        return this.keylessSearch(query, numResults, timeout);
+       }
 -      // If Serper fails, optionally try browser fallbacks
 -      if (!enableBrowserFallbacks) {
 -        console.log('[SearchEngine] Serper failed, but browser fallbacks disabled. Returning empty results.');
@@ -149,12 +195,15 @@ index d979c9d..17f5cb2 100644
      }
  
      // Only proceed to browser engines if fallbacks are enabled
-@@ -379,18 +411,32 @@ export class SearchEngine {
+@@ -379,18 +449,161 @@
    /**
     * Runs a search with a specific browser engine
     */
 +  /** Browser-fallback chain member: a Serper failure hands over to the next engine. */
    private async tryApiSearch(query: string, numResults: number, timeout: number): Promise<SearchResult[]> {
+-    // Prefer the per-request key (HTTP callers bring their own); fall back to the
+-    // process env (stdio callers set it in their mcp.json `env`).
+-    const apiKey = requestContext.getStore()?.serperKey || process.env.SERPER_API_KEY;
 +    try {
 +      return await this.serperSearch(query, numResults, timeout);
 +    } catch (error) {
@@ -163,10 +212,139 @@ index d979c9d..17f5cb2 100644
 +    }
 +  }
 +
++  // Prefer the per-request key (HTTP callers bring their own); fall back to the
++  // process env (stdio callers set it in their mcp.json `env`).
++  private static serperKey(): string | undefined {
++    return requestContext.getStore()?.serperKey || process.env.SERPER_API_KEY || undefined;
++  }
++
++  /**
++   * The engines a local server searches in the bundled headless browser when no Serper
++   * key is set, in order. Measured 2026-09-26 on chrome-headless-shell 153, four real
++   * queries each: Yahoo 4/4 relevant, 1.0-1.5 s, direct result links (plain HTTP gets
++   * a 500); Brave 4/4 relevant, 2.1-2.4 s, then a CAPTCHA after ~25 searches in ~15
++   * minutes from one address. Not used, same measurement: DuckDuckGo (HTTP 202 bot page;
++   * 0 results in the browser; lite 403), Mojeek (CAPTCHA from the first query), Bing
++   * (pages load, 0/4 relevant: unrelated links behind bing.com/ck redirects).
++   */
++  private static readonly KEYLESS_ENGINES: readonly KeylessEngine[] = [
++    {
++      name: 'Yahoo',
++      url: (query) => `https://search.yahoo.com/search?p=${encodeURIComponent(query)}`,
++      ready: '#web .algo',
++      parse: (engine, html, max) => engine.parseYahooResults(html, max),
++    },
++    {
++      name: 'Brave Search',
++      url: (query) => `https://search.brave.com/search?q=${encodeURIComponent(query)}&source=web`,
++      ready: '[data-type="web"]',
++      parse: (engine, html, max) => engine.parseBraveResults(html, max),
++    },
++  ];
++
++  private async keylessSearch(
++    query: string,
++    numResults: number,
++    timeout: number,
++  ): Promise<SearchResultWithMetadata> {
++    const engines = SearchEngine.KEYLESS_ENGINES;
++    // ratio: the caller's budget is shared evenly, so a failing first engine leaves the next its turn.
++    const engineTimeout = timeout / engines.length;
++    const failures: string[] = [];
++    for (const engine of engines) {
++      try {
++        const results = await this.concurrencyLimiter(() =>
++          this.browserEngineSearch(engine, query, numResults, engineTimeout),
++        );
++        console.log(`[SearchEngine] ✓ ${engine.name} (browser, no Serper key) returned ${results.length} results`);
++        return { results, engine: keylessEngineName(engine.name) };
++      } catch (error) {
++        const reason = error instanceof Error ? error.message : String(error);
++        console.error(`[SearchEngine] Keyless ${engine.name} failed: ${reason}`);
++        failures.push(`${engine.name}: ${reason}`);
++      }
++    }
++    throw new SearchUnavailableError(keylessFailureMessage(failures.join('; ')));
++  }
++
++  private async browserEngineSearch(
++    engine: KeylessEngine,
++    query: string,
++    numResults: number,
++    timeout: number,
++  ): Promise<SearchResult[]> {
++    const browser = await this.browserPool.getBrowser();
++    const page = await browser.newPage({
++      userAgent:
++        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
++      locale: 'en-US',
++    });
++    try {
++      const response = await page.goto(engine.url(query), { waitUntil: 'domcontentloaded', timeout });
++      try {
++        await page.waitForSelector(`${engine.ready}, ${CHALLENGE_SELECTOR}`, { timeout });
++      } catch {
++        // Neither results nor a challenge appeared; the page is still read and described below.
++      }
++      if (await page.$(CHALLENGE_SELECTOR)) {
++        throw new Error('it is showing a CAPTCHA (it limits automated searches from this network)');
++      }
++      const html = await page.content();
++      const results = engine.parse(this, html, numResults);
++      if (results.length === 0) {
++        throw new Error(
++          `no readable results on the page (HTTP ${response?.status() ?? 'no response'}, title "${await page.title()}")`,
++        );
++      }
++      return results;
++    } finally {
++      await page.close().catch(() => undefined);
++    }
++  }
++
++  /** Yahoo's results are `#web .algo` blocks: `.compTitle a` → the target, `h3` → the title, `.compText` → the snippet. */
++  private parseYahooResults(html: string, maxResults: number): SearchResult[] {
++    const $ = cheerio.load(html);
++    const results: SearchResult[] = [];
++    const seen = new Set<string>();
++    const timestamp = generateTimestamp();
++    $('#web .algo').each((_index, element) => {
++      if (results.length >= maxResults) return false;
++      const $element = $(element);
++      const url = this.cleanYahooUrl($element.find('.compTitle a[href], h3 a[href]').first().attr('href') || '');
++      const title = $element.find('h3').first().text().replace(/\s+/g, ' ').trim();
++      const snippet = $element.find('.compText').first().text().replace(/\s+/g, ' ').trim();
++      if (!url.startsWith('http') || !title || seen.has(url)) return;
++      seen.add(url);
++      results.push({
++        title,
++        url,
++        description: snippet || 'No description available',
++        fullContent: '',
++        contentPreview: '',
++        wordCount: 0,
++        timestamp,
++        fetchStatus: 'success',
++      });
++    });
++    return results;
++  }
++
++  /** Yahoo sometimes wraps the target as r.search.yahoo.com/…/RU=<encoded target>/RK=…; unwrap it. */
++  private cleanYahooUrl(href: string): string {
++    const wrapped = /\/RU=([^/]+)\//.exec(href);
++    if (href.includes('r.search.yahoo.com') && wrapped) {
++      try {
++        return decodeURIComponent(wrapped[1]);
++      } catch {
++        return href;
++      }
++    }
++    return href;
++  }
++
 +  private async serperSearch(query: string, numResults: number, timeout: number): Promise<SearchResult[]> {
-     // Prefer the per-request key (HTTP callers bring their own); fall back to the
-     // process env (stdio callers set it in their mcp.json `env`).
-     const apiKey = requestContext.getStore()?.serperKey || process.env.SERPER_API_KEY;
++    const apiKey = SearchEngine.serperKey();
      if (!apiKey) {
        console.error('[SearchEngine] API search failed: SERPER_API_KEY is not set');
 -      return [];
@@ -185,7 +363,7 @@ index d979c9d..17f5cb2 100644
      }
  
      // NOTE: Cache check has been moved to the search() method above.
-@@ -450,7 +496,7 @@ export class SearchEngine {
+@@ -450,7 +663,7 @@
            data: error.response?.data,
          });
        }
@@ -194,11 +372,177 @@ index d979c9d..17f5cb2 100644
      }
    }
  
+@@ -592,6 +805,13 @@
+ 
+         const results = this.parseBraveResults(html, numResults);
+         console.log(`[SearchEngine] Browser Brave parsed ${results.length} results`);
++        // Zero parsed results is a blocked, challenge or changed page as often as a real
++        // no-match, and the caller cannot tell them apart from an empty list: say which page it was.
++        if (results.length === 0) {
++          throw new Error(
++            `Brave Search returned a page with no readable results (page title "${await page.title()}", ${html.length} bytes)`,
++          );
++        }
+ 
+         return results;
+       } catch (error) {
+@@ -763,104 +983,56 @@
+     }
+   }
+ 
+-   private parseBraveResults(html: string, maxResults: number): SearchResult[] {
+-     console.log(`[SearchEngine] Parsing Brave HTML with length: ${html.length}`);
+-     
+-     const $ = cheerio.load(html);
+-     const results: SearchResult[] = [];
+-     const timestamp = generateTimestamp();
++  /**
++   * Brave's web results are `[data-type="web"]` blocks: one anchor to the result,
++   * whose title sits in `.search-snippet-title` beside a site-name/breadcrumb block,
++   * and the snippet in `.generic-snippet .content` (markup read 2026-09-26). Taking
++   * the anchor's whole text as the title glued the site name and the breadcrumb
++   * onto it ("Real Python realpython.com › python311-… Python 3.11 Preview: …").
++   */
++  private parseBraveResults(html: string, maxResults: number): SearchResult[] {
++    const $ = cheerio.load(html);
++    const results: SearchResult[] = [];
++    const seen = new Set<string>();
++    const timestamp = generateTimestamp();
++    const isBraveOwn = (href: string) => {
++      try {
++        return new URL(href).hostname.endsWith('brave.com');
++      } catch {
++        return true;
++      }
++    };
+ 
+-     // Brave result selectors - expanded to be more robust
+-     const resultSelectors = [
+-       '[data-type="web"]',     // Main Brave results
+-       '.result',               // Alternative format
+-       '.fdb',                  // Brave specific format
+-       '[class*="result"]',     // Any class containing "result"
+-       '[class*="web-result"]', // Any class containing "web-result"
+-       'div[role="listitem"]'   // Common list item role
+-     ];
+-    
+-    let foundResults = false;
+-    
+-    for (const selector of resultSelectors) {
+-      if (foundResults && results.length >= maxResults) break;
+-      
+-      console.log(`[SearchEngine] Trying Brave selector: ${selector}`);
+-      const elements = $(selector);
+-      console.log(`[SearchEngine] Found ${elements.length} elements with selector ${selector}`);
+-      
+-      elements.each((_index, element) => {
+-        if (results.length >= maxResults) return false;
+-
+-        const $element = $(element);
+-        
+-        // Try multiple title selectors for Brave
+-        const titleSelectors = [
+-          '.title a',              // Brave specific
+-          'h2 a',                  // Common format  
+-          '.result-title a',       // Alternative format
+-          'a[href*="://"]',        // Any external link
+-          '.snippet-title a'       // Snippet title
+-        ];
+-        
+-        let title = '';
+-        let url = '';
+-        
+-        for (const titleSelector of titleSelectors) {
+-          const $titleElement = $element.find(titleSelector).first();
+-          if ($titleElement.length) {
+-            title = $titleElement.text().trim();
+-            url = $titleElement.attr('href') || '';
+-            console.log(`[SearchEngine] Brave found title with ${titleSelector}: "${title}"`);
+-            if (title && url && url.startsWith('http')) {
+-              break;
+-            }
+-          }
+-        }
+-        
+-        // If still no title, try getting it from any text content
+-        if (!title) {
+-          const textContent = $element.text().trim();
+-          const lines = textContent.split('\n').filter(line => line.trim().length > 0);
+-          if (lines.length > 0) {
+-            title = lines[0].trim();
+-            console.log(`[SearchEngine] Brave found title from text content: "${title}"`);
+-          }
+-        }
+-        
+-        // Try multiple snippet selectors for Brave
+-        const snippetSelectors = [
+-          '.snippet-content',      // Brave specific
+-          '.snippet',              // Generic
+-          '.description',          // Alternative
+-          'p'                      // Fallback paragraph
+-        ];
+-        
+-        let snippet = '';
+-        for (const snippetSelector of snippetSelectors) {
+-          const $snippetElement = $element.find(snippetSelector).first();
+-          if ($snippetElement.length) {
+-            snippet = $snippetElement.text().trim();
+-            break;
+-          }
+-        }
+-        
+-        if (title && url && this.isValidSearchUrl(url)) {
+-          console.log(`[SearchEngine] Brave found: "${title}" -> "${url}"`);
+-          results.push({
+-            title,
+-            url: this.cleanBraveUrl(url),
+-            description: snippet || 'No description available',
+-            fullContent: '',
+-            contentPreview: '',
+-            wordCount: 0,
+-            timestamp,
+-            fetchStatus: 'success',
+-          });
+-          foundResults = true;
+-        }
++    $('[data-type="web"]').each((_index, element) => {
++      if (results.length >= maxResults) return false;
++      const $element = $(element);
++      const url =
++        $element
++          .find('a[href^="http"]')
++          .toArray()
++          .map((anchor) => $(anchor).attr('href') || '')
++          .find((href) => !isBraveOwn(href)) || '';
++      const $title = $element.find('.search-snippet-title, .title').first();
++      const title = ($title.attr('title') || $title.text()).trim();
++      const snippet = $element
++        .find('.generic-snippet .content, .snippet-description, .snippet-content')
++        .first()
++        .text()
++        .replace(/\s+/g, ' ')
++        .trim();
++      if (!url || !title || seen.has(url)) return;
++      seen.add(url);
++      results.push({
++        title,
++        url,
++        description: snippet || 'No description available',
++        fullContent: '',
++        contentPreview: '',
++        wordCount: 0,
++        timestamp,
++        fetchStatus: 'success',
+       });
+-    }
++    });
+ 
+     console.log(`[SearchEngine] Brave found ${results.length} results`);
+     return results;
 diff --git a/src/server.ts b/src/server.ts
-index dbc822f..7ec88f0 100644
 --- a/src/server.ts
 +++ b/src/server.ts
-@@ -38,7 +38,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+@@ -38,7 +38,7 @@
  import { z } from 'zod';
  import * as fs from 'fs';
  import * as path from 'path';
@@ -207,7 +551,16 @@ index dbc822f..7ec88f0 100644
  import { EnhancedContentExtractor } from './enhanced-content-extractor.js';
  import { pdfExtractor as pdfExtractorInstance } from './pdf-extractor.js';
  
-@@ -170,6 +170,12 @@ export class WebSearchMCPServer {
+@@ -141,7 +141,7 @@
+ • Save cited research to a markdown file (give it URLs) → research_and_save_to_markdown.
+ • A GitHub repo's code/README → get-github-repo-content.   An API's endpoints → get-openapi-spec.
+ • Re-read something already fetched → list-cached-documents, then read-cached-document.
+-Web searches can take 30–90s — use a generous client timeout. On the hosted server, searches need a Serper key (X-Serper-Key header).`;
++Web searches can take 30–90s — use a generous client timeout. On the hosted server, searches need a Serper key (X-Serper-Key header); a local server without a key searches Brave Search in a headless browser.`;
+ 
+ export class WebSearchMCPServer {
+   private server: McpServer;
+@@ -170,6 +170,12 @@
        throw error;
      }
  
@@ -220,7 +573,16 @@ index dbc822f..7ec88f0 100644
      if (error instanceof Error) {
        // Categorize common errors and map to appropriate MCP error codes
        const message = error.message.toLowerCase();
-@@ -2082,11 +2088,9 @@ export class WebSearchMCPServer {
+@@ -498,7 +504,7 @@
+ 
+           // Format: structured JSON block + human-readable text for AI-friendly parsing
+           const jsonBlock = `\`\`\`json\n${JSON.stringify(summaryResults, null, 2)}\n\`\`\``;
+-          let responseText = `Search summaries for "${obj.query}" with ${summaryResults.length} results:\n\n${jsonBlock}\n\n`;
++          let responseText = `Search summaries for "${obj.query}" with ${summaryResults.length} results (search engine: ${searchResponse.engine}):\n\n${jsonBlock}\n\n`;
+ 
+           summaryResults.forEach((summary, i) => {
+             responseText += `**${i + 1}. ${summary.title}**\n`;
+@@ -2082,11 +2088,9 @@
        }
        const message = error instanceof Error ? error.message : 'Unknown web search error';
        telemetryCollector.recordSearchFailure(searchEngineName || 'unknown', Date.now() - startTime);
@@ -236,17 +598,25 @@ index dbc822f..7ec88f0 100644
    }
  
 diff --git a/tests/integration/api_search.test.ts b/tests/integration/api_search.test.ts
-index 19618b7..3ddb336 100644
 --- a/tests/integration/api_search.test.ts
 +++ b/tests/integration/api_search.test.ts
-@@ -1,5 +1,5 @@
+@@ -1,31 +1,37 @@
  import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 -import { SearchEngine } from '../../src/search-engine.js';
 +import { SearchEngine, SearchUnavailableError } from '../../src/search-engine.js';
++import { requestContext } from '../../src/request-context.js';
  
  describe('SearchEngine API Integration', () => {
    let engine: SearchEngine;
-@@ -12,20 +12,15 @@ describe('SearchEngine API Integration', () => {
++  const saved = process.env.SERPER_API_KEY;
+ 
+   beforeAll(async () => {
+     engine = new SearchEngine();
++    delete process.env.SERPER_API_KEY;
+   });
+ 
+   afterAll(async () => {
++    if (saved !== undefined) process.env.SERPER_API_KEY = saved;
      await engine.closeAll();
    });
  
@@ -261,38 +631,46 @@ index 19618b7..3ddb336 100644
 -    expect(result).toBeDefined();
 -    expect(result.results).toBeDefined();
 -  }, 30000); // Increased timeout for fallback engines
--
++  it('without a key, a local server searches in the browser, or names why it could not', async () => {
++    const outcome = await engine
++      .search({ query: 'python asyncio TaskGroup exception handling', numResults: 3 })
++      .catch((error: unknown) => error);
++    if (outcome instanceof Error) {
++      expect(outcome).toBeInstanceOf(SearchUnavailableError);
++      expect(outcome.message).toContain('no Serper key and the browser engines failed');
++    } else {
++      expect(outcome.engine).toMatch(/in the browser \(no Serper key\)$/);
++      expect(outcome.results.length).toBeGreaterThan(0);
++    }
++  }, 60000);
+ 
 -  it('should handle empty results gracefully', async () => {
 -    const result = await engine.search({ query: '', numResults: 1 });
 -    expect(result.results).toBeInstanceOf(Array);
 -  }, 30000); // Increased timeout for fallback engines
-+  it('without a key, says the search is not set up instead of returning an empty list', async () => {
-+    const saved = process.env.SERPER_API_KEY;
-+    delete process.env.SERPER_API_KEY;
-+    try {
-+      await expect(engine.search({ query: 'test query', numResults: 1 })).rejects.toBeInstanceOf(
-+        SearchUnavailableError,
-+      );
-+    } finally {
-+      if (saved !== undefined) process.env.SERPER_API_KEY = saved;
-+    }
++  it('without a key, a hosted request is told to send one instead of getting an empty list', async () => {
++    await expect(
++      requestContext.run({}, () => engine.search({ query: 'test query hosted', numResults: 1 })),
++    ).rejects.toBeInstanceOf(SearchUnavailableError);
 +  }, 30000);
  });
 diff --git a/tests/unit/search-unavailable.test.ts b/tests/unit/search-unavailable.test.ts
-new file mode 100644
-index 0000000..45da1ec
 --- /dev/null
 +++ b/tests/unit/search-unavailable.test.ts
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,259 @@
 +import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 +import axios, { AxiosError, AxiosHeaders } from 'axios';
 +import {
 +  SearchEngine,
 +  SearchUnavailableError,
-+  SEARCH_NOT_CONFIGURED_MESSAGE,
++  HOSTED_SEARCH_NOT_CONFIGURED_MESSAGE,
++  keylessEngineName,
 +  describeSerperError,
 +} from '../../src/search-engine.js';
 +import { ProgressiveSearchEngine } from '../../src/progressive-search-engine.js';
++import { requestContext } from '../../src/request-context.js';
++import { browserPool } from '../../src/browser-pool.js';
++import type { SearchResult } from '../../src/types.js';
 +
 +function httpError(status: number): AxiosError {
 +  const headers = new AxiosHeaders();
@@ -308,6 +686,44 @@ index 0000000..45da1ec
 +let counter = 0;
 +const unique = (text: string) => `${text} ${++counter} ${Date.now()}`;
 +
++const hit: SearchResult = {
++  title: 'Data Center End of Life',
++  url: 'https://www.atlassian.com/licensing/data-center-end-of-life',
++  description: 'Atlassian Data Center end of life dates',
++  fullContent: '',
++  contentPreview: '',
++  wordCount: 0,
++  timestamp: 'now',
++  fetchStatus: 'success',
++};
++
++type EngineSearch = (
++  engine: { name: string },
++  query: string,
++  numResults: number,
++  timeout: number,
++) => Promise<SearchResult[]>;
++const engineSpy = () =>
++  vi.spyOn(
++    SearchEngine.prototype as unknown as { browserEngineSearch: EngineSearch },
++    'browserEngineSearch',
++  );
++
++/** A pooled browser whose every page renders `html`; `challenge` makes the CAPTCHA probe hit. */
++function fakeBrowser(html: string, title: string, challenge = false) {
++  const page = {
++    goto: vi.fn().mockResolvedValue({ status: () => 200 }),
++    waitForSelector: vi.fn().mockResolvedValue(undefined),
++    $: vi.fn().mockResolvedValue(challenge ? {} : null),
++    content: vi.fn().mockResolvedValue(html),
++    title: vi.fn().mockResolvedValue(title),
++    close: vi.fn().mockResolvedValue(undefined),
++  };
++  const browser = { isConnected: () => true, newPage: vi.fn().mockResolvedValue(page) };
++  vi.spyOn(browserPool, 'getBrowser').mockResolvedValue(browser as never);
++  return page;
++}
++
 +describe('a search that could not run says why, and never blames the query', () => {
 +  const saved = { ...process.env };
 +  beforeEach(() => {
@@ -321,30 +737,90 @@ index 0000000..45da1ec
 +    vi.restoreAllMocks();
 +  });
 +
-+  it('no key: rejects with the setup message and makes no call', async () => {
++  it('no key on a local server: searches Yahoo in the browser first and names that engine', async () => {
 +    const post = vi.spyOn(axios, 'post');
-+    const engine = new SearchEngine();
-+    const error = await engine
-+      .search({ query: unique('Atlassian Data Center end of life') })
-+      .catch((e: unknown) => e);
-+    expect(error).toBeInstanceOf(SearchUnavailableError);
-+    expect((error as Error).message).toBe(SEARCH_NOT_CONFIGURED_MESSAGE);
-+    expect((error as Error).message).toContain('Search API key');
-+    expect((error as Error).message).not.toMatch(/broaden|site:|exact-phrase/);
++    const search = engineSpy().mockResolvedValue([hit]);
++    const result = await new SearchEngine().search({ query: unique('Atlassian Data Center end of life') });
++    expect(result.results.map((r) => r.url)).toEqual([hit.url]);
++    expect(result.engine).toBe(keylessEngineName('Yahoo'));
++    expect(search.mock.calls.map(([engine]) => engine.name)).toEqual(['Yahoo']);
 +    expect(post).not.toHaveBeenCalled();
 +  });
 +
-+  it('a rejected key names the key, not the query', async () => {
++  it('no key and the first engine fails: the next engine answers, with the budget shared', async () => {
++    const search = engineSpy()
++      .mockRejectedValueOnce(new Error('it is showing a CAPTCHA'))
++      .mockResolvedValueOnce([hit]);
++    const result = await new SearchEngine().search({ query: unique('jcma'), timeout: 10000 });
++    expect(result.engine).toBe(keylessEngineName('Brave Search'));
++    expect(search.mock.calls.map(([engine, , , timeout]) => [engine.name, timeout])).toEqual([
++      ['Yahoo', 5000],
++      ['Brave Search', 5000],
++    ]);
++  });
++
++  it('no key and every browser engine fails: one named error with each reason, never an empty list', async () => {
++    engineSpy()
++      .mockRejectedValueOnce(new Error('net::ERR_NAME_NOT_RESOLVED'))
++      .mockRejectedValueOnce(new Error('it is showing a CAPTCHA'));
++    const error = await new SearchEngine()
++      .search({ query: unique('jcma versions') })
++      .catch((e: unknown) => e);
++    expect(error).toBeInstanceOf(SearchUnavailableError);
++    const message = (error as Error).message;
++    expect(message).toContain(
++      'no Serper key and the browser engines failed: Yahoo: net::ERR_NAME_NOT_RESOLVED; Brave Search: it is showing a CAPTCHA',
++    );
++    expect(message).toContain('get-single-web-page-content');
++    expect(message).toContain('Search API key');
++    expect(message).not.toMatch(/broaden|site:|exact-phrase/);
++  });
++
++  it('a CAPTCHA page is named as one, on the real page path', async () => {
++    fakeBrowser('<html><title>Captcha</title><div class="captcha-wrapper"></div></html>', 'Captcha', true);
++    const error = await new SearchEngine()
++      .search({ query: unique('anything at all') })
++      .catch((e: unknown) => e);
++    expect(error).toBeInstanceOf(SearchUnavailableError);
++    expect((error as Error).message).toContain(
++      'Yahoo: it is showing a CAPTCHA (it limits automated searches from this network); Brave Search: it is showing a CAPTCHA',
++    );
++  });
++
++  it('a page with no readable results is described by its status and title, not returned as empty', async () => {
++    const page = fakeBrowser('<html><title>Changed layout</title><body></body></html>', 'Changed layout');
++    const error = await new SearchEngine()
++      .search({ query: unique('anything else') })
++      .catch((e: unknown) => e);
++    expect((error as Error).message).toContain(
++      'Yahoo: no readable results on the page (HTTP 200, title "Changed layout")',
++    );
++    expect(page.close).toHaveBeenCalledTimes(2);
++  });
++
++  it('a hosted request without a key is told to send one, and no browser is launched', async () => {
++    const search = engineSpy();
++    const error = await requestContext
++      .run({}, () => new SearchEngine().search({ query: unique('hosted no key') }))
++      .catch((e: unknown) => e);
++    expect(error).toBeInstanceOf(SearchUnavailableError);
++    expect((error as Error).message).toBe(HOSTED_SEARCH_NOT_CONFIGURED_MESSAGE);
++    expect(search).not.toHaveBeenCalled();
++  });
++
++  it('a rejected key names the key, not the query, and does not fall back silently', async () => {
 +    process.env.SERPER_API_KEY = 'bad';
 +    vi.spyOn(axios, 'post').mockRejectedValue(httpError(401));
++    const search = engineSpy();
 +    const error = await new SearchEngine()
 +      .search({ query: unique('jcma versions') })
 +      .catch((e: unknown) => e);
 +    expect(error).toBeInstanceOf(SearchUnavailableError);
 +    expect((error as Error).message).toContain('the Serper key was rejected (HTTP 401)');
++    expect(search).not.toHaveBeenCalled();
 +  });
 +
-+  it('a call that ran and matched nothing is an honest empty result', async () => {
++  it('a Serper call that ran and matched nothing is an honest empty result', async () => {
 +    process.env.SERPER_API_KEY = 'good';
 +    vi.spyOn(axios, 'post').mockResolvedValue({ data: { organic: [] } });
 +    const result = await new SearchEngine().search({ query: unique('zzqx nothing') });
@@ -352,31 +828,22 @@ index 0000000..45da1ec
 +    expect(result.engine).toBe('serper-only');
 +  });
 +
-+  it('a call that ran returns its results', async () => {
++  it('a Serper call that ran returns its results', async () => {
 +    process.env.SERPER_API_KEY = 'good';
 +    vi.spyOn(axios, 'post').mockResolvedValue({
-+      data: {
-+        organic: [
-+          {
-+            title: 'Data Center End of Life',
-+            link: 'https://www.atlassian.com/licensing/data-center-end-of-life',
-+            snippet: 's',
-+          },
-+        ],
-+      },
++      data: { organic: [{ title: hit.title, link: hit.url, snippet: 's' }] },
 +    });
 +    const result = await new SearchEngine().search({ query: unique('dc eol') });
-+    expect(result.results.map((r) => r.url)).toEqual([
-+      'https://www.atlassian.com/licensing/data-center-end-of-life',
-+    ]);
++    expect(result.results.map((r) => r.url)).toEqual([hit.url]);
 +  });
 +
-+  it('progressive search does not turn a missing key into "no relevant content"', async () => {
++  it('progressive search does not turn a failed search into "no relevant content"', async () => {
++    engineSpy().mockRejectedValue(new Error('net::ERR_INTERNET_DISCONNECTED'));
 +    const progressive = new ProgressiveSearchEngine([new SearchEngine()], { maxDepth: 2 });
 +    const q = unique('Atlassian DC end of support');
 +    const error = await progressive.search(q, { query: q, maxDepth: 2 }).catch((e: unknown) => e);
 +    expect(error).toBeInstanceOf(SearchUnavailableError);
-+    expect((error as Error).message).toBe(SEARCH_NOT_CONFIGURED_MESSAGE);
++    expect((error as Error).message).toContain('net::ERR_INTERNET_DISCONNECTED');
 +  });
 +
 +  it('describes provider failures by what happened', () => {
@@ -386,5 +853,67 @@ index 0000000..45da1ec
 +    expect(describeSerperError(new Error('getaddrinfo ENOTFOUND google.serper.dev'))).toBe(
 +      'getaddrinfo ENOTFOUND google.serper.dev',
 +    );
++  });
++});
++
++type Parser = (html: string, max: number) => SearchResult[];
++const parser = (name: 'parseBraveResults' | 'parseYahooResults') => {
++  const engine = new SearchEngine() as unknown as Record<string, Parser>;
++  return (html: string, max: number) => engine[name].call(engine, html, max);
++};
++
++describe('Brave result parsing', () => {
++  // Trimmed from a live search.brave.com page captured 2026-09-26.
++  const block = (href: string, site: string, crumb: string, title: string, snippet: string) => `
++    <div class="snippet svelte-jmfu5f" data-type="web"><div class="result-body"><div class="result-content">
++      <a href="${href}" class="svelte-14r20fy l1"><div class="site-name-wrapper">
++        <img src="https://imgs.search.brave.com/x/favicon" alt="">
++        <div class="site-name-content"><div class="desktop-small-semibold">${site}</div>
++        <cite class="snippet-url">${crumb}</cite></div></div>
++        <div class="title search-snippet-title line-clamp-1" title="${title}">${title}</div></a>
++      <div class="generic-snippet"><div class="content"><span class="t-secondary">March 18, 2026 -</span> ${snippet}</div></div>
++    </div></div></div>`;
++  const html = `<html><body>
++    ${block('https://realpython.com/python311-exception-groups/', 'Real Python', 'realpython.com › python311-exception-groups', 'Python 3.11 Preview: Task and Exception Groups – Real Python', 'In this subsection, you’ll use asyncio.TaskGroup.')}
++    ${block('https://realpython.com/python311-exception-groups/', 'Real Python', 'realpython.com', 'duplicate', 'duplicate')}
++    ${block('https://search.brave.com/goggles', 'Brave', 'brave.com', 'Brave goggles', 'internal')}
++    ${block('https://stackoverflow.com/questions/75250788', 'Stack Overflow', 'stackoverflow.com › questions', 'How to prevent python3.11 TaskGroup from canceling all the tasks', 'Use try/except*.')}
++  </body></html>`;
++  const parse = parser('parseBraveResults');
++
++  it('takes the title element, not the site name and breadcrumb glued to it', () => {
++    const results = parse(html, 10);
++    expect(results.map((r) => [r.title, r.url])).toEqual([
++      ['Python 3.11 Preview: Task and Exception Groups – Real Python', 'https://realpython.com/python311-exception-groups/'],
++      ['How to prevent python3.11 TaskGroup from canceling all the tasks', 'https://stackoverflow.com/questions/75250788'],
++    ]);
++    expect(results[0].description).toBe('March 18, 2026 - In this subsection, you’ll use asyncio.TaskGroup.');
++  });
++
++  it('stops at the requested count', () => {
++    expect(parse(html, 1)).toHaveLength(1);
++  });
++});
++
++describe('Yahoo result parsing', () => {
++  // Trimmed from a live search.yahoo.com page captured 2026-09-26.
++  const block = (href: string, crumb: string, title: string, snippet: string) => `
++    <li><div class="dd algo algo-sr"><div class="compTitle options-toggle">
++      <a class="d-ib" target="_blank" href="${href}"><div class="d-ib p-abs"><span class="d-ib va-mid">
++        <span class="fc-141414 d-b">site</span>${crumb}</span></div>
++        <h3 class="title"><span class="d-b fz-20">${title}</span></h3></a></div>
++      <div class="compText aAbs"><p><span class="fc-smoke">Feb 4, 2026 · </span> ${snippet}</p></div></div></li>`;
++  const html = `<html><body><div id="web"><ol>
++    ${block('https://www.alltrails.com/romania/cluj', 'https://www.alltrails.com › romania › cluj', '10 Best trails and hikes in Cluj | AllTrails', 'Discover hand-curated <b>trail</b> maps.')}
++    ${block('https://r.search.yahoo.com/_ylt=A/RV=2/RE=1/RO=10/RU=https%3a%2f%2ftripjive.com%2fhiking%2f/RK=2/RS=x-', 'tripjive.com', 'Hiking Trails Near Cluj-Napoca', 'Explore the best <b>hiking</b> trails.')}
++    ${block('https://www.alltrails.com/romania/cluj', 'dup', 'duplicate', 'duplicate')}
++  </ol></div></body></html>`;
++  const parse = parser('parseYahooResults');
++
++  it('reads title, target and snippet, unwraps redirect links and drops duplicates', () => {
++    expect(parse(html, 10).map((r) => [r.title, r.url, r.description])).toEqual([
++      ['10 Best trails and hikes in Cluj | AllTrails', 'https://www.alltrails.com/romania/cluj', 'Feb 4, 2026 · Discover hand-curated trail maps.'],
++      ['Hiking Trails Near Cluj-Napoca', 'https://tripjive.com/hiking/', 'Feb 4, 2026 · Explore the best hiking trails.'],
++    ]);
 +  });
 +});
