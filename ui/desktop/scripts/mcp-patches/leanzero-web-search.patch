@@ -1,5 +1,3 @@
-diff --git a/package.json b/package.json
-index 3ebb63e..c04c748 100644
 --- a/package.json
 +++ b/package.json
 @@ -77,5 +77,8 @@
@@ -11,11 +9,9 @@ index 3ebb63e..c04c748 100644
 +    "qs": "6.16.0"
    }
  }
-diff --git a/src/browser-engine.ts b/src/browser-engine.ts
-index d279e4e..a995efa 100644
 --- a/src/browser-engine.ts
 +++ b/src/browser-engine.ts
-@@ -53,6 +53,12 @@ function getEngineSpecificArgs(engineType: BrowserEngineType): string[] {
+@@ -53,6 +53,12 @@
  export async function createOptimizedBrowser(
    options?: BrowserEngineOptions
  ): Promise<Browser> {
@@ -28,8 +24,6 @@ index d279e4e..a995efa 100644
    const effectiveOptions = { ...DEFAULT_ENGINE_OPTIONS, ...options };
    const engineType = effectiveOptions.engineType || 'webkit';
    
-diff --git a/src/index.ts b/src/index.ts
-index 96a27ad..1f3ea62 100644
 --- a/src/index.ts
 +++ b/src/index.ts
 @@ -1,11 +1,8 @@
@@ -47,9 +41,6 @@ index 96a27ad..1f3ea62 100644
  
  import { WebSearchMCPServer } from './server.js';
  
-diff --git a/src/lifeline.ts b/src/lifeline.ts
-new file mode 100644
-index 0000000..6d00478
 --- /dev/null
 +++ b/src/lifeline.ts
 @@ -0,0 +1,63 @@
@@ -116,11 +107,9 @@ index 0000000..6d00478
 +  }, PARENT_POLL_MS);
 +  watch.unref();
 +}
-diff --git a/src/openapi-extractor.ts b/src/openapi-extractor.ts
-index 0428550..abf3ec6 100644
 --- a/src/openapi-extractor.ts
 +++ b/src/openapi-extractor.ts
-@@ -315,7 +315,7 @@ async function downloadOpenAPISpec(
+@@ -315,7 +315,7 @@
        }
  
        // Detect content type
@@ -129,8 +118,6 @@ index 0428550..abf3ec6 100644
        let docType: TechnicalDocType = TechnicalDocType.OPENAPI_JSON;
  
        if (contentType.includes('yaml') || url.toLowerCase().endsWith('.yaml')) {
-diff --git a/src/progressive-search-engine.ts b/src/progressive-search-engine.ts
-index d9425f0..035f4ee 100644
 --- a/src/progressive-search-engine.ts
 +++ b/src/progressive-search-engine.ts
 @@ -3,7 +3,7 @@
@@ -142,7 +129,7 @@ index d9425f0..035f4ee 100644
  import { SearchResult } from './types.js';
  import { StandardIntentDetector, QueryIntent, generateIntentBasedExpansions } from './query-intent-detector.js';
  import { SemanticExpander, HeuristicSemanticExpander } from './semantic-expander.js';
-@@ -321,6 +321,9 @@ export class ProgressiveSearchEngine implements IProgressiveSearchEngine {
+@@ -321,6 +321,9 @@
          return result.results;
        }
      } catch (error) {
@@ -152,7 +139,7 @@ index d9425f0..035f4ee 100644
        console.warn(`[ProgressiveSearchEngine] Primary engine failed, trying fallbacks:`, error);
      }
      
-@@ -364,6 +367,7 @@ export class ProgressiveSearchEngine implements IProgressiveSearchEngine {
+@@ -364,6 +367,7 @@
            return result.results;
          }
        } catch (error) {
@@ -160,11 +147,9 @@ index d9425f0..035f4ee 100644
          console.warn(`[ProgressiveSearchEngine] Engine search failed for "${query}":`, error);
        }
      }
-diff --git a/src/search-engine.ts b/src/search-engine.ts
-index d979c9d..c1fdd92 100644
 --- a/src/search-engine.ts
 +++ b/src/search-engine.ts
-@@ -18,6 +18,78 @@ import { requestDeduplicator } from './request-deduplicator.js';
+@@ -18,6 +18,78 @@
  // Per-request context: a caller-supplied Serper key overrides the process env.
  import { requestContext } from './request-context.js';
  
@@ -243,7 +228,7 @@ index d979c9d..c1fdd92 100644
  export interface SearchEngineConfig {
    maxRequestsPerMinute?: number;
    resetIntervalMs?: number;
-@@ -79,7 +151,8 @@ export class SearchEngine {
+@@ -79,7 +151,8 @@
     * primary path):
     *   - `USE_SERPER_ONLY=false` ⇒ enable browser fallbacks
     *   - `ENABLE_BROWSER_FALLBACKS=true` ⇒ enable browser fallbacks (legacy alias)
@@ -253,7 +238,7 @@ index d979c9d..c1fdd92 100644
     */
    private async executeSearch(query: string, numResults: number, timeout: number): Promise<SearchResultWithMetadata> {
      const serperOnlyEnv = process.env.USE_SERPER_ONLY;
-@@ -89,23 +162,20 @@ export class SearchEngine {
+@@ -89,23 +162,20 @@
  
      console.log(`[SearchEngine] Serper-only mode: ${useSerperOnly} (USE_SERPER_ONLY=${serperOnlyEnv ?? 'unset'}, ENABLE_BROWSER_FALLBACKS=${process.env.ENABLE_BROWSER_FALLBACKS ?? 'unset'})`);
  
@@ -275,20 +260,20 @@ index d979c9d..c1fdd92 100644
          }
 -      } catch (error) {
 -        console.error('[SearchEngine] Serper API failed:', error instanceof Error ? error.message : 'Unknown');
--      }
++        return this.keylessSearch(query, numResults, timeout);
+       }
 -      // If Serper fails, optionally try browser fallbacks
 -      if (!enableBrowserFallbacks) {
 -        console.log('[SearchEngine] Serper failed, but browser fallbacks disabled. Returning empty results.');
 -        return { results: [], engine: 'serper-failed-no-fallback' };
-+        return this.keylessSearch(query, numResults, timeout);
-       }
+-      }
 +      const results = await this.serperSearch(query, numResults, timeout);
 +      console.log(`[SearchEngine] ✓ Serper returned ${results.length} results directly`);
 +      return { results, engine: 'serper-only' };
      }
  
      // Only proceed to browser engines if fallbacks are enabled
-@@ -379,18 +449,161 @@ export class SearchEngine {
+@@ -379,18 +449,161 @@
    /**
     * Runs a search with a specific browser engine
     */
@@ -456,7 +441,7 @@ index d979c9d..c1fdd92 100644
      }
  
      // NOTE: Cache check has been moved to the search() method above.
-@@ -450,7 +663,7 @@ export class SearchEngine {
+@@ -450,7 +663,7 @@
            data: error.response?.data,
          });
        }
@@ -465,7 +450,7 @@ index d979c9d..c1fdd92 100644
      }
    }
  
-@@ -592,6 +805,13 @@ export class SearchEngine {
+@@ -592,6 +805,13 @@
  
          const results = this.parseBraveResults(html, numResults);
          console.log(`[SearchEngine] Browser Brave parsed ${results.length} results`);
@@ -479,7 +464,7 @@ index d979c9d..c1fdd92 100644
  
          return results;
        } catch (error) {
-@@ -763,104 +983,56 @@ export class SearchEngine {
+@@ -763,104 +983,56 @@
      }
    }
  
@@ -632,11 +617,9 @@ index d979c9d..c1fdd92 100644
  
      console.log(`[SearchEngine] Brave found ${results.length} results`);
      return results;
-diff --git a/src/server.ts b/src/server.ts
-index dbc822f..ee1ec91 100644
 --- a/src/server.ts
 +++ b/src/server.ts
-@@ -35,10 +35,11 @@ class McpError extends Error {
+@@ -35,10 +35,11 @@
  }
  
  import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -649,7 +632,56 @@ index dbc822f..ee1ec91 100644
  import { EnhancedContentExtractor } from './enhanced-content-extractor.js';
  import { pdfExtractor as pdfExtractorInstance } from './pdf-extractor.js';
  
-@@ -141,7 +142,7 @@ export const WEB_SEARCH_INSTRUCTIONS = `web-search MCP — choose the RIGHT tool
+@@ -48,12 +49,9 @@
+ import { ProgressiveSearchEngine } from './progressive-search-engine.js';
+ import { isPdfUrl, fetchSitemapUrls, withTimeout, clampReadWindow } from './utils.js';
+ 
+-// Root directory for files this server writes (research-output markdown, and —
+-// via the crawl cache — saved OpenAPI specs). Defaults to the launch dir when it
+-// looks like a project (cwd has package.json), else the repo root. OUTPUT_DIR
+-// (or DOC_OUTPUT_DIR) overrides both, so a stdio client can pin where documents
+-// land on the CALLER's machine. NOTE: a remote/hosted server still writes on the
+-// HOST — this only relocates within whatever machine the server runs on.
++// Root directory for research-output markdown: OUTPUT_DIR / DOC_OUTPUT_DIR when
++// the user chose one, else DATA_DIR — never the launch dir (see state-dir.ts).
++// NOTE: a remote/hosted server still writes on the HOST.
+ function getOutputRoot(): string {
+   // 1) Per-request override (hosted X-Output-Dir header), via AsyncLocalStorage.
+   //    SANDBOXED under a server base so a remote tenant can only organize files
+@@ -63,21 +61,15 @@
+   const ctx = requestContext.getStore();
+   if (ctx?.outputDir && String(ctx.outputDir).trim()) {
+     const base = process.env.CLIENT_OUTPUT_BASE
+-      || path.join(process.env.DATA_DIR || process.cwd(), 'client-output');
++      || path.join(dataDir(), 'client-output');
+     const sub = path.normalize(String(ctx.outputDir))
+       .replace(/^([./\\]|\.\.[/\\]?)+/, '')
+       .replace(/^[/\\]+/, '');
+     const resolved = path.resolve(base, sub);
+     return resolved.startsWith(path.resolve(base)) ? resolved : path.resolve(base);
+   }
+-  // 2) Operator/self-host env (trusted), unsandboxed.
+-  const override = process.env.OUTPUT_DIR || process.env.DOC_OUTPUT_DIR;
+-  if (override && override.trim()) {
+-    return path.isAbsolute(override) ? override : path.resolve(process.cwd(), override);
+-  }
+-  // 3) Default: launch dir if it's a project, else repo root.
+-  const isCwdProjectRoot = fs.existsSync(path.join(process.cwd(), 'package.json'));
+-  return isCwdProjectRoot ? process.cwd() : path.resolve(__dirname, '..', '..');
++  // 2) Operator/self-host env, else the server's own DATA_DIR.
++  return outputRoot();
+ }
+ 
+ // Per-tool wall-clock budgets. All sit comfortably below the Forge function
+@@ -97,6 +89,7 @@
+ import * as yaml from 'js-yaml';
+ import { attachClientDetect, isAgenticClient, getClientInfo } from './client-detect.js';
+ import { searchLearning, toolLearning } from './insights.js';
++import { dataDir, outputRoot } from './state-dir.js';
+ import { buildDownloadUrl, mimeFor } from './download-registry.js';
+ import { requestContext } from './request-context.js';
+ 
+@@ -141,7 +134,7 @@
  • Save cited research to a markdown file (give it URLs) → research_and_save_to_markdown.
  • A GitHub repo's code/README → get-github-repo-content.   An API's endpoints → get-openapi-spec.
  • Re-read something already fetched → list-cached-documents, then read-cached-document.
@@ -658,7 +690,7 @@ index dbc822f..ee1ec91 100644
  
  export class WebSearchMCPServer {
    private server: McpServer;
-@@ -170,6 +171,12 @@ export class WebSearchMCPServer {
+@@ -170,6 +163,12 @@
        throw error;
      }
  
@@ -671,7 +703,7 @@ index dbc822f..ee1ec91 100644
      if (error instanceof Error) {
        // Categorize common errors and map to appropriate MCP error codes
        const message = error.message.toLowerCase();
-@@ -498,7 +505,7 @@ export class WebSearchMCPServer {
+@@ -498,7 +497,7 @@
  
            // Format: structured JSON block + human-readable text for AI-friendly parsing
            const jsonBlock = `\`\`\`json\n${JSON.stringify(summaryResults, null, 2)}\n\`\`\``;
@@ -680,7 +712,20 @@ index dbc822f..ee1ec91 100644
  
            summaryResults.forEach((summary, i) => {
              responseText += `**${i + 1}. ${summary.title}**\n`;
-@@ -2082,11 +2089,9 @@ export class WebSearchMCPServer {
+@@ -1868,9 +1867,9 @@
+ 
+           // Search both well-known dirs in order: OpenAPI specs, then research output.
+           // CRITICAL: resolve the OpenAPI dir from the extractor's cache, NOT from
+-          // cwd — the cache dir is module-relative (dist/../../docs/technical), so a
+-          // cwd-based guess diverges from where get-openapi-spec actually saved the
+-          // file and read-cached-document would report "not found".
++          // the output root — CRAWL_CACHE_DIR can move the cache elsewhere, so a
++          // guess diverges from where get-openapi-spec actually saved the file and
++          // read-cached-document would report "not found".
+           const openapiDir = openAPIExtractor.getOpenAPIDir();
+           const researchDir = path.join(projectRoot, 'docs', 'research-output');
+ 
+@@ -2082,11 +2081,9 @@
        }
        const message = error instanceof Error ? error.message : 'Unknown web search error';
        telemetryCollector.recordSearchFailure(searchEngineName || 'unknown', Date.now() - startTime);
@@ -695,7 +740,7 @@ index dbc822f..ee1ec91 100644
      }
    }
  
-@@ -2150,42 +2155,40 @@ export class WebSearchMCPServer {
+@@ -2150,42 +2147,40 @@
    private setupGracefulShutdown(): void {
      // Handle unhandled promise rejections
      process.on('unhandledRejection', (reason, promise) => {
@@ -755,9 +800,6 @@ index dbc822f..ee1ec91 100644
    }
  
    async run(): Promise<void> {
-diff --git a/src/stdio-guard.ts b/src/stdio-guard.ts
-new file mode 100644
-index 0000000..9d77fcf
 --- /dev/null
 +++ b/src/stdio-guard.ts
 @@ -0,0 +1,16 @@
@@ -777,8 +819,6 @@ index 0000000..9d77fcf
 +
 +installStdioSafeConsoleShim();
 +installClientLifeline();
-diff --git a/tests/integration/api_search.test.ts b/tests/integration/api_search.test.ts
-index 19618b7..b44eb8a 100644
 --- a/tests/integration/api_search.test.ts
 +++ b/tests/integration/api_search.test.ts
 @@ -1,31 +1,37 @@
@@ -835,9 +875,6 @@ index 19618b7..b44eb8a 100644
 +    ).rejects.toBeInstanceOf(SearchUnavailableError);
 +  }, 30000);
  });
-diff --git a/tests/unit/search-unavailable.test.ts b/tests/unit/search-unavailable.test.ts
-new file mode 100644
-index 0000000..8e4398d
 --- /dev/null
 +++ b/tests/unit/search-unavailable.test.ts
 @@ -0,0 +1,259 @@
@@ -1100,3 +1137,343 @@ index 0000000..8e4398d
 +    ]);
 +  });
 +});
+--- /dev/null
++++ b/src/state-dir.ts
+@@ -0,0 +1,62 @@
++/**
++ * Where this server may write. The launch directory is never a default: an agent
++ * starts the server in the user's project (goose Q-139), so research files, the
++ * crawl cache, insights and tenants must not appear there unasked.
++ *
++ * DATA_DIR is the server's own directory (goose passes one it owns); OUTPUT_DIR
++ * or DOC_OUTPUT_DIR is where the user asked research files to go, else DATA_DIR.
++ * Without DATA_DIR the per-user state directory is used and the reason is logged.
++ */
++import os from 'node:os';
++import path from 'node:path';
++import { logger } from './logger.js';
++
++const SERVER_ID = 'leanzero-web-search';
++const reported = new Set<string>();
++
++function reportOnce(key: string, msg: string, meta: Record<string, unknown>): void {
++  if (reported.has(key)) return;
++  reported.add(key);
++  logger.warn(msg, meta);
++}
++
++export function absoluteDirFromEnv(name: string): string | undefined {
++  const raw = process.env[name]?.trim();
++  if (!raw) return undefined;
++  if (path.isAbsolute(raw)) return raw;
++  reportOnce(`relative:${name}`, `[paths] ${name} is not an absolute path and is ignored: resolving it would write into the launch directory`, {
++    [name]: raw,
++    cwd: process.cwd(),
++  });
++  return undefined;
++}
++
++function userStateDir(): string {
++  const home = os.homedir();
++  if (!home) {
++    throw new Error('[paths] DATA_DIR is not set and the user home directory is unknown; refusing to write into the launch directory');
++  }
++  const base =
++    process.platform === 'darwin'
++      ? path.join(home, 'Library', 'Application Support')
++      : process.platform === 'win32'
++        ? process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local')
++        : absoluteDirFromEnv('XDG_STATE_HOME') || path.join(home, '.local', 'state');
++  return path.join(base, 'LeanZero', SERVER_ID);
++}
++
++/** The server's own files: insights, tenants, hosted client output, and the default output root. */
++export function dataDir(): string {
++  const configured = absoluteDirFromEnv('DATA_DIR');
++  if (configured) return configured;
++  const dir = userStateDir();
++  reportOnce('default-data-dir', '[paths] no absolute DATA_DIR is set; this server writes its own files under the per-user state directory, never the launch directory', {
++    dataDir: dir,
++  });
++  return dir;
++}
++
++/** Research markdown and (under docs/technical) the crawl cache and saved OpenAPI specs. */
++export function outputRoot(): string {
++  return absoluteDirFromEnv('OUTPUT_DIR') || absoluteDirFromEnv('DOC_OUTPUT_DIR') || dataDir();
++}
+--- a/src/crawl-cache.ts
++++ b/src/crawl-cache.ts
+@@ -8,24 +8,7 @@
+ import fs from 'fs';
+ import path from 'path';
+ import crypto from 'crypto';
+-
+-// Get the directory where this module is located
+-// In CommonJS: use __dirname directly
+-// In ES modules: resolve from import.meta.url (not available in CJS bundle)
+-const getModuleDir = (): string => {
+-  if (typeof __dirname !== 'undefined') {
+-    return __dirname;
+-  }
+-  // Fallback to resolving from the file
+-  try {
+-    const url = new URL('file:' + __filename);
+-    return path.dirname(url.pathname);
+-  } catch {
+-    return path.resolve();
+-  }
+-};
+-
+-const moduleDir = getModuleDir();
++import { absoluteDirFromEnv, outputRoot } from './state-dir.js';
+ 
+ export interface CrawlCacheEntry {
+   url: string;
+@@ -43,19 +26,10 @@
+   totalEntries: number;
+ }
+ 
+-// Default cache directory. Module-relative by default, but overridable so a
+-// deployment (or a test) can pin it to a known location — the module-relative
+-// path differs between the dist build and source, which otherwise makes "where
+-// did my spec get saved?" environment-dependent.
+-// Priority: CRAWL_CACHE_DIR (most specific) → OUTPUT_DIR/DOC_OUTPUT_DIR (shared
+-// "put my files here" override, kept in sync with the research-output root) →
+-// module-relative repo path.
+-const OUTPUT_DIR_OVERRIDE = process.env.OUTPUT_DIR || process.env.DOC_OUTPUT_DIR;
+-const DEFAULT_CACHE_DIR = process.env.CRAWL_CACHE_DIR
+-  ? path.resolve(process.env.CRAWL_CACHE_DIR)
+-  : OUTPUT_DIR_OVERRIDE && OUTPUT_DIR_OVERRIDE.trim()
+-    ? path.join(path.resolve(OUTPUT_DIR_OVERRIDE), 'docs', 'technical')
+-    : path.join(moduleDir, '../../docs/technical');
++// Default cache directory: CRAWL_CACHE_DIR, else docs/technical under the output
++// root (OUTPUT_DIR / DOC_OUTPUT_DIR / DATA_DIR) — never relative to the launch dir,
++// which is the user's project when an agent starts this server (goose Q-139).
++const DEFAULT_CACHE_DIR = absoluteDirFromEnv('CRAWL_CACHE_DIR') || path.join(outputRoot(), 'docs', 'technical');
+ const CACHE_FILE = 'crawl-cache.json';
+ const DEFAULT_TTL_MS = 86400000; // 24 hours
+ 
+--- a/src/insights.ts
++++ b/src/insights.ts
+@@ -12,12 +12,12 @@
+ import * as path from 'path';
+ 
+ import { logger } from './logger.js';
++import { dataDir } from './state-dir.js';
+ import { getClientInfo, clientCanPersistMemory } from './client-detect.js';
+ 
+ function insightsPath(): string {
+   if (process.env.INSIGHTS_LOG) return process.env.INSIGHTS_LOG;
+-  const base = process.env.DATA_DIR || process.cwd();
+-  return path.join(base, 'logs', 'insights.jsonl');
++  return path.join(dataDir(), 'logs', 'insights.jsonl');
+ }
+ 
+ let dirReady = false;
+--- a/src/auth.ts
++++ b/src/auth.ts
+@@ -20,10 +20,10 @@
+ import express, { type Express, type Request, type Response, type NextFunction } from 'express';
+ import rateLimit from 'express-rate-limit';
+ import { logger } from './logger.js';
++import { dataDir } from './state-dir.js';
+ import { verifyOAuth, oauthEnabled, protectedResourceMetadataUrl } from './oauth.js';
+ 
+-const DATA_DIR = process.env.DATA_DIR || process.cwd();
+-const TENANTS_PATH = path.join(DATA_DIR, 'tenants.json');
++const TENANTS_PATH = path.join(dataDir(), 'tenants.json');
+ const ROTATE_GRACE_MS = 5 * 60 * 1000;
+ 
+ interface ExpiringHash {
+--- a/src/download-registry.ts
++++ b/src/download-registry.ts
+@@ -18,6 +18,7 @@
+ import crypto from 'node:crypto';
+ import path from 'node:path';
+ import fs from 'node:fs';
++import { absoluteDirFromEnv, dataDir, outputRoot } from './state-dir.js';
+ 
+ const TTL_MS = Number(process.env.FILE_DOWNLOAD_TTL_MS || 24 * 3600 * 1000);
+ 
+@@ -38,28 +39,21 @@
+   return null;
+ }
+ 
+-// Files may only be served from under these roots (defense in depth). WIDER than
+-// the doc-processor template on purpose: research markdown lands under
+-// getOutputRoot() (≈ process.cwd()), while OpenAPI specs land under the
+-// crawl-cache root — which, in this ESM build where __dirname is unavailable,
+-// can resolve to the launch dir's PARENT (e.g. <repo>/.. /docs/technical/openapi).
+-// Including cwd + its parent + the explicit output/cache env dirs covers both
+-// observed locations without leaking outside the project tree. Combined with the
+-// HMAC signature (paths can't be forged), this is defense-in-depth, not the
+-// primary control.
++// Files may only be served from under these roots (defense in depth): the places
++// this server writes — the output root (research markdown, and the crawl cache
++// under docs/technical), DATA_DIR and its client-output, and CRAWL_CACHE_DIR.
++// Combined with the HMAC signature (paths can't be forged), this is
++// defense-in-depth, not the primary control.
+ function allowedBases(): string[] {
+   const bases = new Set<string>();
+   const add = (p?: string | null): void => {
+     if (p && String(p).trim()) bases.add(path.resolve(String(p)));
+   };
+-  add(process.cwd());
+-  add(path.resolve(process.cwd(), '..'));
+-  add(process.env.DATA_DIR);
+-  if (process.env.DATA_DIR) add(path.join(process.env.DATA_DIR, 'client-output')); // default CLIENT_OUTPUT_BASE
++  add(dataDir());
++  add(path.join(dataDir(), 'client-output')); // default CLIENT_OUTPUT_BASE
+   add(process.env.CLIENT_OUTPUT_BASE);
+-  add(process.env.OUTPUT_DIR);
+-  add(process.env.DOC_OUTPUT_DIR);
+-  add(process.env.CRAWL_CACHE_DIR);
++  add(outputRoot());
++  add(absoluteDirFromEnv('CRAWL_CACHE_DIR'));
+   return [...bases];
+ }
+ 
+--- /dev/null
++++ b/tests/integration/output-location.test.ts
+@@ -0,0 +1,88 @@
++// Shared console redirection setup
++import './setup.ts';
++
++import { describe, it, expect, afterAll } from 'vitest';
++import { Client } from '@modelcontextprotocol/sdk/client/index.js';
++import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
++import * as fs from 'fs';
++import * as os from 'os';
++import * as path from 'path';
++
++// goose Q-139: an agent launches this server with cwd = the user's project. The
++// server must not create docs/, logs/ or anything else there (or in its parents,
++// where the old module-relative crawl cache landed). Offline: startup creates the
++// crawl cache, research_and_save_to_markdown creates its output dir before the
++// (refused) fetch, and list-cached-documents reads the same root back.
++const sandboxes: string[] = [];
++afterAll(() => {
++  for (const dir of sandboxes) fs.rmSync(dir, { recursive: true, force: true });
++});
++
++const tree = (dir: string): string[] =>
++  fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
++    const p = path.join(dir, e.name);
++    return e.isDirectory() ? [p + path.sep, ...tree(p)] : [p];
++  });
++
++async function runInProject(env: Record<string, string>) {
++  const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ws-output-location-')));
++  sandboxes.push(sandbox);
++  const home = path.join(sandbox, 'home');
++  const project = path.join(home, 'projects', 'app');
++  fs.mkdirSync(project, { recursive: true });
++  fs.writeFileSync(path.join(project, 'package.json'), '{"name":"app"}');
++  const before = new Set(tree(sandbox));
++
++  const transport = new StdioClientTransport({
++    command: process.execPath,
++    args: [path.resolve('dist/index.js')],
++    cwd: project,
++    env: { PATH: process.env.PATH ?? '', HOME: home, USERPROFILE: home, LOCALAPPDATA: path.join(home, 'AppData', 'Local'), MCP_CLIENT_TYPE: 'agent', ...env },
++  });
++  const client = new Client({ name: 'output-location-test', version: '1.0.0' });
++  await client.connect(transport);
++  await client.callTool(
++    { name: 'research_and_save_to_markdown', arguments: { url: 'http://127.0.0.1:9/unreachable' } },
++    undefined,
++    { timeout: 60000 },
++  );
++  const listed = await client.callTool({ name: 'list-cached-documents', arguments: {} }, undefined, { timeout: 30000 });
++  await client.close();
++
++  const created = tree(sandbox).filter((p) => !before.has(p)).map((p) => path.relative(sandbox, p));
++  return { sandbox, created, listed };
++}
++
++const insideProjectOrParents = (created: string[]) =>
++  created.filter((p) => p.startsWith(path.join('home', 'projects')) || /^home[/\\](docs|logs)/.test(p));
++
++describe('files never land in the launch directory (goose Q-139)', () => {
++  it('with DATA_DIR, writes only under DATA_DIR', async () => {
++    const dataDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ws-data-dir-')));
++    sandboxes.push(dataDir);
++    const { created } = await runInProject({ DATA_DIR: dataDir });
++    expect(insideProjectOrParents(created)).toEqual([]);
++    expect(fs.existsSync(path.join(dataDir, 'docs', 'technical', 'openapi'))).toBe(true);
++    expect(fs.existsSync(path.join(dataDir, 'docs', 'research-output'))).toBe(true);
++  }, 120000);
++
++  it('with OUTPUT_DIR, research and the crawl cache go there', async () => {
++    const outputDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ws-output-dir-')));
++    const dataDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ws-data-dir-')));
++    sandboxes.push(outputDir, dataDir);
++    const { created } = await runInProject({ OUTPUT_DIR: outputDir, DATA_DIR: dataDir });
++    expect(insideProjectOrParents(created)).toEqual([]);
++    expect(fs.existsSync(path.join(outputDir, 'docs', 'technical', 'openapi'))).toBe(true);
++    expect(fs.existsSync(path.join(outputDir, 'docs', 'research-output'))).toBe(true);
++  }, 120000);
++
++  it('with nothing configured (or a relative path), uses the per-user state dir, never the project', async () => {
++    for (const env of [{}, { OUTPUT_DIR: 'research', DATA_DIR: 'state' }]) {
++      const { created } = await runInProject(env);
++      expect(insideProjectOrParents(created)).toEqual([]);
++      const research = created.find((p) => p.endsWith(path.join('docs', 'research-output')));
++      expect(research).toBeDefined();
++      expect(research).toContain(path.join('LeanZero', 'leanzero-web-search'));
++    }
++  }, 240000);
++});
+--- a/tests/integration/cached-document-pagination.test.ts
++++ b/tests/integration/cached-document-pagination.test.ts
+@@ -18,7 +18,9 @@
+   const testTimeout = 30000;
+ 
+   const fileName = 'research-pagination-selftest-DELETEME.md';
+-  const researchDir = path.join(process.cwd(), 'docs', 'research-output');
++  // The server never writes into its launch dir (goose Q-139): pin the output root.
++  const outputDir = path.join(os.tmpdir(), 'mcp-output-selftest');
++  const researchDir = path.join(outputDir, 'docs', 'research-output');
+   const filePath = path.join(researchDir, fileName);
+   // 240k chars in four labelled 60k blocks so page boundaries are verifiable.
+   const content = 'A'.repeat(60000) + 'B'.repeat(60000) + 'C'.repeat(60000) + 'D'.repeat(60000);
+@@ -39,14 +41,14 @@
+       command: 'node',
+       args: ['dist/index.js'],
+       stdioBufferMaxSize: 1024 * 1024 * 50,
+-      env: { ...process.env, CRAWL_CACHE_DIR: cacheDir },
++      env: { ...process.env, CRAWL_CACHE_DIR: cacheDir, OUTPUT_DIR: outputDir, DATA_DIR: outputDir },
+     } as any);
+     client = new Client({ name: 'pagination-test-client', version: '1.0.0' });
+     await client.connect(transport);
+   }, 60000);
+ 
+   afterAll(async () => {
+-    try { fs.unlinkSync(filePath); } catch { /* already gone */ }
++    try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch { /* already gone */ }
+     try { fs.rmSync(cacheDir, { recursive: true, force: true }); } catch { /* ignore */ }
+     await client.close();
+   });
+--- a/tests/integration/research_save.test.ts
++++ b/tests/integration/research_save.test.ts
+@@ -4,6 +4,7 @@
+ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+ import * as fs from 'fs';
++import * as os from 'os';
+ import * as path from 'path';
+ 
+ async function checkPlaywrightAvailability(): Promise<boolean> {
+@@ -30,9 +31,11 @@
+       return;
+     }
+ 
++    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-research-save-'));
+     transport = new StdioClientTransport({
+       command: 'node',
+       args: ['dist/index.js'],
++      env: { ...process.env, OUTPUT_DIR: outputDir, DATA_DIR: outputDir } as Record<string, string>,
+     });
+ 
+     client = new Client({ name: 'research-test-client', version: '1.0.0' });
