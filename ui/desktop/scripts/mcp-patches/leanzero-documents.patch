@@ -1,8 +1,17 @@
-diff --git a/package.json b/package.json
-index b633287..8903899 100644
 --- a/package.json
 +++ b/package.json
-@@ -43,7 +43,10 @@
+@@ -26,8 +26,9 @@
+     "test:create-pptx": "node --test test/test-create-pptx.js",
+     "test:fact-check": "node --test test/test-fact-check.js",
+     "test:format-router": "node --test test/test-format-router.js",
++    "test:output-location": "node --test test/test-output-location.js",
+     "insights": "node scripts/insights-report.mjs",
+-    "test:all": "npm test && npm run test:read-doc && npm run test:schemas && npm run test:render && npm run test:upload && npm run test:http && npm run test:auth && npm run test:oauth && npm run test:pdf && npm run test:create-tags && npm run test:create-pdf && npm run test:create-pptx && npm run test:fact-check && npm run test:format-router",
++    "test:all": "npm test && npm run test:read-doc && npm run test:schemas && npm run test:render && npm run test:upload && npm run test:http && npm run test:auth && npm run test:oauth && npm run test:pdf && npm run test:create-tags && npm run test:create-pdf && npm run test:create-pptx && npm run test:fact-check && npm run test:format-router && npm run test:output-location",
+     "lint:no-console-log": "! grep -rn 'console\\.log(' src/ --include='*.js'"
+   },
+   "dependencies": {
+@@ -43,7 +44,10 @@
      "pdf-parse": "^2.4.5",
      "pptxgenjs": "^4.0.1",
      "puppeteer": "^25.1.0",
@@ -14,11 +23,9 @@ index b633287..8903899 100644
 +    "image-size": "2.0.4"
    }
  }
-diff --git a/src/index.js b/src/index.js
-index c23a3dd..415c477 100644
 --- a/src/index.js
 +++ b/src/index.js
-@@ -6,7 +6,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
+@@ -6,7 +6,10 @@
  import { setupLogging, log } from "./utils/logger.js";
  import { registerAllTools, SERVER_INSTRUCTIONS } from "./tool-registry.js";
  import { setClientInfo } from "./utils/client-profile.js";
@@ -29,11 +36,9 @@ index c23a3dd..415c477 100644
  setupLogging();
  
  const server = new Server(
-diff --git a/src/services/web-search-client.js b/src/services/web-search-client.js
-index c939449..5e23564 100644
 --- a/src/services/web-search-client.js
 +++ b/src/services/web-search-client.js
-@@ -14,7 +14,7 @@ import { log } from "../utils/logger.js";
+@@ -14,7 +14,7 @@
   * the Funnel URL's Host matches the allow-list.
   */
  export const DEFAULT_WEB_SEARCH_URL =
@@ -42,7 +47,7 @@ index c939449..5e23564 100644
  
  /**
   * Call one tool on the web-search MCP. Returns { ok, text, isError }.
-@@ -24,6 +24,7 @@ export const DEFAULT_WEB_SEARCH_URL =
+@@ -24,6 +24,7 @@
   */
  export async function callWebSearchTool(cfg, toolName, args) {
    const target = cfg.url || DEFAULT_WEB_SEARCH_URL;
@@ -50,9 +55,6 @@ index c939449..5e23564 100644
    const headers = {};
    if (cfg.bearer) headers["Authorization"] = `Bearer ${cfg.bearer}`;
    if (cfg.serperKey) headers["X-Serper-Key"] = cfg.serperKey;
-diff --git a/src/utils/lifeline.js b/src/utils/lifeline.js
-new file mode 100644
-index 0000000..91e44b9
 --- /dev/null
 +++ b/src/utils/lifeline.js
 @@ -0,0 +1,43 @@
@@ -99,3 +101,409 @@ index 0000000..91e44b9
 +  }, PARENT_POLL_MS);
 +  watch.unref();
 +}
+--- /dev/null
++++ b/src/utils/state-dir.js
+@@ -0,0 +1,55 @@
++/**
++ * Where this server keeps its OWN files (server log, insights, document registry,
++ * tenants/OAuth state). The launch directory is never a default: an agent starts
++ * the server in the user's project (goose Q-139), so those files must not appear
++ * there unasked. Documents the user asks for still go where getOutputRoot() says.
++ *
++ * DATA_DIR (goose passes one it owns), else the per-user state directory with the
++ * reason on stderr. The logger depends on this module, so it reports on stderr itself.
++ */
++import os from "node:os";
++import path from "node:path";
++
++const SERVER_ID = "leanzero-documents";
++const reported = new Set();
++
++function reportOnce(key, message, meta) {
++  if (reported.has(key)) return;
++  reported.add(key);
++  process.stderr.write(`[paths] ${message} ${JSON.stringify(meta)}\n`);
++}
++
++function absoluteDirFromEnv(name) {
++  const raw = process.env[name]?.trim();
++  if (!raw) return undefined;
++  if (path.isAbsolute(raw)) return raw;
++  reportOnce(`relative:${name}`, `${name} is not an absolute path and is ignored: resolving it would write into the launch directory`, {
++    [name]: raw,
++    cwd: process.cwd(),
++  });
++  return undefined;
++}
++
++function userStateDir() {
++  const home = os.homedir();
++  if (!home) {
++    throw new Error("[paths] DATA_DIR is not set and the user home directory is unknown; refusing to write into the launch directory");
++  }
++  const base =
++    process.platform === "darwin"
++      ? path.join(home, "Library", "Application Support")
++      : process.platform === "win32"
++        ? process.env.LOCALAPPDATA || path.join(home, "AppData", "Local")
++        : absoluteDirFromEnv("XDG_STATE_HOME") || path.join(home, ".local", "state");
++  return path.join(base, "LeanZero", SERVER_ID);
++}
++
++export function dataDir() {
++  const configured = absoluteDirFromEnv("DATA_DIR");
++  if (configured) return configured;
++  const dir = userStateDir();
++  reportOnce("default-data-dir", "no absolute DATA_DIR is set; this server writes its own files under the per-user state directory, never the launch directory", {
++    dataDir: dir,
++  });
++  return dir;
++}
+--- a/src/utils/logger.js
++++ b/src/utils/logger.js
+@@ -1,10 +1,10 @@
+ import fs from "fs";
+ import path from "path";
++import { dataDir } from "./state-dir.js";
+ 
+-// Define log file path relative to current working directory
+-const LOG_FILE = path.join(process.cwd(), "logs", "server.log");
++// The server's own directory, never the launch dir (the user's project; goose Q-139).
++const LOG_FILE = path.join(dataDir(), "logs", "server.log");
+ 
+-// Ensure logs directory exists using absolute path from current working directory
+ let logFileStream = null;
+ 
+ /**
+@@ -15,7 +15,7 @@
+     const timestamp = new Date().toISOString();
+ 
+     // Create the logs directory if it doesn't exist
+-    const logDir = path.join(process.cwd(), "logs");
++    const logDir = path.dirname(LOG_FILE);
+     if (!fs.existsSync(logDir)) {
+       fs.mkdirSync(logDir, { recursive: true });
+     }
+--- a/src/utils/insights.js
++++ b/src/utils/insights.js
+@@ -4,7 +4,7 @@
+  * the tools. Written ALWAYS (regardless of client type); the per-agent
+  * `memoryNudge` is a separate, client-gated thing.
+  *
+- * Location: INSIGHTS_LOG env, else <DATA_DIR or cwd>/logs/insights.jsonl.
++ * Location: INSIGHTS_LOG env, else <dataDir()>/logs/insights.jsonl — never the launch dir.
+  * Writing is best-effort and never throws into a tool handler.
+  */
+ 
+@@ -12,11 +12,11 @@
+ import path from "path";
+ 
+ import { log } from "./logger.js";
++import { dataDir } from "./state-dir.js";
+ 
+ function insightsPath() {
+   if (process.env.INSIGHTS_LOG) return process.env.INSIGHTS_LOG;
+-  const base = process.env.DATA_DIR || process.cwd();
+-  return path.join(base, "logs", "insights.jsonl");
++  return path.join(dataDir(), "logs", "insights.jsonl");
+ }
+ 
+ let _dirReady = false;
+--- a/src/utils/registry.js
++++ b/src/utils/registry.js
+@@ -1,13 +1,16 @@
+ /**
+  * Document Registry System
+- * Tracks all created documents in docs/registry.json for deduplication and discovery
++ * Tracks all created documents in <dataDir()>/registry.json for deduplication and
++ * discovery. It is the server's own bookkeeping, so it never lands in the launch
++ * dir (the user's project; goose Q-139) — entries carry absolute file paths.
+  */
+ 
+ import fs from "fs/promises";
+ import path from "path";
++import { dataDir } from "./state-dir.js";
+ 
+-const REGISTRY_PATH = path.join(process.cwd(), "docs", "registry.json");
+-const LOCK_FILE_PATH = path.join(process.cwd(), "docs", ".registry.lock");
++const REGISTRY_PATH = path.join(dataDir(), "registry.json");
++const LOCK_FILE_PATH = path.join(dataDir(), ".registry.lock");
+ 
+ /**
+  * Get the absolute registry file path
+@@ -28,6 +31,7 @@
+  * @returns {boolean} True if lock acquired, false otherwise
+  */
+ export async function acquireLock() {
++  await fs.mkdir(path.dirname(LOCK_FILE_PATH), { recursive: true });
+   try {
+     await fs.writeFile(LOCK_FILE_PATH, String(process.pid), { flag: "wx" });
+     return true;
+--- a/src/auth.js
++++ b/src/auth.js
+@@ -5,9 +5,9 @@
+ import express from "express";
+ import rateLimit from "express-rate-limit";
+ import { log } from "./utils/logger.js";
++import { dataDir } from "./utils/state-dir.js";
+ 
+-const DATA_DIR = process.env.DATA_DIR || process.cwd();
+-const TENANTS_PATH = path.join(DATA_DIR, "tenants.json");
++const TENANTS_PATH = path.join(dataDir(), "tenants.json");
+ const ROTATE_GRACE_MS = 5 * 60 * 1000;
+ 
+ let cache = null;
+--- a/src/oauth/provider.js
++++ b/src/oauth/provider.js
+@@ -6,6 +6,7 @@
+ import { renderConsentPage } from "./consent.js";
+ import { verifyTenantToken } from "../auth.js";
+ import { log } from "../utils/logger.js";
++import { dataDir } from "../utils/state-dir.js";
+ 
+ // OAuth 2.1 authorization-server provider for the MCP SDK's mcpAuthRouter.
+ // Bridges the OAuth login step to the existing per-tenant bearer tokens: the
+@@ -18,8 +19,7 @@
+ // they survive launchd restarts. Authorization codes are short-lived and kept
+ // in memory only (the code→token exchange happens within seconds).
+ 
+-const DATA_DIR = process.env.DATA_DIR || process.cwd();
+-const TOKENS_PATH = path.join(DATA_DIR, "oauth-tokens.json");
++const TOKENS_PATH = path.join(dataDir(), "oauth-tokens.json");
+ 
+ const ACCESS_TTL_MS = Number(process.env.OAUTH_ACCESS_TTL_MS) || 60 * 60 * 1000;          // 1h
+ const REFRESH_TTL_MS = Number(process.env.OAUTH_REFRESH_TTL_MS) || 30 * 24 * 60 * 60 * 1000; // 30d
+--- a/src/oauth/clients-store.js
++++ b/src/oauth/clients-store.js
+@@ -1,13 +1,13 @@
+ import { promises as fs } from "node:fs";
+ import path from "node:path";
+ import { log } from "../utils/logger.js";
++import { dataDir } from "../utils/state-dir.js";
+ 
+ // File-backed OAuthRegisteredClientsStore for dynamic client registration.
+ // claude.ai (and other MCP clients) register themselves via POST /register; we
+ // persist the registration so the client_id survives server restarts. Mirrors
+ // the tmp+rename, mode-0600 persistence pattern used by src/auth.js (tenants).
+-const DATA_DIR = process.env.DATA_DIR || process.cwd();
+-const CLIENTS_PATH = path.join(DATA_DIR, "oauth-clients.json");
++const CLIENTS_PATH = path.join(dataDir(), "oauth-clients.json");
+ 
+ export class FileClientsStore {
+   constructor() {
+--- a/src/tools/utils.js
++++ b/src/tools/utils.js
+@@ -8,6 +8,7 @@
+   findDocuments
+ } from "../utils/registry.js";
+ import { log } from "../utils/logger.js";
++import { dataDir } from "../utils/state-dir.js";
+ import { requestContext } from "../utils/request-context.js";
+ 
+ /**
+@@ -34,7 +35,7 @@
+   const ctx = requestContext.getStore && requestContext.getStore();
+   if (ctx && ctx.outputDir && String(ctx.outputDir).trim()) {
+     const base = process.env.CLIENT_OUTPUT_BASE
+-      || path.join(process.env.DATA_DIR || process.cwd(), "client-output");
++      || path.join(dataDir(), "client-output");
+     const sub = path.normalize(String(ctx.outputDir))
+       .replace(/^([./\\]|\.\.[/\\]?)+/, "")  // strip leading ./ ../ and slashes
+       .replace(/^[/\\]+/, "");
+@@ -326,6 +327,15 @@
+   const resolvedPath = path.isAbsolute(outputPath)
+     ? outputPath
+     : path.resolve(getOutputRoot(), outputPath);
++
++  // Over stdio, an explicit path outside the output root is the caller's choice:
++  // respect it, as enforceDocsFolder does, instead of moving it under <root>/docs
++  // (goose Q-139). A hosted request keeps being pulled into its sandboxed root.
++  const hosted = Boolean(requestContext.getStore && requestContext.getStore());
++  const fromRoot = path.relative(getOutputRoot(), resolvedPath);
++  if (!hosted && (fromRoot === ".." || fromRoot.startsWith(".." + path.sep) || path.isAbsolute(fromRoot))) {
++    return { outputPath: resolvedPath, wasCategorized: false };
++  }
+ 
+   const categoryInfo = getCategoryPath(category);
+   const docsRoot = path.join(getOutputRoot(), "docs");
+--- a/src/tools/create-doc.js
++++ b/src/tools/create-doc.js
+@@ -31,6 +31,7 @@
+   createNumberingConfig,
+ } from "./styling.js";
+ import {
++  getOutputRoot,
+   validateAndNormalizeInput,
+   ensureDirectory,
+   enforceDocsFolder,
+@@ -327,7 +328,7 @@
+     const normalized = validateAndNormalizeInput(input, [], "docx");
+     let outputPath = normalized.outputPath;
+     if (!path.isAbsolute(outputPath)) {
+-      outputPath = path.resolve(process.cwd(), outputPath);
++      outputPath = path.resolve(getOutputRoot(), outputPath);
+     }
+ 
+     // Apply category-based subfolder organization
+--- a/src/tools/create-markdown.js
++++ b/src/tools/create-markdown.js
+@@ -1,6 +1,7 @@
+ import fs from "fs/promises";
+ import path from "path";
+ import {
++  getOutputRoot,
+   validateAndNormalizeInput,
+   ensureDirectory,
+   enforceDocsFolder,
+@@ -123,7 +124,7 @@
+     const normalized = validateAndNormalizeInput(parsedInput, [], "md");
+     let outputPath = normalized.outputPath;
+     if (!path.isAbsolute(outputPath)) {
+-      outputPath = path.resolve(process.cwd(), outputPath);
++      outputPath = path.resolve(getOutputRoot(), outputPath);
+     }
+ 
+     // Apply category-based subfolder organization
+--- a/src/tools/create-excel.js
++++ b/src/tools/create-excel.js
+@@ -2,6 +2,7 @@
+ import fs from "fs";
+ import path from "path";
+ import {
++  getOutputRoot,
+   validateAndNormalizeInput,
+   ensureDirectory,
+   enforceDocsFolder,
+@@ -116,7 +117,7 @@
+ 
+     let outputPath = normalized.outputPath;
+     if (!path.isAbsolute(outputPath)) {
+-      outputPath = path.resolve(process.cwd(), outputPath);
++      outputPath = path.resolve(getOutputRoot(), outputPath);
+     }
+ 
+     // Apply category-based subfolder organization
+--- a/src/tools/create-pdf.js
++++ b/src/tools/create-pdf.js
+@@ -2,6 +2,7 @@
+ import path from "path";
+ 
+ import {
++  getOutputRoot,
+   validateAndNormalizeInput,
+   ensureDirectory,
+   enforceDocsFolder,
+@@ -176,7 +177,7 @@
+     // Path resolution (mirror create-doc): normalize → category → enforce docs/
+     const normalized = validateAndNormalizeInput(parsedInput, [], "pdf");
+     let outputPath = normalized.outputPath;
+-    if (!path.isAbsolute(outputPath)) outputPath = path.resolve(process.cwd(), outputPath);
++    if (!path.isAbsolute(outputPath)) outputPath = path.resolve(getOutputRoot(), outputPath);
+ 
+     const { outputPath: categorizedPath, wasCategorized } = applyCategoryToPath(outputPath, category);
+     outputPath = categorizedPath;
+--- a/src/tools/create-pptx.js
++++ b/src/tools/create-pptx.js
+@@ -3,6 +3,7 @@
+ import PptxGenJS from "pptxgenjs";
+ 
+ import {
++  getOutputRoot,
+   validateAndNormalizeInput,
+   ensureDirectory,
+   enforceDocsFolder,
+@@ -465,7 +466,7 @@
+     // Path resolution (mirror create-pdf): normalize → category → enforce docs/
+     const normalized = validateAndNormalizeInput(parsedInput, [], "pptx");
+     let outputPath = normalized.outputPath;
+-    if (!path.isAbsolute(outputPath)) outputPath = path.resolve(process.cwd(), outputPath);
++    if (!path.isAbsolute(outputPath)) outputPath = path.resolve(getOutputRoot(), outputPath);
+ 
+     const { outputPath: categorizedPath, wasCategorized } = applyCategoryToPath(outputPath, category);
+     outputPath = categorizedPath;
+--- /dev/null
++++ b/test/test-output-location.js
+@@ -0,0 +1,83 @@
++// goose Q-139: an agent launches this server with cwd = the user's project. The
++// server's own files (server.log, insights, registry) must never land there, and a
++// document goes where the caller or DOC_OUTPUT_DIR says — not under <cwd>/docs.
++import { test, after } from "node:test";
++import assert from "node:assert/strict";
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++import { fileURLToPath } from "node:url";
++import { Client } from "@modelcontextprotocol/sdk/client/index.js";
++import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
++
++const entry = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "index.js");
++const sandboxes = [];
++after(() => sandboxes.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
++
++const tree = (dir) =>
++  fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
++    const p = path.join(dir, e.name);
++    return e.isDirectory() ? [p + path.sep, ...tree(p)] : [p];
++  });
++
++async function createInProject(env, outputPath) {
++  const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "docs-output-location-")));
++  sandboxes.push(sandbox);
++  const home = path.join(sandbox, "home");
++  const project = path.join(home, "projects", "app");
++  fs.mkdirSync(project, { recursive: true });
++  fs.writeFileSync(path.join(project, "package.json"), '{"name":"app"}');
++  const before = new Set(tree(sandbox));
++
++  const transport = new StdioClientTransport({
++    command: process.execPath,
++    args: [entry],
++    cwd: project,
++    env: { PATH: process.env.PATH ?? "", HOME: home, USERPROFILE: home, MCP_CLIENT_TYPE: "agent", ...env(sandbox) },
++  });
++  const client = new Client({ name: "output-location-test", version: "1.0.0" });
++  await client.connect(transport);
++  const result = await client.callTool({
++    name: "create-markdown",
++    arguments: {
++      title: "Payments Webhook Integration Guide",
++      content: "## Setup\n\nRegister the webhook endpoint and verify the signature header.\n\n## Retries\n\nFailed deliveries retry with backoff.",
++      outputPath: outputPath(sandbox),
++    },
++  });
++  await client.close();
++  assert.notEqual(result.isError, true, JSON.stringify(result.content));
++  const created = tree(sandbox).filter((p) => !before.has(p)).map((p) => path.relative(sandbox, p));
++  const touched = created.filter((p) => p.startsWith(path.join("home", "projects")) || /^home[/\\](docs|logs)/.test(p));
++  return { created, touched };
++}
++
++test("with DATA_DIR, the server's own files go there and an absolute document path is honoured", async () => {
++  const { created, touched } = await createInProject(
++    (s) => ({ DATA_DIR: path.join(s, "state") }),
++    (s) => path.join(s, "chosen", "guide.md"),
++  );
++  assert.deepEqual(touched, []);
++  assert.ok(created.includes(path.join("chosen", "guide.md")), created.join("\n"));
++  for (const own of [path.join("logs", "server.log"), path.join("logs", "insights.jsonl"), "registry.json"]) {
++    assert.ok(created.includes(path.join("state", own)), `${own} missing: ${created.join("\n")}`);
++  }
++});
++
++test("a relative document path resolves under DOC_OUTPUT_DIR, not the launch dir", async () => {
++  const { created, touched } = await createInProject(
++    (s) => ({ DATA_DIR: path.join(s, "state"), DOC_OUTPUT_DIR: path.join(s, "documents") }),
++    () => "guide.md",
++  );
++  assert.deepEqual(touched, []);
++  assert.ok(created.some((p) => p.startsWith("documents" + path.sep) && p.endsWith("guide.md")), created.join("\n"));
++});
++
++test("without DATA_DIR, the server's own files use the per-user state dir, never the project", async () => {
++  const { created, touched } = await createInProject(
++    () => ({}),
++    (s) => path.join(s, "chosen", "guide.md"),
++  );
++  assert.deepEqual(touched, []);
++  assert.ok(created.some((p) => p.includes(path.join("LeanZero", "leanzero-documents")) && p.endsWith("server.log")), created.join("\n"));
++});

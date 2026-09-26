@@ -7042,16 +7042,23 @@ async function bundledMcps() {
       );
       await fs.access(entry);
       await fs.access(node);
+      // The server's own files (logs, caches, registries, and research when no folder is
+      // chosen) live in a directory the app owns, never the session's working directory (Q-139).
+      const ownEnvs = { DATA_DIR: path.join(app.getPath('userData'), 'bundled-mcp-data', item.id) };
       return {
         name: item.name,
         description: item.description,
         type: 'stdio' as const,
         cmd: node,
         args: [entry],
-        envs: { ...bundleEnvs, ...(!app.isPackaged ? devOnlyEnvs : {}) },
+        envs: { ...bundleEnvs, ...ownEnvs, ...(!app.isPackaged ? devOnlyEnvs : {}) },
         timeout: 300,
         bundleEntry: ['bundled-mcps', item.id, item.entry].join('/'),
-        managedEnvKeys: [...Object.keys(bundleEnvs), ...Object.keys(devOnlyEnvs)],
+        managedEnvKeys: [
+          ...Object.keys(bundleEnvs),
+          ...Object.keys(ownEnvs),
+          ...Object.keys(devOnlyEnvs),
+        ],
         packaged: app.isPackaged,
       };
     })
