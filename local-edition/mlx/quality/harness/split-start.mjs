@@ -22,13 +22,23 @@ const owners = await p.evaluate(() => [...document.querySelectorAll('button')].f
   return 'none';
 }));
 const status = () => p.evaluate(async () => { const s = await window.electron.mlxEngineActivity(); return `${s.engine}/${s.mode} ${s.statusDetail ?? ''}`; });
+// The split must serve the model that was picked: on 3.0.52 the relaunch restored the previous Flash split,
+// and the running-split shortcut passed a "27B" smoke against Flash (2026-09-26).
+const want = mi > 0 ? process.argv[mi + 1].toLowerCase() : '';
+const served = async () => {
+  const m = await fetch('http://127.0.0.1:8091/v1/models').then((x) => x.json()).catch(() => ({ data: [] }));
+  return (m.data ?? []).flatMap((d) => [d.id, ...(d.aliases ?? [])]).filter(Boolean);
+};
+const servesWanted = async () => !want || (await served()).some((n) => n.toLowerCase().includes(want));
 const complete = async (secs) => {
+  const names = await served();
+  if (!(await servesWanted())) { console.log(`${secs}s split serves ${JSON.stringify(names)}, not "${want}"`); process.exit(1); }
   const r = await fetch('http://127.0.0.1:8091/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'Say OK.' }], max_tokens: 8 }) }).then((x) => x.json()).catch((e) => ({ error: String(e) }));
-  console.log(`${secs}s split up; completion:`, JSON.stringify(r.choices?.[0]?.message ?? r).slice(0, 200));
+  console.log(`${secs}s split up serving ${names[0]}; completion:`, JSON.stringify(r.choices?.[0]?.message ?? r).slice(0, 200));
   process.exit(r.choices ? 0 : 1);
 };
 // A restore after install may already have brought the split back: then there is no Run to press.
-if (/distributed\/running/.test(await status())) await complete(0);
+if (/distributed\/running/.test(await status()) && (await servesWanted())) await complete(0);
 const i = owners.indexOf('Run across both Macs');
 if (i < 0) { console.log('no split Run button', JSON.stringify(owners)); process.exit(2); }
 const t0 = Date.now();
