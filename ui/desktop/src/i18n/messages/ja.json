@@ -27,22 +27,25 @@
     "defaultMessage": "フリートはオフライン"
   },
   "addNode.machineAllTaken": {
-    "defaultMessage": "発見されたすべてのマシンに既に MLX ノードがあります — まず 1 つ削除するか、クラウドノード(無制限)を追加してください。"
+    "defaultMessage": "リンク済みのすべての Mac にすでに MLX ノードがあります — ノード表でモデルを変更するか、先に削除してください。クラウドノードは無制限です。"
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{MLX ノード未設定のスウォームマシンが # 台} other{MLX ノード未設定のスウォームマシンが # 台}} — 各マシンはちょうど 1 つを持てます。"
+    "defaultMessage": "{count,plural,one{MLX ノード未設定の Mac が # 台} other{MLX ノード未設定の Mac が # 台}} — 各 Mac はちょうど 1 つを持てます。"
   },
   "addNode.machineLabel": {
-    "defaultMessage": "マシン — 1 台につき MLX ノード 1 つ"
+    "defaultMessage": "Mac — 各 1 つの MLX ノード"
   },
   "addNode.machineLocalTag": {
-    "defaultMessage": "このマシン"
+    "defaultMessage": "この Mac"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "スウォームのマシンが見つかりません(LM Studio / lms に到達不可)— ノードはこのマシン用に作成されます。下で名前を付けてください。"
+    "defaultMessage": "LeanZero Link がこの Mac の名前を取得できませんでした({error}) — ノードはこの Mac 用に作成されます。下で名前を付けてください。"
+  },
+  "addNode.machineOnlyThisMac": {
+    "defaultMessage": "リンクされているのはこの Mac だけです — 他の Mac は LeanZero Link に参加するとここに表示されます(プロバイダ › マイ Mac)。"
   },
   "addNode.machinePlaceholder": {
-    "defaultMessage": "マシンを選択…"
+    "defaultMessage": "Mac を選択…"
   },
   "addNode.machineRemoteTag": {
     "defaultMessage": "リモート"
@@ -66,7 +69,7 @@
     "defaultMessage": "エンジンのモデルフォルダーに完全なモデルがまだありません — まず LeanZero MLX タブでダウンロードしてください。"
   },
   "addNode.mlxOneModel": {
-    "defaultMessage": "1 つの LeanZero MLX エンジンは 1 つのモデルのみを提供します。すべての MLX ノードはエンジンがマウントしているものを共有するため、ノードごとに別モデルはまだできません。このノードを追加すると、ここで選んだモデルにエンジンが切り替わります。"
+    "defaultMessage": "LeanZero MLX エンジンは一度に 1 つのモデルを提供し、その Mac のすべての MLX ノードで共有されます。この Mac のノードを追加しても何も読み込まず、何も止めません。swarm ビルドがこのノードで使うモデルを設定し、この Mac が次にそのモデルを提供するときにノード名で応答します。チャットはこの Mac がいま提供しているもの(「実行」で開始したモデル)から応答し、ノードはそれに従います。"
   },
   "addNode.providerLabel": {
     "defaultMessage": "プロバイダー"
@@ -558,7 +561,7 @@
     "defaultMessage": "OpenAI 互換"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "OpenAI API を話すあらゆるサーバー — vLLM、llama.cpp、リモートの LM Studio、Together、Groq、社内ゲートウェイ。必要なだけ追加できます。チャットセッションで使えますが、swarm ノードはまだ使えません。"
+    "defaultMessage": "OpenAI API を話すあらゆるサーバー — vLLM、llama.cpp、Together、Groq、社内ゲートウェイ。必要なだけ追加できます。チャットセッションで使えますが、swarm ノードはまだ使えません。"
   },
   "cloudProviders.configured": {
     "defaultMessage": "設定済み"
@@ -570,7 +573,7 @@
     "defaultMessage": "接続済み"
   },
   "cloudProviders.description": {
-    "defaultMessage": "このアプリが呼び出せるクラウドプロバイダーの認証情報 — キーは goose のシークレットストアに暗号化して保存されます。ローカルバックエンド(LM Studio、MLX エンジン)には認証情報は不要で、他のタブにあります。"
+    "defaultMessage": "このアプリが呼び出せるクラウドプロバイダーの認証情報 — キーは goose のシークレットストアに暗号化して保存されます。LeanZero MLX エンジンはご自身の Mac 上で動作し、認証情報は不要で、他のタブにあります。"
   },
   "cloudProviders.endpointUnread": {
     "defaultMessage": "これらのリクエストの送信先を読み取れませんでした: {error}"
@@ -642,7 +645,7 @@
     "defaultMessage": "すべてのリクエストに付けて送信されます。エンドポイントの設定ファイルに平文で保存されます。"
   },
   "compatibleEndpoint.intro": {
-    "defaultMessage": "OpenAI API を話すあらゆるサーバー — vLLM、llama.cpp、別のマシンの LM Studio、Together、Groq、社内ゲートウェイ。「接続をテスト」で保存し、サーバーにモデル一覧を問い合わせます。チャットセッション用です。swarm ノードはまだ互換エンドポイントを使えません。"
+    "defaultMessage": "OpenAI API を話すあらゆるサーバー — vLLM、llama.cpp、Together、Groq、社内ゲートウェイ。「接続をテスト」で保存し、サーバーにモデル一覧を問い合わせます。チャットセッション用です。swarm ノードはまだ互換エンドポイントを使えません。"
   },
   "compatibleEndpoint.keep": {
     "defaultMessage": "残す"
@@ -4923,10 +4926,10 @@
     "defaultMessage": "分散エンジンは {served} を提供していますが、このノードは {wanted} を必要としています。"
   },
   "noNodeNotice.lmNotListed": {
-    "defaultMessage": "{model} は LM Studio に読み込まれていません。"
+    "defaultMessage": "{model} はこのノードが指すサーバーに読み込まれていません。"
   },
   "noNodeNotice.lmUnreachable": {
-    "defaultMessage": "{url} で応答がありません — LM Studio が起動していない可能性があります。"
+    "defaultMessage": "{url} で応答がありません — このノードが指すサーバーが動いていません。"
   },
   "noNodeNotice.lookupFailed": {
     "defaultMessage": "このノードがマウントするモデルを読み取れませんでした: {error}"

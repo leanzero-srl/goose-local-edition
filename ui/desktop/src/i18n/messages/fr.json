@@ -27,22 +27,25 @@
     "defaultMessage": "flotte hors ligne"
   },
   "addNode.machineAllTaken": {
-    "defaultMessage": "Chaque machine découverte a déjà son nœud MLX — retirez-en un d'abord, ou ajoutez des nœuds cloud (illimités)."
+    "defaultMessage": "Chaque Mac relié a déjà son nœud MLX — changez son modèle dans le tableau des nœuds ou supprimez-le d’abord ; les nœuds cloud sont illimités."
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{# machine de l'essaim} other{# machines de l'essaim}} encore sans nœud MLX — chaque machine en porte exactement un."
+    "defaultMessage": "{count,plural,one{# Mac} other{# Mac}} encore sans nœud MLX — chaque Mac en porte exactement un."
   },
   "addNode.machineLabel": {
-    "defaultMessage": "Machine — un nœud MLX chacune"
+    "defaultMessage": "Mac — un nœud MLX chacun"
   },
   "addNode.machineLocalTag": {
-    "defaultMessage": "cette machine"
+    "defaultMessage": "ce Mac"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "Aucune machine de l'essaim découverte (LM Studio / lms injoignable) — le nœud est créé pour CETTE machine ; nommez-le ci-dessous."
+    "defaultMessage": "LeanZero Link n’a pas pu nommer ce Mac ({error}) — le nœud est créé pour ce Mac ; nommez-le ci-dessous."
+  },
+  "addNode.machineOnlyThisMac": {
+    "defaultMessage": "Seul ce Mac est relié — vos autres Mac apparaissent ici dès qu’ils rejoignent LeanZero Link (Fournisseurs › Mes Mac)."
   },
   "addNode.machinePlaceholder": {
-    "defaultMessage": "Choisissez une machine…"
+    "defaultMessage": "Choisir un Mac…"
   },
   "addNode.machineRemoteTag": {
     "defaultMessage": "distante"
@@ -66,7 +69,7 @@
     "defaultMessage": "Aucun modèle complet dans le dossier de modèles du moteur — téléchargez-en d'abord un dans l'onglet LeanZero MLX."
   },
   "addNode.mlxOneModel": {
-    "defaultMessage": "Un moteur LeanZero MLX sert UN seul modèle : tous les nœuds MLX partagent ce que le moteur a monté, un modèle différent par nœud n'est pas encore possible. Ajouter ce nœud pointe le moteur vers le modèle choisi ici."
+    "defaultMessage": "Un moteur LeanZero MLX sert un modèle à la fois, partagé par tous les nœuds MLX de ce Mac. Ajouter un nœud pour ce Mac ne charge rien et n’arrête rien : il fixe le modèle que les builds du swarm utilisent sur ce nœud, et ce Mac répond sous le nom du nœud la prochaine fois qu’il sert ce modèle. Le chat répond avec ce que ce Mac sert maintenant — un modèle que vous lancez dans Exécuter — et le nœud le suit."
   },
   "addNode.providerLabel": {
     "defaultMessage": "Fournisseur"
@@ -558,7 +561,7 @@
     "defaultMessage": "Compatible OpenAI"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Tout serveur qui parle l’API OpenAI — vLLM, llama.cpp, un LM Studio distant, Together, Groq, une passerelle d’entreprise. Ajoutez-en autant que nécessaire. Les sessions de chat peuvent les utiliser ; les nœuds du swarm pas encore."
+    "defaultMessage": "Tout serveur qui parle l’API OpenAI — vLLM, llama.cpp, Together, Groq, une passerelle d’entreprise. Ajoutez-en autant que nécessaire. Les sessions de chat peuvent les utiliser ; les nœuds du swarm pas encore."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Configurés"
@@ -570,7 +573,7 @@
     "defaultMessage": "Connecté"
   },
   "cloudProviders.description": {
-    "defaultMessage": "Les identifiants des fournisseurs cloud que cette app peut appeler — les clés sont chiffrées dans le coffre de secrets goose. Les backends locaux (LM Studio, le moteur MLX) n'ont pas besoin d'identifiants et vivent dans les autres onglets."
+    "defaultMessage": "Les identifiants des fournisseurs cloud que cette app peut appeler — les clés sont chiffrées dans le coffre de secrets goose. Le moteur LeanZero MLX tourne sur vos propres Mac, n'a pas besoin d'identifiants et vit dans les autres onglets."
   },
   "cloudProviders.endpointUnread": {
     "defaultMessage": "Impossible de lire où vont ces requêtes : {error}"
@@ -642,7 +645,7 @@
     "defaultMessage": "Envoyés avec chaque requête. Stockés en clair dans le fichier de réglages de l’endpoint."
   },
   "compatibleEndpoint.intro": {
-    "defaultMessage": "Tout serveur qui parle l’API OpenAI — vLLM, llama.cpp, LM Studio sur une autre machine, Together, Groq, une passerelle d’entreprise. Tester la connexion l’enregistre et demande ses modèles au serveur. Pour les sessions de chat : les nœuds du swarm ne peuvent pas encore utiliser un endpoint compatible."
+    "defaultMessage": "Tout serveur qui parle l’API OpenAI — vLLM, llama.cpp, Together, Groq, une passerelle d’entreprise. Tester la connexion l’enregistre et demande ses modèles au serveur. Pour les sessions de chat : les nœuds du swarm ne peuvent pas encore utiliser un endpoint compatible."
   },
   "compatibleEndpoint.keep": {
     "defaultMessage": "Conserver"
@@ -4923,10 +4926,10 @@
     "defaultMessage": "Le moteur distribué sert {served} ; ce nœud attend {wanted}."
   },
   "noNodeNotice.lmNotListed": {
-    "defaultMessage": "{model} n’est pas chargé dans LM Studio."
+    "defaultMessage": "{model} n’est pas chargé sur le serveur visé par ce nœud."
   },
   "noNodeNotice.lmUnreachable": {
-    "defaultMessage": "Rien ne répond sur {url} — LM Studio n’est peut-être pas lancé."
+    "defaultMessage": "Rien ne répond à {url} — le serveur visé par ce nœud ne tourne pas."
   },
   "noNodeNotice.lookupFailed": {
     "defaultMessage": "Impossible de lire quel modèle ce nœud monte : {error}"

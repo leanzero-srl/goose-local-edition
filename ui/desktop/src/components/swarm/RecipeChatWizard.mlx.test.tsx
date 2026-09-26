@@ -85,14 +85,15 @@ describe('RecipeChatWizard × the LeanZero MLX engine', () => {
     expect((fleetChat.mock.calls[0] as [string, { model: string }])[1].model).toBe('gabee-coder-27b');
   });
 
-  it('nothing served anywhere: offline, and the failure names BOTH engines', async () => {
+  it('nothing served anywhere: offline, and the failure says where to start a model — never LM Studio', async () => {
     mlxStatus = { ...SERVING, state: 'stopped', servedModelId: undefined, modelId: undefined };
     mount();
     await screen.findByText(/What's the task\?/);
     expect(screen.getByText('offline')).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText(/Answer the fleet/), { target: { value: 'hi' } });
     fireEvent.click(screen.getByRole('button', { name: /^Send$/ }));
-    await screen.findByText(/load one in LM Studio or mount one in the LeanZero MLX engine/);
+    const failure = await screen.findByText(/start one in Providers › LeanZero MLX › Run it/);
+    expect(failure.textContent).not.toMatch(/LM Studio/);
     expect(fleetChat).not.toHaveBeenCalled();
   });
 });

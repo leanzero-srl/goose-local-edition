@@ -2395,42 +2395,6 @@ ipcMain.on('mlx-distributed-report', (_event, report: unknown) => {
 // The state tile reads "who is using it" from here, on its own poll — main's latest read, no fetch.
 ipcMain.handle('mlx-engine-activity', () => mlxMonitor.current());
 
-// The swarm's MACHINES, from `lms ps --json`: each loaded model's identifier is prefixed with its
-// machine name (workhorse-…, mihai-…), and `deviceIdentifier: null` marks the LOCAL machine's own
-// models (remotes carry an LM Link device hash). Distinct prefixes = the machines a LeanZero MLX
-// node can be created for; the add-node dialog caps its list to exactly these. Empty on any error
-// so the caller degrades to the manual local-label path.
-ipcMain.handle('fleet-machines', async (): Promise<Array<{ machine: string; local: boolean }>> => {
-  return await new Promise((resolve) => {
-    const home = process.env.HOME || os.homedir();
-    const lmsHome = `${home}/.lmstudio/bin/lms`;
-    const bin = fsSync.existsSync(lmsHome) ? lmsHome : 'lms';
-    execFile(bin, ['ps', '--json'], { timeout: 4000 }, (error, stdout) => {
-      if (error) {
-        resolve([]);
-        return;
-      }
-      try {
-        const arr = JSON.parse(stdout) as Array<{
-          identifier?: string;
-          deviceIdentifier?: string | null;
-        }>;
-        const byMachine = new Map<string, boolean>();
-        for (const m of arr) {
-          if (!m.identifier) continue;
-          const dash = m.identifier.indexOf('-');
-          const machine = dash > 0 ? m.identifier.slice(0, dash) : m.identifier;
-          const local = m.deviceIdentifier == null;
-          byMachine.set(machine, (byMachine.get(machine) ?? false) || local);
-        }
-        resolve([...byMachine.entries()].map(([machine, local]) => ({ machine, local })));
-      } catch {
-        resolve([]);
-      }
-    });
-  });
-});
-
 ipcMain.handle('get-setting', (_event, key: SettingKey) => {
   const settings = getSettings();
   return settings[key];

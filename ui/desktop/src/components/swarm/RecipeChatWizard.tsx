@@ -201,7 +201,7 @@ export function RecipeChatWizard({
       e instanceof Error && e.name === 'AbortError'
         ? 'the fleet took too long (is it busy building? free it up and retry)'
         : e instanceof Error && e.message === 'no-model'
-          ? 'no fleet model is served — load one in LM Studio or mount one in the LeanZero MLX engine'
+          ? 'no fleet model is served — start one in Providers › LeanZero MLX › Run it'
           : e instanceof Error
             ? e.message
             : String(e);

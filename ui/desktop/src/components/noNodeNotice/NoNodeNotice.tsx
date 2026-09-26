@@ -75,11 +75,11 @@ const i18n = defineMessages({
   },
   lmUnreachable: {
     id: 'noNodeNotice.lmUnreachable',
-    defaultMessage: 'Nothing answers at {url} — LM Studio may not be running.',
+    defaultMessage: 'Nothing answers at {url} — the server this node points to is not running.',
   },
   lmNotListed: {
     id: 'noNodeNotice.lmNotListed',
-    defaultMessage: '{model} is not loaded in LM Studio.',
+    defaultMessage: '{model} is not loaded on the server this node points to.',
   },
   busy: { id: 'noNodeNotice.busy', defaultMessage: 'Every slot on this node is busy.' },
   noDevices: { id: 'noNodeNotice.noDevices', defaultMessage: 'No enabled node is configured.' },

@@ -27,22 +27,25 @@
     "defaultMessage": "艦隊離線"
   },
   "addNode.machineAllTaken": {
-    "defaultMessage": "每台已發現的機器都已有 MLX 節點 — 請先移除一個,或新增雲端節點(數量不限)。"
+    "defaultMessage": "每台已連結的 Mac 都已有 MLX 節點 — 請在節點表中變更其模型或先將其移除;雲端節點不限數量。"
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{還有 # 台蜂群機器沒有 MLX 節點} other{還有 # 台蜂群機器沒有 MLX 節點}} — 每台機器恰好承載一個。"
+    "defaultMessage": "{count,plural,one{還有 # 台 Mac 沒有 MLX 節點} other{還有 # 台 Mac 沒有 MLX 節點}} — 每台 Mac 恰好承載一個。"
   },
   "addNode.machineLabel": {
-    "defaultMessage": "機器 — 每台一個 MLX 節點"
+    "defaultMessage": "Mac — 每台一個 MLX 節點"
   },
   "addNode.machineLocalTag": {
-    "defaultMessage": "本機"
+    "defaultMessage": "這台 Mac"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "未發現蜂群機器(LM Studio / lms 無法連線)— 節點將為本機建立;請在下方命名。"
+    "defaultMessage": "LeanZero Link 無法取得這台 Mac 的名稱({error}) — 節點將為這台 Mac 建立;請在下方命名。"
+  },
+  "addNode.machineOnlyThisMac": {
+    "defaultMessage": "只有這台 Mac 已連結 — 你的其他 Mac 加入 LeanZero Link 後會顯示在這裡(供應商 › 我的 Mac)。"
   },
   "addNode.machinePlaceholder": {
-    "defaultMessage": "選擇機器…"
+    "defaultMessage": "選擇一台 Mac…"
   },
   "addNode.machineRemoteTag": {
     "defaultMessage": "遠端"
@@ -66,7 +69,7 @@
     "defaultMessage": "引擎的模型資料夾中還沒有完整的模型 — 請先在 LeanZero MLX 分頁下載一個。"
   },
   "addNode.mlxOneModel": {
-    "defaultMessage": "一個 LeanZero MLX 引擎只服務一個模型:所有 MLX 節點共享引擎目前掛載的模型,暫時無法為每個節點配置不同的模型。新增此節點會讓引擎指向你在這裡選擇的模型。"
+    "defaultMessage": "一個 LeanZero MLX 引擎一次只提供一個模型,由那台 Mac 上的所有 MLX 節點共用。為這台 Mac 新增節點不會載入任何東西,也不會停止任何東西:它設定 swarm 建置在此節點上使用的模型,這台 Mac 下次提供該模型時會以節點的名稱回應。聊天由這台 Mac 目前提供的內容回應 — 即你在「執行」中啟動的模型 — 節點會跟隨它。"
   },
   "addNode.providerLabel": {
     "defaultMessage": "提供方"
@@ -558,7 +561,7 @@
     "defaultMessage": "OpenAI 相容"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "任何支援 OpenAI API 的伺服器 — vLLM、llama.cpp、遠端 LM Studio、Together、Groq、公司閘道。需要多少就新增多少。聊天工作階段可以使用;swarm 節點暫時無法使用。"
+    "defaultMessage": "任何支援 OpenAI API 的伺服器 — vLLM、llama.cpp、Together、Groq、公司閘道。需要多少就新增多少。聊天工作階段可以使用;swarm 節點暫時無法使用。"
   },
   "cloudProviders.configured": {
     "defaultMessage": "已設定"
@@ -570,7 +573,7 @@
     "defaultMessage": "已連線"
   },
   "cloudProviders.description": {
-    "defaultMessage": "此應用程式可呼叫的雲端提供方憑證 — 金鑰會加密存入 goose 的機密儲存庫。本機後端(LM Studio、MLX 引擎)無需憑證,位於其他分頁。"
+    "defaultMessage": "此應用程式可呼叫的雲端提供方憑證 — 金鑰會加密存入 goose 的機密儲存庫。LeanZero MLX 引擎在你自己的 Mac 上執行,無需憑證,位於其他分頁。"
   },
   "cloudProviders.endpointUnread": {
     "defaultMessage": "無法讀取這些請求的去向:{error}"
@@ -642,7 +645,7 @@
     "defaultMessage": "隨每個請求傳送。以純文字儲存在端點的設定檔中。"
   },
   "compatibleEndpoint.intro": {
-    "defaultMessage": "任何支援 OpenAI API 的伺服器 — vLLM、llama.cpp、另一台電腦上的 LM Studio、Together、Groq、公司閘道。測試連線會儲存它並向伺服器要求模型清單。用於聊天工作階段:swarm 節點暫時無法使用相容端點。"
+    "defaultMessage": "任何支援 OpenAI API 的伺服器 — vLLM、llama.cpp、Together、Groq、公司閘道。測試連線會儲存它並向伺服器要求模型清單。用於聊天工作階段:swarm 節點暫時無法使用相容端點。"
   },
   "compatibleEndpoint.keep": {
     "defaultMessage": "保留"
@@ -4923,10 +4926,10 @@
     "defaultMessage": "分散式引擎提供 {served}；此節點需要 {wanted}。"
   },
   "noNodeNotice.lmNotListed": {
-    "defaultMessage": "{model} 未在 LM Studio 中載入。"
+    "defaultMessage": "{model} 未載入在此節點指向的伺服器上。"
   },
   "noNodeNotice.lmUnreachable": {
-    "defaultMessage": "{url} 上沒有回應 — LM Studio 可能沒有執行。"
+    "defaultMessage": "{url} 沒有回應 — 此節點指向的伺服器未在執行。"
   },
   "noNodeNotice.lookupFailed": {
     "defaultMessage": "無法讀取此節點掛載的模型：{error}"

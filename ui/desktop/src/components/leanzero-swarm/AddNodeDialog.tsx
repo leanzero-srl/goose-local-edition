@@ -25,10 +25,12 @@ import {
   mlxRemoteDeviceRow,
   mlxServedAlias,
   sanitizeNodeLabel,
+  swarmMachinesFromLink,
   type SwarmMachine,
 } from './nodes';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import { acpListProviderDetails } from '../../acp/providers';
+import { leanzeroLinkNodes, linkErrorText } from '../../acp/leanzero-link';
 import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import { defineMessages, useIntl } from '../../i18n';
 
@@ -58,26 +60,31 @@ const i18n = defineMessages({
   mlxOneModel: {
     id: 'addNode.mlxOneModel',
     defaultMessage:
-      'One LeanZero MLX engine serves ONE model: every MLX node shares whatever the engine has mounted, so a different model per node is not possible yet. Adding this node points the engine at the model you pick here.',
+      'One LeanZero MLX engine serves one model at a time, shared by every MLX node on that Mac. Adding a node for this Mac loads nothing and stops nothing: it sets the model swarm builds use on this node, and this Mac answers under the node’s name the next time it serves that model. Chat answers from what this Mac serves now — a model you start in Run it — and the node follows it.',
   },
-  machineLabel: { id: 'addNode.machineLabel', defaultMessage: 'Machine — one MLX node each' },
-  machinePlaceholder: { id: 'addNode.machinePlaceholder', defaultMessage: 'Pick a machine…' },
+  machineLabel: { id: 'addNode.machineLabel', defaultMessage: 'Mac — one MLX node each' },
+  machinePlaceholder: { id: 'addNode.machinePlaceholder', defaultMessage: 'Pick a Mac…' },
   machineCap: {
     id: 'addNode.machineCap',
     defaultMessage:
-      '{count, plural, one {# swarm machine} other {# swarm machines}} without an MLX node yet — each machine can carry exactly one.',
+      '{count, plural, one {# Mac} other {# Macs}} without an MLX node yet — each Mac carries exactly one.',
   },
-  machineLocalTag: { id: 'addNode.machineLocalTag', defaultMessage: 'this machine' },
+  machineLocalTag: { id: 'addNode.machineLocalTag', defaultMessage: 'this Mac' },
   machineRemoteTag: { id: 'addNode.machineRemoteTag', defaultMessage: 'remote' },
   machineNoneDiscovered: {
     id: 'addNode.machineNoneDiscovered',
     defaultMessage:
-      'No swarm machines discovered (LM Studio / lms unreachable) — the node is created for THIS machine; name it below.',
+      'LeanZero Link could not name this Mac ({error}) — the node is created for this Mac; name it below.',
   },
   machineAllTaken: {
     id: 'addNode.machineAllTaken',
     defaultMessage:
-      'Every discovered swarm machine already has its MLX node — remove one first, or add cloud nodes (those are unlimited).',
+      'Every linked Mac already has its MLX node — change its model in the Nodes table or remove it first; cloud nodes are unlimited.',
+  },
+  machineOnlyThisMac: {
+    id: 'addNode.machineOnlyThisMac',
+    defaultMessage:
+      'Only this Mac is linked — your other Macs appear here once they join LeanZero Link (Providers › My Macs).',
   },
   remoteAwaiting: {
     id: 'addNode.remoteAwaiting',
@@ -162,6 +169,7 @@ export function deriveProviderOptions(
 interface MachineOption {
   value: string;
   label: string;
+  name: string;
   local: boolean;
 }
 
@@ -174,14 +182,15 @@ interface MlxModelOption {
 /**
  * The "+ Add node" flow — a custom dialog (never a native primitive) that walks provider → model:
  *
- *  - LeanZero MLX: MACHINE-CAPPED (owner amendment). The swarm's machines are enumerated live
- *    (`lms ps` via the fleet-machines IPC ∪ the LM Link model-id prefixes), each machine can carry
- *    exactly ONE MLX node, and the picker offers exactly the machines that lack one. The LOCAL
- *    machine's node is fully served: the add aligns mlx_engine.model_id/served_model_name AND
- *    writes the device row (engine:'mlx-sidecar', model_id = the served alias) in one motion. A
- *    REMOTE machine's node writes the same row plus host = the machine, and the pool renders it
- *    "awaiting fleet routing" — never as reachable. With no machines discovered at all, the node
- *    is created for THIS machine under a hand-typed label (the pre-discovery behavior).
+ *  - LeanZero MLX: MAC-CAPPED (owner amendment). The Macs are the LeanZero Link roster, read on
+ *    open: this Mac (Link names it even when not connected) and every linked peer; each Mac carries
+ *    exactly ONE MLX node, and the picker offers exactly the Macs that lack one. This Mac's add
+ *    writes mlx_engine.model_id/served_model_name (the alias this Mac answers under the next time
+ *    it serves that model — nothing is loaded or stopped) AND the device row (engine:'mlx-sidecar',
+ *    model_id = the alias). Chat does not wait for that: the router follows what this Mac serves
+ *    now (Q-128). A peer's node writes the same row plus host = the peer, and the pool renders it
+ *    "awaiting fleet routing" — never as reachable. When Link cannot be read at all, the node is
+ *    created for this Mac under a hand-typed label, and the dialog says why.
  *  - Cloud providers: the existing CLI-driven pane (key if missing → live roster → add) — the
  *    desktop NEVER upserts a cloud device row itself. Cloud nodes are unlimited.
  *  - LM Studio: NOT OFFERED any more (SHOW_LMSTUDIO_PROVIDER) — discovery was automatic, so the
@@ -194,7 +203,6 @@ export default function AddNodeDialog({
   open,
   onClose,
   devices,
-  fleetModels,
   fleetEndpoint,
   fleetOnline,
   fleetCount,
@@ -207,7 +215,6 @@ export default function AddNodeDialog({
   open: boolean;
   onClose: () => void;
   devices: SwarmDeviceRow[];
-  fleetModels: string[];
   fleetEndpoint: string;
   fleetOnline: boolean;
   fleetCount: number;
@@ -225,6 +232,7 @@ export default function AddNodeDialog({
   const intl = useIntl();
   const [provider, setProvider] = useState<string | null>(null);
   const [machines, setMachines] = useState<SwarmMachine[] | null>(null);
+  const [machinesError, setMachinesError] = useState<string | null>(null);
   const [machine, setMachine] = useState<string | null>(null);
   const [label, setLabel] = useState('');
   const [mlxModels, setMlxModels] = useState<MlxLocalModel[] | null>(null);
@@ -246,6 +254,7 @@ export default function AddNodeDialog({
     setMlxModelId(null);
     setMachine(null);
     setMachines(null);
+    setMachinesError(null);
     if (reassign) {
       setLabel(reassign.id.replace(/-mlx$/, ''));
       setWeight(Math.max(1, Math.min(9, reassign.weight)));
@@ -281,7 +290,7 @@ export default function AddNodeDialog({
     };
   }, [open]);
 
-  // MLX pane data: the engine's local models + the swarm's machines, loaded when the pane opens.
+  // MLX pane data: the engine's local models + the linked Macs, loaded when the pane opens.
   useEffect(() => {
     if (!open || provider !== 'mlx') return;
     if (mlxModels == null) {
@@ -296,16 +305,16 @@ export default function AddNodeDialog({
         }
       })();
     }
-    if (machines == null) {
+    if (machines == null && machinesError == null) {
       void (async () => {
         try {
-          setMachines(await window.electron.fleetMachines());
-        } catch {
-          setMachines([]);
+          setMachines(swarmMachinesFromLink(await leanzeroLinkNodes()));
+        } catch (e) {
+          setMachinesError(linkErrorText(e));
         }
       })();
     }
-  }, [open, provider, mlxModels, machines]);
+  }, [open, provider, mlxModels, machines, machinesError]);
 
   const providerOptions = useMemo(
     () => deriveProviderOptions(configuredProviders, SHOW_LMSTUDIO_PROVIDER && lmStudioVisible),
@@ -319,20 +328,21 @@ export default function AddNodeDialog({
     () => (reassign ? devices.filter((d) => d.id !== reassign.id) : devices),
     [devices, reassign]
   );
-  const anyDiscovery = (machines?.length ?? 0) > 0 || fleetModels.length > 0;
   const addable = useMemo(
-    () => addableMlxMachines(machines ?? [], fleetModels, capDevices),
-    [machines, fleetModels, capDevices]
+    () => addableMlxMachines(machines ?? [], capDevices),
+    [machines, capDevices]
   );
   const machineOptions: MachineOption[] = addable.map((m) => ({
     value: m.machine,
     label: m.machine,
+    name: m.name,
     local: m.local,
   }));
   const selectedMachine = machineOptions.find((o) => o.value === machine) ?? null;
   const selectedMachineIsLocal = selectedMachine?.local ?? false;
-  // No discovery at all -> the manual local-label path keeps the local node creatable.
-  const manualLocalPath = machines != null && !anyDiscovery;
+  const onlyThisMac = machines != null && machines.every((m) => m.local);
+  // Link could not be read -> the manual label path keeps this Mac's node creatable.
+  const manualLocalPath = machinesError != null;
 
   const effectiveLabel = manualLocalPath ? sanitizeNodeLabel(label) : (machine ?? '');
   const effectiveIsLocal = manualLocalPath ? true : selectedMachineIsLocal;
@@ -450,14 +460,10 @@ export default function AddNodeDialog({
               text={intl.formatMessage(i18n.mlxOneModel)}
             />
 
-            {machines == null ? (
-              <span className={cx('flex items-center gap-2', TYPE.bodyMuted)}>
-                <Loader2 className="size-3.5 animate-spin text-lz-accent" />…
-              </span>
-            ) : manualLocalPath ? (
+            {manualLocalPath ? (
               <>
-                <span className={TYPE.bodyMuted}>
-                  {intl.formatMessage(i18n.machineNoneDiscovered)}
+                <span className={TYPE.bodyMuted} data-testid="add-node-machine-manual">
+                  {intl.formatMessage(i18n.machineNoneDiscovered, { error: machinesError })}
                 </span>
                 <div className="flex flex-col gap-1.5">
                   <span className={FIELD_LABEL}>{intl.formatMessage(i18n.mlxLabelLabel)}</span>
@@ -470,6 +476,10 @@ export default function AddNodeDialog({
                   />
                 </div>
               </>
+            ) : machines == null ? (
+              <span className={cx('flex items-center gap-2', TYPE.bodyMuted)}>
+                <Loader2 className="size-3.5 animate-spin text-lz-accent" />…
+              </span>
             ) : machineOptions.length === 0 ? (
               <span className={cx('text-lz-body text-lz-warn', WEIGHT.medium)}>
                 {intl.formatMessage(i18n.machineAllTaken)}
@@ -484,7 +494,8 @@ export default function AddNodeDialog({
                   placeholder={intl.formatMessage(i18n.machinePlaceholder)}
                   renderOption={(opt) => (
                     <span className="flex items-center gap-2">
-                      <span className="font-mono text-lz-mono">{opt.label}</span>
+                      <span>{opt.name}</span>
+                      <span className="font-mono text-lz-mono text-lz-ink-3">{opt.label}</span>
                       {opt.local ? (
                         <Chip tone="ok">{intl.formatMessage(i18n.machineLocalTag)}</Chip>
                       ) : (
@@ -498,6 +509,12 @@ export default function AddNodeDialog({
                   {intl.formatMessage(i18n.machineCap, { count: machineOptions.length })}
                 </span>
               </div>
+            )}
+
+            {onlyThisMac && (
+              <span className={TYPE.meta} data-testid="add-node-only-this-mac">
+                {intl.formatMessage(i18n.machineOnlyThisMac)}
+              </span>
             )}
 
             {machine != null && !selectedMachineIsLocal && (

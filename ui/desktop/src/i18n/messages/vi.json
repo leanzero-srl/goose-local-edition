@@ -27,22 +27,25 @@
     "defaultMessage": "đội máy ngoại tuyến"
   },
   "addNode.machineAllTaken": {
-    "defaultMessage": "Mọi máy phát hiện được đều đã có nút MLX — hãy gỡ một cái trước, hoặc thêm nút đám mây (không giới hạn)."
+    "defaultMessage": "Mọi Mac đã liên kết đều có nút MLX — đổi mô hình của nó trong bảng nút hoặc xóa nó trước; nút đám mây không giới hạn."
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{# máy trong bầy} other{# máy trong bầy}} chưa có nút MLX — mỗi máy mang đúng một nút."
+    "defaultMessage": "{count,plural,one{# Mac} other{# Mac}} chưa có nút MLX — mỗi Mac mang đúng một nút."
   },
   "addNode.machineLabel": {
-    "defaultMessage": "Máy — mỗi máy một nút MLX"
+    "defaultMessage": "Mac — mỗi máy một nút MLX"
   },
   "addNode.machineLocalTag": {
-    "defaultMessage": "máy này"
+    "defaultMessage": "Mac này"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "Không phát hiện máy nào trong bầy (LM Studio / lms không truy cập được) — nút được tạo cho MÁY NÀY; đặt tên bên dưới."
+    "defaultMessage": "LeanZero Link không lấy được tên Mac này ({error}) — nút được tạo cho Mac này; hãy đặt tên bên dưới."
+  },
+  "addNode.machineOnlyThisMac": {
+    "defaultMessage": "Chỉ Mac này được liên kết — các Mac khác của bạn sẽ hiện ở đây khi tham gia LeanZero Link (Nhà cung cấp › Các Mac của tôi)."
   },
   "addNode.machinePlaceholder": {
-    "defaultMessage": "Chọn máy…"
+    "defaultMessage": "Chọn một Mac…"
   },
   "addNode.machineRemoteTag": {
     "defaultMessage": "từ xa"
@@ -66,7 +69,7 @@
     "defaultMessage": "Chưa có mô hình hoàn chỉnh trong thư mục mô hình của động cơ — hãy tải một cái ở tab LeanZero MLX trước."
   },
   "addNode.mlxOneModel": {
-    "defaultMessage": "Một động cơ LeanZero MLX chỉ phục vụ MỘT mô hình: mọi nút MLX dùng chung thứ động cơ đã gắn, nên mỗi nút một mô hình khác nhau là chưa thể. Thêm nút này sẽ trỏ động cơ tới mô hình bạn chọn ở đây."
+    "defaultMessage": "Một động cơ LeanZero MLX phục vụ một mô hình mỗi lúc, dùng chung cho mọi nút MLX trên Mac đó. Thêm nút cho Mac này không tải gì và không dừng gì: nó đặt mô hình mà các bản dựng swarm dùng trên nút này, và Mac này trả lời dưới tên của nút vào lần tới phục vụ mô hình đó. Trò chuyện trả lời từ những gì Mac này đang phục vụ — mô hình bạn khởi động trong Chạy — và nút đi theo nó."
   },
   "addNode.providerLabel": {
     "defaultMessage": "Nhà cung cấp"
@@ -558,7 +561,7 @@
     "defaultMessage": "Tương thích OpenAI"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Bất kỳ máy chủ nào dùng API của OpenAI — vLLM, llama.cpp, LM Studio từ xa, Together, Groq, cổng nội bộ công ty. Thêm bao nhiêu tùy ý. Phiên trò chuyện có thể dùng chúng; các nút swarm thì chưa."
+    "defaultMessage": "Bất kỳ máy chủ nào dùng API của OpenAI — vLLM, llama.cpp, Together, Groq, cổng nội bộ công ty. Thêm bao nhiêu tùy ý. Phiên trò chuyện có thể dùng chúng; các nút swarm thì chưa."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Đã cấu hình"
@@ -570,7 +573,7 @@
     "defaultMessage": "Đã kết nối"
   },
   "cloudProviders.description": {
-    "defaultMessage": "Thông tin xác thực của các nhà cung cấp đám mây mà ứng dụng này có thể gọi — khóa được mã hóa vào kho bí mật của goose. Backend cục bộ (LM Studio, động cơ MLX) không cần thông tin xác thực và nằm ở các tab khác."
+    "defaultMessage": "Thông tin xác thực của các nhà cung cấp đám mây mà ứng dụng này có thể gọi — khóa được mã hóa vào kho bí mật của goose. Động cơ LeanZero MLX chạy trên chính các Mac của bạn, không cần thông tin xác thực và nằm ở các tab khác."
   },
   "cloudProviders.endpointUnread": {
     "defaultMessage": "Không đọc được các yêu cầu này đi đâu: {error}"
@@ -642,7 +645,7 @@
     "defaultMessage": "Gửi kèm mọi yêu cầu. Lưu dạng văn bản thường trong tệp cài đặt của endpoint."
   },
   "compatibleEndpoint.intro": {
-    "defaultMessage": "Bất kỳ máy chủ nào dùng API của OpenAI — vLLM, llama.cpp, LM Studio trên máy khác, Together, Groq, cổng nội bộ công ty. Kiểm tra kết nối sẽ lưu nó và hỏi máy chủ danh sách mô hình. Dành cho phiên trò chuyện: các nút swarm chưa dùng được endpoint tương thích."
+    "defaultMessage": "Bất kỳ máy chủ nào dùng API của OpenAI — vLLM, llama.cpp, Together, Groq, cổng nội bộ công ty. Kiểm tra kết nối sẽ lưu nó và hỏi máy chủ danh sách mô hình. Dành cho phiên trò chuyện: các nút swarm chưa dùng được endpoint tương thích."
   },
   "compatibleEndpoint.keep": {
     "defaultMessage": "Giữ lại"
@@ -4923,10 +4926,10 @@
     "defaultMessage": "Công cụ phân tán phục vụ {served}; nút này cần {wanted}."
   },
   "noNodeNotice.lmNotListed": {
-    "defaultMessage": "{model} chưa được tải trong LM Studio."
+    "defaultMessage": "{model} chưa được tải trên máy chủ mà nút này trỏ tới."
   },
   "noNodeNotice.lmUnreachable": {
-    "defaultMessage": "Không có gì trả lời tại {url} — có thể LM Studio chưa chạy."
+    "defaultMessage": "Không có gì trả lời tại {url} — máy chủ mà nút này trỏ tới không chạy."
   },
   "noNodeNotice.lookupFailed": {
     "defaultMessage": "Không đọc được nút này gắn mô hình nào: {error}"

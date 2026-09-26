@@ -34,7 +34,7 @@ const i18n = defineMessages({
   intro: {
     id: 'compatibleEndpoint.intro',
     defaultMessage:
-      'Any server that speaks the OpenAI API — vLLM, llama.cpp, LM Studio on another machine, Together, Groq, a company gateway. Test connection saves it and asks the server for its models. For chat sessions: swarm nodes cannot use a compatible endpoint yet.',
+      'Any server that speaks the OpenAI API — vLLM, llama.cpp, Together, Groq, a company gateway. Test connection saves it and asks the server for its models. For chat sessions: swarm nodes cannot use a compatible endpoint yet.',
   },
   modelIntro: {
     id: 'compatibleEndpoint.modelIntro',

@@ -488,7 +488,6 @@ export default function SwarmNodesSection({
           setReassignTarget(null);
         }}
         devices={configuredDevices}
-        fleetModels={fleet.models}
         fleetEndpoint={endpoint}
         fleetOnline={fleet.online}
         fleetCount={fleet.lanes.length}

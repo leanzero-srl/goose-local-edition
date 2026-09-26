@@ -1,4 +1,6 @@
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
+import type { NodeState, NodesResponse } from '../../acp/leanzero-link';
+import { macName } from './macs';
 
 /**
  * Derivations for LeanZero MLX swarm nodes — the shape proven in the swarm E2E and running live
@@ -74,44 +76,58 @@ export function mlxRemoteDeviceRow(
   return { ...mlxDeviceRow(machine, hfModelId, weight), host: sanitizeNodeLabel(machine) };
 }
 
+/**
+ * A Mac a LeanZero MLX node can be made for. `machine` is the node label (the Mac's name, made
+ * label-safe); `name` is the Mac's name as every other surface shows it (`macName`); `names` are the
+ * labels an existing row may already carry for this Mac (its name and its hostname).
+ */
 export interface SwarmMachine {
   machine: string;
+  name: string;
   local: boolean;
+  names: string[];
 }
 
-/** True when this machine already has an MLX node in the pool (by id convention or host). */
-export function machineHasMlxNode(machine: string, devices: SwarmDeviceRow[]): boolean {
-  const m = sanitizeNodeLabel(machine);
-  return devices.some(
-    (d) => d.engine === 'mlx-sidecar' && (d.id === `${m}-mlx` || (d.host ?? null) === m)
-  );
+function swarmMachineOf(node: NodeState, local: boolean): SwarmMachine | null {
+  const names = [...new Set([sanitizeNodeLabel(macName(node)), sanitizeNodeLabel(node.hostname)])];
+  const labels = names.filter((n) => n !== '');
+  if (labels.length === 0) return null;
+  return { machine: labels[0], name: macName(node), local, names: labels };
 }
 
 /**
- * The machines a LeanZero MLX node can still be added FOR — the amendment's cap: one MLX node per
- * swarm machine, so a 5-machine swarm offers exactly 5 (minus the ones already added). Machines
- * come from `lms ps` (the fleet-machines IPC) unioned with the LM Link model-id prefixes the HTTP
- * fleet reports; the IPC's local flag wins when both name a machine.
+ * The Macs the product actually knows, from the LeanZero Link roster: this Mac first (Link answers
+ * with this Mac alone when it is not connected), then every linked peer in the roster's order.
+ */
+export function swarmMachinesFromLink(nodes: NodesResponse): SwarmMachine[] {
+  const self = swarmMachineOf(nodes.self, true);
+  const peers = nodes.peers.map((p) => swarmMachineOf(p, false));
+  return [self, ...peers].filter((m): m is SwarmMachine => m !== null);
+}
+
+/**
+ * True when this Mac already has its MLX node in the pool. A row with no `host` is served by THIS
+ * Mac's engine whatever its label, so any such row takes this Mac's slot; a peer's row carries the
+ * peer as `host`.
+ */
+export function machineHasMlxNode(machine: SwarmMachine, devices: SwarmDeviceRow[]): boolean {
+  return devices.some((d) => {
+    if (d.engine !== 'mlx-sidecar') return false;
+    const host = d.host ?? null;
+    if (host === null) return machine.local;
+    return machine.names.includes(host);
+  });
+}
+
+/**
+ * The Macs a LeanZero MLX node can still be added FOR — the owner's cap: one MLX node per Mac, so
+ * three linked Macs offer exactly three (minus the ones already added).
  */
 export function addableMlxMachines(
-  ipcMachines: SwarmMachine[],
-  fleetModels: string[],
+  machines: SwarmMachine[],
   devices: SwarmDeviceRow[]
 ): SwarmMachine[] {
-  const byName = new Map<string, boolean>();
-  for (const m of ipcMachines) {
-    const name = sanitizeNodeLabel(m.machine);
-    if (name) byName.set(name, (byName.get(name) ?? false) || m.local);
-  }
-  for (const model of fleetModels) {
-    const bare = model.split('/').pop() ?? model;
-    const dash = bare.indexOf('-');
-    const name = sanitizeNodeLabel(dash > 0 ? bare.slice(0, dash) : bare);
-    if (name && !byName.has(name)) byName.set(name, false);
-  }
-  return [...byName.entries()]
-    .filter(([name]) => !machineHasMlxNode(name, devices))
-    .map(([machine, local]) => ({ machine, local }));
+  return machines.filter((m) => !machineHasMlxNode(m, devices));
 }
 
 export interface NodeConfigAccess {

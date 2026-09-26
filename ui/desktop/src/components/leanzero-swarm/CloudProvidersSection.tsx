@@ -26,7 +26,7 @@ const i18n = defineMessages({
   description: {
     id: 'cloudProviders.description',
     defaultMessage:
-      'Credentials for the cloud providers this app can call — keys are encrypted into your goose secret store. Local backends (LM Studio, the MLX engine) need no credentials and live in the other tabs.',
+      'Credentials for the cloud providers this app can call — keys are encrypted into your goose secret store. The LeanZero MLX engine runs on your own Macs, needs no credentials and lives in the other tabs.',
   },
   recheck: { id: 'cloudProviders.recheck', defaultMessage: 'Recheck connections' },
   checking: { id: 'cloudProviders.checking', defaultMessage: 'Checking connections…' },
@@ -66,7 +66,7 @@ const i18n = defineMessages({
   compatibleHint: {
     id: 'cloudProviders.compatibleHint',
     defaultMessage:
-      'Any server that speaks the OpenAI API — vLLM, llama.cpp, a remote LM Studio, Together, Groq, a company gateway. Add as many as you need. Chat sessions can use them; swarm nodes cannot yet.',
+      'Any server that speaks the OpenAI API — vLLM, llama.cpp, Together, Groq, a company gateway. Add as many as you need. Chat sessions can use them; swarm nodes cannot yet.',
   },
   chatOnly: { id: 'cloudProviders.chatOnly', defaultMessage: 'Chat only' },
   chatOnlyHint: {

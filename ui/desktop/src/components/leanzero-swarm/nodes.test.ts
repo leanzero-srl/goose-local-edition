@@ -8,7 +8,9 @@ import {
   mlxRemoteDeviceRow,
   mlxServedAlias,
   sanitizeNodeLabel,
+  swarmMachinesFromLink,
 } from './nodes';
+import type { NodeState, NodesResponse } from '../../acp/leanzero-link';
 
 /**
  * The alias contract, pinned to THE LIVE TRUTH on this machine's config.yaml (the swarm E2E node):
@@ -66,51 +68,97 @@ describe('mlx node derivations', () => {
 });
 
 /**
- * The owner's cap: one MLX node per swarm MACHINE. Machines come from `lms ps` (fleet-machines
- * IPC, local flag included) unioned with the LM Link model-id prefixes; already-added machines
- * leave the addable list — a 3-machine swarm offers exactly 3, then 2, then 1, then none.
+ * Q-130: the Macs a LeanZero MLX node can be made for come from what the product discovers — the
+ * LeanZero Link roster (this Mac, then every linked peer) — never from LM Studio's `lms ps`. The
+ * owner's cap holds: one MLX node per Mac.
  */
-describe('addableMlxMachines — the machine cap', () => {
-  const fleetModels = ['gabee-qwen3.8-27b', 'mihai-qwen3.8-27b', 'workhorse-qwen3.8-27b'];
-  const ipc = [
-    { machine: 'workhorse', local: true },
-    { machine: 'mihai', local: false },
-    { machine: 'gabee', local: false },
-  ];
+const node = (over: Partial<NodeState> & Pick<NodeState, 'node_id' | 'hostname'>): NodeState => ({
+  status: { type: 'Idle' },
+  sessions_active: 0,
+  updated_at: '2026-09-26T00:00:00Z',
+  ...over,
+});
+const ROSTER: NodesResponse = {
+  self: node({
+    node_id: 'n-self',
+    hostname: 'Mihai-Macbook-2',
+    computer_name: 'Mihai’s MacBook Pro',
+  }),
+  peers: [
+    node({ node_id: 'n-wh', hostname: 'Works-Mac-Studio', computer_name: 'Workhorse' }),
+    node({ node_id: 'n-gb', hostname: 'gabee-mbp', status: { type: 'Offline' } }),
+  ],
+};
 
-  it('a 3-machine swarm offers exactly 3, with the IPC local flag carried', () => {
-    const out = addableMlxMachines(ipc, fleetModels, []);
-    expect(out.map((m) => m.machine).sort()).toEqual(['gabee', 'mihai', 'workhorse']);
-    expect(out.find((m) => m.machine === 'workhorse')?.local).toBe(true);
-    expect(out.find((m) => m.machine === 'mihai')?.local).toBe(false);
+describe('swarmMachinesFromLink — the discovery source', () => {
+  it('this Mac first, then every linked peer, labelled by the Mac’s one name', () => {
+    const out = swarmMachinesFromLink(ROSTER);
+    expect(out).toEqual([
+      {
+        machine: 'mihais-macbook-pro',
+        name: 'Mihai’s MacBook Pro',
+        local: true,
+        names: ['mihais-macbook-pro', 'mihai-macbook-2'],
+      },
+      {
+        machine: 'workhorse',
+        name: 'Workhorse',
+        local: false,
+        names: ['workhorse', 'works-mac-studio'],
+      },
+      // a peer that predates computer_name is named by its hostname — once
+      { machine: 'gabee-mbp', name: 'gabee-mbp', local: false, names: ['gabee-mbp'] },
+    ]);
   });
 
-  it('an already-added machine leaves the list — by id convention OR by host', () => {
+  it('Link not connected answers with this Mac alone — so this Mac alone is offered', () => {
+    const out = swarmMachinesFromLink({ self: ROSTER.self, peers: [] });
+    expect(out.map((m) => [m.machine, m.local])).toEqual([['mihais-macbook-pro', true]]);
+  });
+});
+
+describe('addableMlxMachines — the one-node-per-Mac cap', () => {
+  const machines = swarmMachinesFromLink(ROSTER);
+
+  it('three linked Macs offer exactly three', () => {
+    expect(addableMlxMachines(machines, []).map((m) => m.machine)).toEqual([
+      'mihais-macbook-pro',
+      'workhorse',
+      'gabee-mbp',
+    ]);
+  });
+
+  it('any local MLX row takes this Mac’s slot whatever its label; a peer’s row by its host', () => {
     const devices = [
-      // the local convention: id '<machine>-mlx'
-      { id: 'workhorse-mlx', model_id: 'workhorse-x-mlx', weight: 2, enabled: true, engine: 'mlx-sidecar' },
-      // the remote shape: host names the machine
-      { id: 'weird-id', model_id: 'mihai-x-mlx', weight: 2, enabled: true, engine: 'mlx-sidecar', host: 'mihai' },
+      // an older local node whose label is not the Mac's name — still this Mac's engine
+      { id: 'mihai-mlx', model_id: 'mihai-x-mlx', weight: 2, enabled: true, engine: 'mlx-sidecar' },
+      // a peer row written under the peer's hostname
+      {
+        id: 'wh-mlx',
+        model_id: 'wh-x-mlx',
+        weight: 2,
+        enabled: true,
+        engine: 'mlx-sidecar',
+        host: 'works-mac-studio',
+      },
     ];
-    const out = addableMlxMachines(ipc, fleetModels, devices);
-    expect(out.map((m) => m.machine)).toEqual(['gabee']);
-    expect(machineHasMlxNode('workhorse', devices)).toBe(true);
-    expect(machineHasMlxNode('mihai', devices)).toBe(true);
-    expect(machineHasMlxNode('gabee', devices)).toBe(false);
+    expect(addableMlxMachines(machines, devices).map((m) => m.machine)).toEqual(['gabee-mbp']);
+    expect(machineHasMlxNode(machines[0], devices)).toBe(true);
+    expect(machineHasMlxNode(machines[1], devices)).toBe(true);
+    expect(machineHasMlxNode(machines[2], devices)).toBe(false);
   });
 
-  it('HTTP-only discovery still yields machines (as remote) when lms is unavailable', () => {
-    const out = addableMlxMachines([], fleetModels, []);
-    expect(out.map((m) => m.machine).sort()).toEqual(['gabee', 'mihai', 'workhorse']);
-    expect(out.every((m) => m.local === false)).toBe(true);
-  });
-
-  it('an LM Studio node with an mlx-sidecar row does not block CLOUD nodes (only MLX is capped)', () => {
+  it('a cloud row never takes a Mac’s slot (only MLX is capped)', () => {
     const devices = [
-      { id: 'zai-glm', model_id: 'glm-5.3-flash', weight: 2, enabled: true, provider: 'zai', host: 'zai' },
+      {
+        id: 'zai-glm',
+        model_id: 'glm-5.3-flash',
+        weight: 2,
+        enabled: true,
+        provider: 'zai',
+        host: 'zai',
+      },
     ];
-    // a cloud row's host names the PROVIDER, never a machine — it must not consume a machine slot
-    const out = addableMlxMachines(ipc, fleetModels, devices);
-    expect(out).toHaveLength(3);
+    expect(addableMlxMachines(machines, devices)).toHaveLength(3);
   });
 });

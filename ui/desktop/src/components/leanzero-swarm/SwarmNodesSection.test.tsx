@@ -69,8 +69,21 @@ vi.mock('../../acp/mlx-serving-intent', () => ({
   mlxServingIntent: () => mockIntent(),
 }));
 
+// Q-130: the add dialog's Macs are the LeanZero Link roster — never LM Studio's `lms ps`.
+const mockLinkNodes = vi.fn();
+vi.mock('../../acp/leanzero-link', async (importActual) => ({
+  ...(await importActual<typeof import('../../acp/leanzero-link')>()),
+  leanzeroLinkNodes: () => mockLinkNodes(),
+}));
+const linkNode = (hostname: string) => ({
+  node_id: `n-${hostname}`,
+  hostname,
+  status: { type: 'Idle' },
+  sessions_active: 0,
+  updated_at: '2026-09-26T00:00:00Z',
+});
+
 const mockSwarmCloud = vi.fn();
-const mockFleetMachines = vi.fn();
 
 class ResizeObserverMock {
   observe() {}
@@ -155,14 +168,10 @@ beforeEach(() => {
   });
   mockIntent.mockResolvedValue({ intent: null, error: null });
   mockSwarmCloud.mockResolvedValue({ ok: true, stdout: '{}', stderr: '', error: null });
-  mockFleetMachines.mockResolvedValue([
-    { machine: 'workhorse', local: true },
-    { machine: 'mihai', local: false },
-  ]);
+  mockLinkNodes.mockResolvedValue({ self: linkNode('workhorse'), peers: [linkNode('mihai')] });
   // the shared setup's window.electron is writable-but-not-configurable — extend it in place
   Object.assign(window.electron as unknown as Record<string, unknown>, {
     swarmCloud: mockSwarmCloud,
-    fleetMachines: mockFleetMachines,
   });
 });
 
@@ -429,26 +438,30 @@ describe('Add node — DERIVED provider list (pass E follow-up, owner)', () => {
   });
 });
 
+const openMlxPane = async () => {
+  await userEvent.click(await screen.findByTestId('swarm-add-node'));
+  await userEvent.click(screen.getAllByRole('combobox')[0]);
+  await userEvent.click(await screen.findByRole('option', { name: /LeanZero MLX/ }));
+  await waitFor(() => {
+    expect(screen.getByTestId('add-node-mlx-pane')).toBeInTheDocument();
+  });
+  return within(screen.getByTestId('add-node-mlx-pane'));
+};
+
 describe('Add node — MLX machine cap', () => {
-  it('offers exactly the discovered machines minus those already added, tagged local/remote', async () => {
-    // gabee is HTTP-discovered via fleetModels, so this pin runs with discovery visible
+  it('offers the linked Macs minus those already added — LM Studio’s fleet is not a source', async () => {
+    // even with the legacy LM Studio fleet ON, its model-id prefixes (gabee) are not Macs
     lmStudioVisible = true;
     render();
-    await userEvent.click(await screen.findByTestId('swarm-add-node'));
-    await userEvent.click(screen.getAllByRole('combobox')[0]);
-    await userEvent.click(await screen.findByRole('option', { name: /LeanZero MLX/ }));
-    await waitFor(() => {
-      expect(screen.getByTestId('add-node-mlx-pane')).toBeInTheDocument();
-    });
-    // machines: workhorse (local, ALREADY ADDED as workhorse-mlx) + mihai (remote) + gabee
-    // (HTTP-discovered) => addable = mihai + gabee
-    const pane = within(screen.getByTestId('add-node-mlx-pane'));
+    const pane = await openMlxPane();
+    // roster: workhorse (this Mac, ALREADY ADDED as workhorse-mlx) + mihai (peer) => mihai only
     await userEvent.click(pane.getAllByRole('combobox')[0]);
     const opts = await screen.findAllByRole('option');
     const names = opts.map((o) => o.textContent);
     expect(names.some((n) => n?.includes('mihai'))).toBe(true);
-    expect(names.some((n) => n?.includes('gabee'))).toBe(true);
+    expect(names.some((n) => n?.includes('gabee'))).toBe(false);
     expect(names.some((n) => n?.includes('workhorse'))).toBe(false);
+    expect(mockLinkNodes).toHaveBeenCalledTimes(1);
   });
 
   it('adding a REMOTE machine writes host + engine and NEVER touches the local engine settings', async () => {
@@ -521,6 +534,61 @@ describe('Add node — MLX machine cap', () => {
       instances: 1,
       engine: 'mlx-sidecar',
     });
+  });
+});
+
+describe('Add node — the MLX pane says what the product does (Q-130)', () => {
+  it('never names LM Studio / lms, and says truthfully that adding loads nothing and chat follows the Run', async () => {
+    render();
+    await openMlxPane();
+    const dialog = screen.getByRole('dialog');
+    await waitFor(() => {
+      expect(within(dialog).getAllByRole('combobox').length).toBeGreaterThan(1);
+    });
+    const text = dialog.textContent ?? '';
+    expect(text).not.toMatch(/LM Studio|\blms\b/);
+    expect(text).not.toMatch(/points the engine/);
+    expect(text).toContain('Adding a node for this Mac loads nothing and stops nothing');
+    expect(text).toContain('Chat answers from what this Mac serves now');
+  });
+
+  it('Link unreadable: the node is made for this Mac by hand, and the dialog says Link could not name it', async () => {
+    mockLinkNodes.mockRejectedValue({ data: 'LeanZero Link is not available in this build' });
+    mockRead.mockResolvedValue({ ...BASE_CFG, devices: [] });
+    render();
+    const pane = await openMlxPane();
+    const manual = await screen.findByTestId('add-node-machine-manual');
+    expect(manual.textContent).toBe(
+      'LeanZero Link could not name this Mac (LeanZero Link is not available in this build) — the node is created for this Mac; name it below.'
+    );
+    expect(pane.getByRole('textbox', { name: 'Node label' })).toBeInTheDocument();
+    expect(screen.getByRole('dialog').textContent).not.toMatch(/LM Studio|\blms\b/);
+  });
+
+  it('this Mac alone on the roster: offered, with where the other Macs come from', async () => {
+    mockLinkNodes.mockResolvedValue({ self: linkNode('workhorse'), peers: [] });
+    mockRead.mockResolvedValue({ ...BASE_CFG, devices: [] });
+    render();
+    const pane = await openMlxPane();
+    expect(await screen.findByTestId('add-node-only-this-mac')).toHaveTextContent(
+      'Only this Mac is linked — your other Macs appear here once they join LeanZero Link (Providers › My Macs).'
+    );
+    await userEvent.click(pane.getAllByRole('combobox')[0]);
+    const opts = await screen.findAllByRole('option');
+    expect(opts).toHaveLength(1);
+    expect(opts[0]).toHaveTextContent('workhorse');
+    expect(opts[0]).toHaveTextContent('this Mac');
+  });
+
+  it('every linked Mac taken: says so and points at the Nodes table', async () => {
+    mockLinkNodes.mockResolvedValue({ self: linkNode('workhorse'), peers: [] });
+    render();
+    await openMlxPane();
+    expect(
+      await screen.findByText(
+        'Every linked Mac already has its MLX node — change its model in the Nodes table or remove it first; cloud nodes are unlimited.'
+      )
+    ).toBeInTheDocument();
   });
 });
 
