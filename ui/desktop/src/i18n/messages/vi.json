@@ -732,7 +732,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Công cụ phân tán phục vụ {served}; nút cần {wanted}."
+    "defaultMessage": "Bản chia đang phục vụ {served}; node muốn {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Lần gắn gần nhất thất bại: {error}"
@@ -1381,6 +1381,39 @@
   },
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Giá trị"
+  },
+  "cutGuard.keep": {
+    "defaultMessage": "Để nó tiếp tục viết"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} sẽ cắt {count} yêu cầu đang chạy ({names}) — yêu cầu lâu nhất {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} sẽ cắt {count} yêu cầu đang chạy — yêu cầu lâu nhất {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} sẽ cắt câu trả lời đang được viết trong “{name}” — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} sẽ cắt một yêu cầu mà goose không xác định được — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "đã {elapsed}, vẫn đang đọc prompt {tokens} token"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "vẫn đang đọc prompt"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Cắt câu trả lời đang được viết?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Cắt {count} yêu cầu đang chạy?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "đã {elapsed}, đã viết {tokens} token"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "đã viết {tokens} token"
   },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "Cấu hình thiết lập {name}"
@@ -2976,7 +3009,7 @@
     "defaultMessage": "Dừng"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "đang dùng {gb} GiB"
+    "defaultMessage": "đang dùng {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Thêm node"
@@ -3000,7 +3033,7 @@
     "defaultMessage": "Áp dụng"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "Còn {available} trên {total} GiB"
+    "defaultMessage": "Còn {available} trên {total} GB"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · RDMA qua Thunderbolt 5"
@@ -3027,7 +3060,7 @@
     "defaultMessage": "Kiểm tra cụm"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Chưa lưu cấu hình phân tán nào."
+    "defaultMessage": "Chưa có bản chia nào được thiết lập."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Cấu hình"
@@ -3228,7 +3261,7 @@
     "defaultMessage": "Một mô hình được chia trên nhiều máy Mac qua Thunderbolt. Máy Mac này là rank 0: nó phục vụ API và giám sát mọi rank."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "KV đã giữ so với ngân sách"
@@ -3240,7 +3273,7 @@
     "defaultMessage": "{count, plural, other {Lớp {first}–{last} · # lớp}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Giới hạn: bộ nhớ {memory} · wired {wired} · cache {cache} GiB"
+    "defaultMessage": "Giới hạn: bộ nhớ {memory} · wired {wired} · cache {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Chưa báo cáo giới hạn"
@@ -3267,7 +3300,7 @@
     "defaultMessage": "Đã tải {done} / {total} GB"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "Cấu hình bị khóa khi engine phân tán đang chiếm máy Mac này. Hãy dừng nó để đổi node hoặc mô hình."
+    "defaultMessage": "Cấu hình bị khóa khi bản chia đang chiếm máy Mac này. Hãy dừng nó để đổi các máy Mac hoặc mô hình."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Chưa đọc được bộ nhớ: {error}"
@@ -3342,10 +3375,10 @@
     "defaultMessage": "Bộ nhớ đỉnh so với ngân sách"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB đỉnh · chưa báo cáo ngân sách"
+    "defaultMessage": "GB đỉnh · chưa báo cáo ngân sách"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB đỉnh trên ngân sách {budget} GiB"
+    "defaultMessage": "GB đỉnh trên ngân sách bản chia {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3354,13 +3387,13 @@
     "defaultMessage": "Bộ nhớ dự kiến so với ngân sách"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "trọng số {weights} · trạng thái {state} · vùng làm việc {workspace} · cache prompt {cache} GiB"
+    "defaultMessage": "trọng số {weights} · trạng thái {state} · vùng làm việc {workspace} · cache prompt {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB dự kiến kèm chi phí phụ, trên ngân sách {budget} GiB"
+    "defaultMessage": "GB dự kiến kèm chi phí phụ, trên ngân sách bản chia {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "dự kiến {gb} GiB kèm chi phí phụ"
+    "defaultMessage": "dự kiến {gb} GB kèm chi phí phụ"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Chưa chạy preflight nào. Một lần chạy thử kiểm tra từng node (khả năng kết nối, bộ nhớ, mô hình, Python, liên kết Thunderbolt, cổng) và lập kế hoạch lớp cho từng node mà không khởi chạy gì cả."
@@ -3402,7 +3435,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Đang đọc engine phân tán…"
+    "defaultMessage": "Đang đọc bản chia…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "Xóa {name}"
@@ -3426,10 +3459,10 @@
     "defaultMessage": "xử lý"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Ngân sách {budget} GiB (giới hạn GPU {ceiling} · khả dụng {available})"
+    "defaultMessage": "Ngân sách bản chia {budget} GB (giới hạn GPU {ceiling} · khả dụng {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Ngân sách {budget} GiB (giới hạn GPU {ceiling} · khả dụng sau khi nén {available})"
+    "defaultMessage": "Ngân sách bản chia {budget} GB (giới hạn GPU {ceiling} · khả dụng sau khi nén {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Giải phóng bộ nhớ thất bại"
@@ -3438,10 +3471,10 @@
     "defaultMessage": "Tự động giải phóng bộ nhớ"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "Đã giải phóng {gib} GiB"
+    "defaultMessage": "Đã giải phóng {gib} GB"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Không giải phóng được gì (ít hơn {gib} GiB)"
+    "defaultMessage": "Không giải phóng được gì (ít hơn {gib} GB)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "Yêu cầu macOS thu hồi bộ nhớ: ứng dụng nhàn rỗi được nén và bộ nhớ đệm bị bỏ. Không có gì bị đóng."
@@ -3453,10 +3486,10 @@
     "defaultMessage": "Giải phóng bộ nhớ không chạy"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "Thiếu {gib} GiB — giải phóng bộ nhớ, hoặc đóng ứng dụng: {apps}"
+    "defaultMessage": "Thiếu {gib} GB — giải phóng bộ nhớ, hoặc đóng ứng dụng: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "Thiếu {gib} GiB — giải phóng bộ nhớ, hoặc đóng ứng dụng"
+    "defaultMessage": "Thiếu {gib} GB — giải phóng bộ nhớ, hoặc đóng ứng dụng"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Đang cập nhật runner của bản chia"
@@ -3503,6 +3536,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Từ chối khởi động"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Dừng bản chia"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Tiếp tục chạy"
   },
@@ -3510,7 +3546,7 @@
     "defaultMessage": "Mọi rank trên {nodes} sẽ bị dừng và được xác minh đã kết thúc, từng pid một. Các yêu cầu đang xử lý sẽ bị cắt."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Dừng engine phân tán?"
+    "defaultMessage": "Dừng bản chia?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Chưa xác minh được việc dừng"
@@ -3525,13 +3561,13 @@
     "defaultMessage": "máy Mac này"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Engine phân tán"
+    "defaultMessage": "Chia trên các máy Mac của bạn"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Backend goose này không cung cấp engine phân tán: thiếu khả năng mlxDistributed, nghĩa là nó cũ hơn bản dựng đã thêm tính năng này. Hãy cập nhật goose để chia một mô hình trên nhiều máy Mac."
+    "defaultMessage": "Backend goose này không cung cấp bản chia: thiếu khả năng mlxDistributed, nghĩa là nó cũ hơn bản dựng đã thêm tính năng này. Hãy cập nhật goose để chia một mô hình trên nhiều máy Mac."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "Suy luận phân tán không khả dụng"
+    "defaultMessage": "Không thể chia một mô hình trên nhiều máy Mac"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Giữ engine đơn"
@@ -3540,7 +3576,7 @@
     "defaultMessage": "Gỡ và tiếp tục"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Engine MLX đơn đang được gắn trên máy Mac này ({detail}). Mỗi máy Mac chỉ thuộc một engine tại một thời điểm: gỡ nó sẽ dừng mô hình đó để engine phân tán có thể khởi động."
+    "defaultMessage": "Engine MLX đơn đang được gắn trên máy Mac này ({detail}). Mỗi máy Mac chỉ thuộc một engine tại một thời điểm: gỡ nó sẽ dừng mô hình đó để bản chia có thể khởi động."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Gỡ engine đơn?"
@@ -3693,7 +3729,7 @@
     "defaultMessage": "SHA256SUMS khác nhau"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{available} trên {total} GiB khả dụng"
+    "defaultMessage": "{available} trên {total} GB khả dụng"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "thiếu trên {nodes}"
@@ -3732,7 +3768,7 @@
     "defaultMessage": "máy Mac này"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Thiết lập engine phân tán"
+    "defaultMessage": "Thiết lập bản chia"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "không truy cập được"
@@ -3747,10 +3783,10 @@
     "defaultMessage": "Cuộc trò chuyện do bản chia trên các máy Mac của bạn phục vụ — số liệu ở ô phía trên. Các dòng này là engine đơn của chính máy Mac này."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Phân tán"
+    "defaultMessage": "Bản chia"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Engine phân tán đang chiếm máy Mac này: engine đơn không thể gắn cho đến khi nó được dừng trong mục Engine phân tán bên dưới."
+    "defaultMessage": "Bản chia đang chiếm máy Mac này: không mô hình nào chạy riêng ở đây cho đến khi bản chia dừng (Dừng, trong Chạy bên dưới)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Chi tiết engine"
@@ -3779,6 +3815,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Chọn một mô hình, rồi khởi chạy nó ở mục “Chạy” bên dưới — trên Mac này, trên một Mac khác của bạn, hoặc chia giữa chúng."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Gắn lại"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Hồ sơ trên"
   },
@@ -3794,6 +3833,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Dừng"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "Dừng phục vụ từ {peer}"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Không thể dừng phục vụ từ Mac kia."
   },
@@ -3802,6 +3844,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Engine của máy Mac này · không chạy"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Gỡ"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB mỗi token thay vì {bf16} KiB — cùng bộ nhớ chứa được {ratio}× ngữ cảnh."
@@ -3852,22 +3897,22 @@
     "defaultMessage": "BỎ SÓT"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "Chỉ {attention} lớp chú ý đầy đủ tăng theo ngữ cảnh và được nén; {state} lớp chú ý tuyến tính giữ trạng thái kích thước cố định. Áp dụng ở lần gắn tiếp theo. Các lần chạy phân tán giữ bộ nhớ đệm bf16."
+    "defaultMessage": "Chỉ {attention} lớp chú ý đầy đủ tăng theo ngữ cảnh và được nén; {state} lớp chú ý tuyến tính giữ trạng thái kích thước cố định. Áp dụng ở lần gắn tiếp theo. Bản chia giữ bộ nhớ đệm bf16."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Không thể nén bộ nhớ đệm KV: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {Phân tán · # node · {backend}}}"
+    "defaultMessage": "{count, plural, other {Chia trên # máy Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {Phân tán · # node}}"
+    "defaultMessage": "{count, plural, other {Chia trên # máy Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "Rank {rank} của engine phân tán của {requester} · {model} · {backend}"
+    "defaultMessage": "Hạng {rank} của bản chia của {requester} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "Rank {rank} của engine phân tán của {requester} · {model}"
+    "defaultMessage": "Hạng {rank} của bản chia của {requester} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "Đang phục vụ từ {peer}"
@@ -4077,13 +4122,16 @@
     "defaultMessage": "chưa có mức đỉnh"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} trên {budget} GiB đỉnh"
+    "defaultMessage": "đỉnh {peak} trên ngân sách bản chia {budget} GB"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Bộ nhớ đỉnh so với ngân sách"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB đỉnh"
+    "defaultMessage": "đỉnh {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "Bộ nhớ nhiều nhất bản chia đã dùng trên {node}, so với {budget} GB nó được dùng ở đó: phần trống khi khởi động, trừ dự phòng, trong giới hạn GPU."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slot {used} / {slots}"
@@ -4131,7 +4179,7 @@
     "defaultMessage": "Engine {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "cho engine phân tán của {requester} qua LeanZero Link"
+    "defaultMessage": "cho bản chia của {requester} qua LeanZero Link"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "Đang tải rank {rank} cho {requester}"
@@ -4202,14 +4250,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Yêu cầu đang xử lý"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Token đã viết so với giới hạn"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} từ cache"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "Đang xếp hàng"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "Đang đọc prompt"
@@ -4222,9 +4270,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} token"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} / {max} token"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "Đang đọc các lượt chạy goose đã đo…"
@@ -4341,10 +4386,10 @@
     "defaultMessage": "Không có điều khiển suy nghĩ: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Không thể dừng engine phân tán"
+    "defaultMessage": "Không dừng được bản chia"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "Việc dừng engine phân tán chưa được xác minh: {steps}"
+    "defaultMessage": "Chưa xác minh được việc dừng bản chia: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Không nạp được engine MLX"
@@ -4354,6 +4399,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Không thể dừng phục vụ từ Mac kia"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Chạy trên Mac này thay thế"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Dừng phục vụ từ Mac kia"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Dừng bản chia"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Thôi chờ nó"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "Gỡ engine MLX"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Không gỡ được engine MLX"
@@ -4854,7 +4914,7 @@
     "defaultMessage": "Bộ nhớ"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "Trống {free} GB / {total} GB"
+    "defaultMessage": "Khả dụng {free} GB / {total} GB"
   },
   "myMacs.mesh": {
     "defaultMessage": "Mạng lưới"
@@ -4965,7 +5025,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Công cụ phân tán phục vụ {served}; nút này cần {wanted}."
+    "defaultMessage": "Bản chia đang phục vụ {served}; node này muốn {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} chưa được tải trên máy chủ mà nút này trỏ tới."
@@ -5056,6 +5116,12 @@
   },
   "nodeModelCell.noModels": {
     "defaultMessage": "Không có mô hình nào trên Mac này khớp."
+  },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Không được phục vụ: engine của Mac này đang chạy {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Nút này được đặt là {set}, nhưng engine của Mac này đang phục vụ {served}. Công việc gửi tới nút này không có engine cho mô hình của nó cho đến khi {set} chạy ở đây."
   },
   "nodeModelCell.pickAria": {
     "defaultMessage": "Mô hình cho {node}"
@@ -5483,6 +5549,12 @@
   "placementCard.stop": {
     "defaultMessage": "Dừng"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "Dừng phục vụ từ {name}"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Dừng bản chia"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "Mọi phần trên {nodes} sẽ bị dừng và được xác nhận đã tắt. Các yêu cầu đang xử lý bị cắt ngang."
   },
@@ -5509,6 +5581,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Nhanh ngang nhau trong sai số (~{mine} so với ~{best} tok/s), nhưng cần nhiều máy Mac hơn"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "Ngữ cảnh {context} của nó nhỏ hơn {live} token mà cuộc trò chuyện đang được trả lời hiện đang chiếm."
   },
   "placementCard.total": {
     "defaultMessage": "Tổng ~{value} tok/s với {concurrency} cùng lúc"

@@ -133,11 +133,13 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
       'Up 31m 14s, 50.7 GB GPU memory',
       '---',
       'Open Providers',
-      'Unmount the MLX engine',
+      // Q-148: the stop names what it would cut, and its "…" says the click asks first.
+      'Stopping cuts 3 requests in flight, the longest (26m 14s, 28k tokens written)',
+      'Unmount the MLX engine…',
     ]);
     expect(actions(model.items)).toEqual([
       ['open-providers', 'Open Providers', true],
-      ['unmount', 'Unmount the MLX engine', true],
+      ['unmount', 'Unmount the MLX engine…', true],
     ]);
   });
 
@@ -281,32 +283,32 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
   const fresh = (report = ready) => ({ ...OPTS, distributed: { report, ageMs: 500 } });
 
   it('the title is the run: ready, requests in flight while serving, held when admission closes', () => {
-    expect(buildMlxTrayModel(INITIAL_SNAPSHOT, fresh()).title).toBe('Dist · ready');
+    expect(buildMlxTrayModel(INITIAL_SNAPSHOT, fresh()).title).toBe('Split · ready');
     expect(
       buildMlxTrayModel(INITIAL_SNAPSHOT, fresh(toMlxDistributedReport(FLASH_SERVING))).title
-    ).toBe('Dist · 2 in flight');
+    ).toBe('Split · 2 in flight');
     expect(
       buildMlxTrayModel(
         INITIAL_SNAPSHOT,
         fresh(toMlxDistributedReport({ ...FLASH_SERVING, admissionOpen: false }))
       ).title
-    ).toBe('Dist · held');
+    ).toBe('Split · held');
   });
 
   it('the menu names the mode, the nodes and backend, per-node memory, restarts and the last alarm', () => {
     const model = buildMlxTrayModel({ ...INITIAL_SNAPSHOT, mode: 'off' }, fresh());
     expect(labels(model.items)).toEqual([
-      'LeanZero MLX: distributed, ready',
-      'Distributed · MacBook Pro + workhorse · JACCL',
+      'LeanZero MLX: split across 2 Macs, ready',
+      'Split across MacBook Pro + workhorse · JACCL',
       'Model: rapid-mlx/Qwen3.8-Flash-Next-4bit',
-      'MacBook Pro: L0–19 · peak 61.0 of 83.4 GiB budget',
-      'workhorse: L20–47 · peak 42.5 of 55.4 GiB budget',
+      'MacBook Pro: L0–19 · peak 61.0 of 83.4 GB split budget',
+      'workhorse: L20–47 · peak 42.5 of 55.4 GB split budget',
       'In flight: 0',
       'Restarts: 1',
       'Last: restart — restart 1 of the breaker window',
       '---',
       'Open Providers',
-      'Stop the distributed engine',
+      'Stop the split',
     ]);
     // Mount is refused by goose while the run owns the Mac, so the tray does not offer it.
     expect(actions(model.items).map(([a]) => a)).toEqual(['open-providers', 'stop-distributed']);
@@ -321,7 +323,7 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
         baseUrl: 'http://127.0.0.1:8091',
       });
     const reading = buildMlxTrayModel(rank0(DIST_READING_STATUS), fresh(serving));
-    expect(reading.title).toBe('Dist · Reading 7.0k');
+    expect(reading.title).toBe('Split · Reading 7.0k');
     expect(reading.phase).toBe('reading');
     expect(labels(reading.items)).toContain('Reading a 7.0k-token prompt, 2.0k read for 14s');
     expect(labels(reading.items)).toContain('Reading at 152 tok/s');
@@ -329,17 +331,32 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
     expect(reading.items[0]).toMatchObject({ phase: 'reading' });
 
     const writing = buildMlxTrayModel(rank0(DIST_WRITING_STATUS), fresh(serving));
-    expect(writing.title).toBe('Dist · 171 tok/s');
+    expect(writing.title).toBe('Split · 171 tok/s');
     expect(writing.phase).toBe('writing');
     expect(labels(writing.items)).toContain('Writing 171 tok/s');
 
     // A read of the single engine never speaks for the run: the counters do.
     const single = buildMlxTrayModel(running(DIST_WRITING_STATUS), fresh(serving));
-    expect(single.title).toBe('Dist · 1 in flight');
+    expect(single.title).toBe('Split · 1 in flight');
     expect(single.phase).toBe('writing');
     // And a rank 0 read never speaks for the single engine once the run is gone.
     const gone = buildMlxTrayModel(rank0(DIST_WRITING_STATUS), OPTS);
     expect(gone.title).toBe('');
+  });
+
+  it('Q-148: while rank 0 writes, the Stop says what it cuts and asks (its "…"); idle, it is plain', () => {
+    const serving = toMlxDistributedReport({ ...FLASH_SERVING, inflight: 1 });
+    const rank0 = (body: unknown) =>
+      running(body, { engine: 'distributed', modelId: null, baseUrl: 'http://127.0.0.1:8091' });
+    const writing = buildMlxTrayModel(rank0(DIST_WRITING_STATUS), fresh(serving));
+    const tail = labels(writing.items).slice(-3);
+    expect(tail[0]).toBe('Open Providers');
+    expect(tail[1]).toMatch(/^Stopping cuts 2 requests in flight, the longest \(.+\)$/);
+    expect(tail[2]).toBe('Stop the split…');
+    expect(actions(writing.items).map(([a]) => a)).toEqual(['open-providers', 'stop-distributed']);
+    // Nothing in flight: the Stop acts where it is, as before.
+    const idle = buildMlxTrayModel({ ...INITIAL_SNAPSHOT, mode: 'off' }, fresh());
+    expect(labels(idle.items).slice(-1)).toEqual(['Stop the split']);
   });
 
   it('a node under pressure or unread says so on its line', () => {
@@ -351,14 +368,16 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
       ],
     });
     const lines = labels(buildMlxTrayModel(INITIAL_SNAPSHOT, fresh(report)).items);
-    expect(lines).toContain('MacBook Pro: L0–19 · peak 61.0 of 83.4 GiB budget · pressure warn');
+    expect(lines).toContain(
+      'MacBook Pro: L0–19 · peak 61.0 of 83.4 GB split budget · pressure warn'
+    );
     expect(lines).toContain('workhorse (failed): memory unread — ssh workhorse: timed out');
   });
 
   it('a read older than three polls is SAID to be stale, never shown as live', () => {
     const stale = { ...OPTS, distributed: { report: ready, ageMs: MLX_DISTRIBUTED_STALE_MS + 1 } };
     const model = buildMlxTrayModel(INITIAL_SNAPSHOT, stale);
-    expect(model.title).toBe('Dist · stale');
+    expect(model.title).toBe('Split · stale');
     expect(labels(model.items)).toContain('Not refreshed for 6s — open goose to read it again');
   });
 
@@ -383,8 +402,8 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
         distributed: { report: failed, ageMs: 0 },
       }
     );
-    expect(off.title).toBe('Dist failed');
-    expect(labels(off.items)).toContain('Distributed engine failed: rank 1 died: exit status 137');
+    expect(off.title).toBe('Split failed');
+    expect(labels(off.items)).toContain('The split failed: rank 1 died: exit status 137');
     expect(actions(off.items).map(([a]) => a)).toEqual(['open-providers', 'mount']);
   });
 });
@@ -400,7 +419,7 @@ describe('the tray while this Mac SERVES a rank of another Mac over LeanZero Lin
     expect(model.title).toBe('Rank 1 · serving');
     expect(labels(model.items)).toEqual([
       'LeanZero MLX: serving a rank, serving',
-      "Rank 1 of MacBook Pro's distributed engine · JACCL",
+      "Rank 1 of MacBook Pro's split · JACCL",
       'Model: Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
       'Single engine: refused while this Mac serves MacBook Pro',
       '---',
@@ -476,14 +495,14 @@ describe('the tray in the engine-phase palette', () => {
       distributed: { report: starting, ageMs: 0 },
     });
     expect(model.phase).toBe('loading');
-    expect(trayTitleText(model)).toBe('🟡 Dist · starting');
+    expect(trayTitleText(model)).toBe('🟡 Split · starting');
     expect(phases(model.items)).toEqual([
-      ['LeanZero MLX: distributed, starting', 'loading'],
+      ['LeanZero MLX: split across 2 Macs, starting', 'loading'],
       [
-        'MacBook Pro (loading): L0–19 · loaded 12.0 of 48.0 GB · peak 61.0 of 83.4 GiB b…',
+        'MacBook Pro (loading): L0–19 · loaded 12.0 of 48.0 GB · peak 61.0 of 83.4 GB sp…',
         'loading',
       ],
-      ['workhorse (ready): L20–47 · peak 42.5 of 55.4 GiB budget', 'idle'],
+      ['workhorse (ready): L20–47 · peak 42.5 of 55.4 GB split budget', 'idle'],
     ]);
     const held = buildMlxTrayModel(INITIAL_SNAPSHOT, {
       ...OPTS,
@@ -493,7 +512,7 @@ describe('the tray in the engine-phase palette', () => {
       },
     });
     expect(held.phase).toBe('held');
-    expect(trayTitleText(held)).toBe('🟠 Dist · held');
+    expect(trayTitleText(held)).toBe('🟠 Split · held');
   });
 
   it('a Mac macOS is making room on is said so, amber, with no load figure', () => {
@@ -511,7 +530,7 @@ describe('the tray in the engine-phase palette', () => {
       distributed: { report, ageMs: 0 },
     });
     expect(phases(model.items)[2]).toEqual([
-      'workhorse (making room): L20–47 · peak 42.5 of 55.4 GiB budget',
+      'workhorse (making room): L20–47 · peak 42.5 of 55.4 GB split budget',
       'loading',
     ]);
   });
@@ -525,7 +544,7 @@ describe('the tray in the engine-phase palette', () => {
       },
     });
     expect(model.phase).toBeNull();
-    expect(trayTitleText(model)).toBe('Dist · stale');
+    expect(trayTitleText(model)).toBe('Split · stale');
     expect(phases(model.items)).toEqual([]);
   });
 

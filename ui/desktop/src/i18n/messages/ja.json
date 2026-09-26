@@ -732,7 +732,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "分散エンジンは {served} を提供していますが、ノードは {wanted} を必要としています。"
+    "defaultMessage": "分割は {served} を提供しています。ノードは {wanted} を求めています。"
   },
   "composerReadiness.failed": {
     "defaultMessage": "前回のマウントに失敗しました: {error}"
@@ -1381,6 +1381,39 @@
   },
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "値"
+  },
+  "cutGuard.keep": {
+    "defaultMessage": "書き続けさせる"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action}で実行中の {count} 件のリクエスト({names})が中断されます — 最長のもの {figures}。"
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action}で実行中の {count} 件のリクエストが中断されます — 最長のもの {figures}。"
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action}で「{name}」で書かれている回答が中断されます — {figures}。"
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action}で goose が特定できなかったリクエストが中断されます — {figures}。"
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "{elapsed} 経過、{tokens} トークンのプロンプトをまだ読み込み中"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "プロンプトをまだ読み込み中"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "書かれている回答を中断しますか?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "実行中の {count} 件のリクエストを中断しますか?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "{elapsed} 経過、{tokens} トークン書き込み済み"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} トークン書き込み済み"
   },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "{name}の設定を構成"
@@ -2976,7 +3009,7 @@
     "defaultMessage": "停止"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "使用中 {gb} GiB"
+    "defaultMessage": "使用中 {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "ノードを追加"
@@ -3000,7 +3033,7 @@
     "defaultMessage": "適用"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{total} GiB 中 {available} GiB 使用可能"
+    "defaultMessage": "{total} GB 中 {available} GB 使用可能"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · Thunderbolt 5 経由の RDMA"
@@ -3027,7 +3060,7 @@
     "defaultMessage": "クラスタのチェック"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "分散構成はまだ保存されていません。"
+    "defaultMessage": "分割はまだ設定されていません。"
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "構成"
@@ -3228,7 +3261,7 @@
     "defaultMessage": "Thunderbolt で複数の Mac に分割した 1 つのモデル。この Mac はランク 0 で、API を提供し、すべてのランクを監視します。"
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "予算に対する予約済み KV"
@@ -3240,7 +3273,7 @@
     "defaultMessage": "{count, plural, other {レイヤー {first}–{last} · # 層}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "上限: メモリ {memory} · wired {wired} · キャッシュ {cache} GiB"
+    "defaultMessage": "上限: メモリ {memory} · wired {wired} · キャッシュ {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "上限はまだ報告されていません"
@@ -3267,7 +3300,7 @@
     "defaultMessage": "{total} GB 中 {done} GB 読み込み済み"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "分散エンジンがこの Mac を使用している間、構成はロックされます。ノードやモデルを変更するには停止してください。"
+    "defaultMessage": "分割がこの Mac を使用している間、構成はロックされます。Mac やモデルを変更するには停止してください。"
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "メモリ未取得: {error}"
@@ -3342,10 +3375,10 @@
     "defaultMessage": "予算に対するピークメモリ"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB ピーク · 予算未報告"
+    "defaultMessage": "GB ピーク · 予算未報告"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB ピーク / 予算 {budget} GiB"
+    "defaultMessage": "GB ピーク / 分割の予算 {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3354,13 +3387,13 @@
     "defaultMessage": "予算に対する計画メモリ"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "重み {weights} · 状態 {state} · ワークスペース {workspace} · プロンプトキャッシュ {cache} GiB"
+    "defaultMessage": "重み {weights} · 状態 {state} · ワークスペース {workspace} · プロンプトキャッシュ {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB（オーバーヘッド込みの計画）/ 予算 {budget} GiB"
+    "defaultMessage": "GB（オーバーヘッド込みの計画）/ 分割の予算 {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "計画 {gb} GiB（オーバーヘッド込み）"
+    "defaultMessage": "計画 {gb} GB（オーバーヘッド込み）"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "プリフライトはまだ実行されていません。ドライランは各ノード（到達性、メモリ、モデル、Python、Thunderbolt リンク、ポート）をチェックし、何も起動せずにノードごとのレイヤーを計画します。"
@@ -3402,7 +3435,7 @@
     "defaultMessage": "ランク {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "分散エンジンを読み取り中…"
+    "defaultMessage": "分割を読み込み中…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "{name} を削除"
@@ -3426,10 +3459,10 @@
     "defaultMessage": "ワーカー"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "予算 {budget} GiB（GPU 上限 {ceiling}・空き {available}）"
+    "defaultMessage": "分割の予算 {budget} GB（GPU 上限 {ceiling}・空き {available}）"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "予算 {budget} GiB（GPU 上限 {ceiling}・圧縮後の空き {available}）"
+    "defaultMessage": "分割の予算 {budget} GB（GPU 上限 {ceiling}・圧縮後の空き {available}）"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "空きを作る処理に失敗しました"
@@ -3438,10 +3471,10 @@
     "defaultMessage": "メモリを自動で空ける"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB 空きました"
+    "defaultMessage": "{gib} GB 空きました"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "空きは増えませんでした（{gib} GiB 減少）"
+    "defaultMessage": "空きは増えませんでした（{gib} GB 減少）"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "macOS にメモリの回収を依頼します。アイドル中のアプリは圧縮され、キャッシュは破棄されます。終了されるものはありません。"
@@ -3453,10 +3486,10 @@
     "defaultMessage": "空きを作る処理は実行されませんでした"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "{gib} GiB 不足 — 空きを作るか、アプリを閉じてください: {apps}"
+    "defaultMessage": "{gib} GB 不足 — 空きを作るか、アプリを閉じてください: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "{gib} GiB 不足 — 空きを作るか、アプリを閉じてください"
+    "defaultMessage": "{gib} GB 不足 — 空きを作るか、アプリを閉じてください"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "分割のランナーを更新中"
@@ -3503,6 +3536,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "起動が拒否されました"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "分割を停止"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "実行を続ける"
   },
@@ -3510,7 +3546,7 @@
     "defaultMessage": "{nodes} のすべてのランクを停止し、pid ごとに終了を確認します。処理中のリクエストは中断されます。"
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "分散エンジンを停止しますか？"
+    "defaultMessage": "分割を停止しますか?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "停止を確認できません"
@@ -3525,13 +3561,13 @@
     "defaultMessage": "この Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "分散エンジン"
+    "defaultMessage": "Mac に分割"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "この goose バックエンドは分散エンジンを提供していません。mlxDistributed 機能がないため、追加されたビルドより古いものです。1 つのモデルを複数の Mac に分割するには goose を更新してください。"
+    "defaultMessage": "この goose バックエンドは分割を提供していません。mlxDistributed 機能がないため、追加されたビルドより古いものです。1 つのモデルを複数の Mac に分割するには goose を更新してください。"
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "分散推論は利用できません"
+    "defaultMessage": "モデルを複数の Mac に分割する機能は利用できません"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "単一エンジンを維持"
@@ -3540,7 +3576,7 @@
     "defaultMessage": "アンマウントして続行"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "この Mac には単一の MLX エンジンがマウントされています（{detail}）。1 台の Mac を使えるのは同時に 1 つのエンジンだけです。アンマウントするとそのモデルが停止し、分散エンジンを起動できます。"
+    "defaultMessage": "この Mac には単一の MLX エンジンがマウントされています（{detail}）。1 台の Mac を使えるのは同時に 1 つのエンジンだけです。アンマウントするとそのモデルが停止し、分割を起動できます。"
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "単一エンジンをアンマウントしますか？"
@@ -3693,7 +3729,7 @@
     "defaultMessage": "SHA256SUMS 不一致"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{total} GiB 中 {available} GiB 利用可能"
+    "defaultMessage": "{total} GB 中 {available} GB 利用可能"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "{nodes} にありません"
@@ -3732,7 +3768,7 @@
     "defaultMessage": "この Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "分散エンジンのセットアップ"
+    "defaultMessage": "分割を設定"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "到達不能"
@@ -3747,10 +3783,10 @@
     "defaultMessage": "チャットは複数の Mac にまたがる分割エンジンが応答しています。その数値は上のタイルにあります。ここに並ぶのはこの Mac 自身の単体エンジンです。"
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "分散"
+    "defaultMessage": "分割"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "分散エンジンがこの Mac を使用中です。下の「分散エンジン」セクションで停止するまで、単一エンジンはマウントできません。"
+    "defaultMessage": "分割がこの Mac を使用しています。分割を停止するまで、ここで単独で動くモデルはありません（下の「実行」の停止から）。"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "エンジンの詳細"
@@ -3779,6 +3815,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "モデルを選び、下の「実行」で起動します — この Mac、他の Mac、または複数の Mac に分割して。"
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "再マウント"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "プロファイルの対象"
   },
@@ -3794,6 +3833,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "{peer} からの提供を停止"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "もう一方の Mac からの提供を停止できませんでした。"
   },
@@ -3802,6 +3844,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "この Mac のエンジン · 停止中"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "アンマウント"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: 1 トークンあたり {bf16} KiB ではなく {bytes} KiB — 同じメモリに {ratio}× のコンテキストが入ります。"
@@ -3852,22 +3897,22 @@
     "defaultMessage": "見逃し"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "コンテキストとともに増えて圧縮されるのは {attention} 個のフルアテンション層だけです。{state} 個のリニアアテンション層は固定サイズの状態を保持します。次回のマウント時に適用されます。分散実行は bf16 キャッシュのままです。"
+    "defaultMessage": "コンテキストとともに増えて圧縮されるのは {attention} 個のフルアテンション層だけです。{state} 個のリニアアテンション層は固定サイズの状態を保持します。次回のマウント時に適用されます。分割は bf16 キャッシュのままです。"
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV キャッシュ圧縮は利用できません: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {分散 · # ノード · {backend}}}"
+    "defaultMessage": "{count, plural, other {# 台の Mac に分割 · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {分散 · # ノード}}"
+    "defaultMessage": "{count, plural, other {# 台の Mac に分割}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "{requester} の分散エンジンのランク {rank} · {model} · {backend}"
+    "defaultMessage": "{requester} の分割のランク {rank} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "{requester} の分散エンジンのランク {rank} · {model}"
+    "defaultMessage": "{requester} の分割のランク {rank} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer} から提供中"
@@ -4077,13 +4122,16 @@
     "defaultMessage": "ピークなし"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "ピーク {peak} / {budget} GiB"
+    "defaultMessage": "ピーク {peak} / 分割の予算 {budget} GB"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "予算に対するピークメモリ"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "ピーク {peak} GiB"
+    "defaultMessage": "ピーク {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "{node} で分割が使ったメモリの最大値と、そこで使える {budget} GB（起動時の空きから予備分を引き、GPU 上限内に収めたもの）の比較です。"
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "スロット {used} / {slots}"
@@ -4131,7 +4179,7 @@
     "defaultMessage": "エンジン {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "LeanZero Link 経由の {requester} の分散エンジン用"
+    "defaultMessage": "LeanZero Link 経由の {requester} の分割用"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "{requester} のランク {rank} を読み込み中"
@@ -4202,14 +4250,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "処理中のリクエスト"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "上限に対する書き込み済みトークン"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} はキャッシュから"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "待機中"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "プロンプト読み込み中"
@@ -4222,9 +4270,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} トークン"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} / {max} トークン"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "goose の計測済みの実行を読み込み中…"
@@ -4341,10 +4386,10 @@
     "defaultMessage": "思考の制御を利用できません: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "分散エンジンを停止できませんでした"
+    "defaultMessage": "分割を停止できませんでした"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "分散エンジンの停止を確認できませんでした: {steps}"
+    "defaultMessage": "分割の停止を確認できませんでした: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX エンジンをマウントできませんでした"
@@ -4354,6 +4399,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "もう一方の Mac からの提供を停止できませんでした"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "代わりにこの Mac で実行"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "もう一方の Mac からの提供を停止"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "分割を停止"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "待つのをやめる"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "MLX エンジンをアンマウント"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "MLX エンジンをアンマウントできませんでした"
@@ -4854,7 +4914,7 @@
     "defaultMessage": "メモリ"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{total} GB 中 {free} GB 空き"
+    "defaultMessage": "{total} GB 中 {free} GB 利用可能"
   },
   "myMacs.mesh": {
     "defaultMessage": "メッシュ"
@@ -4965,7 +5025,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "分散エンジンは {served} を提供していますが、このノードは {wanted} を必要としています。"
+    "defaultMessage": "分割は {served} を提供しています。このノードは {wanted} を求めています。"
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} はこのノードが指すサーバーに読み込まれていません。"
@@ -5056,6 +5116,12 @@
   },
   "nodeModelCell.noModels": {
     "defaultMessage": "この Mac に一致するモデルはありません。"
+  },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "未提供: この Mac のエンジンは {model} を実行中"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "このノードは {set} に設定されていますが、この Mac のエンジンは {served} を提供しています。{set} がここで動くまで、このノードに送られた作業にはそのモデルのエンジンがありません。"
   },
   "nodeModelCell.pickAria": {
     "defaultMessage": "{node} のモデル"
@@ -5483,6 +5549,12 @@
   "placementCard.stop": {
     "defaultMessage": "停止"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "{name} からの提供を停止"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "分割を停止"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "{nodes} 上のすべての部分を停止し、終了を確認します。処理中のリクエストは中断されます。"
   },
@@ -5509,6 +5581,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "誤差の範囲で同じ速さ（~{mine} 対 ~{best} tok/s）ですが、より多くの Mac が必要"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "コンテキスト {context} は、回答中の会話が現在保持している {live} トークンより小さいです。"
   },
   "placementCard.total": {
     "defaultMessage": "同時 {concurrency} 件で合計 ~{value} tok/s"

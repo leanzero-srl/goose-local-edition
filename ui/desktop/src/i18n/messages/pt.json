@@ -732,7 +732,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "O motor distribuído serve {served}; o nó quer {wanted}."
+    "defaultMessage": "A divisão serve {served}; o nó quer {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "A última montagem falhou: {error}"
@@ -1381,6 +1381,39 @@
   },
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Valor"
+  },
+  "cutGuard.keep": {
+    "defaultMessage": "Deixar continuar a escrever"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} interrompe {count} pedidos em curso ({names}) — o mais longo {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} interrompe {count} pedidos em curso — o mais longo {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} interrompe a resposta que está a ser escrita em “{name}” — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} interrompe um pedido que o goose não conseguiu identificar — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "há {elapsed}, ainda a ler o seu prompt de {tokens} tokens"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "ainda a ler o seu prompt"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Interromper a resposta que está a ser escrita?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Interromper {count} pedidos em curso?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "há {elapsed}, {tokens} tokens escritos"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} tokens escritos"
   },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "Configurar definições de {name}"
@@ -2976,7 +3009,7 @@
     "defaultMessage": "Parar"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "ativa {gb} GiB"
+    "defaultMessage": "ativa {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Adicionar nó"
@@ -3000,7 +3033,7 @@
     "defaultMessage": "Aplicar"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{available} de {total} GiB disponíveis"
+    "defaultMessage": "{available} de {total} GB disponíveis"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · RDMA via Thunderbolt 5"
@@ -3027,7 +3060,7 @@
     "defaultMessage": "Verificações do cluster"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Ainda não há configuração distribuída salva."
+    "defaultMessage": "Ainda não há nenhuma divisão configurada."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Configuração"
@@ -3228,7 +3261,7 @@
     "defaultMessage": "Um modelo dividido entre vários Macs via Thunderbolt. Este Mac é o rank 0: ele serve a API e supervisiona cada rank."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} de {budget} GiB"
+    "defaultMessage": "KV {reserved} de {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "KV reservado em relação ao orçamento"
@@ -3240,7 +3273,7 @@
     "defaultMessage": "{count, plural, one {Camadas {first}–{last} · # camada} other {Camadas {first}–{last} · # camadas}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Limites: memória {memory} · wired {wired} · cache {cache} GiB"
+    "defaultMessage": "Limites: memória {memory} · wired {wired} · cache {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Limites ainda não informados"
@@ -3267,7 +3300,7 @@
     "defaultMessage": "Carregados {done} de {total} GB"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "A configuração fica bloqueada enquanto o mecanismo distribuído ocupa este Mac. Pare-o para mudar os nós ou o modelo."
+    "defaultMessage": "A configuração fica bloqueada enquanto a divisão ocupa este Mac. Pare-a para mudar os seus Macs ou o modelo."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Memória não lida: {error}"
@@ -3342,10 +3375,10 @@
     "defaultMessage": "Memória de pico em relação ao orçamento"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB de pico · nenhum orçamento informado"
+    "defaultMessage": "GB de pico · nenhum orçamento informado"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB de pico de um orçamento de {budget} GiB"
+    "defaultMessage": "GB de pico de um orçamento da divisão de {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3354,13 +3387,13 @@
     "defaultMessage": "Memória planejada em relação ao orçamento"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "pesos {weights} · estado {state} · área de trabalho {workspace} · cache de prompts {cache} GiB"
+    "defaultMessage": "pesos {weights} · estado {state} · área de trabalho {workspace} · cache de prompts {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB planejados com sobrecarga, de um orçamento de {budget} GiB"
+    "defaultMessage": "GB planejados com sobrecarga, de um orçamento da divisão de {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "planejado {gb} GiB com sobrecarga"
+    "defaultMessage": "planejado {gb} GB com sobrecarga"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Nenhum preflight foi executado ainda. Um teste a seco verifica cada nó (acessibilidade, memória, o modelo, Python, o link Thunderbolt, portas) e planeja as camadas por nó sem iniciar nada."
@@ -3402,7 +3435,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Lendo o mecanismo distribuído…"
+    "defaultMessage": "Lendo a divisão…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "Remover {name}"
@@ -3426,10 +3459,10 @@
     "defaultMessage": "trabalhador"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Orçamento {budget} GiB (limite da GPU {ceiling} · disponível {available})"
+    "defaultMessage": "Orçamento da divisão {budget} GB (limite da GPU {ceiling} · disponível {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Orçamento {budget} GiB (limite da GPU {ceiling} · disponível após compactação {available})"
+    "defaultMessage": "Orçamento da divisão {budget} GB (limite da GPU {ceiling} · disponível após compactação {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Liberar espaço falhou"
@@ -3438,10 +3471,10 @@
     "defaultMessage": "Liberar memória automaticamente"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB liberados"
+    "defaultMessage": "{gib} GB liberados"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Nada liberado ({gib} GiB a menos)"
+    "defaultMessage": "Nada liberado ({gib} GB a menos)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "Pede ao macOS que recupere memória: apps ociosos são comprimidos e caches descartados. Nada é encerrado."
@@ -3453,10 +3486,10 @@
     "defaultMessage": "Liberar espaço não foi executado"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "Faltam {gib} GiB — libere espaço ou feche apps: {apps}"
+    "defaultMessage": "Faltam {gib} GB — libere espaço ou feche apps: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "Faltam {gib} GiB — libere espaço ou feche apps"
+    "defaultMessage": "Faltam {gib} GB — libere espaço ou feche apps"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Atualizando o runner do split"
@@ -3503,6 +3536,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Início recusado"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Parar a divisão"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Manter em execução"
   },
@@ -3510,7 +3546,7 @@
     "defaultMessage": "Cada rank em {nodes} é parado e verificado como encerrado, pid por pid. As solicitações em andamento são interrompidas."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Parar o mecanismo distribuído?"
+    "defaultMessage": "Parar a divisão?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Parada não verificada"
@@ -3525,13 +3561,13 @@
     "defaultMessage": "este Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Mecanismo distribuído"
+    "defaultMessage": "Dividido entre os seus Macs"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Este backend do goose não oferece o mecanismo distribuído: falta a capacidade mlxDistributed, então ele é anterior à versão que o adicionou. Atualize o goose para dividir um modelo entre vários Macs."
+    "defaultMessage": "Este backend do goose não oferece a divisão: falta a capacidade mlxDistributed, então ele é anterior à versão que a adicionou. Atualize o goose para dividir um modelo entre vários Macs."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "A inferência distribuída não está disponível"
+    "defaultMessage": "Dividir um modelo entre vários Macs não está disponível"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Manter o mecanismo único"
@@ -3540,7 +3576,7 @@
     "defaultMessage": "Desmontar e continuar"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "O mecanismo MLX único está montado neste Mac ({detail}). Um Mac pertence a um mecanismo por vez: desmontar para esse modelo para que o mecanismo distribuído possa iniciar."
+    "defaultMessage": "O mecanismo MLX único está montado neste Mac ({detail}). Um Mac pertence a um mecanismo por vez: desmontar para esse modelo para que a divisão possa iniciar."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Desmontar o mecanismo único?"
@@ -3693,7 +3729,7 @@
     "defaultMessage": "SHA256SUMS diferem"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{available} de {total} GiB disponíveis"
+    "defaultMessage": "{available} de {total} GB disponíveis"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "ausente em {nodes}"
@@ -3732,7 +3768,7 @@
     "defaultMessage": "este Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Configurar o mecanismo distribuído"
+    "defaultMessage": "Configurar a divisão"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "inacessível"
@@ -3747,10 +3783,10 @@
     "defaultMessage": "O chat é atendido pela divisão entre os seus Macs; os números dela estão no bloco acima. Estas linhas são do motor único deste Mac."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Distribuído"
+    "defaultMessage": "Divisão"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "O mecanismo distribuído ocupa este Mac: o mecanismo único não pode ser montado até que ele seja parado na seção Mecanismo distribuído abaixo."
+    "defaultMessage": "A divisão ocupa este Mac: nenhum modelo roda aqui sozinho até a divisão parar (Parar, em Executar abaixo)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Detalhes do motor"
@@ -3779,6 +3815,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Escolha um modelo e inicie-o abaixo em “Executar” — neste Mac, em outro dos seus Macs ou dividido entre eles."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Voltar a montar"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Perfis em"
   },
@@ -3794,6 +3833,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Parar"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "Parar o serviço a partir de {peer}"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Não foi possível parar o serviço a partir do outro Mac."
   },
@@ -3802,6 +3844,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Motor deste Mac · parado"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Desmontar"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB por token em vez de {bf16} KiB — a mesma memória comporta {ratio}× o contexto."
@@ -3852,22 +3897,22 @@
     "defaultMessage": "NÃO ENCONTRADO"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "Só as {attention} camadas de atenção completa crescem com o contexto e são comprimidas; {state} camadas de atenção linear mantêm um estado de tamanho fixo. Vale a partir da próxima montagem. Execuções distribuídas mantêm uma cache bf16."
+    "defaultMessage": "Só as {attention} camadas de atenção completa crescem com o contexto e são comprimidas; {state} camadas de atenção linear mantêm um estado de tamanho fixo. Vale a partir da próxima montagem. Uma divisão mantém uma cache bf16."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Compressão da cache KV indisponível: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, one {Distribuído · # nó · {backend}} other {Distribuído · # nós · {backend}}}"
+    "defaultMessage": "{count, plural, one {Dividido entre # Mac · {backend}} other {Dividido entre # Macs · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, one {Distribuído · # nó} other {Distribuído · # nós}}"
+    "defaultMessage": "{count, plural, one {Dividido entre # Mac} other {Dividido entre # Macs}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "Rank {rank} do motor distribuído de {requester} · {model} · {backend}"
+    "defaultMessage": "Posição {rank} da divisão de {requester} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "Rank {rank} do motor distribuído de {requester} · {model}"
+    "defaultMessage": "Posição {rank} da divisão de {requester} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "Servido a partir de {peer}"
@@ -4077,13 +4122,16 @@
     "defaultMessage": "ainda sem pico"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} de {budget} GiB de pico"
+    "defaultMessage": "pico {peak} de {budget} GB de orçamento da divisão"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Memória de pico em relação ao orçamento"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB de pico"
+    "defaultMessage": "pico {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "A maior quantidade de memória que a divisão usou em {node}, face aos {budget} GB que pode usar lá: o que estava livre quando começou, menos a reserva, dentro do limite da GPU."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slots {used} de {slots}"
@@ -4131,7 +4179,7 @@
     "defaultMessage": "Motor {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "para o motor distribuído de {requester} pelo LeanZero Link"
+    "defaultMessage": "para a divisão de {requester} pelo LeanZero Link"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "Carregando o rank {rank} para {requester}"
@@ -4202,14 +4250,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Solicitações em andamento"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Tokens escritos em relação ao limite"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} do cache"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "Na fila"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "Lendo o prompt"
@@ -4222,9 +4270,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} tokens"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} de {max} tokens"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "Lendo as execuções medidas pelo goose…"
@@ -4341,10 +4386,10 @@
     "defaultMessage": "Controles de raciocínio indisponíveis: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Não foi possível parar o mecanismo distribuído"
+    "defaultMessage": "Não foi possível parar a divisão"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "A parada do mecanismo distribuído não foi verificada: {steps}"
+    "defaultMessage": "A parada da divisão não foi verificada: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Não foi possível montar o motor MLX"
@@ -4354,6 +4399,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Não foi possível parar o serviço a partir do outro Mac"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Executar antes neste Mac"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Parar o serviço a partir do outro Mac"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Parar a divisão"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Deixar de esperar por ele"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "Desmontar o motor MLX"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Não foi possível desmontar o motor MLX"
@@ -4854,7 +4914,7 @@
     "defaultMessage": "Memória"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{free} GB livres de {total} GB"
+    "defaultMessage": "{free} GB disponíveis de {total} GB"
   },
   "myMacs.mesh": {
     "defaultMessage": "Malha"
@@ -4965,7 +5025,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "O motor distribuído serve {served}; este nó quer {wanted}."
+    "defaultMessage": "A divisão serve {served}; este nó quer {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} não está carregado no servidor para o qual este nó aponta."
@@ -5056,6 +5116,12 @@
   },
   "nodeModelCell.noModels": {
     "defaultMessage": "Nenhum modelo deste Mac corresponde."
+  },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Não servido: o motor deste Mac executa {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Este nó está definido para {set}, mas o motor deste Mac serve {served}. O trabalho enviado a este nó não tem motor para o seu modelo até {set} correr aqui."
   },
   "nodeModelCell.pickAria": {
     "defaultMessage": "Modelo para {node}"
@@ -5483,6 +5549,12 @@
   "placementCard.stop": {
     "defaultMessage": "Parar"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "Parar o serviço a partir de {name}"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Parar a divisão"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "Cada parte em {nodes} é parada e confirmada como encerrada. Solicitações em andamento são interrompidas."
   },
@@ -5509,6 +5581,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Tão rápido dentro da margem de erro (~{mine} contra ~{best} tok/s), mas precisa de mais Macs"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "O seu contexto de {context} é menor do que os {live} tokens que a conversa a ser respondida já ocupa."
   },
   "placementCard.total": {
     "defaultMessage": "~{value} tok/s no total com {concurrency} ao mesmo tempo"

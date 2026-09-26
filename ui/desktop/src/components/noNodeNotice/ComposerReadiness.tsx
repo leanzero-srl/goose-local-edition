@@ -75,7 +75,7 @@ const i18n = defineMessages({
   },
   distributedMismatch: {
     id: 'composerReadiness.distributedMismatch',
-    defaultMessage: 'The distributed engine serves {served}; the node wants {wanted}.',
+    defaultMessage: 'The split serves {served}; the node wants {wanted}.',
   },
   remoteLoading: {
     id: 'composerReadiness.remoteLoading',

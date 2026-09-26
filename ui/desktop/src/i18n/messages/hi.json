@@ -732,7 +732,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "वितरित इंजन {served} सर्व करता है; नोड को {wanted} चाहिए।"
+    "defaultMessage": "विभाजन {served} सर्व करता है; नोड {wanted} चाहता है।"
   },
   "composerReadiness.failed": {
     "defaultMessage": "पिछला माउंट विफल रहा: {error}"
@@ -1381,6 +1381,39 @@
   },
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "मूल्य"
+  },
+  "cutGuard.keep": {
+    "defaultMessage": "लिखते रहने दें"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} {count} चल रहे अनुरोधों को काट देगा ({names}) — सबसे लंबा {figures}।"
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} {count} चल रहे अनुरोधों को काट देगा — सबसे लंबा {figures}।"
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} “{name}” में लिखे जा रहे उत्तर को काट देगा — {figures}।"
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} एक ऐसे अनुरोध को काट देगा जिसे goose पहचान नहीं सका — {figures}।"
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "{elapsed} से, अभी भी अपना {tokens}-टोकन प्रॉम्प्ट पढ़ रहा है"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "अभी भी अपना प्रॉम्प्ट पढ़ रहा है"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "लिखे जा रहे उत्तर को काटें?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "{count} चल रहे अनुरोध काटें?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "{elapsed} से, {tokens} टोकन लिखे गए"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} टोकन लिखे गए"
   },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "{name} सेटिंग्स कॉन्फ़िगर करें"
@@ -2976,7 +3009,7 @@
     "defaultMessage": "रोकें"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "सक्रिय {gb} GiB"
+    "defaultMessage": "सक्रिय {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "नोड जोड़ें"
@@ -3000,7 +3033,7 @@
     "defaultMessage": "लागू करें"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{total} GiB में से {available} GiB उपलब्ध"
+    "defaultMessage": "{total} GB में से {available} GB उपलब्ध"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · Thunderbolt 5 पर RDMA"
@@ -3027,7 +3060,7 @@
     "defaultMessage": "क्लस्टर जाँचें"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "अभी तक कोई वितरित कॉन्फ़िगरेशन सहेजा नहीं गया है।"
+    "defaultMessage": "अभी कोई विभाजन सेट नहीं है।"
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "कॉन्फ़िगरेशन"
@@ -3228,7 +3261,7 @@
     "defaultMessage": "Thunderbolt के ज़रिए कई Mac में बँटा एक मॉडल। यह Mac रैंक 0 है: यह API परोसता है और हर रैंक की निगरानी करता है।"
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "बजट के मुकाबले आरक्षित KV"
@@ -3240,7 +3273,7 @@
     "defaultMessage": "{count, plural, one {परतें {first}–{last} · # परत} other {परतें {first}–{last} · # परतें}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "सीमाएँ: मेमोरी {memory} · wired {wired} · कैश {cache} GiB"
+    "defaultMessage": "सीमाएँ: मेमोरी {memory} · wired {wired} · कैश {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "सीमाएँ अभी रिपोर्ट नहीं हुईं"
@@ -3267,7 +3300,7 @@
     "defaultMessage": "{total} GB में से {done} लोड हुए"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "जब तक वितरित इंजन इस Mac पर है, कॉन्फ़िगरेशन लॉक रहता है। नोड या मॉडल बदलने के लिए इसे रोकें।"
+    "defaultMessage": "जब तक विभाजन इस Mac पर है, कॉन्फ़िगरेशन लॉक रहता है। इसके Mac या मॉडल बदलने के लिए इसे रोकें।"
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "मेमोरी नहीं पढ़ी गई: {error}"
@@ -3342,10 +3375,10 @@
     "defaultMessage": "बजट के मुकाबले शिखर मेमोरी"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB शिखर · बजट रिपोर्ट नहीं हुआ"
+    "defaultMessage": "GB शिखर · बजट रिपोर्ट नहीं हुआ"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB शिखर, {budget} GiB बजट में से"
+    "defaultMessage": "GB शिखर, {budget} GB विभाजन बजट में से"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3354,13 +3387,13 @@
     "defaultMessage": "बजट के मुकाबले नियोजित मेमोरी"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "वेट {weights} · स्थिति {state} · वर्कस्पेस {workspace} · प्रॉम्प्ट कैश {cache} GiB"
+    "defaultMessage": "वेट {weights} · स्थिति {state} · वर्कस्पेस {workspace} · प्रॉम्प्ट कैश {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB ओवरहेड सहित नियोजित, {budget} GiB बजट में से"
+    "defaultMessage": "GB ओवरहेड सहित नियोजित, {budget} GB विभाजन बजट में से"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "नियोजित {gb} GiB ओवरहेड सहित"
+    "defaultMessage": "नियोजित {gb} GB ओवरहेड सहित"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "अभी कोई प्रीफ़्लाइट नहीं चला। ड्राई रन हर नोड (पहुँच, मेमोरी, मॉडल, Python, Thunderbolt लिंक, पोर्ट) जाँचता है और कुछ भी लॉन्च किए बिना प्रति नोड परतों की योजना बनाता है।"
@@ -3402,7 +3435,7 @@
     "defaultMessage": "रैंक {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "वितरित इंजन पढ़ा जा रहा है…"
+    "defaultMessage": "विभाजन पढ़ा जा रहा है…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "{name} हटाएँ"
@@ -3426,10 +3459,10 @@
     "defaultMessage": "वर्कर"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "बजट {budget} GiB (GPU सीमा {ceiling} · उपलब्ध {available})"
+    "defaultMessage": "विभाजन बजट {budget} GB (GPU सीमा {ceiling} · उपलब्ध {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "बजट {budget} GiB (GPU सीमा {ceiling} · संघनन के बाद उपलब्ध {available})"
+    "defaultMessage": "विभाजन बजट {budget} GB (GPU सीमा {ceiling} · संघनन के बाद उपलब्ध {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "जगह बनाना विफल रहा"
@@ -3438,10 +3471,10 @@
     "defaultMessage": "मेमोरी अपने-आप खाली करें"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB खाली हुई"
+    "defaultMessage": "{gib} GB खाली हुई"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "कुछ खाली नहीं हुआ ({gib} GiB कम)"
+    "defaultMessage": "कुछ खाली नहीं हुआ ({gib} GB कम)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "macOS से मेमोरी वापस लेने को कहता है: निष्क्रिय ऐप्स संपीड़ित होते हैं और कैश हटाए जाते हैं। कुछ भी बंद नहीं होता।"
@@ -3453,10 +3486,10 @@
     "defaultMessage": "जगह बनाना नहीं चला"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "{gib} GiB कम — जगह बनाएं, या ऐप्स बंद करें: {apps}"
+    "defaultMessage": "{gib} GB कम — जगह बनाएं, या ऐप्स बंद करें: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "{gib} GiB कम — जगह बनाएं, या ऐप्स बंद करें"
+    "defaultMessage": "{gib} GB कम — जगह बनाएं, या ऐप्स बंद करें"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "स्प्लिट का रनर अपडेट हो रहा है"
@@ -3503,6 +3536,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "शुरू करना अस्वीकृत"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "विभाजन रोकें"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "चलने दें"
   },
@@ -3510,7 +3546,7 @@
     "defaultMessage": "{nodes} पर हर रैंक रोकी जाती है और हर pid के लिए बंद होने की पुष्टि की जाती है। प्रगति में अनुरोध कट जाएँगे।"
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "वितरित इंजन रोकें?"
+    "defaultMessage": "विभाजन रोकें?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "रुकना सत्यापित नहीं"
@@ -3525,13 +3561,13 @@
     "defaultMessage": "यह Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "वितरित इंजन"
+    "defaultMessage": "आपके Mac में विभाजित"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "यह goose बैकएंड वितरित इंजन नहीं देता: mlxDistributed क्षमता मौजूद नहीं है, यानी यह उस बिल्ड से पुराना है जिसने इसे जोड़ा। एक मॉडल को कई Mac में बाँटने के लिए goose अपडेट करें।"
+    "defaultMessage": "यह goose बैकएंड विभाजन नहीं देता: mlxDistributed क्षमता मौजूद नहीं है, यानी यह उस बिल्ड से पुराना है जिसने इसे जोड़ा। एक मॉडल को कई Mac में बाँटने के लिए goose अपडेट करें।"
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "वितरित इन्फ़रेंस उपलब्ध नहीं है"
+    "defaultMessage": "एक मॉडल को कई Mac में विभाजित करना उपलब्ध नहीं है"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "एकल इंजन रखें"
@@ -3540,7 +3576,7 @@
     "defaultMessage": "अनमाउंट करें और जारी रखें"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "इस Mac पर एकल MLX इंजन माउंट है ({detail})। एक Mac एक समय में एक ही इंजन का होता है: अनमाउंट करने से वह मॉडल रुकता है ताकि वितरित इंजन शुरू हो सके।"
+    "defaultMessage": "इस Mac पर एकल MLX इंजन माउंट है ({detail})। एक Mac एक समय में एक ही इंजन का होता है: अनमाउंट करने से वह मॉडल रुकता है ताकि विभाजन शुरू हो सके।"
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "एकल इंजन अनमाउंट करें?"
@@ -3693,7 +3729,7 @@
     "defaultMessage": "SHA256SUMS अलग हैं"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{total} GiB में से {available} GiB उपलब्ध"
+    "defaultMessage": "{total} GB में से {available} GB उपलब्ध"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "{nodes} पर नहीं है"
@@ -3732,7 +3768,7 @@
     "defaultMessage": "यह Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "वितरित इंजन सेट करें"
+    "defaultMessage": "विभाजन सेट करें"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "पहुँच योग्य नहीं"
@@ -3747,10 +3783,10 @@
     "defaultMessage": "चैट आपके Mac पर बँटे इंजन से चल रही है — उसके आँकड़े ऊपर की टाइल में हैं। ये पंक्तियाँ इस Mac के अपने एकल इंजन की हैं।"
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "वितरित"
+    "defaultMessage": "विभाजन"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "वितरित इंजन इस Mac पर है: जब तक इसे नीचे वितरित इंजन अनुभाग में रोका नहीं जाता, एकल इंजन माउंट नहीं हो सकता।"
+    "defaultMessage": "विभाजन इस Mac पर है: जब तक विभाजन रोका नहीं जाता, यहाँ कोई मॉडल अकेले नहीं चलता (रोकें, नीचे Run it में)।"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "इंजन विवरण"
@@ -3779,6 +3815,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "एक मॉडल चुनें, फिर नीचे “चलाएँ” में उसे शुरू करें — इस Mac पर, अपने किसी दूसरे Mac पर, या उनके बीच विभाजित करके।"
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "फिर से माउंट करें"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "प्रोफ़ाइल कहाँ"
   },
@@ -3794,6 +3833,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "रोकें"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "{peer} से सर्विंग रोकें"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "दूसरे Mac से सर्विंग रोकी नहीं जा सकी।"
   },
@@ -3802,6 +3844,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "इस Mac का इंजन · नहीं चल रहा"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "अनमाउंट करें"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: हर टोकन पर {bf16} KiB की जगह {bytes} KiB — उसी मेमोरी में {ratio}× संदर्भ आता है।"
@@ -3852,22 +3897,22 @@
     "defaultMessage": "छूटा"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "केवल {attention} फुल-अटेंशन लेयर संदर्भ के साथ बढ़ती हैं और संपीड़ित होती हैं; {state} लीनियर-अटेंशन लेयर स्थिर आकार की स्थिति रखती हैं। अगले माउंट पर लागू होता है। वितरित रन bf16 कैश ही रखते हैं।"
+    "defaultMessage": "केवल {attention} फुल-अटेंशन लेयर संदर्भ के साथ बढ़ती हैं और संपीड़ित होती हैं; {state} लीनियर-अटेंशन लेयर स्थिर आकार की स्थिति रखती हैं। अगले माउंट पर लागू होता है। विभाजन bf16 कैश ही रखता है।"
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV कैश संपीड़न उपलब्ध नहीं: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, one {वितरित · # नोड · {backend}} other {वितरित · # नोड · {backend}}}"
+    "defaultMessage": "{count, plural, one {# Mac में विभाजित · {backend}} other {# Mac में विभाजित · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, one {वितरित · # नोड} other {वितरित · # नोड}}"
+    "defaultMessage": "{count, plural, one {# Mac में विभाजित} other {# Mac में विभाजित}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "{requester} के वितरित इंजन का रैंक {rank} · {model} · {backend}"
+    "defaultMessage": "{requester} के विभाजन की रैंक {rank} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "{requester} के वितरित इंजन का रैंक {rank} · {model}"
+    "defaultMessage": "{requester} के विभाजन की रैंक {rank} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer} से सर्व हो रहा है"
@@ -4077,13 +4122,16 @@
     "defaultMessage": "अभी कोई शिखर नहीं"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} / {budget} GiB शिखर"
+    "defaultMessage": "शिखर {peak} / {budget} GB विभाजन बजट"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "बजट के मुकाबले शिखर मेमोरी"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB शिखर"
+    "defaultMessage": "शिखर {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "{node} पर विभाजन ने अब तक सबसे अधिक जितनी मेमोरी ली, उन {budget} GB के मुकाबले जो वह वहाँ ले सकता है: शुरू होते समय जो खाली था, रिज़र्व घटाकर, GPU सीमा के भीतर।"
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "स्लॉट {used} / {slots}"
@@ -4131,7 +4179,7 @@
     "defaultMessage": "इंजन {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "LeanZero Link पर {requester} के वितरित इंजन के लिए"
+    "defaultMessage": "LeanZero Link पर {requester} के विभाजन के लिए"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "{requester} के लिए रैंक {rank} लोड हो रहा है"
@@ -4202,14 +4250,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "चल रहे अनुरोध"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "सीमा की तुलना में लिखे गए टोकन"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} कैश से"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "कतार में"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "प्रॉम्प्ट पढ़ रहा है"
@@ -4222,9 +4270,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} टोकन"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{max} में से {written} टोकन"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "goose के मापे गए रन पढ़े जा रहे हैं…"
@@ -4341,10 +4386,10 @@
     "defaultMessage": "सोचने के नियंत्रण उपलब्ध नहीं: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "वितरित इंजन रोका नहीं जा सका"
+    "defaultMessage": "विभाजन रोका नहीं जा सका"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "वितरित इंजन का रुकना सत्यापित नहीं हुआ: {steps}"
+    "defaultMessage": "विभाजन का रुकना सत्यापित नहीं हुआ: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX इंजन माउंट नहीं हो सका"
@@ -4354,6 +4399,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "दूसरे Mac से सर्विंग रोकी नहीं जा सकी"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "इसके बजाय इस Mac पर चलाएँ"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "दूसरे Mac से सर्विंग रोकें"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "विभाजन रोकें"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "इसकी प्रतीक्षा बंद करें"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "MLX इंजन अनमाउंट करें"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "MLX इंजन अनमाउंट नहीं हो सका"
@@ -4854,7 +4914,7 @@
     "defaultMessage": "मेमोरी"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{total} GB में से {free} GB खाली"
+    "defaultMessage": "{total} GB में से {free} GB उपलब्ध"
   },
   "myMacs.mesh": {
     "defaultMessage": "मेश"
@@ -4965,7 +5025,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "वितरित इंजन {served} सर्व करता है; इस नोड को {wanted} चाहिए।"
+    "defaultMessage": "विभाजन {served} सर्व करता है; यह नोड {wanted} चाहता है।"
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} उस सर्वर पर लोड नहीं है जिसकी ओर यह नोड इशारा करता है।"
@@ -5056,6 +5116,12 @@
   },
   "nodeModelCell.noModels": {
     "defaultMessage": "इस Mac पर कोई मॉडल मेल नहीं खाता।"
+  },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "सर्व नहीं हो रहा: इस Mac का इंजन {model} चला रहा है"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "यह नोड {set} पर सेट है, लेकिन इस Mac का इंजन {served} सर्व करता है। इस नोड को भेजे गए काम के मॉडल के लिए तब तक कोई इंजन नहीं है जब तक {set} यहाँ नहीं चलता।"
   },
   "nodeModelCell.pickAria": {
     "defaultMessage": "{node} के लिए मॉडल"
@@ -5483,6 +5549,12 @@
   "placementCard.stop": {
     "defaultMessage": "रोकें"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "{name} से सर्विंग रोकें"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "विभाजन रोकें"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "{nodes} पर हर हिस्सा रोका जाता है और उसके बंद होने की पुष्टि होती है। चल रहे अनुरोध कट जाते हैं।"
   },
@@ -5509,6 +5581,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "त्रुटि की सीमा में उतना ही तेज़ (~{mine} बनाम ~{best} tok/s), पर ज़्यादा Mac चाहिए"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "इसका {context} संदर्भ उन {live} टोकनों से कम है जो अभी उत्तर दी जा रही बातचीत में हैं।"
   },
   "placementCard.total": {
     "defaultMessage": "एक साथ {concurrency} पर कुल ~{value} tok/s"

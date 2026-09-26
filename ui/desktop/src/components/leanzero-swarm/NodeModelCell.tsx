@@ -3,7 +3,7 @@ import { Chip, Combobox, TONE_TEXT, TYPE, cx } from '../lz';
 import type { MlxEngineSettings, MlxLocalModel } from '../../acp/mlx-engine';
 import type { MlxServingIntent } from '../../acp/mlx-serving-intent';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
-import { chatNodeOf, servedRepo, shortModelName } from '../noNodeNotice/mlxMount';
+import { chatNodeOf, nodeNamesModel, servedRepo, shortModelName } from '../noNodeNotice/mlxMount';
 import { defineMessages, useIntl } from '../../i18n';
 
 const i18n = defineMessages({
@@ -20,6 +20,15 @@ const i18n = defineMessages({
       'You started {served} on this Mac, so chat goes to it on this node. The node stays set to {set} for swarm builds and benchmarks.',
   },
   engineServes: { id: 'nodeModelCell.engineServes', defaultMessage: 'Engine serves {model}' },
+  notServed: {
+    id: 'nodeModelCell.notServed',
+    defaultMessage: 'Not served: this Mac’s engine runs {model}',
+  },
+  notServedTitle: {
+    id: 'nodeModelCell.notServedTitle',
+    defaultMessage:
+      'This node is set to {set}, but this Mac’s engine serves {served}. Work routed to this node has no engine for its model until {set} runs here.',
+  },
   noModels: { id: 'nodeModelCell.noModels', defaultMessage: 'No model on this Mac matches.' },
   saveFailed: { id: 'nodeModelCell.saveFailed', defaultMessage: 'Not saved: {error}' },
 });
@@ -53,6 +62,13 @@ export function NodeModelCell({
   const [saving, setSaving] = useState(false);
   const chat =
     served != null && settings != null ? chatNodeOf(devices, settings, intent, served) : null;
+  // Set to a model the engine does not serve, and not the node chat follows: a solid warning,
+  // never a grey aside (Q-154: "mihai-flash-…" beside a grey "Engine serves Qwen3.8-27B").
+  const notServed =
+    served != null &&
+    settings != null &&
+    chat?.nodeId !== device.id &&
+    !nodeNamesModel(device.id, device.model_id, served, servedRepo(settings, served));
   const options = useMemo(
     () =>
       models
@@ -107,7 +123,17 @@ export function NodeModelCell({
           </Chip>
         </span>
       )}
-      {served != null && chat?.nodeId !== device.id && (
+      {served != null && notServed && (
+        <span data-testid={`node-model-not-served-${device.id}`}>
+          <Chip
+            tone="warn"
+            title={intl.formatMessage(i18n.notServedTitle, { set: device.model_id, served })}
+          >
+            {intl.formatMessage(i18n.notServed, { model: shortModelName(served) })}
+          </Chip>
+        </span>
+      )}
+      {served != null && chat?.nodeId !== device.id && !notServed && (
         <span
           data-testid={`node-model-serves-${device.id}`}
           className={cx(TYPE.meta, 'truncate')}

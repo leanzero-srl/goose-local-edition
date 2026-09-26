@@ -16,7 +16,8 @@ import {
   type EnginePhase,
   type Tone,
 } from '../lz';
-import { ConfirmationModal } from '../ui/ConfirmationModal';
+import { cutMessage, useCutGuard, useInFlightWork } from './cutGuard';
+import type { MlxEngineKind } from '../../utils/mlxInFlight';
 import { ToneBanner } from './studio';
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
@@ -309,6 +310,16 @@ const i18n = defineMessages({
       'Every part on {nodes} is stopped and verified gone. Requests in flight are cut off.',
   },
   keepRunning: { id: 'placementCard.keepRunning', defaultMessage: 'Keep running' },
+  stopSplitAction: { id: 'placementCard.stopSplitAction', defaultMessage: 'Stop the split' },
+  stopRouteAction: {
+    id: 'placementCard.stopRouteAction',
+    defaultMessage: 'Stop serving from {name}',
+  },
+  tooSmallForLive: {
+    id: 'placementCard.tooSmallForLive',
+    defaultMessage:
+      'Its {context} context is under the {live} tokens the conversation being answered holds now.',
+  },
   runnerUpdating: {
     id: 'placementCard.runnerUpdating',
     defaultMessage: 'Updating the split’s runner on {nodes}…',
@@ -879,6 +890,25 @@ export function servingWays(
   });
 }
 
+/** The engine a way runs on, in main's read's words — what a stop of that way cuts. */
+export function engineOfWay(way: Way): MlxEngineKind {
+  return way.kind === 'local' ? 'single' : way.kind === 'peer' ? 'remote' : 'distributed';
+}
+
+/**
+ * A way whose context is under what the live conversation already holds cannot carry it: never
+ * "Best" while that conversation is being answered (Q-148: "Best" fit only at 45,083 context while
+ * the answer being written held ~64k). A way that serves now holds it already.
+ */
+export function tooSmallForLive(
+  candidate: PlacementCandidate | null,
+  liveContextTokens: number | null,
+  servesNow: boolean
+): boolean {
+  if (servesNow || candidate?.fit.context == null || liveContextTokens == null) return false;
+  return candidate.fit.context < liveContextTokens;
+}
+
 function LiveChip({ live }: { live: { phase: EnginePhase; state: string } }) {
   const intl = useIntl();
   const word =
@@ -948,7 +978,8 @@ function PlacementCardBody({
     sessionStorage.setItem(SPLIT_DETAILS_KEY, open ? 'open' : 'folded');
     setDetailsOpenState(open);
   }, []);
-  const [confirmStopSplit, setConfirmStopSplit] = useState(false);
+  const { guard, dialog: cutDialog } = useCutGuard();
+  const liveWork = useInFlightWork();
   const [, setRemoteTick] = useState(0);
   const request = useRef(0);
 
@@ -1166,11 +1197,24 @@ function PlacementCardBody({
    * it idle and held its memory (3.0.29: Run across both Macs read "short 5.2 GB on Work's Mac
    * Studio" while the Studio's own copy held 53 GB).
    */
-  const run = async (way: Way) => {
+  const run = (way: Way) => {
+    // Whatever serves now stops first; while it holds work, the person is asked first (Q-148).
+    const current = serving;
+    if (current.length === 0) {
+      void switchTo(way, current);
+      return;
+    }
+    void guard(
+      current.map((s) => engineOfWay(s.way)),
+      title(way),
+      () => void switchTo(way, current)
+    );
+  };
+
+  const switchTo = async (way: Way, current: ServingWay[]) => {
     setNotice(null);
     // Whatever serves now stops first — the picked model on another way, or another model
     // anywhere (Q-119: Run for Flash while the Studio served the 27B).
-    const current = serving;
     if (current.length === 0 && way.kind === 'local') {
       onMountHere();
       return;
@@ -1220,15 +1264,35 @@ function PlacementCardBody({
     }
   };
 
-  const stop = async (way: Way) => {
+  const stop = (way: Way) => {
     if (way.kind === 'local') {
+      // The view's Unmount, which asks first while the engine holds work.
       onStopHere();
       return;
     }
     if (way.kind === 'split') {
-      setConfirmStopSplit(true);
+      void guard(
+        ['distributed'],
+        intl.formatMessage(i18n.stopSplitAction),
+        () => void stopSplit(),
+        {
+          title: intl.formatMessage(i18n.stopSplitTitle),
+          message: intl.formatMessage(i18n.stopSplitMessage, {
+            nodes: distributed?.nodes.map((n) => n.name).join(', ') || '—',
+          }),
+          cancel: intl.formatMessage(i18n.keepRunning),
+        }
+      );
       return;
     }
+    void guard(
+      ['remote'],
+      intl.formatMessage(i18n.stopRouteAction, { name: servedWhere(way) }),
+      () => void stopRoute(way)
+    );
+  };
+
+  const stopRoute = async (way: Way) => {
     setBusy(`stop:${way.key}`);
     try {
       // Withdrawn here at once when its Mac is not answering; a kept model is PeerHeldLine's.
@@ -1241,7 +1305,6 @@ function PlacementCardBody({
   };
 
   const stopSplit = async () => {
-    setConfirmStopSplit(false);
     setBusy('stop:split');
     try {
       await mlxDistributedStop();
@@ -1378,8 +1441,11 @@ function PlacementCardBody({
     const action = c?.action ?? null;
     // "Best" is goose's: the planner ranks long documents by a whole turn's expected time, so a
     // split that reads faster but writes slower wins only when the turn's answer is short enough.
-    const isBest = c != null && plan?.best === c.id;
-    const isBestNow = c != null && plan?.bestAvailable === c.id && plan.bestAvailable !== plan.best;
+    const servesNow = serving.some((s) => s.way.key === way.key);
+    const tooSmall = tooSmallForLive(c, liveWork?.contextTokens ?? null, servesNow);
+    const isBest = c != null && plan?.best === c.id && !tooSmall;
+    const isBestNow =
+      c != null && plan?.bestAvailable === c.id && plan.bestAvailable !== plan.best && !tooSmall;
     // The split beside a Mac the model fits on states what it costs and buys (Q-72) — that line
     // carries both writing figures, so goose's "Slower for this" would only repeat half of it.
     const tradeOff = c && way.kind === 'split' ? splitTradeOff(plan, c) : null;
@@ -1397,6 +1463,11 @@ function PlacementCardBody({
       needsCopy == null &&
       fitsForGoose &&
       (action == null || action.kind !== 'unavailable');
+    // Run on this way cuts the work the serving engines hold now: said before any click.
+    const cutsLive =
+      startable && liveWork != null && serving.some((s) => engineOfWay(s.way) === liveWork.engine)
+        ? liveWork
+        : null;
     const placementId = c?.id ?? (way.kind === 'local' ? 'single:local' : null);
     const measuring = busy === `measure:${placementId}`;
     const rate = needsCopy ? macs.copyRate(SELF_KEY, needsCopy.key) : null;
@@ -1458,6 +1529,25 @@ function PlacementCardBody({
               {line}
             </p>
           ))}
+        {cutsLive && (
+          <p
+            data-testid={`placement-cuts-live-${way.kind}`}
+            className={cx('break-words', TYPE.meta, WEIGHT.semibold, TONE_TEXT.err)}
+          >
+            {cutMessage(intl, intl.formatMessage(i18n.run), cutsLive)}
+          </p>
+        )}
+        {tooSmall && c?.fit.context != null && liveWork?.contextTokens != null && (
+          <p
+            data-testid={`placement-too-small-${way.kind}`}
+            className={cx('break-words', TYPE.meta, WEIGHT.semibold, TONE_TEXT.warn)}
+          >
+            {intl.formatMessage(i18n.tooSmallForLive, {
+              context: c.fit.context.toLocaleString(),
+              live: liveWork.contextTokens.toLocaleString(),
+            })}
+          </p>
+        )}
         {way.kind === 'split' &&
           running &&
           distributed?.contextLimit != null &&
@@ -1474,7 +1564,7 @@ function PlacementCardBody({
               variant={isBest || (!plan && way.kind === 'local') ? 'primary' : 'secondary'}
               icon={busy === `run:${way.key}` ? <Loader2 className="animate-spin" /> : <Play />}
               disabled={busy != null || (way.kind === 'local' && mountBusy)}
-              onClick={() => void run(way)}
+              onClick={() => run(way)}
               data-testid={`placement-run-${way.kind}`}
             >
               {busy === `run:${way.key}`
@@ -1487,7 +1577,7 @@ function PlacementCardBody({
               variant="secondary"
               icon={busy === `stop:${way.key}` ? <Loader2 className="animate-spin" /> : <Square />}
               disabled={busy != null}
-              onClick={() => void stop(way)}
+              onClick={() => stop(way)}
               data-testid={`placement-stop-${way.kind}`}
             >
               {intl.formatMessage(i18n.stop)}
@@ -1704,18 +1794,7 @@ function PlacementCardBody({
           </ul>
         </Disclosure>
       )}
-      <ConfirmationModal
-        isOpen={confirmStopSplit}
-        title={intl.formatMessage(i18n.stopSplitTitle)}
-        message={intl.formatMessage(i18n.stopSplitMessage, {
-          nodes: distributed?.nodes.map((n) => n.name).join(', ') || '—',
-        })}
-        confirmLabel={intl.formatMessage(i18n.stop)}
-        cancelLabel={intl.formatMessage(i18n.keepRunning)}
-        confirmVariant="destructive"
-        onConfirm={() => void stopSplit()}
-        onCancel={() => setConfirmStopSplit(false)}
-      />
+      {cutDialog}
     </section>
   );
 }

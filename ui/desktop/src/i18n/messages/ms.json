@@ -732,7 +732,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Enjin teragih menyajikan {served}; nod ini mahukan {wanted}."
+    "defaultMessage": "Pembahagian menyajikan {served}; nod mahukan {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"
@@ -1381,6 +1381,39 @@
   },
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Nilai"
+  },
+  "cutGuard.keep": {
+    "defaultMessage": "Biarkan ia terus menulis"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} memotong {count} permintaan yang sedang berjalan ({names}) — yang paling lama {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} memotong {count} permintaan yang sedang berjalan — yang paling lama {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} memotong jawapan yang sedang ditulis dalam “{name}” — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} memotong permintaan yang goose tidak dapat namakan — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "sudah {elapsed}, masih membaca gesaan {tokens} tokennya"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "masih membaca gesaannya"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Potong jawapan yang sedang ditulis?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Potong {count} permintaan yang sedang berjalan?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "sudah {elapsed}, {tokens} token ditulis"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} token ditulis"
   },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "Konfigurasikan tetapan {name}"
@@ -2976,7 +3009,7 @@
     "defaultMessage": "Henti"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "aktif {gb} GiB"
+    "defaultMessage": "aktif {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Tambah nod"
@@ -3000,7 +3033,7 @@
     "defaultMessage": "Guna"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{available} daripada {total} GiB tersedia"
+    "defaultMessage": "{available} daripada {total} GB tersedia"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · RDMA melalui Thunderbolt 5"
@@ -3027,7 +3060,7 @@
     "defaultMessage": "Semakan kluster"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Belum ada konfigurasi teragih yang disimpan."
+    "defaultMessage": "Belum ada pembahagian yang disediakan."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Konfigurasi"
@@ -3228,7 +3261,7 @@
     "defaultMessage": "Satu model dibahagikan merentas beberapa Mac melalui Thunderbolt. Mac ini ialah rank 0: ia menyediakan API dan menyelia setiap rank."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} daripada {budget} GiB"
+    "defaultMessage": "KV {reserved} daripada {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "KV yang ditempah berbanding bajet"
@@ -3240,7 +3273,7 @@
     "defaultMessage": "{count, plural, other {Lapisan {first}–{last} · # lapisan}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Had: memori {memory} · wired {wired} · cache {cache} GiB"
+    "defaultMessage": "Had: memori {memory} · wired {wired} · cache {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Had belum dilaporkan"
@@ -3267,7 +3300,7 @@
     "defaultMessage": "Dimuatkan {done} daripada {total} GB"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "Konfigurasi dikunci selagi enjin teragih menguasai Mac ini. Hentikannya untuk menukar nod atau model."
+    "defaultMessage": "Konfigurasi dikunci selagi pembahagian menguasai Mac ini. Hentikannya untuk menukar Mac-nya atau model."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Memori tidak dibaca: {error}"
@@ -3342,10 +3375,10 @@
     "defaultMessage": "Memori puncak berbanding bajet"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB puncak · tiada bajet dilaporkan"
+    "defaultMessage": "GB puncak · tiada bajet dilaporkan"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB puncak daripada bajet {budget} GiB"
+    "defaultMessage": "GB puncak daripada bajet pembahagian {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3354,13 +3387,13 @@
     "defaultMessage": "Memori yang dirancang berbanding bajet"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "pemberat {weights} · keadaan {state} · ruang kerja {workspace} · cache prompt {cache} GiB"
+    "defaultMessage": "pemberat {weights} · keadaan {state} · ruang kerja {workspace} · cache prompt {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB dirancang dengan overhed, daripada bajet {budget} GiB"
+    "defaultMessage": "GB dirancang dengan overhed, daripada bajet pembahagian {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "dirancang {gb} GiB dengan overhed"
+    "defaultMessage": "dirancang {gb} GB dengan overhed"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Belum ada preflight dijalankan. Larian kering menyemak setiap nod (kebolehcapaian, memori, model, Python, pautan Thunderbolt, port) dan merancang lapisan bagi setiap nod tanpa melancarkan apa-apa."
@@ -3402,7 +3435,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Membaca enjin teragih…"
+    "defaultMessage": "Membaca pembahagian…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "Buang {name}"
@@ -3426,10 +3459,10 @@
     "defaultMessage": "pekerja"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Bajet {budget} GiB (had GPU {ceiling} · tersedia {available})"
+    "defaultMessage": "Bajet pembahagian {budget} GB (had GPU {ceiling} · tersedia {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Bajet {budget} GiB (had GPU {ceiling} · tersedia selepas pemadatan {available})"
+    "defaultMessage": "Bajet pembahagian {budget} GB (had GPU {ceiling} · tersedia selepas pemadatan {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Kosongkan ruang gagal"
@@ -3438,10 +3471,10 @@
     "defaultMessage": "Kosongkan memori secara automatik"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB dikosongkan"
+    "defaultMessage": "{gib} GB dikosongkan"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Tiada yang dikosongkan ({gib} GiB kurang)"
+    "defaultMessage": "Tiada yang dikosongkan ({gib} GB kurang)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "Meminta macOS menuntut semula memori: apl terbiar dimampatkan dan cache dibuang. Tiada apa yang ditutup."
@@ -3453,10 +3486,10 @@
     "defaultMessage": "Kosongkan ruang tidak dijalankan"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "Kurang {gib} GiB — kosongkan ruang, atau tutup apl: {apps}"
+    "defaultMessage": "Kurang {gib} GB — kosongkan ruang, atau tutup apl: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "Kurang {gib} GiB — kosongkan ruang, atau tutup apl"
+    "defaultMessage": "Kurang {gib} GB — kosongkan ruang, atau tutup apl"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Mengemas kini runner split"
@@ -3503,6 +3536,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Mula ditolak"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Hentikan pembahagian"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Biarkan berjalan"
   },
@@ -3510,7 +3546,7 @@
     "defaultMessage": "Setiap rank pada {nodes} dihentikan dan disahkan hilang, pid demi pid. Permintaan yang sedang berjalan akan terputus."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Hentikan enjin teragih?"
+    "defaultMessage": "Hentikan pembahagian?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Henti tidak disahkan"
@@ -3525,13 +3561,13 @@
     "defaultMessage": "Mac ini"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Enjin teragih"
+    "defaultMessage": "Dibahagikan merentas Mac anda"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Backend goose ini tidak menawarkan enjin teragih: keupayaan mlxDistributed tiada, jadi ia lebih lama daripada binaan yang menambahnya. Kemas kini goose untuk membahagikan satu model merentas beberapa Mac."
+    "defaultMessage": "Backend goose ini tidak menawarkan pembahagian: keupayaan mlxDistributed tiada, jadi ia lebih lama daripada binaan yang menambahnya. Kemas kini goose untuk membahagikan satu model merentas beberapa Mac."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "Inferens teragih tidak tersedia"
+    "defaultMessage": "Membahagikan model merentas beberapa Mac tidak tersedia"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Kekalkan enjin tunggal"
@@ -3540,7 +3576,7 @@
     "defaultMessage": "Nyahlekap dan teruskan"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Enjin MLX tunggal dilekapkan pada Mac ini ({detail}). Satu Mac dikuasai satu enjin pada satu masa: menyahlekapnya menghentikan model itu supaya enjin teragih boleh dimulakan."
+    "defaultMessage": "Enjin MLX tunggal dilekapkan pada Mac ini ({detail}). Satu Mac dikuasai satu enjin pada satu masa: menyahlekapnya menghentikan model itu supaya pembahagian boleh dimulakan."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Nyahlekap enjin tunggal?"
@@ -3693,7 +3729,7 @@
     "defaultMessage": "SHA256SUMS berbeza"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{available} daripada {total} GiB tersedia"
+    "defaultMessage": "{available} daripada {total} GB tersedia"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "tiada pada {nodes}"
@@ -3732,7 +3768,7 @@
     "defaultMessage": "Mac ini"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Sediakan enjin teragih"
+    "defaultMessage": "Sediakan pembahagian"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "tidak dapat dicapai"
@@ -3747,10 +3783,10 @@
     "defaultMessage": "Sembang dilayan oleh pembahagian merentas Mac anda — angkanya dalam jubin di atas. Baris ini milik enjin tunggal Mac ini sendiri."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Teragih"
+    "defaultMessage": "Pembahagian"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Enjin teragih menguasai Mac ini: enjin tunggal tidak boleh dilekapkan sehingga ia dihentikan dalam bahagian Enjin teragih di bawah."
+    "defaultMessage": "Pembahagian menguasai Mac ini: tiada model berjalan di sini secara bersendirian sehingga pembahagian dihentikan (Hentikan, di bawah Jalankan)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Butiran enjin"
@@ -3779,6 +3815,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Pilih model, kemudian mulakannya dalam “Jalankan” di bawah — pada Mac ini, pada Mac anda yang lain, atau dibahagikan antara mereka."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Lekap semula"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Profil pada"
   },
@@ -3794,6 +3833,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Hentikan"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "Hentikan penghidangan dari {peer}"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Tidak dapat menghentikan penghidangan dari Mac lain."
   },
@@ -3802,6 +3844,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Enjin Mac ini · tidak berjalan"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Nyahlekap"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB bagi setiap token dan bukan {bf16} KiB — memori yang sama memuatkan {ratio}× konteks."
@@ -3852,22 +3897,22 @@
     "defaultMessage": "TERLEPAS"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "Hanya {attention} lapisan perhatian penuh yang berkembang bersama konteks dan dimampatkan; {state} lapisan perhatian linear menyimpan keadaan bersaiz tetap. Berkuat kuasa pada lekapan seterusnya. Larian teragih kekal dengan cache bf16."
+    "defaultMessage": "Hanya {attention} lapisan perhatian penuh yang berkembang bersama konteks dan dimampatkan; {state} lapisan perhatian linear menyimpan keadaan bersaiz tetap. Berkuat kuasa pada lekapan seterusnya. Pembahagian kekal dengan cache bf16."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Pemampatan cache KV tidak tersedia: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {Teragih · # nod · {backend}}}"
+    "defaultMessage": "{count, plural, one {Dibahagikan merentas # Mac · {backend}} other {Dibahagikan merentas # Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {Teragih · # nod}}"
+    "defaultMessage": "{count, plural, one {Dibahagikan merentas # Mac} other {Dibahagikan merentas # Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "Rank {rank} enjin teragih {requester} · {model} · {backend}"
+    "defaultMessage": "Kedudukan {rank} pembahagian {requester} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "Rank {rank} enjin teragih {requester} · {model}"
+    "defaultMessage": "Kedudukan {rank} pembahagian {requester} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "Dihidangkan dari {peer}"
@@ -4077,13 +4122,16 @@
     "defaultMessage": "belum ada puncak"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} daripada {budget} GiB puncak"
+    "defaultMessage": "puncak {peak} daripada bajet pembahagian {budget} GB"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Memori puncak berbanding bajet"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB puncak"
+    "defaultMessage": "puncak {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "Memori paling banyak yang digunakan pembahagian pada {node}, berbanding {budget} GB yang boleh digunakannya di sana: yang kosong semasa ia bermula, tolak rizab, dalam had GPU."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slot {used} daripada {slots}"
@@ -4131,7 +4179,7 @@
     "defaultMessage": "Enjin {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "untuk enjin teragih {requester} melalui LeanZero Link"
+    "defaultMessage": "untuk pembahagian {requester} melalui LeanZero Link"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "Memuatkan rank {rank} untuk {requester}"
@@ -4202,14 +4250,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Permintaan sedang berjalan"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Token ditulis berbanding had"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} daripada cache"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "Dalam baris gilir"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "Membaca prompt"
@@ -4222,9 +4270,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} token"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} daripada {max} token"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "Membaca larian diukur goose…"
@@ -4341,10 +4386,10 @@
     "defaultMessage": "Kawalan berfikir tidak tersedia: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Tidak dapat menghentikan enjin teragih"
+    "defaultMessage": "Tidak dapat menghentikan pembahagian"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "Penghentian enjin teragih tidak disahkan: {steps}"
+    "defaultMessage": "Penghentian pembahagian tidak disahkan: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Enjin MLX tidak dapat dilekapkan"
@@ -4354,6 +4399,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Tidak dapat menghentikan penghidangan dari Mac lain"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Jalankan pada Mac ini sahaja"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Hentikan penghidangan dari Mac lain"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Hentikan pembahagian"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Berhenti menunggunya"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "Nyahlekap enjin MLX"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Enjin MLX tidak dapat dinyahlekap"
@@ -4854,7 +4914,7 @@
     "defaultMessage": "Memori"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{free} GB kosong daripada {total} GB"
+    "defaultMessage": "{free} GB tersedia daripada {total} GB"
   },
   "myMacs.mesh": {
     "defaultMessage": "Mesh"
@@ -4965,7 +5025,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Enjin teragih menyajikan {served}; nod ini mahukan {wanted}."
+    "defaultMessage": "Pembahagian menyajikan {served}; nod ini mahukan {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} tidak dimuatkan pada pelayan yang ditunjuk nod ini."
@@ -5056,6 +5116,12 @@
   },
   "nodeModelCell.noModels": {
     "defaultMessage": "Tiada model pada Mac ini yang sepadan."
+  },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Tidak disajikan: enjin Mac ini menjalankan {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Nod ini ditetapkan kepada {set}, tetapi enjin Mac ini menyajikan {served}. Kerja yang dihalakan ke nod ini tiada enjin untuk modelnya sehingga {set} berjalan di sini."
   },
   "nodeModelCell.pickAria": {
     "defaultMessage": "Model untuk {node}"
@@ -5483,6 +5549,12 @@
   "placementCard.stop": {
     "defaultMessage": "Hentikan"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "Hentikan penghidangan dari {name}"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Hentikan pembahagian"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "Setiap bahagian pada {nodes} dihentikan dan disahkan telah tamat. Permintaan yang sedang berjalan akan terputus."
   },
@@ -5509,6 +5581,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Sama laju dalam julat ralat (~{mine} lwn ~{best} tok/s), tetapi perlu lebih banyak Mac"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "Konteks {context}nya lebih kecil daripada {live} token yang kini dipegang oleh perbualan yang sedang dijawab."
   },
   "placementCard.total": {
     "defaultMessage": "Jumlah ~{value} tok/s dengan {concurrency} serentak"

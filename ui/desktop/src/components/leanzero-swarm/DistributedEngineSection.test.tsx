@@ -188,7 +188,7 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     const mode = screen.getByTestId('mlx-dist-mode');
     expect(mode).toHaveAttribute('data-mode', 'distributed');
     expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
-      'Distributed · 2 nodes · JACCL'
+      'Split across 2 Macs · JACCL'
     );
     expect(within(mode).getByText('Ready')).toBeInTheDocument();
 
@@ -199,14 +199,14 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     );
     expect(within(macbook).getByTestId('mlx-dist-node-peak')).toHaveTextContent('61.0');
     expect(within(macbook).getByTestId('mlx-dist-node-budget')).toHaveTextContent(
-      'GiB peak of 83.4 GiB budget'
+      'GB peak of 83.4 GB split budget'
     );
     expect(within(macbook).getByText('coordinator · rank 0')).toBeInTheDocument();
     expect(within(macbook).getByTestId('mlx-dist-node-link')).toHaveTextContent(
       'JACCL · 192.168.0.1 · en3 · 80 Gb/s'
     );
     expect(
-      within(macbook).getByText('Caps: memory 96.0 · wired 76.8 · cache 8.0 GiB')
+      within(macbook).getByText('Caps: memory 96.0 · wired 76.8 · cache 8.0 GB')
     ).toBeInTheDocument();
 
     expect(within(workhorse).getByTestId('mlx-dist-node-layers')).toHaveTextContent(
@@ -215,7 +215,7 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     expect(within(workhorse).getByTestId('mlx-dist-node-peak')).toHaveTextContent('42.5');
     // 61.6 GiB available × 0.90 = 55.44 GiB — the budget the planner printed, to one decimal.
     expect(within(workhorse).getByTestId('mlx-dist-node-budget')).toHaveTextContent(
-      'GiB peak of 55.4 GiB budget'
+      'GB peak of 55.4 GB split budget'
     );
     const bars = within(workhorse).getAllByRole('progressbar', {
       name: 'Peak memory against the budget',
@@ -283,10 +283,10 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     const plans = within(report).getAllByTestId('mlx-dist-plan');
     expect(within(plans[0]).getByTestId('mlx-dist-plan-planned')).toHaveTextContent('63.6');
     expect(plans[0]).toHaveTextContent('Layers 0–19 · 20 layers');
-    expect(plans[0]).toHaveTextContent('GiB planned with overhead, of 83.4 GiB budget');
-    expect(plans[1]).toHaveTextContent('GiB planned with overhead, of 55.4 GiB budget');
+    expect(plans[0]).toHaveTextContent('GB planned with overhead, of 83.4 GB split budget');
+    expect(plans[1]).toHaveTextContent('GB planned with overhead, of 55.4 GB split budget');
     expect(plans[1]).toHaveTextContent(
-      'weights 38.4 · state 0.2 · workspace 0.4 · prompt cache 0.0 GiB'
+      'weights 38.4 · state 0.2 · workspace 0.4 · prompt cache 0.0 GB'
     );
     expect(
       within(report).getByText('92.70 GiB available of 128.00 GiB, pressure normal')
@@ -311,10 +311,10 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     expect(screen.getByRole('combobox', { name: 'Backend' })).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
     expect(mockStop).not.toHaveBeenCalled();
-    expect(screen.getByText('Stop the distributed engine?')).toBeInTheDocument();
+    expect(await screen.findByText('Stop the split?')).toBeInTheDocument();
     expect(screen.getByText(/Every rank on MacBook Pro, workhorse is stopped/)).toBeInTheDocument();
     const dialog = screen.getByRole('dialog');
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Stop' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Stop the split' }));
     await waitFor(() => expect(mockStop).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Stopped, verified')).toBeInTheDocument();
   });
@@ -326,7 +326,9 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     });
     section();
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
-    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }));
+    await userEvent.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Stop the split' })
+    );
     expect(await screen.findByText('Stop not verified')).toBeInTheDocument();
     expect(screen.getByText('SIGTERM rank 1 pid 5521 → STILL ALIVE')).toBeInTheDocument();
   });
@@ -378,11 +380,11 @@ describe('DistributedEngineSection — Make room', () => {
       .getAllByTestId('mlx-dist-preflight-node')
       .find((c) => c.getAttribute('data-node') === 'workhorse')!;
     expect(within(card).getByTestId('mlx-dist-short')).toHaveTextContent(
-      'Short by 3.8 GiB — Make room, or close apps: Google Chrome (6.1 GiB), Slack (1.2 GiB)'
+      'Short by 3.8 GB — Make room, or close apps: Google Chrome (6.1 GB), Slack (1.2 GB)'
     );
-    expect(within(card).getByText('Freed 5.6 GiB')).toHaveAttribute('data-tone', 'ok');
+    expect(within(card).getByText('Freed 5.6 GB')).toHaveAttribute('data-tone', 'ok');
     expect(within(card).getByTestId('mlx-dist-budget-line')).toHaveTextContent(
-      'Budget 35.1 GiB (GPU limit 77.8 · available after compaction 39.0)'
+      'Split budget 35.1 GB (GPU limit 77.8 · available after compaction 39.0)'
     );
     // The MacBook has no compaction and no short line.
     const macbook = screen
@@ -450,7 +452,7 @@ describe('DistributedEngineSection — starting', () => {
     const { container } = section({ status: STOPPED_WITH_CONFIG });
     // The section names the engine it configures, even while the Mac belongs to the single one.
     expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
-      'Distributed · 2 nodes · JACCL'
+      'Split across 2 Macs · JACCL'
     );
     await userEvent.click(screen.getByRole('button', { name: 'Start' }));
     expect(mockStart).toHaveBeenCalledWith(null);
@@ -559,10 +561,8 @@ describe('DistributedEngineSection — pipeline slots (rank 0’s /v1/status)', 
     expect(screen.getByTestId('mlx-dist-waiting')).toHaveTextContent('Waiting 0');
     expect(screen.getByTestId('mlx-dist-waiting').className).not.toContain('text-lz-warn');
     const [macbook, workhorse] = screen.getAllByTestId('mlx-dist-node');
-    expect(within(macbook).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.0 of 0.5 GiB');
-    expect(within(workhorse).getByTestId('mlx-dist-node-kv')).toHaveTextContent(
-      'KV 0.0 of 0.5 GiB'
-    );
+    expect(within(macbook).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.0 of 0.5 GB');
+    expect(within(workhorse).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.0 of 0.5 GB');
     expect(
       within(macbook).getByRole('progressbar', { name: 'KV reserved against the budget' })
     ).toHaveAttribute('aria-valuenow', '0');
@@ -580,7 +580,7 @@ describe('DistributedEngineSection — pipeline slots (rank 0’s /v1/status)', 
     expect(waiting).toHaveTextContent('Waiting 1');
     expect(waiting.className).toContain('text-lz-warn');
     const [macbook] = screen.getAllByTestId('mlx-dist-node');
-    expect(within(macbook).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.5 of 0.5 GiB');
+    expect(within(macbook).getByTestId('mlx-dist-node-kv')).toHaveTextContent('KV 0.5 of 0.5 GB');
     expect(
       within(macbook).getByRole('progressbar', { name: 'KV reserved against the budget' })
     ).toHaveAttribute('aria-valuenow', '100');
@@ -689,7 +689,7 @@ describe('DistributedEngineSection — configuration', () => {
   it('a saved but stopped config: the headline is the configured engine, not the single one', () => {
     section({ status: STOPPED_WITH_CONFIG });
     expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
-      'Distributed · 2 nodes · JACCL'
+      'Split across 2 Macs · JACCL'
     );
     expect(within(screen.getByTestId('mlx-dist-mode')).getByText('Stopped')).toBeInTheDocument();
     expect(screen.queryByText('Single · this Mac')).toBeNull();
@@ -884,7 +884,7 @@ describe('DistributedEngineSection — Set up detects everything from one peer n
 describe('DistributedEngineSection — loud absence', () => {
   it('capability missing: the section explains why it is unavailable', async () => {
     const { container } = section({ capability: false, status: null });
-    expect(screen.getByText('Distributed inference is unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Splitting a model across Macs is unavailable')).toBeInTheDocument();
     expect(screen.getByText(/the mlxDistributed capability is missing/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
     await expectDesigned(container);
@@ -917,7 +917,7 @@ describe('DistributedEngineSection — loud absence', () => {
 
   it('embedded under Run it: no title, no second Start or Stop — the row owns them', () => {
     section({ embedded: true, status: STOPPED_WITH_CONFIG });
-    expect(screen.queryByText('Distributed engine')).toBeNull();
+    expect(screen.queryByText('Split across your Macs')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
     expect(screen.queryByTestId('mlx-dist-mode')).toBeNull();
     expect(screen.getByRole('button', { name: 'Preflight (dry run)' })).toBeInTheDocument();

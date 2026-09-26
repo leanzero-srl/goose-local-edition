@@ -23,7 +23,8 @@ import { formatGb } from './primitives';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import { PERMISSIONS, PERMISSION_KEY, allowsOf, type Mac, type Permission } from './macs';
-import { macLine, macStateWord, summarizeMac } from './macSummary';
+import { macLine, macStateWord } from './macSummary';
+import { useMacSummary } from './useMacSummary';
 import { PERMISSION_LABEL, useMacs, type MacFacts } from './useMacs';
 
 /**
@@ -42,7 +43,8 @@ const i18n = defineMessages({
   },
   thisMac: { id: 'myMacs.thisMac', defaultMessage: 'This Mac' },
   memory: { id: 'myMacs.memory', defaultMessage: 'Memory' },
-  memoryFree: { id: 'myMacs.memoryFree', defaultMessage: '{free} GB free of {total} GB' },
+  // The Engine card's words for the same number: one unit, one verb (Q-156).
+  memoryFree: { id: 'myMacs.memoryFree', defaultMessage: '{free} GB available of {total} GB' },
   disk: { id: 'myMacs.disk', defaultMessage: 'Disk' },
   diskFree: { id: 'myMacs.diskFree', defaultMessage: '{free} free of {total}' },
   models: { id: 'myMacs.models', defaultMessage: 'Models' },
@@ -143,7 +145,7 @@ function FactsGrid({ mac, facts }: { mac: Mac; facts: MacFacts }) {
         : status
           ? intl.formatMessage(i18n.memoryFree, {
               free: status.availableMemoryGb.toFixed(1),
-              total: status.totalMemoryGb.toFixed(0),
+              total: status.totalMemoryGb.toFixed(1),
             })
           : facts.statusError
             ? cantRead(facts.statusError)
@@ -335,15 +337,11 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
   const intl = useIntl();
   const macsCtx = useMacs();
   const { mlxDistributed } = useFeatures();
-  const distributed = useMlxDistributedStatus(mlxDistributed && mac.isSelf);
+  // Polled here so the card is current while it is open; every read lands in the latest status
+  // the one derivation reads (useMacSummary, Q-149).
+  useMlxDistributedStatus(mlxDistributed && mac.isSelf);
   const facts = macsCtx.factsOf(mac.key);
-  const summary = summarizeMac(mac, {
-    status: facts.status,
-    statusError: facts.statusError,
-    activity: facts.activity,
-    decodeTps: facts.decodeTps,
-    distributed: distributed.status,
-  });
+  const summary = useMacSummary(mac);
   const line = macLine(intl, summary);
   const word = macStateWord(intl, summary.state);
   const { linkState } = props;

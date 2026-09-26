@@ -40,15 +40,15 @@ import {
 import { useMlxEngineStatusPoll } from './useMlxEngineStatus';
 import { MLX_STATUS_POLL_MS } from './mlxLiveStats';
 import { ownsTheMac } from './mlxDistributed';
-import { setNodeModel } from './nodes';
+import { macOfMlxNode, setNodeModel, swarmMachinesFromLink, type SwarmMachine } from './nodes';
+import { leanzeroLinkNodes } from '../../acp/leanzero-link';
 import { NodeModelCell } from './NodeModelCell';
 
 const i18nMsg = defineMessages({
   nodesTitle: { id: 'swarmSettings.nodesTitle', defaultMessage: 'Nodes' },
   nodesDesc: {
     id: 'swarmSettings.nodesDesc',
-    defaultMessage:
-      'Share: relative share of work across nodes — higher gets more tasks.',
+    defaultMessage: 'Share: relative share of work across nodes — higher gets more tasks.',
   },
   shareLabel: { id: 'swarmSettings.shareLabel', defaultMessage: 'Share' },
   addNode: { id: 'swarmSettings.addNode', defaultMessage: 'Add node' },
@@ -146,6 +146,18 @@ export default function SwarmNodesSection({
   const [pendingReassign, setPendingReassign] = useState<NodeRow | null>(null);
   const [removing, setRemoving] = useState(false);
   const [nodeError, setNodeError] = useState<string | null>(null);
+  // The Macs, from the LeanZero Link roster (as Add node reads them): an MLX node is named by the
+  // Mac it runs on. Unread, a node keeps its own label — nothing is guessed.
+  const [machines, setMachines] = useState<SwarmMachine[]>([]);
+  useEffect(() => {
+    let alive = true;
+    leanzeroLinkNodes()
+      .then((roster) => alive && setMachines(swarmMachinesFromLink(roster)))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   /** Fresh-read the whole swarm config and mutate it — never from possibly-stale panel state. */
   const mutateConfigFresh = useCallback(
@@ -249,8 +261,7 @@ export default function SwarmNodesSection({
           // The engine substring-matches these keys (id.contains(key)); a full device id contains
           // itself, so a newly written full-id key always matches its node. Update an existing
           // matching key in place so the map never carries two values for one node.
-          const existing =
-            row.id in sw ? row.id : Object.keys(sw).find((k) => row.id.includes(k));
+          const existing = row.id in sw ? row.id : Object.keys(sw).find((k) => row.id.includes(k));
           sw[existing ?? row.id] = share;
           return { ...base, speed_weights: sw };
         }).catch(fail);
@@ -275,8 +286,11 @@ export default function SwarmNodesSection({
 
   // A local LeanZero MLX node's Model cell reads what this Mac's engine serves and the models on
   // this Mac, and changes the node's model through the one node-model writer (`setNodeModel`).
-  const isLocalMlxRow = (d: { engine?: string | null; host?: string | null; provider?: string | null }) =>
-    d.engine === 'mlx-sidecar' && d.host == null && d.provider == null;
+  const isLocalMlxRow = (d: {
+    engine?: string | null;
+    host?: string | null;
+    provider?: string | null;
+  }) => d.engine === 'mlx-sidecar' && d.host == null && d.provider == null;
   const hasLocalMlx = configuredDevices.some(isLocalMlxRow);
   const readSwarmStrict = useCallback(
     () => read('swarm', false, { throwOnError: true }) as Promise<SwarmConfig | null>,
@@ -328,19 +342,32 @@ export default function SwarmNodesSection({
   const endpoint = cfg.endpoint ?? DEFAULTS.endpoint ?? '';
 
   const view: NodeView[] = rows.map((row, i) => ({ row, hue: nodeHue(i) }));
+  // A node's name: the Mac it runs on for an MLX node; a cloud node by its model; else its label.
+  const nodeName = (row: NodeRow): string =>
+    macOfMlxNode(row, machines)?.name ??
+    (row.provider != null ? row.modelId : deviceFromModelId(row.modelId) || row.id);
+  const namesTaken = new Map<string, number>();
+  for (const { row } of view) {
+    const name = nodeName(row);
+    namesTaken.set(name, (namesTaken.get(name) ?? 0) + 1);
+  }
 
   const columns: DataTableColumn<NodeView>[] = [
     {
       key: 'node',
       header: 'Node',
       cell: ({ row, hue }) => {
-        const isCloud = row.provider != null;
-        const name = isCloud ? row.modelId : deviceFromModelId(row.modelId) || row.id;
+        const name = nodeName(row);
+        // Two nodes on one Mac (the one-per-Mac cap came later) stay apart by their own label.
+        const shared = (namesTaken.get(name) ?? 0) > 1;
         return (
-          <span className="flex items-center gap-2">
+          <span className="flex items-center gap-2" data-testid={`node-name-${row.id}`}>
             <StatusDot node={hue} label={`node ${name}`} />
-            <span className={cx('truncate', WEIGHT.semibold)} title={row.modelId}>
-              {name}
+            <span className="flex min-w-0 flex-col">
+              <span className={cx('truncate', WEIGHT.semibold)} title={row.modelId}>
+                {name}
+              </span>
+              {shared && <span className={cx('truncate', TYPE.meta)}>{row.id}</span>}
             </span>
           </span>
         );
@@ -405,7 +432,10 @@ export default function SwarmNodesSection({
         return row.provider != null ? (
           <span className="text-lz-ink-4">—</span>
         ) : (
-          <span className="block max-w-[28ch] truncate font-mono text-lz-mono text-lz-ink-3" title={row.modelId}>
+          <span
+            className="block max-w-[28ch] truncate font-mono text-lz-mono text-lz-ink-3"
+            title={row.modelId}
+          >
             {row.modelId}
           </span>
         );

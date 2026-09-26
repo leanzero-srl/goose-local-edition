@@ -422,7 +422,8 @@ export function AppInner() {
   const navigate = useNavigate();
   const setView = useNavigation();
   const intl = useIntl();
-  useMlxTrayActions();
+  // The tray's stops ask here first while the engine holds work (Q-148).
+  const trayCutDialog = useMlxTrayActions();
   const { leanzeroLink } = useFeatures();
   useLinkTrayReporter(leanzeroLink);
   useMlxRestore();
@@ -761,6 +762,7 @@ export function AppInner() {
   return (
     <>
       {closeRunDialog}
+      {trayCutDialog}
       <PageViewTracker />
       <ToastContainer
         aria-label="Toast notifications"

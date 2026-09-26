@@ -20,6 +20,8 @@ import { formatGb } from './primitives';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { peerRefuses, type Mac } from './macs';
 import { ReplicaJobRow } from './ModelReplica';
+import { macStateWord } from './macSummary';
+import { modelRoleOn, useMacSummary } from './useMacSummary';
 import {
   copyKey,
   copyRunning,
@@ -159,6 +161,8 @@ function MatrixCell({ mac, modelId, macs, onPending, onOpenSampling }: CellProps
   const downloadError = ctx.downloadErrors[mac.key]?.[modelId];
   const model = facts.models?.find((m) => m.id === modelId) ?? null;
   const testId = `model-cell-${mac.key}-${modelId}`;
+  // What this Mac does with the model — the one derivation My Macs and the tray read (Q-149).
+  const summary = useMacSummary(mac);
 
   if (job && (copyRunning(job) || job.error != null || job.progress?.state === 'failed')) {
     const failed = job.error != null || job.progress?.state === 'failed';
@@ -267,23 +271,34 @@ function MatrixCell({ mac, modelId, macs, onPending, onOpenSampling }: CellProps
 
   if (model) {
     const incomplete = model.missingFiles > 0 || !model.complete;
-    const status = facts.status;
-    const inEngine =
-      status?.modelId === modelId && (status.state === 'running' || status.state === 'mounting');
-    const phase: EnginePhase = status?.state === 'mounting' ? 'loading' : 'idle';
+    const role = modelRoleOn(summary, modelId);
+    const phase: EnginePhase =
+      role === 'split' || role === 'hosting'
+        ? (summary.phase ?? 'idle')
+        : role === 'loading'
+          ? 'loading'
+          : 'idle';
     return (
-      <div className="flex min-w-0 flex-col gap-1" data-testid={testId} data-cell="present">
+      <div
+        className="flex min-w-0 flex-col gap-1"
+        data-testid={testId}
+        data-cell="present"
+        data-role={role ?? 'disk'}
+      >
         <span className="flex flex-wrap items-center gap-1">
           {incomplete ? (
             <Chip tone="warn">
               {intl.formatMessage(i18n.incomplete, { count: Math.max(1, model.missingFiles) })}
             </Chip>
-          ) : inEngine ? (
+          ) : role ? (
             // The copy an engine holds is the one FILLED chip in the table, in the engine-phase
             // palette; a copy that only sits on disk is quiet. A solid green "On disk" beside a
-            // grey "Loaded" made the serving copy look the least alive (Q-45).
+            // grey "Loaded" made the serving copy look the least alive (Q-45). A split's copies
+            // say so on both Macs — "On disk" twice while the split served it (Q-149).
             <Chip phase={phase}>
-              {intl.formatMessage(phase === 'loading' ? i18n.loading : i18n.loaded)}
+              {role === 'split' || role === 'hosting'
+                ? macStateWord(intl, summary.state)
+                : intl.formatMessage(role === 'loading' ? i18n.loading : i18n.loaded)}
             </Chip>
           ) : (
             <Chip>{intl.formatMessage(i18n.onDisk)}</Chip>

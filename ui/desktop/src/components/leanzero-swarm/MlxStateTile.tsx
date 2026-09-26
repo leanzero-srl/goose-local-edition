@@ -150,12 +150,8 @@ const i18n = defineMessages({
   rowTokens: { id: 'mlxStateTile.row.tokens', defaultMessage: '{count} tokens' },
   rowCached: { id: 'mlxStateTile.row.cached', defaultMessage: '{count} from cache' },
   rowWriting: { id: 'mlxStateTile.row.writing', defaultMessage: 'Writing' },
-  rowWrittenOf: {
-    id: 'mlxStateTile.row.writtenOf',
-    defaultMessage: '{written} of {max} tokens',
-  },
   rowWritten: { id: 'mlxStateTile.row.written', defaultMessage: '{written} tokens' },
-  rowBar: { id: 'mlxStateTile.row.bar', defaultMessage: 'Tokens written of the limit' },
+  rowRate: { id: 'mlxStateTile.row.rate', defaultMessage: '{rate} tok/s' },
   serving: { id: 'mlxStateTile.serving', defaultMessage: 'Serving' },
   clientChat: { id: 'mlxStateTile.client.chat', defaultMessage: 'Chat · {name}' },
   openServedSession: {
@@ -239,8 +235,16 @@ const i18n = defineMessages({
   },
   distSlots: { id: 'mlxStateTile.dist.slots', defaultMessage: 'slots {used} of {slots}' },
   distWaiting: { id: 'mlxStateTile.dist.waiting', defaultMessage: '{count} waiting' },
-  distPeak: { id: 'mlxStateTile.dist.peak', defaultMessage: '{peak} of {budget} GiB peak' },
-  distPeakNoBudget: { id: 'mlxStateTile.dist.peakNoBudget', defaultMessage: '{peak} GiB peak' },
+  distPeak: {
+    id: 'mlxStateTile.dist.peak',
+    defaultMessage: 'peak {peak} of {budget} GB split budget',
+  },
+  distPeakTitle: {
+    id: 'mlxStateTile.dist.peakTitle',
+    defaultMessage:
+      'The most memory the split has used on {node}, against the {budget} GB it may use there: what was free when it started, less the reserve, within the GPU limit.',
+  },
+  distPeakNoBudget: { id: 'mlxStateTile.dist.peakNoBudget', defaultMessage: 'peak {peak} GB' },
   distNoPeak: { id: 'mlxStateTile.dist.noPeak', defaultMessage: 'no peak yet' },
   distPeakBar: {
     id: 'mlxStateTile.dist.peakBar',
@@ -256,7 +260,7 @@ const i18n = defineMessages({
   },
   hostingFor: {
     id: 'mlxStateTile.hosting.for',
-    defaultMessage: "for {requester}'s distributed engine over LeanZero Link",
+    defaultMessage: "for {requester}'s split over LeanZero Link",
   },
   hostingPid: { id: 'mlxStateTile.hosting.pid', defaultMessage: 'rank pid {pid}' },
   hostingLoading: {
@@ -355,7 +359,7 @@ export interface MlxStateTileProps {
   failedError: string | null;
   /** The state's own action (Mount / Retry), drawn on the tile. */
   action: ReactNode;
-  /** Which engine owns this Mac, in words ("Single · this Mac" / "Distributed · 2 nodes · JACCL"). */
+  /** Which engine owns this Mac, in words ("Single · this Mac" / "Split across 2 Macs · JACCL"). */
   modeLabel: string;
   /**
    * The distributed engine's status. While it owns this Mac the tile IS that engine: its state,
@@ -505,26 +509,27 @@ function RequestRow({ request }: { request: MlxLiveRequest }) {
       </li>
     );
   }
-  const max = request.maxTokens;
-  const fraction = max != null && max > 0 ? request.completionTokens / max : null;
-  const written = intl.formatNumber(request.completionTokens);
+  // What it has written, how long it has run and how fast — never a share of max_tokens: that is
+  // a ceiling, not a target, and "19,951 of 222,148 tokens · 9%" read as ~6 h left (Q-150).
+  const written = intl.formatMessage(i18n.rowWritten, {
+    written: intl.formatNumber(request.completionTokens),
+  });
+  const after = [
+    request.elapsedS != null ? formatElapsed(request.elapsedS) : null,
+    request.tokensPerSecond != null && request.tokensPerSecond > 0
+      ? intl.formatMessage(i18n.rowRate, { rate: formatRate(request.tokensPerSecond, intl.locale) })
+      : null,
+  ].filter(Boolean);
   return (
     <li data-testid="mlx-live-request" data-phase={request.phase} className="flex flex-col gap-1.5">
       <div className={cx('flex items-baseline justify-between gap-3', LINE)}>
         <span className="min-w-0 truncate">
           <span className={WEIGHT.semibold}>{intl.formatMessage(i18n.rowWriting)}</span>
           {' · '}
-          {max != null
-            ? intl.formatMessage(i18n.rowWrittenOf, { written, max: intl.formatNumber(max) })
-            : intl.formatMessage(i18n.rowWritten, { written })}
+          {written}
         </span>
-        {fraction != null && (
-          <span className={cx('shrink-0', WEIGHT.semibold)}>
-            {Math.round(Math.min(1, fraction) * 100)}%
-          </span>
-        )}
+        {after.length > 0 && <span className="shrink-0">{after.join(' · ')}</span>}
       </div>
-      {fraction != null && <TileBar fraction={fraction} label={intl.formatMessage(i18n.rowBar)} />}
     </li>
   );
 }
@@ -1178,7 +1183,18 @@ function DistributedInstrument({
                 <span className={cx('min-w-0 truncate', WEIGHT.semibold)}>
                   {span ? `${node.name} · ${span}` : node.name}
                 </span>
-                <span className="shrink-0">
+                <span
+                  className="shrink-0"
+                  data-testid="mlx-dist-tile-peak"
+                  title={
+                    budget != null
+                      ? intl.formatMessage(i18n.distPeakTitle, {
+                          node: node.name,
+                          budget: gb1(budget),
+                        })
+                      : undefined
+                  }
+                >
                   {peak == null
                     ? intl.formatMessage(i18n.distNoPeak)
                     : budget != null

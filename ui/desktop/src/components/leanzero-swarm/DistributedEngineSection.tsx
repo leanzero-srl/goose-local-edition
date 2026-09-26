@@ -36,7 +36,6 @@ import {
   type KeyValueItem,
   type Tone,
 } from '../lz';
-import { ConfirmationModal } from '../ui/ConfirmationModal';
 import {
   Dialog,
   DialogContent,
@@ -102,6 +101,7 @@ import { nodePhase, runPhase } from './mlxPhase';
 import { DistributedSetup, linkNode } from './DistributedSetup';
 import { formatElapsed } from './mlxLiveStats';
 import { mlxErrorMessage } from './mlxErrorMessage';
+import { useCutGuard } from './cutGuard';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
 import {
   LOCAL_NETWORK_CHECK,
@@ -119,7 +119,7 @@ import {
  */
 
 const i18n = defineMessages({
-  title: { id: 'mlxDistributed.title', defaultMessage: 'Distributed engine' },
+  title: { id: 'mlxDistributed.title', defaultMessage: 'Split across your Macs' },
   intro: {
     id: 'mlxDistributed.intro',
     defaultMessage:
@@ -127,14 +127,14 @@ const i18n = defineMessages({
   },
   unavailableTitle: {
     id: 'mlxDistributed.unavailableTitle',
-    defaultMessage: 'Distributed inference is unavailable',
+    defaultMessage: 'Splitting a model across Macs is unavailable',
   },
   unavailableBody: {
     id: 'mlxDistributed.unavailableBody',
     defaultMessage:
-      'This goose backend does not offer the distributed engine: the mlxDistributed capability is missing, so it predates the build that added it. Update goose to split one model across several Macs.',
+      'This goose backend does not offer the split: the mlxDistributed capability is missing, so it predates the build that added it. Update goose to split one model across several Macs.',
   },
-  reading: { id: 'mlxDistributed.reading', defaultMessage: 'Reading the distributed engine…' },
+  reading: { id: 'mlxDistributed.reading', defaultMessage: 'Reading the split…' },
   unreadable: { id: 'mlxDistributed.unreadable', defaultMessage: 'Status unreadable' },
   retry: { id: 'mlxDistributed.retry', defaultMessage: 'Retry' },
   model: { id: 'mlxDistributed.fact.model', defaultMessage: 'Model' },
@@ -158,7 +158,7 @@ const i18n = defineMessages({
   locked: {
     id: 'mlxDistributed.locked',
     defaultMessage:
-      'The configuration is locked while the distributed engine owns this Mac. Stop it to change nodes or the model.',
+      'The configuration is locked while the split owns this Mac. Stop it to change its Macs or the model.',
   },
   admissionOpen: { id: 'mlxDistributed.admissionOpen', defaultMessage: 'Admitting requests' },
   admissionClosed: { id: 'mlxDistributed.admissionClosed', defaultMessage: 'Admission closed' },
@@ -208,10 +208,10 @@ const i18n = defineMessages({
   },
   shard: { id: 'mlxDistributed.shard', defaultMessage: 'Shard {index} of {count}' },
   noLayers: { id: 'mlxDistributed.noLayers', defaultMessage: 'Layers not reported' },
-  peakOf: { id: 'mlxDistributed.peakOf', defaultMessage: 'GiB peak of {budget} GiB budget' },
+  peakOf: { id: 'mlxDistributed.peakOf', defaultMessage: 'GB peak of {budget} GB split budget' },
   peakNoBudget: {
     id: 'mlxDistributed.peakNoBudget',
-    defaultMessage: 'GiB peak · no budget reported',
+    defaultMessage: 'GB peak · no budget reported',
   },
   noPeak: { id: 'mlxDistributed.noPeak', defaultMessage: 'No peak reported yet' },
   loadBytes: { id: 'mlxDistributed.load.bytes', defaultMessage: 'Loaded {done} of {total} GB' },
@@ -219,18 +219,18 @@ const i18n = defineMessages({
   makingRoom: { id: 'mlxDistributed.node.makingRoom', defaultMessage: 'Making room' },
   warming: { id: 'mlxDistributed.node.warming', defaultMessage: 'Warming up' },
   peakBar: { id: 'mlxDistributed.peakBar', defaultMessage: 'Peak memory against the budget' },
-  active: { id: 'mlxDistributed.active', defaultMessage: 'active {gb} GiB' },
-  planned: { id: 'mlxDistributed.planned', defaultMessage: 'planned {gb} GiB with overhead' },
+  active: { id: 'mlxDistributed.active', defaultMessage: 'active {gb} GB' },
+  planned: { id: 'mlxDistributed.planned', defaultMessage: 'planned {gb} GB with overhead' },
   available: {
     id: 'mlxDistributed.available',
-    defaultMessage: '{available} of {total} GiB available',
+    defaultMessage: '{available} of {total} GB available',
   },
   limits: {
     id: 'mlxDistributed.limits',
-    defaultMessage: 'Caps: memory {memory} · wired {wired} · cache {cache} GiB',
+    defaultMessage: 'Caps: memory {memory} · wired {wired} · cache {cache} GB',
   },
   limitsNone: { id: 'mlxDistributed.limitsNone', defaultMessage: 'Caps not reported yet' },
-  kv: { id: 'mlxDistributed.kv', defaultMessage: 'KV {reserved} of {budget} GiB' },
+  kv: { id: 'mlxDistributed.kv', defaultMessage: 'KV {reserved} of {budget} GB' },
   kvBar: { id: 'mlxDistributed.kvBar', defaultMessage: 'KV reserved against the budget' },
   pressureNormal: { id: 'mlxDistributed.pressure.normal', defaultMessage: 'Pressure normal' },
   pressureWarn: { id: 'mlxDistributed.pressure.warn', defaultMessage: 'Pressure warn' },
@@ -268,12 +268,12 @@ const i18n = defineMessages({
   noFit: { id: 'mlxDistributed.noFit', defaultMessage: 'does not fit' },
   planLine: {
     id: 'mlxDistributed.planLine',
-    defaultMessage: 'GiB planned with overhead, of {budget} GiB budget',
+    defaultMessage: 'GB planned with overhead, of {budget} GB split budget',
   },
   planBreakdown: {
     id: 'mlxDistributed.planBreakdown',
     defaultMessage:
-      'weights {weights} · state {state} · workspace {workspace} · prompt cache {cache} GiB',
+      'weights {weights} · state {state} · workspace {workspace} · prompt cache {cache} GB',
   },
   planBar: { id: 'mlxDistributed.planBar', defaultMessage: 'Planned memory against the budget' },
   noPlan: { id: 'mlxDistributed.noPlan', defaultMessage: 'No plan for this rank' },
@@ -281,7 +281,7 @@ const i18n = defineMessages({
   configTitle: { id: 'mlxDistributed.configTitle', defaultMessage: 'Configuration' },
   configNone: {
     id: 'mlxDistributed.configNone',
-    defaultMessage: 'No distributed configuration is saved yet.',
+    defaultMessage: 'No split is set up yet.',
   },
   setUp: { id: 'mlxDistributed.setUp', defaultMessage: 'Set up' },
   notConfigured: { id: 'mlxDistributed.notConfigured', defaultMessage: 'Not configured' },
@@ -427,7 +427,7 @@ const i18n = defineMessages({
   unmountMessage: {
     id: 'mlxDistributed.unmountMessage',
     defaultMessage:
-      'The single MLX engine is mounted on this Mac ({detail}). One engine owns a Mac at a time: unmounting stops that model so the distributed engine can start.',
+      'The single MLX engine is mounted on this Mac ({detail}). One engine owns a Mac at a time: unmounting stops that model so the split can start.',
   },
   unmountConfirm: {
     id: 'mlxDistributed.unmountConfirm',
@@ -437,13 +437,14 @@ const i18n = defineMessages({
     id: 'mlxDistributed.unmountCancel',
     defaultMessage: 'Keep the single engine',
   },
-  stopTitle: { id: 'mlxDistributed.stopTitle', defaultMessage: 'Stop the distributed engine?' },
+  stopTitle: { id: 'mlxDistributed.stopTitle', defaultMessage: 'Stop the split?' },
   stopMessage: {
     id: 'mlxDistributed.stopMessage',
     defaultMessage:
       'Every rank on {nodes} is stopped and verified gone, pid by pid. Requests in flight are cut off.',
   },
   stopCancel: { id: 'mlxDistributed.stopCancel', defaultMessage: 'Keep running' },
+  stopAction: { id: 'mlxDistributed.stopAction', defaultMessage: 'Stop the split' },
   stopVerified: { id: 'mlxDistributed.stopVerified', defaultMessage: 'Stopped, verified' },
   stopUnverified: { id: 'mlxDistributed.stopUnverified', defaultMessage: 'Stop not verified' },
   eventsTitle: { id: 'mlxDistributed.eventsTitle', defaultMessage: 'Supervisor events' },
@@ -453,12 +454,12 @@ const i18n = defineMessages({
 const ROOM = defineMessages({
   budgetLine: {
     id: 'mlxDistributed.room.budgetLine',
-    defaultMessage: 'Budget {budget} GiB (GPU limit {ceiling} · available {available})',
+    defaultMessage: 'Split budget {budget} GB (GPU limit {ceiling} · available {available})',
   },
   budgetLineCompacted: {
     id: 'mlxDistributed.room.budgetLineCompacted',
     defaultMessage:
-      'Budget {budget} GiB (GPU limit {ceiling} · available after compaction {available})',
+      'Split budget {budget} GB (GPU limit {ceiling} · available after compaction {available})',
   },
   freeMemory: { id: 'mlxDistributed.room.freeMemory', defaultMessage: 'Free memory automatically' },
   makeRoom: { id: 'mlxDistributed.room.makeRoom', defaultMessage: 'Make room' },
@@ -467,20 +468,20 @@ const ROOM = defineMessages({
     defaultMessage:
       'Asks macOS to reclaim memory: idle apps are compressed and caches dropped. Nothing is quit.',
   },
-  freed: { id: 'mlxDistributed.room.freed', defaultMessage: 'Freed {gib} GiB' },
+  freed: { id: 'mlxDistributed.room.freed', defaultMessage: 'Freed {gib} GB' },
   freedNothing: {
     id: 'mlxDistributed.room.freedNothing',
-    defaultMessage: 'Nothing freed ({gib} GiB less)',
+    defaultMessage: 'Nothing freed ({gib} GB less)',
   },
   refused: { id: 'mlxDistributed.room.refused', defaultMessage: 'Make room did not run' },
   failed: { id: 'mlxDistributed.room.failed', defaultMessage: 'Make room failed' },
   shortBy: {
     id: 'mlxDistributed.room.shortBy',
-    defaultMessage: 'Short by {gib} GiB — Make room, or close apps: {apps}',
+    defaultMessage: 'Short by {gib} GB — Make room, or close apps: {apps}',
   },
   shortByNoApps: {
     id: 'mlxDistributed.room.shortByNoApps',
-    defaultMessage: 'Short by {gib} GiB — Make room, or close apps',
+    defaultMessage: 'Short by {gib} GB — Make room, or close apps',
   },
   memoryCompacted: { id: 'mlxDistributed.event.memoryCompacted', defaultMessage: 'Memory freed' },
   compactionSkipped: {
@@ -808,7 +809,7 @@ function RoomBlock({ node, room }: { node: MlxDistributedNodePreflight; room: Ro
   const free = room.freeMemory(node.name);
   const compaction = room.compaction(node.name);
   const making = room.making === node.name;
-  const apps = (node.topApps ?? []).map((a) => `${a.name} (${gb1(gib(a.rssBytes))} GiB)`);
+  const apps = (node.topApps ?? []).map((a) => `${a.name} (${gb1(gib(a.rssBytes))} GB)`);
   return (
     <div data-testid="mlx-dist-room" className="flex flex-col gap-2">
       {node.shortBytes != null && (
@@ -1914,8 +1915,8 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const [refusal, setRefusal] = useState<MlxDistributedStartResponse['refusal']>(null);
   const [freshPreflight, setFreshPreflight] = useState<MlxDistributedPreflight | null>(null);
   const [repairLink, setRepairLink] = useState(false);
-  const [confirmUnmount, setConfirmUnmount] = useState<string | null>(null);
-  const [confirmStop, setConfirmStop] = useState(false);
+  // Both stops here ask first, and name the answer they cut while one is being written (Q-148).
+  const { guard, dialog: cutDialog } = useCutGuard();
   const [stopReport, setStopReport] = useState<MlxDistributedStopResponse['stop'] | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [makingRoom, setMakingRoom] = useState<string | null>(null);
@@ -1992,7 +1993,12 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
     }
     const why = response.refusal ?? null;
     if (why?.code === 'singleEngineMounted' && offerUnmount) {
-      setConfirmUnmount(singleStatus?.servedModelId ?? singleStatus?.modelId ?? why.message);
+      const detail = singleStatus?.servedModelId ?? singleStatus?.modelId ?? why.message;
+      void guard(['single'], intl.formatMessage(i18n.unmountConfirm), onUnmountAndContinue, {
+        title: intl.formatMessage(i18n.unmountTitle),
+        message: intl.formatMessage(i18n.unmountMessage, { detail }),
+        cancel: intl.formatMessage(i18n.unmountCancel),
+      });
       return;
     }
     setRefusal(why);
@@ -2001,7 +2007,6 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const onStart = () => void run('start', i18n.startError, () => startOnce(true));
 
   const onUnmountAndContinue = () => {
-    setConfirmUnmount(null);
     void run('unmount', i18n.unmountError, async () => {
       await mlxEngineUnmount();
       props.onSingleChanged();
@@ -2010,7 +2015,6 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   };
 
   const onStop = () => {
-    setConfirmStop(false);
     void run('stop', i18n.stopError, async () => {
       const response = await mlxDistributedStop();
       setStopReport(response.stop);
@@ -2244,7 +2248,13 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
               <Button
                 variant="destructive"
                 icon={busy === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
-                onClick={() => setConfirmStop(true)}
+                onClick={() =>
+                  void guard(['distributed'], intl.formatMessage(i18n.stopAction), onStop, {
+                    title: intl.formatMessage(i18n.stopTitle),
+                    message: intl.formatMessage(i18n.stopMessage, { nodes: nodeNames || '—' }),
+                    cancel: intl.formatMessage(i18n.stopCancel),
+                  })
+                }
                 disabled={busy != null || otherWindow != null}
               >
                 {intl.formatMessage(i18n.stop)}
@@ -2421,26 +2431,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
 
       {status && <EventsPanel events={status.events} />}
 
-      <ConfirmationModal
-        isOpen={confirmUnmount != null}
-        title={intl.formatMessage(i18n.unmountTitle)}
-        message={intl.formatMessage(i18n.unmountMessage, { detail: confirmUnmount ?? '' })}
-        confirmLabel={intl.formatMessage(i18n.unmountConfirm)}
-        cancelLabel={intl.formatMessage(i18n.unmountCancel)}
-        confirmVariant="destructive"
-        onConfirm={onUnmountAndContinue}
-        onCancel={() => setConfirmUnmount(null)}
-      />
-      <ConfirmationModal
-        isOpen={confirmStop}
-        title={intl.formatMessage(i18n.stopTitle)}
-        message={intl.formatMessage(i18n.stopMessage, { nodes: nodeNames || '—' })}
-        confirmLabel={intl.formatMessage(i18n.stop)}
-        cancelLabel={intl.formatMessage(i18n.stopCancel)}
-        confirmVariant="destructive"
-        onConfirm={onStop}
-        onCancel={() => setConfirmStop(false)}
-      />
+      {cutDialog}
     </Section>
   );
 }

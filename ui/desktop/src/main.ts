@@ -146,6 +146,7 @@ import { PHASE_HEX, type EnginePhase } from './components/lz/tokens';
 import { phaseDotBitmap } from './utils/phaseDot';
 import { isMlxRemoteReport, remoteLiveBase, type MlxRemoteReport } from './utils/mlxRemoteReport';
 import { MLX_ENGINE_SNAPSHOT_CHANNEL } from './utils/mlxEngineMonitor';
+import { TRAY_ACTION_ENGINES, workCutBy } from './utils/mlxInFlight';
 import { isMlxRestoreReport, type MlxRestoreReport } from './utils/mlxRestoreReport';
 import {
   isLinkTrayReport,
@@ -2170,6 +2171,13 @@ const runMlxTrayAction = (action: MlxTrayAction) => {
     // At the Engine tab by name: a view already open on another tab stays there otherwise.
     win.webContents.send('set-view', 'leanzero-swarm', 'mlx');
     return;
+  }
+  // A stop that would cut work in flight is asked in the window first (Q-148), so the window comes
+  // forward for its question; a stop with nothing to cut acts where it is.
+  const engines = TRAY_ACTION_ENGINES[action];
+  if (engines && workCutBy(mlxMonitor.current(), engines)) {
+    if (!win.isVisible()) win.show();
+    win.focus();
   }
   // Mount/unmount/stop are ACP calls, and the ACP client lives in the renderer (useMlxTrayActions).
   win.webContents.send('mlx-tray-action', action);

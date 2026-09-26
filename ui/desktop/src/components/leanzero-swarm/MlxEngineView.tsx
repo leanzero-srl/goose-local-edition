@@ -122,6 +122,9 @@ import {
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import { PeerHeldLine } from './PeerHeldLine';
 import { dropRoute } from './routeSwitch';
+import { useCutGuard } from './cutGuard';
+import { macLine, macStateWord, type MacSummary } from './macSummary';
+import { modelRoleOn, useMacSummary } from './useMacSummary';
 import { routeServesChat } from '../chatServedBy/chatServedBy';
 import {
   PlacementBadge,
@@ -135,11 +138,11 @@ import {
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
 
 const i18n = defineMessages({
-  distributedOwns: { id: 'mlxEngineView.distributedOwns', defaultMessage: 'Distributed' },
+  distributedOwns: { id: 'mlxEngineView.distributedOwns', defaultMessage: 'Split' },
   distributedOwnsText: {
     id: 'mlxEngineView.distributedOwnsText',
     defaultMessage:
-      'The distributed engine owns this Mac: the single engine cannot mount until it is stopped in the Distributed engine section below.',
+      'The split owns this Mac: no model runs here alone until the split is stopped (Stop, under Run it below).',
   },
   servingDistributed: {
     id: 'mlxEngineView.servingDistributed',
@@ -177,6 +180,12 @@ const i18n = defineMessages({
     defaultMessage: 'Memory unmeasured: {error}',
   },
   stopRemote: { id: 'mlxEngineView.stopRemote', defaultMessage: 'Stop' },
+  stopRemoteAction: {
+    id: 'mlxEngineView.stopRemoteAction',
+    defaultMessage: 'Stop serving from {peer}',
+  },
+  unmountAction: { id: 'mlxEngineView.unmountAction', defaultMessage: 'Unmount' },
+  remountAction: { id: 'mlxEngineView.remountAction', defaultMessage: 'Remount' },
   stopRemoteFailed: {
     id: 'mlxEngineView.stopRemoteFailed',
     defaultMessage: 'Could not stop serving from the other Mac.',
@@ -440,7 +449,7 @@ function RestartRequiredBanner({
   );
 }
 
-/** A solid used-fill on a surface-2 track: the accent, or warn when the headroom is tight. */
+/** A solid fill on a surface-2 track: the accent, or warn when the headroom is tight. */
 function UsageBar({ pct, tight, label }: { pct: number; tight: boolean; label: string }) {
   return (
     <div
@@ -483,17 +492,18 @@ function MemoryBar({ availableGb, totalGb }: { availableGb: number; totalGb: num
 }
 
 /**
- * Disk space on the models dir's volume: solid used-fill on a track, "{free} free of {total}"
- * beside it. Numbers come from the modelsList response (statvfs), never fabricated.
+ * Disk space on the models dir's volume: the FREE space as a solid fill on a track, "{free} free
+ * of {total}" beside it — the fill is the number printed next to it, as the folders' note says
+ * (Q-157: "139 GB free of 926 GB" was drawn 85% full, the used space). Numbers come from the
+ * modelsList response (statvfs), never fabricated.
  */
 function DiskBar({ availableBytes, totalBytes }: { availableBytes: number; totalBytes: number }) {
-  const usedBytes = Math.max(0, totalBytes - availableBytes);
-  const pct = totalBytes > 0 ? Math.min(100, (usedBytes / totalBytes) * 100) : 0;
+  const pct = totalBytes > 0 ? Math.min(100, (Math.max(0, availableBytes) / totalBytes) * 100) : 0;
   const tight = totalBytes > 0 && availableBytes / totalBytes < 0.1;
   return (
     <div className="flex min-w-0 items-center gap-3" data-testid="mlx-disk-bar">
       <HardDrive className={cx('size-4 shrink-0', tight ? TONE_TEXT.warn : 'text-lz-ink-3')} />
-      <UsageBar pct={pct} tight={tight} label="Disk space used on the models volume" />
+      <UsageBar pct={pct} tight={tight} label="Free space on the models volume" />
       <span
         className={cx(
           'shrink-0 text-lz-meta',
@@ -1197,6 +1207,8 @@ interface SamplingSectionProps {
   onSaveSettings: () => void;
   saving: boolean;
   saveError: string | null;
+  /** What the Mac these profiles belong to serves — the one derivation (Q-149). */
+  summary: MacSummary;
 }
 
 function SamplingSection(props: SamplingSectionProps) {
@@ -1215,12 +1227,17 @@ function SamplingSection(props: SamplingSectionProps) {
     onSaveSettings,
     saving,
     saveError,
+    summary,
   } = props;
+  const intl = useIntl();
 
   const dirty = drafts != null && savedDrafts != null && !draftsEqual(drafts, savedDrafts);
   const profileIds = Object.keys(settings?.modelProfiles ?? {});
-  const selectedIsMounted =
-    status?.modelId != null && selectedModelId != null && status.modelId === selectedModelId;
+  const selectedRole = selectedModelId != null ? modelRoleOn(summary, selectedModelId) : null;
+  // A split (or a part of one) serves the model: said as the Mac's own line, never "no model
+  // mounted" beside a green Writing tab (Q-149).
+  const splitLine =
+    summary.state === 'split' || summary.state === 'hosting' ? macLine(intl, summary) : null;
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -1237,8 +1254,13 @@ function SamplingSection(props: SamplingSectionProps) {
           Sampling is PER MODEL: each model mounts with the flags from its own profile, and
           per-request values sent by goose override them.
         </p>
-        <p className={TYPE.body}>
-          {status?.modelId ? (
+        <p className={TYPE.body} data-testid="mlx-sampling-serves" data-state={summary.state}>
+          {splitLine && summary.modelId ? (
+            <>
+              <span className="text-lz-ink-3">Serving: </span>
+              <span className={cx('font-mono text-lz-mono', WEIGHT.semibold)}>{splitLine}</span>
+            </>
+          ) : status?.modelId ? (
             <>
               <span className="text-lz-ink-3">Currently mounted: </span>
               <span className={cx('font-mono text-lz-mono', WEIGHT.semibold)}>
@@ -1255,7 +1277,11 @@ function SamplingSection(props: SamplingSectionProps) {
         title="Model profile"
         headerRight={
           <>
-            {selectedIsMounted && <Chip tone="ok">mounted</Chip>}
+            {selectedRole === 'loaded' || selectedRole === 'loading' ? (
+              <Chip tone="ok">mounted</Chip>
+            ) : selectedRole ? (
+              <Chip tone="ok">{macStateWord(intl, summary.state)}</Chip>
+            ) : null}
             {dirty && <Chip tone="warn">unsaved</Chip>}
             <Button
               size="sm"
@@ -2476,7 +2502,7 @@ function MlxEngineViewBody() {
       setLive({
         ok: false,
         detail: distUp
-          ? 'the distributed engine reported no base URL'
+          ? 'the split reported no base URL'
           : remoteUp
             ? 'this goose does not hand over the relay to the other Mac’s engine (update goose)'
             : 'the running engine reported no base URL',
@@ -2614,6 +2640,7 @@ function MlxEngineViewBody() {
     [samplingIsSelf, models, macsCtx, samplingMac]
   );
   const samplingStatus = samplingIsSelf ? status : macsCtx.factsOf(samplingMac).status;
+  const samplingSummary = useMacSummary(samplingMacObj);
 
   useEffect(() => {
     if (samplingIsSelf || peerSettings[samplingMac]) return;
@@ -2666,8 +2693,10 @@ function MlxEngineViewBody() {
     })();
   }, [mountModelId, refreshStatus]);
 
+  // Every stop and remount here asks first while the engine it stops holds work (Q-148).
+  const { guard, dialog: cutDialog } = useCutGuard();
   const [remoteStopError, setRemoteStopError] = useState<string | null>(null);
-  const onStopRemote = useCallback(() => {
+  const stopRemoteNow = useCallback(() => {
     void (async () => {
       setEngineBusy(true);
       setRemoteStopError(null);
@@ -2683,8 +2712,12 @@ function MlxEngineViewBody() {
       }
     })();
   }, [intl, refreshStatus]);
+  const onStopRemote = useCallback(() => {
+    const peer = remote ? routePeerName(remote) : '—';
+    void guard(['remote'], intl.formatMessage(i18n.stopRemoteAction, { peer }), stopRemoteNow);
+  }, [guard, intl, remote, stopRemoteNow]);
 
-  const onUnmount = useCallback(() => {
+  const unmountNow = useCallback(() => {
     void (async () => {
       setEngineBusy(true);
       setMountError(null);
@@ -2698,9 +2731,12 @@ function MlxEngineViewBody() {
       }
     })();
   }, [refreshStatus]);
+  const onUnmount = useCallback(() => {
+    void guard(['single'], intl.formatMessage(i18n.unmountAction), unmountNow);
+  }, [guard, intl, unmountNow]);
 
   /** Remount the Mac whose profiles changed: this Mac's engine, or the other Mac's over Link. */
-  const remountOn = useCallback(
+  const remountNowOn = useCallback(
     (macKey: string) => {
       const mac = macsCtx.macByKey(macKey) ?? macsCtx.self;
       const macStatus = mac.isSelf ? status : macsCtx.factsOf(mac.key).status;
@@ -2723,6 +2759,20 @@ function MlxEngineViewBody() {
       })();
     },
     [macsCtx, peerSettings, refreshStatus, settings, status]
+  );
+  // A remount of this Mac cuts its single engine's work; of another Mac, the route's when that
+  // Mac's engine is the one serving this Mac's chat.
+  const remountOn = useCallback(
+    (macKey: string) => {
+      const mac = macsCtx.macByKey(macKey) ?? macsCtx.self;
+      const servesChat = !mac.isSelf && remote != null && remote.peer === mac.nodeId;
+      void guard(
+        mac.isSelf ? ['single'] : servesChat ? ['remote'] : [],
+        intl.formatMessage(i18n.remountAction),
+        () => remountNowOn(macKey)
+      );
+    },
+    [guard, intl, macsCtx, remote, remountNowOn]
   );
   const onRemount = useCallback(() => remountOn(SELF_KEY), [remountOn]);
 
@@ -2836,6 +2886,7 @@ function MlxEngineViewBody() {
   // scroll area) belongs to LeanZeroSwarmView — this component is the LeanZero MLX tab's content.
   return (
     <div className="flex flex-col gap-4">
+      {cutDialog}
       {/* The engine's own section switch sits UNDER the Providers strip, so it is the subordinate
           underline register, on the row's hairline — never a second solid strip that reads as
           another top nav. */}
@@ -2934,6 +2985,7 @@ function MlxEngineViewBody() {
           onSaveSettings={onSaveProfile}
           saving={saving}
           saveError={saveError}
+          summary={samplingSummary}
         />
       )}
     </div>

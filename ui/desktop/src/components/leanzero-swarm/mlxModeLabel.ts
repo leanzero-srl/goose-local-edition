@@ -4,7 +4,8 @@ import type { MlxModeSummary } from './mlxDistributed';
 
 /**
  * The one sentence that says which engine this Mac runs — on the state tile, the Engine tab's
- * section row and the Distributed section — so the three never disagree.
+ * section row and the split's section — so the three never disagree. The split is called one
+ * thing everywhere a person reads it: "Split across N Macs", "the split" (Q-155).
  */
 const i18n = defineMessages({
   single: { id: 'mlxMode.single', defaultMessage: 'Single · this Mac' },
@@ -12,19 +13,19 @@ const i18n = defineMessages({
   remote: { id: 'mlxMode.remote', defaultMessage: 'Serving from {peer}' },
   distributed: {
     id: 'mlxMode.distributed',
-    defaultMessage: 'Distributed · {count, plural, one {# node} other {# nodes}} · {backend}',
+    defaultMessage: 'Split across {count, plural, one {# Mac} other {# Macs}} · {backend}',
   },
   distributedNoBackend: {
     id: 'mlxMode.distributedNoBackend',
-    defaultMessage: 'Distributed · {count, plural, one {# node} other {# nodes}}',
+    defaultMessage: 'Split across {count, plural, one {# Mac} other {# Macs}}',
   },
   hosting: {
     id: 'mlxMode.hosting',
-    defaultMessage: "Rank {rank} of {requester}'s distributed engine · {model} · {backend}",
+    defaultMessage: "Rank {rank} of {requester}'s split · {model} · {backend}",
   },
   hostingNoBackend: {
     id: 'mlxMode.hostingNoBackend',
-    defaultMessage: "Rank {rank} of {requester}'s distributed engine · {model}",
+    defaultMessage: "Rank {rank} of {requester}'s split · {model}",
   },
 });
 

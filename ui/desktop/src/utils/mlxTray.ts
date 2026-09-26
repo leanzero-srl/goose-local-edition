@@ -36,6 +36,7 @@ import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
 import { leaveCause, type LeaveCause } from './leaveCause';
 import { routeContactLost, routePeerGone, type PeerGone } from './routeContact';
 import { restoreTrayLine, type MlxRestoreReport } from './mlxRestoreReport';
+import { TRAY_ACTION_ENGINES, trayCutLine, workCutBy } from './mlxInFlight';
 
 /**
  * The menu-bar presence of the local LeanZero MLX engine, as a PURE function of main's snapshot:
@@ -290,12 +291,7 @@ function remoteModel(
   items.push(
     { type: 'separator' },
     { type: 'action', label: 'Open Providers', action: 'open-providers', enabled: canAct },
-    {
-      type: 'action',
-      label: clip(`Stop serving from ${remote.peerName}`),
-      action: 'stop-remote',
-      enabled: canAct,
-    }
+    ...stopItems(snapshot, clip(`Stop serving from ${remote.peerName}`), 'stop-remote', canAct)
   );
   return {
     title: remoteTrayTitle(remote, live, reconnecting ? (cause ?? 'lost') : null),
@@ -315,6 +311,24 @@ const LABEL_MAX = 80;
 
 function clip(text: string): string {
   return text.length > LABEL_MAX ? `${text.slice(0, LABEL_MAX - 1)}…` : text;
+}
+
+/**
+ * A stop that would cut work in flight says so on the line above it, and its label ends in "…":
+ * the click asks first, in the window (Q-148). Nothing in flight: the action alone, as it was.
+ */
+function stopItems(
+  snapshot: MlxEngineSnapshot,
+  label: string,
+  action: MlxTrayAction,
+  enabled: boolean
+): MlxTrayItem[] {
+  const work = workCutBy(snapshot, TRAY_ACTION_ENGINES[action] ?? []);
+  if (!work) return [{ type: 'action', label, action, enabled }];
+  return [
+    { type: 'info', label: clip(trayCutLine(work)) },
+    { type: 'action', label: `${label}…`, action, enabled },
+  ];
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -523,12 +537,12 @@ function shortModel(id: string): string {
   return id.split('/').pop() || id;
 }
 
-/** "Distributed · MacBook Pro + workhorse · JACCL" — the mode line the tile and the tab say too. */
+/** "Split across MacBook Pro + workhorse · JACCL" — the mode line the tile and the tab say too. */
 export function distributedModeLine(report: MlxDistributedReport): string {
   const nodes =
     report.nodeNames.length > 0 ? report.nodeNames.join(' + ') : `${report.nodes.length} nodes`;
   const backend = backendName(report.backend);
-  return clip(['Distributed', nodes, backend].filter(Boolean).join(' · '));
+  return clip([`Split across ${nodes}`, backend].filter(Boolean).join(' · '));
 }
 
 function ageText(ms: number): string {
@@ -548,10 +562,10 @@ export function distributedNodeLine(node: MlxDistributedReportNode, runState: st
       : null,
     node.peakGb != null
       ? node.budgetGb != null
-        ? `peak ${gb1(node.peakGb)} of ${gb1(node.budgetGb)} GiB budget`
-        : `peak ${gb1(node.peakGb)} GiB`
+        ? `peak ${gb1(node.peakGb)} of ${gb1(node.budgetGb)} GB split budget`
+        : `peak ${gb1(node.peakGb)} GB`
       : node.availableGb != null
-        ? `${gb1(node.availableGb)} GiB available`
+        ? `${gb1(node.availableGb)} GB available`
         : null,
     node.pressure && node.pressure !== 'normal' ? `pressure ${node.pressure}` : null,
   ].filter(Boolean);
@@ -582,13 +596,13 @@ export function distributedTrayTitle(
   live: MlxEngineSnapshot | null = null
 ): string {
   const { report } = d;
-  if (distributedStale(d)) return 'Dist · stale';
-  if (!report.admissionOpen) return 'Dist · held';
-  if (live) return `Dist · ${mlxTrayTitle(live)}`;
+  if (distributedStale(d)) return 'Split · stale';
+  if (!report.admissionOpen) return 'Split · held';
+  if (live) return `Split · ${mlxTrayTitle(live)}`;
   if (report.state === 'serving') {
-    return report.inflight != null ? `Dist · ${report.inflight} in flight` : 'Dist · serving';
+    return report.inflight != null ? `Split · ${report.inflight} in flight` : 'Split · serving';
   }
-  return `Dist · ${report.state}`;
+  return `Split · ${report.state}`;
 }
 
 function distributedItems(
@@ -601,7 +615,7 @@ function distributedItems(
   const items: MlxTrayItem[] = [
     {
       type: 'info',
-      label: `LeanZero MLX: distributed, ${report.state}`,
+      label: `LeanZero MLX: split across ${plural(report.nodes.length, 'Mac', 'Macs')}, ${report.state}`,
       ...(stale ? {} : { phase: runPhase(report.state, report.admissionOpen, activity) }),
     },
     { type: 'info', label: distributedModeLine(report) },
@@ -648,13 +662,11 @@ function distributedItems(
   return items;
 }
 
-/** "Rank 1 of MacBook Pro's distributed engine · JACCL" (the model has its own line below). */
+/** "Rank 1 of MacBook Pro's split · JACCL" (the model has its own line below). */
 export function hostingLine(hosting: MlxDistributedReportHosting): string {
   const backend = backendName(hosting.backend);
   return clip(
-    [`Rank ${hosting.rank} of ${hosting.requester}'s distributed engine`, backend]
-      .filter(Boolean)
-      .join(' · ')
+    [`Rank ${hosting.rank} of ${hosting.requester}'s split`, backend].filter(Boolean).join(' · ')
   );
 }
 
@@ -751,12 +763,7 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
           action: 'open-providers',
           enabled: options.canAct,
         },
-        {
-          type: 'action',
-          label: 'Stop the distributed engine',
-          action: 'stop-distributed',
-          enabled: options.canAct,
-        },
+        ...stopItems(snapshot, 'Stop the split', 'stop-distributed', options.canAct),
       ],
     };
   }
@@ -784,9 +791,7 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
   if (distributed && distributedFailed) {
     items.push({
       type: 'info',
-      label: clip(
-        `Distributed engine failed: ${distributed.report.lastError ?? 'no error was reported'}`
-      ),
+      label: clip(`The split failed: ${distributed.report.lastError ?? 'no error was reported'}`),
     });
   }
   items.push({ type: 'separator' });
@@ -797,12 +802,7 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
     enabled: options.canAct,
   });
   if (singleSnap.mode === 'running' || singleSnap.mode === 'mounting') {
-    items.push({
-      type: 'action',
-      label: 'Unmount the MLX engine',
-      action: 'unmount',
-      enabled: options.canAct,
-    });
+    items.push(...stopItems(singleSnap, 'Unmount the MLX engine', 'unmount', options.canAct));
   } else {
     items.push({
       type: 'action',
@@ -816,6 +816,6 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
   const single = mlxTrayTitle(singleSnap);
   if (single) return { title: single, phase: singlePhase, items };
   return distributedFailed
-    ? { title: 'Dist failed', phase: 'failed', items }
+    ? { title: 'Split failed', phase: 'failed', items }
     : { title: '', phase: null, items };
 }

@@ -732,7 +732,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "分散式引擎提供 {served}；該節點需要 {wanted}。"
+    "defaultMessage": "分割正在提供 {served}；節點需要 {wanted}。"
   },
   "composerReadiness.failed": {
     "defaultMessage": "上次掛載失敗:{error}"
@@ -1381,6 +1381,39 @@
   },
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "值"
+  },
+  "cutGuard.keep": {
+    "defaultMessage": "讓它繼續寫"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action}會中斷 {count} 個進行中的請求({names})— 最長的一個 {figures}。"
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action}會中斷 {count} 個進行中的請求 — 最長的一個 {figures}。"
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action}會中斷「{name}」中正在寫的回答 — {figures}。"
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action}會中斷一個 goose 無法辨識的請求 — {figures}。"
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "已進行 {elapsed},仍在讀取 {tokens} 個 token 的提示"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "仍在讀取提示"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "中斷正在寫的回答？"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "中斷 {count} 個進行中的請求？"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "已進行 {elapsed},已寫 {tokens} 個 token"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "已寫 {tokens} 個 token"
   },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "設定 {name} 設定"
@@ -2976,7 +3009,7 @@
     "defaultMessage": "停止"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "使用中 {gb} GiB"
+    "defaultMessage": "使用中 {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "新增節點"
@@ -3000,7 +3033,7 @@
     "defaultMessage": "套用"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{total} GiB 中可用 {available} GiB"
+    "defaultMessage": "{total} GB 中可用 {available} GB"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · 經 Thunderbolt 5 的 RDMA"
@@ -3027,7 +3060,7 @@
     "defaultMessage": "叢集檢查"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "尚未儲存分散式設定。"
+    "defaultMessage": "尚未設定分割。"
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "設定"
@@ -3228,7 +3261,7 @@
     "defaultMessage": "透過 Thunderbolt 將一個模型拆分到多台 Mac 上。這台 Mac 是 rank 0：它提供 API 並監督每個 rank。"
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "已預留 KV 佔預算比例"
@@ -3240,7 +3273,7 @@
     "defaultMessage": "{count, plural, other {第 {first}–{last} 層 · 共 # 層}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "上限：記憶體 {memory} · wired {wired} · 快取 {cache} GiB"
+    "defaultMessage": "上限：記憶體 {memory} · wired {wired} · 快取 {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "尚未回報上限"
@@ -3267,7 +3300,7 @@
     "defaultMessage": "已載入 {done} / {total} GB"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "分散式引擎佔用這台 Mac 時設定會鎖定。停止它才能變更節點或模型。"
+    "defaultMessage": "分割佔用這台 Mac 時設定會鎖定。停止它才能變更它的 Mac 或模型。"
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "未讀取到記憶體：{error}"
@@ -3342,10 +3375,10 @@
     "defaultMessage": "峰值記憶體與預算之比"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB 峰值 · 未回報預算"
+    "defaultMessage": "GB 峰值 · 未回報預算"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB 峰值，預算 {budget} GiB"
+    "defaultMessage": "GB 峰值，分割預算 {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3354,13 +3387,13 @@
     "defaultMessage": "計畫記憶體與預算之比"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "權重 {weights} · 狀態 {state} · 工作區 {workspace} · 提示快取 {cache} GiB"
+    "defaultMessage": "權重 {weights} · 狀態 {state} · 工作區 {workspace} · 提示快取 {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB 含開銷的計畫用量，預算 {budget} GiB"
+    "defaultMessage": "GB 含開銷的計畫用量，分割預算 {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "計畫 {gb} GiB（含開銷）"
+    "defaultMessage": "計畫 {gb} GB（含開銷）"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "尚未執行預檢。試執行會檢查每個節點（可達性、記憶體、模型、Python、Thunderbolt 連結、連接埠），並在不啟動任何東西的情況下規劃各節點的層。"
@@ -3402,7 +3435,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "正在讀取分散式引擎…"
+    "defaultMessage": "正在讀取分割…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "移除 {name}"
@@ -3426,10 +3459,10 @@
     "defaultMessage": "工作節點"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "預算 {budget} GiB（GPU 上限 {ceiling} · 可用 {available}）"
+    "defaultMessage": "分割預算 {budget} GB（GPU 上限 {ceiling} · 可用 {available}）"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "預算 {budget} GiB（GPU 上限 {ceiling} · 壓縮後可用 {available}）"
+    "defaultMessage": "分割預算 {budget} GB（GPU 上限 {ceiling} · 壓縮後可用 {available}）"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "騰出空間失敗"
@@ -3438,10 +3471,10 @@
     "defaultMessage": "自動釋放記憶體"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "已釋放 {gib} GiB"
+    "defaultMessage": "已釋放 {gib} GB"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "未釋放記憶體（減少 {gib} GiB）"
+    "defaultMessage": "未釋放記憶體（減少 {gib} GB）"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "請 macOS 回收記憶體：閒置的 App 會被壓縮，快取會被捨棄。不會結束任何 App。"
@@ -3453,10 +3486,10 @@
     "defaultMessage": "騰出空間未執行"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "還差 {gib} GiB — 騰出空間，或關閉 App：{apps}"
+    "defaultMessage": "還差 {gib} GB — 騰出空間，或關閉 App：{apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "還差 {gib} GiB — 騰出空間，或關閉 App"
+    "defaultMessage": "還差 {gib} GB — 騰出空間，或關閉 App"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "正在更新拆分的執行器"
@@ -3503,6 +3536,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "啟動遭拒"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "停止分割"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "繼續執行"
   },
@@ -3510,7 +3546,7 @@
     "defaultMessage": "{nodes} 上的每個 rank 都會停止，並逐一依 pid 確認已結束。處理中的請求會中斷。"
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "要停止分散式引擎嗎？"
+    "defaultMessage": "停止分割？"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "停止未經確認"
@@ -3525,13 +3561,13 @@
     "defaultMessage": "這台 Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "分散式引擎"
+    "defaultMessage": "分割到你的 Mac"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "此 goose 後端不提供分散式引擎：缺少 mlxDistributed 能力，表示它早於加入此功能的版本。請更新 goose，才能將一個模型拆分到多台 Mac 上。"
+    "defaultMessage": "此 goose 後端不提供分割：缺少 mlxDistributed 能力，表示它早於加入此功能的版本。請更新 goose，才能將一個模型拆分到多台 Mac 上。"
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "無法使用分散式推論"
+    "defaultMessage": "無法將模型分割到多台 Mac"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "保留單機引擎"
@@ -3540,7 +3576,7 @@
     "defaultMessage": "卸載並繼續"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "這台 Mac 上掛載著單機 MLX 引擎（{detail}）。一台 Mac 同一時間只能屬於一個引擎：卸載會停止該模型，讓分散式引擎可以啟動。"
+    "defaultMessage": "這台 Mac 上掛載著單機 MLX 引擎（{detail}）。一台 Mac 同一時間只能屬於一個引擎：卸載會停止該模型，讓分割可以啟動。"
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "要卸載單機引擎嗎？"
@@ -3693,7 +3729,7 @@
     "defaultMessage": "SHA256SUMS 不一致"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{total} GiB 中可用 {available} GiB"
+    "defaultMessage": "{total} GB 中可用 {available} GB"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "{nodes} 上缺少"
@@ -3732,7 +3768,7 @@
     "defaultMessage": "本機"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "設定分散式引擎"
+    "defaultMessage": "設定分割"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "無法連線"
@@ -3747,10 +3783,10 @@
     "defaultMessage": "聊天由跨多台 Mac 的拆分引擎提供——其數據在上方的卡片中。這些列是此 Mac 自己的單機引擎。"
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "分散式"
+    "defaultMessage": "分割"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "分散式引擎正佔用這台 Mac：在下方「分散式引擎」區段停止它之前，單機引擎無法掛載。"
+    "defaultMessage": "分割正在佔用這台 Mac：在分割停止之前，這裡不會單獨執行任何模型（在下方「執行」中停止）。"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "引擎詳細資料"
@@ -3779,6 +3815,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "選擇一個模型，然後在下方「執行」中啟動 — 在這台 Mac、你的另一台 Mac 上，或分割到多台 Mac。"
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "重新掛載"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "設定檔所在"
   },
@@ -3794,6 +3833,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "停止由 {peer} 提供服務"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "無法停止由另一台 Mac 提供的服務。"
   },
@@ -3802,6 +3844,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "此 Mac 的引擎 · 未執行"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "卸載"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}：每個 token {bytes} KiB，而不是 {bf16} KiB — 同樣的記憶體可容納 {ratio}× 的上下文。"
@@ -3852,22 +3897,22 @@
     "defaultMessage": "未找到"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "只有 {attention} 個全注意力層會隨上下文成長並被壓縮；{state} 個線性注意力層保持固定大小的狀態。下次掛載時生效。分散式執行保持 bf16 快取。"
+    "defaultMessage": "只有 {attention} 個全注意力層會隨上下文成長並被壓縮；{state} 個線性注意力層保持固定大小的狀態。下次掛載時生效。分割保持 bf16 快取。"
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV 快取壓縮無法使用：{reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {分散式 · # 個節點 · {backend}}}"
+    "defaultMessage": "{count, plural, other {分割到 # 台 Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {分散式 · # 個節點}}"
+    "defaultMessage": "{count, plural, other {分割到 # 台 Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "{requester} 分散式引擎的 rank {rank} · {model} · {backend}"
+    "defaultMessage": "{requester} 分割的第 {rank} 個分片 · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "{requester} 分散式引擎的 rank {rank} · {model}"
+    "defaultMessage": "{requester} 分割的第 {rank} 個分片 · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "由 {peer} 提供"
@@ -4077,13 +4122,16 @@
     "defaultMessage": "尚無峰值"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "峰值 {peak} / {budget} GiB"
+    "defaultMessage": "峰值 {peak} / 分割預算 {budget} GB"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "峰值記憶體與預算之比"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "峰值 {peak} GiB"
+    "defaultMessage": "峰值 {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "分割在 {node} 上用過的最大記憶體，對比它在那裡可用的 {budget} GB：啟動時的空閒記憶體減去預留，並在 GPU 上限之內。"
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "槽位 {used} / {slots}"
@@ -4131,7 +4179,7 @@
     "defaultMessage": "引擎 {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "透過 LeanZero Link 服務 {requester} 的分散式引擎"
+    "defaultMessage": "透過 LeanZero Link 用於 {requester} 的分割"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "正在為 {requester} 載入 rank {rank}"
@@ -4202,14 +4250,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "處理中的請求"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "已生成 token 佔上限的比例"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} 來自快取"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "排隊中"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "正在讀取提示詞"
@@ -4222,9 +4270,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} 個 token"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} / {max} 個 token"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "正在讀取 goose 測得的執行紀錄…"
@@ -4341,10 +4386,10 @@
     "defaultMessage": "思考控制無法使用：{reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "無法停止分散式引擎"
+    "defaultMessage": "無法停止分割"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "分散式引擎的停止未經確認：{steps}"
+    "defaultMessage": "未能確認分割已停止：{steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "無法掛載 MLX 引擎"
@@ -4354,6 +4399,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "無法停止由另一台 Mac 提供的服務"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "改為在這台 Mac 上執行"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "停止由另一台 Mac 提供服務"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "停止分割"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "不再等待它"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "卸載 MLX 引擎"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "無法卸載 MLX 引擎"
@@ -4965,7 +5025,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "分散式引擎提供 {served}；此節點需要 {wanted}。"
+    "defaultMessage": "分割正在提供 {served}；此節點需要 {wanted}。"
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} 未載入在此節點指向的伺服器上。"
@@ -5056,6 +5116,12 @@
   },
   "nodeModelCell.noModels": {
     "defaultMessage": "這台 Mac 上沒有相符的模型。"
+  },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "未提供：這台 Mac 的引擎正在執行 {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "此節點設為 {set}，但這台 Mac 的引擎提供的是 {served}。在 {set} 於此執行之前，送往此節點的工作沒有對應其模型的引擎。"
   },
   "nodeModelCell.pickAria": {
     "defaultMessage": "{node} 的模型"
@@ -5483,6 +5549,12 @@
   "placementCard.stop": {
     "defaultMessage": "停止"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "停止由 {name} 提供服務"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "停止分割"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "{nodes} 上的每個部分都會停止並確認已結束。進行中的請求會被中斷。"
   },
@@ -5509,6 +5581,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "在誤差範圍內同樣快（~{mine} 對 ~{best} tok/s），但需要更多 Mac"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "它的 {context} 上下文小於正在回答的對話現在佔用的 {live} 個 token。"
   },
   "placementCard.total": {
     "defaultMessage": "同時 {concurrency} 個時總計 ~{value} tok/s"

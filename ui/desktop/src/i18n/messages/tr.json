@@ -732,7 +732,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Dağıtık motor {served} sunuyor; düğüm {wanted} istiyor."
+    "defaultMessage": "Bölme {served} sunuyor; düğüm {wanted} istiyor."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Son takma başarısız oldu: {error}"
@@ -1381,6 +1381,39 @@
   },
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Değer"
+  },
+  "cutGuard.keep": {
+    "defaultMessage": "Yazmaya devam etsin"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action}, süren {count} isteği ({names}) keser — en uzunu {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action}, süren {count} isteği keser — en uzunu {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action}, “{name}” içinde yazılmakta olan yanıtı keser — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action}, goose'un adlandıramadığı bir isteği keser — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "{elapsed} oldu, {tokens} token'lık istemini hâlâ okuyor"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "istemini hâlâ okuyor"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Yazılmakta olan yanıt kesilsin mi?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Süren {count} istek kesilsin mi?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "{elapsed} oldu, {tokens} token yazıldı"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} token yazıldı"
   },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "{name} ayarlarını yapılandırın"
@@ -2976,7 +3009,7 @@
     "defaultMessage": "Durdur"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "etkin {gb} GiB"
+    "defaultMessage": "etkin {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Düğüm ekle"
@@ -3000,7 +3033,7 @@
     "defaultMessage": "Uygula"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{total} GiB'ın {available} GiB'ı kullanılabilir"
+    "defaultMessage": "{total} GB'ın {available} GB'ı kullanılabilir"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · Thunderbolt 5 üzerinden RDMA"
@@ -3027,7 +3060,7 @@
     "defaultMessage": "Küme denetimleri"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Henüz kayıtlı dağıtık yapılandırma yok."
+    "defaultMessage": "Henüz kurulmuş bir bölme yok."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Yapılandırma"
@@ -3228,7 +3261,7 @@
     "defaultMessage": "Thunderbolt üzerinden birkaç Mac'e bölünmüş tek bir model. Bu Mac rank 0'dır: API'yi sunar ve her rank'ı denetler."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "Bütçeye göre ayrılmış KV"
@@ -3240,7 +3273,7 @@
     "defaultMessage": "{count, plural, one {Katman {first}–{last} · # katman} other {Katman {first}–{last} · # katman}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Sınırlar: bellek {memory} · wired {wired} · önbellek {cache} GiB"
+    "defaultMessage": "Sınırlar: bellek {memory} · wired {wired} · önbellek {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Sınırlar henüz bildirilmedi"
@@ -3267,7 +3300,7 @@
     "defaultMessage": "{total} GB’nin {done} GB’si yüklendi"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "Dağıtık motor bu Mac'i kullanırken yapılandırma kilitlidir. Düğümleri veya modeli değiştirmek için onu durdurun."
+    "defaultMessage": "Bölme bu Mac'i kullanırken yapılandırma kilitlidir. Mac'lerini veya modeli değiştirmek için onu durdurun."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Bellek okunamadı: {error}"
@@ -3342,10 +3375,10 @@
     "defaultMessage": "Bütçeye göre tepe bellek"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB tepe · bütçe bildirilmedi"
+    "defaultMessage": "GB tepe · bütçe bildirilmedi"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB tepe, {budget} GiB bütçeden"
+    "defaultMessage": "GB tepe, {budget} GB bölme bütçesinden"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3354,13 +3387,13 @@
     "defaultMessage": "Bütçeye göre planlanan bellek"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "ağırlıklar {weights} · durum {state} · çalışma alanı {workspace} · istem önbelleği {cache} GiB"
+    "defaultMessage": "ağırlıklar {weights} · durum {state} · çalışma alanı {workspace} · istem önbelleği {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB ek yükle planlandı, {budget} GiB bütçeden"
+    "defaultMessage": "GB ek yükle planlandı, {budget} GB bölme bütçesinden"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "planlanan {gb} GiB (ek yük dahil)"
+    "defaultMessage": "planlanan {gb} GB (ek yük dahil)"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Henüz preflight çalıştırılmadı. Deneme çalıştırması her düğümü (erişilebilirlik, bellek, model, Python, Thunderbolt bağlantısı, bağlantı noktaları) denetler ve hiçbir şey başlatmadan katmanları düğümlere göre planlar."
@@ -3402,7 +3435,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Dağıtık motor okunuyor…"
+    "defaultMessage": "Bölme okunuyor…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "{name} kaldır"
@@ -3426,10 +3459,10 @@
     "defaultMessage": "işçi"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Bütçe {budget} GiB (GPU sınırı {ceiling} · kullanılabilir {available})"
+    "defaultMessage": "Bölme bütçesi {budget} GB (GPU sınırı {ceiling} · kullanılabilir {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Bütçe {budget} GiB (GPU sınırı {ceiling} · sıkıştırma sonrası kullanılabilir {available})"
+    "defaultMessage": "Bölme bütçesi {budget} GB (GPU sınırı {ceiling} · sıkıştırma sonrası kullanılabilir {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Yer açma başarısız oldu"
@@ -3438,10 +3471,10 @@
     "defaultMessage": "Belleği otomatik boşalt"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "{gib} GiB boşaltıldı"
+    "defaultMessage": "{gib} GB boşaltıldı"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Hiçbir şey boşaltılmadı ({gib} GiB daha az)"
+    "defaultMessage": "Hiçbir şey boşaltılmadı ({gib} GB daha az)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "macOS’tan belleği geri almasını ister: boştaki uygulamalar sıkıştırılır, önbellekler bırakılır. Hiçbir şey kapatılmaz."
@@ -3453,10 +3486,10 @@
     "defaultMessage": "Yer açma çalışmadı"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "{gib} GiB eksik — yer açın veya uygulamaları kapatın: {apps}"
+    "defaultMessage": "{gib} GB eksik — yer açın veya uygulamaları kapatın: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "{gib} GiB eksik — yer açın veya uygulamaları kapatın"
+    "defaultMessage": "{gib} GB eksik — yer açın veya uygulamaları kapatın"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Bölmenin çalıştırıcısı güncelleniyor"
@@ -3503,6 +3536,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Başlatma reddedildi"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Bölmeyi durdur"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Çalışmaya devam etsin"
   },
@@ -3510,7 +3546,7 @@
     "defaultMessage": "{nodes} üzerindeki her rank durdurulur ve pid pid sonlandığı doğrulanır. İşlenmekte olan istekler kesilir."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Dağıtık motor durdurulsun mu?"
+    "defaultMessage": "Bölme durdurulsun mu?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Durdurma doğrulanmadı"
@@ -3525,13 +3561,13 @@
     "defaultMessage": "bu Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Dağıtık motor"
+    "defaultMessage": "Mac'lerinize bölünmüş"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Bu goose arka ucu dağıtık motoru sunmuyor: mlxDistributed yeteneği eksik, yani onu ekleyen derlemeden daha eski. Bir modeli birkaç Mac'e bölmek için goose'u güncelleyin."
+    "defaultMessage": "Bu goose arka ucu bölmeyi sunmuyor: mlxDistributed yeteneği eksik, yani onu ekleyen derlemeden daha eski. Bir modeli birkaç Mac'e bölmek için goose'u güncelleyin."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "Dağıtık çıkarım kullanılamıyor"
+    "defaultMessage": "Bir modeli Mac'lere bölmek kullanılamıyor"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Tekli motoru koru"
@@ -3540,7 +3576,7 @@
     "defaultMessage": "Kaldır ve devam et"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Tekli MLX motoru bu Mac'e bağlı ({detail}). Bir Mac aynı anda tek bir motora aittir: kaldırmak o modeli durdurur, böylece dağıtık motor başlayabilir."
+    "defaultMessage": "Tekli MLX motoru bu Mac'e bağlı ({detail}). Bir Mac aynı anda tek bir motora aittir: kaldırmak o modeli durdurur, böylece bölme başlayabilir."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Tekli motor kaldırılsın mı?"
@@ -3693,7 +3729,7 @@
     "defaultMessage": "SHA256SUMS farklı"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{total} GiB'ın {available} GiB'ı kullanılabilir"
+    "defaultMessage": "{total} GB'ın {available} GB'ı kullanılabilir"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "{nodes} üzerinde yok"
@@ -3732,7 +3768,7 @@
     "defaultMessage": "bu Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Dağıtık motoru kur"
+    "defaultMessage": "Bölmeyi kur"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "erişilemiyor"
@@ -3747,10 +3783,10 @@
     "defaultMessage": "Sohbete Mac’lerinize bölünmüş motor yanıt veriyor; onun değerleri yukarıdaki kutuda. Bu satırlar bu Mac’in kendi tekil motoruna ait."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Dağıtık"
+    "defaultMessage": "Bölme"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Dağıtık motor bu Mac'i kullanıyor: tekli motor, aşağıdaki Dağıtık motor bölümünde durdurulana kadar bağlanamaz."
+    "defaultMessage": "Bölme bu Mac'i kullanıyor: bölme durdurulana kadar burada tek başına model çalışmaz (Durdur, aşağıdaki Çalıştır altında)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Motor ayrıntıları"
@@ -3779,6 +3815,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Bir model seçin, ardından aşağıdaki “Çalıştır” bölümünde başlatın — bu Mac’te, diğer bir Mac’inizde ya da aralarında bölünerek."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Yeniden bağla"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Profillerin yeri"
   },
@@ -3794,6 +3833,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Durdur"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "{peer} üzerinden sunumu durdur"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Diğer Mac üzerinden sunum durdurulamadı."
   },
@@ -3802,6 +3844,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Bu Mac’in motoru · çalışmıyor"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Bağlantıyı kaldır"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: token başına {bf16} KiB yerine {bytes} KiB — aynı bellek {ratio}× bağlam tutar."
@@ -3852,22 +3897,22 @@
     "defaultMessage": "KAÇIRILDI"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "Yalnızca {attention} tam dikkat katmanı bağlamla büyür ve sıkıştırılır; {state} doğrusal dikkat katmanı sabit boyutlu durum tutar. Bir sonraki bağlamada uygulanır. Dağıtık çalışmalar bf16 önbelleği korur."
+    "defaultMessage": "Yalnızca {attention} tam dikkat katmanı bağlamla büyür ve sıkıştırılır; {state} doğrusal dikkat katmanı sabit boyutlu durum tutar. Bir sonraki bağlamada uygulanır. Bölme bf16 önbelleği korur."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV önbelleği sıkıştırması kullanılamıyor: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, one {Dağıtık · # düğüm · {backend}} other {Dağıtık · # düğüm · {backend}}}"
+    "defaultMessage": "{count, plural, one {# Mac'e bölünmüş · {backend}} other {# Mac'e bölünmüş · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, one {Dağıtık · # düğüm} other {Dağıtık · # düğüm}}"
+    "defaultMessage": "{count, plural, one {# Mac'e bölünmüş} other {# Mac'e bölünmüş}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "{requester} dağıtık motorunun rank {rank} · {model} · {backend}"
+    "defaultMessage": "{requester} bölmesinin {rank}. sırası · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "{requester} dağıtık motorunun rank {rank} · {model}"
+    "defaultMessage": "{requester} bölmesinin {rank}. sırası · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer} üzerinden sunuluyor"
@@ -4077,13 +4122,16 @@
     "defaultMessage": "henüz tepe yok"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} / {budget} GiB tepe"
+    "defaultMessage": "tepe {peak} / {budget} GB bölme bütçesi"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Bütçeye göre tepe bellek"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} GiB tepe"
+    "defaultMessage": "tepe {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "Bölmenin {node} üzerinde kullandığı en yüksek bellek, orada kullanabileceği {budget} GB'a karşı: başladığında boş olan, yedek düşülmüş, GPU sınırı içinde."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "slotlar {used} / {slots}"
@@ -4131,7 +4179,7 @@
     "defaultMessage": "Motor {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "LeanZero Link üzerinden {requester} dağıtık motoru için"
+    "defaultMessage": "LeanZero Link üzerinden {requester} bölmesi için"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "{requester} için rank {rank} yükleniyor"
@@ -4202,14 +4250,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Süren istekler"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Sınıra göre yazılan token"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} önbellekten"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "Kuyrukta"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/sn"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "İstem okunuyor"
@@ -4222,9 +4270,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} token"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} / {max} token"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "goose'un ölçtüğü çalıştırmalar okunuyor…"
@@ -4341,10 +4386,10 @@
     "defaultMessage": "Düşünme denetimleri kullanılamıyor: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Dağıtık motor durdurulamadı"
+    "defaultMessage": "Bölme durdurulamadı"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "Dağıtık motorun durdurulması doğrulanmadı: {steps}"
+    "defaultMessage": "Bölmenin durması doğrulanmadı: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX motoru bağlanamadı"
@@ -4354,6 +4399,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Diğer Mac üzerinden sunum durdurulamadı"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Bunun yerine bu Mac'te çalıştır"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Diğer Mac üzerinden sunumu durdur"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Bölmeyi durdur"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Onu beklemeyi bırak"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "MLX motorunun bağlantısını kaldır"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "MLX motorunun bağlantısı kaldırılamadı"
@@ -4854,7 +4914,7 @@
     "defaultMessage": "Bellek"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "{total} GB içinde {free} GB boş"
+    "defaultMessage": "{total} GB içinde {free} GB kullanılabilir"
   },
   "myMacs.mesh": {
     "defaultMessage": "Ağ örgüsü"
@@ -4965,7 +5025,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Dağıtık motor {served} sunuyor; bu düğüm {wanted} istiyor."
+    "defaultMessage": "Bölme {served} sunuyor; bu düğüm {wanted} istiyor."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} bu düğümün işaret ettiği sunucuda yüklü değil."
@@ -5056,6 +5116,12 @@
   },
   "nodeModelCell.noModels": {
     "defaultMessage": "Bu Mac’te eşleşen model yok."
+  },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Sunulmuyor: bu Mac'in motoru {model} çalıştırıyor"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Bu düğüm {set} olarak ayarlı, ancak bu Mac'in motoru {served} sunuyor. {set} burada çalışana kadar bu düğüme yönlendirilen işin modeli için motor yok."
   },
   "nodeModelCell.pickAria": {
     "defaultMessage": "{node} için model"
@@ -5483,6 +5549,12 @@
   "placementCard.stop": {
     "defaultMessage": "Durdur"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "{name} üzerinden sunumu durdur"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Bölmeyi durdur"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "{nodes} üzerindeki her parça durdurulur ve bittiği doğrulanır. Süren istekler kesilir."
   },
@@ -5509,6 +5581,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Hata payı içinde aynı hızda (~{mine} ile ~{best} tok/sn), ama daha fazla Mac gerekiyor"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "{context} bağlamı, yanıtlanmakta olan konuşmanın şu anda tuttuğu {live} token'dan küçük."
   },
   "placementCard.total": {
     "defaultMessage": "Aynı anda {concurrency} ile toplam ~{value} tok/sn"

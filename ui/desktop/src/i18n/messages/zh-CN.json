@@ -732,7 +732,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "分布式引擎提供 {served}；该节点需要 {wanted}。"
+    "defaultMessage": "拆分正在提供 {served}；节点需要 {wanted}。"
   },
   "composerReadiness.failed": {
     "defaultMessage": "上次挂载失败:{error}"
@@ -1381,6 +1381,39 @@
   },
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "值"
+  },
+  "cutGuard.keep": {
+    "defaultMessage": "让它继续写"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action}会中断 {count} 个进行中的请求({names})— 最长的一个 {figures}。"
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action}会中断 {count} 个进行中的请求 — 最长的一个 {figures}。"
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action}会中断“{name}”中正在写的回答 — {figures}。"
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action}会中断一个 goose 无法识别的请求 — {figures}。"
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "已进行 {elapsed},仍在读取 {tokens} 个 token 的提示"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "仍在读取提示"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "中断正在写的回答？"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "中断 {count} 个进行中的请求？"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "已进行 {elapsed},已写 {tokens} 个 token"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "已写 {tokens} 个 token"
   },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "配置 {name} 设置"
@@ -2976,7 +3009,7 @@
     "defaultMessage": "停止"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "活跃 {gb} GiB"
+    "defaultMessage": "活跃 {gb} GB"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "添加节点"
@@ -3000,7 +3033,7 @@
     "defaultMessage": "应用"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "{total} GiB 中可用 {available} GiB"
+    "defaultMessage": "{total} GB 中可用 {available} GB"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · 经 Thunderbolt 5 的 RDMA"
@@ -3027,7 +3060,7 @@
     "defaultMessage": "集群检查"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "尚未保存分布式配置。"
+    "defaultMessage": "尚未设置拆分。"
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "配置"
@@ -3228,7 +3261,7 @@
     "defaultMessage": "通过 Thunderbolt 将一个模型拆分到多台 Mac 上。这台 Mac 是 rank 0：它提供 API 并监督每个 rank。"
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} / {budget} GiB"
+    "defaultMessage": "KV {reserved} / {budget} GB"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "已预留 KV 占预算比例"
@@ -3240,7 +3273,7 @@
     "defaultMessage": "{count, plural, other {第 {first}–{last} 层 · 共 # 层}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "上限：内存 {memory} · wired {wired} · 缓存 {cache} GiB"
+    "defaultMessage": "上限：内存 {memory} · wired {wired} · 缓存 {cache} GB"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "尚未报告上限"
@@ -3267,7 +3300,7 @@
     "defaultMessage": "已加载 {done} / {total} GB"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "分布式引擎占用这台 Mac 时配置处于锁定状态。停止它才能更改节点或模型。"
+    "defaultMessage": "拆分占用这台 Mac 时配置处于锁定状态。停止它才能更改它的 Mac 或模型。"
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "未读取到内存：{error}"
@@ -3342,10 +3375,10 @@
     "defaultMessage": "峰值内存与预算之比"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "GiB 峰值 · 未报告预算"
+    "defaultMessage": "GB 峰值 · 未报告预算"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "GiB 峰值，预算 {budget} GiB"
+    "defaultMessage": "GB 峰值，拆分预算 {budget} GB"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3354,13 +3387,13 @@
     "defaultMessage": "计划内存与预算之比"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "权重 {weights} · 状态 {state} · 工作区 {workspace} · 提示缓存 {cache} GiB"
+    "defaultMessage": "权重 {weights} · 状态 {state} · 工作区 {workspace} · 提示缓存 {cache} GB"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "GiB 含开销的计划用量，预算 {budget} GiB"
+    "defaultMessage": "GB 含开销的计划用量，拆分预算 {budget} GB"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "计划 {gb} GiB（含开销）"
+    "defaultMessage": "计划 {gb} GB（含开销）"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "尚未运行预检。试运行会检查每个节点（可达性、内存、模型、Python、Thunderbolt 链路、端口），并在不启动任何东西的情况下规划各节点的层。"
@@ -3402,7 +3435,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "正在读取分布式引擎…"
+    "defaultMessage": "正在读取拆分…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "移除 {name}"
@@ -3426,10 +3459,10 @@
     "defaultMessage": "工作节点"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "预算 {budget} GiB（GPU 上限 {ceiling} · 可用 {available}）"
+    "defaultMessage": "拆分预算 {budget} GB（GPU 上限 {ceiling} · 可用 {available}）"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "预算 {budget} GiB（GPU 上限 {ceiling} · 压缩后可用 {available}）"
+    "defaultMessage": "拆分预算 {budget} GB（GPU 上限 {ceiling} · 压缩后可用 {available}）"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "腾出空间失败"
@@ -3438,10 +3471,10 @@
     "defaultMessage": "自动释放内存"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "已释放 {gib} GiB"
+    "defaultMessage": "已释放 {gib} GB"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "未释放内存（减少 {gib} GiB）"
+    "defaultMessage": "未释放内存（减少 {gib} GB）"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "请求 macOS 回收内存：闲置应用会被压缩，缓存会被丢弃。不会退出任何应用。"
@@ -3453,10 +3486,10 @@
     "defaultMessage": "腾出空间未运行"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "还差 {gib} GiB — 腾出空间，或关闭应用：{apps}"
+    "defaultMessage": "还差 {gib} GB — 腾出空间，或关闭应用：{apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "还差 {gib} GiB — 腾出空间，或关闭应用"
+    "defaultMessage": "还差 {gib} GB — 腾出空间，或关闭应用"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "正在更新拆分的运行器"
@@ -3503,6 +3536,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "启动被拒绝"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "停止拆分"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "继续运行"
   },
@@ -3510,7 +3546,7 @@
     "defaultMessage": "{nodes} 上的每个 rank 都会被停止，并按 pid 逐个确认已退出。处理中的请求会被中断。"
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "停止分布式引擎？"
+    "defaultMessage": "停止拆分？"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "停止未经确认"
@@ -3525,13 +3561,13 @@
     "defaultMessage": "这台 Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "分布式引擎"
+    "defaultMessage": "拆分到你的 Mac"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "此 goose 后端不提供分布式引擎：缺少 mlxDistributed 能力，说明它早于加入该功能的版本。请更新 goose，以便把一个模型拆分到多台 Mac 上。"
+    "defaultMessage": "此 goose 后端不提供拆分：缺少 mlxDistributed 能力，说明它早于加入该功能的版本。请更新 goose，以便把一个模型拆分到多台 Mac 上。"
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "分布式推理不可用"
+    "defaultMessage": "无法将模型拆分到多台 Mac"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "保留单机引擎"
@@ -3540,7 +3576,7 @@
     "defaultMessage": "卸载并继续"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "这台 Mac 上挂载着单机 MLX 引擎（{detail}）。一台 Mac 同一时间只能归一个引擎所有：卸载会停止该模型，以便分布式引擎启动。"
+    "defaultMessage": "这台 Mac 上挂载着单机 MLX 引擎（{detail}）。一台 Mac 同一时间只能归一个引擎所有：卸载会停止该模型，以便拆分启动。"
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "卸载单机引擎？"
@@ -3693,7 +3729,7 @@
     "defaultMessage": "SHA256SUMS 不一致"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "{total} GiB 中可用 {available} GiB"
+    "defaultMessage": "{total} GB 中可用 {available} GB"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "{nodes} 上缺失"
@@ -3732,7 +3768,7 @@
     "defaultMessage": "本机"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "设置分布式引擎"
+    "defaultMessage": "设置拆分"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "无法连接"
@@ -3747,10 +3783,10 @@
     "defaultMessage": "聊天由跨多台 Mac 的拆分引擎提供——其数据在上方的卡片中。这些行是此 Mac 自己的单机引擎。"
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "分布式"
+    "defaultMessage": "拆分"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "分布式引擎正占用这台 Mac：在下方“分布式引擎”部分停止它之前，单机引擎无法挂载。"
+    "defaultMessage": "拆分正在占用这台 Mac：在拆分停止之前，这里不会单独运行任何模型（在下方“运行”中停止）。"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "引擎详情"
@@ -3779,6 +3815,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "选择一个模型，然后在下方“运行”中启动 — 在这台 Mac、你的另一台 Mac 上，或拆分到多台 Mac。"
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "重新挂载"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "配置所在"
   },
@@ -3794,6 +3833,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "停止由 {peer} 提供服务"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "无法停止由另一台 Mac 提供的服务。"
   },
@@ -3802,6 +3844,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "此 Mac 的引擎 · 未运行"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "卸载"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}：每个 token {bytes} KiB，而不是 {bf16} KiB — 同样的内存可容纳 {ratio}× 的上下文。"
@@ -3852,22 +3897,22 @@
     "defaultMessage": "未找到"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "只有 {attention} 个全注意力层会随上下文增长并被压缩；{state} 个线性注意力层保持固定大小的状态。下次挂载时生效。分布式运行保持 bf16 缓存。"
+    "defaultMessage": "只有 {attention} 个全注意力层会随上下文增长并被压缩；{state} 个线性注意力层保持固定大小的状态。下次挂载时生效。拆分保持 bf16 缓存。"
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV 缓存压缩不可用：{reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {分布式 · # 个节点 · {backend}}}"
+    "defaultMessage": "{count, plural, other {拆分到 # 台 Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {分布式 · # 个节点}}"
+    "defaultMessage": "{count, plural, other {拆分到 # 台 Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "{requester} 分布式引擎的 rank {rank} · {model} · {backend}"
+    "defaultMessage": "{requester} 拆分的第 {rank} 个分片 · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "{requester} 分布式引擎的 rank {rank} · {model}"
+    "defaultMessage": "{requester} 拆分的第 {rank} 个分片 · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "由 {peer} 提供"
@@ -4077,13 +4122,16 @@
     "defaultMessage": "尚无峰值"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "峰值 {peak} / {budget} GiB"
+    "defaultMessage": "峰值 {peak} / 拆分预算 {budget} GB"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "峰值内存与预算之比"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "峰值 {peak} GiB"
+    "defaultMessage": "峰值 {peak} GB"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "拆分在 {node} 上用过的最大内存，对比它在那里可用的 {budget} GB：启动时的空闲内存减去预留，并在 GPU 上限之内。"
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "槽位 {used} / {slots}"
@@ -4131,7 +4179,7 @@
     "defaultMessage": "引擎 {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "通过 LeanZero Link 服务 {requester} 的分布式引擎"
+    "defaultMessage": "通过 LeanZero Link 用于 {requester} 的拆分"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "正在为 {requester} 加载 rank {rank}"
@@ -4202,14 +4250,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "处理中的请求"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "已生成 token 占上限的比例"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} 来自缓存"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "排队中"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} tok/s"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "正在读取提示词"
@@ -4222,9 +4270,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} 个 token"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} / {max} 个 token"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "正在读取 goose 测得的运行记录…"
@@ -4341,10 +4386,10 @@
     "defaultMessage": "思考控制不可用：{reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "无法停止分布式引擎"
+    "defaultMessage": "无法停止拆分"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "分布式引擎的停止未经确认：{steps}"
+    "defaultMessage": "未能验证拆分已停止：{steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "无法挂载 MLX 引擎"
@@ -4354,6 +4399,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "无法停止由另一台 Mac 提供的服务"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "改为在这台 Mac 上运行"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "停止由另一台 Mac 提供服务"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "停止拆分"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "不再等待它"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "卸载 MLX 引擎"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "无法卸载 MLX 引擎"
@@ -4965,7 +5025,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "分布式引擎提供 {served}；此节点需要 {wanted}。"
+    "defaultMessage": "拆分正在提供 {served}；此节点需要 {wanted}。"
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} 未加载在此节点指向的服务器上。"
@@ -5056,6 +5116,12 @@
   },
   "nodeModelCell.noModels": {
     "defaultMessage": "这台 Mac 上没有匹配的模型。"
+  },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "未提供：这台 Mac 的引擎正在运行 {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "此节点设为 {set}，但这台 Mac 的引擎提供的是 {served}。在 {set} 于此运行之前，发往此节点的工作没有对应其模型的引擎。"
   },
   "nodeModelCell.pickAria": {
     "defaultMessage": "{node} 的模型"
@@ -5483,6 +5549,12 @@
   "placementCard.stop": {
     "defaultMessage": "停止"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "停止由 {name} 提供服务"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "停止拆分"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "{nodes} 上的每个部分都会停止并确认已结束。进行中的请求会被中断。"
   },
@@ -5509,6 +5581,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "在误差范围内同样快（~{mine} 对 ~{best} tok/s），但需要更多 Mac"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "它的 {context} 上下文小于正在回答的对话现在占用的 {live} 个 token。"
   },
   "placementCard.total": {
     "defaultMessage": "同时 {concurrency} 个时总计 ~{value} tok/s"

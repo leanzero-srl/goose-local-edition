@@ -92,7 +92,7 @@ const i18n = defineMessages({
   },
   distributedWrongModel: {
     id: 'noNodeNotice.distributedWrongModel',
-    defaultMessage: 'The distributed engine serves {served}; this node wants {wanted}.',
+    defaultMessage: 'The split serves {served}; this node wants {wanted}.',
   },
   mountFailed: { id: 'noNodeNotice.mountFailed', defaultMessage: 'Mount failed' },
   aliasMismatch: {

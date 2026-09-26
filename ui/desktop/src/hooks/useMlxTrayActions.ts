@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactElement } from 'react';
 import type { IpcRendererEvent } from 'electron';
 import { defineMessages, useIntl } from '../i18n';
 import {
@@ -23,6 +23,8 @@ import { useFeatures } from '../contexts/FeaturesContext';
 import { useMlxRemoteReporter } from './useMlxRemoteReporter';
 import { toastError } from '../toasts';
 import { errorMessage } from '../utils/conversionUtils';
+import { useCutGuard } from '../components/leanzero-swarm/cutGuard';
+import { TRAY_ACTION_ENGINES } from '../utils/mlxInFlight';
 
 const i18n = defineMessages({
   mountFailed: {
@@ -39,17 +41,40 @@ const i18n = defineMessages({
   },
   stopFailed: {
     id: 'mlxTray.distributedStopFailed',
-    defaultMessage: 'Could not stop the distributed engine',
+    defaultMessage: 'Could not stop the split',
   },
   stopUnverified: {
     id: 'mlxTray.distributedStopUnverified',
-    defaultMessage: 'The distributed engine stop was not verified: {steps}',
+    defaultMessage: 'The split’s stop was not verified: {steps}',
   },
   remoteStopFailed: {
     id: 'mlxTray.remoteStopFailed',
     defaultMessage: 'Could not stop serving from the other Mac',
   },
+  unmountAction: { id: 'mlxTray.unmountAction', defaultMessage: 'Unmount the MLX engine' },
+  stopSplitAction: { id: 'mlxTray.stopSplitAction', defaultMessage: 'Stop the split' },
+  stopRemoteAction: {
+    id: 'mlxTray.stopRemoteAction',
+    defaultMessage: 'Stop serving from the other Mac',
+  },
+  runHereAction: { id: 'mlxTray.runHereAction', defaultMessage: 'Run on this Mac instead' },
+  stopWaitingAction: { id: 'mlxTray.stopWaitingAction', defaultMessage: 'Stop waiting for it' },
 });
+
+/**
+ * The tray's doors ask first while the engine they stop holds work, like every other door (Q-148:
+ * the tray's stop cut a 39-min answer with no word). The engines are the one table main raises the
+ * window by (TRAY_ACTION_ENGINES); these are the doors' words.
+ */
+const TRAY_CUT_WORDS: Partial<Record<MlxTrayRendererAction, MessageDescriptorLike>> = {
+  unmount: i18n.unmountAction,
+  'stop-distributed': i18n.stopSplitAction,
+  'stop-remote': i18n.stopRemoteAction,
+  'run-here': i18n.runHereAction,
+  'stop-waiting': i18n.stopWaitingAction,
+};
+
+type MessageDescriptorLike = (typeof i18n)[keyof typeof i18n];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -197,8 +222,9 @@ export function useMlxDistributedReporter(enabled: boolean): void {
   }, [enabled]);
 }
 
-export function useMlxTrayActions(): void {
+export function useMlxTrayActions(): ReactElement {
   const intl = useIntl();
+  const { guard, dialog } = useCutGuard();
   const { mlxDistributed } = useFeatures();
   useMlxDistributedReporter(mlxDistributed);
   useMlxRemoteReporter();
@@ -206,7 +232,14 @@ export function useMlxTrayActions(): void {
     const onAction = (_event: IpcRendererEvent, ...args: unknown[]) => {
       const action = args[0];
       if (typeof action !== 'string' || !RENDERER_ACTIONS.includes(action)) return;
-      runMlxTrayAction(action as MlxTrayRendererAction).catch((error: unknown) => {
+      const act = () => perform(action as MlxTrayRendererAction);
+      const engines = TRAY_ACTION_ENGINES[action as MlxTrayRendererAction];
+      const words = TRAY_CUT_WORDS[action as MlxTrayRendererAction];
+      if (engines && words) void guard(engines, intl.formatMessage(words), act);
+      else act();
+    };
+    const perform = (action: MlxTrayRendererAction) => {
+      runMlxTrayAction(action).catch((error: unknown) => {
         if (error instanceof DistributedStopNotVerified) {
           toastError({
             title: intl.formatMessage(i18n.stopFailed),
@@ -231,5 +264,6 @@ export function useMlxTrayActions(): void {
     };
     window.electron.on('mlx-tray-action', onAction);
     return () => window.electron.off('mlx-tray-action', onAction);
-  }, [intl]);
+  }, [intl, guard]);
+  return dialog;
 }

@@ -378,7 +378,7 @@ describe('LeanZeroLinkSection — My Macs', () => {
     );
     expect(within(self).getByTestId('my-mac-state')).toHaveTextContent('Not loaded');
     expect(within(self).getByTestId('my-mac-line')).toHaveTextContent('No model loaded');
-    expect(within(self).getByText('89.7 GB free of 128 GB')).toBeInTheDocument();
+    expect(within(self).getByText('89.7 GB available of 128.0 GB')).toBeInTheDocument();
     expect(within(self).getByText('149 GB free of 926 GB')).toBeInTheDocument();
     expect(within(self).getByText('Apple M4 Max · 40-core GPU')).toBeInTheDocument();
     expect(within(self).getByTestId('my-mac-models-self')).toHaveTextContent('1');

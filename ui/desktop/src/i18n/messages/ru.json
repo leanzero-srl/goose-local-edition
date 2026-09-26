@@ -732,7 +732,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Распределённый движок обслуживает {served}; узлу нужна {wanted}."
+    "defaultMessage": "Разделение обслуживает {served}; узлу нужна {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Последнее монтирование не удалось: {error}"
@@ -1381,6 +1381,39 @@
   },
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Значение"
+  },
+  "cutGuard.keep": {
+    "defaultMessage": "Пусть пишет дальше"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} оборвёт {count} выполняемых запросов ({names}) — самый долгий {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} оборвёт {count} выполняемых запросов — самый долгий {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} оборвёт ответ, который пишется в «{name}», — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} оборвёт запрос, который goose не смог назвать, — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "уже {elapsed}, всё ещё читает свой промпт на {tokens} токенов"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "всё ещё читает свой промпт"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Оборвать ответ, который сейчас пишется?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Оборвать {count} выполняемых запросов?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "уже {elapsed}, написано {tokens} токенов"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "написано {tokens} токенов"
   },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "Настроить параметры {name}"
@@ -2976,7 +3009,7 @@
     "defaultMessage": "Остановить"
   },
   "mlxDistributed.active": {
-    "defaultMessage": "активно {gb} ГиБ"
+    "defaultMessage": "активно {gb} ГБ"
   },
   "mlxDistributed.addNode": {
     "defaultMessage": "Добавить узел"
@@ -3000,7 +3033,7 @@
     "defaultMessage": "Применить"
   },
   "mlxDistributed.available": {
-    "defaultMessage": "Доступно {available} из {total} ГиБ"
+    "defaultMessage": "Доступно {available} из {total} ГБ"
   },
   "mlxDistributed.backend.jaccl": {
     "defaultMessage": "JACCL · RDMA по Thunderbolt 5"
@@ -3027,7 +3060,7 @@
     "defaultMessage": "Проверки кластера"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Распределённая конфигурация ещё не сохранена."
+    "defaultMessage": "Разделение ещё не настроено."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Конфигурация"
@@ -3228,7 +3261,7 @@
     "defaultMessage": "Одна модель, разделённая между несколькими Mac по Thunderbolt. Этот Mac — ранг 0: он обслуживает API и следит за каждым рангом."
   },
   "mlxDistributed.kv": {
-    "defaultMessage": "KV {reserved} из {budget} ГиБ"
+    "defaultMessage": "KV {reserved} из {budget} ГБ"
   },
   "mlxDistributed.kvBar": {
     "defaultMessage": "Зарезервированный KV относительно бюджета"
@@ -3240,7 +3273,7 @@
     "defaultMessage": "{count, plural, one {Слои {first}–{last} · # слой} few {Слои {first}–{last} · # слоя} many {Слои {first}–{last} · # слоёв} other {Слои {first}–{last} · # слоя}}"
   },
   "mlxDistributed.limits": {
-    "defaultMessage": "Пределы: память {memory} · wired {wired} · кэш {cache} ГиБ"
+    "defaultMessage": "Пределы: память {memory} · wired {wired} · кэш {cache} ГБ"
   },
   "mlxDistributed.limitsNone": {
     "defaultMessage": "Пределы ещё не сообщены"
@@ -3267,7 +3300,7 @@
     "defaultMessage": "Загружено {done} из {total} ГБ"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "Конфигурация заблокирована, пока распределённый движок занимает этот Mac. Остановите его, чтобы изменить узлы или модель."
+    "defaultMessage": "Конфигурация заблокирована, пока разделение занимает этот Mac. Остановите его, чтобы изменить его Mac или модель."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Память не прочитана: {error}"
@@ -3342,10 +3375,10 @@
     "defaultMessage": "Пиковая память относительно бюджета"
   },
   "mlxDistributed.peakNoBudget": {
-    "defaultMessage": "ГиБ пик · бюджет не сообщён"
+    "defaultMessage": "ГБ пик · бюджет не сообщён"
   },
   "mlxDistributed.peakOf": {
-    "defaultMessage": "ГиБ пик из бюджета {budget} ГиБ"
+    "defaultMessage": "ГБ пик из бюджета разделения {budget} ГБ"
   },
   "mlxDistributed.pid": {
     "defaultMessage": "pid {pid}"
@@ -3354,13 +3387,13 @@
     "defaultMessage": "Запланированная память относительно бюджета"
   },
   "mlxDistributed.planBreakdown": {
-    "defaultMessage": "веса {weights} · состояние {state} · рабочая область {workspace} · кэш промптов {cache} ГиБ"
+    "defaultMessage": "веса {weights} · состояние {state} · рабочая область {workspace} · кэш промптов {cache} ГБ"
   },
   "mlxDistributed.planLine": {
-    "defaultMessage": "ГиБ по плану с накладными расходами, из бюджета {budget} ГиБ"
+    "defaultMessage": "ГБ по плану с накладными расходами, из бюджета разделения {budget} ГБ"
   },
   "mlxDistributed.planned": {
-    "defaultMessage": "по плану {gb} ГиБ с накладными расходами"
+    "defaultMessage": "по плану {gb} ГБ с накладными расходами"
   },
   "mlxDistributed.preflightNone": {
     "defaultMessage": "Preflight ещё не запускался. Пробный прогон проверяет каждый узел (доступность, память, модель, Python, канал Thunderbolt, порты) и распределяет слои по узлам, ничего не запуская."
@@ -3402,7 +3435,7 @@
     "defaultMessage": "ранг {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Чтение распределённого движка…"
+    "defaultMessage": "Чтение разделения…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "Удалить {name}"
@@ -3426,10 +3459,10 @@
     "defaultMessage": "исполнитель"
   },
   "mlxDistributed.room.budgetLine": {
-    "defaultMessage": "Бюджет {budget} ГиБ (лимит GPU {ceiling} · доступно {available})"
+    "defaultMessage": "Бюджет разделения {budget} ГБ (лимит GPU {ceiling} · доступно {available})"
   },
   "mlxDistributed.room.budgetLineCompacted": {
-    "defaultMessage": "Бюджет {budget} ГиБ (лимит GPU {ceiling} · доступно после сжатия {available})"
+    "defaultMessage": "Бюджет разделения {budget} ГБ (лимит GPU {ceiling} · доступно после сжатия {available})"
   },
   "mlxDistributed.room.failed": {
     "defaultMessage": "Не удалось освободить место"
@@ -3438,10 +3471,10 @@
     "defaultMessage": "Освобождать память автоматически"
   },
   "mlxDistributed.room.freed": {
-    "defaultMessage": "Освобождено {gib} ГиБ"
+    "defaultMessage": "Освобождено {gib} ГБ"
   },
   "mlxDistributed.room.freedNothing": {
-    "defaultMessage": "Ничего не освобождено (на {gib} ГиБ меньше)"
+    "defaultMessage": "Ничего не освобождено (на {gib} ГБ меньше)"
   },
   "mlxDistributed.room.hint": {
     "defaultMessage": "Просит macOS вернуть память: простаивающие приложения сжимаются, кэши сбрасываются. Ничего не закрывается."
@@ -3453,10 +3486,10 @@
     "defaultMessage": "Освобождение места не запускалось"
   },
   "mlxDistributed.room.shortBy": {
-    "defaultMessage": "Не хватает {gib} ГиБ — освободите место или закройте приложения: {apps}"
+    "defaultMessage": "Не хватает {gib} ГБ — освободите место или закройте приложения: {apps}"
   },
   "mlxDistributed.room.shortByNoApps": {
-    "defaultMessage": "Не хватает {gib} ГиБ — освободите место или закройте приложения"
+    "defaultMessage": "Не хватает {gib} ГБ — освободите место или закройте приложения"
   },
   "mlxDistributed.runnerUpdate.title": {
     "defaultMessage": "Обновление раннера разделения"
@@ -3503,6 +3536,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Запуск отклонён"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Остановить разделение"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Оставить работать"
   },
@@ -3510,7 +3546,7 @@
     "defaultMessage": "Каждый ранг на {nodes} останавливается, и его завершение проверяется по каждому pid. Запросы в работе будут прерваны."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Остановить распределённый движок?"
+    "defaultMessage": "Остановить разделение?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Остановка не подтверждена"
@@ -3525,13 +3561,13 @@
     "defaultMessage": "этот Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Распределённый движок"
+    "defaultMessage": "Разделено между вашими Mac"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Этот бэкенд goose не предлагает распределённый движок: нет возможности mlxDistributed, значит, он старше сборки, в которой она появилась. Обновите goose, чтобы разделить одну модель между несколькими Mac."
+    "defaultMessage": "Этот бэкенд goose не предлагает разделение: нет возможности mlxDistributed, значит, он старше сборки, в которой она появилась. Обновите goose, чтобы разделить одну модель между несколькими Mac."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "Распределённый инференс недоступен"
+    "defaultMessage": "Разделение модели между Mac недоступно"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Оставить одиночный движок"
@@ -3540,7 +3576,7 @@
     "defaultMessage": "Выгрузить и продолжить"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Одиночный движок MLX загружен на этом Mac ({detail}). Mac одновременно принадлежит только одному движку: выгрузка остановит эту модель, чтобы распределённый движок смог запуститься."
+    "defaultMessage": "Одиночный движок MLX загружен на этом Mac ({detail}). Mac одновременно принадлежит только одному движку: выгрузка остановит эту модель, чтобы разделение смогло запуститься."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Выгрузить одиночный движок?"
@@ -3693,7 +3729,7 @@
     "defaultMessage": "SHA256SUMS различаются"
   },
   "mlxDistributedSetup.memory": {
-    "defaultMessage": "доступно {available} из {total} ГиБ"
+    "defaultMessage": "доступно {available} из {total} ГБ"
   },
   "mlxDistributedSetup.missingOn": {
     "defaultMessage": "нет на {nodes}"
@@ -3732,7 +3768,7 @@
     "defaultMessage": "этот Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Настройка распределённого движка"
+    "defaultMessage": "Настроить разделение"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "недоступен"
@@ -3747,10 +3783,10 @@
     "defaultMessage": "Чат обслуживает разделение между вашими Mac — его показатели в плитке выше. Эти строки относятся к одиночному движку этого Mac."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Распределённо"
+    "defaultMessage": "Разделение"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Распределённый движок занимает этот Mac: одиночный движок нельзя загрузить, пока распределённый не остановлен в разделе «Распределённый движок» ниже."
+    "defaultMessage": "Разделение занимает этот Mac: ни одна модель не запустится здесь отдельно, пока разделение не остановлено (Остановить, в разделе «Запуск» ниже)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Сведения о движке"
@@ -3779,6 +3815,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Выберите модель и запустите её ниже в «Запуске» — на этом Mac, на другом вашем Mac или с разделением между ними."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Смонтировать заново"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Профили на"
   },
@@ -3794,6 +3833,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Остановить"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "Остановить обслуживание с {peer}"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Не удалось остановить обслуживание с другого Mac."
   },
@@ -3802,6 +3844,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Движок этого Mac · не запущен"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Отмонтировать"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} КиБ на токен вместо {bf16} КиБ — в той же памяти помещается в {ratio}× больше контекста."
@@ -3852,22 +3897,22 @@
     "defaultMessage": "ПРОПУЩЕН"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "С контекстом растут и сжимаются только {attention} слоёв полного внимания; {state} слоёв линейного внимания хранят состояние фиксированного размера. Применяется при следующем монтировании. Распределённые запуски сохраняют bf16-кэш."
+    "defaultMessage": "С контекстом растут и сжимаются только {attention} слоёв полного внимания; {state} слоёв линейного внимания хранят состояние фиксированного размера. Применяется при следующем монтировании. Разделение сохраняет bf16-кэш."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Сжатие KV-кэша недоступно: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, one {Распределённо · # узел · {backend}} few {Распределённо · # узла · {backend}} many {Распределённо · # узлов · {backend}} other {Распределённо · # узла · {backend}}}"
+    "defaultMessage": "{count, plural, one {Разделено между # Mac · {backend}} few {Разделено между # Mac · {backend}} many {Разделено между # Mac · {backend}} other {Разделено между # Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, one {Распределённо · # узел} few {Распределённо · # узла} many {Распределённо · # узлов} other {Распределённо · # узла}}"
+    "defaultMessage": "{count, plural, one {Разделено между # Mac} few {Разделено между # Mac} many {Разделено между # Mac} other {Разделено между # Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "Ранг {rank} распределённого движка {requester} · {model} · {backend}"
+    "defaultMessage": "Ранг {rank} разделения {requester} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "Ранг {rank} распределённого движка {requester} · {model}"
+    "defaultMessage": "Ранг {rank} разделения {requester} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "Обслуживается с {peer}"
@@ -4077,13 +4122,16 @@
     "defaultMessage": "пика ещё нет"
   },
   "mlxStateTile.dist.peak": {
-    "defaultMessage": "{peak} из {budget} ГиБ пик"
+    "defaultMessage": "пик {peak} из {budget} ГБ бюджета разделения"
   },
   "mlxStateTile.dist.peakBar": {
     "defaultMessage": "Пиковая память относительно бюджета"
   },
   "mlxStateTile.dist.peakNoBudget": {
-    "defaultMessage": "{peak} ГиБ пик"
+    "defaultMessage": "пик {peak} ГБ"
+  },
+  "mlxStateTile.dist.peakTitle": {
+    "defaultMessage": "Наибольший объём памяти, который разделение заняло на {node}, против {budget} ГБ, которые ему там доступны: что было свободно при запуске, за вычетом резерва, в пределах лимита GPU."
   },
   "mlxStateTile.dist.slots": {
     "defaultMessage": "слоты {used} из {slots}"
@@ -4131,7 +4179,7 @@
     "defaultMessage": "Движок: {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "для распределённого движка {requester} через LeanZero Link"
+    "defaultMessage": "для разделения {requester} через LeanZero Link"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "Загрузка ранга {rank} для {requester}"
@@ -4202,14 +4250,14 @@
   "mlxStateTile.requestsAria": {
     "defaultMessage": "Запросы в работе"
   },
-  "mlxStateTile.row.bar": {
-    "defaultMessage": "Записанные токены относительно лимита"
-  },
   "mlxStateTile.row.cached": {
     "defaultMessage": "{count} из кеша"
   },
   "mlxStateTile.row.queued": {
     "defaultMessage": "В очереди"
+  },
+  "mlxStateTile.row.rate": {
+    "defaultMessage": "{rate} ток/с"
   },
   "mlxStateTile.row.reading": {
     "defaultMessage": "Читает промпт"
@@ -4222,9 +4270,6 @@
   },
   "mlxStateTile.row.written": {
     "defaultMessage": "{written} токенов"
-  },
-  "mlxStateTile.row.writtenOf": {
-    "defaultMessage": "{written} из {max} токенов"
   },
   "mlxStateTile.runsPending": {
     "defaultMessage": "Читаем измеренные goose запуски…"
@@ -4341,10 +4386,10 @@
     "defaultMessage": "Управление размышлением недоступно: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Не удалось остановить распределённый движок"
+    "defaultMessage": "Не удалось остановить разделение"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "Остановка распределённого движка не подтверждена: {steps}"
+    "defaultMessage": "Остановка разделения не подтверждена: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Не удалось смонтировать движок MLX"
@@ -4354,6 +4399,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Не удалось остановить обслуживание с другого Mac"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Запустить на этом Mac"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Остановить обслуживание с другого Mac"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Остановить разделение"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Больше не ждать его"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "Отмонтировать движок MLX"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Не удалось отмонтировать движок MLX"
@@ -4854,7 +4914,7 @@
     "defaultMessage": "Память"
   },
   "myMacs.memoryFree": {
-    "defaultMessage": "Свободно {free} ГБ из {total} ГБ"
+    "defaultMessage": "Доступно {free} ГБ из {total} ГБ"
   },
   "myMacs.mesh": {
     "defaultMessage": "Сеть"
@@ -4965,7 +5025,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Распределённый движок обслуживает {served}; этому узлу нужна {wanted}."
+    "defaultMessage": "Разделение обслуживает {served}; этому узлу нужна {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} не загружена на сервере, на который указывает этот узел."
@@ -5056,6 +5116,12 @@
   },
   "nodeModelCell.noModels": {
     "defaultMessage": "На этом Mac нет подходящей модели."
+  },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Не обслуживается: движок этого Mac запускает {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Этот узел настроен на {set}, но движок этого Mac обслуживает {served}. У работы, направленной на этот узел, нет движка для его модели, пока здесь не запущена {set}."
   },
   "nodeModelCell.pickAria": {
     "defaultMessage": "Модель для {node}"
@@ -5483,6 +5549,12 @@
   "placementCard.stop": {
     "defaultMessage": "Остановить"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "Остановить обслуживание с {name}"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Остановить разделение"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "Каждая часть на {nodes} останавливается, и её завершение проверяется. Текущие запросы будут прерваны."
   },
@@ -5509,6 +5581,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Так же быстро в пределах погрешности (~{mine} против ~{best} ток/с), но нужно больше Mac"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "Его контекст {context} меньше {live} токенов, которые уже занимает разговор, на который сейчас идёт ответ."
   },
   "placementCard.total": {
     "defaultMessage": "~{value} ток/с всего при {concurrency} одновременно"
