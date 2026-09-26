@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-26 23:10 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
+Updated: 2026-09-26 23:15 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
 
 ## Live
 - Installed on both Macs: 3.0.52 (Q-107, Q-138, Q-130, Q-140, Q-141, Q-142). Split-start smoke: 27B tensor up in 17 s.
@@ -19,6 +19,8 @@ Updated: 2026-09-26 23:10 · heartbeat: session cron 90b0083a (:04/:14/…/:54, 
   Not touched (owner's): ~/.goose/models 128 GB, forge-live-harness/evidence 37 GB, ~/.codex 19 GB.
 
 ## Agents (worktree, NO GPU)
+- Q-146 instrument MERGED 56ae7ca19 (/v1/status `stream`: parser_state, withheld chars, text tail; GOOSE_RANK_WITHHELD) → ships in 3.0.54.
+- Method sent to the CogniRunner (cognirunner-86) and lz-ppm (projects-bd) sessions at the owner's ask.
 - LIVE critic round 1 (whole app, while #3d's call generates) → ROUND-2026-09-26-live-1.md.
 - Q-146 instrument: parser state + withheld chars + text tail in /v1/status, withholding-path table.
 - NEEDS-YOU + Q-147 RUNNING state (owner asks 22:3x / 22:5x) in ONE agent (same sidebar files): ask_user tool + persistent card above composer + sidebar marker + app-wide count;
@@ -28,7 +30,8 @@ Updated: 2026-09-26 23:10 · heartbeat: session cron 90b0083a (:04/:14/…/:54, 
 1. Read the silent call's words (watcher) → decide Q-146's fix. Then re-run E2E #3d. Prove: calls ≥90% cached after turn 1 (Q-142), tool call streams "writing a tool call
    to shell" (Q-141), load_tools keeps the cache (Q-107); turn times vs #3c (110/690/1380/516/924 s) and #4 Studio
    (170/81/1333 s). diskio.py on goosed (Q-115).
-2. 3.0.53 DONE → install → split-start → E2E #3d rerun (27B tensor) → then E2E #5b Flash pipeline + load.py rerun (canary TTFT).
+2. 3.0.53 DONE → install → Flash pipeline split-start → load.py rerun (Q-145 canary TTFT) + E2E #5b; build 3.0.54
+   (Q-146 instrument) right after → E2E #3d rerun on 27B tensor with /v1/status stream visible → then Flash pipeline + load.py rerun (canary TTFT).
 3. Critic pass (mlx-ux-critic) on 3.0.52 after #3d; include the needs-you surface once merged.
 4. Agents return → read log → merge → gate (clippy, tests, wincheck.sh) → push → CI.
 
