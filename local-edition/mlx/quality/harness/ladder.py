@@ -13,6 +13,12 @@ ap = argparse.ArgumentParser()
 ap.add_argument('base'); ap.add_argument('model'); ap.add_argument('out')
 ap.add_argument('--sizes', default='400,2100,2700,4500,7300,15000,30000')
 a = ap.parse_args()
+# The engine's own name for the model (Q-131: a split answers to one id form only, and which one depends on how it
+# was started) — ask /v1/models instead of trusting the name given.
+_served = json.load(urllib.request.urlopen(a.base.rstrip('/') + '/v1/models', timeout=30))['data'][0]['id']
+if _served != a.model:
+    print(f'  model: using the served id {_served!r} (asked for {a.model!r})')
+    a.model = _served
 WORDS = open('/usr/share/dict/words').read().split()
 w = csv.writer(open(a.out, 'a', newline=''))
 for size in [int(s) for s in a.sizes.split(',')]:
