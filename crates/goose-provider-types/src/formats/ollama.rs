@@ -12,7 +12,7 @@
 use crate::conversation::message::{Message, MessageContent};
 use crate::{
     conversation::token_usage::ProviderUsage,
-    formats::openai::{self, is_valid_function_name},
+    formats::openai::{self, is_valid_function_name, UnparsedToolCalls},
 };
 use async_stream::try_stream;
 use chrono;
@@ -84,7 +84,7 @@ pub fn parse_xml_tool_calls(content: &str) -> (Option<String>, Vec<MessageConten
 /// This wraps the standard OpenAI response parsing and adds XML fallback for models
 /// like Qwen3-coder that output XML tool calls when given many tools.
 pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
-    let message = openai::response_to_message(response)?;
+    let message = openai::response_to_message_with(response, UnparsedToolCalls::KeepAsText)?;
 
     let has_tool_requests = message
         .content
@@ -165,7 +165,8 @@ where
     try_stream! {
         use futures::StreamExt;
 
-        let base_stream = openai::response_to_streaming_message(stream);
+        let base_stream =
+            openai::response_to_streaming_message_with(stream, UnparsedToolCalls::KeepAsText);
         let mut base_stream = std::pin::pin!(base_stream);
 
         let mut accumulated_text = String::new();
@@ -415,6 +416,38 @@ hello
             panic!("Expected ToolRequest");
         }
 
+        Ok(())
+    }
+
+    /// The OpenAI decoder turns a reply that is only call markup into a failed call (Q-133);
+    /// under Ollama that text is this wrapper's to parse, so it must still arrive as text.
+    #[tokio::test]
+    async fn streamed_xml_still_reaches_the_ollama_fallback() -> anyhow::Result<()> {
+        use futures::StreamExt;
+
+        let frame = |text: &str| {
+            format!(
+                "data: {}",
+                json!({"choices": [{"index": 0, "delta": {"content": text}, "finish_reason": null}]})
+            )
+        };
+        let lines = vec![
+            frame("<function=developer__shell>\n<parameter=command>ls</parameter>\n"),
+            frame("</function>"),
+            "data: [DONE]".to_string(),
+        ];
+        let stream = tokio_stream::iter(lines.into_iter().map(Ok));
+        let mut messages = std::pin::pin!(response_to_streaming_message_ollama(stream));
+        let mut calls = Vec::new();
+        while let Some(item) = messages.next().await {
+            for content in item?.0.map(|m| m.content).into_iter().flatten() {
+                if let MessageContent::ToolRequest(request) = content {
+                    calls.push(request.tool_call.map(|call| call.name.to_string()));
+                }
+            }
+        }
+        assert_eq!(calls.len(), 1, "{calls:?}");
+        assert_eq!(calls[0].as_deref().ok(), Some("developer__shell"));
         Ok(())
     }
 }

@@ -1,6 +1,10 @@
 use crate::conversation::message::{Message, MessageContent, ProviderMetadata};
 use crate::conversation::token_usage::{ProviderUsage, Usage};
 use crate::errors::ProviderError;
+pub use crate::formats::unparsed_tool_call::UnparsedToolCalls;
+use crate::formats::unparsed_tool_call::{
+    settle_reply, settle_text, RefusedToolCall, UnparsedCallHold,
+};
 use crate::images::{convert_image, detect_image_path, load_image_file, ImageFormat};
 use crate::json::{parse_tool_arguments, truncation_error_message};
 use crate::mcp_utils::extract_text_from_resource;
@@ -243,6 +247,10 @@ struct StreamingChoice {
     index: Option<i32>,
     #[serde(default, deserialize_with = "empty_finish_reason_as_none")]
     finish_reason: Option<String>,
+    /// Rapid-MLX's word that a tool call went out as `content` because its name was not declared
+    /// (Q-133); absent from every other engine.
+    #[serde(default)]
+    refused_tool_calls: Option<Vec<RefusedToolCall>>,
 }
 
 fn empty_finish_reason_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -867,6 +875,13 @@ pub fn format_tools(tools: &[Tool]) -> anyhow::Result<Vec<Value>> {
 
 /// Convert OpenAI's API response to internal Message format
 pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
+    response_to_message_with(response, UnparsedToolCalls::Fail)
+}
+
+pub fn response_to_message_with(
+    response: &Value,
+    unparsed: UnparsedToolCalls,
+) -> anyhow::Result<Message> {
     let Some(original) = response
         .get("choices")
         .and_then(|c| c.get(0))
@@ -900,6 +915,19 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
         }
     }
 
+    let refused: Vec<RefusedToolCall> = match response["choices"][0].get("refused_tool_calls") {
+        Some(calls) => serde_json::from_value::<Option<Vec<RefusedToolCall>>>(calls.clone())?
+            .into_iter()
+            .flatten()
+            .collect(),
+        None => Vec::new(),
+    };
+    let has_tool_calls = original
+        .get("tool_calls")
+        .and_then(|calls| calls.as_array())
+        .is_some_and(|calls| !calls.is_empty());
+    let mut failed_calls = Vec::new();
+
     if let Some(text) = original.get("content") {
         if let Some(text_str) = text.as_str() {
             let (cleaned, inline_thinking) = split_think_blocks(text_str);
@@ -908,10 +936,20 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
                 content.push(MessageContent::thinking(inline_thinking, ""));
             }
 
-            if !cleaned.is_empty() {
-                content.push(MessageContent::text(cleaned));
+            let settled = if has_tool_calls {
+                Ok(cleaned)
+            } else {
+                settle_text(&cleaned, unparsed)
+            };
+            let (shown, failed) = settle_reply(settled, &refused);
+            failed_calls = failed;
+            if !shown.is_empty() {
+                content.push(MessageContent::text(shown));
             }
         }
+    }
+    if failed_calls.is_empty() && !refused.is_empty() {
+        failed_calls = settle_reply(Ok(String::new()), &refused).1;
     }
 
     if let Some(tool_calls) = original.get("tool_calls") {
@@ -1010,6 +1048,7 @@ pub fn response_to_message(response: &Value) -> anyhow::Result<Message> {
             }
         }
     }
+    content.extend(failed_calls);
 
     Ok(Message::new(
         Role::Assistant,
@@ -1370,7 +1409,17 @@ fn parse_streaming_chunk(line: &str) -> Result<Option<StreamingChunk>, ProviderE
 }
 
 pub fn response_to_streaming_message<S>(
+    stream: S,
+) -> impl Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
+where
+    S: Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
+{
+    response_to_streaming_message_with(stream, UnparsedToolCalls::Fail)
+}
+
+pub fn response_to_streaming_message_with<S>(
     mut stream: S,
+    unparsed: UnparsedToolCalls,
 ) -> impl Stream<Item = anyhow::Result<(Option<Message>, Option<ProviderUsage>)>> + 'static
 where
     S: Stream<Item = anyhow::Result<String>> + Unpin + Send + 'static,
@@ -1392,6 +1441,8 @@ where
         let mut forming = FormingProgress::default();
         let mut unplaced_text = String::new();
         let mut completion = StreamCompletion::default();
+        let mut call_hold = UnparsedCallHold::new(unparsed);
+        let mut refused: Vec<RefusedToolCall> = Vec::new();
 
         'outer: while let Some(response) = stream.next().await {
             let response_str = response?;
@@ -1427,6 +1478,9 @@ where
                         saw_structured_reasoning = true;
                         pending_inline_thinking.clear();
                     }
+                }
+                if let Some(calls) = &chunk.choices[0].refused_tool_calls {
+                    refused.extend(calls.iter().cloned());
                 }
             }
 
@@ -1498,6 +1552,9 @@ where
                                 }
 
                                 if !tool_chunk.choices.is_empty() {
+                                    if let Some(calls) = &tool_chunk.choices[0].refused_tool_calls {
+                                        refused.extend(calls.iter().cloned());
+                                    }
                                     if let Some(details) = &tool_chunk.choices[0].delta.reasoning_details {
                                         accumulated_reasoning.extend(details.iter().cloned());
                                     }
@@ -1595,10 +1652,12 @@ where
                     flush_thinking.push_str(&filtered.thinking);
                 }
                 pending_inline_thinking.clear();
-                if !filtered.content.is_empty() || !flush_thinking.is_empty() {
+                // Real calls arrived: whatever the hold kept was only the text before them.
+                let shown = call_hold.release() + &filtered.content;
+                if !shown.is_empty() || !flush_thinking.is_empty() {
                     let mut filtered_contents = Vec::new();
-                    if !filtered.content.is_empty() {
-                        filtered_contents.push(MessageContent::text(filtered.content));
+                    if !shown.is_empty() {
+                        filtered_contents.push(MessageContent::text(shown));
                     }
                     if !flush_thinking.is_empty() {
                         filtered_contents.push(MessageContent::thinking(flush_thinking, ""));
@@ -1732,8 +1791,13 @@ where
                         pending_inline_thinking.push_str(&filtered.thinking);
                     }
 
-                    if !filtered.content.is_empty() {
-                        content.push(MessageContent::text(filtered.content));
+                    let mut shown = call_hold.push(&filtered.content);
+                    // A cut reply is not a call block; the truncation stamp needs its text.
+                    if chunk.choices[0].finish_reason.as_deref() == Some("length") {
+                        shown.push_str(&call_hold.release());
+                    }
+                    if !shown.is_empty() {
+                        content.push(MessageContent::text(shown));
                     }
                 }
 
@@ -1783,16 +1847,29 @@ where
         }
         pending_inline_thinking.clear();
 
-        if !filtered.content.is_empty() || !trailing_thinking.is_empty() {
+        let tail = call_hold.push(&filtered.content);
+        let (settled, failed_calls) = settle_reply(call_hold.finish(), &refused);
+        let shown = tail + &settled;
+        if !failed_calls.is_empty() {
+            tracing::warn!(
+                refused = ?refused,
+                failed_calls = failed_calls.len(),
+                "the engine returned a tool call as text; it becomes a failed tool call, not the reply"
+            );
+        }
+
+        if !shown.is_empty() || !trailing_thinking.is_empty() || !failed_calls.is_empty() {
             let mut content = Vec::new();
 
-            if !filtered.content.is_empty() {
-                content.push(MessageContent::text(filtered.content));
+            if !shown.is_empty() {
+                content.push(MessageContent::text(shown));
             }
 
             if !trailing_thinking.is_empty() {
                 content.push(MessageContent::thinking(trailing_thinking, ""));
             }
+
+            content.extend(failed_calls);
 
             yield (
                 Some(Message::new(
@@ -5909,5 +5986,195 @@ mod stream_completion_tests {
             }
         }
         assert_eq!(calls, 1);
+    }
+}
+
+#[cfg(test)]
+mod unparsed_tool_call_tests {
+    use super::*;
+    use futures::StreamExt;
+
+    /// The content deltas goose received for Q-133's failing call (goose 3.0.49, 2026-09-26,
+    /// llm_request.0.jsonl: Flash on the pipeline split called `bash`; the request declared `shell`).
+    const Q133_CONTENT: [&str; 12] = [
+        "\n\n",
+        "<tool_call>\n<function=bash>",
+        "\n",
+        "<parameter",
+        "=",
+        "command",
+        ">",
+        "\n",
+        "cd work && cp /tmp/VENDORED.md ./VENDORED.md && wc -l VENDORED.md",
+        "\n</parameter",
+        ">\n</function",
+        "></tool_call>",
+    ];
+
+    fn frame(delta: Value, finish: Option<&str>, extra: Value) -> String {
+        let mut choice = json!({"index": 0, "delta": delta, "finish_reason": finish});
+        if let (Some(choice), Some(extra)) = (choice.as_object_mut(), extra.as_object()) {
+            choice.extend(extra.clone());
+        }
+        let mut chunk = json!({
+            "id": "chatcmpl-b8b5ca15ea664f2bb68c3994",
+            "object": "chat.completion.chunk",
+            "created": 1,
+            "model": "mihai-flash-qwen3.8-flash-next-4bit-mlx",
+            "choices": [choice],
+        });
+        if finish.is_some() {
+            chunk["usage"] =
+                json!({"prompt_tokens": 53974, "completion_tokens": 153, "total_tokens": 54127});
+        }
+        format!("data: {chunk}")
+    }
+
+    fn q133_stream(final_choice_extra: Value) -> Vec<String> {
+        let mut lines = vec![frame(
+            json!({"reasoning_content": "Now let me place the file and commit.\n"}),
+            None,
+            json!({}),
+        )];
+        lines.extend(
+            Q133_CONTENT
+                .iter()
+                .map(|text| frame(json!({"content": text}), None, json!({}))),
+        );
+        lines.push(frame(json!({}), Some("stop"), final_choice_extra));
+        lines.push("data: [DONE]".to_string());
+        lines
+    }
+
+    /// (text shown, failed-request messages, successful calls, usage frames).
+    async fn decode(lines: Vec<String>) -> (String, Vec<String>, Vec<String>, usize) {
+        let stream = tokio_stream::iter(lines.into_iter().map(Ok));
+        let mut messages = std::pin::pin!(response_to_streaming_message(stream));
+        let (mut text, mut failed, mut calls, mut usages) =
+            (String::new(), Vec::new(), Vec::new(), 0);
+        while let Some(item) = messages.next().await {
+            let (message, usage) = item.expect("the stream decodes");
+            usages += usize::from(usage.is_some());
+            for content in message.map(|m| m.content).into_iter().flatten() {
+                match content {
+                    MessageContent::Text(t) => text.push_str(&t.text),
+                    MessageContent::ToolRequest(request) => match request.tool_call {
+                        Ok(call) => calls.push(call.name.to_string()),
+                        Err(error) => failed.push(error.message.to_string()),
+                    },
+                    _ => {}
+                }
+            }
+        }
+        (text, failed, calls, usages)
+    }
+
+    #[tokio::test]
+    async fn the_q133_stream_is_a_failed_tool_call_not_a_reply() {
+        let refused = json!({"refused_tool_calls": [{"name": "bash"}]});
+        let (text, failed, calls, usages) = decode(q133_stream(refused)).await;
+
+        assert_eq!(text, "", "the XML must not be shown as the reply");
+        assert!(calls.is_empty());
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(
+            failed[0].contains("refused your tool call to `bash`"),
+            "{}",
+            failed[0]
+        );
+        assert!(failed[0].contains("<function=bash>"), "{}", failed[0]);
+        assert_eq!(usages, 1);
+    }
+
+    #[tokio::test]
+    async fn an_engine_that_does_not_flag_it_still_fails_the_call() {
+        let (text, failed, calls, _) = decode(q133_stream(json!({}))).await;
+
+        assert_eq!(text, "");
+        assert!(calls.is_empty());
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(
+            failed[0].contains("tool call to `bash` came back"),
+            "{}",
+            failed[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn ordinary_replies_and_real_calls_are_untouched() {
+        let reply = vec![
+            frame(json!({"content": "\n\n"}), None, json!({})),
+            frame(json!({"content": "<b>Done</b>."}), None, json!({})),
+            frame(json!({}), Some("stop"), json!({})),
+            "data: [DONE]".to_string(),
+        ];
+        let (text, failed, calls, _) = decode(reply).await;
+        assert_eq!(text, "\n\n<b>Done</b>.");
+        assert!(failed.is_empty() && calls.is_empty());
+
+        // The shape of the calls before Q-133's, which parsed: "\n\n" then a real call.
+        let call = vec![
+            frame(json!({"content": "\n\n"}), None, json!({})),
+            frame(
+                json!({"tool_calls": [{"index": 0, "id": "call_0ad950e8", "type": "function",
+                    "function": {"name": "shell", "arguments": "{\"command\": \"ls\"}"}}]}),
+                Some("tool_calls"),
+                json!({}),
+            ),
+            "data: [DONE]".to_string(),
+        ];
+        let (text, failed, calls, _) = decode(call).await;
+        assert_eq!(text, "\n\n");
+        assert!(failed.is_empty());
+        assert_eq!(calls, vec!["shell".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_length_cut_block_is_shown_with_its_stamp() {
+        let lines = vec![
+            frame(
+                json!({"content": "<tool_call>\n<function=shell>"}),
+                None,
+                json!({}),
+            ),
+            frame(
+                json!({"content": "\n<parameter=command>\nls"}),
+                Some("length"),
+                json!({}),
+            ),
+            "data: [DONE]".to_string(),
+        ];
+        let (text, failed, _, _) = decode(lines).await;
+        assert!(text.starts_with("<tool_call>\n<function=shell>"), "{text}");
+        assert!(text.contains(OUTPUT_TRUNCATED_BY_LENGTH), "{text}");
+        assert!(failed.is_empty());
+    }
+
+    #[test]
+    fn the_non_streamed_answer_fails_the_call_too() -> anyhow::Result<()> {
+        let response = json!({
+            "choices": [{
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": Q133_CONTENT.concat()},
+                "refused_tool_calls": [{"name": "bash"}],
+            }]
+        });
+        let message = response_to_message(&response)?;
+        assert!(!message
+            .content
+            .iter()
+            .any(|c| matches!(c, MessageContent::Text(_))));
+        let failed: Vec<_> = message
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                MessageContent::ToolRequest(r) => r.tool_call.as_ref().err(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(failed.len(), 1);
+        assert!(failed[0].message.contains("`bash`"));
+        Ok(())
     }
 }
