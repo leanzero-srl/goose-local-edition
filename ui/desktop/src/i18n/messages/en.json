@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Needs {gb} GB more free memory"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "No runs since it restarted — the next reply gives it a writing rate"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "No runs measured yet — the next reply gives it a writing rate"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "No measured runs on this way yet — Measure speed in Run it records one"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "of {gb} GB"
@@ -4167,7 +4164,7 @@
     "defaultMessage": "prompt tokens, reading for {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s reading, slowest–fastest"
+    "defaultMessage": "tok/s reading, middle half of runs"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s reading this prompt"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} of {max} tokens"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Reading goose's measured runs…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "goose's measured runs could not be read: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Serving"
@@ -4269,7 +4272,7 @@
     "defaultMessage": "GB of weights"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s writing, slowest–fastest"
+    "defaultMessage": "tok/s writing, middle half of runs"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s writing"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Leaves {model} for this chat"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose helper running"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Serving other work"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Shared with other work"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Busy, whose work unknown"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Clear your selected model and provider settings to start fresh"
@@ -5301,13 +5316,16 @@
     "defaultMessage": "Running and not measured yet — Measure speed replaces the estimate with this Mac’s own number."
   },
   "placementCard.measured": {
-    "defaultMessage": "{runs,plural,one{measured} other{measured · # runs}}"
+    "defaultMessage": "{runs,plural,one{measured · # run} other{measured · # runs}}"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "Measured: {decode} tok/s writing, {prefill} tok/s reading"
   },
   "placementCard.measuring": {
     "defaultMessage": "Measuring: a ~2k-token prompt, then 256 tokens…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} middle half"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "No speed figure"

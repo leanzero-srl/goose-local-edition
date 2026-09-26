@@ -284,8 +284,11 @@ pub fn rank_specs(
 /// (`--slots`: the fork re-plans at load for that many full-context sequences and admits requests
 /// by that KV budget; `--max-batch` = the same count, the rows proven per batch), and the split
 /// preflight approved (`--split` = ranks 1..N-1's starts), so the fork loads exactly that split
-/// instead of re-balancing on its own load-time figures, and the prefill chunk whose attention
-/// scores preflight fitted beside the fork's plan (`--prefill-step`, `RankPlan::prefill_step`).
+/// instead of re-balancing on its own load-time figures, the prefill chunk whose attention
+/// scores preflight fitted beside the fork's plan (`--prefill-step`, `RankPlan::prefill_step`),
+/// and this rank's scores at that chunk (`--attention-scores-bytes`,
+/// `RankPlan::attention_scores_bytes`): the fork's buffer cache holds its measured budget less
+/// its plan less these, so a prefill's scores and the cache never share the same room (Q-127).
 pub fn pipeline_serve_args(
     config: &DistributedConfig,
     node: &NodeConfig,
@@ -293,6 +296,7 @@ pub fn pipeline_serve_args(
     context: u64,
     split: &str,
     prefill_step: u64,
+    attention_scores_bytes: u64,
 ) -> Vec<String> {
     [
         "--model",
@@ -313,24 +317,36 @@ pub fn pipeline_serve_args(
         split,
         "--prefill-step",
         &prefill_step.to_string(),
+        "--attention-scores-bytes",
+        &attention_scores_bytes.to_string(),
     ]
     .iter()
     .map(|a| a.to_string())
     .collect()
 }
 
-/// The per-rank pipeline specs for the plan preflight approved.
+/// The per-rank pipeline specs for the plan preflight approved; `attention_scores_bytes[rank]`
+/// is that rank's `RankPlan::attention_scores_bytes`.
 pub fn pipeline_rank_specs(
     config: &DistributedConfig,
     served_id: &str,
     context: u64,
     split: &str,
     prefill_step: u64,
+    attention_scores_bytes: &[u64],
     memory_report_seconds: f64,
 ) -> Vec<RankSpec> {
-    base_specs(config, served_id, memory_report_seconds, |_, node| {
+    base_specs(config, served_id, memory_report_seconds, |rank, node| {
         RankProgram::PipelineServe {
-            serve_args: pipeline_serve_args(config, node, served_id, context, split, prefill_step),
+            serve_args: pipeline_serve_args(
+                config,
+                node,
+                served_id,
+                context,
+                split,
+                prefill_step,
+                attention_scores_bytes[rank],
+            ),
         }
     })
 }
@@ -949,8 +965,16 @@ pub(crate) mod tests {
             crate::distributed::plan::tests::FLASH_PLAN_32K,
         )
         .unwrap();
-        let specs =
-            pipeline_rank_specs(&config, "node-alias", 32_768, &plan.split_arg(), 2_048, 2.0);
+        let scores = [805_306_368u64, 0];
+        let specs = pipeline_rank_specs(
+            &config,
+            "node-alias",
+            32_768,
+            &plan.split_arg(),
+            2_048,
+            &scores,
+            2.0,
+        );
         for (rank, spec) in specs.iter().enumerate() {
             let RankProgram::PipelineServe { serve_args } = &spec.program else {
                 panic!("{spec:?}");
@@ -976,6 +1000,8 @@ pub(crate) mod tests {
                     "19",
                     "--prefill-step",
                     "2048",
+                    "--attention-scores-bytes",
+                    scores[rank].to_string().as_str(),
                 ]
             );
             assert_eq!(
@@ -1004,7 +1030,7 @@ pub(crate) mod tests {
         let mut four = config.clone();
         four.slots = Some(4);
         let RankProgram::PipelineServe { serve_args } =
-            &pipeline_rank_specs(&four, "node-alias", 8_192, "19", 2_048, 2.0)[0].program
+            &pipeline_rank_specs(&four, "node-alias", 8_192, "19", 2_048, &[0, 0], 2.0)[0].program
         else {
             unreachable!()
         };
@@ -1077,6 +1103,7 @@ pub(crate) mod tests {
              \x20   parser.add_argument('--slots', type=int, default=2)\n\
              \x20   parser.add_argument('--max-batch', type=int, default=2)\n\
              \x20   parser.add_argument('--prefill-step', type=int)\n\
+             \x20   parser.add_argument('--attention-scores-bytes', type=int, default=0)\n\
              \x20   parser.add_argument('--split')\n\
              def serve(options, emit=None):\n\
              \x20   time.sleep(0.3)\n\
@@ -1089,8 +1116,16 @@ pub(crate) mod tests {
         let mut config = pipeline_config();
         config.slots = Some(3);
         config.nodes[1].pipeline_python = Some("/usr/bin/python3".into());
-        let mut spec =
-            pipeline_rank_specs(&config, "node-alias", 32_768, "19", 2_048, 0.05).remove(1);
+        let mut spec = pipeline_rank_specs(
+            &config,
+            "node-alias",
+            32_768,
+            "19",
+            2_048,
+            &[0, 805_306_368],
+            0.05,
+        )
+        .remove(1);
         spec.memory_report_seconds = 0.05;
         let out = tokio::process::Command::new(spec.interpreter(&config.nodes[1]).unwrap())
             .args(python_args(&spec).unwrap())
@@ -1136,6 +1171,10 @@ pub(crate) mod tests {
         assert_eq!(
             ready["prefill_step"], 2_048,
             "the chunk preflight fitted the attention scores to, not the fork's default"
+        );
+        assert_eq!(
+            ready["attention_scores_bytes"], 805_306_368,
+            "this rank's own scores, which the fork's buffer cache leaves room for"
         );
         assert_eq!(ready["rank"], 1);
         assert_eq!(ready["coordinator"], "192.168.0.1:32323");
@@ -1357,7 +1396,8 @@ print("ok")
             return;
         };
         let config = pipeline_config();
-        let spec = pipeline_rank_specs(&config, "node-alias", 32_768, "19", 2_048, 2.0).remove(0);
+        let spec =
+            pipeline_rank_specs(&config, "node-alias", 32_768, "19", 2_048, &[0, 0], 2.0).remove(0);
         let rank = include_str!("pipeline_rank.py");
         let serves = rank
             .find("threading.Thread(target=report_memory")

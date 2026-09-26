@@ -7,7 +7,8 @@ import {
 } from './mlxRemoteReport';
 import { buildMlxTrayModel, lostSinceText } from './mlxTray';
 import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
-import { EMPTY_BOOK, parseMlxLiveStatus } from '../components/leanzero-swarm/mlxLiveStats';
+import { parseMlxLiveStatus } from '../components/leanzero-swarm/mlxLiveStats';
+import { MEASURED_PENDING } from './mlxMeasuredRuns';
 import {
   GENERATING_STATUS,
   IDLE_STATUS,
@@ -38,7 +39,7 @@ function remoteSnapshot(body: unknown): MlxEngineSnapshot {
     mode: 'running',
     baseUrl: RELAY,
     stats: read.stats,
-    rates: EMPTY_BOOK,
+    measured: MEASURED_PENDING,
   };
 }
 

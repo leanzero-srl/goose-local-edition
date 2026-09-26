@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Precisa de mais {gb} GB de memória livre"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Nenhuma execução desde que reiniciou — a próxima resposta dará uma taxa de escrita"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Nenhuma execução medida ainda — a próxima resposta dará uma taxa de escrita"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Ainda não há execuções medidas desta forma — «Medir velocidade» em «Executar» registra uma"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "de {gb} GB"
@@ -4167,7 +4164,7 @@
     "defaultMessage": "tokens do prompt, lendo há {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s lendo, mais lenta–mais rápida"
+    "defaultMessage": "tok/s lendo, metade central das execuções"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s lendo este prompt"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} de {max} tokens"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Lendo as execuções medidas pelo goose…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "Não foi possível ler as execuções medidas pelo goose: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Atendendo"
@@ -4269,7 +4272,7 @@
     "defaultMessage": "GB de pesos"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s escrevendo, mais lenta–mais rápida"
+    "defaultMessage": "tok/s escrevendo, metade central das execuções"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s escrevendo"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Deixa {model} nesta conversa"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Chamada auxiliar do goose em execução"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Atendendo outro trabalho"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Compartilhado com outro trabalho"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Ocupado, não se sabe para quem"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Limpe suas configurações de modelo e provedor selecionados para começar do zero"
@@ -5301,13 +5316,16 @@
     "defaultMessage": "Em execução e ainda não medido — Medir velocidade troca a estimativa pelo número deste Mac."
   },
   "placementCard.measured": {
-    "defaultMessage": "{runs, plural, one {medido} other {medido · # execuções}}"
+    "defaultMessage": "{runs, plural, one {medido · # execução} other {medido · # execuções}}"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "Medido: {decode} tok/s escrevendo, {prefill} tok/s lendo"
   },
   "placementCard.measuring": {
     "defaultMessage": "Medindo: um prompt de ~2k tokens e depois 256 tokens…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} metade central"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "Sem número de velocidade"

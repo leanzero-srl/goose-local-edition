@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "あと {gb} GB の空きメモリが必要"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "再起動後の実行はまだありません — 次の応答で書き込み速度が出ます"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "まだ計測された実行はありません — 次の応答で書き込み速度が出ます"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "この方法での計測済みの実行はまだありません — 「実行」の「速度を測定」で記録できます"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
@@ -4167,7 +4164,7 @@
     "defaultMessage": "プロンプトトークン、{elapsed} 読み込み中"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s 読み取り、最遅–最速"
+    "defaultMessage": "tok/s 読み取り、実行の中央半分"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s（このプロンプトの読み込み）"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} / {max} トークン"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "goose の計測済みの実行を読み込み中…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "goose の計測済みの実行を読み込めませんでした: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "処理対象"
@@ -4269,7 +4272,7 @@
     "defaultMessage": "GB の重み"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s 書き込み、最遅–最速"
+    "defaultMessage": "tok/s 書き込み、実行の中央半分"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s（書き込み）"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "このチャットでは {model} から切り替えます"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose の補助呼び出しを実行中"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "他の処理を実行中"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "他の処理と共有中"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "処理中（誰の処理か不明）"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "選択したモデルとプロバイダー設定をクリアして最初からやり直します"
@@ -5308,6 +5323,9 @@
   },
   "placementCard.measuring": {
     "defaultMessage": "測定中：約 2k トークンのプロンプトの後に 256 トークン…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} 中央半分"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "速度データなし"

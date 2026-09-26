@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "{gb} GB और खाली मेमोरी चाहिए"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "रीस्टार्ट के बाद कोई रन नहीं — अगला उत्तर लिखने की दर देगा"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "अभी तक कोई रन मापा नहीं गया — अगला उत्तर लिखने की दर देगा"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "इस तरीके पर अभी तक कोई मापा गया रन नहीं — «चलाएँ» में «गति मापें» एक दर्ज करता है"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "{gb} GB में से"
@@ -4167,7 +4164,7 @@
     "defaultMessage": "प्रॉम्प्ट टोकन, {elapsed} से पढ़ रहा है"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s पढ़ना, सबसे धीमा–सबसे तेज़"
+    "defaultMessage": "tok/s पढ़ना, बीच के आधे रन"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s इस प्रॉम्प्ट को पढ़ते हुए"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{max} में से {written} टोकन"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "goose के मापे गए रन पढ़े जा रहे हैं…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "goose के मापे गए रन पढ़े नहीं जा सके: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "सेवा दे रहा है"
@@ -4269,7 +4272,7 @@
     "defaultMessage": "GB वेट्स"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s लिखना, सबसे धीमा–सबसे तेज़"
+    "defaultMessage": "tok/s लिखना, बीच के आधे रन"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s लिखते हुए"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "इस चैट के लिए {model} छोड़ देता है"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose का सहायक कॉल चल रहा है"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "दूसरा काम कर रहा है"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "दूसरे काम के साथ साझा"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "व्यस्त, किसका काम पता नहीं"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "नए सिरे से शुरुआत करने के लिए अपने चयनित मॉडल और प्रदाता सेटिंग्स को साफ़ करें"
@@ -5301,13 +5316,16 @@
     "defaultMessage": "चल रहा है और अभी मापा नहीं गया — गति मापें अनुमान को इस Mac की अपनी संख्या से बदल देता है।"
   },
   "placementCard.measured": {
-    "defaultMessage": "{runs, plural, one {मापा गया} other {मापा गया · # बार}}"
+    "defaultMessage": "{runs, plural, one {मापा गया · # बार} other {मापा गया · # बार}}"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "मापा गया: लिखना {decode} tok/s, पढ़ना {prefill} tok/s"
   },
   "placementCard.measuring": {
     "defaultMessage": "माप रहे हैं: ~2k टोकन का प्रॉम्प्ट, फिर 256 टोकन…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} बीच का आधा"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "गति का आँकड़ा नहीं"

@@ -337,6 +337,7 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     contextWindow: 262144,
     phase: 'idle',
     activity: 'idle',
+    work: null,
     busyWithOthers: null,
     turnRequest: null,
     readTps: null,
@@ -363,8 +364,26 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
   });
 
   it('Q-56: the dot’s word is ON SCREEN beside it, not only its aria-label', async () => {
-    renderChip({ ...STUDIO, phase: 'writing', activity: 'generating' });
+    renderChip({ ...STUDIO, phase: 'writing', activity: 'generating', work: 'thisChat' });
     expect((await screen.findByTestId('model-chip-phase')).textContent).toBe('Writing');
+  });
+
+  it('Q-124: the chip says whose work the engine does — never "Reading a prompt" for goose’s helper after the turn', async () => {
+    const cases = [
+      [{ phase: 'reading', activity: 'prefill', work: 'thisChat' }, 'Reading a prompt'],
+      [{ phase: 'idle', activity: 'prefill', work: 'helper' }, 'goose helper running'],
+      [{ phase: 'held', activity: 'generating', work: 'others' }, 'Serving other work'],
+      [{ phase: 'writing', activity: 'generating', work: 'shared' }, 'Shared with other work'],
+      [{ phase: 'reading', activity: 'prefill', work: 'unattributed' }, 'Busy, whose work unknown'],
+    ] as const;
+    for (const [over, word] of cases) {
+      const { unmount } = renderChip({ ...STUDIO, ...over });
+      const phase = await screen.findByTestId('model-chip-phase');
+      expect(phase.textContent).toBe(word);
+      expect(phase).toHaveAttribute('data-work', over.work);
+      expect(screen.getAllByTestId('lz-status-dot')[0]).toHaveAttribute('data-phase', over.phase);
+      unmount();
+    }
   });
 
   it('a route to the Studio: "<model> · Work\'s Mac Studio" with the phase dot — never "swarm"', () => {

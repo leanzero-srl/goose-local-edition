@@ -188,7 +188,8 @@ fn aux_cors_layer() -> CorsLayer {
         ])
 }
 
-/// The HTTP API routes (`/v1/*`, `/cognirunner/*`, `/mlx-engine/serving`) over this server's own agent manager, under
+/// The HTTP API routes (`/v1/*`, `/cognirunner/*`, `/mlx-engine/serving`,
+/// `/mlx-engine/measured-runs`) over this server's own agent manager, under
 /// the same secret as the ACP endpoint (`X-Secret-Key`, or Bearer where
 /// `auth::accepts_bearer` allows). The desktop's engine is `goose serve`, so this is the mount
 /// that makes the API reachable on the node a user actually runs.
@@ -196,6 +197,7 @@ fn api_routes(server: Arc<AcpServer>, secret_key: Option<String>) -> Router {
     let source = crate::api::AgentManagerSource::FromAcpServer(server);
     let mut routes = crate::api::openai_compat::routes(source.clone())
         .merge(crate::api::mlx_serving::routes(source.clone()))
+        .merge(crate::api::mlx_measured_runs::routes())
         .merge(crate::api::cognirunner::routes(source));
     if let Some(secret_key) = secret_key {
         routes = routes.layer(axum::middleware::from_fn_with_state(

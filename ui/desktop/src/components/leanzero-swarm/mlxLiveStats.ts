@@ -195,98 +195,6 @@ export function measuredPrefillTps(stats: MlxLiveStats): number {
   return best?.tps ?? 0;
 }
 
-/** One run (one request) this reader saw, with the rates the engine measured for it. */
-export interface RunRates {
-  /** Its writing rate at the last read that caught it generating (the engine's own per-request rate). */
-  decodeTps: number | null;
-  /** Its prompt's uncached tokens over its time to first token — the same measure as the tile's. */
-  prefillTps: number | null;
-}
-
-/**
- * Every run this reader saw on ONE (Mac, model), by request id — what the idle tile and the tray
- * summarise as a median and a slowest–fastest range instead of one "last run" (the owner, 3.0.33:
- * "this only shows the last reported value instead of showing a median"). A run shorter than one
- * read is never seen; that is the reader's limit, stated by the count shown beside the median.
- *
- * The book OUTLIVES an engine restart (Q-44: after the Studio relaunched, the 8-run median was gone
- * and the tile showed no rate at all) — the same model on the same Mac writes at the same rate, so
- * the runs before the restart still measure it. The readers key their books by Mac and model, so a
- * different model never inherits them. Request ids are the engine's own; a restarted engine's ids
- * do not repeat the old ones, and one that did would overwrite a run, never invent one.
- */
-export interface RateBook {
-  uptimeS: number | null;
-  runs: ReadonlyMap<string, RunRates>;
-  /** The engine restarted while this book was kept: an empty book then says "since it restarted". */
-  restarted: boolean;
-}
-
-export const EMPTY_BOOK: RateBook = { uptimeS: null, runs: new Map(), restarted: false };
-
-function runPrefillTps(r: MlxLiveRequest): number | null {
-  // The distributed engine's rank 0 reports the prompt's own rate while it reads.
-  if (r.phase === 'prefill')
-    return r.status !== 'waiting' && (r.promptTps ?? 0) > 0 ? r.promptTps : null;
-  if (r.phase !== 'generation' || r.ttftS == null || r.ttftS <= 0 || r.promptTokens == null) {
-    return null;
-  }
-  const computed = r.promptTokens - (r.cachedTokens ?? 0);
-  if (computed <= 0) return null;
-  return r.promptTps ?? computed / r.ttftS;
-}
-
-/** Fold one read into the book; an engine whose uptime went backwards restarted — its runs stay. */
-export function advanceRateBook(prev: RateBook, stats: MlxLiveStats): RateBook {
-  const restarted = prev.uptimeS != null && stats.uptimeS != null && stats.uptimeS < prev.uptimeS;
-  const runs = new Map(prev.runs);
-  for (const r of stats.requests) {
-    const decode =
-      r.phase === 'generation' && r.completionTokens >= 2 && (r.tokensPerSecond ?? 0) > 0
-        ? r.tokensPerSecond
-        : null;
-    const prefill = runPrefillTps(r);
-    if (decode == null && prefill == null) continue;
-    const had = runs.get(r.id);
-    runs.set(r.id, {
-      decodeTps: decode ?? had?.decodeTps ?? null,
-      prefillTps: prefill ?? had?.prefillTps ?? null,
-    });
-  }
-  return {
-    uptimeS: stats.uptimeS ?? (restarted ? null : prev.uptimeS),
-    runs,
-    restarted: prev.restarted || restarted,
-  };
-}
-
-export interface RateSpread {
-  median: number;
-  min: number;
-  max: number;
-  runs: number;
-}
-
-export function rateSpread(values: readonly number[]): RateSpread | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-  return { median, min: sorted[0], max: sorted[sorted.length - 1], runs: sorted.length };
-}
-
-/** The book's writing and reading spreads — each over the runs that measured it. */
-export function bookSpreads(book: RateBook): {
-  writing: RateSpread | null;
-  reading: RateSpread | null;
-} {
-  const runs = [...book.runs.values()];
-  return {
-    writing: rateSpread(runs.flatMap((r) => (r.decodeTps != null ? [r.decodeTps] : []))),
-    reading: rateSpread(runs.flatMap((r) => (r.prefillTps != null ? [r.prefillTps] : []))),
-  };
-}
-
 export interface TpsSample {
   uptimeS: number;
   tps: number;
@@ -480,15 +388,14 @@ export async function readMlxLiveStatus(baseUrl: string): Promise<MlxLiveRead> {
 
 /**
  * What MAIN last read of the engine (utils/mlxEngineMonitor.ts), which reads it the whole time it
- * answers — the page reads only while the Engine tab is open. WHO it serves, and every run main
- * caught, for the engine kind main read. null when this build has no bridge or the bridge fails:
- * the tile then shows no "Serving" block rather than an empty one that would read as "nobody", and
- * only the runs the page itself caught.
+ * answers — the page reads only while the Engine tab is open: WHO it serves, for the engine kind main
+ * read. null when this build has no bridge or the bridge fails: the tile then shows no "Serving" block
+ * rather than an empty one that would read as "nobody". Measured runs are goose's (its store), never
+ * a book kept here (Q-129).
  */
 export async function readMainEngine(): Promise<{
   serving: MlxServing | null;
   engine: MlxEngineSnapshot['engine'];
-  rates: RateBook;
 } | null> {
   const bridge = (
     window as unknown as { electron?: { mlxEngineActivity?: () => Promise<MlxEngineSnapshot> } }
@@ -499,19 +406,8 @@ export async function readMainEngine(): Promise<{
     return {
       serving: snapshot.mode === 'running' ? snapshot.serving : null,
       engine: snapshot.engine,
-      rates: snapshot.rates,
     };
   } catch {
     return null;
   }
-}
-
-/** Two readers' books of ONE engine: the union of their runs (request ids are the engine's own). */
-export function mergeRateBooks(a: RateBook, b: RateBook): RateBook {
-  const uptimes = [a.uptimeS, b.uptimeS].filter((u): u is number => u != null);
-  return {
-    uptimeS: uptimes.length ? Math.max(...uptimes) : null,
-    runs: new Map([...a.runs, ...b.runs]),
-    restarted: a.restarted || b.restarted,
-  };
 }

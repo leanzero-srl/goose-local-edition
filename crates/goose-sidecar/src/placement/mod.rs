@@ -8,6 +8,7 @@ pub mod chip;
 pub mod model;
 pub mod planner;
 pub mod predict;
+pub mod runs;
 pub mod store;
 
 /// Resident bytes of whatever LISTENS on `port` (the single engine's python, found by its socket,

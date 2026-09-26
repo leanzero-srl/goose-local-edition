@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "還需要 {gb} GB 可用記憶體"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "重新啟動後還沒有執行紀錄——下一次回覆會給出寫入速度"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "還沒有測得執行紀錄——下一次回覆會給出寫入速度"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "這種方式還沒有測得的執行紀錄——在「執行」中按「測量速度」即可記錄一次"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
@@ -4167,7 +4164,7 @@
     "defaultMessage": "個提示詞 token，已讀取 {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s 讀取，最慢–最快"
+    "defaultMessage": "tok/s 讀取，中間一半的執行"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s（讀取此提示詞）"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} / {max} 個 token"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "正在讀取 goose 測得的執行紀錄…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "無法讀取 goose 測得的執行紀錄：{detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "正在服務"
@@ -4269,7 +4272,7 @@
     "defaultMessage": "GB 權重"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s 寫入，最慢–最快"
+    "defaultMessage": "tok/s 寫入，中間一半的執行"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s（生成）"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "此聊天將不再使用 {model}"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose 輔助呼叫執行中"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "正在處理其他工作"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "與其他工作共用"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "忙碌中，不清楚是誰的工作"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "清除您選定的模型與供應商設定以重新開始"
@@ -5308,6 +5323,9 @@
   },
   "placementCard.measuring": {
     "defaultMessage": "測量中：約 2k token 的提示，然後 256 個 token…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} 中間一半"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "無速度資料"

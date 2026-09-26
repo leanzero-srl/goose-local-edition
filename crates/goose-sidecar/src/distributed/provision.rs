@@ -34,12 +34,16 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// every rank snapshots its own layers at the single engine's stable boundary and restores the
 /// SAME prefix rank 0 chose, bounded inside each rank's planned KV budget minus the live batch;
 /// usage carries `prompt_tokens_details.cached_tokens`, `/v1/status` a `prefix_cache` block, and
-/// `/v1/models` declares `rapid_mlx_transient_tail` (so the omlx provider sends the tail).
+/// `/v1/models` declares `rapid_mlx_transient_tail` (so the omlx provider sends the tail), and
+/// MLX's buffer cache bounded by the rank's MEASURED budget less its plan less the attention
+/// scores goose charges (`serve --attention-scores-bytes`; 66ccd37a6, branch
+/// lz/pipeline-cache-budget, tag lz-pipeline-qwen4.2, Q-127 — it was the GPU ceiling less the
+/// plan, and the Flash split's rank 0 cached 49.5 GB beside ~60 GB active on a 81.4 GB budget).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "b7bd1afc2fd1d75ed366c09c3e41b96be2cfbb68";
+pub const PIPELINE_FORK_COMMIT: &str = "66ccd37a6d2e07e7dfb9cb3705e5c43266675bea";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@b7bd1afc2fd1d75ed366c09c3e41b96be2cfbb68";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@66ccd37a6d2e07e7dfb9cb3705e5c43266675bea";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.

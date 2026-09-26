@@ -837,7 +837,7 @@ mod tests {
              def add_arguments(parser):\n\
              \x20   for flag in ('--model', '--served-model-name', '--host', '--split'):\n\
              \x20       parser.add_argument(flag)\n\
-             \x20   for flag in ('--port', '--context', '--slots', '--max-batch', '--prefill-step'):\n\
+             \x20   for flag in ('--port', '--context', '--slots', '--max-batch', '--prefill-step', '--attention-scores-bytes'):\n\
              \x20       parser.add_argument(flag, type=int)\n\
              def serve(options, emit=None):\n\
              \x20   done = threading.Event()\n\
@@ -875,7 +875,8 @@ mod tests {
         config.nodes[1] = node.clone();
         config.nodes[0].pipeline_python = Some("/unused/rank0/python".to_string());
         let spec =
-            launch::pipeline_rank_specs(&config, "served-id", 8_192, "19", 2_048, 0.05).remove(1);
+            launch::pipeline_rank_specs(&config, "served-id", 8_192, "19", 2_048, &[0, 0], 0.05)
+                .remove(1);
         RankStartRequest {
             run_id: "run-1".to_string(),
             requester: Requester {

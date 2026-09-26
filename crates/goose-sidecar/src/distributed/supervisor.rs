@@ -1883,12 +1883,29 @@ fn launch_specs(
                          run it again"
                     )
                 })?;
+            let attention_scores = preflight
+                .nodes
+                .iter()
+                .map(|node| {
+                    node.plan
+                        .as_ref()
+                        .and_then(|plan| plan.attention_scores_bytes)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "the preflight charged {} no attention scores (a preflight made \
+                                 before Q-127): run it again",
+                                node.name
+                            )
+                        })
+                })
+                .collect::<Result<Vec<u64>>>()?;
             launch::pipeline_rank_specs(
                 &ctx.config,
                 &ctx.served_id,
                 context,
                 &super::plan::split_arg(starts),
                 prefill_step,
+                &attention_scores,
                 report_seconds,
             )
         }
@@ -3238,6 +3255,83 @@ mod tests {
                 })
             })
         }
+    }
+
+    /// Q-127: each pipeline rank is handed ITS OWN attention scores from its preflight plan, so
+    /// the fork bounds MLX's buffer cache at its measured budget less the plan less them; a plan
+    /// that carries none (made before Q-127) is refused by name, never launched with a 0.
+    #[test]
+    fn each_pipeline_rank_is_handed_its_own_attention_scores_and_a_plan_without_them_is_refused() {
+        let plan = crate::distributed::plan::parse_pipeline_plan(
+            crate::distributed::plan::tests::FLASH_PLAN_32K,
+        )
+        .unwrap();
+        let scores = [805_306_368u64, 6_442_450_944];
+        let mut report = PreflightReport {
+            ok: true,
+            ran_at_ms: 0,
+            backend: Backend::Jaccl,
+            runner: Some(Runner::PipelineQwen4),
+            model_type: None,
+            context_limit: Some(32_768),
+            context_source: None,
+            max_context_fits: None,
+            pipeline_starts: Some(plan.starts.clone()),
+            slots: Some(2),
+            checks: Vec::new(),
+            nodes: (0..2)
+                .map(|rank| preflight::NodePreflight {
+                    plan: Some(plan.stages[rank].rank_plan_with_scores(scores[rank], 2_048)),
+                    ..node_preflight(rank, None)
+                })
+                .collect(),
+            repairs: Vec::new(),
+        };
+        let shared = Arc::new(StdMutex::new(Shared {
+            status: DistributedStatus::stopped(),
+            stop_tx: None,
+            task: None,
+        }));
+        let ctx = RunContext {
+            shared: Arc::clone(&shared),
+            exec: Arc::new(RecoveringNode {
+                polls: StdMutex::new(0),
+                shared,
+                seen: StdMutex::new(Vec::new()),
+            }),
+            http: reqwest::Client::new(),
+            stream_http: reqwest::Client::new(),
+            config: two_mac_config(),
+            served_id: "node-alias".into(),
+            runner: Runner::PipelineQwen4,
+            owner: None,
+        };
+        let specs = launch_specs(&ctx, &report, 32_768).unwrap();
+        for (rank, spec) in specs.iter().enumerate() {
+            let launch::RankProgram::PipelineServe { serve_args } = &spec.program else {
+                panic!("{spec:?}");
+            };
+            let joined = serve_args.join(" ");
+            assert!(
+                joined.ends_with(&format!(
+                    "--prefill-step 2048 --attention-scores-bytes {}",
+                    scores[rank]
+                )),
+                "{joined}"
+            );
+        }
+
+        report.nodes[1]
+            .plan
+            .as_mut()
+            .unwrap()
+            .attention_scores_bytes = None;
+        let refusal = format!("{:#}", launch_specs(&ctx, &report, 32_768).unwrap_err());
+        assert_eq!(
+            refusal,
+            "the preflight charged node1 no attention scores (a preflight made before Q-127): run \
+             it again"
+        );
     }
 
     #[tokio::test]

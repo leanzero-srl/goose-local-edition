@@ -515,6 +515,54 @@ describe('Run it on the real 27B plan', () => {
   });
 
   /**
+   * Q-129: a single measured run was drawn as a range ("29.6–29.6 measured"). A measured figure draws
+   * its runs through measuredFigure — the rule the Engine tile and the tray use: one run is a count,
+   * never a range; several runs show their middle half; an estimate keeps its error range.
+   */
+  describe('the Studio way’s measured figure (Q-129)', () => {
+    const withStudioDecode = (value: number, low: number, high: number, runs: number) => ({
+      ...PLAN_27B,
+      candidates: (PLAN_27B.candidates ?? []).map((c) =>
+        c.key.kind === 'single' && c.key.nodes[0] !== 'local'
+          ? {
+              ...c,
+              speed: {
+                ...c.speed,
+                decode: { estimate: { value, low, high }, measured: true, runs },
+              },
+            }
+          : c
+      ),
+    });
+
+    it('one run reads "measured · 1 run" beside its rate — never "29.6–29.6"', async () => {
+      mockPlan.mockResolvedValue(answer(withStudioDecode(29.6066, 29.6066, 29.6066, 1)));
+      renderCard();
+      const peer = await screen.findByTestId('placement-way-peer');
+      expect(within(peer).getByText('~29.6 tok/s writing')).toBeInTheDocument();
+      expect(within(peer).getByText('measured · 1 run')).toBeInTheDocument();
+      expect(within(peer).queryByText('29.6–29.6')).toBeNull();
+      expect(within(peer).queryByTestId('placement-figure-range')).toBeNull();
+    });
+
+    it('the Studio’s 303 counted turns: the median, their middle half, and the count', async () => {
+      mockPlan.mockResolvedValue(answer(withStudioDecode(26.96, 24.14, 30.74, 303)));
+      renderCard();
+      const peer = await screen.findByTestId('placement-way-peer');
+      expect(within(peer).getByText('~27.0 tok/s writing')).toBeInTheDocument();
+      expect(within(peer).getByText('24.1–30.7 middle half')).toBeInTheDocument();
+      expect(within(peer).getByText('measured · 303 runs')).toBeInTheDocument();
+    });
+
+    it('an estimate keeps its error range and says estimated', async () => {
+      renderCard();
+      const peer = await screen.findByTestId('placement-way-peer');
+      expect(within(peer).getByText('20.8–23.0')).toBeInTheDocument();
+      expect(within(peer).getByText('estimated')).toBeInTheDocument();
+    });
+  });
+
+  /**
    * Q-72: E2E #1 turn 0 took 20 min 20 s on the split — it writes ~14 tok/s against 22 on the Studio
    * alone, for ~1.2× faster prompt reading. For a model that fits one Mac, the split's row states the
    * trade-off in the plan's own figures, and goose's bare "Slower for this" is not repeated.

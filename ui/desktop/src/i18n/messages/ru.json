@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Нужно ещё {gb} ГБ свободной памяти"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Запусков после перезапуска нет — следующий ответ даст скорость записи"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Запусков пока не измерено — следующий ответ даст скорость записи"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "На этом способе запусков пока не измерено — «Измерить скорость» в «Запуск» запишет один"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "из {gb} ГБ"
@@ -4167,7 +4164,7 @@
     "defaultMessage": "токенов промпта, читается {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "ток/с чтение, медленнее–быстрее"
+    "defaultMessage": "ток/с чтение, средняя половина запусков"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s при чтении этого промпта"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} из {max} токенов"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Читаем измеренные goose запуски…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "Не удалось прочитать измеренные goose запуски: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Обслуживает"
@@ -4269,7 +4272,7 @@
     "defaultMessage": "ГБ весов"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "ток/с запись, медленнее–быстрее"
+    "defaultMessage": "ток/с запись, средняя половина запусков"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s при записи"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Уходит с {model} в этом чате"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Идёт вспомогательный вызов goose"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Обслуживает другую работу"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Делит с другой работой"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Занят, чья работа — неизвестно"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Очистить выбранную модель и настройки провайдера, чтобы начать заново"
@@ -5308,6 +5323,9 @@
   },
   "placementCard.measuring": {
     "defaultMessage": "Измерение: запрос на ~2k токенов, затем 256 токенов…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} средняя половина"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "Нет данных о скорости"

@@ -3,6 +3,7 @@
 //! engine the desktop runs) and goosed serve the same handlers.
 
 pub mod cognirunner;
+pub mod mlx_measured_runs;
 pub mod mlx_serving;
 pub mod openai_compat;
 

@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Butuh {gb} GB memori bebas lagi"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Belum ada run sejak dimulai ulang — balasan berikutnya memberi laju menulis"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Belum ada run yang diukur — balasan berikutnya memberi laju menulis"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Belum ada run terukur dengan cara ini — Ukur kecepatan di Jalankan mencatat satu"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "dari {gb} GB"
@@ -4167,7 +4164,7 @@
     "defaultMessage": "token prompt, dibaca selama {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s membaca, paling lambat–paling cepat"
+    "defaultMessage": "tok/s membaca, separuh tengah dari run"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s membaca prompt ini"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} dari {max} token"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Membaca run terukur goose…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "Run terukur goose tidak dapat dibaca: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Melayani"
@@ -4269,7 +4272,7 @@
     "defaultMessage": "GB bobot"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s menulis, paling lambat–paling cepat"
+    "defaultMessage": "tok/s menulis, separuh tengah dari run"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s menulis"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Meninggalkan {model} untuk obrolan ini"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Panggilan pembantu goose berjalan"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Melayani pekerjaan lain"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Dibagi dengan pekerjaan lain"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Sibuk, milik siapa tidak diketahui"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Bersihkan pengaturan model dan penyedia yang dipilih untuk memulai dari awal"
@@ -5308,6 +5323,9 @@
   },
   "placementCard.measuring": {
     "defaultMessage": "Mengukur: prompt ~2k token, lalu 256 token…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} separuh tengah"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "Tidak ada angka kecepatan"

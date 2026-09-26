@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "여유 메모리가 {gb}GB 더 필요합니다"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "재시작 이후 실행 없음 — 다음 응답에서 쓰기 속도가 나옵니다"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "아직 측정된 실행 없음 — 다음 응답에서 쓰기 속도가 나옵니다"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "이 방식으로 측정된 실행이 아직 없습니다 — '실행'의 '속도 측정'으로 하나를 기록합니다"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb}GB"
@@ -4167,7 +4164,7 @@
     "defaultMessage": "프롬프트 토큰, {elapsed}째 읽는 중"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s 읽기, 최저–최고"
+    "defaultMessage": "tok/s 읽기, 실행의 중간 절반"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s (이 프롬프트 읽기)"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} / {max} 토큰"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "goose가 측정한 실행을 읽는 중…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "goose가 측정한 실행을 읽을 수 없습니다: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "처리 중"
@@ -4269,7 +4272,7 @@
     "defaultMessage": "GB 가중치"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s 쓰기, 최저–최고"
+    "defaultMessage": "tok/s 쓰기, 실행의 중간 절반"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s (작성)"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "이 채팅에서 {model} 사용을 그만둡니다"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose 보조 호출 실행 중"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "다른 작업 처리 중"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "다른 작업과 공유 중"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "처리 중, 누구의 작업인지 알 수 없음"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "선택한 모델 및 제공업체 설정을 지우고 새로 시작합니다."
@@ -5308,6 +5323,9 @@
   },
   "placementCard.measuring": {
     "defaultMessage": "측정 중: 약 2k 토큰 프롬프트 후 256 토큰…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} 중간 절반"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "속도 수치 없음"

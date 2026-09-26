@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "{gb} GB daha boş bellek gerekiyor"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Yeniden başladığından beri çalıştırma yok — sonraki yanıt bir yazma hızı verir"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Henüz ölçülen çalıştırma yok — sonraki yanıt bir yazma hızı verir"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Bu yolda henüz ölçülmüş çalıştırma yok — Çalıştır'daki Hızı ölç bir tane kaydeder"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
@@ -4167,7 +4164,7 @@
     "defaultMessage": "istem tokenı, {elapsed} süredir okunuyor"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s okuma, en yavaş–en hızlı"
+    "defaultMessage": "tok/s okuma, çalıştırmaların orta yarısı"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s (bu istemi okuma)"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} / {max} token"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "goose'un ölçtüğü çalıştırmalar okunuyor…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "goose'un ölçtüğü çalıştırmalar okunamadı: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Hizmet veriyor"
@@ -4269,7 +4272,7 @@
     "defaultMessage": "GB ağırlık"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s yazma, en yavaş–en hızlı"
+    "defaultMessage": "tok/s yazma, çalıştırmaların orta yarısı"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s (yazma)"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Bu sohbet için {model} bırakılır"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose yardımcı çağrısı çalışıyor"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Başka bir işe hizmet ediyor"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Başka işle paylaşılıyor"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Meşgul, kimin işi bilinmiyor"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Yeni bir başlangıç yapmak için seçtiğiniz model ve sağlayıcı ayarlarını temizleyin"
@@ -5301,13 +5316,16 @@
     "defaultMessage": "Çalışıyor ve henüz ölçülmedi — Hızı ölç, tahmini bu Mac’in kendi sayısıyla değiştirir."
   },
   "placementCard.measured": {
-    "defaultMessage": "{runs, plural, one {ölçüldü} other {ölçüldü · # çalıştırma}}"
+    "defaultMessage": "{runs, plural, one {ölçüldü · # çalıştırma} other {ölçüldü · # çalıştırma}}"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "Ölçüldü: yazma {decode} tok/sn, okuma {prefill} tok/sn"
   },
   "placementCard.measuring": {
     "defaultMessage": "Ölçülüyor: ~2k token’lık bir istem, ardından 256 token…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} orta yarı"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "Hız verisi yok"

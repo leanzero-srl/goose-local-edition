@@ -70,6 +70,13 @@ pub struct RankPlan {
     pub with_overhead_bytes: u64,
     pub budget_bytes: u64,
     pub fits: bool,
+    /// Pipeline: the prefill attention scores in `workspace_bytes` that the fork's own plan leaves
+    /// out (`PipelineAttention::scores_bytes` at `prefill_step`). The rank's serve is handed them
+    /// (`--attention-scores-bytes`) so MLX's buffer cache holds the fork's measured budget less
+    /// the plan less these — the transient room the chunk was sized into (Q-127). `None` for the
+    /// tensor runner and for a pipeline plan made before Q-127.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_scores_bytes: Option<u64>,
 }
 
 impl RankPlan {
@@ -484,6 +491,7 @@ impl TensorModelFacts {
             with_overhead_bytes: with_overhead,
             budget_bytes: budget,
             fits: with_overhead <= budget,
+            attention_scores_bytes: None,
         };
         plan.prompt_cache_entries =
             plan.prompt_cache_limit_bytes() / self.smallest_cache_entry_bytes(ranks);
@@ -674,6 +682,7 @@ impl PipelineStage {
             with_overhead_bytes: total,
             budget_bytes: self.budget_bytes,
             fits: self.fits && total <= self.budget_bytes,
+            attention_scores_bytes: Some(scores),
         }
     }
 }
@@ -1197,6 +1206,7 @@ pub(crate) mod tests {
         let charged = rank1.rank_plan_with_scores(6_442_450_944, 2_048);
         assert_eq!(charged.with_overhead_bytes, 48_424_487_136 + 6_442_450_944);
         assert_eq!(charged.workspace_bytes, 4_515_057_664 + 6_442_450_944);
+        assert_eq!(charged.attention_scores_bytes, Some(6_442_450_944));
         assert!(charged.fits);
 
         // The same room at the model's full 262,144 tokens: a 2,048-token chunk would need 51.5

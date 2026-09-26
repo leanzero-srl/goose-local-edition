@@ -3089,8 +3089,8 @@ export const zMlxEstimateDto = z.object({
 });
 
 /**
- * `measured` = goose timed this placement (median of `runs`, range = their extremes); else the
- * calibrated formula's estimate.
+ * `measured` = goose timed this placement (median of `runs`, range = their middle half, rounded
+ * out to whole runs — all of them up to four); else the calibrated formula's estimate.
  */
 export const zMlxSpeedFigureDto = z.object({
     estimate: zMlxEstimateDto,

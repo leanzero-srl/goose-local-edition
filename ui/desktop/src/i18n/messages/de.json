@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Braucht {gb} GB mehr freien Speicher"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Keine Läufe seit dem Neustart — die nächste Antwort liefert eine Schreibrate"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Noch keine Läufe gemessen — die nächste Antwort liefert eine Schreibrate"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Noch keine gemessenen Läufe auf diesem Weg — „Geschwindigkeit messen“ unter „Ausführen“ zeichnet einen auf"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "von {gb} GB"
@@ -4167,7 +4164,7 @@
     "defaultMessage": "Prompt-Tokens, wird seit {elapsed} gelesen"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s lesen, langsamster–schnellster"
+    "defaultMessage": "tok/s lesen, mittlere Hälfte der Läufe"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s beim Lesen dieses Prompts"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} von {max} Tokens"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "goose’ gemessene Läufe werden gelesen…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "goose’ gemessene Läufe konnten nicht gelesen werden: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Bedient"
@@ -4269,7 +4272,7 @@
     "defaultMessage": "GB Gewichte"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s schreiben, langsamster–schnellster"
+    "defaultMessage": "tok/s schreiben, mittlere Hälfte der Läufe"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s beim Schreiben"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Verlässt {model} für diesen Chat"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose-Hilfsaufruf läuft"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Bedient andere Arbeit"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Mit anderer Arbeit geteilt"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Beschäftigt, unklar für wen"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Löschen Sie Ihre ausgewählten Modell- und Anbietereinstellungen, um neu zu beginnen"
@@ -5301,13 +5316,16 @@
     "defaultMessage": "Läuft und ist noch nicht gemessen — Geschwindigkeit messen ersetzt die Schätzung durch die eigene Zahl dieses Macs."
   },
   "placementCard.measured": {
-    "defaultMessage": "{runs, plural, one {gemessen} other {gemessen · # Läufe}}"
+    "defaultMessage": "{runs, plural, one {gemessen · # Lauf} other {gemessen · # Läufe}}"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "Gemessen: {decode} Tok/s schreiben, {prefill} Tok/s lesen"
   },
   "placementCard.measuring": {
     "defaultMessage": "Messung: ein Prompt mit ~2k Tokens, dann 256 Tokens…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} mittlere Hälfte"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "Keine Geschwindigkeitsangabe"

@@ -1,5 +1,4 @@
 import {
-  bookSpreads,
   MLX_STATUS_POLL_MS,
   compactTokens,
   formatElapsed,
@@ -9,8 +8,8 @@ import {
   mlxActivity,
   readingNowTps,
   type MlxLiveStats,
-  type RateSpread,
 } from '../components/leanzero-swarm/mlxLiveStats';
+import { measuredFigure, type MeasuredFigure, type MlxMeasuredRead } from './mlxMeasuredRuns';
 import {
   backendName,
   gb1,
@@ -403,6 +402,32 @@ export function clientLabel(client: MlxClient): string {
   }
 }
 
+function measuredText(verb: string, f: MeasuredFigure): string {
+  const rate = `${verb} ${formatRate(f.median)} tok/s`;
+  if (f.runs === 1) return `${rate} · 1 run`;
+  const half = f.spread
+    ? `, middle half ${formatRate(f.spread.low)}–${formatRate(f.spread.high)}`
+    : '';
+  return `${rate} · median of ${f.runs} runs${half}`;
+}
+
+/**
+ * goose's measured runs for the way the engine runs — the figures the Engine tile and the Run it card
+ * show (the same reader, the same one-run rule): writing, and reading at the chat prompt size. A read
+ * still in flight says nothing; one that failed says why; none measured says so.
+ */
+export function measuredLines(read: MlxMeasuredRead): string[] {
+  if (read.kind === 'pending') return [];
+  if (read.kind === 'unread') return [clip(`Measured runs unread: ${read.detail}`)];
+  const writing = measuredFigure(read.answer.writing);
+  const reading = measuredFigure(read.answer.reading);
+  if (!writing && !reading) return ['No measured runs on this way yet'];
+  return [
+    writing ? measuredText('Writes', writing) : null,
+    reading ? measuredText('Reads', reading) : null,
+  ].filter((line): line is string => line != null);
+}
+
 function servingItems(serving: MlxServing | null): MlxTrayItem[] {
   if (!serving) return [];
   const items: MlxTrayItem[] = serving.clients.map((c) => ({
@@ -456,20 +481,9 @@ function runningItems(snapshot: MlxEngineSnapshot): MlxTrayItem[] {
     items.push({ type: 'info', label: `Read the last prompt at ${formatRate(prefill)} tok/s` });
   }
   if (activity !== 'generating' && decode === 0 && prefill === 0) {
-    const { writing, reading } = bookSpreads(snapshot.rates);
-    const spread = (s: RateSpread) =>
-      s.max > s.min
-        ? `${formatRate(s.median)} tok/s (${formatRate(s.min)}–${formatRate(s.max)})`
-        : `${formatRate(s.median)} tok/s`;
-    const runs = Math.max(writing?.runs ?? 0, reading?.runs ?? 0);
-    if (writing || reading) {
-      const parts = [
-        writing ? `writes ${spread(writing)}` : null,
-        reading ? `reads ${spread(reading)}` : null,
-      ].filter(Boolean);
-      const over = runs >= 2 ? `Median of ${runs} runs` : '1 run';
-      items.push({ type: 'info', label: `${over}: ${parts.join(', ')}` });
-    }
+    items.push(
+      ...measuredLines(snapshot.measured).map((label) => ({ type: 'info' as const, label }))
+    );
   }
   if (snapshot.statusDetail) {
     items.push({ type: 'info', label: clip(`Stale: ${snapshot.statusDetail}`) });
