@@ -180,6 +180,43 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
 - Live proof: the ignored `live_mount_of_the_real_engine…` test now sends a logprobs request and asserts 200-with-entries
   (or a 400 naming logprobs) AND the same pid still serving — 27B with MTP active: 200, 8 entries, unmount clean.
 
+## Warm vs cold, and what a census actually measures — Q-108 (2026-09-26, Studio, lz.7)
+Suspicion was "the hybrid prefix cache restores state that is not a cold prefill, so a warm engine loses its
+place". REFUTED, deterministically. Tools: `warm-cold/` next to this file.
+- Method (reuse it for every new pin): capture a real goose session's request bodies with `proxy.py`
+  (listen 18572 → tunnel 18571), then `replay.py` the same requests at temperature 0 with top-5 logprobs on
+  fresh engines per arm (`studio_serve.sh <label> <cache on|off> <mtp on|off>`, then `POST /v1/cache/clear`,
+  because a fresh engine is NOT cold: it LOADS the persisted prefix cache from
+  ~/.cache/rapid-mlx/prefix_cache/<model> at boot), and `compare.py ref test` → first divergent token,
+  both sides' top-2 margin, max |Δlogprob| before it.
+- Result (21-turn census, 4.1k→8.6k-token prompts): cache on vs off 22/25 identical (MTP on) and 24/25 (MTP off);
+  a SECOND session on the warm engine vs cold 18/21; MTP on vs off 21/25. EVERY divergence is an exact bf16 tie
+  (logprobs are quantised to 1/8: one side's top-2 margin 0.0, the other 0.125) on a harmless token
+  (" per"/" the", "="/"=path"); max |Δlogprob| before any divergence 0.125 = one quantum. The cache resumes at
+  2048-stride checkpoints (4096, 6144, 8192) and restores bit-for-bit up to that quantum.
+- Cross-session reuse is nil anyway: the working directory sits in the first user message at token ~1756,
+  below the first 2048 checkpoint, so session 2's first request is a MISS.
+- What really derails a census (read the words, 60 samples/arm of turn 2 at goose's sampling — goose-cli
+  sends no temperature, so the checkpoint's generation_config applies: 1.0 / 0.95 / 20): the model opens with a
+  FALSE claim about the session ("I need to go back and redo step 2 since I skipped it", "I need to continue
+  from where I was interrupted", "Step 1 failed because the `docs` directory did not exist") in 12/60 fresh,
+  9/60 warm, 12/60 fresh without MTP, 6/60 on a second fresh engine — no warm/MTP effect. Temperature only
+  halves it (0.7/0.8: 4/60, 0.6: 6/60, 0.3: 3/60). The cause is the REQUEST SHAPE: the census binary
+  (target/debug/goose of 2026-09-25 21:14) predates Q-94 and posts `<turn-context>` as its own trailing USER
+  turn; joined to the tool result (the app's shape since 41fff6704) or dropped, it is 0/60 at turn 2 and 0/60
+  at turn 3, and direct calls rise 23–25/60 → 45–51/60. A census must run a goose built from the current tree
+  (`strings <bin> | grep -c rapid_mlx_transient_tail_on_tool` ≥ 1) or it measures a shape the app no longer sends.
+- The ledger's "fresh clean, warm failed" split was confounded: g1 (clean) and g2 (failed) BOTH ran after the
+  same 10 replays on their engines; with ~16% per early turn, one derailment then feeds itself through history.
+- End to end with goose built from main (joined shape), one lz.7 engine, three censuses in a row: 59 calls,
+  0 failed, 0 false-state texts, no "attached"/"redo" spiral. Not perfect: n1 (the FRESH one) skipped step 20
+  and still answered "All 20 steps succeeded."; n3 ran step 6 before step 4; n2 was 20/20 in order.
+- Census harness traps: `--provider openai` never probes `rapid_mlx_transient_tail` (only `omlx` is in
+  PROVIDERS_FRONTING_RAPID_MLX), so no tail is marked and every turn resumes from a 2048-stride checkpoint
+  (re-prefilling 600–1,800 tokens) instead of the message boundary. Run it as `--provider omlx` to measure the app.
+- Residual, not fixed here: 1–6/60 replies open with `!` junk in plain text (`! [Image: …]`, `![](https://…)`) —
+  the text-side twin of Q-85's tool-argument `!`; the lz.7 guard covers only the tool-call skeleton.
+
 ## Placement planner + "Measure speed" (2026-09-24 — design local-edition/mlx/DESIGN-PLACEMENT.md, phases 1–2)
 - Code: `goose_sidecar::placement` (chip, model, predict, planner, store, bench); ACP `mlxEngine/{placementPlan,measureSpeed,
   speedHistory}` in `crates/goose/src/acp/server/mlx_placement.rs` (capability `mlxPlacement`); chat-turn recorder
