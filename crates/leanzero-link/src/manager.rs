@@ -40,6 +40,7 @@ use crate::state::{
     ExecuteRequest, MlxControl, MlxControlError, MlxOp, PeerRegistry, RemoteExecutor,
     SwarmStateSource,
 };
+use crate::tailnet_route::RouteReport;
 use crate::token::node_token_from_secret;
 use crate::wire::{LeaveReason, NodeStatus, PeerLeavingNotice};
 use crate::worker_client::{
@@ -205,6 +206,19 @@ pub struct LinkState {
     /// faulted under the connection (see [`ReconnectState`]).
     #[serde(default)]
     pub reconnect: ReconnectState,
+    /// How Link last reached its two servers (see [`LinkRoutes`]).
+    #[serde(default)]
+    pub routes: LinkRoutes,
+}
+
+/// The road Link last took to each of its servers — the auth worker and the mesh's
+/// control plane — and whether it failed ([`crate::tailnet_route`], Q-137). Shown so a
+/// tailnet pin, or a Funnel that stopped answering, is never invisible. `None` = no
+/// request has been made to that server since this goosed started.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LinkRoutes {
+    pub worker: Option<RouteReport>,
+    pub control: Option<RouteReport>,
 }
 
 #[derive(Debug, Error)]
@@ -718,6 +732,7 @@ impl LinkManager {
             )
         };
 
+        let routes = self.core.routes();
         let Some((mesh, registry, generation)) = live else {
             return LinkState {
                 auth,
@@ -728,6 +743,7 @@ impl LinkManager {
                 intent,
                 intent_error,
                 reconnect,
+                routes,
             };
         };
 
@@ -741,6 +757,7 @@ impl LinkManager {
                 intent,
                 intent_error,
                 reconnect,
+                routes: routes.clone(),
             },
             Err(err @ MeshError::DaemonExited { .. }) => {
                 drop_active_after_daemon_fault(
@@ -761,6 +778,7 @@ impl LinkManager {
                     intent,
                     intent_error,
                     reconnect: inner.reconnect.clone(),
+                    routes,
                 }
             }
             Err(err) => LinkState {
@@ -772,6 +790,7 @@ impl LinkManager {
                 intent,
                 intent_error,
                 reconnect,
+                routes: routes.clone(),
             },
         }
     }
@@ -1548,6 +1567,13 @@ impl Core {
             generation,
             seams: seams.clone(),
         })
+    }
+
+    fn routes(&self) -> LinkRoutes {
+        LinkRoutes {
+            worker: self.worker.last_route(),
+            control: self.config.mesh.control_route.get(),
+        }
     }
 
     /// The mesh node hostname: the machine hostname joined to a short, stable,

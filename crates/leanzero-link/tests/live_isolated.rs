@@ -158,3 +158,60 @@ async fn live_peer_call_goes_through_the_daemons_socks5_listener() {
 
     engine.shutdown().await;
 }
+
+/// Q-137 live: the daemon's control plane reaches a Headscale behind a `*.ts.net` Funnel
+/// host at the node's TAILNET address through [`leanzero_link::control_proxy`], while
+/// that node's Funnel is down. It joins NOTHING: the key is deliberately invalid, so the
+/// only way `tailscale up` fails fast with the control server's own verdict on the key is
+/// that TLS to the control server succeeded through the proxy (a dead Funnel instead
+/// times the join out). State lives in a temp dir, never `~/.leanzero`. Env:
+/// `LEANZERO_LINK_LIVE_TAILNET_LOGIN_SERVER` — e.g. `https://worksmacstudio.tailfc4700.ts.net`.
+/// Capture the personal `tailscale status --json` before and after.
+#[tokio::test]
+#[ignore = "starts a real userspace tailscaled against a live control server with an invalid key; capture the personal tailscale status before/after"]
+async fn live_control_plane_is_reached_over_the_tailnet_proxy() {
+    use leanzero_link::mesh::MeshError;
+    use leanzero_link::tailnet_route::RoutePath;
+
+    let login_server = std::env::var("LEANZERO_LINK_LIVE_TAILNET_LOGIN_SERVER")
+        .expect("LEANZERO_LINK_LIVE_TAILNET_LOGIN_SERVER must be set for this live test");
+    let state = tempfile::tempdir().unwrap();
+    let mut config = MeshConfig::new(
+        discovery::find_tailscaled().unwrap(),
+        discovery::find_tailscale_cli().unwrap(),
+        "lzp-live-q137".to_string(),
+    )
+    .unwrap();
+    config.state_dir = state.path().join("ts");
+    config.socket_path = config.state_dir.join("tailscaled.sock");
+    config.login_server = login_server;
+    config.join_timeout = Duration::from_secs(45);
+    config.validate().unwrap();
+    let route = config.control_route.clone();
+
+    let engine = MeshEngine::start(config).await.unwrap();
+    let started = Instant::now();
+    let err = engine
+        .join(
+            "hskey-auth-leanzero-q137-deliberately-invalid",
+            "lzp-live-q137",
+        )
+        .await
+        .expect_err("an invalid key must not join");
+    let took = started.elapsed();
+    eprintln!("join refused after {took:?}: {err}");
+    let report = route.get().expect("the control road is recorded");
+    eprintln!("control route: {report:?}");
+    engine.shutdown().await;
+
+    assert!(
+        matches!(report.path, RoutePath::Tailnet { .. }),
+        "the control host must be dialed at its tailnet address: {report:?}"
+    );
+    assert_eq!(report.last_failure, None, "{report:?}");
+    assert!(matches!(err, MeshError::JoinFailed { .. }), "{err}");
+    assert!(
+        took < Duration::from_secs(40),
+        "a join that ran to its timeout never heard the control server: {took:?}"
+    );
+}

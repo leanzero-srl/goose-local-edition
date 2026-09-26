@@ -37,6 +37,7 @@ import {
   type ReconnectState,
 } from '../../acp/leanzero-link';
 import { MyMacs } from './MyMacs';
+import { LinkRoutesPanel } from './LinkRoutes';
 import { WithMacs, useMacs } from './useMacs';
 
 const i18n = defineMessages({
@@ -777,6 +778,8 @@ const LeanZeroLinkSectionBody: React.FC = () => {
           }}
         />
       )}
+
+      {linkState?.routes && <LinkRoutesPanel routes={linkState.routes} />}
 
       <ConfirmationModal
         isOpen={logoutOpen}

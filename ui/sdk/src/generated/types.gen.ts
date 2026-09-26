@@ -5289,6 +5289,10 @@ export type LeanzeroLinkStateResponse_unstable = {
      * The launch reconnect's outcome.
      */
     reconnect?: LeanzeroLinkReconnectDto;
+    /**
+     * How Link last reached its auth worker and its mesh's control plane.
+     */
+    routes?: LeanzeroLinkRoutesDto;
 };
 
 /**
@@ -5402,6 +5406,34 @@ export type LeanzeroLinkReconnectDto = {
     at: string;
     state: 'failed';
 };
+
+/**
+ * The road Link last took to each of its two servers — the auth worker and the mesh's
+ * control plane. A server with a Tailscale `*.ts.net` name is reached at its tailnet
+ * address when this Mac is on its tailnet, and through Tailscale Funnel otherwise; the
+ * choice and its reason are shown, never switched silently. Absent = no request yet.
+ */
+export type LeanzeroLinkRoutesDto = {
+    worker?: LeanzeroLinkRouteDto | null;
+    control?: LeanzeroLinkRouteDto | null;
+};
+
+export type LeanzeroLinkRouteDto = {
+    host: string;
+    path: LeanzeroLinkRoutePathDto;
+    ip?: string | null;
+    reason?: string | null;
+    /**
+     * RFC3339.
+     */
+    decidedAt: string;
+    /**
+     * The last request on this road failed with this; absent once one succeeds.
+     */
+    lastFailure?: string | null;
+};
+
+export type LeanzeroLinkRoutePathDto = 'tailnet' | 'public';
 
 /**
  * The composed auth + mesh state.

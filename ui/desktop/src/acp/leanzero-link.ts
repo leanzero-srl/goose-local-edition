@@ -90,6 +90,27 @@ export type ReconnectState =
   | { state: 'reconnected'; at: string; meshIp: string }
   | { state: 'failed'; reason: string; at: string };
 
+/**
+ * The road Link last took to one of its servers. A `*.ts.net` server is reached at its tailnet
+ * address (`tailnet`, `ip`) when this Mac is on that node's tailnet, else by public DNS — which for a
+ * `*.ts.net` name is Tailscale Funnel (`public`, `reason` says why the tailnet was not used).
+ */
+export interface LinkRoute {
+  host: string;
+  path: 'tailnet' | 'public';
+  ip?: string;
+  reason?: string;
+  decidedAt: string;
+  /** The last request on this road failed with this; absent once one succeeds. */
+  lastFailure?: string;
+}
+
+/** How Link last reached its auth worker and its mesh's control plane; absent = no request yet. */
+export interface LinkRoutes {
+  worker?: LinkRoute;
+  control?: LinkRoute;
+}
+
 /** The composed auth + live mesh state goosed surfaces for the Link tab. */
 export interface LinkState {
   auth: AuthState;
@@ -101,6 +122,8 @@ export interface LinkState {
   intentError?: string;
   /** Absent only from a goosed that predates the launch reconnect. */
   reconnect?: ReconnectState;
+  /** Absent only from a goosed that predates the route report (Q-137). */
+  routes?: LinkRoutes;
   /** "Load and download models" as configured now (`LEANZERO_LINK_ALLOW_REMOTE_EXECUTION`). */
   remoteExecutionAllowed?: boolean;
   /** What the RUNNING control service enforces (connected only); differs until a reconnect. */

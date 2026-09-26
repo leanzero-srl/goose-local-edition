@@ -12614,6 +12614,11 @@
           "default": {
             "state": "idle"
           }
+        },
+        "routes": {
+          "$ref": "#/$defs/LeanzeroLinkRoutesDto",
+          "description": "How Link last reached its auth worker and its mesh's control plane.",
+          "default": {}
         }
       },
       "required": [
@@ -12977,6 +12982,85 @@
         }
       ],
       "description": "What goosed did about a `connected` intent without the user — the reconnect it runs\nonce per launch. Internally tagged on `state`:\n`idle | skipped | reconnecting | reconnected | failed`. `failed` is the loud one: the\nmesh should be up and is not, `reason` says why, and Retry is `connect`."
+    },
+    "LeanzeroLinkRoutesDto": {
+      "type": "object",
+      "properties": {
+        "worker": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LeanzeroLinkRouteDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LeanzeroLinkRouteDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "The road Link last took to each of its two servers — the auth worker and the mesh's\ncontrol plane. A server with a Tailscale `*.ts.net` name is reached at its tailnet\naddress when this Mac is on its tailnet, and through Tailscale Funnel otherwise; the\nchoice and its reason are shown, never switched silently. Absent = no request yet."
+    },
+    "LeanzeroLinkRouteDto": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/LeanzeroLinkRoutePathDto"
+        },
+        "ip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decidedAt": {
+          "type": "string",
+          "description": "RFC3339."
+        },
+        "lastFailure": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The last request on this road failed with this; absent once one succeeds."
+        }
+      },
+      "required": [
+        "host",
+        "path",
+        "decidedAt"
+      ]
+    },
+    "LeanzeroLinkRoutePathDto": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "tailnet",
+          "description": "Dialed at the node's tailnet address (`ip`); the name stays the TLS name."
+        },
+        {
+          "type": "string",
+          "const": "public",
+          "description": "Resolved by public DNS — for a `*.ts.net` name, Tailscale Funnel. `reason` says\nwhy the tailnet road was not taken."
+        }
+      ]
     },
     "LeanzeroLinkStatusRequest_unstable": {
       "type": "object",
