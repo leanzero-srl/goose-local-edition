@@ -253,8 +253,9 @@ pub fn parse_ps_row(text: &str) -> Result<Option<ProcSample>> {
 /// What a foreign MLX process is. A SINGLE server (`mlx_lm.server`, `rapid-mlx serve`) is one
 /// model behind one HTTP port — an independent engine whose resident memory the node's measured
 /// `available` already excludes. A DISTRIBUTED process (`mlx.launch`, the fork's
-/// `pipeline_qwen4`, a goose rank) joins a group: it holds a coordinator port or an RDMA queue
-/// pair and would collide with this launch.
+/// `pipeline_qwen4 serve|run`, a goose rank) joins a group: it holds a coordinator port or an RDMA
+/// queue pair and would collide with this launch. The fork's `plan` dry run joins nothing and is
+/// neither.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForeignKind {
     SingleServer,
@@ -295,9 +296,35 @@ fn shown(command: &str) -> String {
     command.chars().take(160).collect()
 }
 
+/// Whether a row naming the fork's pipeline joins a distributed group. Of
+/// `pipeline_qwen4 {plan,serve,run}` only `serve` and `run` call `mx.distributed.init` (fork
+/// `_cmd_run` / `pipeline_qwen4_serve.serve`); `plan` is the dry run "from index/headers only"
+/// goose itself runs on every pick and every preflight, and `--help` is the preflight's runner
+/// probe — neither opens a coordinator socket or a queue pair (Q-126: two of goose's own
+/// `plan --json` probes, gone seconds later, refused its own Run as a foreign split). A row that
+/// names the pipeline some other way (`pipeline_qwen4_serve`, a wrapper) is not provably a
+/// planner and stays a group member.
+fn pipeline_joins_group(command: &str) -> bool {
+    const GROUP_SUBCOMMANDS: [&str; 2] = ["serve", "run"];
+    let args: Vec<&str> = command
+        .split_whitespace()
+        .map(|arg| arg.trim_matches(|c| c == '\'' || c == '"'))
+        .collect();
+    let program = args.iter().position(|arg| {
+        *arg == "rapid_mlx.distributed.pipeline_qwen4"
+            || arg.rsplit('/').next() == Some("pipeline_qwen4.py")
+    });
+    match program {
+        Some(at) => args
+            .get(at + 1)
+            .is_some_and(|sub| GROUP_SUBCOMMANDS.contains(sub)),
+        None => true,
+    }
+}
+
 /// [`foreign_engine_processes`] with each row's [`ForeignKind`].
 pub fn classify_foreign_engines(text: &str, own: &[u32]) -> Vec<(u32, String, ForeignKind)> {
-    const DISTRIBUTED: [&str; 3] = ["mlx.launch", "pipeline_qwen4", super::launch::RANK_MARKER];
+    const GROUP_PROGRAMS: [&str; 2] = ["mlx.launch", super::launch::RANK_MARKER];
     const SINGLE: [&str; 3] = ["mlx_lm.server", "mlx_lm/server", "rapid-mlx serve"];
     ps_rows(text)
         .filter_map(|(pid, command)| {
@@ -305,7 +332,9 @@ pub fn classify_foreign_engines(text: &str, own: &[u32]) -> Vec<(u32, String, Fo
             if !interpreter || own.contains(&pid) {
                 return None;
             }
-            let kind = if DISTRIBUTED.iter().any(|m| command.contains(m)) {
+            let joins_group = GROUP_PROGRAMS.iter().any(|m| command.contains(m))
+                || (command.contains("pipeline_qwen4") && pipeline_joins_group(command));
+            let kind = if joins_group {
                 ForeignKind::Distributed
             } else if SINGLE.iter().any(|m| command.contains(m)) {
                 ForeignKind::SingleServer
@@ -672,6 +701,39 @@ Pages occupied by compressor:                 649325.
                 (101, ForeignKind::SingleServer),
                 (103, ForeignKind::SingleServer),
                 (104, ForeignKind::Distributed)
+            ]
+        );
+    }
+
+    /// Q-126, measured on 3.0.48 at 11:41:50: goose's own `plan --json` probes (pids 52054 and
+    /// 52057, exited seconds later) were named a foreign split and refused Run. The fork's `plan`
+    /// and `--help` join no group; its `serve`/`run`, `mlx.launch`, and a row that names the
+    /// pipeline some other way still do.
+    #[test]
+    fn the_forks_planner_joins_no_group_and_its_ranks_do() {
+        let fork = "/Users/me/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python";
+        let ps = format!(
+            "52054 {fork} -m rapid_mlx.distributed.pipeline_qwen4 plan --json --model /m/Qwen3.8-Flash-Next-4bit --node Mihai-Macbook:128.00:90.00:100.00 --batch 1
+52057 {fork} -m rapid_mlx.distributed.pipeline_qwen4 plan --json --model /m/Qwen3.8-Flash-Next-4bit --node a:1:1:1 --context 65536
+  401 {fork} -m rapid_mlx.distributed.pipeline_qwen4 --help
+  402 {fork} -m rapid_mlx.distributed.pipeline_qwen4 serve --model /m --port 8090
+  403 {fork} /x/rapid_mlx/distributed/pipeline_qwen4.py run --model /m --prompt hi --max-tokens 4
+  404 {fork} '/x/pipeline_qwen4.py' plan --json --model /m
+  405 {fork} -m rapid_mlx.distributed.pipeline_qwen4_serve --model /m
+  406 {fork} /x/bin/mlx.launch --hosts a,b -- python -m rapid_mlx.distributed.pipeline_qwen4 serve
+"
+        );
+        let kinds: Vec<(u32, ForeignKind)> = classify_foreign_engines(&ps, &[])
+            .into_iter()
+            .map(|(p, _, k)| (p, k))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (402, ForeignKind::Distributed),
+                (403, ForeignKind::Distributed),
+                (405, ForeignKind::Distributed),
+                (406, ForeignKind::Distributed),
             ]
         );
     }
