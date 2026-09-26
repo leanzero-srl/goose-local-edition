@@ -27,6 +27,14 @@
 //! All state is derived from the conversation, so it survives a resumed session and there is
 //! nothing to advance or reset. Which calls were zero-progress rides the tool result's trusted
 //! meta, the same channel the ACP server forwards to the desktop as `_meta.goose`.
+//!
+//! INSIDE one response the rule is simpler: a call identical (name + JSON-equal arguments) to an
+//! earlier call of the SAME response is never run — the model asked for one thing twice before it
+//! could have seen either answer, so the second cannot be new information, whatever the tool.
+//! It gets a named result pointing at the call that does run. Measured 2026-09-26 (Q-159, E2E #3d,
+//! the tensor split sampling greedy): one response carried 57 calls, 54 of them
+//! `ledger__ledger_append` with byte-identical arguments; goose ran all 54 and the chat ledger got 54
+//! identical lines.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -50,6 +58,10 @@ pub const REPETITION_INSPECTOR_NAME: &str = "repetition";
 const REPEAT_KEY: &str = "repeat";
 const SAME_OUTPUT: &str = "same_output";
 const SKIPPED: &str = "skipped";
+const IN_ANSWER: &str = "in_answer";
+
+const SETTLED_FINDING: &str = "REP-001";
+const IN_ANSWER_FINDING: &str = "REP-002";
 
 fn times(n: usize) -> String {
     if n == 1 {
@@ -68,6 +80,26 @@ fn skipped_reason(returned: usize) -> String {
         "Not run: this exact call already returned this same output {} this turn, you were told so, and no call since has returned anything new — running it again would return that output again. Use it, or take a different step.",
         times(returned)
     )
+}
+
+/// `position` is 1-based among the response's calls, the order the model wrote them.
+fn in_answer_reason(position: usize, original: &ToolRequest, name: &str) -> String {
+    format!(
+        "Not run: identical to call #{position} in this same answer ({name}, id {}) — same tool, same \
+         arguments, so that call's result is this call's result too. Ask for each call once per \
+         answer.",
+        original.id
+    )
+}
+
+/// The earlier request of the same response that `index` repeats, with its 1-based position.
+fn earlier_identical(requests: &[ToolRequest], index: usize) -> Option<(usize, &ToolRequest)> {
+    let call = requests[index].tool_call.as_ref().ok()?;
+    requests[..index]
+        .iter()
+        .enumerate()
+        .find(|(_, earlier)| same_call(&earlier.tool_call, call))
+        .map(|(position, earlier)| (position + 1, earlier))
 }
 
 type CompletedCall<'a> = (
@@ -179,6 +211,7 @@ fn standing<'a>(turn: &[CompletedCall<'a>], call: &CallToolRequestParams) -> Opt
             continue;
         }
         match (repeat_marker(result), standing.as_mut()) {
+            (Some(IN_ANSWER), _) => {}
             (Some(SKIPPED), Some(s)) => s.told_at = Some(index),
             (Some(SKIPPED), None) => {}
             (marker, Some(s)) if same_output(s.output, result) => {
@@ -237,10 +270,16 @@ pub fn note_if_unchanged(
     *output = Ok(result);
 }
 
-/// The result a declined repeat hands the model: the fact, not a refusal to continue.
-pub fn skipped_result(reason: &str) -> CallToolResult {
+/// The result a declined repeat hands the model: the fact, not a refusal to continue. The finding
+/// says which rule declined it, and the marker tells the desktop which line to show.
+pub fn skipped_result(reason: &str, finding_id: Option<&str>) -> CallToolResult {
     let mut result = CallToolResult::error(vec![Content::text(reason)]);
-    set_repeat_marker(&mut result, SKIPPED);
+    let marker = if finding_id == Some(IN_ANSWER_FINDING) {
+        IN_ANSWER
+    } else {
+        SKIPPED
+    };
+    set_repeat_marker(&mut result, marker);
     result
 }
 
@@ -280,16 +319,23 @@ impl ToolInspector for RepetitionInspector {
     ) -> Result<Vec<InspectionResult>> {
         Ok(tool_requests
             .iter()
-            .filter_map(|request| {
+            .enumerate()
+            .filter_map(|(index, request)| {
                 let call = request.tool_call.as_ref().ok()?;
-                let reason = settled_call_reason(messages, call)?;
+                let (reason, finding) = match earlier_identical(tool_requests, index) {
+                    Some((position, original)) => (
+                        in_answer_reason(position, original, &call.name),
+                        IN_ANSWER_FINDING,
+                    ),
+                    None => (settled_call_reason(messages, call)?, SETTLED_FINDING),
+                };
                 Some(InspectionResult {
                     tool_request_id: request.id.clone(),
                     action: InspectionAction::Deny,
                     reason,
                     confidence: 1.0,
                     inspector_name: REPETITION_INSPECTOR_NAME.to_string(),
-                    finding_id: Some("REP-001".to_string()),
+                    finding_id: Some(finding.to_string()),
                 })
             })
             .collect())
@@ -366,7 +412,7 @@ mod tests {
                 result.unwrap()
             } else {
                 assert_eq!(denied[0].action, InspectionAction::Deny);
-                skipped_result(&denied[0].reason)
+                skipped_result(&denied[0].reason, denied[0].finding_id.as_deref())
             };
             self.messages
                 .push(Message::assistant().with_tool_request(id.clone(), Ok(call)));
@@ -569,6 +615,94 @@ mod tests {
         assert_eq!(result.is_error, Some(true));
         assert_eq!(texts(&result)[1], same_output_note(1));
         assert_eq!(marker(&result), Some(SAME_OUTPUT));
+    }
+
+    fn request(id: &str, call: CallToolRequestParams) -> ToolRequest {
+        ToolRequest {
+            id: id.to_string(),
+            tool_call: Ok(call),
+            metadata: None,
+            tool_meta: None,
+        }
+    }
+
+    fn ledger_append(kind: &str, text: &str) -> CallToolRequestParams {
+        CallToolRequestParams::new("ledger__ledger_append")
+            .with_arguments(object!({ "kind": kind, "text": text }))
+    }
+
+    /// Q-159 (E2E #3d): one answer — a write, then the same `ledger__ledger_append` three times, one
+    /// of them with its keys in another order. The first append runs; each copy is declined with a
+    /// result naming the call it copies; nothing about the write or the history decides it.
+    #[tokio::test]
+    async fn copies_inside_one_answer_are_named_and_not_run() {
+        let inspector = RepetitionInspector::new(Arc::new(AtomicBool::new(true)));
+        let fact = "Harbourline Freight DC→Cloud readiness: Jira DC 9.12.x single node";
+        let reordered = CallToolRequestParams::new("ledger__ledger_append")
+            .with_arguments(object!({ "text": fact, "kind": "fact" }));
+        let answer = vec![
+            request("call_w", shell("cat > readiness.md")),
+            request("call_1", ledger_append("fact", fact)),
+            request("call_2", ledger_append("fact", fact)),
+            request("call_3", reordered),
+            request("call_4", ledger_append("finding", fact)),
+        ];
+        let messages = vec![Message::user().with_text("assess Harbourline")];
+        let denied = inspector
+            .inspect("s", &answer, &messages, GooseMode::Auto)
+            .await
+            .unwrap();
+
+        let ids: Vec<&str> = denied.iter().map(|d| d.tool_request_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["call_2", "call_3"],
+            "the first and the other-kind call run"
+        );
+        for d in &denied {
+            assert_eq!(d.action, InspectionAction::Deny);
+            assert_eq!(d.finding_id.as_deref(), Some(IN_ANSWER_FINDING));
+            assert_eq!(
+                d.reason,
+                "Not run: identical to call #2 in this same answer (ledger__ledger_append, id \
+                 call_1) — same tool, same arguments, so that call's result is this call's result \
+                 too. Ask for each call once per answer."
+            );
+            let result = skipped_result(&d.reason, d.finding_id.as_deref());
+            assert_eq!(marker(&result), Some(IN_ANSWER));
+            assert_eq!(texts(&result), vec![d.reason.as_str()]);
+        }
+    }
+
+    /// A copy declined inside one answer never ran, so it is not a "same output" the next answer can
+    /// be declined on: a poll repeated in the NEXT answer still runs and is only noted.
+    #[tokio::test]
+    async fn an_in_answer_copy_does_not_count_as_a_run_for_later_answers() {
+        let poll = shell("cargo test 2>&1 | tail -1");
+        let mut messages = vec![Message::user().with_text("run the tests")];
+        messages.push(
+            Message::assistant()
+                .with_tool_request("a", Ok(poll.clone()))
+                .with_tool_request("b", Ok(poll.clone())),
+        );
+        let copy = skipped_result("Not run: identical to call #1", Some(IN_ANSWER_FINDING));
+        messages.push(
+            Message::user()
+                .with_tool_response(
+                    "a",
+                    Ok(CallToolResult::success(vec![Content::text("1 passed")])),
+                )
+                .with_tool_response("b", Ok(copy)),
+        );
+
+        assert_eq!(settled_call_reason(&messages, &poll), None);
+        let mut output = Ok(CallToolResult::success(vec![Content::text("1 passed")]));
+        note_if_unchanged(&messages, &poll, &mut output);
+        let output = output.unwrap();
+        assert_eq!(
+            texts(&output),
+            vec!["1 passed", same_output_note(1).as_str()]
+        );
     }
 
     #[tokio::test]

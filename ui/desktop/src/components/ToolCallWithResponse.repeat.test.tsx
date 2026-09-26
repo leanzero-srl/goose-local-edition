@@ -59,6 +59,18 @@ describe('ToolCallWithResponse repeat guard line', () => {
     expect(screen.getByText('Completed')).toBeInTheDocument();
   });
 
+  it('shows a copy of an earlier call in the same answer as Skipped, not as Failed', () => {
+    renderCall(response('in_answer', true));
+    expect(
+      screen.getByText(
+        'Skipped — identical to an earlier call in this same answer'
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText('Skipped')).toBeInTheDocument();
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('tool-call-failure')).not.toBeInTheDocument();
+  });
+
   it('renders no repeat line for an ordinary call', () => {
     renderCall(response());
     expect(screen.queryByText(/identical to an earlier call/)).not.toBeInTheDocument();

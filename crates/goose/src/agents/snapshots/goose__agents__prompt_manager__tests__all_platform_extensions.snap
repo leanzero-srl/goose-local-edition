@@ -107,7 +107,7 @@ The project ledger (.goose/ledger.md) is this project's dated log — findings, 
 what was tried and why it is not coming back, facts learned. Its newest entries are in
 every turn's context and it survives compaction and sessions. Append to it with
 ledger_append the moment you learn something a future session would otherwise rediscover:
-a measurement, a dead end, a decision with its reason. Read further back with
+a measurement, a dead end, a decision with its reason — once each. Read further back with
 ledger_read. Facts that should be recalled by topic belong in memory; the ledger is
 what happened, in order.
 

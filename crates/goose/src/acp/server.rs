@@ -2036,6 +2036,7 @@ fn forming_progress_text(
         )
     };
     let mut parts = Vec::new();
+    parts.extend(forming_repeats_clause(&progress.repeats));
     if progress.argument_chars > 0 {
         parts.push(format!("{} of arguments", chars(progress.argument_chars)));
     }
@@ -2052,6 +2053,29 @@ fn forming_progress_text(
         return Some(format!("goose is writing {calls}"));
     }
     Some(format!("goose is writing {calls} — {}", parts.join(", ")))
+}
+
+/// The forming line's word on calls that copy an earlier call of the same response (Q-159: 54 of
+/// 57 were one `ledger__ledger_append`, and the line said only "writing 57 tool calls"). goose runs
+/// such a copy once (`tool_monitor`), so the person watching learns it now, not 40 minutes later.
+fn forming_repeats_clause(
+    repeats: &goose_providers::formats::openai::RepeatedCalls,
+) -> Option<String> {
+    let verb = match repeats.count {
+        0 => return None,
+        1 => "is",
+        _ => "are",
+    };
+    Some(match &repeats.one_original {
+        Some(tool) => format!(
+            "{} of them {verb} identical to an earlier {tool} call",
+            repeats.count
+        ),
+        None => format!(
+            "{} of them {verb} identical to earlier calls",
+            repeats.count
+        ),
+    })
 }
 
 /// Sends the forming line as a progress status whenever its text changes — the counts are the
@@ -3300,12 +3324,67 @@ mod tests {
                 argument_chars: 11_046,
                 reasoning_chars: 2_100,
                 unplaced_text_chars: 82_400,
+                ..Default::default()
             })
             .as_deref(),
             Some(
                 "goose is writing 36 tool calls, the latest to memory__remember_memory — 11.0k chars \
                  of arguments, 2.1k chars of reasoning, 82.4k chars of text not shown in the chat"
             )
+        );
+    }
+
+    /// Q-159 (E2E #3d): 57 calls forming, 54 of them one `ledger__ledger_append` copied word for word.
+    #[test]
+    fn forming_progress_text_says_how_many_calls_repeat_an_earlier_one() {
+        use goose_providers::formats::openai::{FormingProgress, RepeatedCalls};
+        let progress = |repeats: RepeatedCalls| FormingProgress {
+            tool_calls: 57,
+            writing: "ledger__ledger_append".to_string(),
+            argument_chars: 11_046,
+            repeats,
+            ..Default::default()
+        };
+        assert_eq!(
+            forming_progress_text(&progress(RepeatedCalls {
+                count: 54,
+                one_original: Some("ledger__ledger_append".to_string()),
+            }))
+            .as_deref(),
+            Some(
+                "goose is writing 57 tool calls, the latest to ledger__ledger_append — 54 of them \
+                 are identical to an earlier ledger__ledger_append call, 11.0k chars of arguments"
+            )
+        );
+        assert_eq!(
+            forming_progress_text(&progress(RepeatedCalls {
+                count: 1,
+                one_original: Some("shell".to_string()),
+            }))
+            .as_deref(),
+            Some(
+                "goose is writing 57 tool calls, the latest to ledger__ledger_append — 1 of them is \
+                 identical to an earlier shell call, 11.0k chars of arguments"
+            )
+        );
+        assert_eq!(
+            forming_progress_text(&progress(RepeatedCalls {
+                count: 3,
+                one_original: None,
+            }))
+            .as_deref(),
+            Some(
+                "goose is writing 57 tool calls, the latest to ledger__ledger_append — 3 of them are \
+                 identical to earlier calls, 11.0k chars of arguments"
+            )
+        );
+        assert_eq!(
+            forming_progress_text(&progress(RepeatedCalls::default())).as_deref(),
+            Some(
+                "goose is writing 57 tool calls, the latest to ledger__ledger_append — 11.0k chars of \
+                 arguments"
+            ),
+            "no repeats, no clause"
         );
     }
 

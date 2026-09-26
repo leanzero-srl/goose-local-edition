@@ -7889,6 +7889,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Output"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "Saltata — identica a una chiamata precedente in questa stessa risposta"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "Stessa chiamata e stesso output di una chiamata precedente di questo turno — il modello è stato avvisato"
   },

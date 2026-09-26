@@ -7889,6 +7889,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Keluaran"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "Dilewati — identik dengan panggilan sebelumnya dalam jawaban yang sama"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "Panggilan dan keluaran sama dengan panggilan sebelumnya di giliran ini — model sudah diberi tahu"
   },

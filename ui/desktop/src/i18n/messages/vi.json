@@ -7889,6 +7889,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Đầu ra"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "Đã bỏ qua — giống hệt một lệnh gọi trước đó trong cùng câu trả lời này"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "Cùng lệnh gọi và cùng đầu ra như một lệnh gọi trước đó trong lượt này — đã báo cho mô hình"
   },

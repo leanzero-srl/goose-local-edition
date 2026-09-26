@@ -67,15 +67,32 @@ const i18n = defineMessages({
     id: 'toolCallWithResponse.repeatSameOutput',
     defaultMessage: 'Same call and same output as an earlier call this turn — the model was told',
   },
+  repeatInAnswer: {
+    id: 'toolCallWithResponse.repeatInAnswer',
+    defaultMessage: 'Skipped — identical to an earlier call in this same answer',
+  },
 });
 
-type RepeatMarker = 'skipped' | 'same_output';
+type RepeatMarker = 'skipped' | 'same_output' | 'in_answer';
+
+const REPEAT_MARKERS: readonly RepeatMarker[] = ['skipped', 'same_output', 'in_answer'];
 
 // Set by the engine's repeat guard (tool_monitor.rs) and carried by the ACP adapter.
 function getRepeatMarker(toolResponse?: ToolResponseMessageContent): RepeatMarker | null {
   const repeat = toolResponse?.metadata?.repeat;
-  return repeat === 'skipped' || repeat === 'same_output' ? repeat : null;
+  return REPEAT_MARKERS.find((marker) => marker === repeat) ?? null;
 }
+
+// A call the repeat guard did not run: shown as Skipped with its line, never as Failed.
+function isNotRun(repeat: RepeatMarker | null): boolean {
+  return repeat === 'skipped' || repeat === 'in_answer';
+}
+
+const REPEAT_LINES = {
+  skipped: i18n.repeatSkipped,
+  same_output: i18n.repeatSameOutput,
+  in_answer: i18n.repeatInAnswer,
+} as const;
 
 interface ToolGraphNode {
   tool: string;
@@ -282,7 +299,7 @@ export default function ToolCallWithResponse({
       : undefined;
   // A Failed card says why on its face (Q-99: a Write that lost `path` showed only the repeat
   // line; "missing field `path`" sat inside the collapsed output). A declined repeat is not a failure.
-  const failure = repeat === 'skipped' ? null : toolFailureText(toolResponse?.toolResult);
+  const failure = isNotRun(repeat) ? null : toolFailureText(toolResponse?.toolResult);
 
   return (
     <>
@@ -314,7 +331,7 @@ export default function ToolCallWithResponse({
         )}
         {repeat && (
           <div className="border-t border-lz-border px-4 py-2 text-xs font-medium text-lz-warn">
-            {intl.formatMessage(repeat === 'skipped' ? i18n.repeatSkipped : i18n.repeatSameOutput)}
+            {intl.formatMessage(REPEAT_LINES[repeat])}
           </div>
         )}
         {/* Inline approval UI */}
@@ -814,7 +831,7 @@ function ToolCallView({
             : 'No result received'
           : loadingStatus === 'loading'
             ? 'Working'
-            : getRepeatMarker(toolResponse) === 'skipped'
+            : isNotRun(getRepeatMarker(toolResponse))
               ? intl.formatMessage(i18n.skipped)
               : loadingStatus === 'error'
                 ? 'Failed'

@@ -7889,6 +7889,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Sortie"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "Ignoré — identique à un appel précédent dans cette même réponse"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "Même appel et même sortie qu’un appel antérieur de ce tour — le modèle en a été informé"
   },

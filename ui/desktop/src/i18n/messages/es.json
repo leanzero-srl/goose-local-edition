@@ -7889,6 +7889,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Salida"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "Omitida — idéntica a una llamada anterior en esta misma respuesta"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "Misma llamada y misma salida que una llamada anterior de este turno — se le indicó al modelo"
   },

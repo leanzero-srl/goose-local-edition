@@ -7889,6 +7889,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Вывод"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "Пропущено — совпадает с более ранним вызовом в этом же ответе"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "Тот же вызов и тот же вывод, что у более раннего вызова в этом ходе — модели сообщено"
   },

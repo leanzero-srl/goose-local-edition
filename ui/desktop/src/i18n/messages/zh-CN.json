@@ -7889,6 +7889,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "输出"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "已跳过 — 与同一回答中较早的调用完全相同"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "与本轮中较早的一次调用相同、输出相同 — 已告知模型"
   },

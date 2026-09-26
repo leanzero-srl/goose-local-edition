@@ -7889,6 +7889,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "出力"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "スキップ — 同じ回答内の以前の呼び出しと同一"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "このターンの以前の呼び出しと同じ呼び出し・同じ出力 — モデルに伝えました"
   },
