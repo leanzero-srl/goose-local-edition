@@ -78,6 +78,8 @@ instructions: |
   - Enable/disable extensions
   - Test extension interactions
   - Verify isolation between extensions
+  - Verify `ask_user` is NOT among your tools: this run is a CLI host that no person answers,
+    and the needs-you extension registers only in desktop user sessions. Its presence is a FAIL.
 
   ### Phase 3: Delegate & Load Testing
   Test the unified delegation and knowledge-loading tools:

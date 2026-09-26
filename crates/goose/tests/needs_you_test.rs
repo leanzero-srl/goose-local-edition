@@ -210,9 +210,7 @@ async fn ask_user_pins_a_durable_item_and_ends_the_turn() -> Result<()> {
         .await?;
     tokio::pin!(reply);
     while let Some(event) = reply.next().await {
-        if let Err(error) = event {
-            return Err(error);
-        }
+        event?;
     }
 
     assert!(
