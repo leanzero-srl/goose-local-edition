@@ -7,6 +7,7 @@ import { ProjectsSection } from './ProjectsSection';
 import { AgentWorkSection } from './AgentWorkSection';
 import { BenchmarkSection } from './BenchmarkSection';
 import { ThemeSwitch } from './ThemeSwitch';
+import ActiveNowSection from '../sessionActivity/ActiveNowSection';
 import { useFeatures } from '../../contexts/FeaturesContext';
 import {
   NAV_ITEMS,
@@ -143,6 +144,7 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
       {/* The three trees, one shape (Mihai 2026-09-22): Projects, then Agent Work desks and
           Benchmark runs, each with its sessions under it. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <ActiveNowSection className="mt-2 shrink-0" />
         <ProjectsSection className="mt-2 shrink-0" />
         {isLocal && <AgentWorkSection className="mt-2 shrink-0" />}
         {isLocal && <BenchmarkSection className="mt-2 shrink-0" />}

@@ -9,12 +9,17 @@ import { SURFACE } from '../lz';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
 import { contrast, resolvedPaint, studioToken } from '../lz/resolvedPaint';
+import { resetNowForTests } from '../sessionActivity/ActivityPills';
+import {
+  resetSessionActivityForTests,
+  seedSessionActivityForTests,
+} from '../sessionActivity/sessionActivityStore';
 
 /**
  * The Projects tree in the Studio register (ui/desktop/DESIGN.md): a SectionHeader that counts
  * the rows the body shows, a ghost "+" whose glyph is the accent, hairline indent guides that are
- * separate elements (never a border-left), dense 32px rows, and the current session marked by an
- * accent StatusDot plus the inset ring. Behaviour is pinned by ProjectsSection.test.tsx; this file
+ * separate elements (never a border-left), dense 32px rows, and the current session marked by the
+ * inset ring alone. Behaviour is pinned by ProjectsSection.test.tsx; this file
  * pins the look and compiles every emitted class against main.css.
  */
 
@@ -119,7 +124,7 @@ describe('ProjectsSection (Studio look)', () => {
     expect(screen.getByText('goose').className).toContain('font-lz-medium');
   });
 
-  it('an expanded project draws a hairline guide beside 32px session rows; the current session carries the accent dot and the inset ring', async () => {
+  it('an expanded project draws a hairline guide beside 32px session rows; the current session carries the inset ring and NO dot', async () => {
     electronMocks([]);
     navMocks.activeSessionId.current = 'sess-1';
     navMocks.recentSessions.current = [
@@ -138,9 +143,11 @@ describe('ProjectsSection (Studio look)', () => {
     expect(current.className).toContain('h-lz-row-dense');
     for (const c of SURFACE.selectedRing.split(' ')) expect(current.className).toContain(c);
     expect(current.className).not.toContain('bg-lz-accent');
-    const dot = within(current).getByRole('img', { name: 'Current session' });
-    expect(dot.className).toContain('bg-lz-accent');
-    expect(dot.getAttribute('data-live')).toBeNull();
+    // A dot on the open row read as "running" (critic round 2026-09-26 row 5): the ring alone
+    // marks it, and an idle open row carries no state pill either.
+    expect(within(current).queryByRole('img')).toBeNull();
+    expect(current.getAttribute('data-state')).toBe('idle');
+    expect(within(current).queryByTestId('session-running-pill')).toBeNull();
 
     const other = screen.getByText('Ship the tree').closest('button') as HTMLElement;
     expect(within(other).queryByRole('img')).toBeNull();
@@ -246,5 +253,94 @@ describe('ProjectsSection (Studio look)', () => {
     );
     expect(classes.length).toBeGreaterThan(40);
     expect(await missingUtilities(classes)).toEqual([]);
+  }, 30_000);
+
+  it('running, waiting and failed sessions carry their state on the row, lead their folder past the preview, and compile', async () => {
+    resetNowForTests(Date.parse('2026-09-26T10:27:00Z'));
+    electronMocks([]);
+    const idle = Array.from({ length: 6 }, (_, i) =>
+      listItem({ id: `idle-${i}`, name: `Idle ${i}` })
+    );
+    navMocks.activeSessionId.current = 'idle-0';
+    navMocks.recentSessions.current = [
+      ...idle,
+      listItem({ id: 'run-1', name: 'Jira Migration Kickoff Notes', createdAt: '2026-09-26T09:00:00Z' }),
+      listItem({ id: 'old-1', name: 'Jira Migration Kickoff Notes', createdAt: '2026-09-20T09:00:00Z' }),
+      listItem({ id: 'wait-1', name: 'Service setup' }),
+      listItem({ id: 'fail-1', name: 'Cut short' }),
+    ];
+    seedSessionActivityForTests({
+      running: [
+        {
+          sessionId: 'run-1',
+          sessionName: 'Jira Migration Kickoff Notes',
+          workingDir: '/proj/goose',
+          startedAt: '2026-09-26T10:00:00Z',
+        },
+      ],
+      needsYou: [
+        {
+          id: 'ny_1',
+          sessionId: 'wait-1',
+          sessionName: 'Service setup',
+          workingDir: '/proj/goose',
+          question: 'Which database?',
+          why: 'w',
+          recommendedAnswer: 'r',
+          options: [],
+          createdAt: '2026-09-26T10:00:00Z',
+          status: 'open',
+        },
+      ],
+      failed: [
+        {
+          sessionId: 'fail-1',
+          sessionName: 'Cut short',
+          workingDir: '/proj/goose',
+          failedAt: '2026-09-26T02:00:00Z',
+          reason: 'The split across your Macs stopped mid-answer',
+        },
+      ],
+    });
+    try {
+      renderSection();
+      const runRow = await screen.findByTestId('session-row-run-1');
+      expect(runRow.getAttribute('data-state')).toBe('running');
+      expect(runRow.getAttribute('aria-busy')).toBe('true');
+      expect(within(runRow).getByTestId('session-running-pill').textContent).toBe('Running · 27m');
+      // Same title in one folder: the newer one is " · 2", and the running one is the newer.
+      expect(within(runRow).getByText('Jira Migration Kickoff Notes · 2')).toBeTruthy();
+
+      const waitRow = screen.getByTestId('session-row-wait-1');
+      expect(waitRow.getAttribute('data-state')).toBe('needs-you');
+      expect(waitRow.getAttribute('aria-busy')).toBeNull();
+      expect(within(waitRow).getByTestId('session-needs-you-pill')).toBeTruthy();
+
+      // The open idle row: ring only, no dot, no pill.
+      const openRow = screen.getByTestId('session-row-idle-0');
+      expect(openRow.getAttribute('data-state')).toBe('idle');
+      expect(within(openRow).queryByRole('img')).toBeNull();
+
+      // Active sessions lead the folder, ahead of the preview cut the idle ones fall under.
+      const order = screen
+        .getAllByTestId(/^session-row-/)
+        .map((row) => row.getAttribute('data-testid'));
+      expect(order.slice(0, 2).sort()).toEqual(['session-row-run-1', 'session-row-wait-1']);
+
+      fireEvent.click(await screen.findByText('Show more'));
+      const failRow = await screen.findByTestId('session-row-fail-1');
+      expect(failRow.getAttribute('data-state')).toBe('failed');
+      expect(within(failRow).getByTestId('session-failed-pill').getAttribute('title')).toContain(
+        'stopped mid-answer'
+      );
+
+      assertStudioClean(document.body);
+      const classes = allClasses(document.body).filter(
+        (c) => !c.startsWith('lucide') && c !== 'group'
+      );
+      expect(await missingUtilities(classes)).toEqual([]);
+    } finally {
+      resetSessionActivityForTests();
+    }
   }, 30_000);
 });

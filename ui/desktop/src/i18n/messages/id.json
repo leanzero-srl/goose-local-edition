@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "dimulai {time}"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "Aktif sekarang"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "Sesi tanpa judul"
+  },
   "addNode.addButton": {
     "defaultMessage": "Tambah node"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "Klien eksternal melalui /v1 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "Buka sesi ini — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "Sesi goose ({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "Keterampilan"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "Jawab"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose sedang bekerja — Anda bisa menjawab setelah giliran ini selesai."
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "Abaikan"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "Sebuah ekstensi memerlukan informasi"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "Tidak dapat menyimpan: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "Atau pilih"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "Atau ketik jawaban Anda sendiri…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} dari {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "Disarankan"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "Membutuhkan Anda"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Model tersimpan mesin MLX menyajikan {served}; node ini menginginkan {wanted}. Pilih model di Providers."
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "Tidak dapat memulai sesi"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, other {# sesi aktif sekarang}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "Tambahkan folder proyek"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "Salin jalur"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "Sesi saat ini"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "Tidak dapat menghapus sesi"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "Lihat JSON sesi"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "Giliran terakhir gagal: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "Giliran terakhir gagal"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "Membutuhkan Anda"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "Membutuhkan Anda · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, one {Menunggu jawaban Anda} other {# pertanyaan menunggu jawaban Anda}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "Berjalan · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "Sebuah giliran sedang berjalan, selama {elapsed}"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, other {# membutuhkan Anda}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "Menunggu Anda"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} berjalan"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "berjalan · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "Sedang berjalan"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "Sesi tanpa judul"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "Sesi mengalami kesalahan"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "Bagikan tautan Nostr terenkripsi"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "Aktif sekarang"
   },
   "sessions.cancel": {
     "defaultMessage": "Batal"

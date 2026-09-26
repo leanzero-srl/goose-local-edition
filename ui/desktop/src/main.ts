@@ -2175,6 +2175,14 @@ const runMlxTrayAction = (action: MlxTrayAction) => {
   win.webContents.send('mlx-tray-action', action);
 };
 
+const openTraySession = (sessionId: string) => {
+  const win = mlxActionWindow();
+  if (!win) return;
+  if (!win.isVisible()) win.show();
+  win.focus();
+  win.webContents.send('set-view', 'pair', sessionId);
+};
+
 // The engine-phase dot beside a tray state line, in the palette's exact hex (12pt @2x).
 const phaseDots = new Map<EnginePhase, NativeImage>();
 const phaseDot = (phase: EnginePhase): NativeImage => {
@@ -2201,7 +2209,9 @@ const mlxTrayMenuItem = (item: MlxTrayItem): MenuItemConstructorOptions => {
         label: item.label,
         ...(item.phase ? { icon: phaseDot(item.phase) } : {}),
         enabled: mlxActionWindow() != null,
-        click: () => runMlxTrayAction('open-providers'),
+        // A chat line opens THAT session by id — two same-title sessions must not be confused.
+        click: () =>
+          item.sessionId ? openTraySession(item.sessionId) : runMlxTrayAction('open-providers'),
       };
     case 'action':
       return {

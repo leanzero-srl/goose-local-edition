@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "avviata {time}"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "Attive ora"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "Sessione senza titolo"
+  },
   "addNode.addButton": {
     "defaultMessage": "Aggiungi nodo"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "Client esterno tramite /v1 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "Apri questa sessione — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "Sessione goose ({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "Competenze"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "Rispondi"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose sta lavorando — potrai rispondere quando questo turno finisce."
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "Ignora"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "Un’estensione ha bisogno di informazioni"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "Impossibile salvare: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "Oppure scegli"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "Oppure scrivi la tua risposta…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} di {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "Consigliata"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "Ha bisogno di te"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "Il modello salvato del motore MLX serve {served}; questo nodo vuole {wanted}. Scegli il modello in Providers."
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "Impossibile avviare una sessione"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, one {# sessione attiva ora} other {# sessioni attive ora}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "Aggiungi una cartella di progetto"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "Copia percorso"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "Sessione corrente"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "Impossibile eliminare la sessione"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "Visualizza JSON della sessione"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "Non riuscita"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "L’ultimo turno non è riuscito: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "L’ultimo turno non è riuscito"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "Ha bisogno di te"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "Ha bisogno di te · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, one {In attesa della tua risposta} other {# domande attendono la tua risposta}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "In corso · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "Un turno è in corso da {elapsed}"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, one {# ha bisogno di te} other {# hanno bisogno di te}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "In attesa di te"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} in corso"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "in corso · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "In corso ora"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "Sessione senza titolo"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "La sessione ha riscontrato un errore"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "Condividi link Nostr crittografato"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "Attive ora"
   },
   "sessions.cancel": {
     "defaultMessage": "Annulla"

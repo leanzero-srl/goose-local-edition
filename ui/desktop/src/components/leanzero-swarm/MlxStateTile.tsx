@@ -12,7 +12,8 @@ import {
 } from 'lucide-react';
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
-import { PHASE_FILL, RADIUS, TNUM, WEIGHT, cx, type EnginePhase } from '../lz';
+import { FOCUS, PHASE_FILL, RADIUS, TNUM, WEIGHT, cx, type EnginePhase } from '../lz';
+import { openSessionFromAnywhere } from '../sessionActivity/sessionActivityStore';
 import type { MlxEngineState } from '../../acp/mlx-engine';
 import {
   latestLocalMlxEngineStatus,
@@ -157,6 +158,10 @@ const i18n = defineMessages({
   rowBar: { id: 'mlxStateTile.row.bar', defaultMessage: 'Tokens written of the limit' },
   serving: { id: 'mlxStateTile.serving', defaultMessage: 'Serving' },
   clientChat: { id: 'mlxStateTile.client.chat', defaultMessage: 'Chat · {name}' },
+  openServedSession: {
+    id: 'mlxStateTile.client.openSession',
+    defaultMessage: 'Open this session — {name}',
+  },
   clientExternal: {
     id: 'mlxStateTile.client.external',
     defaultMessage: 'External client via /v1 · {model}',
@@ -545,16 +550,23 @@ const CLIENT_ICON = { chat: MessageSquare, external: PlugZap, session: Bot } as 
 /** WHO the engine is serving — only what goose listed; the rest is a count beside the live runs. */
 function ServingList({ serving }: { serving: MlxServing }) {
   const intl = useIntl();
-  const rows: Array<{ key: string; icon: ReactNode; text: string; extra?: string }> =
-    serving.clients.map((c) => {
-      const Icon = CLIENT_ICON[c.kind];
-      return {
-        key: c.key,
-        icon: <Icon />,
-        text: clientText(intl, c),
-        extra: c.count > 1 ? intl.formatMessage(i18n.clientTimes, { count: c.count }) : undefined,
-      };
-    });
+  const rows: Array<{
+    key: string;
+    icon: ReactNode;
+    text: string;
+    extra?: string;
+    /** A chat in this app: the row opens that exact session. */
+    sessionId?: string;
+  }> = serving.clients.map((c) => {
+    const Icon = CLIENT_ICON[c.kind];
+    return {
+      key: c.key,
+      icon: <Icon />,
+      text: clientText(intl, c),
+      extra: c.count > 1 ? intl.formatMessage(i18n.clientTimes, { count: c.count }) : undefined,
+      sessionId: c.kind === 'chat' ? c.sessionId : undefined,
+    };
+  });
   if (serving.unattributed > 0) {
     rows.push({
       key: 'unattributed',
@@ -588,9 +600,26 @@ function ServingList({ serving }: { serving: MlxServing }) {
             className={cx('flex min-w-0 items-center gap-2 [&_svg]:size-4', LINE)}
           >
             <span aria-hidden>{r.icon}</span>
-            <span className={cx('min-w-0 truncate', WEIGHT.semibold)} title={r.text}>
-              {r.text}
-            </span>
+            {r.sessionId ? (
+              <button
+                type="button"
+                data-testid="mlx-serving-open-session"
+                title={intl.formatMessage(i18n.openServedSession, { name: r.text })}
+                onClick={() => openSessionFromAnywhere(r.sessionId!)}
+                className={cx(
+                  'min-w-0 truncate text-left underline decoration-1 underline-offset-2 hover:decoration-2',
+                  WEIGHT.semibold,
+                  RADIUS.control,
+                  FOCUS
+                )}
+              >
+                {r.text}
+              </button>
+            ) : (
+              <span className={cx('min-w-0 truncate', WEIGHT.semibold)} title={r.text}>
+                {r.text}
+              </span>
+            )}
             {r.extra && <span className="shrink-0">{r.extra}</span>}
           </li>
         ))}

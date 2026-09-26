@@ -10,6 +10,8 @@ mod schedule;
 pub use schedule::*;
 mod proposals;
 pub use proposals::*;
+mod needs_you;
+pub use needs_you::*;
 
 /// Schema descriptor for a single custom method, produced by the
 /// `#[custom_methods]` macro's generated `custom_method_schemas()` function.

@@ -44,6 +44,7 @@ import RunSamplingStrip from './swarm/RunSamplingStrip';
 import { useSwarmRun } from './swarm/useSwarmRun';
 import SwarmWorkspace from './swarm/SwarmWorkspace';
 import MemoryProposalCards from './memories/MemoryProposalCard';
+import NeedsYouTray from './sessionActivity/NeedsYouCard';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
 import {
   Button,
@@ -644,6 +645,16 @@ export default function BaseChat({
           />
         </div>
       )}
+
+      {/* What the model (or an extension) needs from the person: pinned outside the scroll area so
+          it never scrolls away, and kept until it is answered or dismissed. */}
+      <NeedsYouTray
+        sessionId={sessionId}
+        chatState={chatState}
+        sendAnswer={(text) => chatInputSubmit({ msg: text, images: [] })}
+        submitElicitationResponse={submitElicitationResponse}
+        className="relative z-10 mx-4 mb-2"
+      />
 
       <div
         data-testid="chat-input-card"

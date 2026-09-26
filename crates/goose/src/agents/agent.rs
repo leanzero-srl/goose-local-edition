@@ -50,7 +50,7 @@ use crate::scheduler_trait::SchedulerTrait;
 use crate::security::adversary_inspector::AdversaryInspector;
 use crate::security::egress_inspector::EgressInspector;
 use crate::security::security_inspector::SecurityInspector;
-use crate::session::extension_data::{EnabledExtensionsState, ExtensionState};
+use crate::session::extension_data::EnabledExtensionsState;
 use crate::session::{Session, SessionManager, SessionNameUpdate};
 use crate::tool_inspection::{InspectionAction, InspectionResult, ToolInspectionManager};
 use crate::tool_monitor::{RepetitionInspector, REPETITION_INSPECTOR_NAME};
@@ -387,6 +387,7 @@ impl Agent {
         let capabilities = ExtensionManagerCapabilities {
             mcpui,
             host_info: explicit_mcp_host_info.clone(),
+            human_host: matches!(config.goose_platform, GoosePlatform::GooseDesktop),
         };
         let client_name = explicit_mcp_host_info
             .as_ref()
@@ -1352,21 +1353,10 @@ impl Agent {
         let extensions_state =
             EnabledExtensionsState::new(self.extension_configs_for_persistence().await);
 
-        let session_manager = self.config.session_manager.clone();
-        let mut session_data = session_manager.get_session(&session.id, false).await?;
-
-        if let Err(e) = extensions_state.to_extension_data(&mut session_data.extension_data) {
-            warn!("Failed to serialize extension state: {}", e);
-            return Err(anyhow!("Extension state serialization failed: {}", e));
-        }
-
-        session_manager
-            .update(&session.id)
-            .extension_data(session_data.extension_data)
-            .apply()
-            .await?;
-
-        Ok(())
+        self.config
+            .session_manager
+            .set_extension_state(&session.id, &extensions_state)
+            .await
     }
 
     /// Save current extension state to session by session_id
@@ -1374,21 +1364,10 @@ impl Agent {
         let extensions_state =
             EnabledExtensionsState::new(self.extension_configs_for_persistence().await);
 
-        let session_manager = self.config.session_manager.clone();
-        let session = session_manager.get_session(session_id, false).await?;
-        let mut extension_data = session.extension_data.clone();
-
-        extensions_state
-            .to_extension_data(&mut extension_data)
-            .map_err(|e| anyhow!("Failed to serialize extension state: {}", e))?;
-
-        session_manager
-            .update(session_id)
-            .extension_data(extension_data)
-            .apply()
-            .await?;
-
-        Ok(())
+        self.config
+            .session_manager
+            .set_extension_state(session_id, &extensions_state)
+            .await
     }
 
     /// Load extensions from session into the agent
@@ -2075,6 +2054,10 @@ impl Agent {
             let mut consecutive_stop_hook_blocks = 0u32;
             let stop_hook_block_cap = self.stop_hook_block_cap();
             let mut can_drain_pending_steers = false;
+            // The last provider call's fate: Some when it failed and nothing recovered it, carrying
+            // what the person saw when there was text. Recorded once the turn ends so every session
+            // list can say FAILED.
+            let mut turn_failure: Option<crate::turn_outcome::Failure> = None;
 
             loop {
                 if is_token_cancelled(&cancel_token) {
@@ -2288,6 +2271,7 @@ impl Agent {
 
                     match next {
                         Ok((response, usage)) => {
+                            turn_failure = None;
                             compaction_attempts = 0;
                             last_call_usage = if usage
                                 .as_ref()
@@ -2490,6 +2474,15 @@ impl Agent {
                                                             }
                                                             ToolStreamItem::Result(mut output) => {
                                                                 if let Ok(ref call_result) = output {
+                                                                    // The question is now in front of the person: the
+                                                                    // turn ends once this batch's results are in, and
+                                                                    // their answer resumes it as their next message.
+                                                                    if call_result.meta.as_ref().is_some_and(|meta| {
+                                                                        meta.0.get(crate::needs_you::END_TURN_META_KEY)
+                                                                            == Some(&serde_json::Value::Bool(true))
+                                                                    }) {
+                                                                        exit_chat = true;
+                                                                    }
                                                                     if let Some(ref meta) = call_result.meta {
                                                                         if let Some(notification_data) = meta.0.get("platform_notification") {
                                                                             if let Some(method) = notification_data.get("method").and_then(|v| v.as_str()) {
@@ -2847,6 +2840,15 @@ impl Agent {
                     }
                 }
                 can_drain_pending_steers = true;
+                if provider_errored && !did_recovery_compact_this_iteration {
+                    turn_failure = Some(crate::turn_outcome::Failure {
+                        shown: messages_to_add
+                            .messages()
+                            .last()
+                            .map(|message| message.as_concat_text())
+                            .filter(|text| !text.is_empty()),
+                    });
+                }
 
                 if tools_updated {
                     (tools, toolshim_tools, system_prompt, _) =
@@ -3227,6 +3229,20 @@ impl Agent {
 
             if !last_assistant_text.is_empty() {
                 tracing::Span::current().record("trace_output", last_assistant_text.as_str());
+            }
+
+            // Swarm workers are left byte-identical (the golden engine); every other session
+            // records how its turn ended.
+            if !self.is_swarm_worker() {
+                if let Err(error) = crate::turn_outcome::record(
+                    &session_manager,
+                    &session_config.id,
+                    turn_failure,
+                )
+                .await
+                {
+                    warn!("Failed to record the turn outcome: {}", error);
+                }
             }
 
             if !stop_hook_handled_for_exit {

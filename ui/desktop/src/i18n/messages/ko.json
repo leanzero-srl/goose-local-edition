@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "{time} 시작"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "지금 활성"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "제목 없는 세션"
+  },
   "addNode.addButton": {
     "defaultMessage": "노드 추가"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "/v1을 통한 외부 클라이언트 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "이 세션 열기 — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "goose 세션({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "스킬"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "답변"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose가 작업 중입니다. 이 턴이 끝나면 답변할 수 있습니다."
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "닫기"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "확장 프로그램에 정보가 필요합니다"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "저장할 수 없습니다: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "또는 선택"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "또는 직접 답변 입력…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} / {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "추천"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "확인 필요"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX 엔진에 저장된 모델은 {served}를 제공합니다. 이 노드는 {wanted}를 원합니다. Providers에서 모델을 선택하세요."
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "세션을 시작할 수 없습니다"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, other {지금 활성 세션 #개}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "프로젝트 폴더 추가"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "경로 복사"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "현재 세션"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "세션을 삭제할 수 없습니다"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "세션 JSON 보기"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "실패"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "마지막 턴이 실패했습니다: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "마지막 턴이 실패했습니다"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "확인 필요"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "확인 필요 · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, other {답변을 기다리는 질문 #개}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "실행 중 · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "턴이 {elapsed} 동안 실행 중입니다"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, other {#개 확인 필요}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "답변 대기 중"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count}개 실행 중"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "실행 중 · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "지금 실행 중"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "제목 없는 세션"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "세션에 오류가 발생했습니다."
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "암호화된 Nostr 링크 공유"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "지금 활성"
   },
   "sessions.cancel": {
     "defaultMessage": "취소"

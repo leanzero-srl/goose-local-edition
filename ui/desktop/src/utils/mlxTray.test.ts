@@ -110,6 +110,14 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
       running(GENERATING_STATUS, { serving: attributeServing(rows, 3, ['bench-r9'], null) }),
       OPTS
     );
+    // The chat line carries its session id so a click opens THAT session, not Providers.
+    const chatLine = model.items.find(
+      (item) => item.type === 'info' && item.label.startsWith('Serving chat:')
+    );
+    expect(chatLine).toMatchObject({ type: 'info', sessionId: rows[0].sessionId });
+    expect(
+      model.items.filter((item) => item.type === 'info' && item.sessionId !== undefined)
+    ).toHaveLength(1);
     expect(model.title).toBe('19.9 tok/s');
     expect(labels(model.items)).toEqual([
       'LeanZero MLX: writing',

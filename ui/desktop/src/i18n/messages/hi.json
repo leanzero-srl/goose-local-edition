@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "{time} पर शुरू"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "अभी सक्रिय"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "बिना शीर्षक का सत्र"
+  },
   "addNode.addButton": {
     "defaultMessage": "नोड जोड़ें"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "/v1 के ज़रिए बाहरी क्लाइंट · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "यह सत्र खोलें — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "goose सत्र ({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "कौशल"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "उत्तर दें"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose काम कर रहा है — यह चरण पूरा होने पर आप उत्तर दे सकेंगे।"
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "ख़ारिज करें"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "एक एक्सटेंशन को जानकारी चाहिए"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "सहेजा नहीं जा सका: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "या चुनें"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "या अपना उत्तर लिखें…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{total} में से {index}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "अनुशंसित"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "आपकी ज़रूरत है"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX इंजन का सहेजा मॉडल {served} देता है; यह नोड {wanted} चाहता है। Providers में मॉडल चुनें।"
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "सत्र शुरू नहीं हो सका"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, one {# सत्र अभी सक्रिय} other {# सत्र अभी सक्रिय}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "प्रोजेक्ट फ़ोल्डर जोड़ें"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "पथ कॉपी करें"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "वर्तमान सत्र"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "सत्र हटाया नहीं जा सका"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "View session JSON"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "विफल"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "पिछला चरण विफल हुआ: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "पिछला चरण विफल हुआ"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "आपकी ज़रूरत है"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "आपकी ज़रूरत है · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, one {आपके उत्तर की प्रतीक्षा} other {# प्रश्न आपके उत्तर की प्रतीक्षा में}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "चल रहा है · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "एक चरण अभी चल रहा है, {elapsed} से"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, one {# को आपकी ज़रूरत है} other {# को आपकी ज़रूरत है}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "आपकी प्रतीक्षा में"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} चल रहे हैं"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "चल रहा है · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "अभी चल रहे हैं"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "बिना शीर्षक का सत्र"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "सत्र में एक त्रुटि आई"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "एन्क्रिप्टेड नोस्ट्र लिंक साझा करें"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "अभी सक्रिय"
   },
   "sessions.cancel": {
     "defaultMessage": "रद्द करें"

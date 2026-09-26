@@ -5681,6 +5681,81 @@ export const zAnswerMemoryProposalResponse_unstable = z.object({
 });
 
 /**
+ * What the person's sessions are doing right now — the one source every session list, the pinned
+ * card and the top bar read. `running`: the sessions holding an in-flight turn in the engine's busy
+ * set (the token map LeanZero Link reads too), user-visible sessions only. `needsYou`: every open
+ * item, oldest first.
+ */
+export const zSessionActivityRequest_unstable = z.record(z.unknown());
+
+export const zRunningSessionDto = z.object({
+    sessionId: z.string(),
+    sessionName: z.string(),
+    workingDir: z.string(),
+    startedAt: z.string()
+});
+
+export const zNeedsYouStatus = z.enum([
+    'open',
+    'answered',
+    'dismissed'
+]);
+
+export const zNeedsYouItemDto = z.object({
+    id: z.string(),
+    sessionId: z.string(),
+    sessionName: z.string(),
+    workingDir: z.string(),
+    question: z.string(),
+    why: z.string(),
+    recommendedAnswer: z.string(),
+    options: z.array(z.string()),
+    createdAt: z.string(),
+    status: zNeedsYouStatus,
+    answer: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zFailedSessionDto = z.object({
+    sessionId: z.string(),
+    sessionName: z.string(),
+    workingDir: z.string(),
+    failedAt: z.string(),
+    reason: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zSessionActivityResponse_unstable = z.object({
+    running: z.array(zRunningSessionDto),
+    needsYou: z.array(zNeedsYouItemDto),
+    failed: z.array(zFailedSessionDto)
+});
+
+export const zNeedsYouAction = z.enum(['answer', 'dismiss']);
+
+/**
+ * Close an open item. `Answer` records the person's text (required); `Dismiss` records nothing.
+ * The answer itself reaches the model as the person's next chat message, sent by the client.
+ */
+export const zResolveNeedsYouRequest_unstable = z.object({
+    sessionId: z.string(),
+    itemId: z.string(),
+    action: zNeedsYouAction,
+    answer: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zResolveNeedsYouResponse_unstable = z.object({
+    item: zNeedsYouItemDto
+});
+
+/**
  * Send a fresh prompt to an idle linked node (self or a peer) and start a NEW session
  * there. Wraps `LinkManager::remote_execute` with `session_id: None`. The caller picks
  * `targetNodeId` from `leanzeroLink/nodes` (filter to `status == "Idle"`); the receive
@@ -5941,6 +6016,8 @@ export const zExtRequest = z.object({
             zLeanzeroLinkNodesRequest_unstable,
             zListMemoryProposalsRequest_unstable,
             zAnswerMemoryProposalRequest_unstable,
+            zSessionActivityRequest_unstable,
+            zResolveNeedsYouRequest_unstable,
             zLeanzeroLinkRemoteExecuteRequest_unstable
         ]),
         z.union([
@@ -6068,6 +6145,8 @@ export const zExtResponse = z.union([
                 zLeanzeroLinkNodesResponse_unstable,
                 zListMemoryProposalsResponse_unstable,
                 zAnswerMemoryProposalResponse_unstable,
+                zSessionActivityResponse_unstable,
+                zResolveNeedsYouResponse_unstable,
                 zLeanzeroLinkRemoteExecuteResponse_unstable
             ]),
             z.unknown()

@@ -25,6 +25,7 @@ import {
 } from './tree';
 import { defineMessages, useIntl } from '../../i18n';
 import { useStartChatAbout } from './useStartChatAbout';
+import { RunningPill } from '../sessionActivity/ActivityPills';
 
 const i18n = defineMessages({
   title: { id: 'agentWorkSection.title', defaultMessage: 'Agent Work' },
@@ -105,11 +106,13 @@ interface TicksState {
   error: boolean;
 }
 
-const TickLeafRow: React.FC<{ tick: TickRecord; active: boolean; onClick: () => void }> = ({
-  tick,
-  active,
-  onClick,
-}) => {
+const TickLeafRow: React.FC<{
+  tick: TickRecord;
+  active: boolean;
+  /** The desk is ticking and this is the tick in flight. */
+  running?: boolean;
+  onClick: () => void;
+}> = ({ tick, active, running = false, onClick }) => {
   const intl = useIntl();
   const when = timeAgo(tick.ended_at ?? tick.started_at);
   const label = intl.formatMessage(i18n.tick, { n: tick.tick });
@@ -129,7 +132,11 @@ const TickLeafRow: React.FC<{ tick: TickRecord; active: boolean; onClick: () => 
         {tick.outcome ?? ''}
         {tick.summary ? ` · ${tick.summary}` : ''}
       </span>
-      {when ? <span className={cx('shrink-0', TYPE.meta, TNUM)}>{when}</span> : null}
+      {running && tick.started_at ? (
+        <RunningPill since={tick.started_at} />
+      ) : when ? (
+        <span className={cx('shrink-0', TYPE.meta, TNUM)}>{when}</span>
+      ) : null}
     </button>
   );
 };
@@ -175,6 +182,11 @@ const DeskRow: React.FC<{
   const name = deskName(row);
   const known = ticks?.ticks ?? [];
   const shown = showAll ? known : known.slice(0, TREE_PREVIEW_COUNT);
+  const ticking = status === 'ticking';
+  const runningSince =
+    known.find((t) => t.tick === st?.tick && !t.ended_at)?.started_at ??
+    st?.phase_started_at ??
+    null;
 
   return (
     <div data-testid={`desk-row-${row.dir}`}>
@@ -199,13 +211,13 @@ const DeskRow: React.FC<{
           <StatusDot tone={LIVE_TONE[live]} live={status === 'ticking'} label={status} />
           <span className={cx('truncate text-lz-body text-lz-ink', WEIGHT.medium)}>{name}</span>
           {!row.exists && <Chip tone="err">{intl.formatMessage(i18n.noManifest)}</Chip>}
-          <span className={cx('ml-auto shrink-0', TYPE.meta, TNUM)}>
-            {status === 'ticking' && st
-              ? `tick ${st.tick}`
-              : next != null
-                ? countdown(next)
-                : status}
-          </span>
+          {ticking && runningSince ? (
+            <RunningPill since={runningSince} className="ml-auto" />
+          ) : (
+            <span className={cx('ml-auto shrink-0', TYPE.meta, TNUM)}>
+              {ticking && st ? `tick ${st.tick}` : next != null ? countdown(next) : status}
+            </span>
+          )}
         </button>
         {menu && (
           <TreeContextMenu
@@ -281,6 +293,7 @@ const DeskRow: React.FC<{
               key={tick.tick}
               tick={tick}
               active={active && activeTick === tick.tick}
+              running={ticking && st?.tick === tick.tick && !tick.ended_at}
               onClick={() => onOpen(tick.tick)}
             />
           ))}

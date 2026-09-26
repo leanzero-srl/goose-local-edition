@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "{time} に開始"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "実行中・対応待ち"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "無題のセッション"
+  },
   "addNode.addButton": {
     "defaultMessage": "ノードを追加"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "/v1 経由の外部クライアント · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "このセッションを開く — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "goose セッション（{type}） · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "スキル"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "回答"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose が作業中です。このターンが終わったら回答できます。"
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "閉じる"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "拡張機能が情報を必要としています"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "保存できませんでした: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "または選択"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "または自分の回答を入力…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} / {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "おすすめ"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "あなたの対応が必要"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "MLX エンジンの保存済みモデルは {served} を提供しています。このノードは {wanted} を必要とします。Providers でモデルを選んでください。"
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "セッションを開始できませんでした"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count, plural, other {現在アクティブなセッション #件}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "プロジェクトフォルダを追加"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "パスをコピー"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "現在のセッション"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "セッションを削除できませんでした"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "セッションJSONを表示"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "失敗"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "直前のターンが失敗しました: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "直前のターンが失敗しました"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "対応が必要"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "対応が必要 · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count, plural, other {回答待ちの質問 #件}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "実行中 · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "ターンを実行中（{elapsed}）"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count, plural, other {対応が必要 #件}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "あなたを待っています"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} 件実行中"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "実行中 · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "実行中"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "無題のセッション"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "セッションでエラーが発生しました"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "暗号化Nostrリンクを共有"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "実行中・対応待ち"
   },
   "sessions.cancel": {
     "defaultMessage": "キャンセル"

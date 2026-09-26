@@ -76,6 +76,7 @@ import { AppEvents } from './constants/events';
 import { registerPlatformEventHandlers } from './utils/platform_events';
 import { defineMessages, useIntl } from './i18n';
 import { StatusDot, SURFACE, TYPE, WEIGHT, cx } from './components/lz';
+import { sessionHref } from './components/sessionActivity/sessionActivityStore';
 
 const i18n = defineMessages({
   shortcutRefusedTitle: {
@@ -630,6 +631,8 @@ export function AppInner() {
         navigate(`/settings?section=${section}`);
       } else if (section && (newView as string) === 'leanzero-swarm') {
         navigate(`/leanzero-swarm?tab=${section}`);
+      } else if (section && (newView as string) === 'pair') {
+        navigate(sessionHref(section));
       } else {
         navigate(`/${newView}`);
       }

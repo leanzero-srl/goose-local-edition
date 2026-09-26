@@ -1,4 +1,13 @@
 {
+  "activeNowSection.startedAt": {
+    "defaultMessage": "started {time}"
+  },
+  "activeNowSection.title": {
+    "defaultMessage": "Active now"
+  },
+  "activeNowSection.unnamed": {
+    "defaultMessage": "Untitled session"
+  },
   "addNode.addButton": {
     "defaultMessage": "Add node"
   },
@@ -4043,6 +4052,9 @@
   "mlxStateTile.client.external": {
     "defaultMessage": "External client via /v1 · {model}"
   },
+  "mlxStateTile.client.openSession": {
+    "defaultMessage": "Open this session — {name}"
+  },
   "mlxStateTile.client.session": {
     "defaultMessage": "goose session ({type}) · {name}"
   },
@@ -4901,6 +4913,36 @@
   "navigation.itemSkills": {
     "defaultMessage": "Skills"
   },
+  "needsYouCard.answer": {
+    "defaultMessage": "Answer"
+  },
+  "needsYouCard.busy": {
+    "defaultMessage": "goose is working — you can answer when this turn ends."
+  },
+  "needsYouCard.dismiss": {
+    "defaultMessage": "Dismiss"
+  },
+  "needsYouCard.extensionTitle": {
+    "defaultMessage": "An extension needs information"
+  },
+  "needsYouCard.failed": {
+    "defaultMessage": "Could not save that: {error}"
+  },
+  "needsYouCard.options": {
+    "defaultMessage": "Or pick"
+  },
+  "needsYouCard.placeholder": {
+    "defaultMessage": "Or type your own answer…"
+  },
+  "needsYouCard.position": {
+    "defaultMessage": "{index} of {total}"
+  },
+  "needsYouCard.recommended": {
+    "defaultMessage": "Recommended"
+  },
+  "needsYouCard.title": {
+    "defaultMessage": "Needs you"
+  },
   "noNodeNotice.aliasMismatch": {
     "defaultMessage": "The MLX engine’s saved model serves {served}; this node wants {wanted}. Pick the model in Providers."
   },
@@ -5594,6 +5636,9 @@
   "projectLanding.startFailed": {
     "defaultMessage": "Could not start a session"
   },
+  "projectsSection.activeInFolder": {
+    "defaultMessage": "{count,plural,one{# session active now} other{# sessions active now}}"
+  },
   "projectsSection.addProject": {
     "defaultMessage": "Add a project folder"
   },
@@ -5611,9 +5656,6 @@
   },
   "projectsSection.copyPath": {
     "defaultMessage": "Copy path"
-  },
-  "projectsSection.currentSession": {
-    "defaultMessage": "Current session"
   },
   "projectsSection.deleteFailed": {
     "defaultMessage": "Could not delete the session"
@@ -6851,6 +6893,48 @@
   "sessionActionsHeader.viewJson": {
     "defaultMessage": "View session JSON"
   },
+  "sessionActivity.failed": {
+    "defaultMessage": "Failed"
+  },
+  "sessionActivity.failedLabel": {
+    "defaultMessage": "The last turn failed: {reason}"
+  },
+  "sessionActivity.failedLabelBare": {
+    "defaultMessage": "The last turn failed"
+  },
+  "sessionActivity.needsYou": {
+    "defaultMessage": "Needs you"
+  },
+  "sessionActivity.needsYouCount": {
+    "defaultMessage": "Needs you · {count}"
+  },
+  "sessionActivity.needsYouLabel": {
+    "defaultMessage": "{count,plural,one{Waiting for your answer} other{# questions waiting for your answer}}"
+  },
+  "sessionActivity.running": {
+    "defaultMessage": "Running · {elapsed}"
+  },
+  "sessionActivity.runningLabel": {
+    "defaultMessage": "A turn is running now, for {elapsed}"
+  },
+  "sessionActivityIndicator.needsYou": {
+    "defaultMessage": "{count,plural,one{# needs you} other{# need you}}"
+  },
+  "sessionActivityIndicator.needsYouMenu": {
+    "defaultMessage": "Waiting for you"
+  },
+  "sessionActivityIndicator.running": {
+    "defaultMessage": "{count} running"
+  },
+  "sessionActivityIndicator.runningFor": {
+    "defaultMessage": "running · {elapsed}"
+  },
+  "sessionActivityIndicator.runningMenu": {
+    "defaultMessage": "Running now"
+  },
+  "sessionActivityIndicator.unnamed": {
+    "defaultMessage": "Untitled session"
+  },
   "sessionIndicators.error": {
     "defaultMessage": "Session encountered an error"
   },
@@ -6895,6 +6979,9 @@
   },
   "sessions.action.shareNostr": {
     "defaultMessage": "Share encrypted Nostr link"
+  },
+  "sessions.activeNow": {
+    "defaultMessage": "Active now"
   },
   "sessions.cancel": {
     "defaultMessage": "Cancel"

@@ -45,12 +45,19 @@ import {
   acpShareSessionNostr,
   type SessionListItem,
 } from '../../acp/sessions';
+import { SessionActivityMarker, useSessionStateAttrs } from '../sessionActivity/ActivityPills';
+import {
+  activityOf,
+  disambiguatedNames,
+  useSessionActivity,
+} from '../sessionActivity/sessionActivityStore';
 import { acpChatSessionActions } from '../../acp/chatSessionStore';
 import { cancelAcpPermissionRequestsForSession } from '../../acp/permissionRequests';
 import { cancelAcpElicitationRequestsForSession } from '../../acp/elicitationRequests';
 import { getSearchShortcutText } from '../../utils/keyboardShortcuts';
 
 const i18n = defineMessages({
+  activeNow: { id: 'sessions.activeNow', defaultMessage: 'Active now' },
   editSessionTitle: { id: 'sessions.edit.title', defaultMessage: 'Edit Session Description' },
   editSessionPlaceholder: { id: 'sessions.edit.placeholder', defaultMessage: 'Enter session description' },
   cancel: { id: 'sessions.cancel', defaultMessage: 'Cancel' },
@@ -274,9 +281,31 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // Running and waiting sessions lead the history in their own group, out of their date groups.
+    const activity = useSessionActivity();
     const visibleDateGroups = useMemo(() => {
-      return dateGroups.slice(0, visibleGroupsCount);
-    }, [dateGroups, visibleGroupsCount]);
+      const groups = dateGroups.slice(0, visibleGroupsCount);
+      const isActive = (session: SessionListItem) => {
+        const a = activityOf(activity, session.id);
+        return a.needsYou > 0 || a.runningSince !== undefined;
+      };
+      const active = sessions.filter(isActive);
+      if (active.length === 0) return groups;
+      return [
+        {
+          label: intl.formatMessage(i18n.activeNow),
+          sessions: active,
+          date: new Date(),
+        },
+        ...groups
+          .map((group) => ({ ...group, sessions: group.sessions.filter((s) => !isActive(s)) }))
+          .filter((group) => group.sessions.length > 0),
+      ];
+    }, [dateGroups, visibleGroupsCount, sessions, activity, intl]);
+    const sessionLabels = useMemo(
+      () => disambiguatedNames(sessions, (s) => displaySessionListName(s.name)),
+      [sessions]
+    );
 
     const previousSearchTermRef = useRef('');
     useEffect(() => {
@@ -620,6 +649,7 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
 
     const SessionItem = React.memo(function SessionItem({
       session,
+      label,
       onEditClick,
       onDuplicateClick,
       onDeleteClick,
@@ -629,6 +659,7 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
       isSharing,
     }: {
       session: SessionListItem;
+      label?: string;
       onEditClick: (session: SessionListItem) => void;
       onDuplicateClick: (session: SessionListItem) => void;
       onDeleteClick: (session: SessionListItem) => void;
@@ -686,15 +717,19 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
         [onOpenInNewWindow, session]
       );
 
-      const displayName = displaySessionListName(session.name);
+      const displayName = label ?? displaySessionListName(session.name);
+      const stateAttrs = useSessionStateAttrs(session.id);
 
       return (
         <Card
           onClick={handleCardClick}
+          data-testid={`session-card-${session.id}`}
+          {...stateAttrs}
           className="h-full py-3 px-4 hover:shadow-default cursor-pointer transition-all duration-150 flex flex-col justify-between relative group"
         >
           <div>
             <h3 className="text-base break-words line-clamp-2 w-full mb-1">{displayName}</h3>
+            <SessionActivityMarker sessionId={session.id} className="mb-1" />
             <div className="flex-1 mt-2">
               <div className="flex items-center text-text-secondary text-xs">
                 <Calendar className="w-3 h-3 mr-1 flex-shrink-0" />
@@ -855,6 +890,7 @@ const SessionListView: React.FC<SessionListViewProps> = React.memo(
                   <SessionItem
                     key={session.id}
                     session={session}
+                    label={sessionLabels.get(session.id)}
                     onEditClick={handleEditSession}
                     onDuplicateClick={handleDuplicateSession}
                     onDeleteClick={handleDeleteSession}
