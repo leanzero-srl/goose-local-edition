@@ -90,7 +90,71 @@ pub struct SidecarConfig {
     pub backoff_cap: Duration,
     /// Where a start publishes what it has seen so far, for whoever reports the start.
     pub startup_watch: Option<Arc<StartupWatch>>,
+    /// How the owner ends this start before it serves (an Unmount while the model loads).
+    pub start_cancel: Option<Arc<StartCancel>>,
 }
+
+/// Ends a start in flight — [`Sidecar::start`], or a supervised restart through
+/// [`Sidecar::ensure_running_unless`]. The start stops its child the way [`Sidecar::shutdown`]
+/// does (SIGTERM to the pid, the grace window, then SIGKILL to its PROVEN own group), releases
+/// the port, and fails with [`StartCancelled`]. A load is ended by its owner, never by a clock:
+/// Q-112's switch asked the Studio to unmount a 27B mid-load, and the load ran on — holding the
+/// Mac's load lock — until it served, then was shut down.
+#[derive(Debug)]
+pub struct StartCancel {
+    cancelled: tokio::sync::watch::Sender<bool>,
+}
+
+impl Default for StartCancel {
+    fn default() -> Self {
+        Self {
+            cancelled: tokio::sync::watch::Sender::new(false),
+        }
+    }
+}
+
+impl StartCancel {
+    pub fn cancel(&self) {
+        self.cancelled.send_replace(true);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        *self.cancelled.borrow()
+    }
+
+    async fn cancelled(&self) {
+        let mut seen = self.cancelled.subscribe();
+        // The sender lives in `self`, so the channel cannot close under this wait.
+        let _ = seen.wait_for(|cancelled| *cancelled).await;
+    }
+}
+
+/// A start its owner ended ([`StartCancel`]) before the engine served.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartCancelled {
+    pub name: String,
+    /// The engine process the cancel stopped; `None` when it ended before one was spawned.
+    pub pid: Option<u32>,
+}
+
+impl std::fmt::Display for StartCancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.pid {
+            Some(pid) => write!(
+                f,
+                "sidecar '{}' was stopped while it loaded (pid {pid}), before it served",
+                self.name
+            ),
+            None => write!(
+                f,
+                "sidecar '{}' was stopped before its engine was spawned",
+                self.name
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StartCancelled {}
 
 /// What a starting engine has shown so far: the resident bytes of the largest process in the
 /// child's tree (the engine itself — its `uv` launcher stays a few MiB) and the engine's last
@@ -142,6 +206,7 @@ impl SidecarConfig {
             backoff_initial: Duration::from_secs(1),
             backoff_cap: Duration::from_secs(30),
             startup_watch: None,
+            start_cancel: None,
         }
     }
 }
@@ -174,6 +239,8 @@ pub struct Sidecar {
     config: SidecarConfig,
     client: reqwest::Client,
     state: Mutex<State>,
+    /// The cancel the start or restart in flight answers to; `None` while none is.
+    cancel: StdMutex<Option<Arc<StartCancel>>>,
 }
 
 impl Sidecar {
@@ -185,6 +252,7 @@ impl Sidecar {
             .timeout(Duration::from_secs(5))
             .build()?;
         let backoff = config.backoff_initial;
+        let cancel = config.start_cancel.clone();
         let sidecar = Self {
             config,
             client,
@@ -193,12 +261,15 @@ impl Sidecar {
                 restarts: VecDeque::new(),
                 backoff,
             }),
+            cancel: StdMutex::new(cancel),
         };
         {
             let mut state = sidecar.state.lock().await;
+            sidecar.refuse_if_cancelled()?;
             let handle = sidecar.spawn_child()?;
             sidecar.await_ready(&mut state, handle).await?;
         }
+        *sidecar.cancel.lock().unwrap() = None;
         Ok(sidecar)
     }
 
@@ -236,6 +307,30 @@ impl Sidecar {
 
     pub async fn healthy(&self) -> bool {
         self.probe().await.is_ok()
+    }
+
+    /// [`Self::ensure_running`], ended by `cancel` if it has to restart the engine and the owner
+    /// stops it before the restart serves.
+    pub async fn ensure_running_unless(&self, cancel: &Arc<StartCancel>) -> Result<()> {
+        *self.cancel.lock().unwrap() = Some(Arc::clone(cancel));
+        let outcome = self.ensure_running().await;
+        *self.cancel.lock().unwrap() = None;
+        outcome
+    }
+
+    fn current_cancel(&self) -> Option<Arc<StartCancel>> {
+        self.cancel.lock().unwrap().clone()
+    }
+
+    fn refuse_if_cancelled(&self) -> Result<()> {
+        if self.current_cancel().is_some_and(|c| c.is_cancelled()) {
+            return Err(StartCancelled {
+                name: self.config.name.clone(),
+                pid: None,
+            }
+            .into());
+        }
+        Ok(())
     }
 
     /// Restart the engine if its process died or it stops answering. Errors once the
@@ -296,7 +391,16 @@ impl Sidecar {
 
         let backoff = state.backoff;
         state.backoff = (state.backoff * 2).min(self.config.backoff_cap);
-        tokio::time::sleep(backoff).await;
+        match self.current_cancel() {
+            Some(cancel) => {
+                tokio::select! {
+                    _ = tokio::time::sleep(backoff) => {}
+                    _ = cancel.cancelled() => {}
+                }
+            }
+            None => tokio::time::sleep(backoff).await,
+        }
+        self.refuse_if_cancelled()?;
 
         let handle = self.spawn_child()?;
         self.await_ready(&mut state, handle).await
@@ -364,10 +468,21 @@ impl Sidecar {
     /// time, no memory movement, no pid joining or leaving — with the last probe reason and
     /// the stderr tail. A slow load that is working is never declared failed by a clock.
     async fn await_ready(&self, state: &mut State, mut handle: ChildHandle) -> Result<()> {
+        let cancel = self.current_cancel();
         let mut sys = System::new();
         let mut last_mark = progress_mark(&mut sys, &handle);
         let mut last_progress = Instant::now();
         loop {
+            if cancel.as_ref().is_some_and(|c| c.is_cancelled()) {
+                let pid = handle.pid;
+                let owned_group = terminate(&mut handle.child).await;
+                self.release_port(owned_group).await;
+                return Err(StartCancelled {
+                    name: self.config.name.clone(),
+                    pid,
+                }
+                .into());
+            }
             if let Some(status) = handle.child.try_wait().context("try_wait during startup")? {
                 let tail = stderr_tail_string(&handle.stderr_tail);
                 bail!(
@@ -425,7 +540,15 @@ impl Sidecar {
                     mark.tree.len()
                 );
             }
-            tokio::time::sleep(Duration::from_millis(400)).await;
+            match &cancel {
+                Some(cancel) => {
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(400)) => {}
+                        _ = cancel.cancelled() => {}
+                    }
+                }
+                None => tokio::time::sleep(Duration::from_millis(400)).await,
+            }
         }
     }
 

@@ -101,6 +101,10 @@ pub struct NodePreflight {
     /// `foreignEngines` FAIL names, for the start's `foreignSplit` refusal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub foreign_splits: Vec<String>,
+    /// The load holding this node's Mac (its record, its holder proven alive) when `loadLock`
+    /// FAILed on one: what the start's `modelLoading` refusal names in plain words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loading: Option<crate::machine::LoadHolder>,
 }
 
 /// One node's measured memory figures and the budget the rule builds from them.
@@ -200,7 +204,7 @@ pub const GPU_CEILING_PROBE: &str =
 
 /// Prints `free`, or `held` then the holder's record (its holder proven alive by the ranks' own
 /// proof, `rank_load_lock.py`), or `stale <proof>` for a record whose holder is gone.
-fn load_lock_probe() -> String {
+pub(crate) fn load_lock_probe() -> String {
     format!(
         "{}\n\
          path = load_lock_path()\n\
@@ -212,41 +216,63 @@ fn load_lock_probe() -> String {
     )
 }
 
-/// The node's load lock, as `load_lock_probe` answered: FAIL while another load holds the Mac.
-fn load_lock_check(text: &str) -> Check {
+/// The node's load lock, as `load_lock_probe` answered: FAIL while another load holds the Mac,
+/// with the holder's record when it names one. The check's words are the Details layer (pid,
+/// port, what the record says); the start's refusal puts the model and the Mac in plain words.
+/// A load of the way a switch replaces never reaches here: the switch's stop cancels it and
+/// returns once its lock is released (`MlxEngineManager::unmount`, Q-112).
+pub(crate) fn load_lock_check(text: &str) -> (Check, Option<crate::machine::LoadHolder>) {
     let mut lines = text.trim_start().splitn(2, '\n');
     let head = lines.next().unwrap_or_default().trim();
     let rest = lines.next().unwrap_or_default();
     if head == "free" {
-        return Check::pass("loadLock", "no other model is loading on this node");
+        return (
+            Check::pass("loadLock", "no other model is loading on this node"),
+            None,
+        );
     }
     if let Some(proof) = head.strip_prefix("stale ") {
-        return Check::pass(
-            "loadLock",
-            format!("no other model is loading on this node (a stale record: {proof})"),
+        return (
+            Check::pass(
+                "loadLock",
+                format!("no other model is loading on this node (a stale record: {proof})"),
+            ),
+            None,
         );
     }
     if head == "held" {
         return match crate::machine::LoadHolder::parse_record(rest) {
-            Ok(Some(holder)) => Check::fail(
-                "loadLock",
-                format!(
-                    "another model is loading on this node: {}. One model loads at a time per \
-                     Mac — two loads at once can wedge its GPU. Start the split once it \
-                     finishes, or stop it first",
-                    holder.describe(crate::machine::now_unix())
+            Ok(Some(holder)) => (
+                Check::fail(
+                    "loadLock",
+                    format!(
+                        "another model is loading on this node: {}. One model loads at a time \
+                         per Mac — two loads at once can wedge its GPU. Start the split once it \
+                         finishes, or stop it first",
+                        holder.describe(crate::machine::now_unix())
+                    ),
                 ),
+                Some(holder),
             ),
-            Ok(None) => Check::fail(
-                "loadLock",
-                "the node's load lock is held with an empty record",
+            Ok(None) => (
+                Check::fail(
+                    "loadLock",
+                    "the node's load lock is held with an empty record",
+                ),
+                None,
             ),
-            Err(e) => Check::fail("loadLock", format!("the node's load lock is held: {e:#}")),
+            Err(e) => (
+                Check::fail("loadLock", format!("the node's load lock is held: {e:#}")),
+                None,
+            ),
         };
     }
-    Check::fail(
-        "loadLock",
-        format!("the node's load lock could not be read: {}", text.trim()),
+    (
+        Check::fail(
+            "loadLock",
+            format!("the node's load lock could not be read: {}", text.trim()),
+        ),
+        None,
     )
 }
 
@@ -534,6 +560,7 @@ struct NodeAnswer {
     /// The resident bytes the other MLX engines on the node hold, charged against its GPU ceiling.
     other_engines_bytes: u64,
     other_engines: Vec<String>,
+    loading: Option<crate::machine::LoadHolder>,
 }
 
 impl NodeAnswer {
@@ -584,6 +611,7 @@ fn read_answer(
         foreign_splits: Vec::new(),
         other_engines_bytes: 0,
         other_engines: Vec::new(),
+        loading: None,
     };
     let output = match output {
         Ok(output) if output.ssh_failed() => {
@@ -657,7 +685,11 @@ fn read_answer(
         .get("wiredlimit")
         .and_then(|t| t.trim().parse().ok());
     answer.checks.push(match sections.get("loadlock") {
-        Some(text) => load_lock_check(text),
+        Some(text) => {
+            let (check, loading) = load_lock_check(text);
+            answer.loading = loading;
+            check
+        }
         None => Check::warn(
             "loadLock",
             "this node's goose predates the machine-wide load lock: a load there is not kept \
@@ -1318,6 +1350,7 @@ pub async fn run_preflight(
             top_apps: answer.top_apps,
             leftovers: answer.leftovers,
             foreign_splits: answer.foreign_splits,
+            loading: answer.loading,
         });
     }
     report.ok = report.failures().is_empty() && report.nodes.iter().all(|n| n.plan.is_some());
@@ -2498,11 +2531,11 @@ pub(crate) mod tests {
             );
             load_lock_check(&String::from_utf8_lossy(&out.stdout))
         };
-        let free = run();
+        let (free, _) = run();
         assert_eq!(free.verdict, CheckVerdict::Pass, "{}", free.message);
 
         let holder = format!(
-            "{}\nimport sys\ntake_load_lock(sys.argv[1], 'single', 'goose (pid 1) is loading Qwen3.8-27B')\n\
+            "{}\nimport sys\ntake_load_lock(sys.argv[1], 'single', 'goose (pid 1) is loading Qwen3.8-27B', 'org/Qwen3.8-27B')\n\
              print('HELD', flush=True)\nsys.stdin.readline()\n",
             include_str!("rank_load_lock.py")
         );
@@ -2517,8 +2550,15 @@ pub(crate) mod tests {
             .read_line(&mut line)
             .unwrap();
         assert_eq!(line.trim(), "HELD");
-        let held = run();
+        let (held, holder) = run();
         assert_eq!(held.verdict, CheckVerdict::Fail);
+        let holder = holder.expect("a held lock names its holder");
+        assert_eq!(holder.pid, rank.id());
+        assert_eq!(
+            holder.model_words(),
+            "Qwen3.8-27B",
+            "the rank's record carries its model"
+        );
         assert!(
             held.message.contains(&format!("pid {}", rank.id())),
             "{}",
@@ -2533,7 +2573,7 @@ pub(crate) mod tests {
         // The holder dies without its release: the record stays, the kernel frees the lock.
         rank.kill().unwrap();
         rank.wait().unwrap();
-        let stale = run();
+        let (stale, _) = run();
         assert_eq!(stale.verdict, CheckVerdict::Pass, "{}", stale.message);
         assert!(stale.message.contains("stale record"), "{}", stale.message);
         drop(rank.stdin.take().map(|mut s| s.write_all(b"\n")));
@@ -2541,7 +2581,8 @@ pub(crate) mod tests {
 
     #[test]
     fn a_probe_answer_that_is_not_one_fails_loud() {
-        let check = load_lock_check("Traceback: no module named pwd");
+        let (check, holder) = load_lock_check("Traceback: no module named pwd");
+        assert_eq!(holder, None);
         assert_eq!(check.verdict, CheckVerdict::Fail);
         assert!(
             check.message.contains("could not be read"),

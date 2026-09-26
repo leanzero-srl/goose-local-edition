@@ -103,6 +103,10 @@ pub struct LoadHolder {
     /// A split's ranks on one Mac are one load: their common launch identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
+    /// The model being loaded, by its id — what a refusal names in plain words. `None` in a
+    /// record written by a goose before it (the words then say the record does not name it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl LoadHolder {
@@ -121,6 +125,9 @@ impl LoadHolder {
         }
         if let Some(group) = &self.group {
             text.push_str(&format!("group={}\n", one_line(group)));
+        }
+        if let Some(model) = &self.model {
+            text.push_str(&format!("model={}\n", one_line(model)));
         }
         text
     }
@@ -151,7 +158,16 @@ impl LoadHolder {
             what: field("what").unwrap_or_default().to_string(),
             port: field("port").and_then(|p| p.parse().ok()),
             group: field("group").map(str::to_string),
+            model: field("model").map(str::to_string),
         }))
+    }
+
+    /// The model in plain words: the last segment of its id ("Qwen3.8-27B-Atlassian-Q8-mlx").
+    pub fn model_words(&self) -> String {
+        match &self.model {
+            Some(model) => model.rsplit('/').next().unwrap_or(model).to_string(),
+            None => "a model its load record does not name".to_string(),
+        }
     }
 
     /// "pid 4321 — Qwen3.8-27B (a single engine on port 8124) — loading for 2m 10s".
@@ -190,6 +206,7 @@ pub struct LoadClaim {
     pub what: String,
     pub port: Option<u16>,
     pub group: Option<String>,
+    pub model: Option<String>,
 }
 
 impl LoadClaim {
@@ -203,6 +220,7 @@ impl LoadClaim {
             ),
             port: Some(port),
             group: None,
+            model: Some(model_id.to_string()),
         }
     }
 }
@@ -279,6 +297,7 @@ fn own_holder(claim: &LoadClaim) -> Result<LoadHolder> {
         what: claim.what.clone(),
         port: claim.port,
         group: claim.group.clone(),
+        model: claim.model.clone(),
     })
 }
 
@@ -732,6 +751,7 @@ mod tests {
             what: what.to_string(),
             port: Some(8124),
             group: None,
+            model: None,
         }
     }
 
@@ -744,9 +764,10 @@ mod tests {
             what: "goose (pid 4321) is loading Qwen3.8-27B\nsecond line".to_string(),
             port: Some(8124),
             group: Some("split:8090:m".to_string()),
+            model: Some("Mihai-LeanZero/Qwen3.8-27B".to_string()),
         };
         let text = holder.to_record();
-        assert_eq!(text.lines().count(), 6, "{text}");
+        assert_eq!(text.lines().count(), 7, "{text}");
         let back = LoadHolder::parse_record(&text).unwrap().unwrap();
         assert_eq!(
             back.what,
@@ -754,6 +775,12 @@ mod tests {
         );
         assert_eq!((back.pid, back.port), (4321, Some(8124)));
         assert_eq!(back.group.as_deref(), Some("split:8090:m"));
+        assert_eq!(back.model_words(), "Qwen3.8-27B");
+        let older = LoadHolder::parse_record("pid=1\nstarted=2\nsince=3\nwhat=x\n")
+            .unwrap()
+            .unwrap();
+        assert_eq!(older.model, None);
+        assert_eq!(older.model_words(), "a model its load record does not name");
         assert_eq!(LoadHolder::parse_record("").unwrap(), None);
         assert_eq!(LoadHolder::parse_record("\n").unwrap(), None);
         assert!(LoadHolder::parse_record("garbage").is_err());
@@ -827,6 +854,7 @@ mod tests {
             what: "a load whose goose crashed".to_string(),
             port: None,
             group: None,
+            model: None,
         };
         std::fs::write(&path, record.to_record()).unwrap();
 

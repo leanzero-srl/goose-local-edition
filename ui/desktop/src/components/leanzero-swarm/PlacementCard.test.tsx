@@ -686,6 +686,80 @@ describe('Run it on the real 27B plan', () => {
     await waitFor(() => expect(order).toEqual(['unmount here', 'start studio']));
   });
 
+  /** PLAN_LINK with the split set up for this model: Run on it starts the saved split as it is. */
+  const splitReady: PlacementPlan = {
+    ...PLAN_LINK,
+    candidates: (PLAN_LINK.candidates ?? []).map((c) =>
+      c.key.kind === 'tensor' ? { ...c, action: { kind: 'startSplit', setupMatches: true } } : c
+    ),
+  };
+
+  it('Q-112: a switch to the split waits for the Studio to let go of the route’s LOADING engine, then starts the split', async () => {
+    mockPlan.mockResolvedValue(answer(splitReady));
+    // 3.0.44: the route restoring after a relaunch — the Studio loading the 27B, the fabric not
+    // yet answering for it.
+    remoteLatest = { state: 'reconnecting', peer: 'wh', modelId: MODEL };
+    const order: string[] = [];
+    mockRemoteStop.mockImplementation(async (keepMounted: boolean) => {
+      order.push(`drop route (keepMounted ${keepMounted})`);
+      remoteLatest = null;
+      return { unmounted: false, unmountError: null, status: { state: 'off' } };
+    });
+    let studioLetGo: () => void = () => undefined;
+    mockUnmount.mockImplementation(
+      (node: string) =>
+        new Promise<void>((resolve) => {
+          order.push(`unmount on ${node}`);
+          studioLetGo = () => {
+            order.push('studio let go');
+            resolve();
+          };
+        })
+    );
+    mockDistributedStart.mockImplementation(async () => {
+      order.push('start split');
+      return { started: true };
+    });
+    renderCard();
+    await userEvent.click(
+      within(await screen.findByTestId('placement-way-split')).getByTestId('placement-run-split')
+    );
+    await waitFor(() => expect(order).toEqual(['drop route (keepMounted true)', 'unmount on wh']));
+    expect(mockDistributedStart).not.toHaveBeenCalled();
+    act(() => studioLetGo());
+    await waitFor(() =>
+      expect(order).toEqual([
+        'drop route (keepMounted true)',
+        'unmount on wh',
+        'studio let go',
+        'start split',
+      ])
+    );
+    expect(mockDistributedStart).toHaveBeenCalledWith(null);
+    expect(await screen.findByText('Starting — this card follows it.')).toBeInTheDocument();
+  });
+
+  it('a switch to the split off an answering Studio starts it after the route’s stop answered', async () => {
+    mockPlan.mockResolvedValue(answer(splitReady));
+    remoteLatest = { state: 'mounting', peer: 'wh', modelId: MODEL };
+    const order: string[] = [];
+    mockRemoteStop.mockImplementation(async (keepMounted: boolean) => {
+      order.push(`stop route (keepMounted ${keepMounted})`);
+      remoteLatest = null;
+      return { unmounted: true, unmountError: null, status: { state: 'off' } };
+    });
+    mockDistributedStart.mockImplementation(async () => {
+      order.push('start split');
+      return { started: true };
+    });
+    renderCard();
+    await userEvent.click(
+      within(await screen.findByTestId('placement-way-split')).getByTestId('placement-run-split')
+    );
+    await waitFor(() => expect(order).toEqual(['stop route (keepMounted false)', 'start split']));
+    expect(mockUnmount).not.toHaveBeenCalled();
+  });
+
   it('a route that cannot be withdrawn (another window owns it) starts nothing, and says why', async () => {
     mockPlan.mockResolvedValue(answer(localFits));
     remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };

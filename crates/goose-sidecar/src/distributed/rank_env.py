@@ -32,6 +32,7 @@ take_load_lock(
     f"split:{spec['port']}:{spec['served_id']}:{spec.get('coordinator') or json.dumps(spec.get('ring_hosts'))}",
     f"goose rank {spec['rank']} of {spec['size']} (pid {os.getpid()}) is loading {spec['served_id']} "
     f"from {spec['model_dir']}",
+    spec["served_id"],
 )
 
 

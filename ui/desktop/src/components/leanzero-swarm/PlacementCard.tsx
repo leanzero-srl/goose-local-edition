@@ -911,20 +911,28 @@ function PlacementCardBody({
   );
 
   /**
-   * Stop a way of this model and return once it has let go of its memory: the single engine's
-   * unmount and the peer's unmount both return after the engine process exits; the split is
-   * followed until it no longer owns the Mac — bounded by its own state, never a clock. A route
-   * is withdrawn on this Mac (routeSwitch.ts): a linked Mac that is not answering, or keeps its
-   * model, is a quiet line (PeerHeldLine, in the Engine view), never a switch that cannot go on. Throws only when the
-   * current way could not be stopped at all.
+   * Stop a way of this model and return once it has let go of its memory — the ONE rule for
+   * "the old way stops first", whether that way is running or still LOADING: the single engine's
+   * unmount and the peer's unmount both return after the engine process exits and the Mac's load
+   * lock is released (a load in flight is cancelled, Q-112); the split is followed until it no
+   * longer owns the Mac — bounded by its own state, never a clock. A route is withdrawn on this
+   * Mac (routeSwitch.ts): a linked Mac that is not answering, or keeps its model, is a quiet line
+   * (PeerHeldLine, in the Engine view), never a switch that cannot go on — except that a switch
+   * to the SPLIT, which runs on that Mac too, starts only once that Mac has answered its unmount
+   * (`settled`): on 3.0.44, right after a relaunch, the split's start began on the MacBook
+   * (05:53:48.94) before the Studio even received the unmount (05:53:49.11), and the preflight
+   * was refused by the route's own load. Throws only when the current way could not be stopped
+   * at all.
    */
-  const stopForSwitch = async (way: Way): Promise<void> => {
+  const stopForSwitch = async (way: Way, next: Way): Promise<void> => {
     if (way.kind === 'local') {
       await mlxEngineUnmount();
       return;
     }
     if (way.kind === 'peer') {
-      await dropRoute().routeGone;
+      const drop = dropRoute();
+      await drop.routeGone;
+      if (next.kind === 'split') await drop.settled;
       return;
     }
     let status = (await mlxDistributedStop()).status;
@@ -958,7 +966,7 @@ function PlacementCardBody({
         const where = title(current);
         setNotice({ tone: 'accent', text: intl.formatMessage(i18n.switching, { model, where }) });
         try {
-          await stopForSwitch(current);
+          await stopForSwitch(current, way);
         } catch (e) {
           const reason = mlxErrorMessage(e, intl.formatMessage(i18n.actionFailed));
           setNotice({

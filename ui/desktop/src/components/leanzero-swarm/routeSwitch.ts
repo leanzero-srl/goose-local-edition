@@ -21,6 +21,8 @@ import { routePeerName } from './macs';
  *    that Mac to free its engine in the background;
  *  - gone (its goose quit, or away well past every comeback): withdraw only — nothing to free.
  * Either way a peer that keeps its model is a quiet fact (`PeerHeld`), never the switch's failure.
+ * The one caller that waits for `settled` is a switch to the split: the split runs on that Mac
+ * too, and its preflight must find the route's engine — loading or running — already gone (Q-112).
  * Throws only when the route itself could not be withdrawn (another window owns it).
  */
 
