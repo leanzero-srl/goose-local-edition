@@ -5,8 +5,8 @@ import { Button, Panel } from '../lz';
 import { useConfig, type FixedExtensionEntry } from '../ConfigContext';
 import type { McpSetupResult } from '../../types/mcpSetup';
 import { McpCapabilities } from './McpCapabilities';
+import { userEnvKeys, type BundledMcp } from './reconcileBundledMcps';
 
-type BundledMcp = Awaited<ReturnType<typeof window.electron.bundledMcps>>[number];
 const input =
   'w-full rounded-lg border border-lz-border-strong bg-lz-surface px-3 py-2 text-sm text-lz-ink focus:outline-none focus:ring-2 focus:ring-lz-accent';
 
@@ -17,26 +17,78 @@ export function mergeMcpSettings(
   saved: FixedExtensionEntry | undefined,
   values: Record<string, string>
 ) {
-  const envs = {
-    ...('envs' in (saved ?? {}) ? (saved as { envs: Record<string, string> }).envs : {}),
-    ...entry.envs,
-  };
+  const savedEnvs = 'envs' in (saved ?? {}) ? (saved as { envs: Record<string, string> }).envs : {};
+  const envs: Record<string, string> = Object.fromEntries(
+    Object.entries(savedEnvs).filter(([key]) => !entry.managedEnvKeys.includes(key))
+  );
+  Object.assign(envs, entry.envs);
   for (const [key, value] of Object.entries(values)) {
     if (value.trim()) envs[key] = value.trim();
     else delete envs[key];
   }
-  const envKeys = (saved && 'env_keys' in saved ? (saved.env_keys ?? []) : []).filter(
-    (key) => !(key in values) || Boolean(values[key].trim())
-  );
+  const envKeys = userEnvKeys(
+    entry,
+    saved && 'env_keys' in saved ? (saved.env_keys ?? []) : []
+  ).filter((key) => !(key in values) || Boolean(values[key].trim()));
+  const {
+    bundleEntry: _bundleEntry,
+    managedEnvKeys: _managedEnvKeys,
+    packaged: _packaged,
+    ...server
+  } = entry;
   return {
-    ...entry,
+    ...server,
     ...saved,
     env_keys: envKeys,
     type: 'stdio' as const,
+    description: entry.description,
     cmd: entry.cmd,
     args: entry.args,
     envs,
   };
+}
+
+export const serperKeySaved = (saved?: FixedExtensionEntry) =>
+  Boolean(saved && 'env_keys' in saved && saved.env_keys?.includes('SERPER_API_KEY'));
+
+/** Which engine web search runs on, from the saved settings — so "no key" never reads as "search is down". */
+function SearchEngineStatus({ keySaved }: { keySaved: boolean }) {
+  return (
+    <section
+      aria-label="Search engine"
+      className="mb-5 flex items-start gap-3 rounded-lg border border-lz-border-strong bg-lz-surface-2 p-3"
+    >
+      <span
+        className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${
+          keySaved ? 'bg-lz-ok-solid text-white' : 'bg-lz-accent text-lz-accent-ink'
+        }`}
+      >
+        {keySaved ? 'Serper' : 'Browser search'}
+      </span>
+      <div className="min-w-0 space-y-1 text-sm">
+        {keySaved ? (
+          <>
+            <p className="font-medium">Searches go through Serper with your saved key.</p>
+            <p className="text-xs leading-relaxed text-lz-ink-2">
+              If the key is rejected or out of credits, a search fails and says so; it does not
+              switch to the browser.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="font-medium">
+              No Serper key saved: searches run in the bundled browser, on Yahoo and then Brave
+              Search.
+            </p>
+            <p className="text-xs leading-relaxed text-lz-ink-2">
+              To search through Serper instead, create a key at serper.dev, paste it into Search API
+              key below and save. New chats pick it up.
+            </p>
+          </>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function ServerSetup({ entry, saved }: { entry: BundledMcp; saved?: FixedExtensionEntry }) {
@@ -140,12 +192,13 @@ function ServerSetup({ entry, saved }: { entry: BundledMcp; saved?: FixedExtensi
           {saved ? (saved.enabled ? 'Enabled' : 'Disabled') : 'Not configured'}
         </span>
       </div>
+      {web && <SearchEngineStatus keySaved={serperKeySaved(saved)} />}
       <fieldset disabled={busy} aria-busy={busy} className="min-w-0 space-y-5">
         {web &&
           field(
             'SERPER_API_KEY',
             'Search API key',
-            'Serper key for web searches. You can collect a known page without a key.',
+            'Optional. With a key from serper.dev, searches go through Serper; without one they run in the bundled browser. Page collection never needs a key.',
             true
           )}
         <div className="flex items-start gap-2">

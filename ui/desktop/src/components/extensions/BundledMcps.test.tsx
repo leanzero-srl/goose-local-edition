@@ -17,6 +17,9 @@ const entry = {
   args: ['/bundle/search.js'],
   envs: { MCP_CLIENT_TYPE: 'agent' },
   timeout: 300,
+  bundleEntry: 'bundled-mcps/leanzero-web-search/dist/index.js',
+  managedEnvKeys: ['MCP_CLIENT_TYPE', 'PUPPETEER_EXECUTABLE_PATH', 'ELECTRON_RUN_AS_NODE'],
+  packaged: true,
 };
 beforeEach(() => {
   vi.clearAllMocks();
@@ -38,6 +41,41 @@ describe('bundled MCP setup', () => {
     expect(result.env_keys).toEqual(['OTHER_KEY']);
     expect(result.envs).toMatchObject({ OUTPUT_DIR: '/research', OTHER_VALUE: 'kept' });
     expect(result.cmd).toBe('/bundle/node');
+  });
+  it('drops env keys a development run wrote, and takes the bundle description', () => {
+    const saved = {
+      type: 'stdio' as const,
+      name: entry.name,
+      cmd: '/dev-tree/Electron',
+      args: ['/dev-tree/bundled-mcps/leanzero-web-search/dist/index.js'],
+      timeout: 300,
+      enabled: true,
+      description: 'Configure SERPER_API_KEY for search',
+      env_keys: ['ELECTRON_RUN_AS_NODE', 'PUPPETEER_EXECUTABLE_PATH', 'OUTPUT_DIR'],
+      envs: { ELECTRON_RUN_AS_NODE: '1', OTHER_VALUE: 'kept' },
+    };
+    const result = mergeMcpSettings(entry, saved, {});
+    expect(result.env_keys).toEqual(['OUTPUT_DIR']);
+    expect(result.envs).toEqual({ OTHER_VALUE: 'kept', MCP_CLIENT_TYPE: 'agent' });
+    expect(result.description).toBe('Search');
+    expect(result).not.toHaveProperty('bundleEntry');
+  });
+  it('says plainly that search runs in the bundled browser when no Serper key is saved', async () => {
+    state.extensionsList = [{ ...entry, enabled: true, env_keys: ['OUTPUT_DIR'] }];
+    render(<BundledMcps />);
+    const status = await screen.findByRole('region', { name: 'Search engine' });
+    expect(status).toHaveTextContent('Browser search');
+    expect(status).toHaveTextContent(
+      'searches run in the bundled browser, on Yahoo and then Brave'
+    );
+    expect(status).toHaveTextContent('create a key at serper.dev, paste it into Search API key');
+  });
+  it('says search goes through Serper once a key is saved', async () => {
+    state.extensionsList = [{ ...entry, enabled: true, env_keys: ['SERPER_API_KEY'] }];
+    render(<BundledMcps />);
+    const status = await screen.findByRole('region', { name: 'Search engine' });
+    expect(status).toHaveTextContent('Searches go through Serper with your saved key.');
+    expect(status).not.toHaveTextContent('Browser search');
   });
   it.each(['~/corpus', 'relative/corpus'])(
     'rejects a folder that the MCP would resolve differently: %s',

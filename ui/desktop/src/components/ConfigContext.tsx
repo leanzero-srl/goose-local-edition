@@ -9,6 +9,11 @@ import {
 } from '../acp/extensions';
 import { pruneDeprecatedBundledExtensions, syncBundledExtensions } from './settings/extensions';
 import { nameToKey } from './settings/extensions/utils';
+import {
+  BUNDLED_MCP_RECORD_KEY,
+  reconcileBundledMcps,
+  type BundledMcpRecord,
+} from './extensions/reconcileBundledMcps';
 import type { ExtensionConfig } from '../types/extensions';
 import { AppEvents } from '../constants/events';
 import type { ProviderDetails } from '../types/providers';
@@ -22,6 +27,29 @@ export type FixedExtensionEntry = ExtensionConfig & {
 };
 
 type ConfigMap = Record<string, unknown>;
+
+async function reconcileBundledMcpsAtStartup(extensions: FixedExtensionEntry[]) {
+  try {
+    const stored = await acpReadConfig(BUNDLED_MCP_RECORD_KEY, false);
+    await reconcileBundledMcps({
+      entries: await window.electron.bundledMcps(),
+      extensions,
+      record: stored && typeof stored === 'object' ? (stored as BundledMcpRecord) : {},
+      add: addConfigExtension,
+      saveRecord: (record) => acpUpsertConfig(BUNDLED_MCP_RECORD_KEY, record, false),
+      log: (line) => {
+        console.info(line);
+        window.electron.logInfo(line);
+      },
+    });
+  } catch (error) {
+    const line = `[bundled-mcps] could not check the bundled MCP servers against this app's bundle: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+    console.error(line);
+    window.electron?.logInfo?.(line);
+  }
+}
 
 interface ConfigContextType {
   config: ConfigMap;
@@ -207,6 +235,7 @@ export const ConfigProvider: React.FC<ConfigProviderProps> = ({ children }) => {
         };
         extensions = await pruneDeprecatedBundledExtensions(extensions, removeExtensionForSync);
         await syncBundledExtensions(extensions, addExtensionForSync);
+        await reconcileBundledMcpsAtStartup(extensions);
         // Reload extensions after sync
         const refreshedResponse = await getConfiguredExtensions();
         extensions = refreshedResponse.extensions;

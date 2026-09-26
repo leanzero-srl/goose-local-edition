@@ -7030,13 +7030,21 @@ async function bundledMcps() {
   };
   const browserExecutable = path.join(bundledRoot, browser.executable);
   await fs.access(browserExecutable);
+  // Every value the app writes for its own servers; the startup reconcile owns exactly these keys
+  // and leaves every other env key (a user's API key, folders) alone.
+  const bundleEnvs = {
+    MCP_CLIENT_TYPE: 'agent',
+    PUPPETEER_EXECUTABLE_PATH: browserExecutable,
+    LEANZERO_BROWSER_EXECUTABLE: browserExecutable,
+  };
+  const devOnlyEnvs = { ELECTRON_RUN_AS_NODE: '1' };
   const catalog = [
     {
       id: 'leanzero-web-search',
       name: 'LeanZero Web Search',
       entry: 'dist/index.js',
       description:
-        'Search the web and extract pages. Configure SERPER_API_KEY for search; page extraction works without a key.',
+        'Search the web and extract pages. With a Serper key (SERPER_API_KEY) searches go through Serper; without one they run on Yahoo, then Brave Search, in the bundled browser.',
     },
     {
       id: 'leanzero-documents',
@@ -7061,13 +7069,11 @@ async function bundledMcps() {
         type: 'stdio' as const,
         cmd: node,
         args: [entry],
-        envs: {
-          MCP_CLIENT_TYPE: 'agent',
-          ...(!app.isPackaged ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
-          PUPPETEER_EXECUTABLE_PATH: browserExecutable,
-          LEANZERO_BROWSER_EXECUTABLE: browserExecutable,
-        },
+        envs: { ...bundleEnvs, ...(!app.isPackaged ? devOnlyEnvs : {}) },
         timeout: 300,
+        bundleEntry: ['bundled-mcps', item.id, item.entry].join('/'),
+        managedEnvKeys: [...Object.keys(bundleEnvs), ...Object.keys(devOnlyEnvs)],
+        packaged: app.isPackaged,
       };
     })
   );

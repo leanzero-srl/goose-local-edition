@@ -143,6 +143,11 @@ type ElectronAPI = {
       type: 'stdio';
       envs: Record<string, string>;
       timeout: number;
+      /** `bundled-mcps/<id>/<entry>`: the tail of `args[0]` that identifies this app's own server. */
+      bundleEntry: string;
+      /** Env keys the app writes for its own servers (paths, client type); every other key is the user's. */
+      managedEnvKeys: string[];
+      packaged: boolean;
     }>
   >;
   platform: string;
