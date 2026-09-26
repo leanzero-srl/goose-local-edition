@@ -8,15 +8,6 @@
 # told apart. Pure stdlib; concatenated after rank_env.py, before the rank program.
 
 
-def prefill_position(ends, chunks, start=0, pad=0):
-    """How far into one row's prompt the prefill is after `chunks` of the batch's prefill ranges.
-    `ends` are the ranges' ends in the padded batch (the fork's `prefill_chunks`), `start` where
-    the prefill began (a restored prefix-cache entry's length, else 0), `pad` the row's own left
-    padding, which is no part of its prompt."""
-    done = ends[min(chunks, len(ends)) - 1] if chunks and ends else start
-    return max(0, done - pad)
-
-
 def live_request(
     request_id,
     arrived,
