@@ -621,6 +621,7 @@ pub fn spawn_rank(node: &NodeConfig, spec: &RankSpec) -> Result<RankProcess> {
 pub(crate) mod tests {
     use super::*;
     use crate::distributed::config::tests::two_mac_config;
+    use crate::distributed::provision::EnvSpec;
 
     /// One launch's own load lock: a test's stand-in ranks never take this Mac's, nor each other's.
     pub(crate) fn launch_load_lock() -> String {
@@ -1159,19 +1160,393 @@ print("ok")
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
+    /// The interpreter of a goose-managed env on this Mac (or the one `override_var` names) whose
+    /// provisioning proof — the exact import preflight runs — prints the pinned answer. `None`,
+    /// said out loud, when it is absent or stale: preflight refuses a stale env before any rank
+    /// runs, so the shipped rank programs never execute under one.
+    fn proven_env(spec: &EnvSpec, override_var: &str) -> Option<String> {
+        let python = std::env::var(override_var)
+            .unwrap_or_else(|_| spec.python(&dirs::home_dir().unwrap().display().to_string()));
+        if !std::path::Path::new(&python).exists() {
+            eprintln!("skipped: {python} absent");
+            return None;
+        }
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(&spec.check)
+            .output()
+            .unwrap_or_else(|e| panic!("{python} runs: {e}"));
+        let answer = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if answer != spec.expect {
+            eprintln!(
+                "skipped: {python} imports '{answer}', the pinned env is '{}' — provision it again \
+                 (or point {override_var} at one that is){}",
+                spec.expect,
+                String::from_utf8_lossy(&out.stderr)
+            );
+            return None;
+        }
+        Some(python)
+    }
+
+    /// Runs `program` as a rank runs its own — the spec base64 in argv[2] — but WITHOUT the rank
+    /// marker, so no sweep ever takes it for a goose rank (Q-77). Returns its GOOSE_TEST line.
+    fn run_against_real_packages(
+        python: &str,
+        program: &str,
+        spec: &RankSpec,
+    ) -> serde_json::Value {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = std::process::Command::new(python)
+            .arg("-c")
+            .arg(program)
+            .arg("goose-sidecar-test")
+            .arg(
+                base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(spec).unwrap()),
+            )
+            .env("TMPDIR", tmp.path())
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{stdout}{stderr}");
+        let line = stdout
+            .lines()
+            .find_map(|l| l.strip_prefix("GOOSE_TEST "))
+            .unwrap_or_else(|| panic!("{stdout}{stderr}"));
+        serde_json::from_str(line).unwrap()
+    }
+
+    /// The pipeline program as shipped — the load lock, the env prelude, the live table and
+    /// pipeline_rank.py up to where serve() needs a model and a group — against the REAL fork at
+    /// the pinned commit (`EnvSpec::pipeline()`'s proof). Its stand-in test replaced the whole fork
+    /// with a module of the same names; here the fork's own seams are what goose patches: the
+    /// attribute guard, `_Job` (a dataclass whose `produced` field LiveJob turns into a
+    /// property), `run_batch`/`_step` measured over the fork's own `prefill_chunks` and `_Row`,
+    /// the fork's own argparse reading goose's serve argv, and the fork's own `_build_app`
+    /// serving `/v1/status` through goose's replacement route (only the tokenizer — the model's
+    /// — is a stand-in). Negative control, measured 2026-09-26: the same program under an env
+    /// still on 2f02ac645 exits at the guard ("has no prefill_chunks").
+    #[test]
+    fn the_pipeline_program_patches_the_real_forks_seams() {
+        let Some(python) = proven_env(&EnvSpec::pipeline(), "GOOSE_TEST_PIPELINE_PYTHON") else {
+            return;
+        };
+        let config = pipeline_config();
+        let spec = pipeline_rank_specs(&config, "node-alias", 32_768, "19", 2_048, 2.0).remove(0);
+        let rank = include_str!("pipeline_rank.py");
+        let serves = rank
+            .find("threading.Thread(target=report_memory")
+            .expect("the program starts the reporter, then serve()");
+        let checks = r#"
+import asyncio
+from fastapi.testclient import TestClient
+
+serve = pipeline_qwen4_serve
+assert serve._Job is LiveJob and serve.run_batch is run_batch, "the job and batch seams are goose's"
+assert serve._step is _step and serve._build_app is _build_app, "the step and app seams are goose's"
+starts = serve.pipe._parse_starts(options.split)
+
+loop = asyncio.new_event_loop()
+row = serve._Row(list(range(10)), 8, 0.0, 1.0)
+job = serve._Job(row, loop, asyncio.Queue())
+assert type(job) is LiveJob and jobs_by_row[id(row)] is job and job.produced == 0, job
+
+# The fork's batch, reduced to what goose measures: its prefill ranges, one sample=False step per
+# range, then a sampled step and a token.
+walked = []
+def walk(stage, guard, rows, prefill_step, *args, **kwargs):
+    for _ in serve.prefill_chunks(0, len(rows[0].ids) - 1, prefill_step, 0):
+        serve._step(stage, None, None, rows, guard, 0, sample=False)
+        walked.append(job.prefilled)
+    serve._step(stage, None, None, rows, guard, 0, sample=True)
+    job.produced += 1
+fork_run_batch = walk
+fork_step = lambda *args, sample, **kwargs: None
+serve.run_batch(type("Stage", (), {"is_first": True})(), None, [row], 4)
+
+class Tokenizer:
+    chat_template = ""
+    eos_token_ids = [0]
+
+state = serve._State(served=options.served_model_name, context=options.context, max_batch=options.max_batch)
+app = serve._build_app(state, Tokenizer(), {0})
+state.active = [job]
+state.jobs.put(serve._Job(serve._Row([1] * 5, 4, 0.0, 1.0), loop, asyncio.Queue()))
+status = TestClient(app).get("/v1/status").json()
+print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "walked": walked,
+      "first_token": job.first_token is not None, "prefilled": job.prefilled, "status": status}))
+"#;
+        let program = format!(
+            "{}{}{}{}{checks}",
+            include_str!("rank_load_lock.py"),
+            include_str!("rank_env.py"),
+            include_str!("rank_live.py"),
+            &rank[..serves]
+        );
+        let seen = run_against_real_packages(&python, &program, &spec);
+        let options = &seen["options"];
+        assert_eq!(options["model"], config.nodes[0].model_dir.as_str());
+        assert_eq!(options["served_model_name"], "node-alias");
+        assert_eq!(options["port"], 8190);
+        assert_eq!(options["context"], 32_768);
+        assert_eq!(options["slots"], 2);
+        assert_eq!(options["max_batch"], 2);
+        assert_eq!(options["prefill_step"], 2_048);
+        assert_eq!(
+            seen["starts"],
+            serde_json::json!([0, 19]),
+            "the fork loads the split preflight approved"
+        );
+        assert_eq!(
+            seen["walked"],
+            serde_json::json!([4, 8, 9]),
+            "each prefill range's end, read from the fork's own prefill_chunks"
+        );
+        assert_eq!(seen["first_token"], true);
+        assert_eq!(seen["prefilled"], 10);
+        let status = &seen["status"];
+        assert_eq!(status["status"], "generating", "{status}");
+        assert_eq!(
+            (&status["num_running"], &status["num_waiting"]),
+            (&serde_json::json!(1), &serde_json::json!(1)),
+            "the fork's own counters ride under goose's table: {status}"
+        );
+        assert_eq!(
+            status["prefix_cache"]["enabled"], false,
+            "the fork's own /v1/status body: {status}"
+        );
+        let phases: Vec<&str> = status["requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["phase"].as_str().unwrap())
+            .collect();
+        assert_eq!(phases, ["generation", "queued"]);
+    }
+
+    /// The tensor program past its prelude — every class and patch rank_wrapper.py lays over
+    /// mlx_lm, up to `server.main()` — against the REAL mlx_lm 0.31.3, on the CPU, with no model
+    /// and no group (MLX's group is the one stand-in). Its stand-in boot tests ran these lines
+    /// against a hand-written mlx_lm; here mlx_lm's own parser reads the wrapper's argv, mlx_lm's
+    /// own prompt loop takes the chunk the wrapper sets (and, unpatched, takes the whole slice),
+    /// mlx_lm's own BatchGenerator / LRUPromptCache carry the live-batch bound, and mlx_lm's own
+    /// HTTP handler serves the wrapper's routes and refusals — the `Refused` BaseException
+    /// passing through `handle_completion`'s `except Exception` is upstream's code, not a copy.
+    #[test]
+    fn the_wrapper_serves_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let tensor = TensorLaunch {
+            planned_bytes: 27_456_216_576,
+            prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_entries: 110,
+            mlx_cache_limit_bytes: 2_745_621_658,
+            // One row's 600 tokens of scores at a 1,000-token width: a 512-token chunk.
+            prefill: TensorPrefill {
+                workspace_bytes: 1_000 * 600 * 25,
+                ..e2e_prefill()
+            },
+        };
+        let mut spec = rank_specs(&config, "node-alias", &[tensor, tensor], 141_568, 2.0).remove(0);
+        if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
+            *doorbell = false;
+        }
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import socket  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let checks = r#"
+import argparse
+import http.server
+import types
+import urllib.error
+import urllib.request
+from queue import Queue
+
+mx.set_default_device(mx.cpu)
+from mlx_lm.generate import GenerationBatch, SequenceStateMachine
+from mlx_lm.models.cache import LRUPromptCache
+
+assert server.run is run and issubclass(server.BatchGenerator, mlx_generate.BatchGenerator)
+assert issubclass(server.LRUPromptCache, LRUPromptCache)
+assert mlx_generate.PromptProcessingBatch.prompt is prompt
+assert mlx_generate.PromptProcessingBatch.split is split
+
+# The argv the wrapper hands mlx_lm, through mlx_lm's OWN parser: main() builds it, and parsing
+# is the last thing main does before it touches the device.
+class Parsed(Exception):
+    pass
+
+real_parse_args = argparse.ArgumentParser.parse_args
+
+def parse_and_stop(self, args=None, namespace=None):
+    raise Parsed(real_parse_args(self, args, namespace))
+
+argparse.ArgumentParser.parse_args = parse_and_stop
+try:
+    server.main()
+    raise SystemExit("mlx_lm's main() never parsed its argv")
+except Parsed as parsed:
+    cli = parsed.args[0]
+argparse.ArgumentParser.parse_args = real_parse_args
+
+def chunks_of(step):
+    taken = []
+    batch = mlx_generate.PromptProcessingBatch.__new__(mlx_generate.PromptProcessingBatch)
+    batch.model = lambda tokens, cache: taken.append(tokens.shape[1])
+    batch.uids, batch.tokens, batch.prompt_cache = [0], [[]], []
+    batch.prefill_step_size = int(prefill["step"])
+    step(batch, [[1] * 1000])
+    return taken
+
+generator = mlx_generate.BatchGenerator.__new__(server.BatchGenerator)
+generator._old_wired_limit = None
+generator.max_tokens, generator.logits_processors, generator._uid_count = 128, [], 0
+generator._default_state_machine = SequenceStateMachine({}, initial="normal")
+generator._unprocessed_sequences, generator._currently_processing = deque(), []
+generator._prompt_batch = mlx_generate.PromptProcessingBatch.empty(None, None)
+generator._generation_batch = GenerationBatch.empty(None, None)
+generator.insert_segments(segments=[[[1] * 100]], caches=[[KVCache()]], all_tokens=[[]], max_tokens=[5])
+
+def entry(first):
+    layer = KVCache()
+    layer.update_and_fetch(mx.zeros((1, 2, 64, 8), dtype=mx.bfloat16), mx.zeros((1, 2, 64, 8), dtype=mx.bfloat16))
+    return list(range(first, first + 64)), [layer]
+
+# mlx_lm's KVCache grows in 256-token steps: a 64-token entry holds a whole step until `compact`
+# gives it exactly its own tokens.
+raw_entry_bytes = sum(layer.nbytes for layer in entry(0)[1])
+compacted = entry(0)[1]
+compact(compacted)
+entry_bytes = sum(layer.nbytes for layer in compacted)
+prompt_cache_limit = generator.prompt_cache_nbytes + entry_bytes
+cache = server.LRUPromptCache(int(spec["prompt_cache_entries"]))
+cache.insert_cache("m", *entry(0))
+cache.insert_cache("m", *entry(100))
+alone = [len(cache), cache.nbytes]
+live_batch[:] = [generator]
+cache.insert_cache("m", *entry(200))
+beside_batch = [len(cache), cache.nbytes]
+live_batch.clear()
+
+responses = server.ResponseGenerator.__new__(server.ResponseGenerator)
+responses.model_provider, responses.requests = types.SimpleNamespace(cli_args=cli), Queue()
+httpd = http.server.ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    lambda *args, **kwargs: server.APIHandler(responses, *args, system_fingerprint="test", **kwargs),
+)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+shared = []
+
+def generation_thread():
+    rqueue, request, args = responses.requests.get()
+    shared.append(args.max_tokens)
+    rqueue.put(ContextFull("no room"))
+
+threading.Thread(target=generation_thread, daemon=True).start()
+
+def call(path, body=None):
+    url = f"http://127.0.0.1:{httpd.server_address[1]}{path}"
+    data = None if body is None else json.dumps(body).encode()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=30) as reply:
+            return [reply.status, json.loads(reply.read())]
+    except urllib.error.HTTPError as error:
+        return [error.code, json.loads(error.read())]
+
+messages = [{"role": "user", "content": "hi"}]
+print("GOOSE_TEST " + json.dumps({
+    "cli": {k: v for k, v in vars(cli).items() if isinstance(v, (int, str, type(None)))},
+    "chunks": chunks_of(mlx_generate.PromptProcessingBatch.prompt),
+    "upstream_chunks": chunks_of(upstream_prompt),
+    "raw_entry_bytes": raw_entry_bytes,
+    "entry_bytes": entry_bytes,
+    "alone": alone,
+    "beside_batch": beside_batch,
+    "models": call("/v1/models"),
+    "wrong_model": call("/v1/chat/completions", {"model": "other", "messages": messages}),
+    "no_room": call("/v1/chat/completions", {"model": served, "messages": messages}),
+    "shared_max_tokens": shared,
+    "status": call("/v1/status"),
+}))
+"#;
+        let program = format!(
+            "{}{}{}{}{}{}\
+             class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+             group = _Group()\n{}{checks}",
+            include_str!("rank_load_lock.py"),
+            include_str!("rank_env.py"),
+            include_str!("rank_live.py"),
+            include_str!("rank_budget.py"),
+            include_str!("rank_prefill.py"),
+            include_str!("rank_batch.py"),
+            &wrapper[start..end]
+        );
+        let seen = run_against_real_packages(&python, &program, &spec);
+        let cli = &seen["cli"];
+        assert_eq!(cli["model"], config.nodes[0].model_dir.as_str());
+        assert_eq!(cli["port"], 8190);
+        assert_eq!(cli["prompt_cache_size"], 110);
+        assert_eq!(
+            cli["prompt_cache_bytes"], 9_431_744_512u64,
+            "mlx_lm's own size parser reads the plan's KV charge"
+        );
+        assert_eq!(cli["prefill_step_size"], 2_048);
+        assert_eq!(
+            seen["chunks"],
+            serde_json::json!([512, 488]),
+            "mlx_lm's own prompt loop takes the chunk the plan's workspace affords"
+        );
+        assert_eq!(
+            seen["upstream_chunks"],
+            serde_json::json!([1_000]),
+            "unpatched, the same loop reads the whole slice in one step"
+        );
+        let entry = seen["entry_bytes"].as_u64().unwrap();
+        assert_eq!(
+            (seen["raw_entry_bytes"].as_u64().unwrap(), entry),
+            (256 * 2 * 8 * 2 * 2, 64 * 2 * 8 * 2 * 2),
+            "compact leaves an entry exactly its 64 tokens of bf16 keys and values, not its step"
+        );
+        assert_eq!(seen["alone"], serde_json::json!([2, 2 * entry]));
+        assert_eq!(
+            seen["beside_batch"],
+            serde_json::json!([1, entry]),
+            "beside the live batch the cache keeps what the KV charge leaves"
+        );
+        assert_eq!(seen["models"][0], 200);
+        assert_eq!(seen["models"][1]["data"][0]["id"], "node-alias");
+        assert_eq!(seen["models"][1]["data"][0]["context_window"], 141_568);
+        assert_eq!(seen["wrong_model"][0], 404);
+        assert_eq!(
+            seen["no_room"],
+            serde_json::json!([400, {"error": {"message": "no room", "code": "context_length_exceeded",
+                "type": "invalid_request_error"}}]),
+            "the refusal passes mlx_lm's own handle_completion to do_POST"
+        );
+        assert_eq!(
+            seen["shared_max_tokens"],
+            serde_json::json!([null]),
+            "an absent max_tokens stays absent through mlx_lm's own validation"
+        );
+        assert_eq!(seen["status"][1]["status"], "idle");
+    }
+
     /// The tensor wrapper's own module prelude — its imports and both upstream-attribute checks,
     /// exactly as shipped — run against the REAL mlx_lm 0.31.3. The stubbed tests never executed
     /// these lines, so 3.0.44 shipped `import mlx_lm.generate as mlx_generate`, which binds the
     /// re-exported `generate` function, and every split died at startup.
     #[test]
     fn the_wrapper_prelude_binds_real_mlx_lm_modules() {
-        let python = dirs::home_dir()
-            .unwrap()
-            .join(".goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python");
-        if !python.exists() {
-            eprintln!("skipped: {} absent", python.display());
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
             return;
-        }
+        };
         let wrapper = include_str!("rank_wrapper.py");
         let start = wrapper
             .find("import mlx_lm  # noqa")
@@ -1207,13 +1582,9 @@ print("ok")
     /// counts a queued row at its cached prefix plus its prompt.
     #[test]
     fn the_moving_split_leaves_what_mlx_lms_split_leaves() {
-        let python = dirs::home_dir()
-            .unwrap()
-            .join(".goose/distributed/mlx0.32.2-mlxlm0.31.3-py3.12/bin/python");
-        if !python.exists() {
-            eprintln!("skipped: {} absent", python.display());
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
             return;
-        }
+        };
         let checks = r#"
 import mlx.core as mx
 
