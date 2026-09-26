@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "In attesa del salvataggio delle immagini..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "{because, select, quit {goose non è in esecuzione su {peer}} other {{peer} non risponde dalle {time} — goose potrebbe essere chiuso, oppure è offline}}"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "Questo Mac"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "L’ultimo montaggio non è riuscito: {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} ha chiuso goose{turn, select, yes {, quindi questa risposta si interrompe} other {}} — apri goose lì, oppure esegui la chat su questo Mac} other {Apri goose lì se è chiuso, oppure esegui la chat su questo Mac}}. goose si riconnette da solo appena torna"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} sta riavviando goose} other {{peer} ha chiuso goose}}{turn, select, yes { — questa risposta si ferma} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "Avvio della suddivisione…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "Smetti di aspettarlo"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "Impossibile smettere di aspettare {peer}: {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "Smette di inviare la chat a {peer}"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Impossibile spostare la chat su questo Mac: {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "Verifico se {mac} ha ancora la tua risposta…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "{because, select, quit {goose non è in esecuzione su {mac} — apri goose lì, oppure esegui la chat su questo Mac} other {{mac} non risponde dalle {time} — goose potrebbe essere chiuso, oppure è offline}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} sta leggendo il tuo prompt ({tokens} token) — {elapsed} finora"

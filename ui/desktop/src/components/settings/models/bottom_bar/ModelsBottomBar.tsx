@@ -34,6 +34,7 @@ import { defineMessages, useIntl } from '../../../../i18n';
 import type { Message } from '../../../../types/message';
 import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
 import { splitStopReason } from '../../../chatServedBy/splitStopText';
+import { peerGoneOf, peerGoneText } from '../../../chatServedBy/peerGoneText';
 import { shortModelName } from '../../../noNodeNotice/mlxMount';
 import { compactTokens } from '../../../leanzero-swarm/mlxLiveStats';
 
@@ -305,9 +306,14 @@ export default function ModelsBottomBar({
   // single engine "not running".
   const splitStop = served?.readiness.kind === 'split-stopped' ? served.readiness.stop : null;
   const splitReason = splitStop ? splitStopReason(intl, splitStop) : null;
+  // A Mac that is away (its goose quit, or silent well past its comeback) is said in the composer
+  // bar's words, and the chip then names only the model — the Mac is already in the words (Q-111).
+  const away = served ? peerGoneOf(served) : null;
+  const goneWords = away ? peerGoneText(intl, away.mac, away.gone) : null;
   // The amber of a Mac that stopped answering is not "Loading" — it is named for what it is.
-  const phaseWord =
-    served?.readiness.kind === 'reconnecting'
+  const phaseWord = goneWords
+    ? goneWords
+    : served?.readiness.kind === 'reconnecting'
       ? intl.formatMessage(i18n.phaseReconnecting)
       : splitStop
         ? intl.formatMessage(i18n.phaseSplitStopped)
@@ -317,9 +323,11 @@ export default function ModelsBottomBar({
   const chipLabel =
     servedModel == null
       ? null
-      : (servedRunning || splitStop) && servedWhere
-        ? intl.formatMessage(i18n.servedChip, { model: servedModel, where: servedWhere })
-        : intl.formatMessage(i18n.servedChipNotRunning, { model: servedModel });
+      : goneWords
+        ? servedModel
+        : (servedRunning || splitStop) && servedWhere
+          ? intl.formatMessage(i18n.servedChip, { model: servedModel, where: servedWhere })
+          : intl.formatMessage(i18n.servedChipNotRunning, { model: servedModel });
 
   return (
     <div className="relative flex items-center" ref={dropdownRef}>
@@ -337,7 +345,12 @@ export default function ModelsBottomBar({
                 {/* The dot's word, on screen — not only its aria-label (Q-56). */}
                 <span
                   data-testid="model-chip-phase"
-                  className="mr-1.5 shrink-0 text-lz-meta font-lz-semibold"
+                  title={goneWords ?? undefined}
+                  className={cx(
+                    'mr-1.5 text-lz-meta font-lz-semibold',
+                    // The gone sentence is the chip's longest word: it gives way before the dot.
+                    goneWords ? 'min-w-0 truncate' : 'shrink-0'
+                  )}
                 >
                   {phaseWord}
                 </span>
@@ -379,17 +392,19 @@ export default function ModelsBottomBar({
               </p>
               <p className={cx('flex items-center gap-1.5', TYPE.meta)}>
                 {served.phase && <StatusDot phase={served.phase} label={phaseWord} />}
-                {splitReason && servedWhere
-                  ? intl.formatMessage(i18n.servedSplitStopped, {
-                      where: servedWhere,
-                      reason: splitReason,
-                    })
-                  : servedRunning && servedWhere
-                    ? intl.formatMessage(
-                        served.foreign ? i18n.servedWhereForeign : i18n.servedWhere,
-                        { phase: phaseWord, where: servedWhere }
-                      )
-                    : intl.formatMessage(i18n.servedNotRunning)}
+                {goneWords
+                  ? goneWords
+                  : splitReason && servedWhere
+                    ? intl.formatMessage(i18n.servedSplitStopped, {
+                        where: servedWhere,
+                        reason: splitReason,
+                      })
+                    : servedRunning && servedWhere
+                      ? intl.formatMessage(
+                          served.foreign ? i18n.servedWhereForeign : i18n.servedWhere,
+                          { phase: phaseWord, where: servedWhere }
+                        )
+                      : intl.formatMessage(i18n.servedNotRunning)}
               </p>
               {served.contextWindow != null && (
                 <p data-testid="model-menu-context" className={cx(TYPE.meta, TNUM)}>

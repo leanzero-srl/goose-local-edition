@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "A aguardar que as imagens sejam guardadas..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "{because, select, quit {o goose não está em execução em {peer}} other {{peer} não responde desde {time} — o goose pode estar fechado, ou está offline}}"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "Este Mac"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "A última montagem falhou: {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} fechou o goose{turn, select, yes {, então esta resposta para} other {}} — abra o goose lá ou execute o chat neste Mac} other {Abra o goose lá se estiver fechado, ou execute o chat neste Mac}}. o goose reconecta sozinho assim que ele voltar"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} está reiniciando o goose} other {{peer} fechou o goose}}{turn, select, yes { — esta resposta para aqui} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "Iniciando a divisão…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "Parar de esperar"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "Não foi possível parar de esperar por {peer}: {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "Para de enviar o chat para {peer}"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Não foi possível mover o chat para este Mac: {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "Verificando se {mac} ainda tem sua resposta…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "{because, select, quit {o goose não está em execução em {mac} — abra o goose lá ou execute o chat neste Mac} other {{mac} não responde desde {time} — o goose pode estar fechado, ou está offline}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} está lendo seu prompt ({tokens} tokens) — {elapsed} até agora"

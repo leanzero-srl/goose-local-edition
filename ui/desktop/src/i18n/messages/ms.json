@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Menunggu imej disimpan..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "{because, select, quit {goose tidak berjalan pada {peer}} other {{peer} tidak menjawab sejak {time} — goose mungkin ditutup, atau ia di luar talian}}"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "Mac ini"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} menutup goose{turn, select, yes {, jadi jawapan ini terhenti} other {}} — buka goose di sana, atau jalankan sembang pada Mac ini} other {Buka goose di sana jika ia ditutup, atau jalankan sembang pada Mac ini}}. goose menyambung semula dengan sendiri apabila ia kembali"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} sedang memulakan semula goose} other {{peer} telah keluar dari goose}}{turn, select, yes { — jawapan ini berhenti} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "Memulakan pembahagian…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "Berhenti menunggunya"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "Tidak dapat berhenti menunggu {peer}: {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "Berhenti menghantar sembang ke {peer}"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Tidak dapat memindahkan sembang ke Mac ini: {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "Menyemak sama ada {mac} masih menyimpan jawapan anda…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "{because, select, quit {goose tidak berjalan pada {mac} — buka goose di sana, atau jalankan sembang pada Mac ini} other {{mac} tidak menjawab sejak {time} — goose mungkin ditutup, atau ia di luar talian}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} sedang membaca prompt anda ({tokens} token) — {elapsed} setakat ini"

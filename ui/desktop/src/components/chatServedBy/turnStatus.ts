@@ -1,11 +1,13 @@
 import type { Message } from '../../types/message';
 import type { MlxLiveRequest } from '../leanzero-swarm/mlxLiveStats';
+import type { PeerGone } from '../../utils/routeContact';
 import { reconnectingMac, type ChatServedBy } from './chatServedBy';
 
 /**
  * WHAT THIS CHAT'S TURN IS WAITING ON — the status line under the composer ("goose is working on
  * it…" otherwise). Every cue is a fact about THIS turn, never a guess:
  *  - `reconnecting`: the Mac that serves it stopped answering (served-by `reconnecting`);
+ *  - `gone`: that Mac's goose quit, or stayed away well past every comeback (served-by `gone`, Q-111);
  *  - `checking`: that Mac answers again but the turn has not streamed since — the relay can tell
  *    whether the Mac still holds the answer only now, so ONE cue holds until the turn streams again
  *    or ends in the dropped-turn notice (Q-52);
@@ -15,6 +17,7 @@ import { reconnectingMac, type ChatServedBy } from './chatServedBy';
  */
 export type TurnCue =
   | { kind: 'reconnecting'; mac: string }
+  | { kind: 'gone'; mac: string; gone: PeerGone }
   | { kind: 'checking'; mac: string }
   | { kind: 'silent'; mac: string }
   | ({ kind: 'reading'; mac: string } & ReadingProgress);
@@ -122,7 +125,12 @@ export interface TurnCueInputs {
 export function pickTurnCue({ served, inFlight, lostTo, silent }: TurnCueInputs): TurnCue | null {
   if (!inFlight || !served) return null;
   const reconnecting = reconnectingMac(served);
-  if (reconnecting) return { kind: 'reconnecting', mac: reconnecting };
+  if (reconnecting) {
+    const gone = served.readiness.kind === 'reconnecting' ? served.readiness.gone : null;
+    return gone
+      ? { kind: 'gone', mac: reconnecting, gone }
+      : { kind: 'reconnecting', mac: reconnecting };
+  }
   const mac = served.where[0] ?? null;
   if (lostTo) return { kind: 'checking', mac: lostTo };
   if (silent && mac && served.engine === 'remote') return { kind: 'silent', mac };

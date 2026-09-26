@@ -4,7 +4,7 @@ import { remoteRouteUp, type MlxRemoteSingleStatus } from '../../acp/mlx-remote-
 import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
 import type { MlxServing } from '../../utils/mlxServing';
 import { leaveCause, type LeaveCause } from '../../utils/leaveCause';
-import { routeContactLost } from '../../utils/routeContact';
+import { routeContactLost, routePeerGone, type PeerGone } from '../../utils/routeContact';
 import type { EnginePhase } from '../lz/tokens';
 import { ownsTheMac, splitContextFromFreeMemory } from '../leanzero-swarm/mlxDistributed';
 import { routePeerName } from '../leanzero-swarm/macs';
@@ -110,6 +110,12 @@ export type ComposerReadiness =
       why: string | null;
       /** The Mac said it is going away on purpose (fdc737969): this answer is gone (Q-54). */
       cause: LeaveCause | null;
+      /**
+       * Not a blip: that Mac's goose said it quit, or has stayed unreachable well past every wait
+       * this Mac measured it come back from (utils/routeContact.ts `routePeerGone`, Q-111) — a
+       * steady "its goose isn't running", never "reconnecting…" for hours. null = a blip.
+       */
+      gone: PeerGone | null;
       /** What "Run on this Mac instead" does — this Mac's readiness with the route set aside. */
       instead: RunHere;
     };
@@ -159,6 +165,11 @@ export function lostContactWith(
   main: MlxEngineSnapshot | null
 ): { why: string | null } | null {
   return routeContactLost(remote, remoteReadError, main);
+}
+
+/** main's measured contact with the route's Mac — only when main's read IS of the route. */
+function routeContactOf(main: MlxEngineSnapshot | null) {
+  return main?.engine === 'remote' ? main.contact : null;
 }
 
 function runHere(local: ComposerReadiness): RunHere {
@@ -473,16 +484,16 @@ function busyWith(
 function phaseOf(
   serving: MlxEngineServing,
   inputs: ChatServedInputs,
-  activity: MlxActivity | null
+  activity: MlxActivity | null,
+  readiness: ComposerReadiness
 ): EnginePhase | null {
   const { single, distributed, remote } = inputs;
   switch (serving.engine) {
     case 'single':
       return singlePhase(single?.state ?? null, false, activity);
     case 'remote':
-      if (remote && lostContactWith(remote, inputs.remoteReadError, inputs.main)) {
-        return 'loading';
-      }
+      // Contact lost: a blip in progress is amber; a Mac whose goose is gone is a steady hold (Q-111).
+      if (readiness.kind === 'reconnecting') return readiness.gone ? 'held' : 'loading';
       return remotePhase(remote?.state ?? 'off', activity);
     case 'split': {
       if (serving.foreign) {
@@ -544,11 +555,13 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
   if (readiness.kind === 'remote') {
     const lost = lostContactWith(readiness.status, inputs.remoteReadError, main);
     if (lost) {
+      const cause = leaveCause(lost.why);
       readiness = {
         kind: 'reconnecting',
         status: readiness.status,
         why: lost.why,
-        cause: leaveCause(lost.why),
+        cause,
+        gone: routePeerGone(routeContactOf(main), cause),
         instead: runHere(readinessVia(null)),
       };
     } else if (readiness.status.state === 'mounting') {
@@ -598,7 +611,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
       ...NO_ENGINE,
       model: named ? model : null,
       where: named ? [thisMac] : [],
-      phase: named ? phaseOf(NO_ENGINE, inputs, null) : null,
+      phase: named ? phaseOf(NO_ENGINE, inputs, null, readiness) : null,
       activity: null,
       busyWithOthers: null,
       turnRequest: null,
@@ -611,7 +624,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
   const activity = stats ? mlxActivity(stats) : null;
   return {
     ...serving,
-    phase: phaseOf(serving, inputs, activity),
+    phase: phaseOf(serving, inputs, activity, readiness),
     activity,
     busyWithOthers:
       stats && activity && main

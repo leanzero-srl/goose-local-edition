@@ -14,7 +14,10 @@ import {
   mlxDistributedStop,
   subscribeMlxDistributedStatus,
 } from '../acp/mlx-distributed';
-import { dropRoute } from '../components/leanzero-swarm/routeSwitch';
+import { dropRoute, type PeerReach } from '../components/leanzero-swarm/routeSwitch';
+import { latestMlxRemoteSingleStatus } from '../acp/mlx-remote-single';
+import { leaveCause } from '../utils/leaveCause';
+import type { MlxEngineSnapshot } from '../utils/mlxEngineMonitor';
 import { MLX_STATUS_POLL_MS } from '../components/leanzero-swarm/mlxLiveStats';
 import { useFeatures } from '../contexts/FeaturesContext';
 import { useMlxRemoteReporter } from './useMlxRemoteReporter';
@@ -50,9 +53,22 @@ const i18n = defineMessages({
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export type MlxTrayRendererAction = 'mount' | 'unmount' | 'stop-distributed' | 'stop-remote';
+export type MlxTrayRendererAction =
+  | 'mount'
+  | 'unmount'
+  | 'stop-distributed'
+  | 'stop-remote'
+  | 'run-here'
+  | 'stop-waiting';
 
-const RENDERER_ACTIONS: readonly string[] = ['mount', 'unmount', 'stop-distributed', 'stop-remote'];
+const RENDERER_ACTIONS: readonly string[] = [
+  'mount',
+  'unmount',
+  'stop-distributed',
+  'stop-remote',
+  'run-here',
+  'stop-waiting',
+];
 
 /** A stop whose ranks were not all observed gone — the steps say which pid was left. */
 export class DistributedStopNotVerified extends Error {
@@ -69,12 +85,35 @@ export class DistributedStopNotVerified extends Error {
  * own loop stops on the real outcome, not on a guess. The distributed stop returns after the
  * verified stop, and its status goes to main the same way.
  */
+/**
+ * Did the route's Mac SAY its goose quit — the route's own words now, or main's word kept for the
+ * whole wait (mlxEngineMonitor `contact.saidQuit`, the one the tray decided on)?
+ */
+async function awayReach(): Promise<PeerReach> {
+  if (leaveCause(latestMlxRemoteSingleStatus()?.lastError) === 'quit') return 'gone';
+  const bridge = (
+    window as unknown as { electron?: { mlxEngineActivity?: () => Promise<MlxEngineSnapshot> } }
+  ).electron?.mlxEngineActivity;
+  const main = bridge ? await bridge().catch(() => null) : null;
+  return main?.engine === 'remote' && main.contact?.saidQuit ? 'gone' : 'unreachable';
+}
+
 export async function runMlxTrayAction(action: MlxTrayRendererAction): Promise<void> {
   if (action === 'stop-remote') {
     // The route's Stop in Run it (routeSwitch.ts, the one path): withdrawn on this Mac, at once when
     // its Mac is not answering; a peer that keeps its model is the quiet PeerHeldLine, not a toast.
     await dropRoute().routeGone;
     return;
+  }
+  if (action === 'stop-waiting' || action === 'run-here') {
+    // Offered only while the route's Mac is away (mlxTray `peerGoneModel`): withdrawn here. A Mac
+    // whose goose said it quit holds nothing and is never asked; a silent one may be offline with
+    // its model loaded, so it is asked in the background. "Run on this Mac instead" then brings
+    // this Mac's engine up unless it is.
+    await dropRoute(await awayReach()).routeGone;
+    if (action === 'stop-waiting') return;
+    const here = await mlxEngineStatus();
+    if (here.state === 'running' || here.state === 'mounting') return;
   }
   if (action === 'stop-distributed') {
     const { stop } = await mlxDistributedStop();
@@ -177,11 +216,11 @@ export function useMlxTrayActions(): void {
         }
         const noModel = error instanceof Error && error.message === 'no-model';
         const title =
-          action === 'mount'
+          action === 'mount' || action === 'run-here'
             ? i18n.mountFailed
             : action === 'unmount'
               ? i18n.unmountFailed
-              : action === 'stop-remote'
+              : action === 'stop-remote' || action === 'stop-waiting'
                 ? i18n.remoteStopFailed
                 : i18n.stopFailed;
         toastError({

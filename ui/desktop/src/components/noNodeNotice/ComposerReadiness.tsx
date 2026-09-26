@@ -9,13 +9,14 @@ import {
   Play,
   ServerOff,
   Settings2,
+  Unplug,
 } from 'lucide-react';
 import { mlxEngineModelsList, type MlxEngineStatus } from '../../acp/mlx-engine';
 import { mlxDistributedStart, mlxDistributedStatus } from '../../acp/mlx-distributed';
 import { gb1, gib } from '../leanzero-swarm/mlxDistributed';
 import { errorMessage } from '../../utils/conversionUtils';
 import { PeerHeldLine } from '../leanzero-swarm/PeerHeldLine';
-import { dropRoute } from '../leanzero-swarm/routeSwitch';
+import { dropRoute, type PeerReach } from '../leanzero-swarm/routeSwitch';
 import { routePeerName } from '../leanzero-swarm/macs';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
 import { compactTokens } from '../leanzero-swarm/mlxLiveStats';
@@ -36,6 +37,7 @@ import {
 } from '../chatServedBy/chatServedBy';
 import type { ChatServing } from '../chatServedBy/useChatServedBy';
 import { splitStopHeadline, splitStopMemory } from '../chatServedBy/splitStopText';
+import { peerGoneText } from '../chatServedBy/peerGoneText';
 import {
   distributedProblem,
   distributedServedId,
@@ -104,6 +106,20 @@ const i18n = defineMessages({
   leavingPlain: {
     id: 'composerReadiness.leavingPlain',
     defaultMessage: 'goose reconnects when it is back',
+  },
+  goneDetail: {
+    id: 'composerReadiness.goneDetail',
+    defaultMessage:
+      '{because, select, quit {{peer} quit goose{turn, select, yes {, so this answer stops} other {}} — open goose there, or run chat on this Mac} other {Open goose there if it is closed, or run chat on this Mac}}. goose reconnects on its own once it is back',
+  },
+  stopWaiting: { id: 'composerReadiness.stopWaiting', defaultMessage: 'Stop waiting for it' },
+  stopWaitingHint: {
+    id: 'composerReadiness.stopWaitingHint',
+    defaultMessage: 'Stops sending chat to {peer}',
+  },
+  stopWaitingFailed: {
+    id: 'composerReadiness.stopWaitingFailed',
+    defaultMessage: 'Could not stop waiting for {peer}: {error}',
   },
   loadHere: {
     id: 'composerReadiness.loadHere',
@@ -183,6 +199,13 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
   const restoreDetails = useRestoreDetails(restore);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [stopWaitError, setStopWaitError] = useState<string | null>(null);
+  // A Mac whose goose SAID it quit holds no engine to free: it is never asked (routeSwitch `gone`).
+  // One that only went silent may be offline with its model still loaded: asked in the background.
+  const reach: PeerReach =
+    readiness.kind === 'reconnecting' && readiness.gone?.because === 'said-quit'
+      ? 'gone'
+      : 'unreachable';
   const [startingSplit, setStartingSplit] = useState(false);
   const [splitStartError, setSplitStartError] = useState<string | null>(null);
 
@@ -195,7 +218,7 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
       setSwitching(true);
       setSwitchError(null);
       try {
-        const dropped = dropRoute(true);
+        const dropped = dropRoute(reach);
         // The route record goes first inside the call; the peer is only asked afterwards.
         await dropped.routeGone;
         if (instead.mount) await mount(STRIP_MOUNT_KEY, instead.mount);
@@ -205,8 +228,22 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
         setSwitching(false);
       }
     },
-    [mount]
+    [mount, reach]
   );
+
+  // "Stop waiting for it": the route withdrawn, nothing mounted — chat stops going to that Mac and
+  // the bar then says what this Mac can do (Q-111).
+  const stopWaiting = useCallback(async () => {
+    setSwitching(true);
+    setStopWaitError(null);
+    try {
+      await dropRoute(reach).routeGone;
+    } catch (e) {
+      setStopWaitError(errorMessage(e, String(e)));
+    } finally {
+      setSwitching(false);
+    }
+  }, [reach]);
 
   // "Start the split again": the saved split, the same call Run it and the relaunch restore make.
   // Its status is read at once so every surface leaves "stopped" on the run's own state.
@@ -269,7 +306,9 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
       onMount={(modelId) => void mount(STRIP_MOUNT_KEY, modelId)}
       switching={switching}
       switchError={switchError}
+      stopWaitError={stopWaitError}
       onRunHere={(instead) => void runHere(instead)}
+      onStopWaiting={() => void stopWaiting()}
       turnInFlight={serving.turnInFlight}
       startingSplit={startingSplit}
       splitStartError={splitStartError}
@@ -373,7 +412,9 @@ function ReadinessStripBody({
   onMount,
   switching,
   switchError,
+  stopWaitError,
   onRunHere,
+  onStopWaiting,
   turnInFlight,
   startingSplit,
   splitStartError,
@@ -387,7 +428,9 @@ function ReadinessStripBody({
   onMount: (modelId: string) => void;
   switching: boolean;
   switchError: string | null;
+  stopWaitError: string | null;
   onRunHere: (instead: RunHere) => void;
+  onStopWaiting: () => void;
   turnInFlight: boolean;
   startingSplit: boolean;
   splitStartError: string | null;
@@ -481,6 +524,41 @@ function ReadinessStripBody({
             {intl.formatMessage(requesting ? i18n.splitOneMacLoading : i18n.splitOneMac)}
           </Button>
         )}
+      </>
+    );
+  } else if (readiness.kind === 'reconnecting' && readiness.gone) {
+    // Not a blip: that Mac's goose said it quit ("isn't running"), or it has been silent well past
+    // the comeback it is expected to make ("hasn't answered since…", closed or offline — never
+    // called a closed app) (Q-111). A steady state in the chip's words, with the two ways out; the
+    // route still comes back on its own when that Mac does.
+    const { gone } = readiness;
+    const peer = routePeerName(readiness.status);
+    headline = peerGoneText(intl, peer, gone);
+    fill = PHASE_FILL.held;
+    detail = switchError
+      ? intl.formatMessage(i18n.switchFailed, { error: switchError })
+      : stopWaitError
+        ? intl.formatMessage(i18n.stopWaitingFailed, { peer, error: stopWaitError })
+        : intl.formatMessage(i18n.goneDetail, {
+            peer,
+            because: gone.because === 'said-quit' ? 'quit' : 'silent',
+            turn: turnInFlight ? 'yes' : 'no',
+          });
+    raw = readiness.why;
+    action = (
+      <>
+        {runHereButton(peer)}
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<Unplug />}
+          disabled={switching}
+          title={intl.formatMessage(i18n.stopWaitingHint, { peer })}
+          data-testid="composer-readiness-stop-waiting"
+          onClick={onStopWaiting}
+        >
+          {intl.formatMessage(i18n.stopWaiting)}
+        </Button>
       </>
     );
   } else if (readiness.kind === 'reconnecting') {
@@ -583,7 +661,9 @@ function ReadinessStripBody({
     <div
       role="status"
       data-testid="composer-readiness"
-      data-readiness={readiness.kind}
+      data-readiness={
+        readiness.kind === 'reconnecting' && readiness.gone ? 'peer-gone' : readiness.kind
+      }
       className={cx(
         'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
         RADIUS.control,

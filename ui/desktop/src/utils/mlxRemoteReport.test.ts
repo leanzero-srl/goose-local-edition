@@ -5,7 +5,7 @@ import {
   remoteTrayLine,
   toMlxRemoteReport,
 } from './mlxRemoteReport';
-import { buildMlxTrayModel } from './mlxTray';
+import { buildMlxTrayModel, lostSinceText } from './mlxTray';
 import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
 import { EMPTY_BOOK, parseMlxLiveStatus } from '../components/leanzero-swarm/mlxLiveStats';
 import {
@@ -210,6 +210,94 @@ describe('the tray while chat is served from a linked Mac', () => {
       'Open Providers',
       "Stop serving from Work's Mac Studio",
     ]);
+  });
+
+  describe('Q-111: a Mac that is away is a steady state with two ways out, not "reconnecting…" for hours', () => {
+    const report = toMlxRemoteReport(READY)!;
+    const SEC = 1000;
+    const LOST_AT = Date.UTC(2026, 8, 25, 23, 14);
+    const lostFor = (
+      lostForMs: number,
+      longestComebackMs: number | null,
+      saidQuit = false
+    ): MlxEngineSnapshot => ({
+      ...INITIAL_SNAPSHOT,
+      engine: 'remote',
+      mode: 'reconnecting',
+      statusDetail: 'unreachable: connect ECONNREFUSED',
+      contact: {
+        lostSinceMs: LOST_AT,
+        lostForMs,
+        longestComebackMs,
+        comebacks: longestComebackMs ? 1 : 0,
+        saidQuit,
+        pollMs: 2 * SEC,
+      },
+    });
+    const actionsOf = (model: ReturnType<typeof buildMlxTrayModel>) =>
+      model.items.flatMap((i) => (i.type === 'action' ? [[i.action, i.label, i.enabled]] : []));
+
+    it('silent hours on a FRESH launch (nothing measured): "hasn’t answered since", closed OR offline — never "isn’t running"', () => {
+      const model = buildMlxTrayModel(lostFor(2 * 3600 * SEC, null), options(report));
+      const since = `Work's Mac Studio hasn’t answered since ${lostSinceText(LOST_AT)}`;
+      expect(model.title).toBe(since);
+      expect(model.phase).toBe('held');
+      expect(model.items[0]).toEqual({ type: 'info', label: since, phase: 'held' });
+      expect(labels(model)).toContain('Its goose may be closed, or it’s offline');
+      expect(labels(model)).toContain('Open goose there, or run chat on this Mac');
+      expect(labels(model).some((l) => /isn’t running|reconnecting|keeps trying/.test(l))).toBe(
+        false
+      );
+      expect(actionsOf(model)).toEqual([
+        ['run-here', 'Run on this Mac instead', true],
+        ['stop-waiting', 'Stop waiting for it', true],
+        ['open-providers', 'Open Providers', true],
+      ]);
+    });
+
+    it('a blip within 3× the expected comeback still says reconnecting', () => {
+      const blip = buildMlxTrayModel(lostFor(75 * SEC, null), options(report));
+      expect(blip.title).toBe("Reconnecting to Work's Mac Studio");
+      expect(blip.phase).toBe('loading');
+      // A measured 90 s mount raises the expectation: 200 s is still a blip there.
+      const slowMount = buildMlxTrayModel(lostFor(200 * SEC, 90 * SEC), options(report));
+      expect(slowMount.title).toBe("Reconnecting to Work's Mac Studio");
+    });
+
+    it('the Mac SAID it quit goose (Q-51): "isn’t running" at once, its word named', () => {
+      const quit = toMlxRemoteReport({
+        ...READY,
+        state: 'reconnecting',
+        lastError:
+          "Work's Mac Studio does not answer over LeanZero Link right now: Work's Mac Studio quit goose",
+      })!;
+      const model = buildMlxTrayModel(INITIAL_SNAPSHOT, options(quit));
+      expect(model.title).toBe("Work's Mac Studio’s goose isn’t running");
+      expect(labels(model)).toEqual([
+        "Work's Mac Studio’s goose isn’t running",
+        "Work's Mac Studio quit goose",
+        'Open goose there, or run chat on this Mac',
+        'Run on this Mac instead',
+        'Stop waiting for it',
+        'Open Providers',
+      ]);
+      // Kept by main after the mesh overwrote the route's words.
+      const kept = buildMlxTrayModel(lostFor(5 * SEC, null, true), options(report));
+      expect(kept.title).toBe("Work's Mac Studio’s goose isn’t running");
+    });
+
+    it('with no model to load here, "Run on this Mac instead" is not offered; no window, the actions wait for one', () => {
+      const noModel = buildMlxTrayModel(lostFor(3600 * SEC, 25 * SEC), {
+        ...options(report),
+        mountModelId: null,
+      });
+      expect(actionsOf(noModel).map(([a]) => a)).toEqual(['stop-waiting', 'open-providers']);
+      const noWindow = buildMlxTrayModel(lostFor(3600 * SEC, 25 * SEC), {
+        ...options(report),
+        canAct: false,
+      });
+      expect(actionsOf(noWindow).every(([, , enabled]) => enabled === false)).toBe(true);
+    });
   });
 
   it('`failed` stays red and means the peer answered that its engine failed — never "reconnecting"', () => {

@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Ожидание сохранения изображений..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "{because, select, quit {goose на {peer} не запущен} other {{peer} не отвечает с {time} — goose, возможно, закрыт, или Mac не в сети}}"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "Этот Mac"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "Последнее монтирование не удалось: {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} закрыл goose{turn, select, yes {, поэтому этот ответ прервётся} other {}} — откройте goose там или запустите чат на этом Mac} other {Откройте goose там, если он закрыт, или запустите чат на этом Mac}}. goose переподключится сам, когда он вернётся"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} перезапускает goose} other {{peer} закрыл goose}}{turn, select, yes { — этот ответ остановится} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "Запуск разделения…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "Больше не ждать"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "Не удалось перестать ждать {peer}: {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "Перестаёт отправлять чат на {peer}"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Не удалось перенести чат на этот Mac: {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "Проверяем, сохранил ли {mac} ваш ответ…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "{because, select, quit {goose на {mac} не запущен — откройте goose там или запустите чат на этом Mac} other {{mac} не отвечает с {time} — goose, возможно, закрыт, или Mac не в сети}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} читает ваш промпт ({tokens} токенов) — прошло {elapsed}"

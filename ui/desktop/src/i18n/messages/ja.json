@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "画像の保存を待機中..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "{because, select, quit {{peer} の goose は起動していません} other {{peer} から {time} 以降応答がありません — goose が閉じているか、オフラインの可能性があります}}"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "この Mac"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "前回のマウントに失敗しました: {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} が goose を終了しました{turn, select, yes {。この回答はここで止まります} other {}} — そちらで goose を開くか、この Mac でチャットを実行してください} other {閉じていればそちらで goose を開くか、この Mac でチャットを実行してください}}. 戻り次第 goose が自動で再接続します"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} が goose を再起動しています} other {{peer} が goose を終了しました}}{turn, select, yes { — この回答はここで止まります} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "分割を開始中…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "待つのをやめる"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "{peer} を待つのをやめられませんでした: {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "{peer} へのチャット送信をやめます"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "チャットをこの Mac に移せませんでした: {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "{mac} がまだ回答を保持しているか確認しています…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "{because, select, quit {{mac} の goose は起動していません — そちらで goose を開くか、この Mac でチャットを実行してください} other {{mac} から {time} 以降応答がありません — goose が閉じているか、オフラインの可能性があります}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} がプロンプトを読んでいます ({tokens} トークン) — 経過 {elapsed}"

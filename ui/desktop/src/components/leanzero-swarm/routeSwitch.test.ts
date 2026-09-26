@@ -77,9 +77,20 @@ describe('dropRoute — the one way chat leaves a route', () => {
     expect(latestPeerHeld()).toMatchObject({ phase: 'held', peerName: "Work's Mac Studio" });
   });
 
+  it('a Mac whose goose is gone: the route is withdrawn and that Mac is never asked (Q-111)', async () => {
+    route = { ...STUDIO, state: 'reconnecting' };
+    const drop = dropRoute('gone');
+    await drop.routeGone;
+    await drop.settled;
+    expect(mockStop).toHaveBeenCalledWith(true);
+    expect(mockUnmount).not.toHaveBeenCalled();
+    // No "still holds the model" about a Mac whose engine went with its goose.
+    expect(latestPeerHeld()).toBeNull();
+  });
+
   it('only a route that could not be withdrawn (another window owns it) is an error', async () => {
     mockStop.mockRejectedValue(new Error('remoteSingleActive: another goose window'));
-    const drop = dropRoute(true);
+    const drop = dropRoute('unreachable');
     await expect(drop.routeGone).rejects.toThrow('remoteSingleActive');
     await drop.settled;
     expect(mockUnmount).not.toHaveBeenCalled();

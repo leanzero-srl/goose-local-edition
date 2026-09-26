@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "正在等待影像儲存…"
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "{because, select, quit {{peer} 上的 goose 未在執行} other {{peer} 自 {time} 起沒有回應 — goose 可能已關閉，或它已離線}}"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "這台 Mac"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "上次掛載失敗:{error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} 已結束 goose{turn, select, yes {，這則回答會停止} other {}} — 請在那邊開啟 goose，或在這台 Mac 上執行聊天} other {如果 goose 已關閉，請在那邊開啟它，或在這台 Mac 上執行聊天}}. 它恢復後 goose 會自動重新連線"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} 正在重新啟動 goose} other {{peer} 已結束 goose}}{turn, select, yes { — 此回答將中止} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "正在啟動分割…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "不再等待"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "無法停止等待 {peer}：{error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "不再將聊天傳送到 {peer}"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "無法將聊天移到這台 Mac：{error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "正在檢查 {mac} 是否仍保留你的回答…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "{because, select, quit {{mac} 上的 goose 未在執行 — 請在那邊開啟 goose，或在這台 Mac 上執行聊天} other {{mac} 自 {time} 起沒有回應 — goose 可能已關閉，或它已離線}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} 正在讀取你的提示（{tokens} 個 token）— 已用 {elapsed}"
