@@ -468,7 +468,7 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   admitted) — derived from ranges all ranks hold, NO new collective word; rank 0 admits the queued head (`_order`:
   protected oldest-first, then fewest left) only when it would be that pick. Aging is in prefill TOKENS, not seconds:
   `_Job.waited` >= own tokens left ⇒ protected (nothing later jumps it). `_Plan.abort` is a per-slot flag list; the plan
-  header is [cmd, leave×slots, abort×slots, joiner×6, evictions]. `_State.held` is GONE → `_State.waiting` (goose's
+  header is [cmd, leave×slots, abort×slots, joiner×7 (the 7th = Q-144's tools word), evictions]. `_State.held` is GONE → `_State.waiting` (goose's
   pipeline_rank.py must read it — companion branch q145-pin-companion, lands WITH the pin bump). A canary arriving
   while BOTH slots are held (one decoding, one prefilling) still waits for a row to leave — slot-bound, not order-bound.
   TRAP (cost: ranks launched beside a live Flash split): in the fork's tests, `test_pipeline_qwen4.py`,
@@ -476,3 +476,28 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   on localhost; only `test_pipeline_qwen4_continuous.py` and `test_pipeline_qwen4_srpf.py` are in-process. While a split
   holds the Mac, run only those two, on CPU: a runner that does `mx.set_default_device(mx.cpu)` then `pytest.main`,
   with the worktree first on sys.path (the venv's editable finder points at the main checkout).
+- 2026-09-26 Q-144 (fork b1bc3b8d9 = tag lz-pipeline-qwen4.7; goose pins 419306f70 = tag lz-pipeline-qwen4.8 = .7 +
+  Q-145 cherry-picked; branch lz/pipeline-single-line-port): THE AUDIT OF
+  lz.3..lz.9 AGAINST THE PIPELINE. lz.3 KV-quant n/a (no --kv-cache-dtype on the pipeline), lz.4 MTP logprobs n/a (no
+  MTP/logprobs; only ints cross threads), lz.5 unset max_tokens equivalent since 5675768ea, lz.6 ported (Q-143), lz.7
+  XML skeleton guard PORTED — it runs on the LAST rank (the one that samples; `_sample`), armed per row by a `tools`
+  word in the plan header (`_PLAN_TAIL` 8), rules from the checkpoint's own tokenizer (Flash arms 12; log line
+  `[pipeline] rank N: xml tool-call skeleton guard armed (12 rules)`), lz.8 PORTED ADAPTED — the pipeline's own
+  `_PrefixStore.put` held the QSAIndexCache raw ring as a VIEW of the chunk's raw keys (entry 1.346x charged at
+  512-token chunks → 1.025x with `_own_bytes`), lz.9 equivalent a863c60c5. THE GUARD THAT REFUSES A REPEAT: the fork's
+  `tests/test_pipeline_single_line_ports_audit.py` fails on any `git rev-list <newest v*-lz.*> ^HEAD ^v0.14.3` commit
+  missing from `tests/pipeline_single_line_ports.json` (review = ported/equivalent naming pipeline commits in HEAD, or
+  n/a with a reason); goose's `the_pipeline_pin_was_reviewed_against_the_single_engine_pin` fails when ENGINE_LAUNCHER's
+  tag != `PIPELINE_SINGLE_LINE_REVIEWED_THROUGH` (provision.rs). A single-engine pin bump therefore = review the new
+  single-line commits on the pipeline line, bump `reviewed_through` in the fork manifest AND the goose constant.
+  Offline method: in-process singleton group + a real tiny `PipelineStage` (float32 — CPU gather_mm takes nothing else)
+  with a scripted logit bias (`tests/test_pipeline_qwen4_single_line_ports.py`); bytes held = `mx.get_active_memory()`
+  deltas after gc + clear_cache, per cache member. Also in-process (safe beside a live split): the port tests, the
+  audit test and `test_pipeline_qwen4_serve_transient_tail.py`. Goose's real-fork seam tests
+  (`the_pipeline_program_patches_the_real_forks_seams`, `every_way_renders_the_same_prompt_for_the_same_setting`) SKIP
+  silently unless an env proves the pinned commit — point `GOOSE_TEST_PIPELINE_PYTHON` at a scratch venv
+  (`uv venv --python 3.12` + `uv pip install "rapid-mlx @ git+…@<commit>" mlx==0.32.2 mlx-lm==0.31.3 mlx-vlm==0.7.1`,
+  ~0.6 GB) and grep `--nocapture` for "skipped". Q-145 receipt: at 419306f70 the seam test's stand-in
+  `engine.joining = …` failed ("property 'joining' … has no setter") — the companion branch had not run it.
+  TRAP: a scratch script named `attrs.py` or `bisect.py` on sys.path shadows the stdlib/attrs package and breaks
+  pytest/fastapi imports — name scratch files `m_*.py`.
