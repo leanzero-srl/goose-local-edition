@@ -1039,8 +1039,9 @@ fn previous_split_check(leftovers: &[probe::GooseRankProcess]) -> Check {
     )
 }
 
-/// A foreign DISTRIBUTED process (mlx.launch, the fork's pipeline, a goose rank this install did
-/// not launch) holds a coordinator port or an RDMA queue pair: FAIL. A foreign SINGLE server (the
+/// A foreign DISTRIBUTED process (mlx.launch, the fork's `pipeline_qwen4 serve|run`, a goose rank
+/// this install did not launch) joins a group, so it holds a coordinator port or an RDMA queue
+/// pair: FAIL. The fork's `plan` dry run joins no group and is never counted (Q-126). A foreign SINGLE server (the
 /// owner's `rapid-mlx serve` on its own port) is an independent engine: its resident memory is
 /// already out of the `available` figure the memory check plans against, so it is a WARN naming
 /// the pid and the cost it does carry (GPU contention: decode on this node slows while it works).
@@ -2741,6 +2742,54 @@ pub(crate) mod tests {
         assert_eq!(
             check(&tokenless, "foreignEngines").unwrap().verdict,
             CheckVerdict::Fail
+        );
+    }
+
+    /// Q-126 on the node's own answer: goose's `plan --json` probe (11:41:50, pids 52054 and
+    /// 52057) holds no coordinator port and joins no group, so `foreignEngines` passes and nothing
+    /// is named a foreign split. Another app's pipeline rank holding the coordinator port (32323,
+    /// JACCL rank 0) still FAILs `foreignEngines` by pid, and `ports` names the listener.
+    #[test]
+    fn goose_s_own_planner_probe_is_not_a_foreign_split_and_a_port_holding_rank_is() {
+        let config = two_mac_config();
+        let fork =
+            "/Users/mihaiperdum/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python";
+        let planners = format!(
+            "52054 {fork} -m {PIPELINE_MODULE} plan --json --model /m/Qwen3.8-Flash-Next-4bit --node Mihai-Macbook:128.00:90.00:100.00
+52057 {fork} -m {PIPELINE_MODULE} plan --json --model /m/Qwen3.8-Flash-Next-4bit --node Mihai-Macbook:128.00:90.00:100.00 --context 65536"
+        );
+        let answer = |ps: &str, listeners: &str| ExecOutput {
+            status: Some(0),
+            stdout: format!("@@self\n7\n@@ps\n{ps}\n@@listen32323\n{listeners}\n@@end\n"),
+            stderr: String::new(),
+        };
+        let probing = read_answer(&config, None, 0, Ok(answer(&planners, "")), Some("mine"));
+        let foreign = check(&probing, "foreignEngines").unwrap();
+        assert_eq!(foreign.verdict, CheckVerdict::Pass, "{}", foreign.message);
+        assert!(probing.foreign_splits.is_empty());
+        assert_eq!(
+            check(&probing, "ports").unwrap().verdict,
+            CheckVerdict::Pass
+        );
+
+        let theirs = format!("{planners}\n  611 {fork} -m {PIPELINE_MODULE} serve --model /m");
+        let collided = read_answer(&config, None, 0, Ok(answer(&theirs, "611")), Some("mine"));
+        let foreign = check(&collided, "foreignEngines").unwrap();
+        assert_eq!(foreign.verdict, CheckVerdict::Fail);
+        assert!(
+            foreign.message.contains("pid 611 ")
+                && !foreign.message.contains("52054")
+                && !foreign.message.contains("52057"),
+            "{}",
+            foreign.message
+        );
+        assert_eq!(collided.foreign_splits.len(), 1);
+        let ports = check(&collided, "ports").unwrap();
+        assert_eq!(ports.verdict, CheckVerdict::Fail);
+        assert!(
+            ports.message.contains("32323 (pid 611)"),
+            "{}",
+            ports.message
         );
     }
 
