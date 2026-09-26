@@ -27,22 +27,25 @@
     "defaultMessage": "frota offline"
   },
   "addNode.machineAllTaken": {
-    "defaultMessage": "Cada máquina descoberta já tem seu nó MLX — remova um primeiro, ou adicione nós de nuvem (esses são ilimitados)."
+    "defaultMessage": "Cada Mac vinculado já tem seu nó MLX — altere o modelo na tabela de nós ou remova-o primeiro; os nós na nuvem são ilimitados."
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{# máquina do enxame} other{# máquinas do enxame}} ainda sem nó MLX — cada máquina carrega exatamente um."
+    "defaultMessage": "{count,plural,one{# Mac} other{# Macs}} ainda sem nó MLX — cada Mac carrega exatamente um."
   },
   "addNode.machineLabel": {
-    "defaultMessage": "Máquina — um nó MLX cada"
+    "defaultMessage": "Mac — um nó MLX cada"
   },
   "addNode.machineLocalTag": {
-    "defaultMessage": "esta máquina"
+    "defaultMessage": "este Mac"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "Nenhuma máquina do enxame descoberta (LM Studio / lms inacessível) — o nó é criado para ESTA máquina; nomeie-o abaixo."
+    "defaultMessage": "O LeanZero Link não conseguiu nomear este Mac ({error}) — o nó é criado para este Mac; dê um nome abaixo."
+  },
+  "addNode.machineOnlyThisMac": {
+    "defaultMessage": "Só este Mac está vinculado — seus outros Macs aparecem aqui quando entrarem no LeanZero Link (Provedores › Meus Macs)."
   },
   "addNode.machinePlaceholder": {
-    "defaultMessage": "Escolha uma máquina…"
+    "defaultMessage": "Escolha um Mac…"
   },
   "addNode.machineRemoteTag": {
     "defaultMessage": "remota"
@@ -66,7 +69,7 @@
     "defaultMessage": "Ainda não há modelos completos na pasta de modelos do motor — baixe um primeiro na aba LeanZero MLX."
   },
   "addNode.mlxOneModel": {
-    "defaultMessage": "Um motor LeanZero MLX serve UM único modelo: todos os nós MLX compartilham o que o motor montou, então um modelo diferente por nó ainda não é possível. Adicionar este nó aponta o motor para o modelo escolhido aqui."
+    "defaultMessage": "Um motor LeanZero MLX serve um modelo de cada vez, partilhado por todos os nós MLX desse Mac. Adicionar um nó para este Mac não carrega nada nem para nada: define o modelo que os builds do swarm usam neste nó, e este Mac responde com o nome do nó na próxima vez que servir esse modelo. O chat responde com o que este Mac serve agora — um modelo que você inicia em Executar — e o nó o segue."
   },
   "addNode.providerLabel": {
     "defaultMessage": "Provedor"
@@ -558,7 +561,7 @@
     "defaultMessage": "Compatível com OpenAI"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Qualquer servidor que fale a API da OpenAI — vLLM, llama.cpp, um LM Studio remoto, Together, Groq, um gateway da empresa. Adicione quantos precisar. Sessões de chat podem usá-los; os nós do swarm ainda não."
+    "defaultMessage": "Qualquer servidor que fale a API da OpenAI — vLLM, llama.cpp, Together, Groq, um gateway da empresa. Adicione quantos precisar. Sessões de chat podem usá-los; os nós do swarm ainda não."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Configurados"
@@ -570,7 +573,7 @@
     "defaultMessage": "Conectado"
   },
   "cloudProviders.description": {
-    "defaultMessage": "Credenciais dos provedores de nuvem que este app pode chamar — as chaves são criptografadas no cofre de segredos do goose. Backends locais (LM Studio, o motor MLX) não precisam de credenciais e vivem nas outras abas."
+    "defaultMessage": "Credenciais dos provedores de nuvem que este app pode chamar — as chaves são criptografadas no cofre de segredos do goose. O motor LeanZero MLX roda nos seus próprios Macs, não precisa de credenciais e vive nas outras abas."
   },
   "cloudProviders.endpointUnread": {
     "defaultMessage": "Não foi possível ler para onde vão estas solicitações: {error}"
@@ -642,7 +645,7 @@
     "defaultMessage": "Enviados em toda solicitação. Guardados em texto simples no arquivo de configuração do endpoint."
   },
   "compatibleEndpoint.intro": {
-    "defaultMessage": "Qualquer servidor que fale a API da OpenAI — vLLM, llama.cpp, LM Studio em outra máquina, Together, Groq, um gateway da empresa. Testar conexão salva e pede ao servidor os seus modelos. Para sessões de chat: os nós do swarm ainda não podem usar um endpoint compatível."
+    "defaultMessage": "Qualquer servidor que fale a API da OpenAI — vLLM, llama.cpp, Together, Groq, um gateway da empresa. Testar conexão salva e pede ao servidor os seus modelos. Para sessões de chat: os nós do swarm ainda não podem usar um endpoint compatível."
   },
   "compatibleEndpoint.keep": {
     "defaultMessage": "Manter"
@@ -4923,10 +4926,10 @@
     "defaultMessage": "O motor distribuído serve {served}; este nó quer {wanted}."
   },
   "noNodeNotice.lmNotListed": {
-    "defaultMessage": "{model} não está carregado no LM Studio."
+    "defaultMessage": "{model} não está carregado no servidor para o qual este nó aponta."
   },
   "noNodeNotice.lmUnreachable": {
-    "defaultMessage": "Nada responde em {url} — o LM Studio pode não estar em execução."
+    "defaultMessage": "Nada responde em {url} — o servidor para o qual este nó aponta não está em execução."
   },
   "noNodeNotice.lookupFailed": {
     "defaultMessage": "Não foi possível ler qual modelo este nó monta: {error}"

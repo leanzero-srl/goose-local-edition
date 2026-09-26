@@ -27,22 +27,25 @@
     "defaultMessage": "флот не в сети"
   },
   "addNode.machineAllTaken": {
-    "defaultMessage": "У каждой обнаруженной машины уже есть MLX-узел — сначала удалите один или добавьте облачные узлы (они не ограничены)."
+    "defaultMessage": "У каждого связанного Mac уже есть MLX-узел — смените его модель в таблице узлов или сначала удалите его; облачные узлы не ограничены."
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{# машина роя} other{# машин роя}} ещё без MLX-узла — каждая машина несёт ровно один."
+    "defaultMessage": "{count,plural,one{# Mac} few{# Mac} many{# Mac} other{# Mac}} ещё без MLX-узла — у каждого Mac ровно один."
   },
   "addNode.machineLabel": {
-    "defaultMessage": "Машина — по одному MLX-узлу на каждую"
+    "defaultMessage": "Mac — по одному MLX-узлу"
   },
   "addNode.machineLocalTag": {
-    "defaultMessage": "эта машина"
+    "defaultMessage": "этот Mac"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "Машины роя не обнаружены (LM Studio / lms недоступны) — узел создаётся для ЭТОЙ машины; назовите его ниже."
+    "defaultMessage": "LeanZero Link не смог назвать этот Mac ({error}) — узел создаётся для этого Mac; задайте имя ниже."
+  },
+  "addNode.machineOnlyThisMac": {
+    "defaultMessage": "Связан только этот Mac — другие ваши Mac появятся здесь, когда присоединятся к LeanZero Link (Провайдеры › Мои Mac)."
   },
   "addNode.machinePlaceholder": {
-    "defaultMessage": "Выберите машину…"
+    "defaultMessage": "Выберите Mac…"
   },
   "addNode.machineRemoteTag": {
     "defaultMessage": "удалённая"
@@ -66,7 +69,7 @@
     "defaultMessage": "В папке моделей движка ещё нет полных моделей — сначала скачайте одну на вкладке LeanZero MLX."
   },
   "addNode.mlxOneModel": {
-    "defaultMessage": "Один движок LeanZero MLX обслуживает ОДНУ модель: все MLX-узлы делят то, что движок смонтировал, поэтому разная модель на узел пока невозможна. Добавление этого узла направит движок на выбранную здесь модель."
+    "defaultMessage": "Один движок LeanZero MLX обслуживает одну модель за раз, общую для всех MLX-узлов этого Mac. Добавление узла для этого Mac ничего не загружает и ничего не останавливает: оно задаёт модель, которую сборки swarm используют на этом узле, и этот Mac отвечает под именем узла, когда в следующий раз будет обслуживать эту модель. Чат отвечает тем, что этот Mac обслуживает сейчас — моделью, запущенной в «Запуск», — и узел следует за ней."
   },
   "addNode.providerLabel": {
     "defaultMessage": "Провайдер"
@@ -558,7 +561,7 @@
     "defaultMessage": "Совместимый с OpenAI"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Любой сервер с API OpenAI — vLLM, llama.cpp, удалённый LM Studio, Together, Groq, корпоративный шлюз. Добавляйте сколько нужно. Сессии чата могут их использовать; узлы swarm пока нет."
+    "defaultMessage": "Любой сервер с API OpenAI — vLLM, llama.cpp, Together, Groq, корпоративный шлюз. Добавляйте сколько нужно. Сессии чата могут их использовать; узлы swarm пока нет."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Настроенные"
@@ -570,7 +573,7 @@
     "defaultMessage": "Подключено"
   },
   "cloudProviders.description": {
-    "defaultMessage": "Учётные данные облачных провайдеров, которых может вызывать это приложение — ключи шифруются в хранилище секретов goose. Локальным бэкендам (LM Studio, движок MLX) учётные данные не нужны, они живут на других вкладках."
+    "defaultMessage": "Учётные данные облачных провайдеров, которых может вызывать это приложение — ключи шифруются в хранилище секретов goose. Движок LeanZero MLX работает на ваших собственных Mac, учётные данные ему не нужны, он живёт на других вкладках."
   },
   "cloudProviders.endpointUnread": {
     "defaultMessage": "Не удалось прочитать, куда идут эти запросы: {error}"
@@ -642,7 +645,7 @@
     "defaultMessage": "Отправляются с каждым запросом. Хранятся открытым текстом в файле настроек конечной точки."
   },
   "compatibleEndpoint.intro": {
-    "defaultMessage": "Любой сервер с API OpenAI — vLLM, llama.cpp, LM Studio на другой машине, Together, Groq, корпоративный шлюз. «Проверить подключение» сохраняет его и запрашивает у сервера список моделей. Для сессий чата: узлы swarm пока не могут использовать совместимую конечную точку."
+    "defaultMessage": "Любой сервер с API OpenAI — vLLM, llama.cpp, Together, Groq, корпоративный шлюз. «Проверить подключение» сохраняет его и запрашивает у сервера список моделей. Для сессий чата: узлы swarm пока не могут использовать совместимую конечную точку."
   },
   "compatibleEndpoint.keep": {
     "defaultMessage": "Оставить"
@@ -4923,10 +4926,10 @@
     "defaultMessage": "Распределённый движок обслуживает {served}; этому узлу нужна {wanted}."
   },
   "noNodeNotice.lmNotListed": {
-    "defaultMessage": "{model} не загружена в LM Studio."
+    "defaultMessage": "{model} не загружена на сервере, на который указывает этот узел."
   },
   "noNodeNotice.lmUnreachable": {
-    "defaultMessage": "По адресу {url} никто не отвечает — возможно, LM Studio не запущен."
+    "defaultMessage": "По адресу {url} никто не отвечает — сервер, на который указывает этот узел, не запущен."
   },
   "noNodeNotice.lookupFailed": {
     "defaultMessage": "Не удалось прочитать, какую модель монтирует этот узел: {error}"

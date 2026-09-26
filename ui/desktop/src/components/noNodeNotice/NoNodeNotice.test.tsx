@@ -426,6 +426,24 @@ describe('NoNodeNotice', () => {
     expect(screen.getByText('No node can answer')).toBeInTheDocument();
     expect(screen.getByText("creating the 'bedrock' provider: no key")).toBeInTheDocument();
   });
+
+  it('an endpoint node’s refusal names its server, never LM Studio (Q-130: not offered here)', () => {
+    const lm = parseNoNodeError(
+      "swarm chat: no node can serve this turn — a-lm: http://10.0.0.2:1234/v1/models unreachable (connect refused); b-lm: model 'qwen' is not listed by http://x/v1/models"
+    )!;
+    const { container } = wrap(<NoNodeNotice rows={lm} live retryText={null} onRetry={vi.fn()} />);
+    expect(
+      within(screen.getByTestId('no-node-row-a-lm')).getByText(
+        'Nothing answers at http://10.0.0.2:1234/v1/models — the server this node points to is not running.'
+      )
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('no-node-row-b-lm')).getByText(
+        'qwen is not loaded on the server this node points to.'
+      )
+    ).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(/LM Studio/);
+  });
 });
 
 describe('GooseMessage renders the refusal as the notice', () => {

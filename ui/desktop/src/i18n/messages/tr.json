@@ -27,22 +27,25 @@
     "defaultMessage": "filo çevrimdışı"
   },
   "addNode.machineAllTaken": {
-    "defaultMessage": "Keşfedilen her makinenin zaten MLX düğümü var — önce birini kaldırın veya bulut düğümleri ekleyin (onlar sınırsız)."
+    "defaultMessage": "Bağlı her Mac’in zaten MLX düğümü var — modelini düğüm tablosunda değiştirin ya da önce kaldırın; bulut düğümleri sınırsızdır."
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{MLX düğümü olmayan # sürü makinesi} other{MLX düğümü olmayan # sürü makinesi}} — her makine tam olarak bir tane taşır."
+    "defaultMessage": "{count,plural,one{MLX düğümü olmayan # Mac} other{MLX düğümü olmayan # Mac}} — her Mac tam olarak bir tane taşır."
   },
   "addNode.machineLabel": {
-    "defaultMessage": "Makine — her birine bir MLX düğümü"
+    "defaultMessage": "Mac — her birine bir MLX düğümü"
   },
   "addNode.machineLocalTag": {
-    "defaultMessage": "bu makine"
+    "defaultMessage": "bu Mac"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "Sürü makinesi bulunamadı (LM Studio / lms erişilemiyor) — düğüm BU makine için oluşturulur; aşağıda adlandırın."
+    "defaultMessage": "LeanZero Link bu Mac’i adlandıramadı ({error}) — düğüm bu Mac için oluşturulur; aşağıda adlandırın."
+  },
+  "addNode.machineOnlyThisMac": {
+    "defaultMessage": "Yalnızca bu Mac bağlı — diğer Mac’leriniz LeanZero Link’e katıldıklarında burada görünür (Sağlayıcılar › Mac’lerim)."
   },
   "addNode.machinePlaceholder": {
-    "defaultMessage": "Bir makine seçin…"
+    "defaultMessage": "Bir Mac seçin…"
   },
   "addNode.machineRemoteTag": {
     "defaultMessage": "uzak"
@@ -66,7 +69,7 @@
     "defaultMessage": "Motorun model klasöründe henüz tam bir model yok — önce LeanZero MLX sekmesinden bir tane indirin."
   },
   "addNode.mlxOneModel": {
-    "defaultMessage": "Bir LeanZero MLX motoru TEK bir model sunar: tüm MLX düğümleri motorun bağladığını paylaşır, bu yüzden düğüm başına farklı model henüz mümkün değil. Bu düğümü eklemek motoru burada seçtiğiniz modele yönlendirir."
+    "defaultMessage": "Bir LeanZero MLX motoru aynı anda tek bir model sunar ve o Mac’teki tüm MLX düğümleri bunu paylaşır. Bu Mac için düğüm eklemek hiçbir şey yüklemez ve hiçbir şeyi durdurmaz: swarm derlemelerinin bu düğümde kullandığı modeli belirler ve bu Mac o modeli bir sonraki sunuşunda düğümün adıyla yanıt verir. Sohbet, bu Mac’in şu anda sunduğundan yanıt verir — Çalıştır’da başlattığınız model — ve düğüm onu izler."
   },
   "addNode.providerLabel": {
     "defaultMessage": "Sağlayıcı"
@@ -558,7 +561,7 @@
     "defaultMessage": "OpenAI uyumlu"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "OpenAI API'sini konuşan her sunucu — vLLM, llama.cpp, uzak bir LM Studio, Together, Groq, bir şirket ağ geçidi. İstediğiniz kadar ekleyin. Sohbet oturumları bunları kullanabilir; swarm düğümleri henüz kullanamaz."
+    "defaultMessage": "OpenAI API'sini konuşan her sunucu — vLLM, llama.cpp, Together, Groq, bir şirket ağ geçidi. İstediğiniz kadar ekleyin. Sohbet oturumları bunları kullanabilir; swarm düğümleri henüz kullanamaz."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Yapılandırılmış"
@@ -570,7 +573,7 @@
     "defaultMessage": "Bağlandı"
   },
   "cloudProviders.description": {
-    "defaultMessage": "Bu uygulamanın çağırabildiği bulut sağlayıcılarının kimlik bilgileri — anahtarlar goose gizli deposuna şifrelenerek yazılır. Yerel arka uçların (LM Studio, MLX motoru) kimlik bilgisine ihtiyacı yoktur ve diğer sekmelerde yaşarlar."
+    "defaultMessage": "Bu uygulamanın çağırabildiği bulut sağlayıcılarının kimlik bilgileri — anahtarlar goose gizli deposuna şifrelenerek yazılır. LeanZero MLX motoru kendi Mac’lerinizde çalışır, kimlik bilgisine ihtiyacı yoktur ve diğer sekmelerde yaşar."
   },
   "cloudProviders.endpointUnread": {
     "defaultMessage": "Bu isteklerin nereye gittiği okunamadı: {error}"
@@ -642,7 +645,7 @@
     "defaultMessage": "Her istekle gönderilir. Uç noktanın ayar dosyasında düz metin olarak saklanır."
   },
   "compatibleEndpoint.intro": {
-    "defaultMessage": "OpenAI API'sini konuşan her sunucu — vLLM, llama.cpp, başka bir makinedeki LM Studio, Together, Groq, bir şirket ağ geçidi. Bağlantıyı test et onu kaydeder ve sunucudan modellerini ister. Sohbet oturumları için: swarm düğümleri henüz uyumlu bir uç nokta kullanamaz."
+    "defaultMessage": "OpenAI API'sini konuşan her sunucu — vLLM, llama.cpp, Together, Groq, bir şirket ağ geçidi. Bağlantıyı test et onu kaydeder ve sunucudan modellerini ister. Sohbet oturumları için: swarm düğümleri henüz uyumlu bir uç nokta kullanamaz."
   },
   "compatibleEndpoint.keep": {
     "defaultMessage": "Tut"
@@ -4923,10 +4926,10 @@
     "defaultMessage": "Dağıtık motor {served} sunuyor; bu düğüm {wanted} istiyor."
   },
   "noNodeNotice.lmNotListed": {
-    "defaultMessage": "{model} LM Studio’da yüklü değil."
+    "defaultMessage": "{model} bu düğümün işaret ettiği sunucuda yüklü değil."
   },
   "noNodeNotice.lmUnreachable": {
-    "defaultMessage": "{url} adresinde yanıt veren yok — LM Studio çalışmıyor olabilir."
+    "defaultMessage": "{url} adresinde yanıt veren yok — bu düğümün işaret ettiği sunucu çalışmıyor."
   },
   "noNodeNotice.lookupFailed": {
     "defaultMessage": "Bu düğümün hangi modeli taktığı okunamadı: {error}"

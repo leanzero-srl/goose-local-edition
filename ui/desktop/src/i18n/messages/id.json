@@ -27,22 +27,25 @@
     "defaultMessage": "armada offline"
   },
   "addNode.machineAllTaken": {
-    "defaultMessage": "Setiap mesin yang ditemukan sudah punya node MLX — hapus satu dulu, atau tambah node cloud (tak terbatas)."
+    "defaultMessage": "Setiap Mac yang tertaut sudah punya node MLX — ubah modelnya di tabel node atau hapus dulu; node cloud tidak terbatas."
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{# mesin swarm} other{# mesin swarm}} belum punya node MLX — tiap mesin membawa tepat satu."
+    "defaultMessage": "{count,plural,one{# Mac} other{# Mac}} belum punya node MLX — tiap Mac membawa tepat satu."
   },
   "addNode.machineLabel": {
-    "defaultMessage": "Mesin — satu node MLX per mesin"
+    "defaultMessage": "Mac — masing-masing satu node MLX"
   },
   "addNode.machineLocalTag": {
-    "defaultMessage": "mesin ini"
+    "defaultMessage": "Mac ini"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "Tidak ada mesin swarm yang ditemukan (LM Studio / lms tak terjangkau) — node dibuat untuk MESIN INI; beri nama di bawah."
+    "defaultMessage": "LeanZero Link tidak bisa menamai Mac ini ({error}) — node dibuat untuk Mac ini; beri nama di bawah."
+  },
+  "addNode.machineOnlyThisMac": {
+    "defaultMessage": "Hanya Mac ini yang tertaut — Mac Anda yang lain muncul di sini setelah bergabung dengan LeanZero Link (Penyedia › Mac Saya)."
   },
   "addNode.machinePlaceholder": {
-    "defaultMessage": "Pilih mesin…"
+    "defaultMessage": "Pilih Mac…"
   },
   "addNode.machineRemoteTag": {
     "defaultMessage": "jarak jauh"
@@ -66,7 +69,7 @@
     "defaultMessage": "Belum ada model lengkap di folder model mesin — unduh dulu satu di tab LeanZero MLX."
   },
   "addNode.mlxOneModel": {
-    "defaultMessage": "Satu mesin LeanZero MLX melayani SATU model: semua node MLX berbagi apa pun yang dimuat mesin, jadi model berbeda per node belum mungkin. Menambahkan node ini mengarahkan mesin ke model yang kamu pilih di sini."
+    "defaultMessage": "Satu mesin LeanZero MLX menyajikan satu model pada satu waktu, dipakai bersama oleh semua node MLX di Mac itu. Menambah node untuk Mac ini tidak memuat apa pun dan tidak menghentikan apa pun: ia menetapkan model yang dipakai build swarm di node ini, dan Mac ini menjawab dengan nama node saat berikutnya menyajikan model itu. Chat menjawab dari apa yang disajikan Mac ini sekarang — model yang Anda mulai di Jalankan — dan node mengikutinya."
   },
   "addNode.providerLabel": {
     "defaultMessage": "Penyedia"
@@ -558,7 +561,7 @@
     "defaultMessage": "Kompatibel dengan OpenAI"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Server apa pun yang berbicara API OpenAI — vLLM, llama.cpp, LM Studio jarak jauh, Together, Groq, gateway perusahaan. Tambahkan sebanyak yang Anda perlukan. Sesi chat dapat memakainya; node swarm belum bisa."
+    "defaultMessage": "Server apa pun yang berbicara API OpenAI — vLLM, llama.cpp, Together, Groq, gateway perusahaan. Tambahkan sebanyak yang Anda perlukan. Sesi chat dapat memakainya; node swarm belum bisa."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Dikonfigurasi"
@@ -570,7 +573,7 @@
     "defaultMessage": "Terhubung"
   },
   "cloudProviders.description": {
-    "defaultMessage": "Kredensial penyedia cloud yang bisa dipanggil aplikasi ini — kunci dienkripsi ke penyimpanan rahasia goose. Backend lokal (LM Studio, mesin MLX) tidak butuh kredensial dan ada di tab lain."
+    "defaultMessage": "Kredensial penyedia cloud yang bisa dipanggil aplikasi ini — kunci dienkripsi ke penyimpanan rahasia goose. Mesin LeanZero MLX berjalan di Mac Anda sendiri, tidak butuh kredensial dan ada di tab lain."
   },
   "cloudProviders.endpointUnread": {
     "defaultMessage": "Tidak dapat membaca ke mana permintaan ini pergi: {error}"
@@ -642,7 +645,7 @@
     "defaultMessage": "Dikirim di setiap permintaan. Disimpan sebagai teks biasa di berkas pengaturan endpoint."
   },
   "compatibleEndpoint.intro": {
-    "defaultMessage": "Server apa pun yang berbicara API OpenAI — vLLM, llama.cpp, LM Studio di mesin lain, Together, Groq, gateway perusahaan. Uji koneksi menyimpannya dan meminta daftar model dari server. Untuk sesi chat: node swarm belum bisa memakai endpoint yang kompatibel."
+    "defaultMessage": "Server apa pun yang berbicara API OpenAI — vLLM, llama.cpp, Together, Groq, gateway perusahaan. Uji koneksi menyimpannya dan meminta daftar model dari server. Untuk sesi chat: node swarm belum bisa memakai endpoint yang kompatibel."
   },
   "compatibleEndpoint.keep": {
     "defaultMessage": "Simpan"
@@ -4923,10 +4926,10 @@
     "defaultMessage": "Mesin terdistribusi melayani {served}; node ini meminta {wanted}."
   },
   "noNodeNotice.lmNotListed": {
-    "defaultMessage": "{model} tidak dimuat di LM Studio."
+    "defaultMessage": "{model} tidak dimuat di server yang dituju node ini."
   },
   "noNodeNotice.lmUnreachable": {
-    "defaultMessage": "Tidak ada yang menjawab di {url} — LM Studio mungkin tidak berjalan."
+    "defaultMessage": "Tidak ada yang menjawab di {url} — server yang dituju node ini tidak berjalan."
   },
   "noNodeNotice.lookupFailed": {
     "defaultMessage": "Tidak dapat membaca model yang dipasang node ini: {error}"

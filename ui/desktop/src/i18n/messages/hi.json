@@ -27,22 +27,25 @@
     "defaultMessage": "फ़्लीट ऑफ़लाइन"
   },
   "addNode.machineAllTaken": {
-    "defaultMessage": "हर खोजी गई मशीन के पास पहले से MLX नोड है — पहले एक हटाएँ, या क्लाउड नोड जोड़ें (वे असीमित हैं)।"
+    "defaultMessage": "हर जुड़े Mac का MLX नोड पहले से है — नोड तालिका में उसका मॉडल बदलें या पहले उसे हटाएँ; क्लाउड नोड असीमित हैं।"
   },
   "addNode.machineCap": {
-    "defaultMessage": "{count,plural,one{# स्वार्म मशीन} other{# स्वार्म मशीनें}} अभी MLX नोड के बिना — हर मशीन पर ठीक एक होता है।"
+    "defaultMessage": "{count,plural,one{# Mac} other{# Mac}} अभी MLX नोड के बिना — हर Mac पर ठीक एक होता है।"
   },
   "addNode.machineLabel": {
-    "defaultMessage": "मशीन — प्रत्येक पर एक MLX नोड"
+    "defaultMessage": "Mac — हर एक पर एक MLX नोड"
   },
   "addNode.machineLocalTag": {
-    "defaultMessage": "यह मशीन"
+    "defaultMessage": "यह Mac"
   },
   "addNode.machineNoneDiscovered": {
-    "defaultMessage": "कोई स्वार्म मशीन नहीं मिली (LM Studio / lms पहुंच से बाहर) — नोड इसी मशीन के लिए बनेगा; नीचे नाम दें।"
+    "defaultMessage": "LeanZero Link इस Mac का नाम नहीं बता सका ({error}) — नोड इसी Mac के लिए बनेगा; नीचे उसका नाम दें।"
+  },
+  "addNode.machineOnlyThisMac": {
+    "defaultMessage": "केवल यह Mac जुड़ा है — आपके दूसरे Mac LeanZero Link से जुड़ते ही यहाँ दिखेंगे (प्रदाता › मेरे Mac)।"
   },
   "addNode.machinePlaceholder": {
-    "defaultMessage": "मशीन चुनें…"
+    "defaultMessage": "एक Mac चुनें…"
   },
   "addNode.machineRemoteTag": {
     "defaultMessage": "दूरस्थ"
@@ -66,7 +69,7 @@
     "defaultMessage": "इंजन के मॉडल फ़ोल्डर में अभी कोई पूर्ण मॉडल नहीं — पहले LeanZero MLX टैब से एक डाउनलोड करें।"
   },
   "addNode.mlxOneModel": {
-    "defaultMessage": "एक LeanZero MLX इंजन केवल एक ही मॉडल चलाता है: सभी MLX नोड वही साझा करते हैं जो इंजन ने माउंट किया है, इसलिए हर नोड के लिए अलग मॉडल अभी संभव नहीं। यह नोड जोड़ने से इंजन यहाँ चुने गए मॉडल पर सेट हो जाएगा।"
+    "defaultMessage": "एक LeanZero MLX इंजन एक समय में एक मॉडल परोसता है, जिसे उस Mac के सभी MLX नोड साझा करते हैं। इस Mac के लिए नोड जोड़ने से न कुछ लोड होता है, न कुछ रुकता है: यह वह मॉडल तय करता है जिसे swarm बिल्ड इस नोड पर इस्तेमाल करते हैं, और अगली बार जब यह Mac वह मॉडल परोसेगा तो नोड के नाम से जवाब देगा। चैट वही जवाब देता है जो यह Mac अभी परोस रहा है — वह मॉडल जिसे आप चलाएँ में शुरू करते हैं — और नोड उसी का अनुसरण करता है।"
   },
   "addNode.providerLabel": {
     "defaultMessage": "प्रदाता"
@@ -558,7 +561,7 @@
     "defaultMessage": "OpenAI-संगत"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "OpenAI API बोलने वाला कोई भी सर्वर — vLLM, llama.cpp, दूरस्थ LM Studio, Together, Groq, कंपनी गेटवे। जितने चाहें जोड़ें। चैट सत्र इनका उपयोग कर सकते हैं; swarm नोड अभी नहीं।"
+    "defaultMessage": "OpenAI API बोलने वाला कोई भी सर्वर — vLLM, llama.cpp, Together, Groq, कंपनी गेटवे। जितने चाहें जोड़ें। चैट सत्र इनका उपयोग कर सकते हैं; swarm नोड अभी नहीं।"
   },
   "cloudProviders.configured": {
     "defaultMessage": "कॉन्फ़िगर किए गए"
@@ -570,7 +573,7 @@
     "defaultMessage": "कनेक्टेड"
   },
   "cloudProviders.description": {
-    "defaultMessage": "उन क्लाउड प्रदाताओं की साख जिन्हें यह ऐप कॉल कर सकता है — कुंजियाँ goose के गुप्त भंडार में एन्क्रिप्ट होती हैं। स्थानीय बैकएंड (LM Studio, MLX इंजन) को साख की ज़रूरत नहीं और वे दूसरे टैब में हैं।"
+    "defaultMessage": "उन क्लाउड प्रदाताओं की साख जिन्हें यह ऐप कॉल कर सकता है — कुंजियाँ goose के गुप्त भंडार में एन्क्रिप्ट होती हैं। LeanZero MLX इंजन आपके अपने Mac पर चलता है, उसे साख की ज़रूरत नहीं और वह दूसरे टैब में है।"
   },
   "cloudProviders.endpointUnread": {
     "defaultMessage": "ये अनुरोध कहाँ जाते हैं, यह पढ़ा नहीं जा सका: {error}"
@@ -642,7 +645,7 @@
     "defaultMessage": "हर अनुरोध के साथ भेजे जाते हैं। एंडपॉइंट की सेटिंग फ़ाइल में सादे पाठ में सहेजे जाते हैं।"
   },
   "compatibleEndpoint.intro": {
-    "defaultMessage": "OpenAI API बोलने वाला कोई भी सर्वर — vLLM, llama.cpp, किसी दूसरी मशीन पर LM Studio, Together, Groq, कंपनी गेटवे। कनेक्शन जाँचें इसे सहेजता है और सर्वर से उसके मॉडल पूछता है। चैट सत्रों के लिए: swarm नोड अभी संगत एंडपॉइंट का उपयोग नहीं कर सकते।"
+    "defaultMessage": "OpenAI API बोलने वाला कोई भी सर्वर — vLLM, llama.cpp, Together, Groq, कंपनी गेटवे। कनेक्शन जाँचें इसे सहेजता है और सर्वर से उसके मॉडल पूछता है। चैट सत्रों के लिए: swarm नोड अभी संगत एंडपॉइंट का उपयोग नहीं कर सकते।"
   },
   "compatibleEndpoint.keep": {
     "defaultMessage": "रखें"
@@ -4923,10 +4926,10 @@
     "defaultMessage": "वितरित इंजन {served} सर्व करता है; इस नोड को {wanted} चाहिए।"
   },
   "noNodeNotice.lmNotListed": {
-    "defaultMessage": "{model} LM Studio में लोड नहीं है।"
+    "defaultMessage": "{model} उस सर्वर पर लोड नहीं है जिसकी ओर यह नोड इशारा करता है।"
   },
   "noNodeNotice.lmUnreachable": {
-    "defaultMessage": "{url} पर कुछ जवाब नहीं देता — शायद LM Studio नहीं चल रहा।"
+    "defaultMessage": "{url} पर कुछ जवाब नहीं देता — यह नोड जिस सर्वर की ओर इशारा करता है वह नहीं चल रहा।"
   },
   "noNodeNotice.lookupFailed": {
     "defaultMessage": "यह नोड कौन सा मॉडल माउंट करता है, पढ़ा नहीं जा सका: {error}"
