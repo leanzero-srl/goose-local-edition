@@ -21,10 +21,15 @@ const NEEDS_LOGIN_JSON: &str = include_str!("fixtures/status_needs_login.json");
 /// opens a kernel-chosen loopback TCP listener and reports it on stderr exactly as
 /// tailscaled 1.98.8 does (`SOCKS5 listening on 127.0.0.1:<port>` — socket first, proxy
 /// second, the real order), removes the socket on SIGTERM. It records the `HTTPS_PROXY` it
-/// was given in `<statedir>/https-proxy.seen` (`<unset>` when absent). Hooks in the state dir:
+/// was given in `<statedir>/https-proxy.seen` (`<unset>` when absent), and marks
+/// `<statedir>/ownership-checked` on the first connection it accepts — nothing but the
+/// engine's listener-pid proof connects (the fake CLI only checks the file), and the engine
+/// makes that proof only after `status` answered. Hooks in the state dir:
 /// `no-proxy-report` (never report the listener), `proxy-report-wildcard` (report
 /// `0.0.0.0:<port>`).
 const FAKE_TAILSCALED: &str = r#"#!/usr/bin/env python3
+import sys
+if sys.argv[1:] == ["--warm"]: sys.exit(0)
 import os, signal, socket, sys, time
 args = sys.argv[1:]
 def flag(name):
@@ -63,10 +68,13 @@ def bye(signum, frame):
     os.unlink(sock)
     sys.exit(0)
 signal.signal(signal.SIGTERM, bye)
+checked = os.path.join(statedir, "ownership-checked")
 while True:
     try:
         c, _ = srv.accept()
         c.close()
+        if not os.path.exists(checked):
+            open(checked, "w").close()
     except socket.timeout:
         pass
 "#;
@@ -75,6 +83,8 @@ while True:
 /// engine's `up` argv, tracks joined state via a marker file beside the socket, and
 /// serves the crate's own fixtures for `status --json`.
 const FAKE_TAILSCALE_CLI: &str = r#"#!/usr/bin/env python3
+import sys
+if sys.argv[1:] == ["--warm"]: sys.exit(0)
 import os, sys
 args = sys.argv[1:]
 def flag(name):
@@ -120,10 +130,12 @@ if "up" in args:
         print("backend error: invalid key: unable to validate API key", file=sys.stderr)
         sys.exit(1)
     # Test hook: with `<base>/slow-up` present, record this CLI's pid and park — lets
-    # the join future be dropped while `up` is still running.
+    # the join future be dropped while `up` is still running. Written aside and renamed:
+    # the test reads the pid the moment the file exists.
     if os.path.exists(os.path.join(base, "slow-up")):
-        with open(os.path.join(base, "up-pid"), "w") as f:
+        with open(os.path.join(base, "up-pid.tmp"), "w") as f:
             f.write(str(os.getpid()))
+        os.rename(os.path.join(base, "up-pid.tmp"), os.path.join(base, "up-pid"))
         import time
         time.sleep(600)
     with open(marker, "w") as f:
@@ -141,6 +153,22 @@ if "status" in args and "--json" in args:
         os.unlink(fail_once)
         print("dial unix %s: connect: connection refused" % sock, file=sys.stderr)
         sys.exit(1)
+    # Test hook: with `<base>/await-spawned` present, answer only once the daemon has
+    # written `<base>/spawned` — the engine cannot act on this probe's answer (and
+    # terminate its spawn) before the spawn has recorded its pid.
+    if os.path.exists(os.path.join(base, "await-spawned")):
+        import time
+        while not os.path.exists(os.path.join(base, "spawned")):
+            time.sleep(0.01)
+    # Test hook: with `<base>/slow-after-first-status` present, the first status answers
+    # at once and every later one outlasts the engine's readiness probe — a CLI starved
+    # on a loaded machine after the daemon was already proven.
+    if os.path.exists(os.path.join(base, "slow-after-first-status")):
+        answered = os.path.join(base, "status-answered")
+        if os.path.exists(answered):
+            import time
+            time.sleep(60)
+        open(answered, "w").close()
     # Test hook: with `<base>/slow-probe` present, record that a probe happened and
     # take a while to answer — lets a daemon die DURING the readiness probe.
     if os.path.exists(os.path.join(base, "slow-probe")):
@@ -161,6 +189,8 @@ sys.exit(2)
 /// the socket it left behind. Stands in for "another process's daemon owns the socket
 /// and ours lost the race".
 const FAKE_TAILSCALED_DIES_DURING_PROBE: &str = r#"#!/usr/bin/env python3
+import sys
+if sys.argv[1:] == ["--warm"]: sys.exit(0)
 import os, socket, sys, time
 args = sys.argv[1:]
 def flag(name):
@@ -183,37 +213,16 @@ sys.exit(0)
 /// idles — so a test can assert it was NEVER run, or that the engine terminated it
 /// per-pid after proving the socket belongs to someone else. A shell script, not
 /// python: the engine kills a useless spawn within a few ms of the probe, before a
-/// python interpreter could even write the marker (measured: 6/6 misses).
+/// python interpreter could even write the marker (measured: 6/6 misses). Where a test
+/// needs the marker before the engine acts, the fake CLI's `await-spawned` hook holds
+/// the probe until it exists — so the marker appears whole (written aside, renamed), or a
+/// SIGTERM landing between the file's creation and its write would leave it empty.
 const FAKE_TAILSCALED_MARKING: &str = r#"#!/bin/sh
+[ "$1" = --warm ] && exit 0
 for a in "$@"; do case "$a" in --statedir=*) statedir="${a#--statedir=}";; esac; done
-echo $$ > "$statedir/spawned"
+echo $$ > "$statedir/spawned.tmp" && mv "$statedir/spawned.tmp" "$statedir/spawned"
 exec sleep 1000
 "#;
-
-/// Execute a freshly written script once, in a throwaway dir, before the engine does.
-/// Measured on macOS 26: the FIRST exec of a newly created script is held ~100-300 ms
-/// by the system's exec-time assessment (the process sits in state S having run no
-/// line) — long enough for the engine to refuse and terminate it before it writes its
-/// marker. Warming makes the marker deterministic; it is a test-environment artifact,
-/// not engine behavior.
-async fn warm_exec(script: &Path) {
-    let warm = tempfile::tempdir().unwrap();
-    let mut child = tokio::process::Command::new(script)
-        .arg(format!("--statedir={}", warm.path().display()))
-        .kill_on_drop(true)
-        .spawn()
-        .expect("warm exec spawns");
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !warm.path().join("spawned").exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "warm exec never ran {}",
-            script.display()
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    child.kill().await.unwrap();
-}
 
 /// A process that is NOT the engine's child, listening on the engine's socket path —
 /// another goosed's daemon. Killed on drop.
@@ -240,11 +249,66 @@ async fn spawn_foreign_listener(sock: &Path) -> tokio::process::Child {
     child
 }
 
-fn write_exec(dir: &Path, name: &str, content: &str) -> PathBuf {
+/// One executable file per fake script CONTENT, shared by every test and run once
+/// (`--warm`, which each fake answers by exiting 0) before any test's clock starts.
+///
+/// Measured on macOS 26 (2026-09-26, load ~20): the first exec of a newly written
+/// script is held by the system's exec-time assessment, ~140-220 ms against 4 ms for
+/// the second exec, and those holds SERIALIZE machine-wide — 45 fresh scripts exec'd in
+/// parallel finished in 7.0 s, the same 45 again in 46 ms. Per-test copies put every
+/// test's daemon and CLI behind that queue, and behind every other build on the machine
+/// emitting new binaries: 13 of 20 suite runs failed (15 s `StartupTimeout`s, "socket
+/// not present yet", "warm exec never ran") while other builds ran. The files live in
+/// the target's tmp dir under a content hash, so an edited script is a new file and an
+/// unchanged one stays assessed across runs.
+fn fake_exec(name: &str, content: &str) -> PathBuf {
+    use std::collections::HashSet;
+    use std::hash::{Hash, Hasher};
     use std::os::unix::fs::PermissionsExt;
-    let path = dir.join(name);
-    std::fs::write(&path, content).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    use std::sync::Mutex;
+
+    static WARMED: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hasher);
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("leanzero-link-fakes");
+    let path = dir.join(format!("{name}-{:016x}", hasher.finish()));
+
+    let mut warmed = WARMED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if warmed.get_or_insert_with(HashSet::new).contains(&path) {
+        return path;
+    }
+    if !path.exists() {
+        std::fs::create_dir_all(&dir).unwrap();
+        // Another test process may be writing the same file: write aside, then rename.
+        let staging = dir.join(format!(".{name}.{}", std::process::id()));
+        std::fs::write(&staging, content).unwrap();
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&staging, &path).unwrap();
+    }
+    let status = loop {
+        match std::process::Command::new(&path).arg("--warm").status() {
+            // Linux refuses to exec a file any process holds open for writing, and a sibling
+            // test that forked while the staging file was open holds it until its own exec.
+            // Holders only ever go away, so once this exec succeeds the engine's cannot fail so.
+            Err(err) if err.raw_os_error() == Some(libc::ETXTBSY) => {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            other => {
+                break other.unwrap_or_else(|err| {
+                    panic!("warming {} failed to exec: {err}", path.display())
+                })
+            }
+        }
+    };
+    assert!(
+        status.success(),
+        "{} --warm exited {status}",
+        path.display()
+    );
+    warmed.as_mut().unwrap().insert(path.clone());
     path
 }
 
@@ -254,8 +318,8 @@ fn fake_config(root: &Path) -> MeshConfig {
     std::fs::write(state_dir.join("needs_login.json"), NEEDS_LOGIN_JSON).unwrap();
     std::fs::write(state_dir.join("running.json"), RUNNING_JSON).unwrap();
     MeshConfig {
-        tailscaled_path: write_exec(root, "fake-tailscaled", FAKE_TAILSCALED),
-        tailscale_cli_path: write_exec(root, "fake-tailscale", FAKE_TAILSCALE_CLI),
+        tailscaled_path: fake_exec("fake-tailscaled", FAKE_TAILSCALED),
+        tailscale_cli_path: fake_exec("fake-tailscale", FAKE_TAILSCALE_CLI),
         socket_path: state_dir.join("tailscaled.sock"),
         state_dir,
         hostname: "lz-node-self".to_string(),
@@ -523,10 +587,9 @@ async fn start_sweeps_a_dead_writers_stale_key_and_keeps_a_live_writers() {
 async fn daemon_exit_during_startup_carries_stderr() {
     let root = tempfile::tempdir().unwrap();
     let mut config = fake_config(root.path());
-    config.tailscaled_path = write_exec(
-        root.path(),
+    config.tailscaled_path = fake_exec(
         "fake-tailscaled-dying",
-        "#!/usr/bin/env python3\nimport sys\nprint('unable to bind socket: operation not permitted', file=sys.stderr)\nsys.exit(3)\n",
+        "#!/usr/bin/env python3\nimport sys\nif sys.argv[1:] == [\"--warm\"]: sys.exit(0)\nprint('unable to bind socket: operation not permitted', file=sys.stderr)\nsys.exit(3)\n",
     );
 
     let err = match MeshEngine::start(config).await {
@@ -547,11 +610,7 @@ async fn start_refuses_a_socket_another_daemon_already_answers() {
     let root = tempfile::tempdir().unwrap();
     let mut config = fake_config(root.path());
     let mut foreign = spawn_foreign_listener(&config.socket_path).await;
-    config.tailscaled_path = write_exec(
-        root.path(),
-        "fake-tailscaled-marking",
-        FAKE_TAILSCALED_MARKING,
-    );
+    config.tailscaled_path = fake_exec("fake-tailscaled-marking", FAKE_TAILSCALED_MARKING);
 
     let result = MeshEngine::start(config.clone()).await;
     assert!(
@@ -594,12 +653,8 @@ async fn start_refuses_a_foreign_listener_even_when_the_pre_spawn_probe_fails_on
     let mut config = fake_config(root.path());
     let mut foreign = spawn_foreign_listener(&config.socket_path).await;
     std::fs::write(config.state_dir.join("probe-fail-once"), "1").unwrap();
-    config.tailscaled_path = write_exec(
-        root.path(),
-        "fake-tailscaled-marking",
-        FAKE_TAILSCALED_MARKING,
-    );
-    warm_exec(&config.tailscaled_path).await;
+    std::fs::write(config.state_dir.join("await-spawned"), "1").unwrap();
+    config.tailscaled_path = fake_exec("fake-tailscaled-marking", FAKE_TAILSCALED_MARKING);
 
     let err = match MeshEngine::start(config.clone()).await {
         Ok(_) => panic!("start adopted a foreign listener after a transient probe failure"),
@@ -633,8 +688,7 @@ async fn start_fails_loudly_when_the_daemon_dies_during_the_readiness_probe() {
     let root = tempfile::tempdir().unwrap();
     let mut config = fake_config(root.path());
     std::fs::write(config.state_dir.join("slow-probe"), "1").unwrap();
-    config.tailscaled_path = write_exec(
-        root.path(),
+    config.tailscaled_path = fake_exec(
         "fake-tailscaled-dies-during-probe",
         FAKE_TAILSCALED_DIES_DURING_PROBE,
     );
@@ -657,13 +711,10 @@ async fn startup_timeout_names_the_last_probe_and_leaves_no_orphan() {
     let root = tempfile::tempdir().unwrap();
     let mut config = fake_config(root.path());
     // The marking daemon records its pid and idles without ever binding the socket.
-    config.tailscaled_path = write_exec(
-        root.path(),
-        "fake-tailscaled-marking",
-        FAKE_TAILSCALED_MARKING,
-    );
-    warm_exec(&config.tailscaled_path).await;
-    config.startup_timeout = Duration::from_secs(1);
+    config.tailscaled_path = fake_exec("fake-tailscaled-marking", FAKE_TAILSCALED_MARKING);
+    // The bound is this test's own; it only has to outlast a warmed `sh` recording its pid.
+    let bound = Duration::from_secs(3);
+    config.startup_timeout = bound;
 
     let err = match MeshEngine::start(config.clone()).await {
         Ok(_) => panic!("start reported ready with no socket"),
@@ -673,7 +724,7 @@ async fn startup_timeout_names_the_last_probe_and_leaves_no_orphan() {
         MeshError::StartupTimeout {
             waited, last_probe, ..
         } => {
-            assert_eq!(*waited, Duration::from_secs(1));
+            assert_eq!(*waited, bound);
             assert!(
                 last_probe.contains("not present yet")
                     && last_probe.contains(&config.socket_path.display().to_string()),
@@ -686,8 +737,10 @@ async fn startup_timeout_names_the_last_probe_and_leaves_no_orphan() {
         err.to_string().contains("last probe: socket"),
         "the Display carries it too: {err}"
     );
-    let our_pid: u32 = std::fs::read_to_string(config.state_dir.join("spawned"))
-        .expect("the daemon was spawned")
+    let spawned = config.state_dir.join("spawned");
+    wait_for("the spawn's pid marker", || spawned.exists()).await;
+    let our_pid: u32 = std::fs::read_to_string(&spawned)
+        .unwrap()
         .trim()
         .parse()
         .unwrap();
@@ -725,26 +778,62 @@ async fn start_records_the_daemons_socks5_listener_and_forgets_it_on_shutdown() 
     assert!(matches!(err, MeshError::NoPeerProxy { .. }), "{err}");
 }
 
+/// Start against a fake daemon that never reports its SOCKS5 listener (plus `hooks` in its
+/// state dir) until an attempt times out AFTER the engine proved the socket ours, and return
+/// that attempt's `last_probe`. `Ok` fails on every attempt.
+///
+/// The startup bound is the test's own and decides only whether the proof happened before
+/// it ran out — on a starved machine it may not have, and that attempt proves nothing either
+/// way — so the bound doubles until the daemon's `ownership-checked` record says the proof
+/// happened. The record is written on accept: it can only be missing after a proof (the
+/// retry, the safe side), never present without one.
+async fn timeout_after_ownership_proof(hooks: &[&str]) -> String {
+    let mut unproven = Vec::new();
+    for bound in [3, 6, 12, 24].map(Duration::from_secs) {
+        let root = tempfile::tempdir().unwrap();
+        let mut config = fake_config(root.path());
+        for hook in ["no-proxy-report"].iter().chain(hooks) {
+            std::fs::write(config.state_dir.join(hook), "1").unwrap();
+        }
+        config.startup_timeout = bound;
+        let checked = config.state_dir.join("ownership-checked");
+
+        let err = match MeshEngine::start(config).await {
+            Ok(_) => panic!("start reported ready with no peer proxy"),
+            Err(e) => e,
+        };
+        let MeshError::StartupTimeout { last_probe, .. } = err else {
+            panic!("expected StartupTimeout, got {err}");
+        };
+        if checked.exists() {
+            return last_probe;
+        }
+        unproven.push(format!("{bound:?}: {last_probe}"));
+    }
+    panic!("the engine never proved the socket ours within any bound: {unproven:#?}");
+}
+
 /// A daemon whose socket answers but which never reports a SOCKS5 listener is NOT
 /// ready: the timeout names the missing report, and our spawn is terminated per-pid.
 #[tokio::test]
 async fn a_daemon_that_never_reports_its_proxy_times_out_naming_it() {
-    let root = tempfile::tempdir().unwrap();
-    let mut config = fake_config(root.path());
-    std::fs::write(config.state_dir.join("no-proxy-report"), "1").unwrap();
-    config.startup_timeout = Duration::from_secs(3);
+    let last_probe = timeout_after_ownership_proof(&[]).await;
+    assert!(
+        last_probe.contains("SOCKS5 listener") && last_probe.contains("is ours"),
+        "the timeout names the missing proxy report: {last_probe}"
+    );
+}
 
-    let err = match MeshEngine::start(config).await {
-        Ok(_) => panic!("start reported ready with no peer proxy"),
-        Err(e) => e,
-    };
-    match &err {
-        MeshError::StartupTimeout { last_probe, .. } => assert!(
-            last_probe.contains("SOCKS5 listener") && last_probe.contains("is ours"),
-            "the timeout names the missing proxy report: {last_probe}"
-        ),
-        other => panic!("expected StartupTimeout, got {other}"),
-    }
+/// Once the socket answered and its listener is proven ours, only the SOCKS5 report is
+/// outstanding: a CLI that turns slow afterwards (a loaded machine) is not re-run each poll,
+/// so it cannot replace the timeout's verdict with a transient `status` failure.
+#[tokio::test]
+async fn a_slow_cli_after_the_proof_cannot_hide_the_missing_proxy_report() {
+    let last_probe = timeout_after_ownership_proof(&["slow-after-first-status"]).await;
+    assert!(
+        last_probe.contains("SOCKS5 listener") && last_probe.contains("is ours"),
+        "the verdict is the missing report, not the slow CLI: {last_probe}"
+    );
 }
 
 /// A reported listener that is not loopback is refused outright — peer traffic never

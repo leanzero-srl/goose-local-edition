@@ -797,10 +797,18 @@ async fn a_peer_whose_link_restarted_under_the_stream_names_the_drop() {
         message.contains("no longer holds it") && message.contains("LeanZero Link restarts"),
         "the reachable peer's answer decided, not its absence: {message}"
     );
-    assert!(
-        engine.stream_dropped.load(Ordering::SeqCst),
-        "the old node's engine stream was released when its Link died"
-    );
+    // The release travels its own road — the tunnel's peer leg closes, the old node drops
+    // its upstream call, the engine notices on its next write — and nothing orders it
+    // against the relay's look at the restarted node, so it is awaited, not sampled.
+    let deadline = tokio::time::Instant::now() + DEADLINE;
+    while !engine.stream_dropped.load(Ordering::SeqCst) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the old node's engine stream was released when its Link died ({} chunks sent)",
+            engine.chunks_sent.load(Ordering::SeqCst)
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 /// The negative control: silence is not death. No response head for many looks, then a gap

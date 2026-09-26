@@ -565,6 +565,12 @@ impl MeshEngine {
         let mut handle = engine.spawn_daemon()?;
 
         let started = Instant::now();
+        // Set once `status --json` has answered on the socket AND its listener is proven
+        // to be our child. From then on only the SOCKS5 report is outstanding, so the CLI
+        // is not re-run each poll: a later slow CLI (a loaded machine) would replace the
+        // verdict the timeout names — "no SOCKS5 report" — with a transient probe failure.
+        // Ownership is still re-proven every poll (listener pid), and death by try_wait.
+        let mut answered_and_ours = false;
         loop {
             if let Some(status) = child_exit(&mut handle, &engine.config)? {
                 return Err(MeshError::DaemonExited {
@@ -574,12 +580,18 @@ impl MeshEngine {
             }
             // What this iteration's readiness check saw — the verdict a timeout names.
             let last_probe: String = if !engine.config.socket_path.exists() {
+                answered_and_ours = false;
                 format!(
                     "socket '{}' not present yet",
                     engine.config.socket_path.display()
                 )
             } else {
-                match probe_socket(&engine.config, READY_PROBE_TIMEOUT).await {
+                let answered = if answered_and_ours {
+                    Ok(())
+                } else {
+                    probe_socket(&engine.config, READY_PROBE_TIMEOUT).await
+                };
+                match answered {
                     Err(text) => format!("`tailscale status` on the socket failed: {text}"),
                     Ok(()) => {
                         if let Some(status) = child_exit(&mut handle, &engine.config)? {
@@ -590,6 +602,7 @@ impl MeshEngine {
                         }
                         match listener_pid(&engine.config.socket_path) {
                             Ok(pid) if Some(pid) == handle.child.id() => {
+                                answered_and_ours = true;
                                 // The socket answers before tailscaled opens its proxy
                                 // listener (tailscaled.go: `startIPNServer` listens, THEN
                                 // `getLocalBackend` runs `outboundProxyListen` in a
