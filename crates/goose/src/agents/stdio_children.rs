@@ -379,6 +379,7 @@ pub fn select_goose_orphans(
         .collect()
 }
 
+#[cfg(unix)]
 fn process_table() -> Vec<ProcessRow> {
     let mut sys = System::new();
     sys.refresh_processes_specifics(
@@ -394,7 +395,7 @@ fn process_table() -> Vec<ProcessRow> {
         .map(|(pid, process)| ProcessRow {
             pid: pid.as_u32(),
             parent: process.parent().map(|p| p.as_u32()),
-            uid: process.user_id().map(|uid| **uid),
+            uid: owner_uid(process),
             start_time: process.start_time(),
             argv: process
                 .cmd()
@@ -405,7 +406,15 @@ fn process_table() -> Vec<ProcessRow> {
         .collect()
 }
 
+/// The numeric owner of a process. Only Unix has one (sysinfo gives Windows a SID), and the reaper
+/// that compares it is Unix-only.
+#[cfg(unix)]
+fn owner_uid(process: &sysinfo::Process) -> Option<u32> {
+    process.user_id().map(|uid| **uid)
+}
+
 /// The orphan still is what the scan saw: same pid, still PPID 1, same start time.
+#[cfg(unix)]
 fn still_the_orphan(orphan: &GooseOrphan) -> bool {
     identity(orphan.row.pid)
         == Some(Identity {
