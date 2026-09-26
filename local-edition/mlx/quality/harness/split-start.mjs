@@ -36,7 +36,7 @@ while (true) {
   await p.waitForTimeout(5000);
   const s = await status(); const secs = ((Date.now() - t0) / 1000).toFixed(0);
   // The card's "Failed" badge can be the previous attempt's; only a WARN logged after this click counts.
-  const warn = lastWarn(); const failed = warn.at > t0 && /exited|ended|refused|failed/i.test(warn.text);
+  const warn = lastWarn(); const failed = warn.at > t0 && /preflight|exited|ended|refused|failed|stale/i.test(warn.text);
   if (/distributed\/running/.test(s)) await complete(secs);
   if (failed) { console.log(`${secs}s split FAILED:\n${warn.text}`); process.exit(1); }
   if (Number(secs) % 30 < 5) console.log(`${secs}s ${s}`);
