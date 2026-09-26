@@ -8,6 +8,7 @@
 // a hang is the finding, and the driver never cancels, retries or edits the turn itself.
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { liveCheck } from './livecheck.mjs';
 const dir = process.argv[2];
 const turnsArg = process.argv.indexOf('--turns'); const maxTurnsArg = turnsArg > 0 ? Number(process.argv[turnsArg + 1]) : 0;
 const work = `${dir}/work`; mkdirSync(work, { recursive: true });
@@ -62,16 +63,35 @@ const screen = () => p.evaluate(() => {
   const stop = !!document.querySelector('button[aria-label="Stop"]');
   return { len: main.innerText.length, chip: (chipEl?.innerText ?? '').replace(/\s+/g, ' '), counter, stop };
 });
+let chatUrl = ''; let title = ''; const liveSeen = new Set();
 const lengths = []; const median = () => { const s = [...lengths].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
 const maxTurns = maxTurnsArg || (brief ? steps.length : 200);
 for (let turn = 0; turn < maxTurns; turn++) {
   const prompt = turn < steps.length ? steps[turn] : `Continue improving the ledger package in ${work}: pick the next most useful feature or fix, implement it with a test, and run the suite. (turn ${turn})`;
   const n0 = await p.evaluate(() => document.querySelectorAll('.goose-message').length);
+  // The owner shares this app while it runs (Q-147: he was on Providers mid-turn). Mid-turn the driver never
+  // yanks his view; to TYPE it must be in its own chat, so it returns there only at a turn boundary.
+  if (chatUrl && p.url() !== chatUrl) { appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} RETURN to own chat from ${p.url().split('#')[1]}\n`); await p.goto(chatUrl); await p.waitForTimeout(3000); }
   const input = p.locator('[data-testid=chat-input]:visible').first();
   await input.click(); await input.fill(prompt); await p.keyboard.press('Enter');
   const start = Date.now(); let lastChange = Date.now(); let prev = null; let ended = ''; let stallLogged = false;
   await p.waitForTimeout(3000);
+  let polls = 0; let away = false;
   while (true) {
+    if (!chatUrl && (Date.now() - start) > 8000) chatUrl = p.url();
+    // Every ~minute: does every surface agree that this session is live? (livecheck.mjs, Q-147)
+    if (polls++ % 30 === 0) {
+      if (!title) title = await p.evaluate(() => document.querySelector('[data-testid=session-title-trigger]')?.innerText.trim() ?? '').catch(() => '');
+      const lc = await liveCheck(p, { title }).catch((e) => ({ findings: [{ kind: 'PROBE_ERROR', says: String(e) }] }));
+      appendFileSync(`${dir}/live.jsonl`, JSON.stringify({ turn, ...lc }) + '\n');
+      for (const f of lc.findings) if (!liveSeen.has(f.kind)) { liveSeen.add(f.kind); await p.screenshot({ path: `${dir}/live-${turn}-${f.kind}.png` }); appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} LIVE ${f.kind} ${JSON.stringify(f).slice(0, 300)}\n`); }
+    }
+    // Someone else moved the view: nothing on screen is this turn's, so no done/stall verdict is taken from it.
+    if (chatUrl && p.url() !== chatUrl) {
+      if (!away) { away = true; appendFileSync(`${dir}/events.log`, `${new Date().toISOString()} VIEW_AWAY ${p.url().split('#')[1]}\n`); }
+      lastChange = Date.now(); await p.waitForTimeout(2000); continue;
+    }
+    away = false;
     for (const u of pollCalls()) appendFileSync(`${dir}/calls.tsv`, [turn, u.input_tokens, u.output_tokens, u.cache_read_input_tokens ?? ''].join('\t') + '\n');
     const s = await screen();
     if (!prev || s.len !== prev.len || s.chip !== prev.chip) lastChange = Date.now();
