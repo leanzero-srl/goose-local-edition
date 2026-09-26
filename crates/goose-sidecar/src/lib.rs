@@ -61,9 +61,10 @@ use tokio::sync::Mutex;
 const STDERR_TAIL_LINES: usize = 200;
 
 /// The one grace window in this crate: SIGTERM → SIGKILL, and how long a released port
-/// is waited for. Every other wait here is bounded by it; no second seconds-literal exists.
-pub(crate) const GRACE_TICKS: u32 = 50;
-pub(crate) const GRACE_TICK: Duration = Duration::from_millis(100);
+/// is waited for. Every other wait here is bounded by it; no second seconds-literal exists. goose's
+/// stdio-extension teardown (`goose::agents::stdio_children`, Q-138) reuses it rather than minting one.
+pub const GRACE_TICKS: u32 = 50;
+pub const GRACE_TICK: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone)]
 pub struct SidecarConfig {

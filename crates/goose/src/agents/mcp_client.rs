@@ -556,6 +556,8 @@ pub struct McpClient {
     server_info: Option<InitializeResult>,
     timeout: std::time::Duration,
     docker_container: Option<String>,
+    /// Declared last so the service above is dropped (and its transport closed) first.
+    stdio_child: Option<crate::agents::stdio_children::StdioChildGuard>,
 }
 
 impl McpClient {
@@ -616,7 +618,22 @@ impl McpClient {
             server_info,
             timeout,
             docker_container,
+            stdio_child: None,
         })
+    }
+
+    /// Tie a stdio extension's process to this client: dropping the client tears the child down
+    /// (Q-138 — `goose serve` exits without running rmcp's own cleanup).
+    pub fn with_stdio_child(
+        mut self,
+        guard: Option<crate::agents::stdio_children::StdioChildGuard>,
+    ) -> Self {
+        self.stdio_child = guard;
+        self
+    }
+
+    pub fn stdio_child_pid(&self) -> Option<u32> {
+        self.stdio_child.as_ref().map(|guard| guard.pid())
     }
 
     pub fn docker_container(&self) -> Option<&str> {
