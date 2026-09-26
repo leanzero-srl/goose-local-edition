@@ -4,6 +4,9 @@
 # ladder, sampler, ssh helpers) that outlived its run. What the running Goose Swarm app owns is left alone:
 # its goosed, its tailscaled, and any engine whose parent is alive. Load-bearing services on the Studio —
 # headscale, the LeanZero Link worker, mcp-web-search, mcp-doc-processor, the system Tailscale — never match.
+# An ORPHAN MCP (Q-138) is a bundled LeanZero MCP (bundled-mcps/leanzero-*) whose goose is gone (PPID 1): on
+# 2026-09-26 six of them spun at 100% CPU for up to 3.4 days, deaf to SIGTERM, so --kill escalates them to
+# SIGKILL per pid when they are still there after the TERM.
 mode=${1:-list}
 probe='
 me=$$
@@ -14,6 +17,7 @@ ps -axo pid=,ppid=,etime=,command= | while read pid ppid et cmd; do
   esac
   kind=""
   case "$cmd" in
+    *bundled-mcps/leanzero-*) [ "$ppid" = 1 ] && kind="orphan-mcp" ;;
     *"bin/rapid-mlx serve"*|*rapid_mlx*|*mlx_lm.server*|*mlx.launch*|*rank_wrapper*|*.goose/distributed/*|*"import base64,sys"*) [ "$ppid" = 1 ] && kind="orphan-engine" ;;
     *"quality/harness/"*|*"ux-audit/"*|*r1.mjs*|*recovery.mjs*|*load.py*|*ladder.py*|*canary.py*|*sampler.sh*) kind="harness" ;;
   esac
@@ -27,6 +31,13 @@ for host in macbook studio; do
     pids=$(echo "$out" | cut -d'|' -f2 | tr '\n' ' ')
     if [ $host = macbook ]; then kill $=pids 2>/dev/null; else ssh workhorse "kill $pids" 2>/dev/null; fi
     echo "   killed (per pid): $pids"
+    mcps=$(echo "$out" | grep '^orphan-mcp|' | cut -d'|' -f2 | tr '\n' ' ')
+    if [ -n "${mcps// }" ]; then
+      sleep 2
+      deaf="for p in $mcps; do ps -o command= -p \$p 2>/dev/null | grep -q 'bundled-mcps/leanzero-' && kill -9 \$p && echo \$p; done"
+      if [ $host = macbook ]; then k=$(zsh -c "$deaf"); else k=$(ssh workhorse "zsh -c $(printf %q "$deaf")"); fi
+      [ -n "$k" ] && echo "   orphan MCPs deaf to SIGTERM, SIGKILLed (per pid): $(echo $k | tr '\n' ' ')"
+    fi
   fi
 done
 # Ports a stopped engine must not still hold.

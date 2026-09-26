@@ -1,3 +1,5 @@
+diff --git a/package.json b/package.json
+index b633287..8903899 100644
 --- a/package.json
 +++ b/package.json
 @@ -43,7 +43,10 @@
@@ -12,10 +14,88 @@
 +    "image-size": "2.0.4"
    }
  }
+diff --git a/src/index.js b/src/index.js
+index c23a3dd..415c477 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -6,7 +6,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
+ import { setupLogging, log } from "./utils/logger.js";
+ import { registerAllTools, SERVER_INSTRUCTIONS } from "./tool-registry.js";
+ import { setClientInfo } from "./utils/client-profile.js";
++import { installClientLifeline } from "./utils/lifeline.js";
+ 
++// A stdio server ends with its client: stdin EOF, a dead stdout/stderr pipe, or a lost parent (goose Q-138).
++installClientLifeline();
+ setupLogging();
+ 
+ const server = new Server(
+diff --git a/src/services/web-search-client.js b/src/services/web-search-client.js
+index c939449..5e23564 100644
 --- a/src/services/web-search-client.js
 +++ b/src/services/web-search-client.js
-@@ -17 +17 @@
+@@ -14,7 +14,7 @@ import { log } from "../utils/logger.js";
+  * the Funnel URL's Host matches the allow-list.
+  */
+ export const DEFAULT_WEB_SEARCH_URL =
 -  process.env.WEB_SEARCH_MCP_URL || "https://worksmacstudio.tailfc4700.ts.net:8443/mcp";
 +  process.env.WEB_SEARCH_MCP_URL || "";
-@@ -26,0 +27 @@
+ 
+ /**
+  * Call one tool on the web-search MCP. Returns { ok, text, isError }.
+@@ -24,6 +24,7 @@ export const DEFAULT_WEB_SEARCH_URL =
+  */
+ export async function callWebSearchTool(cfg, toolName, args) {
+   const target = cfg.url || DEFAULT_WEB_SEARCH_URL;
 +  if (!target) throw new Error("Configure WEB_SEARCH_MCP_URL to use document web research.");
+   const headers = {};
+   if (cfg.bearer) headers["Authorization"] = `Bearer ${cfg.bearer}`;
+   if (cfg.serperKey) headers["X-Serper-Key"] = cfg.serperKey;
+diff --git a/src/utils/lifeline.js b/src/utils/lifeline.js
+new file mode 100644
+index 0000000..91e44b9
+--- /dev/null
++++ b/src/utils/lifeline.js
+@@ -0,0 +1,43 @@
++/**
++ * A stdio MCP server lives exactly as long as its client (goose Q-138).
++ *
++ * The StdioServerTransport listens for stdin 'data' and 'error' only, so a client that dies leaves
++ * this process running whenever anything else holds the event loop open (a Puppeteer browser, a
++ * timer) — measured 2026-09-26: two bundled-MCP orphans idled for days after their goose ended.
++ * stdin EOF/close ends the process; an error on stdout/stderr (EPIPE: the reader is gone) ends the
++ * process; a parent that changes (reparented to launchd/init) ends the process. The exit notice is a
++ * synchronous write to fd 2 that may fail silently, because fd 2 may be the pipe that is gone.
++ */
++import { writeSync } from "fs";
++
++let exiting = false;
++
++export function exitBecausePeerGone(reason) {
++  if (exiting) return;
++  exiting = true;
++  try {
++    writeSync(2, `[lifeline] client gone (${reason}); exiting\n`);
++  } catch {
++    // fd 2 is the dead pipe itself; the exit below is the report.
++  }
++  process.exit(0);
++}
++
++// Parent-death poll cadence. stdin EOF is the immediate signal and covers a dead parent on its own;
++// this poll only catches a parent that died while something else still holds the stdin write end.
++// It bounds no work — it is how often a lost parent is noticed.
++const PARENT_POLL_MS = 2_000;
++
++export function installClientLifeline() {
++  process.stdin.on("end", () => exitBecausePeerGone("stdin end"));
++  process.stdin.on("close", () => exitBecausePeerGone("stdin closed"));
++  process.stdin.on("error", (error) => exitBecausePeerGone(`stdin ${error.code ?? error.message}`));
++  process.stdout.on("error", (error) => exitBecausePeerGone(`stdout ${error.code ?? error.message}`));
++  process.stderr.on("error", (error) => exitBecausePeerGone(`stderr ${error.code ?? error.message}`));
++
++  const parent = process.ppid;
++  const watch = setInterval(() => {
++    if (process.ppid !== parent) exitBecausePeerGone(`parent ${parent} gone (now ${process.ppid})`);
++  }, PARENT_POLL_MS);
++  watch.unref();
++}

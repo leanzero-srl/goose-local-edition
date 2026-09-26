@@ -1478,6 +1478,9 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
     // Before anything binds or spawns: a stop that lands during startup must reach the
     // teardown, never the default action (which kills goosed and leaks its children).
     let mut exit_signals = ExitSignals::install()?;
+    // A goosed that crashed (or an older build) can leave its bundled MCPs orphaned; stop, per
+    // pid, the ones that provably run goose's own bundled-MCP entries (Q-138).
+    goose::agents::stdio_children::spawn_startup_reaper();
 
     let builtins = if builtins.is_empty() {
         vec!["developer".to_string()]
@@ -1692,7 +1695,11 @@ where
     let serve = serve.into_future();
     tokio::pin!(serve);
     tokio::select! {
-        result = &mut serve => Ok(result?),
+        result = &mut serve => {
+            let outcome = goose::agents::stdio_children::teardown_all().await;
+            tracing::info!(%outcome, "goose serve: server ended; stdio extensions torn down");
+            Ok(result?)
+        }
         signal = signals.recv() => {
             tracing::info!(signal = signal.name, "goose serve: stop requested; tearing down supervised processes");
             let reports = goose::acp::server::teardown_supervised().await;

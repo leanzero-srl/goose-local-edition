@@ -230,6 +230,7 @@ gethostname = "1.1.0"
 leanzero-link = { version = "0.1.0", path = "../leanzero-link", features = ["rustls-tls"] }
 goose-memory-store = { path = "../goose-memory-store" }
 hmac = "0.13"
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { workspace = true }

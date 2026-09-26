@@ -408,7 +408,9 @@ struct ResolvedTool {
     resource_uri: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn child_process_client(
+    extension_name: &str,
     mut command: Command,
     timeout: &Option<u64>,
     provider: SharedProvider,
@@ -439,6 +441,9 @@ async fn child_process_client(
     let mut stderr = stderr.take().ok_or_else(|| {
         ExtensionError::SetupError("failed to attach child process stderr".to_owned())
     })?;
+    let stdio_child = transport
+        .id()
+        .and_then(|pid| crate::agents::stdio_children::register(pid, extension_name));
 
     let stderr_task = tokio::spawn(async move {
         let mut all_stderr = Vec::new();
@@ -458,8 +463,9 @@ async fn child_process_client(
     .await;
 
     match client_result {
-        Ok(client) => Ok(client),
+        Ok(client) => Ok(client.with_stdio_child(stdio_child)),
         Err(error) => {
+            drop(stdio_child);
             let error_task_out = stderr_task.await?;
             Err::<McpClient, ExtensionError>(match error_task_out {
                 Ok(stderr_content) => ProcessExit::new(stderr_content, error).into(),
@@ -1058,6 +1064,7 @@ impl ExtensionManager {
                         });
 
                         let client = child_process_client(
+                            &sanitized_name,
                             command,
                             &Some(timeout_secs),
                             self.provider.clone(),
@@ -1135,6 +1142,7 @@ impl ExtensionManager {
                 };
 
                 let client = child_process_client(
+                    &sanitized_name,
                     command,
                     timeout,
                     self.provider.clone(),
@@ -1167,6 +1175,7 @@ impl ExtensionManager {
                 });
 
                 let client = child_process_client(
+                    &sanitized_name,
                     command,
                     timeout,
                     self.provider.clone(),

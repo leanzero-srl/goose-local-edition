@@ -37,6 +37,8 @@ type ReadinessFetch = (input: string, init?: ReadinessFetchInit) => Promise<Resp
 // signal above never reaches. The SIGKILL fallback must not cut that teardown short, so its
 // delay is the sum of the supervisors' own worst-case grace windows (each a per-pid
 // SIGTERM → 50 × 100 ms → SIGKILL leg; the sources are the constants named here):
+//   stdio  crates/goose/src/agents/stdio_children.rs teardown_all (goose-sidecar's GRACE)   50 × 100 ms
+//          — every stdio extension child (bundled MCPs), all TERMed at once, one shared window (Q-138)
 //   mesh   crates/leanzero-link/src/mesh.rs   terminate_per_pid                 50 × 100 ms
 //   engine crates/goose-sidecar/src/lib.rs    terminate  (GRACE_TICKS × GRACE_TICK) 50 × 100 ms
 //                                             release_port / wait_port_clear      50 × 100 ms
@@ -45,11 +47,13 @@ type ReadinessFetch = (input: string, init?: ReadinessFetchInit) => Promise<Resp
 // resolves on goosed's 'close' the moment its teardown finishes, which on the happy path is
 // well under a second.
 const PER_PID_GRACE_MS = 50 * 100;
+const STDIO_EXTENSIONS_TEARDOWN_CEILING_MS = PER_PID_GRACE_MS;
 const MESH_TEARDOWN_CEILING_MS = PER_PID_GRACE_MS;
 const ENGINE_TEARDOWN_CEILING_MS = 2 * PER_PID_GRACE_MS;
 const ENGINE_STATUS_PROBE_CEILING_MS = 5000;
 const TEARDOWN_MARGIN_MS = 1000;
 export const GOOSED_SIGKILL_AFTER_MS =
+  STDIO_EXTENSIONS_TEARDOWN_CEILING_MS +
   MESH_TEARDOWN_CEILING_MS +
   ENGINE_TEARDOWN_CEILING_MS +
   ENGINE_STATUS_PROBE_CEILING_MS +

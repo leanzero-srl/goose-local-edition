@@ -125,6 +125,11 @@ fn sigterm_runs_the_supervised_teardown_and_exits_143() {
 
     let log = files_mentioning(root.path(), "goose serve: teardown");
     assert!(
+        log.contains("stdio extensions") && log.contains("no stdio extension children"),
+        "the stdio extension teardown step never reported under {}:\n{log}",
+        root.path().display()
+    );
+    assert!(
         log.contains("leanzero-link mesh") && log.contains("no mesh daemon running"),
         "the mesh teardown step never reported under {}:\n{log}",
         root.path().display()

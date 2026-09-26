@@ -10,8 +10,10 @@
 //! (it never adopts a daemon it did not spawn). The fix is for goosed to stop what it
 //! supervises, per-pid, on its way out — this module is the sequence.
 //!
-//! The order is fixed: the mesh first, so peers see the node leave before its engine
-//! disappears; the engine second. Every step reports what it did in one line, and a step
+//! The order is fixed: the stdio extension children first (Q-138 — `std::process::exit` after
+//! this sequence runs no destructor, so rmcp's own child cleanup never fired and every bundled
+//! MCP outlived goosed; they are leaves nothing else depends on); then the mesh, so peers see the
+//! node leave before its engine disappears; the engine last. Every step reports what it did in one line, and a step
 //! that has nothing to do says so — a silent step would be indistinguishable from a step
 //! that never ran.
 
@@ -46,6 +48,18 @@ pub async fn teardown_in_order(resources: &[Arc<dyn SupervisedResource>]) -> Vec
         });
     }
     reports
+}
+
+struct StdioExtensions;
+
+#[async_trait]
+impl SupervisedResource for StdioExtensions {
+    fn name(&self) -> &'static str {
+        "stdio extensions"
+    }
+    async fn teardown(&self) -> String {
+        crate::agents::stdio_children::teardown_all().await
+    }
 }
 
 struct LinkMeshes;
@@ -84,10 +98,12 @@ impl SupervisedResource for MlxDistributedEngine {
     }
 }
 
-/// The production sequence: the mesh daemon, then the engine sidecar, then the distributed
-/// engine's ranks (at most one of the two engines runs; the other reports it has nothing).
+/// The production sequence: every stdio extension child, the mesh daemon, then the engine
+/// sidecar, then the distributed engine's ranks (at most one of the two engines runs; the other
+/// reports it has nothing).
 pub async fn teardown_supervised() -> Vec<TeardownReport> {
     let resources: Vec<Arc<dyn SupervisedResource>> = vec![
+        Arc::new(StdioExtensions),
         Arc::new(LinkMeshes),
         Arc::new(MlxEngine),
         Arc::new(MlxDistributedEngine),
@@ -157,15 +173,20 @@ mod tests {
         let names: Vec<_> = reports.iter().map(|r| r.resource).collect();
         assert_eq!(
             names,
-            vec!["leanzero-link mesh", "mlx engine", "mlx distributed engine"]
+            vec![
+                "stdio extensions",
+                "leanzero-link mesh",
+                "mlx engine",
+                "mlx distributed engine"
+            ]
         );
         assert!(
-            reports[0].outcome.contains("no mesh daemon"),
+            reports[0].outcome.contains("no stdio extension children"),
             "{}",
             reports[0].outcome
         );
         assert!(
-            reports[1].outcome.contains("nothing supervised"),
+            reports[1].outcome.contains("no mesh daemon"),
             "{}",
             reports[1].outcome
         );
@@ -173,6 +194,11 @@ mod tests {
             reports[2].outcome.contains("nothing supervised"),
             "{}",
             reports[2].outcome
+        );
+        assert!(
+            reports[3].outcome.contains("nothing supervised"),
+            "{}",
+            reports[3].outcome
         );
     }
 }

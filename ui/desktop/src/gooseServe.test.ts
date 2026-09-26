@@ -357,15 +357,19 @@ describe('buildGooseServeEnv — the tool shim directory (Q-102)', () => {
 
 describe('stop — the SIGKILL fallback covers goosed\'s own teardown', () => {
   // goosed's teardown on SIGTERM is bounded only by its supervisors' per-pid grace windows:
-  // the mesh daemon (one 50 × 100 ms leg), the engine sidecar (two: terminate + release_port)
-  // and the status probe that gates the unmount (reqwest 5 s). Cutting SIGKILL in before
-  // that ceiling re-creates the orphans this constant exists to prevent.
-  it('waits at least the mesh + engine + probe ceilings before SIGKILL', () => {
+  // the stdio extension children (one shared 50 × 100 ms window — Q-138), the mesh daemon (one
+  // leg), the engine sidecar (two: terminate + release_port) and the status probe that gates the
+  // unmount (reqwest 5 s). Cutting SIGKILL in before that ceiling re-creates the orphans this
+  // constant exists to prevent.
+  it('waits at least the stdio + mesh + engine + probe ceilings before SIGKILL', () => {
     const perPidGraceMs = 50 * 100;
+    const stdioCeiling = perPidGraceMs;
     const meshCeiling = perPidGraceMs;
     const engineCeiling = 2 * perPidGraceMs;
     const probeCeiling = 5000;
-    expect(GOOSED_SIGKILL_AFTER_MS).toBeGreaterThanOrEqual(meshCeiling + engineCeiling + probeCeiling);
+    expect(GOOSED_SIGKILL_AFTER_MS).toBeGreaterThanOrEqual(
+      stdioCeiling + meshCeiling + engineCeiling + probeCeiling
+    );
   });
 });
 

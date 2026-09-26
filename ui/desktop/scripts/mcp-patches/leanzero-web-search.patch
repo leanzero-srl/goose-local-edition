@@ -1,4 +1,5 @@
 diff --git a/package.json b/package.json
+index 3ebb63e..c04c748 100644
 --- a/package.json
 +++ b/package.json
 @@ -77,5 +77,8 @@
@@ -11,9 +12,10 @@ diff --git a/package.json b/package.json
    }
  }
 diff --git a/src/browser-engine.ts b/src/browser-engine.ts
+index d279e4e..a995efa 100644
 --- a/src/browser-engine.ts
 +++ b/src/browser-engine.ts
-@@ -53,6 +53,12 @@
+@@ -53,6 +53,12 @@ function getEngineSpecificArgs(engineType: BrowserEngineType): string[] {
  export async function createOptimizedBrowser(
    options?: BrowserEngineOptions
  ): Promise<Browser> {
@@ -26,10 +28,99 @@ diff --git a/src/browser-engine.ts b/src/browser-engine.ts
    const effectiveOptions = { ...DEFAULT_ENGINE_OPTIONS, ...options };
    const engineType = effectiveOptions.engineType || 'webkit';
    
+diff --git a/src/index.ts b/src/index.ts
+index 96a27ad..1f3ea62 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1,11 +1,8 @@
+ #!/usr/bin/env node
+ 
+-// Install the stdio-safe console shim BEFORE any other import. Some
+-// transitive deps (cheerio, playwright internals, undici) print to console at
+-// module-load time; without this redirect they would corrupt the MCP JSON-RPC
+-// frame stream on stdout.
+-import { installStdioSafeConsoleShim } from './logger.js';
+-installStdioSafeConsoleShim();
++// Must stay the first import: it routes console output to stderr (stdout carries the MCP JSON-RPC
++// frames) and ends this process with its client (goose Q-138) before any other module evaluates.
++import './stdio-guard.js';
+ 
+ import { WebSearchMCPServer } from './server.js';
+ 
+diff --git a/src/lifeline.ts b/src/lifeline.ts
+new file mode 100644
+index 0000000..6d00478
+--- /dev/null
++++ b/src/lifeline.ts
+@@ -0,0 +1,63 @@
++/**
++ * A stdio MCP server lives exactly as long as its client (goose Q-138).
++ *
++ * Measured 2026-09-26: eight copies of this server outlived the goose that spawned them, six of
++ * them at 100% CPU for up to 3.4 days, all deaf to SIGTERM. The chain: goose died, so stdin hit
++ * EOF and stdout/stderr lost their reader. The StdioServerTransport listens for stdin 'data' and
++ * 'error' only, so the EOF went unnoticed. The next stderr write raised EPIPE; with no 'error'
++ * listener on the stream it became an uncaughtException; the handler logged it with
++ * console.error — another stderr write, another EPIPE, another uncaughtException — about 60,000
++ * times a second, forever.
++ *
++ * The rules here: stdin EOF/close ends the process; an EPIPE (or any error) on stdout/stderr ends
++ * the process — the peer is gone and nothing can be delivered; a parent that changes (reparented
++ * to launchd/init) ends the process. The exit notice goes to fd 2 with a synchronous write that
++ * may fail silently, because fd 2 may be the very pipe that is gone.
++ */
++import { writeSync } from 'node:fs';
++
++let exiting = false;
++
++const PEER_GONE_CODES = new Set(['EPIPE', 'ERR_STREAM_DESTROYED', 'ERR_STREAM_WRITE_AFTER_END', 'ECONNRESET']);
++
++export function isPeerGoneError(error: unknown): boolean {
++  const code = (error as { code?: unknown } | null)?.code;
++  return typeof code === 'string' && PEER_GONE_CODES.has(code);
++}
++
++export function isExiting(): boolean {
++  return exiting;
++}
++
++/** Exit now, once. Browser children are released by Playwright's own exit hook. */
++export function exitBecausePeerGone(reason: string): void {
++  if (exiting) return;
++  exiting = true;
++  try {
++    writeSync(2, `[lifeline] client gone (${reason}); exiting\n`);
++  } catch {
++    // fd 2 is the dead pipe itself; the exit below is the report.
++  }
++  process.exit(0);
++}
++
++/**
++ * Parent-death poll cadence. stdin EOF is the immediate signal and covers a dead parent on its own;
++ * this poll only catches a parent that died while something else still holds the stdin write end.
++ * It bounds no work — it is how often a lost parent is noticed.
++ */
++const PARENT_POLL_MS = 2_000;
++
++export function installClientLifeline(): void {
++  process.stdin.on('end', () => exitBecausePeerGone('stdin end'));
++  process.stdin.on('close', () => exitBecausePeerGone('stdin closed'));
++  process.stdin.on('error', (error: NodeJS.ErrnoException) => exitBecausePeerGone(`stdin ${error.code ?? error.message}`));
++  process.stdout.on('error', (error: NodeJS.ErrnoException) => exitBecausePeerGone(`stdout ${error.code ?? error.message}`));
++  process.stderr.on('error', (error: NodeJS.ErrnoException) => exitBecausePeerGone(`stderr ${error.code ?? error.message}`));
++
++  const parent = process.ppid;
++  const watch = setInterval(() => {
++    if (process.ppid !== parent) exitBecausePeerGone(`parent ${parent} gone (now ${process.ppid})`);
++  }, PARENT_POLL_MS);
++  watch.unref();
++}
 diff --git a/src/openapi-extractor.ts b/src/openapi-extractor.ts
+index 0428550..abf3ec6 100644
 --- a/src/openapi-extractor.ts
 +++ b/src/openapi-extractor.ts
-@@ -315,7 +315,7 @@
+@@ -315,7 +315,7 @@ async function downloadOpenAPISpec(
        }
  
        // Detect content type
@@ -39,6 +130,7 @@ diff --git a/src/openapi-extractor.ts b/src/openapi-extractor.ts
  
        if (contentType.includes('yaml') || url.toLowerCase().endsWith('.yaml')) {
 diff --git a/src/progressive-search-engine.ts b/src/progressive-search-engine.ts
+index d9425f0..035f4ee 100644
 --- a/src/progressive-search-engine.ts
 +++ b/src/progressive-search-engine.ts
 @@ -3,7 +3,7 @@
@@ -50,7 +142,7 @@ diff --git a/src/progressive-search-engine.ts b/src/progressive-search-engine.ts
  import { SearchResult } from './types.js';
  import { StandardIntentDetector, QueryIntent, generateIntentBasedExpansions } from './query-intent-detector.js';
  import { SemanticExpander, HeuristicSemanticExpander } from './semantic-expander.js';
-@@ -321,6 +321,9 @@
+@@ -321,6 +321,9 @@ export class ProgressiveSearchEngine implements IProgressiveSearchEngine {
          return result.results;
        }
      } catch (error) {
@@ -60,7 +152,7 @@ diff --git a/src/progressive-search-engine.ts b/src/progressive-search-engine.ts
        console.warn(`[ProgressiveSearchEngine] Primary engine failed, trying fallbacks:`, error);
      }
      
-@@ -364,6 +367,7 @@
+@@ -364,6 +367,7 @@ export class ProgressiveSearchEngine implements IProgressiveSearchEngine {
            return result.results;
          }
        } catch (error) {
@@ -69,9 +161,10 @@ diff --git a/src/progressive-search-engine.ts b/src/progressive-search-engine.ts
        }
      }
 diff --git a/src/search-engine.ts b/src/search-engine.ts
+index d979c9d..c1fdd92 100644
 --- a/src/search-engine.ts
 +++ b/src/search-engine.ts
-@@ -18,6 +18,78 @@
+@@ -18,6 +18,78 @@ import { requestDeduplicator } from './request-deduplicator.js';
  // Per-request context: a caller-supplied Serper key overrides the process env.
  import { requestContext } from './request-context.js';
  
@@ -150,7 +243,7 @@ diff --git a/src/search-engine.ts b/src/search-engine.ts
  export interface SearchEngineConfig {
    maxRequestsPerMinute?: number;
    resetIntervalMs?: number;
-@@ -79,7 +151,8 @@
+@@ -79,7 +151,8 @@ export class SearchEngine {
     * primary path):
     *   - `USE_SERPER_ONLY=false` ⇒ enable browser fallbacks
     *   - `ENABLE_BROWSER_FALLBACKS=true` ⇒ enable browser fallbacks (legacy alias)
@@ -160,7 +253,7 @@ diff --git a/src/search-engine.ts b/src/search-engine.ts
     */
    private async executeSearch(query: string, numResults: number, timeout: number): Promise<SearchResultWithMetadata> {
      const serperOnlyEnv = process.env.USE_SERPER_ONLY;
-@@ -89,23 +162,20 @@
+@@ -89,23 +162,20 @@ export class SearchEngine {
  
      console.log(`[SearchEngine] Serper-only mode: ${useSerperOnly} (USE_SERPER_ONLY=${serperOnlyEnv ?? 'unset'}, ENABLE_BROWSER_FALLBACKS=${process.env.ENABLE_BROWSER_FALLBACKS ?? 'unset'})`);
  
@@ -182,20 +275,20 @@ diff --git a/src/search-engine.ts b/src/search-engine.ts
          }
 -      } catch (error) {
 -        console.error('[SearchEngine] Serper API failed:', error instanceof Error ? error.message : 'Unknown');
-+        return this.keylessSearch(query, numResults, timeout);
-       }
+-      }
 -      // If Serper fails, optionally try browser fallbacks
 -      if (!enableBrowserFallbacks) {
 -        console.log('[SearchEngine] Serper failed, but browser fallbacks disabled. Returning empty results.');
 -        return { results: [], engine: 'serper-failed-no-fallback' };
--      }
++        return this.keylessSearch(query, numResults, timeout);
+       }
 +      const results = await this.serperSearch(query, numResults, timeout);
 +      console.log(`[SearchEngine] ✓ Serper returned ${results.length} results directly`);
 +      return { results, engine: 'serper-only' };
      }
  
      // Only proceed to browser engines if fallbacks are enabled
-@@ -379,18 +449,161 @@
+@@ -379,18 +449,161 @@ export class SearchEngine {
    /**
     * Runs a search with a specific browser engine
     */
@@ -363,7 +456,7 @@ diff --git a/src/search-engine.ts b/src/search-engine.ts
      }
  
      // NOTE: Cache check has been moved to the search() method above.
-@@ -450,7 +663,7 @@
+@@ -450,7 +663,7 @@ export class SearchEngine {
            data: error.response?.data,
          });
        }
@@ -372,7 +465,7 @@ diff --git a/src/search-engine.ts b/src/search-engine.ts
      }
    }
  
-@@ -592,6 +805,13 @@
+@@ -592,6 +805,13 @@ export class SearchEngine {
  
          const results = this.parseBraveResults(html, numResults);
          console.log(`[SearchEngine] Browser Brave parsed ${results.length} results`);
@@ -386,7 +479,7 @@ diff --git a/src/search-engine.ts b/src/search-engine.ts
  
          return results;
        } catch (error) {
-@@ -763,104 +983,56 @@
+@@ -763,104 +983,56 @@ export class SearchEngine {
      }
    }
  
@@ -396,26 +489,7 @@ diff --git a/src/search-engine.ts b/src/search-engine.ts
 -     const $ = cheerio.load(html);
 -     const results: SearchResult[] = [];
 -     const timestamp = generateTimestamp();
-+  /**
-+   * Brave's web results are `[data-type="web"]` blocks: one anchor to the result,
-+   * whose title sits in `.search-snippet-title` beside a site-name/breadcrumb block,
-+   * and the snippet in `.generic-snippet .content` (markup read 2026-09-26). Taking
-+   * the anchor's whole text as the title glued the site name and the breadcrumb
-+   * onto it ("Real Python realpython.com › python311-… Python 3.11 Preview: …").
-+   */
-+  private parseBraveResults(html: string, maxResults: number): SearchResult[] {
-+    const $ = cheerio.load(html);
-+    const results: SearchResult[] = [];
-+    const seen = new Set<string>();
-+    const timestamp = generateTimestamp();
-+    const isBraveOwn = (href: string) => {
-+      try {
-+        return new URL(href).hostname.endsWith('brave.com');
-+      } catch {
-+        return true;
-+      }
-+    };
- 
+-
 -     // Brave result selectors - expanded to be more robust
 -     const resultSelectors = [
 -       '[data-type="web"]',     // Main Brave results
@@ -437,7 +511,26 @@ diff --git a/src/search-engine.ts b/src/search-engine.ts
 -      
 -      elements.each((_index, element) => {
 -        if (results.length >= maxResults) return false;
--
++  /**
++   * Brave's web results are `[data-type="web"]` blocks: one anchor to the result,
++   * whose title sits in `.search-snippet-title` beside a site-name/breadcrumb block,
++   * and the snippet in `.generic-snippet .content` (markup read 2026-09-26). Taking
++   * the anchor's whole text as the title glued the site name and the breadcrumb
++   * onto it ("Real Python realpython.com › python311-… Python 3.11 Preview: …").
++   */
++  private parseBraveResults(html: string, maxResults: number): SearchResult[] {
++    const $ = cheerio.load(html);
++    const results: SearchResult[] = [];
++    const seen = new Set<string>();
++    const timestamp = generateTimestamp();
++    const isBraveOwn = (href: string) => {
++      try {
++        return new URL(href).hostname.endsWith('brave.com');
++      } catch {
++        return true;
++      }
++    };
+ 
 -        const $element = $(element);
 -        
 -        // Try multiple title selectors for Brave
@@ -540,9 +633,14 @@ diff --git a/src/search-engine.ts b/src/search-engine.ts
      console.log(`[SearchEngine] Brave found ${results.length} results`);
      return results;
 diff --git a/src/server.ts b/src/server.ts
+index dbc822f..ee1ec91 100644
 --- a/src/server.ts
 +++ b/src/server.ts
-@@ -38,7 +38,7 @@
+@@ -35,10 +35,11 @@ class McpError extends Error {
+ }
+ 
+ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
++import { exitBecausePeerGone, isExiting, isPeerGoneError } from './lifeline.js';
  import { z } from 'zod';
  import * as fs from 'fs';
  import * as path from 'path';
@@ -551,7 +649,7 @@ diff --git a/src/server.ts b/src/server.ts
  import { EnhancedContentExtractor } from './enhanced-content-extractor.js';
  import { pdfExtractor as pdfExtractorInstance } from './pdf-extractor.js';
  
-@@ -141,7 +141,7 @@
+@@ -141,7 +142,7 @@ export const WEB_SEARCH_INSTRUCTIONS = `web-search MCP — choose the RIGHT tool
  • Save cited research to a markdown file (give it URLs) → research_and_save_to_markdown.
  • A GitHub repo's code/README → get-github-repo-content.   An API's endpoints → get-openapi-spec.
  • Re-read something already fetched → list-cached-documents, then read-cached-document.
@@ -560,7 +658,7 @@ diff --git a/src/server.ts b/src/server.ts
  
  export class WebSearchMCPServer {
    private server: McpServer;
-@@ -170,6 +170,12 @@
+@@ -170,6 +171,12 @@ export class WebSearchMCPServer {
        throw error;
      }
  
@@ -573,7 +671,7 @@ diff --git a/src/server.ts b/src/server.ts
      if (error instanceof Error) {
        // Categorize common errors and map to appropriate MCP error codes
        const message = error.message.toLowerCase();
-@@ -498,7 +504,7 @@
+@@ -498,7 +505,7 @@ export class WebSearchMCPServer {
  
            // Format: structured JSON block + human-readable text for AI-friendly parsing
            const jsonBlock = `\`\`\`json\n${JSON.stringify(summaryResults, null, 2)}\n\`\`\``;
@@ -582,7 +680,7 @@ diff --git a/src/server.ts b/src/server.ts
  
            summaryResults.forEach((summary, i) => {
              responseText += `**${i + 1}. ${summary.title}**\n`;
-@@ -2082,11 +2088,9 @@
+@@ -2082,11 +2089,9 @@ export class WebSearchMCPServer {
        }
        const message = error instanceof Error ? error.message : 'Unknown web search error';
        telemetryCollector.recordSearchFailure(searchEngineName || 'unknown', Date.now() - startTime);
@@ -597,7 +695,90 @@ diff --git a/src/server.ts b/src/server.ts
      }
    }
  
+@@ -2150,42 +2155,40 @@ export class WebSearchMCPServer {
+   private setupGracefulShutdown(): void {
+     // Handle unhandled promise rejections
+     process.on('unhandledRejection', (reason, promise) => {
++      if (isExiting()) return;
++      if (isPeerGoneError(reason)) return exitBecausePeerGone(`unhandled ${(reason as { code?: string }).code}`);
+       console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+       // Don't exit on unhandled rejections, just log them
+     });
+ 
+-    // Handle uncaught exceptions
++    // Handle uncaught exceptions. A peer-gone error (EPIPE on the stdio pipes) is never logged:
++    // logging it writes to the dead pipe and raises it again — the Q-138 loop.
+     process.on('uncaughtException', (error) => {
++      if (isExiting()) return;
++      if (isPeerGoneError(error)) return exitBecausePeerGone(`uncaught ${(error as NodeJS.ErrnoException).code}`);
+       console.error('Uncaught Exception:', error);
+       // Don't exit on uncaught exceptions in MCP context
+     });
+ 
+-    // Graceful shutdown - close browsers when process exits
+-    process.on('SIGINT', async () => {
+-      console.log('Shutting down gracefully...');
++    // Graceful shutdown - close browsers, then exit. A second signal exits at once; the close is
++    // best-effort because Playwright's own exit hook kills any browser it launched.
++    let stopping = false;
++    const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
++      if (stopping) process.exit(0);
++      stopping = true;
+       try {
+         await Promise.all([
+           this.contentExtractor.closeAll(),
+           this.searchEngine.closeAll()
+         ]);
+       } catch (error) {
+-        console.error('Error during graceful shutdown:', error);
++        console.error(`Error during ${signal} shutdown:`, error);
+       }
+       process.exit(0);
+-    });
+-
+-    process.on('SIGTERM', async () => {
+-      console.log('Shutting down gracefully...');
+-      try {
+-        await Promise.all([
+-          this.contentExtractor.closeAll(),
+-          this.searchEngine.closeAll()
+-        ]);
+-      } catch (error) {
+-        console.error('Error during graceful shutdown:', error);
+-      }
+-      process.exit(0);
+-    });
++    };
++    process.on('SIGINT', () => { void shutdown('SIGINT'); });
++    process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
++    process.on('SIGHUP', () => { void shutdown('SIGHUP'); });
+   }
+ 
+   async run(): Promise<void> {
+diff --git a/src/stdio-guard.ts b/src/stdio-guard.ts
+new file mode 100644
+index 0000000..9d77fcf
+--- /dev/null
++++ b/src/stdio-guard.ts
+@@ -0,0 +1,16 @@
++/**
++ * Imported FIRST by index.ts, for its side effects only.
++ *
++ * ES module imports are evaluated before the importing module's body, so the shim that index.ts
++ * used to install in its own body ran only after server.js's whole import graph — module-level
++ * singletons (browserPool, crawlCache, …) had already printed to stdout, ahead of the initialize
++ * reply (measured 2026-09-26: six `[BrowserPool] …` / `[CrawlCache] …` lines on the JSON-RPC
++ * stream). A module imported first is evaluated first.
++ *
++ * The lifeline (goose Q-138) is armed here for the same reason: before anything else can write.
++ */
++import { installStdioSafeConsoleShim } from './logger.js';
++import { installClientLifeline } from './lifeline.js';
++
++installStdioSafeConsoleShim();
++installClientLifeline();
 diff --git a/tests/integration/api_search.test.ts b/tests/integration/api_search.test.ts
+index 19618b7..b44eb8a 100644
 --- a/tests/integration/api_search.test.ts
 +++ b/tests/integration/api_search.test.ts
 @@ -1,31 +1,37 @@
@@ -655,6 +836,8 @@ diff --git a/tests/integration/api_search.test.ts b/tests/integration/api_search
 +  }, 30000);
  });
 diff --git a/tests/unit/search-unavailable.test.ts b/tests/unit/search-unavailable.test.ts
+new file mode 100644
+index 0000000..8e4398d
 --- /dev/null
 +++ b/tests/unit/search-unavailable.test.ts
 @@ -0,0 +1,259 @@
