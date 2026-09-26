@@ -166,9 +166,28 @@ pub fn turn_facts(messages: &[Message]) -> TurnFacts {
 }
 
 /// Fence tokens never survive inside fenced content: the model must not be able to read a
-/// pasted `USER>>>` as the end of the user's words.
+/// pasted `USER>>>` as the end of the user's words. Nor does markup: a `<` that opens a tag
+/// (`<tool_call>`, `</think>`, `<function=…>`, `<|im_start|>`) becomes `‹`. Q-132: a reply held a
+/// tool call as raw text, the checker copied the replies into its reasoning and stopped streaming
+/// at "<<<REPLY 6" — the reply whose text opens with `<tool_call>` — while the engine generated
+/// 13,750 tokens: the engine's tool-call parser holds text after that opener as an unclosed call.
+/// A quote the model copies back is restored by [`undefang`] before it is verified or shown.
 fn defang(text: &str) -> String {
-    text.replace("<<<", "‹‹‹").replace(">>>", "›››")
+    let fenced = text.replace("<<<", "‹‹‹").replace(">>>", "›››");
+    let mut out = String::with_capacity(fenced.len());
+    let mut chars = fenced.chars().peekable();
+    while let Some(c) = chars.next() {
+        let opens_a_tag = c == '<'
+            && chars
+                .peek()
+                .is_some_and(|next| next.is_ascii_alphabetic() || matches!(next, '/' | '|'));
+        out.push(if opens_a_tag { '‹' } else { c });
+    }
+    out
+}
+
+fn undefang(text: &str) -> String {
+    text.replace('‹', "<").replace('›', ">")
 }
 
 pub fn assessment_system_prompt() -> String {
@@ -245,27 +264,69 @@ fn nearest_memories(store: &MemoryStore, query: &str) -> Vec<String> {
     }
 }
 
-/// The one provider call, tagged with the chat's session id. The task is detached
-/// (`tokio::spawn` carries no task-local), so without this scope the swarm router's lease and
-/// serving record for the judgement carried no session, and the desktop's busy bar could not
-/// count it as the chat's own request.
+/// The one provider call. It goes through the helper path (reasoning off, tagged with the chat's
+/// session id — the task is detached and `tokio::spawn` carries no task-local, so without the tag
+/// the swarm router's lease and serving record carried no session and the desktop's busy bar could
+/// not count it as the chat's own request), and it YIELDS to a user turn (Q-132): a turn that
+/// starts drops the call and it is asked again once no turn runs.
+///
+/// `envelope` is the most tokens the asked-for answer can hold (see [`verdict_envelope`] and
+/// [`assessment_envelope`]): the call ends there instead of at the context window's room. A cut
+/// answer is logged by name; it never parses, so nothing is proposed or shown from it.
 async fn ask_the_judge(
     provider: &dyn Provider,
     model_config: &ModelConfig,
     session_id: &str,
     system: &str,
     user: String,
+    envelope: i32,
 ) -> Result<(Message, ProviderUsage), ProviderError> {
-    crate::session_context::with_session_id(
-        Some(session_id.to_string()),
-        provider.complete(
-            model_config,
-            system,
-            &[Message::user().with_text(user)],
-            &[],
-        ),
-    )
-    .await
+    let bounded = model_config.clone().with_max_tokens(Some(envelope));
+    let messages = [Message::user().with_text(user)];
+    let answer = crate::turn_priority::after_user_turns("end-of-turn reviewer", || {
+        crate::model_config::complete_helper(provider, &bounded, session_id, system, &messages, &[])
+    })
+    .await?;
+    if answer
+        .0
+        .as_concat_text()
+        .contains(goose_providers::formats::openai::OUTPUT_TRUNCATED_BY_LENGTH)
+    {
+        tracing::warn!(
+            session_id,
+            envelope,
+            "end-of-turn reviewer: the answer reached its envelope and was cut; nothing is taken from it"
+        );
+    }
+    Ok(answer)
+}
+
+/// Every token an engine emits covers at least one byte of text (byte-level BPE; SentencePiece
+/// with byte fallback), so an answer is never more tokens than its UTF-8 bytes.
+fn tokens_for_bytes(bytes: usize) -> i32 {
+    i32::try_from(bytes).unwrap_or(i32::MAX)
+}
+
+/// The answer check's envelope: its verdict copies every quote from the fenced data and every key
+/// from the schema its system prompt states, so it is never longer than the prompt it answers. On
+/// the measured Q-132 prompt (1,581 + 15,643 bytes) that is 17,224 tokens, where the request sent
+/// no bound and the window's room was 255,247.
+pub fn verdict_envelope(system: &str, user: &str) -> i32 {
+    tokens_for_bytes(system.len() + user.len())
+}
+
+/// The memory assessment's envelope: the largest judgement the parser keeps — the memory and the
+/// reason at their clamps, every character the widest UTF-8 encodes. Anything longer is discarded
+/// by [`parse_assessment`] anyway.
+pub fn assessment_envelope() -> i32 {
+    let widest = |n: usize| char::MAX.to_string().repeat(n);
+    let largest = serde_json::json!({
+        "worth": true,
+        "polarity": "negative",
+        "memory": widest(ASSESSMENT_MEMORY_MAX_CHARS),
+        "why": widest(ASSESSMENT_WHY_MAX_CHARS),
+    });
+    tokens_for_bytes(largest.to_string().len())
 }
 
 /// The detached task. Every early return is a deliberate "nothing proposed".
@@ -346,14 +407,22 @@ pub async fn assess_turn(
     };
     let system = assessment_system_prompt();
     let user = assessment_user_prompt(&facts, "end_turn", &nearest);
-    let reply =
-        match ask_the_judge(provider.as_ref(), &model_config, &session_id, &system, user).await {
-            Ok((message, _usage)) => reply_text(&message),
-            Err(err) => {
-                tracing::warn!(session_id, %err, "assessment: provider error, nothing proposed");
-                return;
-            }
-        };
+    let reply = match ask_the_judge(
+        provider.as_ref(),
+        &model_config,
+        &session_id,
+        &system,
+        user,
+        assessment_envelope(),
+    )
+    .await
+    {
+        Ok((message, _usage)) => reply_text(&message),
+        Err(err) => {
+            tracing::warn!(session_id, %err, "assessment: provider error, nothing proposed");
+            return;
+        }
+    };
     let Some(assessment) = parse_assessment(&reply) else {
         tracing::debug!(session_id, "assessment: nothing worth proposing");
         return;
@@ -803,14 +872,14 @@ pub fn verified_answer_findings(raw: &str, inputs: &AnswerCheckInputs) -> Vec<An
         .collect();
     let mut found: Vec<AnswerFinding> = Vec::new();
     for finding in parsed.findings {
-        let quote = finding.quote.trim().to_string();
+        let quote = undefang(finding.quote.trim());
         let q = normalized(&quote);
         if q.is_empty() {
             continue;
         }
         let verified = match finding.kind.trim() {
             "contradiction" => {
-                let against = finding.against.trim().to_string();
+                let against = undefang(finding.against.trim());
                 let a = normalized(&against);
                 if a.is_empty() || q == a {
                     continue;
@@ -826,7 +895,7 @@ pub fn verified_answer_findings(raw: &str, inputs: &AnswerCheckInputs) -> Vec<An
                     })
             }
             "contradicted" => {
-                let against = evidence_quote(&finding.against);
+                let against = evidence_quote(&undefang(&finding.against));
                 let pieces: Vec<String> = against
                     .split('…')
                     .map(normalized)
@@ -932,12 +1001,15 @@ pub async fn check_turn_answer(
         let Some(user) = answer_check_user_prompt(&inputs, question) else {
             continue;
         };
+        let system = answer_check_system_prompt(question);
+        let envelope = verdict_envelope(&system, &user);
         let reply = match ask_the_judge(
             provider.as_ref(),
             &model_config,
             &session_id,
-            &answer_check_system_prompt(question),
+            &system,
             user,
+            envelope,
         )
         .await
         {
@@ -1032,6 +1104,7 @@ mod tests {
                 "20260925_20",
                 "system",
                 "user".to_string(),
+                verdict_envelope("system", "user"),
             )
             .await
         })
@@ -1039,6 +1112,101 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(judged.0.as_concat_text(), "20260925_20");
+    }
+
+    /// Q-132, llm_request.2557c942 (3.0.49, the Flash pipeline split, 14:28:57): the answer check
+    /// was posted with no template switch and no bound — `max_tokens: null`, no
+    /// `chat_template_kwargs` — and reasoned 13,750 tokens. Both questions now reach the engine
+    /// with thinking off and the verdict's own envelope, and the verdict still arrives.
+    #[tokio::test]
+    async fn both_answer_check_questions_reach_the_mlx_engine_with_thinking_off_and_an_envelope() {
+        use crate::model_config::mlx_endpoint::{thinking_off, MlxEndpoint, SERVED};
+        let mut inputs = inputs_764101();
+        inputs.unfinished = vec![(20, "rerun the census".to_string())];
+        for question in AnswerQuestion::ALL {
+            let engine = MlxEndpoint::start().await;
+            let system = answer_check_system_prompt(question);
+            let user = answer_check_user_prompt(&inputs, question).unwrap();
+            let envelope = verdict_envelope(&system, &user);
+            let (answer, _) = ask_the_judge(
+                engine.provider.as_ref(),
+                &ModelConfig::new(SERVED),
+                "20260926_5",
+                &system,
+                user.clone(),
+                envelope,
+            )
+            .await
+            .unwrap();
+            assert_eq!(answer.as_concat_text(), "reading project configuration");
+            let bodies = engine.bodies().await;
+            assert_eq!(bodies.len(), 1);
+            assert_eq!(bodies[0]["messages"][0]["content"], system);
+            assert_eq!(bodies[0]["chat_template_kwargs"], thinking_off());
+            assert_eq!(bodies[0]["max_tokens"], envelope);
+            assert_eq!(envelope as usize, system.len() + user.len());
+        }
+        let engine = MlxEndpoint::start().await;
+        ask_the_judge(
+            engine.provider.as_ref(),
+            &ModelConfig::new(SERVED),
+            "20260926_5",
+            &assessment_system_prompt(),
+            "Turn ended: end_turn".to_string(),
+            assessment_envelope(),
+        )
+        .await
+        .unwrap();
+        let bodies = engine.bodies().await;
+        assert_eq!(bodies[0]["chat_template_kwargs"], thinking_off());
+        assert_eq!(bodies[0]["max_tokens"], assessment_envelope());
+    }
+
+    /// The envelope never cuts an answer the parser would keep: the largest judgement at its
+    /// clamps, in the widest characters, still parses inside the assessment's envelope.
+    #[test]
+    fn the_largest_kept_judgement_fits_its_envelope() {
+        let widest = |n: usize| char::MAX.to_string().repeat(n);
+        let raw = serde_json::json!({
+            "worth": true,
+            "polarity": "negative",
+            "memory": widest(ASSESSMENT_MEMORY_MAX_CHARS),
+            "why": widest(ASSESSMENT_WHY_MAX_CHARS),
+        })
+        .to_string();
+        assert!(parse_assessment(&raw).is_some());
+        assert!(raw.len() <= assessment_envelope() as usize);
+    }
+
+    /// Q-132: REPLY 6 of the measured turn was a tool call written as text. The checker's prompt
+    /// no longer carries markup an engine's tool or reasoning parser acts on, and a quote the model
+    /// copies back from the defanged prompt still verifies against the reply as the user read it.
+    #[test]
+    fn markup_in_a_reply_reaches_the_checker_defanged_and_its_quote_still_verifies() {
+        let reply = "Copied the manifest.\n<tool_call>\n<function=bash>\n<parameter=command>\nwc -l VENDORED.md\n</parameter>\n</function></tool_call>\nAll 85 files copied. Only 80 files were copied.";
+        let inputs = AnswerCheckInputs {
+            replies: vec![reply.to_string()],
+            evidence: String::new(),
+            tool_outputs: vec![],
+            unfinished: vec![],
+        };
+        let prompt = answer_check_user_prompt(&inputs, AnswerQuestion::Answer).unwrap();
+        for markup in [
+            "<tool_call>",
+            "<function=",
+            "<parameter=",
+            "</function>",
+            "</tool_call>",
+        ] {
+            assert!(!prompt.contains(markup), "{markup} reached the prompt");
+        }
+        assert!(defang("a <b and 3 < 4 -> <|im_start|>").contains("a ‹b and 3 < 4 -> ‹|im_start|>"));
+        let raw = r#"{"findings": [{"kind": "contradiction", "reply": 1, "quote": "‹/function>‹/tool_call> All 85 files copied.", "against": "Only 80 files were copied."}]}"#;
+        let found = verified_answer_findings(raw, &inputs);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0]
+            .line
+            .contains("</function></tool_call> All 85 files copied."));
     }
 
     #[test]

@@ -122,21 +122,37 @@ pub async fn get_fast_model(
     }
 }
 
-/// The config every helper call runs with — the fast model, reasoning off. A helper's answer is
-/// a label, a title or a digest whose own prompt already says what to write; reasoning first buys
-/// nothing and, on a local engine, competes with the agent's turn for the same decode.
-pub async fn get_fast_model_without_reasoning(
-    provider_name: &str,
+/// THE helper path (Q-132): every call goose makes AROUND a turn — the title, the tool labels,
+/// the tool-pair digest, compaction, the orchestrator summary, the end-of-turn reviewer (memory
+/// assessment and the "goose check:" answer check), the permission judge and the adversary
+/// inspector — runs through here, and this is the one place a helper's reasoning is switched off.
+/// A helper's prompt already says what to write and in what shape; reasoning first buys nothing
+/// measured, and on a local engine it competes with the agent's turn for the same decode: the
+/// answer check on the Flash split (2026-09-26 14:28) sent no switch and reasoned 5,295+ tokens
+/// over 278+ s before any verdict. A helper that needs to think must carry a MEASUREMENT saying
+/// so and call the provider itself. The call is tagged with the chat's session id, so the swarm
+/// router's lease and the serving record name the chat even from a detached task.
+pub async fn complete_helper(
+    provider: &dyn Provider,
     model_config: &ModelConfig,
-) -> Result<ModelConfig> {
-    Ok(get_fast_model(provider_name, model_config)
-        .await?
-        .with_thinking_effort(ThinkingEffort::Off))
+    session_id: &str,
+    system: &str,
+    messages: &[Message],
+    tools: &[Tool],
+) -> Result<(Message, ProviderUsage), ProviderError> {
+    let helper = model_config
+        .clone()
+        .with_thinking_effort(ThinkingEffort::Off);
+    crate::session_context::with_session_id(
+        Some(session_id.to_string()),
+        provider.complete(&helper, system, messages, tools),
+    )
+    .await
 }
 
 /// Run a completion for a lightweight "fast" task (session naming, compaction,
 /// summarization) using the provider's fast model, falling back to the supplied
-/// main `model_config` if the fast model errors.
+/// main `model_config` if the fast model errors. Both go through [`complete_helper`].
 pub async fn complete_fast(
     provider: &dyn Provider,
     model_config: &ModelConfig,
@@ -145,13 +161,17 @@ pub async fn complete_fast(
     messages: &[Message],
     tools: &[Tool],
 ) -> Result<(Message, ProviderUsage), ProviderError> {
-    let fast_model_config = get_fast_model_without_reasoning(provider.get_name(), model_config)
+    let fast_model_config = get_fast_model(provider.get_name(), model_config)
         .await
         .map_err(|e| ProviderError::ExecutionError(e.to_string()))?;
 
-    match crate::session_context::with_session_id(
-        Some(session_id.to_string()),
-        provider.complete(&fast_model_config, system, messages, tools),
+    match complete_helper(
+        provider,
+        &fast_model_config,
+        session_id,
+        system,
+        messages,
+        tools,
     )
     .await
     {
@@ -163,14 +183,7 @@ pub async fn complete_fast(
                 e,
                 model_config.model_name
             );
-            let fallback_config = model_config
-                .clone()
-                .with_thinking_effort(ThinkingEffort::Off);
-            crate::session_context::with_session_id(
-                Some(session_id.to_string()),
-                provider.complete(&fallback_config, system, messages, tools),
-            )
-            .await
+            complete_helper(provider, model_config, session_id, system, messages, tools).await
         }
         Err(e) => Err(e),
     }
@@ -380,5 +393,51 @@ pub(crate) mod mlx_endpoint {
             "{}",
             bodies[0]
         );
+    }
+}
+
+/// Q-132's one rule, refused rather than remembered: every helper goose runs around a turn calls
+/// the model through `complete_helper` (directly or via `complete_fast`), never the provider
+/// itself, so none can leave its reasoning on by omission as the answer check did.
+#[cfg(test)]
+mod one_helper_path {
+    const HELPERS: [(&str, &str); 7] = [
+        ("turn_assessment.rs", include_str!("turn_assessment.rs")),
+        (
+            "permission/permission_judge.rs",
+            include_str!("permission/permission_judge.rs"),
+        ),
+        (
+            "security/adversary_inspector.rs",
+            include_str!("security/adversary_inspector.rs"),
+        ),
+        (
+            "acp/server/tool_labels.rs",
+            include_str!("acp/server/tool_labels.rs"),
+        ),
+        ("context_mgmt/mod.rs", include_str!("context_mgmt/mod.rs")),
+        (
+            "session/session_naming.rs",
+            include_str!("session/session_naming.rs"),
+        ),
+        (
+            "agents/platform_extensions/orchestrator.rs",
+            include_str!("agents/platform_extensions/orchestrator.rs"),
+        ),
+    ];
+
+    #[test]
+    fn every_helper_calls_the_model_through_the_helper_path() {
+        for (file, source) in HELPERS {
+            let run_path = source.split("#[cfg(test)]\nmod tests").next().unwrap();
+            assert!(
+                !run_path.contains(".complete("),
+                "{file} calls a provider directly; route it through complete_helper"
+            );
+            assert!(
+                run_path.contains("complete_helper(") || run_path.contains("complete_fast("),
+                "{file} is listed as a helper but calls neither complete_helper nor complete_fast"
+            );
+        }
     }
 }

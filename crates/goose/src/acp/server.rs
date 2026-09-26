@@ -2507,6 +2507,9 @@ impl GooseAcpAgent {
         let session_id = args.session_id.0.to_string();
         let sid = sid_short(&session_id);
         let t_start = std::time::Instant::now();
+        // Q-132: while this turn runs, the end-of-turn reviewer of any chat waits, and one already
+        // in flight is dropped — on an engine that batches statically it held this turn's request.
+        let user_turn = crate::turn_priority::user_turn();
 
         let run_id = format!("run_{}", Uuid::new_v4());
         let cancel_token = CancellationToken::new();
@@ -2789,7 +2792,9 @@ impl GooseAcpAgent {
         }
         // FRAME 1.14 event B: the end-of-turn assessment rides a DETACHED task, spawned after the
         // response is built and only on EndTurn — a cancelled turn is never assessed, and a turn's
-        // result never waits on (or fails because of) its judgement.
+        // result never waits on (or fails because of) its judgement. This turn is over before
+        // either is spawned, so neither waits on it.
+        drop(user_turn);
         if !was_cancelled {
             tokio::spawn(crate::turn_assessment::assess_turn(
                 agent.clone(),

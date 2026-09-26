@@ -164,14 +164,13 @@ pub async fn detect_read_only_tools(
             return vec![];
         }
     };
-    let res = crate::session_context::with_session_id(
-        Some(session_id.to_string()),
-        provider.complete(
-            &model_config,
-            &system_prompt,
-            check_messages.messages(),
-            std::slice::from_ref(&tool),
-        ),
+    let res = crate::model_config::complete_helper(
+        provider.as_ref(),
+        &model_config,
+        session_id,
+        &system_prompt,
+        check_messages.messages(),
+        std::slice::from_ref(&tool),
     )
     .await;
 

@@ -423,7 +423,8 @@ impl OpenAiProvider {
     }
 
     /// A request that asked for no reasoning (`ThinkingEffort::Off`: goose's helper calls — tool
-    /// labels, titles, tool-pair digests, compaction — via `complete_fast`) reaches an MLX engine
+    /// labels, titles, tool-pair digests, compaction, the end-of-turn reviewer — via goose's one
+    /// helper path, `model_config::complete_helper`) reaches an MLX engine
     /// as `chat_template_kwargs.enable_thinking = false`. The chat format emits an effort only for
     /// OpenAI Responses models, so without this the Off was dropped on the way and the model's own
     /// template thought anyway — measured 2026-09-25 on the Qwen3.8-27B split: a 3–8 word tool label

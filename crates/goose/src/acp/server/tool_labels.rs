@@ -1,7 +1,8 @@
 //! The two tool-call labels the desktop shows: one per call, one per chain of calls. Both run on the
-//! fast model — the chat's own model when no fast model is configured — with reasoning off, like
-//! every other `complete_fast` helper: a 3–8 word label gains nothing from thinking first, and on a
-//! local engine each label's reasoning competes with the agent's turn for the same decode.
+//! fast model — the chat's own model when no fast model is configured — with reasoning off
+//! through `complete_helper`, like every other helper: a 3–8 word label gains nothing from
+//! thinking first, and on a local engine each label's reasoning competes with the agent's turn
+//! for the same decode.
 
 use crate::conversation::message::{Message, MessageContent};
 use crate::providers::base::Provider;
@@ -32,17 +33,15 @@ pub(super) async fn complete_tool_label(
     what: &str,
 ) -> anyhow::Result<Option<String>> {
     let fast_model_config =
-        crate::model_config::get_fast_model_without_reasoning(provider.get_name(), model_config)
-            .await?;
+        crate::model_config::get_fast_model(provider.get_name(), model_config).await?;
     for attempt in 0..2 {
-        match crate::session_context::with_session_id(
-            Some(session_id.to_string()),
-            provider.complete(
-                &fast_model_config,
-                system,
-                std::slice::from_ref(message),
-                &[],
-            ),
+        match crate::model_config::complete_helper(
+            provider,
+            &fast_model_config,
+            session_id,
+            system,
+            std::slice::from_ref(message),
+            &[],
         )
         .await
         {
