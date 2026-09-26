@@ -117,6 +117,7 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   IOSurfaceSharedEvent waits, a 1024² matmul never finished — while two 27B loads and the single engine
   competed at kernel WARN/CRITICAL. A test that needs only cache ops runs on `mx.cpu` so it can never
   hang on the GPU.
+- TRAP (2026-09-26, Q-113 — shipped in 3.0.44, every tensor split died at startup): `import mlx_lm.generate as g` binds the re-exported `generate` FUNCTION (mlx_lm/__init__.py), so `g.PromptProcessingBatch` raised AttributeError in the rank prelude. The tests passed because they stubbed mlx_lm or used `from mlx_lm.generate import …` (which resolves the module). RULE: every rank-program line that runs without a model — imports, hasattr checks, monkeypatch targets, signatures — gets a test that runs the SHIPPED text against the REAL provisioned venv (`the_wrapper_prelude_binds_real_mlx_lm_modules` is the pattern; skip loudly when the venv is absent). Bind submodules with `importlib.import_module`. And a split fix is not proven until a real split STARTS on the installed build — Q-104 was merged with no live launch.
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
