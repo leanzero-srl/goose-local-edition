@@ -5,6 +5,7 @@ import type {
   MlxPlacementCandidateDto,
 } from '@aaif/goose-sdk';
 import { getAcpClient } from './acpConnection';
+import { rememberLocalMlxEngineStatus } from './mlx-engine-latest';
 
 /**
  * Client surface for the in-house supervised MLX engine (Rapid-MLX sidecar).
@@ -379,7 +380,10 @@ export async function mlxEngineStatus(
     '_goose/unstable/mlxEngine/status',
     withNode(fitModelId ? { fitModelId } : {}, nodeId)
   );
-  if (nodeId == null) reportToMain(response.status);
+  if (nodeId == null) {
+    reportToMain(response.status);
+    rememberLocalMlxEngineStatus(response.status);
+  }
   return response.status;
 }
 

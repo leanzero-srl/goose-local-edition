@@ -4148,11 +4148,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Butuh {gb} GB memori bebas lagi"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Belum ada run sejak dimulai ulang — balasan berikutnya memberi laju menulis"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Belum ada run yang diukur — balasan berikutnya memberi laju menulis"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Belum ada run terukur dengan cara ini — Ukur kecepatan di Jalankan mencatat satu"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "dari {gb} GB"
@@ -4210,6 +4207,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} dari {max} token"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Membaca run terukur goose…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "Run terukur goose tidak dapat dibaca: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Melayani"

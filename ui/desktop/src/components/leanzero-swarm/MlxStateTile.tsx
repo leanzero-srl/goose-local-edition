@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useSyncExternalStore, type ReactNode } from 'react';
 import {
   Bot,
   CircleHelp,
@@ -14,6 +14,15 @@ import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
 import { PHASE_FILL, RADIUS, TNUM, WEIGHT, cx, type EnginePhase } from '../lz';
 import type { MlxEngineState } from '../../acp/mlx-engine';
+import {
+  latestLocalMlxEngineStatus,
+  subscribeLocalMlxEngineStatus,
+} from '../../acp/mlx-engine-latest';
+import {
+  latestPlacementPlans,
+  subscribePlacementPlans,
+  type MeasuredFigure,
+} from '../../acp/mlx-placement';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { remoteRouteUp, type MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 import { routePeerName } from './macs';
@@ -31,6 +40,7 @@ import {
 } from './mlxDistributed';
 import { hostingPhase, nodePhase, remotePhase, runPhase, singlePhase } from './mlxPhase';
 import { distributedStateWord } from './mlxModeLabel';
+import { engineWayOf, measuredRunsOf, type MeasuredRuns } from './measuredRuns';
 import type { MlxClient, MlxServing } from '../../utils/mlxServing';
 import {
   formatElapsed,
@@ -39,7 +49,6 @@ import {
   measuredPrefillTps,
   mlxActivity,
   sparklinePoints,
-  bookSpreads,
   type RateBook,
   type MlxLiveRead,
   type MlxLiveRequest,
@@ -102,13 +111,17 @@ const i18n = defineMessages({
     defaultMessage: 'tok/s writing, {count, plural, one {# run} other {median of # runs}}',
   },
   writeRange: { id: 'mlxStateTile.writeRange', defaultMessage: 'tok/s writing, slowest–fastest' },
-  noRunsSinceRestart: {
-    id: 'mlxStateTile.noRunsSinceRestart',
-    defaultMessage: 'No runs since it restarted — the next reply gives it a writing rate',
-  },
   noRunsYet: {
-    id: 'mlxStateTile.noRunsYet',
-    defaultMessage: 'No runs measured yet — the next reply gives it a writing rate',
+    id: 'mlxStateTile.noRunsOnThisWay',
+    defaultMessage: 'No measured runs on this way yet — Measure speed in Run it records one',
+  },
+  runsPending: {
+    id: 'mlxStateTile.runsPending',
+    defaultMessage: "Reading goose's measured runs…",
+  },
+  runsUnread: {
+    id: 'mlxStateTile.runsUnread',
+    defaultMessage: "goose's measured runs could not be read: {detail}",
   },
   readRate: { id: 'mlxStateTile.readRate', defaultMessage: 'tok/s reading this prompt' },
   readRateMedian: {
@@ -320,7 +333,11 @@ export interface MlxStateTileProps {
   live: MlxLiveRead | null;
   /** RUNNING: the writing rate per read, oldest first. */
   history: readonly TpsSample[];
-  /** RUNNING: every run this engine served that a read caught — the median and range it shows. */
+  /**
+   * NOT READ by the tile since Q-123: its measured runs are goose's, from the plan the Run it card
+   * draws (`measuredRuns.ts`). Kept only because MlxEngineView still passes its in-memory book;
+   * delete the prop together with that book.
+   */
   rates: RateBook;
   /** RUNNING: who the engine is serving, from main's read of goose's in-flight list. */
   serving: MlxServing | null;
@@ -598,7 +615,7 @@ function Fact({ value, label }: { value: string; label: string }) {
 function RunningInstrument(props: {
   live: MlxLiveRead | null;
   history: readonly TpsSample[];
-  rates: RateBook;
+  measured: MeasuredRuns;
   serving: MlxServing | null;
   /** The engine is a linked Mac's, read through the relay: a failed read names Link. */
   overLink?: boolean;
@@ -628,7 +645,7 @@ function RunningInstrument(props: {
     <LiveReadout
       stats={live.stats}
       history={props.history}
-      rates={props.rates}
+      measured={props.measured}
       serving={props.serving}
     />
   );
@@ -641,15 +658,22 @@ interface Figure {
 }
 
 /** The two figures the tile leads with, per activity — each one measured, or null (not drawn). */
+function measuredOf(measured: MeasuredRuns): {
+  writing: MeasuredFigure | null;
+  reading: MeasuredFigure | null;
+} {
+  return measured.kind === 'read' ? measured : { writing: null, reading: null };
+}
+
 function figures(
   intl: IntlShape,
   stats: MlxLiveStats,
-  rates: RateBook
+  measured: MeasuredRuns
 ): { hero: Figure | null; second: Figure | null } {
   const activity = mlxActivity(stats);
   const rate = (tps: number) => formatRate(tps, intl.locale);
   const prefillNow = measuredPrefillTps(stats);
-  const { writing, reading } = bookSpreads(rates);
+  const { writing, reading } = measuredOf(measured);
   const readFigure: Figure | null =
     prefillNow > 0
       ? {
@@ -713,18 +737,18 @@ function figures(
 function LiveReadout({
   stats,
   history,
-  rates,
+  measured,
   serving,
 }: {
   stats: MlxLiveStats;
   history: readonly TpsSample[];
-  rates: RateBook;
+  measured: MeasuredRuns;
   serving: MlxServing | null;
 }) {
   const intl = useIntl();
   const activity = mlxActivity(stats);
   const active = activity === 'generating' || activity === 'prefill' || activity === 'queued';
-  const { hero, second } = figures(intl, stats, rates);
+  const { hero, second } = figures(intl, stats, measured);
   // Only measured figures are drawn: a dash beside "Reading prompt · 2m 37s" said no prompt was
   // read, and two dashes beside "2 requests served" said nothing happened (3.0.31–3.0.32).
   const shown = [hero, second].filter((f): f is Figure => f != null);
@@ -734,21 +758,22 @@ function LiveReadout({
     ...stats.requests.filter((r) => r.status === 'waiting'),
   ];
   const facts: Array<{ key: string; value: string; label: string }> = [];
-  // The median leads above; the spread around it sits here, once the runs differ.
-  const spreads = bookSpreads(rates);
-  const range = (min: number, max: number) =>
-    `${formatRate(min, intl.locale)}–${formatRate(max, intl.locale)}`;
-  if (spreads.writing && spreads.writing.max > spreads.writing.min) {
+  // The median leads above; the spread around it sits here, once the runs differ — one run has
+  // no range to show (Q-123: "29.6–29.6").
+  const spreads = measuredOf(measured);
+  const range = (spread: { low: number; high: number }) =>
+    `${formatRate(spread.low, intl.locale)}–${formatRate(spread.high, intl.locale)}`;
+  if (spreads.writing?.spread) {
     facts.push({
       key: 'writeRange',
-      value: range(spreads.writing.min, spreads.writing.max),
+      value: range(spreads.writing.spread),
       label: intl.formatMessage(i18n.writeRange),
     });
   }
-  if (spreads.reading && spreads.reading.max > spreads.reading.min) {
+  if (spreads.reading?.spread) {
     facts.push({
       key: 'readRange',
-      value: range(spreads.reading.min, spreads.reading.max),
+      value: range(spreads.reading.spread),
       label: intl.formatMessage(i18n.readRange),
     });
   }
@@ -818,11 +843,15 @@ function LiveReadout({
           ))}
         </div>
       )}
-      {/* Idle with no run in the book: say so, instead of a tile whose only figures are lifetime
-          counters (Q-44: "274 requests served … 11m 7s engine uptime" and no rate). */}
+      {/* Idle with no measured run: say so — or that goose's runs are still being read, or why
+          they could not be — instead of a tile whose only figures are lifetime counters (Q-44). */}
       {activity === 'idle' && spreads.writing == null && (
-        <p data-testid="mlx-no-runs" className={LINE}>
-          {intl.formatMessage(rates.restarted ? i18n.noRunsSinceRestart : i18n.noRunsYet)}
+        <p data-testid="mlx-no-runs" data-runs={measured.kind} className={LINE}>
+          {measured.kind === 'pending'
+            ? intl.formatMessage(i18n.runsPending)
+            : measured.kind === 'unread'
+              ? intl.formatMessage(i18n.runsUnread, { detail: measured.detail })
+              : intl.formatMessage(i18n.noRunsYet)}
         </p>
       )}
       {/* The writing rate's trace means something only while it writes; idle it was a flat line
@@ -1048,13 +1077,13 @@ function DistributedInstrument({
   status,
   live,
   history,
-  rates,
+  measured,
   serving,
 }: {
   status: MlxDistributedStatus;
   live: MlxLiveRead | null;
   history: readonly TpsSample[];
-  rates: RateBook;
+  measured: MeasuredRuns;
   serving: MlxServing | null;
 }) {
   const intl = useIntl();
@@ -1085,7 +1114,7 @@ function DistributedInstrument({
         </span>
       )}
       {live != null && runIsUp(status) ? (
-        <RunningInstrument live={live} history={history} rates={rates} serving={serving} />
+        <RunningInstrument live={live} history={history} measured={measured} serving={serving} />
       ) : status.inflight != null ? (
         <div className="flex items-baseline gap-2">
           <span data-testid="mlx-dist-tile-inflight" className={HERO}>
@@ -1148,13 +1177,13 @@ function RemoteInstrument({
   remote,
   live,
   history,
-  rates,
+  measured,
   serving,
 }: {
   remote: MlxRemoteSingleStatus;
   live: MlxLiveRead | null;
   history: readonly TpsSample[];
-  rates: RateBook;
+  measured: MeasuredRuns;
   serving: MlxServing | null;
 }) {
   const intl = useIntl();
@@ -1167,7 +1196,13 @@ function RemoteInstrument({
         </span>
       )}
       {remote.state === 'ready' && (
-        <RunningInstrument live={live} history={history} rates={rates} serving={serving} overLink />
+        <RunningInstrument
+          live={live}
+          history={history}
+          measured={measured}
+          serving={serving}
+          overLink
+        />
       )}
       {remote.state === 'mounting' && (
         <div className="flex flex-col gap-2">
@@ -1284,6 +1319,17 @@ export function servingEngine(
   };
 }
 
+/**
+ * goose's measured runs for the way the tile's engine runs now — the Run it card's own figures
+ * (acp/mlx-placement.ts keeps every plan goose answered). The single engine's HF id is read from the
+ * latest local status: the tile is handed only its state word.
+ */
+function useMeasuredRuns(engine: ServingEngine): MeasuredRuns {
+  const plans = useSyncExternalStore(subscribePlacementPlans, latestPlacementPlans);
+  const local = useSyncExternalStore(subscribeLocalMlxEngineStatus, latestLocalMlxEngineStatus);
+  return measuredRunsOf(plans, engineWayOf(engine.dist, engine.remote, local?.modelId ?? null));
+}
+
 export function MlxStateTile(props: MlxStateTileProps) {
   const intl = useIntl();
   const {
@@ -1291,7 +1337,6 @@ export function MlxStateTile(props: MlxStateTileProps) {
     unreachable,
     live,
     history,
-    rates,
     serving,
     mount,
     cost,
@@ -1301,6 +1346,7 @@ export function MlxStateTile(props: MlxStateTileProps) {
   } = props;
   const load = props.load ?? null;
   const engine = servingEngine(intl, props);
+  const measured = useMeasuredRuns(engine);
   const { starting, dist, hosting, remote, activity, phase, wordText } = engine;
   const icon = remote ? (
     remote.state === 'mounting' || remote.state === 'reconnecting' ? (
@@ -1369,7 +1415,7 @@ export function MlxStateTile(props: MlxStateTileProps) {
           status={dist}
           live={live}
           history={history}
-          rates={rates}
+          measured={measured}
           serving={serving}
         />
       )}
@@ -1379,12 +1425,12 @@ export function MlxStateTile(props: MlxStateTileProps) {
           remote={remote}
           live={live}
           history={history}
-          rates={rates}
+          measured={measured}
           serving={serving}
         />
       )}
       {!dist && !hosting && !remote && state === 'running' && (
-        <RunningInstrument live={live} history={history} rates={rates} serving={serving} />
+        <RunningInstrument live={live} history={history} measured={measured} serving={serving} />
       )}
       {!dist && !hosting && !remote && starting && <MountingInstrument mount={mount} load={load} />}
       {!dist && !hosting && !remote && !starting && state === 'stopped' && (

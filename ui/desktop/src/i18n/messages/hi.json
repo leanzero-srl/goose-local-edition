@@ -4148,11 +4148,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "{gb} GB और खाली मेमोरी चाहिए"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "रीस्टार्ट के बाद कोई रन नहीं — अगला उत्तर लिखने की दर देगा"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "अभी तक कोई रन मापा नहीं गया — अगला उत्तर लिखने की दर देगा"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "इस तरीके पर अभी तक कोई मापा गया रन नहीं — «चलाएँ» में «गति मापें» एक दर्ज करता है"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "{gb} GB में से"
@@ -4210,6 +4207,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{max} में से {written} टोकन"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "goose के मापे गए रन पढ़े जा रहे हैं…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "goose के मापे गए रन पढ़े नहीं जा सके: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "सेवा दे रहा है"

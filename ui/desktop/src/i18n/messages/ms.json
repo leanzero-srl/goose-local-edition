@@ -4148,11 +4148,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Perlu {gb} GB lagi memori bebas"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Tiada larian sejak dimulakan semula — balasan seterusnya memberi kadar menulis"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Belum ada larian diukur — balasan seterusnya memberi kadar menulis"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Belum ada larian diukur dengan cara ini — Ukur kelajuan dalam Jalankan merekodkan satu"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "daripada {gb} GB"
@@ -4210,6 +4207,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} daripada {max} token"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Membaca larian diukur goose…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "Larian diukur goose tidak dapat dibaca: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Melayan"

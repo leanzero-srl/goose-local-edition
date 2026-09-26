@@ -4148,11 +4148,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "还需要 {gb} GB 可用内存"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "重启后还没有运行记录——下一次回复会给出写入速度"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "还没有测得运行记录——下一次回复会给出写入速度"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "这种方式还没有测得的运行记录——在“运行”中点“测量速度”即可记录一次"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
@@ -4210,6 +4207,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} / {max} 个 token"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "正在读取 goose 测得的运行记录…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "无法读取 goose 测得的运行记录：{detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "正在服务"

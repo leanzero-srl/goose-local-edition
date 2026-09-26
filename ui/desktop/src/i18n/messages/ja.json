@@ -4148,11 +4148,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "あと {gb} GB の空きメモリが必要"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "再起動後の実行はまだありません — 次の応答で書き込み速度が出ます"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "まだ計測された実行はありません — 次の応答で書き込み速度が出ます"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "この方法での計測済みの実行はまだありません — 「実行」の「速度を測定」で記録できます"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
@@ -4210,6 +4207,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} / {max} トークン"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "goose の計測済みの実行を読み込み中…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "goose の計測済みの実行を読み込めませんでした: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "処理対象"

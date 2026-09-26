@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { act, render, screen, within } from '@testing-library/react';
 import { MlxStateTile, type MlxStateTileProps } from './MlxStateTile';
+import { rememberLocalMlxEngineStatus } from '../../acp/mlx-engine-latest';
+import { rememberPlacementPlans, resetPlacementPlansSeen } from '../../acp/mlx-placement';
+import { measuredPlan, type MeasuredRunsFixture } from './placement.fixtures';
 import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import { attributeServing, type MlxServingRow } from '../../utils/mlxServing';
@@ -8,13 +11,10 @@ import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
 import {
   EMPTY_BOOK,
-  advanceRateBook,
   advanceMountWatch,
   mountCostOf,
   mountFill,
   parseMlxLiveStatus,
-  type RateBook,
-  type MlxLiveStats,
   type TpsSample,
 } from './mlxLiveStats';
 import {
@@ -40,14 +40,28 @@ const HISTORY: TpsSample[] = [
   { uptimeS: 1874.3, tps: 19.9 },
 ];
 
-function statsOf(body: unknown): MlxLiveStats {
-  const read = parseMlxLiveStatus(body);
-  if (!read.ok) throw new Error(read.detail);
-  return read.stats;
+const MODEL = 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx';
+const THIS_MAC = { kind: 'single' as const, nodes: ['local'] };
+
+/** goose answered its plan (the Run it card's): this Mac's way with these measured runs. */
+function goose(decode?: MeasuredRunsFixture, prefill?: MeasuredRunsFixture) {
+  rememberPlacementPlans([measuredPlan(MODEL, [{ key: THIS_MAC, decode, prefill }])]);
 }
 
-/** What the tile carries after it watched the fixture's generating read. */
-const LAST_AFTER_GENERATING: RateBook = advanceRateBook(EMPTY_BOOK, statsOf(GENERATING_STATUS));
+/** The fixture's generating read, as goose measured it: 19.9 tok/s writing, 196 reading, one run. */
+const ONE_RUN_19_9: MeasuredRunsFixture = [19.9, 19.9, 19.9, 1];
+const ONE_PROMPT_196: MeasuredRunsFixture = [195.6, 195.6, 195.6, 1];
+
+beforeEach(() => {
+  resetPlacementPlansSeen();
+  rememberLocalMlxEngineStatus({
+    state: 'running',
+    modelId: MODEL,
+    restartRequired: false,
+    availableMemoryGb: 0,
+    totalMemoryGb: 0,
+  });
+});
 
 const ROW_BASE = { startedAt: '2026-09-23T20:00:00Z', sessionError: null };
 
@@ -95,7 +109,6 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     const { container } = tile({
       live: parseMlxLiveStatus(GENERATING_STATUS),
       history: HISTORY,
-      rates: LAST_AFTER_GENERATING,
     });
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-state', 'running');
@@ -139,10 +152,8 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
   });
 
   it('reading a prompt: the ACCENT fill, the prompt size and its elapsed seconds as the hero', async () => {
-    const { container } = tile({
-      live: parseMlxLiveStatus(PREFILL_STATUS),
-      rates: LAST_AFTER_GENERATING,
-    });
+    goose(ONE_RUN_19_9, ONE_PROMPT_196);
+    const { container } = tile({ live: parseMlxLiveStatus(PREFILL_STATUS) });
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-activity', 'prefill');
     expect(t.className).toContain('bg-lz-phase-reading');
@@ -157,10 +168,10 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
   });
 
   it('idle: a SOLID SLATE fill (not green) with the measured rates as plain facts', async () => {
+    goose(ONE_RUN_19_9, ONE_PROMPT_196);
     const { container } = tile({
       live: parseMlxLiveStatus(IDLE_STATUS),
       history: [{ uptimeS: 1, tps: 19.9 }],
-      rates: LAST_AFTER_GENERATING,
     });
     const t = screen.getByTestId('mlx-state-badge');
     expect(t).toHaveAttribute('data-activity', 'idle');
@@ -179,32 +190,8 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
   });
 
   it('idle after several runs: the MEDIAN is the big number, slowest–fastest sits in the facts', () => {
-    const run = (id: string, tps: number, uptime: number) =>
-      statsOf({
-        status: 'generating',
-        uptime_s: uptime,
-        requests: [
-          {
-            request_id: id,
-            status: 'running',
-            phase: 'generation',
-            prompt_tokens: 48200,
-            completion_tokens: 60,
-            tokens_per_second: tps,
-            ttft_s: 300,
-            cached_tokens: 5000,
-          },
-        ],
-      });
-    let rates = EMPTY_BOOK;
-    for (const [id, tps, up] of [
-      ['a', 22.0, 10],
-      ['b', 51.4, 20],
-      ['c', 24.1, 30],
-    ] as const) {
-      rates = advanceRateBook(rates, run(id, tps, up));
-    }
-    tile({ live: parseMlxLiveStatus({ ...IDLE_STATUS, uptime_s: 40 }), rates });
+    goose([24.1, 22.0, 51.4, 3], [144, 139.5, 150.2, 3]);
+    tile({ live: parseMlxLiveStatus({ ...IDLE_STATUS, uptime_s: 40 }) });
     const t = screen.getByTestId('mlx-state-badge');
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('24.1');
     expect(within(t).getByText('tok/s writing, median of 3 runs')).toBeInTheDocument();
@@ -215,6 +202,8 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
   });
 
   it('idle with nothing measured yet: the headline says Idle, no dashes, no flat graph, never the engine aggregate (1,048,576 tok/s after a one-token request)', () => {
+    // goose's plan has only its estimates for this way: an estimate is never shown as a run.
+    goose();
     tile({
       live: parseMlxLiveStatus({
         status: 'idle',
@@ -238,20 +227,50 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     // "0 prompt tokens from cache" repeated what "0% of cache lookups hit" says.
     expect(screen.queryByText('prompt tokens from cache')).toBeNull();
     expect(screen.getByText('requests served')).toBeInTheDocument();
-    // Q-44: an empty book says so, instead of a tile of lifetime counters and no rate.
+    // Q-44: no run says so, instead of a tile of lifetime counters and no rate.
     expect(screen.getByTestId('mlx-no-runs')).toHaveTextContent(
-      'No runs measured yet — the next reply gives it a writing rate'
+      'No measured runs on this way yet — Measure speed in Run it records one'
     );
+    expect(screen.getByTestId('mlx-no-runs')).toHaveAttribute('data-runs', 'read');
   });
 
-  it('Q-44: idle after a restart with no run kept says "since it restarted"; with runs kept, their median leads', () => {
-    const idle = parseMlxLiveStatus({ ...IDLE_STATUS, uptime_s: 667 });
-    const { unmount } = tile({ live: idle, rates: { ...EMPTY_BOOK, restarted: true } });
-    expect(screen.getByTestId('mlx-no-runs')).toHaveTextContent('No runs since it restarted');
-    unmount();
-    tile({ live: idle, rates: { ...LAST_AFTER_GENERATING, restarted: true } });
-    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('19.9');
+  it('Q-123: after a relaunch the tile reads goose’s kept runs — one run is "1 run", never a range', () => {
+    // The relaunch: the page's own run book is empty and goose has not answered the plan yet —
+    // the tile says it is reading, never "No runs measured yet".
+    tile({ live: parseMlxLiveStatus({ ...IDLE_STATUS, uptime_s: 12 }), rates: EMPTY_BOOK });
+    expect(screen.getByTestId('mlx-no-runs')).toHaveTextContent("Reading goose's measured runs…");
+    expect(screen.queryByText(/No runs measured yet/)).toBeNull();
+    // goose answers the plan the Run it card draws, from the runs it kept across the relaunch.
+    act(() => goose([29.6, 29.6, 29.6, 1]));
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('29.6');
+    expect(within(t).getByText('tok/s writing, 1 run')).toBeInTheDocument();
+    expect(within(t).queryByText('29.6–29.6')).toBeNull();
+    expect(within(t).queryByText('tok/s writing, slowest–fastest')).toBeNull();
     expect(screen.queryByTestId('mlx-no-runs')).toBeNull();
+  });
+
+  it('Q-123: goose’s runs that cannot be read say why — the plan’s own words, or the way it lacks', () => {
+    rememberPlacementPlans([
+      { ...measuredPlan(MODEL, []), error: 'the models folder is unreadable' },
+    ]);
+    const idle = parseMlxLiveStatus(IDLE_STATUS);
+    const { unmount } = tile({ live: idle });
+    expect(screen.getByTestId('mlx-no-runs')).toHaveTextContent(
+      "goose's measured runs could not be read: the models folder is unreadable"
+    );
+    unmount();
+    rememberPlacementPlans([
+      measuredPlan(MODEL, [
+        { key: { kind: 'single', nodes: ['workhorse'] }, decode: ONE_RUN_19_9 },
+      ]),
+    ]);
+    tile({ live: idle });
+    expect(screen.getByTestId('mlx-no-runs')).toHaveTextContent(
+      "goose's plan for this model has no this-Mac way"
+    );
+    // The Studio's run is never lent to this Mac's engine.
+    expect(screen.queryByTestId('mlx-live-tps')).toBeNull();
   });
 
   it('reading a prompt with no rate yet: the prompt and its time, never a dash saying no prompt was read', () => {
@@ -629,7 +648,6 @@ describe('MlxStateTile — a remote single IS the tile while it serves this Mac�
       remote: ROUTE,
       modeLabel: "Serving from Work's Mac Studio",
       live: parseMlxLiveStatus(GENERATING_STATUS),
-      rates: LAST_AFTER_GENERATING,
       action: <button type="button">Stop</button>,
     });
     const t = screen.getByTestId('mlx-state-badge');
@@ -705,7 +723,6 @@ describe('MlxStateTile — a remote single IS the tile while it serves this Mac�
       state: 'stopped',
       remote: ROUTE,
       live: { ok: false, detail: 'timeout: no answer within 1500 ms' },
-      rates: LAST_AFTER_GENERATING,
     });
     const gone = screen.getByTestId('mlx-live-unavailable');
     expect(gone).toHaveAttribute('data-over-link', 'true');
@@ -714,6 +731,20 @@ describe('MlxStateTile — a remote single IS the tile while it serves this Mac�
     expect(gone).toHaveTextContent('timeout: no answer within 1500 ms');
     expect(screen.queryByTestId('mlx-live-tps')).toBeNull();
     expect(screen.queryByTestId('mlx-live-pps')).toBeNull();
+  });
+
+  it('Q-123: idle over the route, the tile reads the LINKED Mac’s runs — never this Mac’s', () => {
+    rememberPlacementPlans([
+      measuredPlan(ROUTE.modelId, [
+        { key: THIS_MAC, decode: [12.0, 11.0, 13.0, 4] },
+        { key: { kind: 'single', nodes: [`link:${ROUTE.peer}`] }, decode: [29.6, 29.6, 29.6, 1] },
+      ]),
+    ]);
+    tile({ state: 'stopped', remote: ROUTE, live: parseMlxLiveStatus(IDLE_STATUS) });
+    const t = screen.getByTestId('mlx-state-badge');
+    expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('29.6');
+    expect(within(t).getByText('tok/s writing, 1 run')).toBeInTheDocument();
+    expect(within(t).queryByText('11.0–13.0')).toBeNull();
   });
 
   it('a route that is off claims nothing: this Mac’s own engine is the tile', () => {

@@ -4148,11 +4148,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Il faut {gb} Go de mémoire libre en plus"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Aucune exécution depuis son redémarrage — la prochaine réponse donnera une vitesse d’écriture"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Aucune exécution mesurée pour l’instant — la prochaine réponse donnera une vitesse d’écriture"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Aucune exécution mesurée de cette façon pour l’instant — « Mesurer la vitesse » dans « Exécuter » en enregistre une"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "sur {gb} Go"
@@ -4210,6 +4207,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} sur {max} jetons"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Lecture des exécutions mesurées par goose…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "Impossible de lire les exécutions mesurées par goose : {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Sert"

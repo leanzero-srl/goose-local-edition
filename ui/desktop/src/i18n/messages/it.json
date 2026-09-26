@@ -4148,11 +4148,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Servono altri {gb} GB di memoria libera"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Nessuna esecuzione dal riavvio: la prossima risposta darà una velocità di scrittura"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Nessuna esecuzione misurata finora: la prossima risposta darà una velocità di scrittura"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Nessuna esecuzione misurata in questo modo finora: «Misura la velocità» in «Esegui» ne registra una"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "di {gb} GB"
@@ -4210,6 +4207,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} di {max} token"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Lettura delle esecuzioni misurate da goose…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "Impossibile leggere le esecuzioni misurate da goose: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Serve"
