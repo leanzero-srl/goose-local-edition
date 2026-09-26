@@ -848,7 +848,7 @@ mod tests {
              def add_arguments(parser):\n\
              \x20   for flag in ('--model', '--served-model-name', '--host', '--split'):\n\
              \x20       parser.add_argument(flag)\n\
-             \x20   for flag in ('--port', '--context', '--slots', '--max-batch', '--prefill-step', '--attention-scores-bytes'):\n\
+             \x20   for flag in ('--port', '--context', '--slots', '--prefill-step', '--attention-scores-bytes'):\n\
              \x20       parser.add_argument(flag, type=int)\n\
              def serve(options, emit=None):\n\
              \x20   done = threading.Event()\n\

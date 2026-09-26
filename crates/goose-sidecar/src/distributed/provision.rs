@@ -79,8 +79,16 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// LATER arrival's chunk ages a request, and a later request goes ahead of an earlier one only by
 /// taking at most half its slack (its own prefill less the jumpers' tokens), so a canary is
 /// prefilled at the next chunk boundary unless both slots are held (the 26d replay: 4.2 / 11.3 s).
+/// And ADMISSION BY WHAT A REQUEST NEEDS OF THE KV BUDGET (Q-160, 7d3327202, branch
+/// lz/pipeline-kv-admission, tag lz-pipeline-qwen4.11): `--max-batch` (goose passed the slots, 2)
+/// capped the rows and every row was priced at the longest horizon for its whole life, so two
+/// chats (no max_tokens: each reserves the whole context) held both slots and a helper call waited
+/// for a whole decode to leave (in process on f8a2461a5: 451 decode steps; on 7d3327202: 3). Now
+/// a row is priced as the padded batch holds it until its own last step (prompt + max_tokens), the
+/// plan header's rows are derived from the budgets on every rank, and `--max-batch` is gone — the
+/// argv drops it in the same pin, or the fork's parser refuses it.
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "f8a2461a53301eb55fc859d415a5e90c2b4250cc";
+pub const PIPELINE_FORK_COMMIT: &str = "7d3327202c7692ce0f616571b6c89f610b157b8f";
 /// The newest single-engine tag (`v*-lz.*`) whose fixes the pipeline fork at
 /// [`PIPELINE_FORK_COMMIT`] carries or has reviewed as not applying — the fork's
 /// `tests/pipeline_single_line_ports.json` `reviewed_through`. The pipeline line branched from the
@@ -90,7 +98,7 @@ pub const PIPELINE_FORK_COMMIT: &str = "f8a2461a53301eb55fc859d415a5e90c2b4250cc
 pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.9";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@f8a2461a53301eb55fc859d415a5e90c2b4250cc";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@7d3327202c7692ce0f616571b6c89f610b157b8f";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.

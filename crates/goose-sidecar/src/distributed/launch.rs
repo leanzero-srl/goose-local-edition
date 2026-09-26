@@ -366,8 +366,10 @@ pub fn rank_specs(
 
 /// The `pipeline_qwen4 serve` arguments for one rank: this node's own model dir, the served id,
 /// rank 0's loopback port, the context preflight allowed, the slots the plan was made for
-/// (`--slots`: the fork re-plans at load for that many full-context sequences and admits requests
-/// by that KV budget; `--max-batch` = the same count, the rows proven per batch), and the split
+/// (`--slots`: the fork re-plans at load for that many full-context sequences and admits each
+/// request by what it needs of that KV budget — its prompt and max_tokens beside what the running
+/// rows will still grow into; no row count is passed: since lz-pipeline-qwen4.11 the fork derives
+/// the rows its plan header names from the same budget, Q-160), and the split
 /// preflight approved (`--split` = ranks 1..N-1's starts), so the fork loads exactly that split
 /// instead of re-balancing on its own load-time figures, the prefill chunk whose attention
 /// scores preflight fitted beside the fork's plan (`--prefill-step`, `RankPlan::prefill_step`),
@@ -399,8 +401,6 @@ pub fn pipeline_serve_args(
         "--context",
         &context.to_string(),
         "--slots",
-        &config.slots().to_string(),
-        "--max-batch",
         &config.slots().to_string(),
         "--split",
         split,
@@ -1204,8 +1204,6 @@ pub(crate) mod tests {
                     "32768",
                     "--slots",
                     "2",
-                    "--max-batch",
-                    "2",
                     "--split",
                     "19",
                     "--prefill-step",
@@ -1255,10 +1253,7 @@ pub(crate) mod tests {
             unreachable!()
         };
         let joined = serve_args.join(" ");
-        assert!(
-            joined.contains("--slots 4 --max-batch 4 --split 19"),
-            "{joined}"
-        );
+        assert!(joined.contains("--slots 4 --split 19"), "{joined}");
 
         let mut tensor_only = config.clone();
         tensor_only.nodes[1].pipeline_python = None;
@@ -1332,7 +1327,6 @@ pub(crate) mod tests {
              \x20   parser.add_argument('--port', type=int, required=True)\n\
              \x20   parser.add_argument('--context', type=int, required=True)\n\
              \x20   parser.add_argument('--slots', type=int, default=2)\n\
-             \x20   parser.add_argument('--max-batch', type=int, default=2)\n\
              \x20   parser.add_argument('--prefill-step', type=int)\n\
              \x20   parser.add_argument('--attention-scores-bytes', type=int, default=0)\n\
              \x20   parser.add_argument('--split')\n\
@@ -1398,7 +1392,10 @@ pub(crate) mod tests {
             ready["slots"], 3,
             "the configured slots, not the fork's default"
         );
-        assert_eq!(ready["max_batch"], 3);
+        assert!(
+            ready.get("max_batch").is_none(),
+            "no row count is passed: the fork derives it from the KV budget (Q-160)"
+        );
         assert_eq!(ready["split"], "19");
         assert_eq!(
             ready["prefill_step"], 2_048,
@@ -1620,7 +1617,7 @@ print("ok")
              def _build_app(state, tokenizer, eos_ids, vision=None): pass\n\
              def add_arguments(parser):\n\
              \x20   for flag in ('--model', '--served-model-name', '--host', '--port', '--context', \
-             '--slots', '--max-batch', '--prefill-step', '--attention-scores-bytes', '--split'):\n\
+             '--slots', '--prefill-step', '--attention-scores-bytes', '--split'):\n\
              \x20       parser.add_argument(flag)\n\
              def serve(options, emit=None):\n\
              \x20   emit('READY', {'rank': 0})\n\
@@ -2126,7 +2123,7 @@ class Tokenizer:
     eos_token_ids = [0]
 
 state = serve._State(served=options.served_model_name, aliases=tuple(options.served_model_alias or ()),
-                     context=options.context, max_batch=options.max_batch)
+                     context=options.context, max_batch=1)
 app = serve._build_app(state, Tokenizer(), {0})
 client = TestClient(app)
 models = [m["id"] for m in client.get("/v1/models").json()["data"]]
@@ -2184,7 +2181,10 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
             "another model is still refused, naming every name served"
         );
         assert_eq!(options["slots"], 2);
-        assert_eq!(options["max_batch"], 2);
+        assert!(
+            options.get("max_batch").is_none(),
+            "the fork's own parser takes no row count since Q-160"
+        );
         assert_eq!(options["prefill_step"], 2_048);
         assert_eq!(
             seen["starts"],
@@ -2355,7 +2355,7 @@ def encode(text, *args, **kwargs):
 
 
 pipe_tokenizer.encode = encode
-state = pipeline_qwen4_serve._State(served=SERVED, context=options.context, max_batch=options.max_batch)
+state = pipeline_qwen4_serve._State(served=SERVED, context=options.context, max_batch=1)
 client = TestClient(pipeline_qwen4_serve._build_app(state, pipe_tokenizer, {0}), raise_server_exceptions=False)
 
 

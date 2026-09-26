@@ -122,8 +122,10 @@ pub struct DistributedConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<u64>,
     /// Pipeline runner only: the full-context sequences the split is planned and KV-budgeted for
-    /// (the fork planner's `--batch`, the server's `--slots` and `--max-batch`). `None` =
-    /// `PIPELINE_DEFAULT_SLOTS`. The tensor runner (`mlx_lm.server`) has no slots.
+    /// (the fork planner's `--batch`, the server's `--slots`). It sizes the budget, not the rows:
+    /// the server admits each request by what it needs of that budget, so short requests run
+    /// beside `slots` full-context ones (Q-160). `None` = `PIPELINE_DEFAULT_SLOTS`. The tensor
+    /// runner (`mlx_lm.server`) has no slots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slots: Option<u32>,
     /// Restart after a rank death or a hang (the breaker still applies). A watchdog CRITICAL
