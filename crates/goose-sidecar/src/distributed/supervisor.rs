@@ -178,6 +178,11 @@ pub enum EventKind {
     RunnerUpdated,
     /// A rebuild failed; the message names the Mac, the refusal's `detail` carries its output.
     RunnerUpdateFailed,
+    /// A JACCL group formed with messages that went nowhere over a fresh connection (Q-136:
+    /// the Thunderbolt RDMA driver can drop a connection's first message while its sender sees it
+    /// complete). The formation handshake absorbed them before any collective; the message names
+    /// each connection and how many.
+    GroupFormationLoss,
 }
 
 impl EventKind {
@@ -215,6 +220,7 @@ impl EventKind {
             EventKind::RunnerUpdating => "runnerUpdating",
             EventKind::RunnerUpdated => "runnerUpdated",
             EventKind::RunnerUpdateFailed => "runnerUpdateFailed",
+            EventKind::GroupFormationLoss => "groupFormationLoss",
         }
     }
 }
@@ -1062,7 +1068,16 @@ async fn readiness_ping(http: reqwest::Client, base: String, served: String) -> 
     Ok(probe::sse_verdict(&body))
 }
 
-fn local_progress_mark(sys: &mut System, ranks: &[RankProcess]) -> Vec<u64> {
+/// One rank's startup progress. A rank waiting in its JACCL group's formation
+/// (rank_formation.py) spins in jaccl's poll and its reporter keeps printing, so neither its CPU
+/// nor its output is progress there: the formation round it has entered is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupMark {
+    Forming(u32),
+    Local { lines: u64, cpu: u64, memory: u64 },
+}
+
+fn startup_marks(sys: &mut System, ranks: &[RankProcess]) -> Vec<StartupMark> {
     sys.refresh_processes_specifics(
         ProcessesToUpdate::All,
         true,
@@ -1070,9 +1085,16 @@ fn local_progress_mark(sys: &mut System, ranks: &[RankProcess]) -> Vec<u64> {
     );
     ranks
         .iter()
-        .flat_map(|rank| {
-            let lines = rank.live.lock().unwrap().lines;
-            let local = rank
+        .map(|rank| {
+            let (lines, forming) = {
+                let live = rank.live.lock().unwrap();
+                let forming = live.forming.filter(|_| live.formation.is_none());
+                (live.lines, forming)
+            };
+            if let Some(round) = forming {
+                return StartupMark::Forming(round);
+            }
+            let (cpu, memory) = rank
                 .host
                 .is_none()
                 .then(|| rank.child.id())
@@ -1080,9 +1102,38 @@ fn local_progress_mark(sys: &mut System, ranks: &[RankProcess]) -> Vec<u64> {
                 .and_then(|pid| sys.process(Pid::from_u32(pid)))
                 .map(|p| (p.accumulated_cpu_time(), p.memory()))
                 .unwrap_or_default();
-            [lines, local.0, local.1]
+            StartupMark::Local { lines, cpu, memory }
         })
         .collect()
+}
+
+/// The stall a start ended on, in words: a formation standstill names each rank's round.
+fn startup_stall_message(
+    ranks: &[RankProcess],
+    marks: &[StartupMark],
+    stalled: Duration,
+) -> String {
+    if !marks.iter().any(|m| matches!(m, StartupMark::Forming(_))) {
+        return format!(
+            "startup stalled: no rank output and no local CPU/memory change for {stalled:?} \
+             (the single engine's startup stall window). Rank 0 output:\n{}",
+            ranks[0].tail()
+        );
+    }
+    let where_each: Vec<String> = ranks
+        .iter()
+        .zip(marks)
+        .map(|(rank, mark)| match mark {
+            StartupMark::Forming(round) => format!("rank {} waits in round {round}", rank.rank),
+            StartupMark::Local { .. } => format!("rank {} is not forming", rank.rank),
+        })
+        .collect();
+    format!(
+        "group formation stalled: {} and no round advanced for {stalled:?} (the single engine's \
+         startup stall window) — ranks whose messages to each other both went nowhere wait for \
+         each other (Q-136); a restart forms a fresh group",
+        where_each.join(", ")
+    )
 }
 
 /// A dead rank, named. A rank an APP runs — this Mac's, or a Link peer's (spawned by the peer's
@@ -1180,6 +1231,30 @@ fn memory_death(
     }
 }
 
+/// Names, once per rank, the messages its group's formation absorbed (rank_formation.py): a
+/// start that needed the handshake says so, it never passes as an ordinary one.
+fn report_formation_losses(ctx: &RunContext, ranks: &[RankProcess], formed: &mut [bool]) {
+    for (rank, formed) in ranks.iter().zip(formed.iter_mut()) {
+        if *formed {
+            continue;
+        }
+        let Some(report) = rank.live.lock().unwrap().formation.clone() else {
+            continue;
+        };
+        *formed = true;
+        if let Some(losses) = report.losses() {
+            ctx.event(
+                EventKind::GroupFormationLoss,
+                Some(&rank.node),
+                format!(
+                    "group formation: {losses} over the fresh connection (Q-136); absorbed \
+                     before any collective, so every later message pairs"
+                ),
+            );
+        }
+    }
+}
+
 async fn wait_ready(
     ctx: &RunContext,
     ranks: &mut [RankProcess],
@@ -1188,14 +1263,16 @@ async fn wait_ready(
     let base = ctx.config.base_url();
     let stall_window = sidecar_parity().startup_stall_window;
     let mut sys = System::new();
-    let mut last_mark = local_progress_mark(&mut sys, ranks);
+    let mut last_mark = startup_marks(&mut sys, ranks);
     let mut last_progress = Instant::now();
     let mut ping: Option<JoinHandle<Result<SseVerdict>>> = None;
+    let mut formed = vec![false; ranks.len()];
     loop {
         tokio::select! {
             _ = stop_rx.changed() => return ReadyOutcome::Stop,
             _ = tokio::time::sleep(READY_TICK) => {}
         }
+        report_formation_losses(ctx, ranks, &mut formed);
         for rank in ranks.iter_mut() {
             if let Ok(Some(status)) = rank.child.try_wait() {
                 let (kind, message) = rank_exit(rank, status, " during startup", ".", None);
@@ -1245,7 +1322,7 @@ async fn wait_ready(
                 Err(e) => ReadyOutcome::Failed(EventKind::StartFailed, None, format!("{e}")),
             };
         }
-        let mark = local_progress_mark(&mut sys, ranks);
+        let mark = startup_marks(&mut sys, ranks);
         if mark != last_mark {
             last_mark = mark;
             last_progress = Instant::now();
@@ -1253,12 +1330,7 @@ async fn wait_ready(
             return ReadyOutcome::Failed(
                 EventKind::StartFailed,
                 None,
-                format!(
-                    "startup stalled: no rank output and no local CPU/memory change for {:?} \
-                     (the single engine's startup stall window). Rank 0 output:\n{}",
-                    last_progress.elapsed(),
-                    ranks[0].tail()
-                ),
+                startup_stall_message(ranks, &mark, last_progress.elapsed()),
             );
         }
     }
@@ -3642,6 +3714,60 @@ mod tests {
 
     /// The install token the tests' ranks and leftovers carry.
     const OWNER: &str = "0123456789abcdef";
+
+    /// Q-136's residual: two ranks that both lost their message in the same formation round wait
+    /// for each other, spinning in jaccl's poll while their reporters keep printing. Neither is
+    /// startup progress there — the round is — and the stall names each rank's round; once the
+    /// group has formed, output and CPU count again.
+    #[tokio::test]
+    async fn a_formation_standstill_is_read_from_the_rounds_not_the_spinning_ranks() {
+        let ranks = [
+            rank(0, None, sleeper("sleep 30"), None),
+            rank(1, Some("workhorse"), sleeper("sleep 30"), None),
+        ];
+        let mut sys = System::new();
+        for rank in &ranks {
+            rank.live.lock().unwrap().forming = Some(1);
+        }
+        let before = startup_marks(&mut sys, &ranks);
+        for rank in &ranks {
+            rank.live.lock().unwrap().lines += 40;
+        }
+        let after = startup_marks(&mut sys, &ranks);
+        assert_eq!(
+            before, after,
+            "report lines while waiting in a round are no progress"
+        );
+        assert_eq!(after, [StartupMark::Forming(1), StartupMark::Forming(1)]);
+        let message = startup_stall_message(&ranks, &after, Duration::from_secs(180));
+        assert!(
+            message.starts_with(
+                "group formation stalled: rank 0 waits in round 1, rank 1 waits in round 1"
+            ),
+            "{message}"
+        );
+
+        ranks[1].live.lock().unwrap().forming = Some(2);
+        assert_ne!(
+            startup_marks(&mut sys, &ranks),
+            after,
+            "a round entered is progress"
+        );
+        for rank in &ranks {
+            rank.live.lock().unwrap().formation = Some(super::super::launch::FormationReport {
+                rank: rank.rank,
+                rounds: 2,
+                lost: Default::default(),
+            });
+        }
+        assert!(startup_marks(&mut sys, &ranks)
+            .iter()
+            .all(|m| matches!(m, StartupMark::Local { .. })));
+        assert!(
+            startup_stall_message(&ranks, &startup_marks(&mut sys, &ranks), Duration::ZERO)
+                .starts_with("startup stalled: no rank output")
+        );
+    }
 
     fn sleeper(script: &str) -> tokio::process::Child {
         tokio::process::Command::new("/bin/sh")

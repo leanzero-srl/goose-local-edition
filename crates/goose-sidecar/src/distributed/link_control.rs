@@ -625,11 +625,13 @@ pub async fn spawn_link_rank(
     adopt_link_rank(node, spec, &peer, started).await
 }
 
-/// A peer whose goosed predates the tensor runner's current program (Q-66's doorbell, Q-79's
-/// bounded prompt cache, Q-104's planned prefill) cannot read this Mac's rank spec (its serde
-/// names the unknown program tag). Said as what to do, not as a parse error.
+/// A peer whose goosed predates the runners' current programs (Q-66's doorbell, Q-79's bounded
+/// prompt cache, Q-104's planned prefill, Q-136's group formation) cannot read this Mac's rank
+/// spec (its serde names the unknown program tag). Said as what to do, not as a parse error.
 pub fn older_peer_refusal(error: &str) -> Option<&'static str> {
     [
+        "mlxLmServerFormation",
+        "pipelineServeFormation",
         "mlxLmServerPrefill",
         "mlxLmServerBounded",
         "mlxLmServerDoorbell",

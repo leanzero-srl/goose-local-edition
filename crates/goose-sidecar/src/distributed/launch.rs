@@ -9,7 +9,7 @@
 //!
 //! The program is embedded here and passed base64 on the command line, so a node needs nothing
 //! installed beyond its interpreter: `rank_env.py` (the backend env, `emit`, the memory reporter —
-//! every rank), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
+//! every rank), `rank_formation.py` (a JACCL group's formation handshake, Q-136), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
 //! `rank_thinking.py` (a chat request's thinking switch, resolved as the single engine resolves it),
 //! then the runner's program — `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
 //! `rank_state.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
@@ -45,6 +45,7 @@ pub const OWNER_ARG_PREFIX: &str = "goose-distributed-owner=";
 const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_load_lock.py"),
     include_str!("rank_env.py"),
+    include_str!("rank_formation.py"),
     include_str!("rank_live.py"),
     include_str!("rank_thinking.py"),
     include_str!("rank_budget.py"),
@@ -56,6 +57,7 @@ const TENSOR_PROGRAM: &str = concat!(
 const PIPELINE_PROGRAM: &str = concat!(
     include_str!("rank_load_lock.py"),
     include_str!("rank_env.py"),
+    include_str!("rank_formation.py"),
     include_str!("rank_live.py"),
     include_str!("rank_thinking.py"),
     include_str!("pipeline_rank.py")
@@ -89,8 +91,14 @@ pub enum RankProgram {
     /// longer pair up) and holds a request rank 0 cannot fit beside the live batch, so a peer
     /// whose wrapper chunks at mlx_lm's fixed step must refuse the rank. `mlxLmServerBounded` (a
     /// Q-79 requester) still reads, with `prefill` absent: upstream chunking, no projection.
+    ///
+    /// Tagged `mlxLmServerFormation` since Q-136: a JACCL launch's spec carries
+    /// [`RankSpec::formation`], and every rank must take part in the handshake (a peer that skips
+    /// it leaves the others waiting in a round that never completes). `mlxLmServerPrefill` (a Q-104
+    /// requester) still reads, with no formation: that requester's ranks form none either.
     #[serde(
-        rename = "mlxLmServerPrefill",
+        rename = "mlxLmServerFormation",
+        alias = "mlxLmServerPrefill",
         alias = "mlxLmServerBounded",
         alias = "mlxLmServerDoorbell",
         alias = "mlxLmServer"
@@ -131,6 +139,10 @@ pub enum RankProgram {
     },
     /// The fork's `pipeline_qwen4_serve.serve` under `pipeline_rank.py` (layer split): the exact
     /// `pipeline_qwen4 serve` arguments, parsed on the rank by the fork's own parser.
+    ///
+    /// Tagged `pipelineServeFormation` since Q-136, for the same reason as the tensor program's
+    /// tag; `pipelineServe` (an older requester's spec) still reads.
+    #[serde(rename = "pipelineServeFormation", alias = "pipelineServe")]
     PipelineServe { serve_args: Vec<String> },
 }
 
@@ -170,8 +182,46 @@ pub struct RankSpec {
     /// at a lock of its own, so a stand-in rank never holds this Mac's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub load_lock: Option<String>,
+    /// The group's formation handshake (`rank_formation.py`, Q-136): every JACCL launch carries
+    /// one, fresh per launch (the supervisor sets it). `None` = a ring launch (TCP, nothing to
+    /// absorb), or an older requester's spec.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formation: Option<GroupFormation>,
     #[serde(flatten)]
     pub program: RankProgram,
+}
+
+/// Formation rounds: rank 0's first message (round 1), the workers' first (round 2), and the one
+/// after it — a message that went nowhere is absorbed when the next one arrives.
+pub const FORMATION_ROUNDS: u32 = 3; // measured: 33 lost first messages, every next one arrived
+
+/// One launch's formation handshake (`rank_formation.py`): `rounds` lockstep all_gathers of
+/// `[nonce, round, rank, check]`; a rank that reads a peer's LATER round sends to that peer
+/// without receiving until the two are in step, and any part that is not this launch's ends the
+/// rank in words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupFormation {
+    /// Fresh per launch, below 2^31 (it rides an int32): a message another launch left on the
+    /// connection carries a different one.
+    pub nonce: u32,
+    pub rounds: u32,
+}
+
+impl GroupFormation {
+    /// A formation no earlier launch of this process used, and — for the connection's previous
+    /// group, launched by any goosed — distinct but by a 2^-31 chance.
+    pub fn fresh() -> Self {
+        use std::hash::{BuildHasher, Hasher};
+        static LAUNCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u32(std::process::id());
+        hasher.write_u64(LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        GroupFormation {
+            // Never 0: a later collective's zero over a primer's buffer must not read as one.
+            nonce: (hasher.finish() as u32) & 0x7fff_ffff | 1,
+            rounds: FORMATION_ROUNDS,
+        }
+    }
 }
 
 /// What preflight's plan hands one tensor rank's launch.
@@ -404,6 +454,7 @@ fn base_specs(
     let launch_load_lock: Option<String> = None;
     #[cfg(test)]
     let launch_load_lock = Some(tests::launch_load_lock());
+    let formation = (config.backend == Backend::Jaccl).then(GroupFormation::fresh);
     config
         .nodes
         .iter()
@@ -428,6 +479,7 @@ fn base_specs(
             planned_weight_bytes: None,
             owner: None,
             load_lock: launch_load_lock.clone(),
+            formation,
             program: program(rank, node),
         })
         .collect()
@@ -507,9 +559,42 @@ pub struct RankLive {
     pub ready: bool,
     /// The rank's last `GOOSE_RANK_STATE`: where its generation loop was (rank_state.py).
     pub state: Option<serde_json::Value>,
+    /// The last round of its group's formation the rank announced (`GOOSE_RANK_FORMING`,
+    /// rank_formation.py): what a formation standstill is read from.
+    pub forming: Option<u32>,
+    /// The rank's `GOOSE_RANK_FORMATION`: its group formed, and how many messages each peer's
+    /// connection swallowed on the way (rank_formation.py, Q-136).
+    pub formation: Option<FormationReport>,
     /// Where the rank's whole output is kept on the Mac whose goosed reads it (rank_log.rs) —
     /// the file's path, or why there is none.
     pub log: Option<String>,
+}
+
+/// A rank's account of its group's formation (`GOOSE_RANK_FORMATION`, rank_formation.py).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct FormationReport {
+    pub rank: usize,
+    pub rounds: u32,
+    /// Per peer (its number as text): that peer's messages to this rank that went nowhere.
+    pub lost: std::collections::BTreeMap<String, u32>,
+}
+
+impl FormationReport {
+    /// What the connections swallowed, in words, or `None` when every first primer arrived.
+    pub fn losses(&self) -> Option<String> {
+        let lost: Vec<String> = self
+            .lost
+            .iter()
+            .filter(|(_, n)| **n > 0)
+            .map(|(src, n)| {
+                format!(
+                    "rank {src} → rank {}: {n} message(s) went nowhere in {} rounds",
+                    self.rank, self.rounds
+                )
+            })
+            .collect();
+        (!lost.is_empty()).then(|| lost.join("; "))
+    }
 }
 
 /// Where a rank's start is, from its own reports. Both rank programs report `RANK_CAPS` once the
@@ -567,6 +652,15 @@ impl RankLive {
                 self.memory = Some(memory);
             }
             return;
+        } else if let Some(forming) = line.strip_prefix("GOOSE_RANK_FORMING ") {
+            if let Ok(forming) = serde_json::from_str::<serde_json::Value>(forming) {
+                if let Some(round) = forming["round"].as_u64() {
+                    self.forming = u32::try_from(round).ok();
+                    return;
+                }
+            }
+        } else if let Some(report) = line.strip_prefix("GOOSE_RANK_FORMATION ") {
+            self.formation = serde_json::from_str(report).ok();
         } else if let Some(state) = line.strip_prefix("GOOSE_RANK_STATE ") {
             if let Ok(state) = serde_json::from_str(state) {
                 self.state = Some(state);
@@ -1083,6 +1177,7 @@ pub(crate) mod tests {
             concat!(
                 include_str!("rank_load_lock.py"),
                 include_str!("rank_env.py"),
+                include_str!("rank_formation.py"),
                 include_str!("rank_live.py"),
                 include_str!("rank_thinking.py"),
                 include_str!("pipeline_rank.py")
@@ -1137,7 +1232,8 @@ pub(crate) mod tests {
     /// The REAL pipeline program (prelude + pipeline_rank.py), booted exactly as a rank is, against
     /// stand-in `mlx.core` and `pipeline_qwen4_serve` modules: it sets the JACCL env, parses goose's
     /// argv with the fork's parser, starts the memory reporter, hands serve() goose's emit, and
-    /// exits with serve()'s code — without ever calling mx.distributed.init itself. macOS only,
+    /// exits with serve()'s code — without ever calling mx.distributed.init itself when the spec
+    /// carries no formation (an older requester's; the formation path is the next test). macOS only,
     /// like every test that boots a real rank program: it takes the load lock through libproc
     /// (`rank_load_lock.py`), which Linux does not have.
     #[cfg(target_os = "macos")]
@@ -1205,6 +1301,7 @@ pub(crate) mod tests {
         )
         .remove(1);
         spec.memory_report_seconds = 0.05;
+        spec.formation = None;
         let out = tokio::process::Command::new(spec.interpreter(&config.nodes[1]).unwrap())
             .args(python_args(&spec).unwrap())
             .env("PYTHONPATH", site)
@@ -1266,6 +1363,321 @@ pub(crate) mod tests {
             "one backend's env only"
         );
         assert_eq!(ready["offline"], "1");
+    }
+
+    /// rank_formation.py under a real interpreter, over a stand-in transport that behaves as the
+    /// Thunderbolt connection did after an abnormal end (Q-136, measured 2026-09-26 with a verbs
+    /// logger on both ranks): the first message(s) one way go nowhere while the sender sees them
+    /// complete, and everything after arrives in order. The negative control is the Q-136 shift
+    /// itself: with no handshake, rank 0's first receive reads rank 1's SECOND message.
+    #[test]
+    fn the_formation_handshake_absorbs_what_a_connection_swallowed() {
+        let prelude = r#"
+import json, queue, threading, types
+
+local = threading.local()
+DROP, QUEUES, EMITTED, SENT = {}, {}, {}, {}
+
+class Arr:
+    def __init__(self, values): self.values = list(values)
+    def tolist(self): return list(self.values)
+
+def send(x, dst, stream=None):
+    # The key's n-th message goes nowhere when n is in DROP[key]; its sender never knows.
+    key = (local.rank, dst)
+    SENT[key] = SENT.get(key, 0) + 1
+    if SENT[key] not in DROP.get(key, ()):
+        QUEUES[key].put(list(x.values))
+    return x
+
+def recv(shape, dtype, src, stream=None):
+    # The stand-in's own guard against a test that would otherwise hang; nothing in goose.
+    return Arr(QUEUES[(src, local.rank)].get(timeout=3))
+
+def all_gather(x, stream=None):
+    # jaccl's mesh all_gather: one message to every peer, one read from every peer.
+    size = GROUP_SIZE[0]
+    for peer in range(size):
+        if peer != local.rank:
+            send(x, peer)
+    parts = []
+    for peer in range(size):
+        parts += x.values if peer == local.rank else recv(None, None, peer).values
+    return Arr(parts)
+
+GROUP_SIZE = [2]
+mx = types.SimpleNamespace(
+    int32="int32", cpu="cpu", eval=lambda *a: None,
+    array=lambda values, dtype=None: Arr(values),
+    distributed=types.SimpleNamespace(send=send, recv=recv, all_gather=all_gather),
+)
+
+def emit(tag, payload):
+    if tag == "RANK_FORMATION":
+        EMITTED[local.rank] = payload
+
+class Group:
+    def __init__(self, rank, size): self.r, self.s = rank, size
+    def rank(self): return self.r
+    def size(self): return self.s
+
+def run(size, drops, stale=(), formation=True):
+    DROP.clear(); EMITTED.clear(); QUEUES.clear(); SENT.clear()
+    GROUP_SIZE[0] = size
+    for src in range(size):
+        for dst in range(size):
+            QUEUES[(src, dst)] = queue.Queue()
+    DROP.update(drops)
+    for key, message in stale:
+        QUEUES[key].put(message)
+    got, errors = {}, {}
+    def body(rank):
+        local.rank = rank
+        try:
+            if formation:
+                form_group(Group(rank, size), {"nonce": 424243, "rounds": 3})
+            # The program's first collective (the wrapper's doorbell port all_sum): one tagged
+            # message to every peer, one read back from each.
+            for peer in range(size):
+                if peer != rank:
+                    send(Arr([777, rank, peer, 0]), peer)
+            got[rank] = {p: recv(None, None, p).tolist() for p in range(size) if p != rank}
+        except BaseException as e:
+            errors[rank] = f"{type(e).__name__}: {e}"
+    threads = [threading.Thread(target=body, args=(r,)) for r in range(size)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    return got, errors
+
+def pairs(got, size):
+    return all(got[r][p] == [777, p, r, 0] for r in range(size) for p in range(size) if p != r)
+"#;
+        let checks = r#"
+# Nothing lost: nothing absorbed, the first collective pairs.
+got, errors = run(2, {})
+assert not errors and pairs(got, 2), (got, errors)
+assert EMITTED == {0: {"rank": 0, "rounds": 3, "lost": {"1": 0}},
+                   1: {"rank": 1, "rounds": 3, "lost": {"0": 0}}}, EMITTED
+
+# The Q-136 case: rank 1's first message to rank 0 went nowhere; its next fills rank 0's read,
+# and rank 0 sends its last round without reading until the two are in step.
+got, errors = run(2, {(1, 0): {1}})
+assert not errors and pairs(got, 2), (got, errors)
+assert EMITTED[0]["lost"] == {"1": 1} and EMITTED[1]["lost"] == {"0": 0}, EMITTED
+
+# Rank 0's first message went nowhere (2 of the 33 measured).
+got, errors = run(2, {(0, 1): {1}})
+assert not errors and pairs(got, 2), (got, errors)
+assert EMITTED[1]["lost"] == {"0": 1} and EMITTED[0]["lost"] == {"1": 0}, EMITTED
+
+# Both first messages went nowhere: rank 0 leads, so the two never wait on each other.
+got, errors = run(2, {(0, 1): {1}, (1, 0): {1}})
+assert not errors and pairs(got, 2), (got, errors)
+assert EMITTED[0]["lost"] == {"1": 1} and EMITTED[1]["lost"] == {"0": 1}, EMITTED
+
+# Negative control: the same loss with no formation shifts every later pairing by one — rank 0
+# never reads rank 1's first collective message (here the stand-in's guard ends its wait).
+got, errors = run(2, {(1, 0): {1}}, formation=False)
+assert got[1][0] == [777, 0, 1, 0] and "Empty" in errors.get(0, ""), (got, errors)
+
+# A message another launch left on the connection is refused in words, never read as data.
+got, errors = run(2, {}, stale=[((0, 1), [999, 1, 0, 1])])
+assert "not this launch's part" in errors.get(1, ""), errors
+
+# Three ranks: formed in step; a loss cannot be skipped around, so it ends the rank in words.
+got, errors = run(3, {})
+assert not errors and pairs(got, 3), (got, errors)
+got, errors = run(3, {(2, 0): {1}})
+assert "cannot skip one peer's receive" in errors.get(0, ""), errors
+
+# The residuals, stated (neither ever measured): two losses in a row one way, or both ways losing
+# the same crossing round, leave the two waiting for each other — goosed's formation standstill
+# names it, and the restart forms a fresh group.
+for drops in ({(1, 0): {1, 2}}, {(0, 1): {2}, (1, 0): {1}}):
+    got, errors = run(2, drops)
+    assert "Empty" in errors.get(0, "") and "Empty" in errors.get(1, ""), (drops, errors)
+print("ok")
+"#;
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!(
+                "{prelude}{}{checks}",
+                include_str!("rank_formation.py")
+            ))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    /// The REAL pipeline program with a JACCL launch's formation: it initialises the group on the
+    /// spec's backend and runs the handshake BEFORE serve() — whose own `init(strict=True)` then
+    /// finds MLX's cached group — so the fork's first collective never meets what a connection
+    /// swallowed. The stand-in group is a group of one (no peer here); the handshake's pairing is
+    /// `the_formation_handshake_absorbs_what_a_connection_swallowed`.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn the_pipeline_program_forms_its_group_before_serve() {
+        let root = tempfile::tempdir().unwrap();
+        let site = root.path();
+        std::fs::create_dir_all(site.join("mlx")).unwrap();
+        std::fs::create_dir_all(site.join("rapid_mlx/distributed")).unwrap();
+        std::fs::write(site.join("mlx/__init__.py"), "").unwrap();
+        std::fs::write(
+            site.join("mlx/core.py"),
+            "class _G:\n\
+             \x20   def rank(self): return 0\n\
+             \x20   def size(self): return 1\n\
+             class _D:\n\
+             \x20   @staticmethod\n\
+             \x20   def init(strict=False, backend='any'):\n\
+             \x20       print('STANDIN_INIT ' + backend, flush=True)\n\
+             \x20       return _G()\n\
+             distributed = _D()\n\
+             def get_active_memory(): return 11\n\
+             def get_peak_memory(): return 22\n\
+             def get_cache_memory(): return 3\n",
+        )
+        .unwrap();
+        std::fs::write(site.join("rapid_mlx/__init__.py"), "").unwrap();
+        std::fs::write(site.join("rapid_mlx/distributed/__init__.py"), "").unwrap();
+        std::fs::write(
+            site.join("rapid_mlx/distributed/pipeline_qwen4_serve.py"),
+            "class _Job:\n\
+             \x20   def __init__(self, row): self.row = row\n\
+             class _Engine:\n\
+             \x20   def _start(self, row): pass\n\
+             \x20   def prefill(self, words): pass\n\
+             def prefill_chunks(start, end, step, split=0): return []\n\
+             def _build_app(state, tokenizer, eos_ids, vision=None): pass\n\
+             def add_arguments(parser):\n\
+             \x20   for flag in ('--model', '--served-model-name', '--host', '--port', '--context', \
+             '--slots', '--max-batch', '--prefill-step', '--attention-scores-bytes', '--split'):\n\
+             \x20       parser.add_argument(flag)\n\
+             def serve(options, emit=None):\n\
+             \x20   emit('READY', {'rank': 0})\n\
+             \x20   return 7\n",
+        )
+        .unwrap();
+        let mut config = pipeline_config();
+        config.nodes[0].pipeline_python = Some("/usr/bin/python3".into());
+        let mut spec = pipeline_rank_specs(
+            &config,
+            &ServedNames::only("node-alias"),
+            32_768,
+            "19",
+            2_048,
+            &[0, 805_306_368],
+            0.05,
+        )
+        .remove(0);
+        spec.memory_report_seconds = 0.05;
+        let formation = spec
+            .formation
+            .expect("a JACCL pipeline launch forms its group");
+        let out = tokio::process::Command::new(spec.interpreter(&config.nodes[0]).unwrap())
+            .args(python_args(&spec).unwrap())
+            .env("PYTHONPATH", site)
+            .output()
+            .await
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            out.status.code(),
+            Some(7),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let order: Vec<&str> = stdout
+            .lines()
+            .filter(|l| {
+                l.starts_with("STANDIN_INIT")
+                    || l.starts_with("GOOSE_RANK_FORMATION")
+                    || l.starts_with("GOOSE_READY")
+            })
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "STANDIN_INIT jaccl",
+                &format!(
+                    r#"GOOSE_RANK_FORMATION {{"rank": 0, "rounds": {}, "lost": {{}}}}"#,
+                    formation.rounds
+                ),
+                r#"GOOSE_READY {"rank": 0}"#,
+            ],
+            "{stdout}"
+        );
+    }
+
+    /// A JACCL launch carries a fresh formation (the nonce differs launch to launch, never 0); a
+    /// ring launch carries none. The rank's report reads
+    /// back as the losses a start names.
+    #[test]
+    fn every_jaccl_launch_forms_its_group_afresh_and_its_losses_are_named() {
+        let config = two_mac_config();
+        let launch_once = || {
+            rank_specs(
+                &config,
+                &ServedNames::only("node-alias"),
+                &[launch(1, 2), launch(3, 2)],
+                8_192,
+                2.0,
+            )
+        };
+        let first = launch_once();
+        let second = launch_once();
+        let formation = first[0].formation.expect("a JACCL launch forms its group");
+        assert_eq!(
+            first[1].formation,
+            Some(formation),
+            "one formation per launch"
+        );
+        assert_eq!(formation.rounds, FORMATION_ROUNDS);
+        assert!(formation.nonce < 1 << 31, "the nonce rides an int32");
+        assert_ne!(
+            formation.nonce, 0,
+            "a zero over a part's buffer never reads as one"
+        );
+        assert_ne!(
+            second[0].formation.unwrap().nonce,
+            formation.nonce,
+            "the next launch's parts are told from this one's"
+        );
+        let json = serde_json::to_value(&first[1]).unwrap();
+        assert_eq!(json["formation"]["rounds"], 3);
+        let mut ring = config.clone();
+        ring.backend = Backend::Ring;
+        let spec = &rank_specs(
+            &ring,
+            &ServedNames::only("node-alias"),
+            &[launch(1, 2), launch(3, 2)],
+            8_192,
+            2.0,
+        )[0];
+        assert_eq!(
+            spec.formation, None,
+            "ring runs over TCP: nothing to absorb"
+        );
+
+        let mut live = RankLive::default();
+        live.take_line(r#"GOOSE_RANK_FORMING {"rank": 0, "round": 1}"#);
+        assert_eq!(live.forming, Some(1));
+        assert!(
+            live.tail.is_empty(),
+            "a round's announcement stays out of the tail"
+        );
+        live.take_line(r#"GOOSE_RANK_FORMATION {"rank": 0, "rounds": 3, "lost": {"1": 0}}"#);
+        assert_eq!(live.formation.as_ref().unwrap().losses(), None);
+        live.take_line(r#"GOOSE_RANK_FORMATION {"rank": 0, "rounds": 3, "lost": {"1": 1}}"#);
+        assert_eq!(
+            live.formation.unwrap().losses().as_deref(),
+            Some("rank 1 → rank 0: 1 message(s) went nowhere in 3 rounds")
+        );
     }
 
     /// rank_live.py's two functions under a real interpreter, on the instants the 2-rank 27B
@@ -2393,6 +2805,7 @@ print("ok")
             concat!(
                 include_str!("rank_load_lock.py"),
                 include_str!("rank_env.py"),
+                include_str!("rank_formation.py"),
                 include_str!("rank_live.py"),
                 include_str!("rank_thinking.py"),
                 include_str!("rank_budget.py"),
@@ -2422,7 +2835,46 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerPrefill");
+        assert_eq!(json["program"], "mlxLmServerFormation");
+        assert_eq!(json["formation"]["rounds"], FORMATION_ROUNDS);
+
+        // A Q-104 requester's spec (the prefill tag, no formation) forms no group here: its own
+        // ranks run no handshake either.
+        let mut prefill = json.clone();
+        prefill["program"] = "mlxLmServerPrefill".into();
+        prefill.as_object_mut().unwrap().remove("formation");
+        let read: RankSpec = serde_json::from_value(prefill).unwrap();
+        assert_eq!(read.formation, None);
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                prefill: Some(_),
+                ..
+            }
+        ));
+
+        // A Q-104 peer's goosed (its enum knows the prefill tag, not the formation one) refuses
+        // this spec: its wrapper would skip the handshake the other ranks wait in.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum PrefillProgram {
+            #[serde(
+                rename = "mlxLmServerPrefill",
+                alias = "mlxLmServerBounded",
+                alias = "mlxLmServerDoorbell",
+                alias = "mlxLmServer"
+            )]
+            MlxLmServer {
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused = serde_json::from_value::<PrefillProgram>(json.clone()).unwrap_err();
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
         assert_eq!(json["doorbell"], true);
         assert_eq!(json["prompt_cache_live_bound"], true);
         assert_eq!(json["prefill"]["step"], 2_048);
@@ -2661,6 +3113,7 @@ print("ok")
         if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
             *doorbell = false;
         }
+        spec.formation = None;
         let mut command = tokio::process::Command::new("/usr/bin/python3");
         command
             .args(python_args(&spec).unwrap())

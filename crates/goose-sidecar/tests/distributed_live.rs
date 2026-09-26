@@ -1212,9 +1212,13 @@ async fn live_q114_a_decode_runs_past_the_metal_resource_limit() {
         .unwrap_or(2 * LATEST_MEASURED_HANG_TOKENS);
     let config = recorded_config();
     let base = config.base_url();
-    let model = unaliased(&config);
+    let model = config.model_id.clone();
     let manager = DistributedManager::new(Arc::new(SystemExec));
-    match manager.start(config.clone(), model.clone()).await.unwrap() {
+    match manager
+        .start(config.clone(), unaliased(&config))
+        .await
+        .unwrap()
+    {
         StartOutcome::Started { .. } => {}
         StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
     }
@@ -1310,9 +1314,13 @@ async fn live_q114_a_transient_rank_stall_ends_loudly() {
     let mut config = recorded_config();
     config.hang_ratio_only = true;
     let base = config.base_url();
-    let model = unaliased(&config);
+    let model = config.model_id.clone();
     let manager = DistributedManager::new(Arc::new(SystemExec));
-    match manager.start(config.clone(), model.clone()).await.unwrap() {
+    match manager
+        .start(config.clone(), unaliased(&config))
+        .await
+        .unwrap()
+    {
         StartOutcome::Started { .. } => {}
         StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
     }
@@ -1381,4 +1389,150 @@ async fn live_q114_a_transient_rank_stall_ends_loudly() {
         .expect("the pair ended on a hang or a rank's death");
     println!("loud: {:?}: {}", loud.kind, loud.message);
     manager.stop().await;
+}
+
+/// The Flash pipeline split on the recorded pair: the fork's runner in the goose-managed fork env
+/// on both Macs, Flash from each Mac's models dir.
+fn flash_pipeline_config() -> DistributedConfig {
+    use goose_sidecar::distributed::provision::EnvSpec;
+    let home = dirs::home_dir().unwrap();
+    let mut config = recorded_config();
+    config.model_id = "rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string();
+    config.nodes[0].pipeline_python = Some(EnvSpec::pipeline().python(&home.display().to_string()));
+    config.nodes[0].model_dir = home
+        .join(".goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit")
+        .display()
+        .to_string();
+    config.nodes[1].pipeline_python = Some(EnvSpec::pipeline().python("/Users/workhorse"));
+    config.nodes[1].model_dir =
+        "/Users/workhorse/.goose/models/rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string();
+    config
+}
+
+/// Q-136: straight after an ABNORMAL end of the split (a rank killed, frozen then killed, or dead
+/// of a GPU timeout mid-collective) the next group's first collective could read the peer's SECOND
+/// message — rank 0's doorbell port came back 0x3F800000 + port (the peer's post-load barrier,
+/// float32 1.0) — and rank 0 died at startup. Each cycle here: start, stream, end the pair
+/// abnormally one of four ways, and require the policy's ONE restart to serve (a startup death
+/// is a second restart). `GOOSE_Q136_CYCLES` (default 12) cycles, the four ways in rotation;
+/// `GOOSE_Q136_FLASH=1` runs the Flash pipeline split (the fork's runner forms its group the same
+/// way) instead of the 27B tensor split.
+#[tokio::test]
+#[ignore = "needs both Macs and the owner's 27B on each; ends the pair abnormally N times"]
+async fn live_q136_every_start_after_an_abnormal_end_forms_a_clean_group() {
+    use goose_sidecar::distributed::EventKind;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    const WAYS: [&str; 4] = ["kill-peer", "freeze-peer", "stall-rank0", "kill-rank0"];
+    let cycles: usize = std::env::var("GOOSE_Q136_CYCLES")
+        .map(|c| c.parse().unwrap())
+        .unwrap_or(12);
+    let mut config = if std::env::var("GOOSE_Q136_FLASH").is_ok() {
+        flash_pipeline_config()
+    } else {
+        recorded_config()
+    };
+    config.restart_on_failure = true;
+    let base = config.base_url();
+    let model = config.model_id.clone();
+    let mut startup_deaths = Vec::new();
+    let mut formation_notes = Vec::new();
+    for cycle in 0..cycles {
+        let way = WAYS[cycle % WAYS.len()];
+        let manager = DistributedManager::new(Arc::new(SystemExec));
+        match manager
+            .start(config.clone(), unaliased(&config))
+            .await
+            .unwrap()
+        {
+            StartOutcome::Started { .. } => {}
+            StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
+        }
+        let peer = wait_serving(&manager, None).await;
+        let seen = Arc::new(AtomicUsize::new(0));
+        let stream = tokio::spawn(stream_completion(
+            base.clone(),
+            model.clone(),
+            3000,
+            Arc::clone(&seen),
+        ));
+        while seen.load(Ordering::SeqCst) < 30 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let rank0 = manager.status().nodes[0].pid.expect("rank 0 runs");
+        let local = |signal: &str| {
+            let out = std::process::Command::new("/bin/kill")
+                .args([&format!("-{signal}"), &rank0.to_string()])
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+        };
+        match way {
+            "kill-peer" => ssh_signal("KILL", peer),
+            "freeze-peer" => ssh_signal("STOP", peer),
+            "stall-rank0" => {
+                // Past Metal's ~5 s command-buffer wait: the peer's GPU times out mid-collective.
+                local("STOP");
+                while manager.status().nodes[0].pid == Some(rank0)
+                    && !matches!(
+                        manager.status().state,
+                        RunState::Starting | RunState::Stopping
+                    )
+                {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+                local("CONT");
+            }
+            _ => local("KILL"),
+        }
+        let (_, done, _) = stream.await.unwrap();
+        assert!(
+            !done,
+            "cycle {cycle} ({way}): an abnormal end must not complete the stream"
+        );
+        let next = wait_serving(&manager, Some(peer)).await;
+        let status = manager.status();
+        let restarts = status.restarts;
+        println!("cycle {cycle} ({way}): peer {peer} -> {next}, restarts {restarts}");
+        for event in &status.events {
+            let first = event.message.lines().next().unwrap_or_default();
+            if first.contains("group formation") {
+                formation_notes.push(format!("cycle {cycle} ({way}): {first}"));
+            }
+        }
+        // The abnormal end is the cycle's one restart; every further one is a start that died.
+        if restarts != 1 {
+            let failed = status
+                .events
+                .iter()
+                .skip_while(|e| e.kind != EventKind::Restart)
+                .filter(|e| {
+                    matches!(
+                        e.kind,
+                        EventKind::RankDied | EventKind::StartFailed | EventKind::Hang
+                    )
+                })
+                .map(|e| e.message.lines().next().unwrap_or_default().to_string())
+                .collect::<Vec<_>>();
+            startup_deaths.push(format!(
+                "cycle {cycle} ({way}): restarts {restarts}: {failed:?}"
+            ));
+        }
+        assert_eq!(
+            short_ok(&base, &model).await,
+            200,
+            "cycle {cycle}: the restarted pair serves"
+        );
+        let stop = manager.stop().await;
+        assert!(stop.verified, "cycle {cycle}: {stop:#?}");
+        if restarts != 1 {
+            print_events(&manager, 0);
+        }
+    }
+    println!("formation notes: {formation_notes:#?}");
+    println!("startup deaths: {startup_deaths:#?}");
+    assert!(
+        startup_deaths.is_empty(),
+        "{} startup death(s) in {cycles} abnormal ends",
+        startup_deaths.len()
+    );
 }
