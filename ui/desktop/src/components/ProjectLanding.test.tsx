@@ -344,9 +344,7 @@ describe('ProjectLanding — the recents carry each session state', () => {
       expect(rows[0].getAttribute('data-testid')).toBe('landing-session-run');
       expect(rows[0].getAttribute('data-state')).toBe('running');
       expect(rows[0].getAttribute('aria-busy')).toBe('true');
-      expect(within(rows[0]).getByTestId('session-running-pill').textContent).toBe(
-        'Running · 27m'
-      );
+      expect(within(rows[0]).getByTestId('session-running-pill').textContent).toBe('Running · 27m');
       expect(within(rows[0]).getByText('Notes · 2')).toBeTruthy();
       const fail = screen.getByTestId('landing-session-fail');
       expect(fail.getAttribute('data-state')).toBe('failed');

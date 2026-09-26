@@ -143,7 +143,9 @@ describe('AgentWorkSection', () => {
     fireEvent.click(row);
     const inFlight = await screen.findByTestId('tick-row-4');
     expect(within(inFlight).getByTestId('session-running-pill').textContent).toBe('Running · 27m');
-    expect(within(screen.getByTestId('tick-row-3')).queryByTestId('session-running-pill')).toBeNull();
+    expect(
+      within(screen.getByTestId('tick-row-3')).queryByTestId('session-running-pill')
+    ).toBeNull();
   });
 
   it('says so when there are no agents', async () => {
