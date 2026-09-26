@@ -8,8 +8,8 @@ Updated: 2026-09-26 22:50 · heartbeat: session cron 90b0083a (:04/:14/…/:54, 
 - E2E #3d HALTED at turn 0 (r1 killed 22:45: the window had been moved to the Engine tab, so r1 was blind). Its
   first agent call is STILL generating on the split (10k+ tokens, nothing streamed, Q-146); watcher b99ercb8g reads
   the words when it ends. Ladder-0 all OK to 39k. Re-run #3d after Q-146's instrument + fix.
-- Harness note: r1.mjs should verify it is still on its own chat page each poll and re-open it (no product defect:
-  the route carried no tray tab, most likely a click).
+- The Engine-tab move was the owner looking at Providers (Q-147 screenshot). r1.mjs must re-open its own session when
+  the view is not its chat, and share the app with the owner.
 - Flash load 26c (3.0.51, fixed load.py): decode healthy (gap 0.7 s); prefills FIFO one at a time → canary 347 s (Q-145).
 - Disk 22:30: cleaned 34 → 156 GB free (debug deps > 6 h, incremental > 2 h, ui/desktop/out, uv cache).
   Not touched (owner's): ~/.goose/models 128 GB, forge-live-harness/evidence 37 GB, ~/.codex 19 GB.
@@ -19,7 +19,7 @@ Updated: 2026-09-26 22:50 · heartbeat: session cron 90b0083a (:04/:14/…/:54, 
 - Q-144 pipeline fork line lacks single-engine fixes lz.3..lz.9 → audit + port + tag + guard.
 - Q-145 fixed on fork branch q145-srpf c24f6b55e + goose companion branch q145-pin-companion; the Q-144 agent tags both.
 - Q-146 instrument: parser state + withheld chars + text tail in /v1/status, withholding-path table.
-- NEEDS-YOU (owner ask 22:3x): ask_user tool + persistent card above composer + sidebar marker + app-wide count;
+- NEEDS-YOU + Q-147 RUNNING state (owner asks 22:3x / 22:5x) in ONE agent (same sidebar files): ask_user tool + persistent card above composer + sidebar marker + app-wide count;
   never in benchmark/swarm sessions.
 
 ## Next actions (in order)
