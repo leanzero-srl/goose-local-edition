@@ -13,6 +13,8 @@
 | E2E #4 | 3.0.46 | Studio single over Link, 262,144, deferral | ″ | 0 | 170 (#2b: 300) | 27 | 31,552 / 32,428 cached | — | kickoff ✓ |
 | E2E #4 | 3.0.46 | ″ | ″ | 1 | 81 (#2b: 43) | ″ | ″ | — | 2 memories saved (global ISO+British rule; project zero-npm rule) |
 | E2E #4 | 3.0.46 | ″ | ″ | 2 | 1333 (#2b: 573) | ″ | 37,649 / 38,173 → 63,552 / 64,021 | — | 77 tool calls, no answer: web search returned empty results `serper-failed-no-fallback` (no key, browser engines off — Q-117); the model pip-installed a package and ran a 300 s find. Run stopped here for the 3.0.47 install (Q-115). Studio cache bounded 20.1/22.4 GB, footprint 45–66 GB |
+| E2E #3c | 3.0.51 | split tensor 27B, 262,144, deferral | jira-migration-readiness | 0 | 2122 (stopped call: 21,741 tokens, 0 streamed — Q-141) | 27 | 30,869 / 32,247 | reasoning off | Q-114 proven (no stall past 2× the old hang); Q-135 proven (no thinking) |
+| E2E #3c | 3.0.51 | ″ | ″ | 1–5 | 110 / 690 / 1380 / 516 / 924 | 29 | every call after turn 2 read 31,385 cached of 58–66k — the turn-context move (Q-142) + a load_tools cold prefill (Q-107) | — | run stopped after turn 5: build superseded by Q-107/Q-141/Q-142; memory created: client-deliverable-conventions.txt (deleted) |
 
 ## Tool-call failure census (2026-09-25, sessions.db)
 | run | engine | calls | failed | causes |
