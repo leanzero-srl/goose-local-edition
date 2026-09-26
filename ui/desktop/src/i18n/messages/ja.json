@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "この Mac に一致するモデルはありません。"
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "未提供: この Mac のエンジンは {model} を実行中"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "このノードは {set} に設定されていますが、この Mac のエンジンは {served} を提供しています。{set} がここで動くまで、このノードに送られた作業にはそのモデルのエンジンがありません。"
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "{node} のモデル"
   },

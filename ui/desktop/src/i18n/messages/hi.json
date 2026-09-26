@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "इस Mac पर कोई मॉडल मेल नहीं खाता।"
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "सर्व नहीं हो रहा: इस Mac का इंजन {model} चला रहा है"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "यह नोड {set} पर सेट है, लेकिन इस Mac का इंजन {served} सर्व करता है। इस नोड को भेजे गए काम के मॉडल के लिए तब तक कोई इंजन नहीं है जब तक {set} यहाँ नहीं चलता।"
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "{node} के लिए मॉडल"
   },

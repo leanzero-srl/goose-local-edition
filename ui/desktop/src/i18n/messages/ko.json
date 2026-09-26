@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "이 Mac에 일치하는 모델이 없습니다."
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "제공되지 않음: 이 Mac의 엔진은 {model} 실행 중"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "이 노드는 {set}(으)로 설정되어 있지만 이 Mac의 엔진은 {served}을(를) 제공합니다. {set}이(가) 여기서 실행될 때까지 이 노드로 보낸 작업에는 해당 모델의 엔진이 없습니다."
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "{node}의 모델"
   },

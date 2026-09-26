@@ -453,6 +453,8 @@ describe('Add node — MLX machine cap', () => {
     // even with the legacy LM Studio fleet ON, its model-id prefixes (gabee) are not Macs
     lmStudioVisible = true;
     render();
+    // The table reads the roster once to name its nodes (Q-154); the dialog reads it fresh.
+    await waitFor(() => expect(mockLinkNodes).toHaveBeenCalledTimes(1));
     const pane = await openMlxPane();
     // roster: workhorse (this Mac, ALREADY ADDED as workhorse-mlx) + mihai (peer) => mihai only
     await userEvent.click(pane.getAllByRole('combobox')[0]);
@@ -461,7 +463,7 @@ describe('Add node — MLX machine cap', () => {
     expect(names.some((n) => n?.includes('mihai'))).toBe(true);
     expect(names.some((n) => n?.includes('gabee'))).toBe(false);
     expect(names.some((n) => n?.includes('workhorse'))).toBe(false);
-    expect(mockLinkNodes).toHaveBeenCalledTimes(1);
+    expect(mockLinkNodes).toHaveBeenCalledTimes(2);
   });
 
   it('adding a REMOTE machine writes host + engine and NEVER touches the local engine settings', async () => {
@@ -720,7 +722,7 @@ describe('the Nodes tab — LeanZero Studio register', () => {
     );
   });
 
-  it('a model nobody here started is said as what the engine serves — chat does not follow it', async () => {
+  it('Q-154: a node set to a model the engine does not serve is a SOLID warning — chat does not follow it', async () => {
     mockMlxStatus.mockResolvedValue({
       state: 'running',
       restartRequired: false,
@@ -730,11 +732,63 @@ describe('the Nodes tab — LeanZero Studio register', () => {
       servedModelId: 'rapid-mlx/Qwen3.8-Flash-Next-4bit',
     });
     render();
-    expect(await screen.findByTestId('node-model-serves-workhorse-mlx')).toHaveTextContent(
-      'Engine serves Qwen3.8-Flash-Next-4bit'
-    );
+    const warn = await screen.findByTestId('node-model-not-served-workhorse-mlx');
+    expect(warn).toHaveTextContent('Not served: this Mac’s engine runs Qwen3.8-Flash-Next-4bit');
+    expect(within(warn).getByTestId('lz-chip')).toHaveAttribute('data-tone', 'warn');
+    // never the grey aside it replaces
+    expect(screen.queryByTestId('node-model-serves-workhorse-mlx')).toBeNull();
     expect(screen.queryByTestId('node-model-chat-workhorse-mlx')).toBeNull();
     expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
+  it('Q-154: nodes are named by the Mac they run on — never the "mihai" prefix of their model ids', async () => {
+    // The 3.0.52 live round: two rows both read "mihai" (deviceFromModelId of
+    // "mihai-qwen3.8-27b-atlassian-q8-mlx" and "mihai-flash-qwen3.8-flash-next-4").
+    mockLinkNodes.mockResolvedValue({
+      self: { ...linkNode('Mihai-Macbook-2.local'), computer_name: 'Mihai Macbook' },
+      peers: [{ ...linkNode('WorksMacStudio.lan'), computer_name: 'Work’s Mac Studio' }],
+    });
+    mockRead.mockResolvedValue({
+      ...BASE_CFG,
+      devices: [
+        {
+          id: 'mihai-mlx',
+          model_id: 'mihai-qwen3.8-27b-atlassian-q8-mlx',
+          weight: 1,
+          enabled: true,
+          engine: 'mlx-sidecar',
+        },
+        {
+          id: 'mihai-flash-mlx',
+          model_id: 'mihai-flash-qwen3.8-flash-next-4',
+          weight: 1,
+          enabled: true,
+          engine: 'mlx-sidecar',
+        },
+        {
+          id: 'studio-mlx',
+          model_id: 'studio-qwen3.8-27b-mlx',
+          weight: 1,
+          enabled: true,
+          engine: 'mlx-sidecar',
+          host: 'works-mac-studio',
+        },
+      ],
+    });
+    render();
+    await waitFor(() =>
+      expect(screen.getByTestId('node-name-mihai-mlx')).toHaveTextContent('Mihai Macbook')
+    );
+    // Two nodes on this Mac stay apart by their own label under the Mac's name.
+    expect(screen.getByTestId('node-name-mihai-mlx')).toHaveTextContent('mihai-mlx');
+    expect(screen.getByTestId('node-name-mihai-flash-mlx')).toHaveTextContent(
+      'Mihai Macbookmihai-flash-mlx'
+    );
+    expect(screen.getByTestId('node-name-studio-mlx')).toHaveTextContent('Work’s Mac Studio');
+    expect(screen.getByTestId('node-name-studio-mlx')).not.toHaveTextContent('studio-mlx');
+    for (const id of ['mihai-mlx', 'mihai-flash-mlx']) {
+      expect(screen.getByTestId(`node-name-${id}`).textContent).not.toMatch(/^mihai$/);
+    }
   });
 
   it('with no nodes the table renders the EmptyState under a header counting 0', async () => {

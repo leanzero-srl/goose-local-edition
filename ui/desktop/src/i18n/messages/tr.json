@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "Bu Mac’te eşleşen model yok."
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Sunulmuyor: bu Mac'in motoru {model} çalıştırıyor"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Bu düğüm {set} olarak ayarlı, ancak bu Mac'in motoru {served} sunuyor. {set} burada çalışana kadar bu düğüme yönlendirilen işin modeli için motor yok."
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "{node} için model"
   },

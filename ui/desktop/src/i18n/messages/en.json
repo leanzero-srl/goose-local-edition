@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "No model on this Mac matches."
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Not served: this Mac’s engine runs {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "This node is set to {set}, but this Mac’s engine serves {served}. Work routed to this node has no engine for its model until {set} runs here."
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "Model for {node}"
   },

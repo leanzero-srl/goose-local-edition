@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "Tiada model pada Mac ini yang sepadan."
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Tidak disajikan: enjin Mac ini menjalankan {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Nod ini ditetapkan kepada {set}, tetapi enjin Mac ini menyajikan {served}. Kerja yang dihalakan ke nod ini tiada enjin untuk modelnya sehingga {set} berjalan di sini."
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "Model untuk {node}"
   },

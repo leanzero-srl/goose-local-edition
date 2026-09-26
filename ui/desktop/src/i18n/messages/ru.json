@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "На этом Mac нет подходящей модели."
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Не обслуживается: движок этого Mac запускает {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Этот узел настроен на {set}, но движок этого Mac обслуживает {served}. У работы, направленной на этот узел, нет движка для его модели, пока здесь не запущена {set}."
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "Модель для {node}"
   },

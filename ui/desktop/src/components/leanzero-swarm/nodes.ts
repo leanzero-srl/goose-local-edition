@@ -111,12 +111,22 @@ export function swarmMachinesFromLink(nodes: NodesResponse): SwarmMachine[] {
  * peer as `host`.
  */
 export function machineHasMlxNode(machine: SwarmMachine, devices: SwarmDeviceRow[]): boolean {
-  return devices.some((d) => {
-    if (d.engine !== 'mlx-sidecar') return false;
-    const host = d.host ?? null;
-    if (host === null) return machine.local;
-    return machine.names.includes(host);
-  });
+  return devices.some((d) => macOfMlxNode(d, [machine]) != null);
+}
+
+/**
+ * The Mac an MLX node runs on — the one rule the cap above uses: no `host` = this Mac, else the
+ * Mac whose name or hostname label is the host. null = not an MLX node, or a Mac the roster does
+ * not list. The Nodes table names a node by this Mac (Q-154: two rows both read "mihai", the
+ * prefix of their model ids).
+ */
+export function macOfMlxNode(
+  device: { engine?: string | null; host?: string | null },
+  machines: readonly SwarmMachine[]
+): SwarmMachine | null {
+  if (device.engine !== 'mlx-sidecar') return null;
+  const host = device.host ?? null;
+  return machines.find((m) => (host === null ? m.local : m.names.includes(host))) ?? null;
 }
 
 /**

@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "Kein Modell auf diesem Mac passt."
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Nicht bereitgestellt: Die Engine dieses Macs führt {model} aus"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Dieser Knoten ist auf {set} eingestellt, aber die Engine dieses Macs stellt {served} bereit. Arbeit, die an diesen Knoten geht, hat keine Engine für sein Modell, bis {set} hier läuft."
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "Modell für {node}"
   },

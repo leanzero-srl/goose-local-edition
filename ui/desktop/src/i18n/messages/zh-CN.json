@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "这台 Mac 上没有匹配的模型。"
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "未提供：这台 Mac 的引擎正在运行 {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "此节点设为 {set}，但这台 Mac 的引擎提供的是 {served}。在 {set} 于此运行之前，发往此节点的工作没有对应其模型的引擎。"
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "{node} 的模型"
   },

@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "Nessun modello su questo Mac corrisponde."
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Non servito: il motore di questo Mac esegue {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Questo nodo è impostato su {set}, ma il motore di questo Mac serve {served}. Il lavoro inviato a questo nodo non ha un motore per il suo modello finché {set} non gira qui."
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "Modello per {node}"
   },

@@ -5072,6 +5072,12 @@
   "nodeModelCell.noModels": {
     "defaultMessage": "Không có mô hình nào trên Mac này khớp."
   },
+  "nodeModelCell.notServed": {
+    "defaultMessage": "Không được phục vụ: engine của Mac này đang chạy {model}"
+  },
+  "nodeModelCell.notServedTitle": {
+    "defaultMessage": "Nút này được đặt là {set}, nhưng engine của Mac này đang phục vụ {served}. Công việc gửi tới nút này không có engine cho mô hình của nó cho đến khi {set} chạy ở đây."
+  },
   "nodeModelCell.pickAria": {
     "defaultMessage": "Mô hình cho {node}"
   },
