@@ -28,6 +28,9 @@ import ToolBoundsNotice from './toolBoundsNotice/ToolBoundsNotice';
 import { parseToolBoundsError } from './toolBoundsNotice/toolSchemaBounds';
 import LinkDropNotice from './linkDropNotice/LinkDropNotice';
 import { splitLinkDrop } from './linkDropNotice/parseLinkDrop';
+import { takeSplitRecord } from './chatServedBy/splitRecord';
+import { splitNetworkCut } from './noNodeNotice/parseNetworkCut';
+import SplitCutNotice from './noNodeNotice/SplitCutNotice';
 
 interface GooseMessageProps {
   sessionId: string;
@@ -54,7 +57,12 @@ export default function GooseMessage({
 }: GooseMessageProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
 
-  const { textContent: fullText, imagePaths } = getTextAndImageContent(message);
+  const { textContent: writtenText, imagePaths } = getTextAndImageContent(message);
+  // A failed turn carries the split's own record of why (Q-121, agents/split_record.rs): taken out
+  // of the text here, read by the notices below. An unreadable line stays in the text, seen.
+  const taken = useMemo(() => takeSplitRecord(writtenText), [writtenText]);
+  const fullText = taken.text;
+  const splitRecord = taken.kind === 'record' ? taken.record : null;
   // A turn the serving Mac dropped over LeanZero Link ends with the relay's error glued onto the
   // partial answer (Q-49): the answer renders as written, the drop as a notice below it.
   const linkDrop = useMemo(() => splitLinkDrop(fullText), [fullText]);
@@ -64,7 +72,19 @@ export default function GooseMessage({
     () => (linkDrop || isStreaming ? null : splitNoNodeRefusal(fullText)),
     [linkDrop, isStreaming, fullText]
   );
-  const displayText = linkDrop ? linkDrop.answer : noNode ? noNode.answer : fullText;
+  // A stream the split's stop cut ends with the provider's "Network error: …" (Q-122): only when
+  // the split's record came with it — without one nothing says the split served this turn.
+  const networkCut = useMemo(
+    () => (linkDrop || noNode || isStreaming || !splitRecord ? null : splitNetworkCut(fullText)),
+    [linkDrop, noNode, isStreaming, splitRecord, fullText]
+  );
+  const displayText = linkDrop
+    ? linkDrop.answer
+    : noNode
+      ? noNode.answer
+      : networkCut
+        ? networkCut.answer
+        : fullText;
   const thinkingContent = getThinkingContent(message);
 
   const timestamp = useMemo(() => formatMessageTimestamp(message.created), [message.created]);
@@ -148,7 +168,7 @@ export default function GooseMessage({
     return null;
   }, [isStreaming, message.content, displayText, noNode, answered]);
   const failureRetryText = useMemo(() => {
-    if (!failure && !linkDrop && !noNode) return null;
+    if (!failure && !linkDrop && !noNode && !networkCut) return null;
     for (let i = messageIndex - 1; i >= 0; i--) {
       if (messages[i].role !== 'user') continue;
       const { textContent, imagePaths: userImages } = getTextAndImageContent(messages[i]);
@@ -156,7 +176,7 @@ export default function GooseMessage({
       return userImages.length === 0 ? textContent : null;
     }
     return null;
-  }, [failure, linkDrop, noNode, messages, messageIndex]);
+  }, [failure, linkDrop, noNode, networkCut, messages, messageIndex]);
   const live = messageIndex === messages.length - 1;
   const createdMs = message.created * 1000;
 
@@ -171,6 +191,7 @@ export default function GooseMessage({
               retryText={failureRetryText}
               onRetry={append}
               createdMs={createdMs}
+              splitRecord={splitRecord}
             />
           ) : (
             <ToolBoundsNotice
@@ -205,16 +226,34 @@ export default function GooseMessage({
       onRetry={append}
       createdMs={createdMs}
       hasAnswer={answered}
+      splitRecord={splitRecord}
+    />
+  );
+  const splitCutNotice = networkCut && splitRecord && (
+    <SplitCutNotice
+      cut={networkCut}
+      record={splitRecord}
+      hasAnswer={answered}
+      live={live && !isStreaming}
+      retryText={failureRetryText}
+      onRetry={append}
     />
   );
 
-  // The drop arrived as its own message: nothing was written, so the notice is the message.
-  if (linkDrop && !displayText.trim() && imagePaths.length === 0 && toolRequests.length === 0) {
+  // The drop (or the cut) arrived as its own message: nothing was written, so the notice is the
+  // message.
+  if (
+    (linkDrop || splitCutNotice) &&
+    !displayText.trim() &&
+    imagePaths.length === 0 &&
+    toolRequests.length === 0
+  ) {
     return (
       <div className="goose-message flex w-[90%] justify-start min-w-0">
         <div className="flex flex-col w-full min-w-0">
           {thinkingContent && <ThinkingContent content={thinkingContent} isExpanded={false} />}
           {linkDropNotice}
+          {splitCutNotice}
           <div className="text-xs font-mono text-text-secondary pt-1">{timestamp}</div>
         </div>
       </div>
@@ -322,6 +361,7 @@ export default function GooseMessage({
 
         {linkDropNotice}
         {cutNotice}
+        {splitCutNotice}
       </div>
     </div>
   );

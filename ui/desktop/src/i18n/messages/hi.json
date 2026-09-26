@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "{peer} से सर्व हो रहा है — जब तक चैट वहाँ जाती है, इस Mac का अपना इंजन अलग रखा गया है।"
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "चैट अब {peer} पर जाती है"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "मॉडल फिर से चल रहा है — अपना संदेश भेजने के लिए फिर से प्रयास करें।"
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — ऊपर का उत्तर वहीं रुक जाता है।} other {{reason} — कोई और यह संदेश नहीं ले सका।}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — उत्तर का कोई भी हिस्सा लिखे जाने से पहले ही वह कट गया।"
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {आपके Macs में विभाजन उत्तर के बीच में रुक गया} other {आपके Macs में विभाजन रुक गया}}"

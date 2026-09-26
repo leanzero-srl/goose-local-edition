@@ -18,6 +18,8 @@ import {
   cx,
 } from '../lz';
 import { splitStopAt, type SplitStop } from '../chatServedBy/splitStop';
+import { refusalStopFromRecord, type SplitRecord } from '../chatServedBy/splitRecord';
+import { routeServesChat } from '../chatServedBy/chatServedBy';
 import { splitStopReason } from '../chatServedBy/splitStopText';
 import { ENGINE_ROUTE } from './ComposerReadiness';
 import type { NoNodeRow, NodeReason } from './parseNoNodeError';
@@ -123,21 +125,31 @@ const i18n = defineMessages({
     id: 'noNodeNotice.splitBack',
     defaultMessage: 'The model is running again — retry to send your message.',
   },
+  splitSummaryCut: {
+    id: 'noNodeNotice.splitSummaryCut',
+    defaultMessage: '{reason} — the answer was cut before any of it was written.',
+  },
+  servedElsewhere: {
+    id: 'noNodeNotice.servedElsewhere',
+    defaultMessage: 'Chat goes to {peer} now',
+  },
   openEngine: { id: 'noNodeNotice.openEngine', defaultMessage: 'Open Engine' },
   details: { id: 'noNodeNotice.details', defaultMessage: 'Details' },
 });
 
 /**
- * The refusal of a turn that met the split already stopped — or an answer the stop CUT (Q-81): said
- * as the split and why, never as "no model is mounted" on this Mac's single engine, which chat was
- * not on. Retry resends; the router's words about this Mac's engine port and the supervisor's own
- * words stay behind Details. Starting the split again or running on one Mac is the composer bar's
- * (one place for the actions).
+ * The refusal of a turn that met the split already stopped — or an answer the stop CUT (Q-81,
+ * Q-122): said as the split and why, never as "no model is mounted" on this Mac's single engine,
+ * which chat was not on, nor as a bare "Network error". Retry resends; the router's words about
+ * this Mac's engine port, the stream's error and the supervisor's own words stay behind Details.
+ * Starting the split again or running on one Mac is the composer bar's (one place for the actions).
  */
-function SplitStoppedNotice({
+export function SplitStoppedNotice({
   stop,
   rows,
   hasAnswer,
+  cut = false,
+  errorText = null,
   live,
   back,
   retryText,
@@ -146,6 +158,10 @@ function SplitStoppedNotice({
   stop: SplitStop;
   rows: NoNodeRow[];
   hasAnswer: boolean;
+  /** The stop cut this turn's own stream (it was not refused afterwards). */
+  cut?: boolean;
+  /** The failure as goose wrote it (the stream's error), for Details. */
+  errorText?: string | null;
   live: boolean;
   back: boolean;
   retryText: string | null;
@@ -153,7 +169,12 @@ function SplitStoppedNotice({
 }) {
   const intl = useIntl();
   const navigate = useNavigate();
-  const answer = hasAnswer ? 'yes' : 'no';
+  const answer = hasAnswer || cut ? 'yes' : 'no';
+  const reason = splitStopReason(intl, stop);
+  const summary =
+    cut && !hasAnswer
+      ? intl.formatMessage(i18n.splitSummaryCut, { reason })
+      : intl.formatMessage(i18n.splitSummary, { answer, reason });
   return (
     <div
       role="alert"
@@ -167,10 +188,7 @@ function SplitStoppedNotice({
             {intl.formatMessage(i18n.splitTitle, { answer })}
           </h3>
           <p data-testid="no-node-split-summary" className={TYPE.body}>
-            {intl.formatMessage(i18n.splitSummary, {
-              answer,
-              reason: splitStopReason(intl, stop),
-            })}
+            {summary}
           </p>
         </div>
       </div>
@@ -210,6 +228,14 @@ function SplitStoppedNotice({
               {row.nodeId ? `${row.nodeId}: ${row.raw}` : row.raw}
             </p>
           ))}
+          {errorText && (
+            <p
+              data-testid="no-node-split-error"
+              className={cx(TYPE.meta, 'whitespace-pre-wrap break-words font-mono')}
+            >
+              {errorText}
+            </p>
+          )}
           <p data-testid="no-node-split-raw" className={cx(TYPE.meta, 'break-words font-mono')}>
             {stop.raw}
           </p>
@@ -281,6 +307,7 @@ export default function NoNodeNotice({
   onRetry,
   createdMs = null,
   hasAnswer = false,
+  splitRecord = null,
 }: {
   rows: NoNodeRow[];
   live: boolean;
@@ -291,6 +318,12 @@ export default function NoNodeNotice({
   createdMs?: number | null;
   /** The model wrote part of an answer before this refusal — the notice renders below it. */
   hasAnswer?: boolean;
+  /**
+   * The split's record goose saved WITH this refusal (Q-121): the split stop is read from it, so
+   * history says what the live notice said after the split's in-memory events are gone. null = none
+   * saved (an older message, or no split in that goosed) — the live events are read, as before.
+   */
+  splitRecord?: SplitRecord | null;
   /** The last user turn's text; null when there is none that can be resent faithfully. */
   retryText: string | null;
   onRetry: (text: string) => void;
@@ -328,14 +361,22 @@ export default function NoNodeNotice({
   const mlxFacts = rows.map(liveFactOf).filter((f): f is EngineFact => f != null);
   const anyMounting = requestingNodeId != null || mlxFacts.includes('mounting');
   const allUp = mlxFacts.length > 0 && mlxFacts.every((f) => f === 'up');
-  const retryPrimary = !mlxDown || allUp;
+  const routeReady = routeServesChat(route, distributed) && route.state === 'ready';
+  const retryPrimary = !mlxDown || allUp || routeReady;
 
   // Chat was on the split and the split had stopped (or stopped under this very answer): that is
-  // the fact, not "no model is mounted" (Q-81). The message's time is floored to the second.
+  // the fact, not "no model is mounted" (Q-81). The message's time is floored to the second. The
+  // record saved with the message wins over the live events, which a relaunch empties (Q-121).
+  const deathBy = createdMs == null || hasAnswer ? null : createdMs + SECOND_MS - 1;
   const splitStop =
-    mlxDown && createdMs != null
-      ? splitStopAt(distributed, createdMs, hasAnswer ? null : createdMs + SECOND_MS - 1)
-      : null;
+    !mlxDown || createdMs == null
+      ? null
+      : splitRecord
+        ? refusalStopFromRecord(splitRecord, createdMs, deathBy)
+        : splitStopAt(distributed, createdMs, deathBy);
+  // Chat goes to another Mac's engine now (the Studio route): mounting THIS Mac's engine is not
+  // what serves chat, so it is never offered (Q-121) — the row says where chat goes instead.
+  const servedElsewhere = routeServesChat(route, distributed) ? route : null;
   if (splitStop) {
     return (
       <SplitStoppedNotice
@@ -353,6 +394,15 @@ export default function NoNodeNotice({
   const renderMlxAction = (row: NoNodeRow) => {
     if (!armed || row.nodeId == null) return null;
     const nodeId = row.nodeId;
+    if (servedElsewhere) {
+      return (
+        <span data-testid={`no-node-served-elsewhere-${nodeId}`}>
+          <Chip tone={servedElsewhere.state === 'ready' ? 'ok' : 'warn'}>
+            {intl.formatMessage(i18n.servedElsewhere, { peer: routePeerName(servedElsewhere) })}
+          </Chip>
+        </span>
+      );
+    }
     if (lookup.state === 'loading') {
       return <Loader2 aria-label="loading" className="size-4 animate-spin text-lz-ink-3" />;
     }

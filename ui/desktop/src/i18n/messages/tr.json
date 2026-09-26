@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "{peer} üzerinden sunuluyor — sohbet oraya gittiği sürece bu Mac'in kendi motoru devre dışı."
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "Sohbet artık {peer} cihazına gidiyor"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "Model yeniden çalışıyor — mesajını göndermek için yeniden dene."
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — yukarıdaki yanıt orada kesiliyor.} other {{reason} — bu mesajı başka hiçbir şey alamadı.}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — yanıt, herhangi bir kısmı yazılmadan önce kesildi."
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {Mac’lerin arasındaki bölme yanıtın ortasında durdu} other {Mac’lerin arasındaki bölme durdu}}"

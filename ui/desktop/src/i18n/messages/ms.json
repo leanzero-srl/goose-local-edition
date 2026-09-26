@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Dihidangkan dari {peer} — enjin Mac ini sendiri diketepikan selagi sembang dihantar ke sana."
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "Sembang kini pergi ke {peer}"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "Model berjalan semula — cuba lagi untuk menghantar mesej anda."
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — jawapan di atas berhenti di situ.} other {{reason} — tiada yang lain dapat menerima mesej ini.}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — jawapan terputus sebelum apa-apa bahagiannya ditulis."
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {Pembahagian merentas Mac anda berhenti di tengah jawapan} other {Pembahagian merentas Mac anda berhenti}}"

@@ -14,6 +14,7 @@ use super::container::Container;
 use super::final_output_tool::FinalOutputTool;
 use super::mcp_client::GooseMcpHostInfo;
 use super::platform_tools;
+use super::split_record;
 use super::tool_confirmation_router::ToolConfirmationRouter;
 use super::tool_execution::{ToolCallResult, CHAT_MODE_TOOL_SKIPPED_RESPONSE, DECLINED_RESPONSE};
 use crate::action_required_manager::ElicitationOutcome;
@@ -2205,6 +2206,7 @@ impl Agent {
 
                 let (disclosed_tools, disclosed_prompt) =
                     self.disclose_tools(&tools, &system_prompt, conversation.messages()).await;
+                let provider_call_started_ms = chrono::Utc::now().timestamp_millis();
                 let mut stream = Self::stream_response_from_provider(
                     self.provider().await?,
                     model_config.clone(),
@@ -2813,8 +2815,13 @@ impl Agent {
                             #[cfg(feature = "telemetry")]
                             crate::posthog::emit_error(provider_err.telemetry_type(), &provider_err.to_string());
                             error!("Error: {}", provider_err);
+                            let split = split_record::split_record_now(provider_call_started_ms);
                             let message = Message::assistant().with_text(
-                                format!("{provider_err}\n\nPlease resend your message to try again.")
+                                split_record::failed_turn_text(
+                                    &provider_err.to_string(),
+                                    split.as_deref(),
+                                    "Please resend your message to try again.",
+                                )
                             ).user_only();
                             messages_to_add.push(message.clone());
                             yield AgentEvent::Message(message);
@@ -2825,8 +2832,13 @@ impl Agent {
                             #[cfg(feature = "telemetry")]
                             crate::posthog::emit_error(provider_err.telemetry_type(), &provider_err.to_string());
                             error!("Error: {}", provider_err);
+                            let split = split_record::split_record_now(provider_call_started_ms);
                             let message = Message::assistant().with_text(
-                                format!("Ran into this error: {provider_err}.\n\nPlease retry if you think this is a transient or recoverable error.")
+                                split_record::failed_turn_text(
+                                    &format!("Ran into this error: {provider_err}."),
+                                    split.as_deref(),
+                                    "Please retry if you think this is a transient or recoverable error.",
+                                )
                             ).user_only();
                             messages_to_add.push(message.clone());
                             yield AgentEvent::Message(message);

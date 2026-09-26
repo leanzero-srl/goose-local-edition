@@ -53,9 +53,16 @@ const ENDING_KINDS = new Set([
 ]);
 const MEMORY_KINDS = new Set(['watchdogWarn', 'watchdogCritical']);
 
+/** The Macs a split ran on: the running nodes, else the ones its config names. */
+export function splitMacNames(running: string[], configured: string[]): string[] {
+  return running.length > 0 ? running : configured;
+}
+
 function splitMacs(status: MlxDistributedStatus): string[] {
-  const running = status.nodes.map((n) => n.name);
-  return running.length > 0 ? running : (status.config?.nodes ?? []).map((n) => n.name);
+  return splitMacNames(
+    status.nodes.map((n) => n.name),
+    (status.config?.nodes ?? []).map((n) => n.name)
+  );
 }
 
 /**
@@ -90,7 +97,33 @@ export function splitStopAt(
 ): SplitStop | null {
   if (!status || foreignOwner(status)) return null;
   if (atMs == null && ownsTheMac(status)) return null;
-  const events = status.events;
+  const macs = splitMacs(status);
+  const found = splitStopIn(status.events, macs, atMs, deathByMs);
+  if (!found) return null;
+  const { stop, death } = found;
+  const node =
+    atMs == null && stop.mac != null ? status.nodes.find((n) => n.name === stop.mac) : undefined;
+  return {
+    ...stop,
+    availableGb: node?.availableMemoryGb ?? null,
+    totalGb: node?.totalMemoryGb ?? null,
+    raw: (atMs == null ? status.lastError : null) ?? death.message,
+    modelId: status.modelId ?? null,
+  };
+}
+
+/**
+ * THE rule, over any list of the supervisor's events — the live status's or the record a failed
+ * turn saved with itself (`splitRecord.ts`, Q-121). Bounds as `splitStopAt`'s; `atMs` null = no
+ * bound. The memory sample, the raw words and the model are the caller's: only the live status
+ * has a sample, and the two sources carry the rest differently.
+ */
+export function splitStopIn(
+  events: MlxDistributedEvent[],
+  macs: string[],
+  atMs: number | null,
+  deathByMs: number | null = atMs
+): { stop: SplitStop; death: MlxDistributedEvent } | null {
   const readyBy = atMs ?? Number.POSITIVE_INFINITY;
   const deathBy = deathByMs ?? Number.POSITIVE_INFINITY;
   let ready = -1;
@@ -109,7 +142,6 @@ export function splitStopAt(
   }
   if (deathAt < 0) return null;
   const death = events[deathAt];
-  const macs = splitMacs(status);
   let mac = namedMac(death, macs);
   let memoryWarned = false;
   for (let i = ready + 1; i < deathAt; i++) {
@@ -120,15 +152,17 @@ export function splitStopAt(
     if (mac == null) mac = warned;
     if (warned === mac) memoryWarned = true;
   }
-  const node = atMs == null && mac != null ? status.nodes.find((n) => n.name === mac) : undefined;
   return {
-    mac,
-    cause: causeOf(death, memoryWarned),
-    availableGb: node?.availableMemoryGb ?? null,
-    totalGb: node?.totalMemoryGb ?? null,
-    atMs: death.atMs,
-    raw: (atMs == null ? status.lastError : null) ?? death.message,
-    macs,
-    modelId: status.modelId ?? null,
+    death,
+    stop: {
+      mac,
+      cause: causeOf(death, memoryWarned),
+      availableGb: null,
+      totalGb: null,
+      atMs: death.atMs,
+      raw: death.message,
+      macs,
+      modelId: null,
+    },
   };
 }

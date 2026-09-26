@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "{peer} から提供中 — チャットがそちらに向かう間、この Mac 自身のエンジンは使われません。"
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "チャットは現在 {peer} に送られます"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "モデルが再び動いています — 再試行してメッセージを送信してください。"
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — 上の回答はそこで止まっています。} other {{reason} — ほかにこのメッセージを受けられるものはありませんでした。}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — 回答は何も書かれる前に途切れました。"
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {Mac 間の分割が回答の途中で停止しました} other {Mac 間の分割が停止しました}}"

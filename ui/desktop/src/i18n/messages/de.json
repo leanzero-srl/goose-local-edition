@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Bereitgestellt von {peer} — die eigene Engine dieses Mac wird beiseitegestellt, solange der Chat dorthin geht."
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "Chat geht jetzt an {peer}"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "Das Modell läuft wieder — wiederhole den Versuch, um deine Nachricht zu senden."
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — die Antwort oben endet dort.} other {{reason} — nichts anderes konnte diese Nachricht annehmen.}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — die Antwort wurde abgebrochen, bevor etwas davon geschrieben war."
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {Die Aufteilung auf deine Macs wurde mitten in der Antwort gestoppt} other {Die Aufteilung auf deine Macs wurde gestoppt}}"

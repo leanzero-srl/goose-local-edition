@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Обслуживается с {peer} — собственный движок этого Mac не используется, пока чат идёт туда."
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "Чат теперь идёт на {peer}"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "Модель снова работает — повторите, чтобы отправить сообщение."
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — ответ выше обрывается здесь.} other {{reason} — больше ничто не смогло принять это сообщение.}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — ответ оборвался до того, как была написана хоть какая-то его часть."
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {Разделение между вашими Mac остановилось посреди ответа} other {Разделение между вашими Mac остановилось}}"

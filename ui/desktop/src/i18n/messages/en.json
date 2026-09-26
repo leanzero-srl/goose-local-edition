@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Serving from {peer} — this Mac’s own engine is set aside while chat goes there."
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "Chat goes to {peer} now"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "The model is running again — retry to send your message."
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer,select,yes{{reason} — the answer above stops there.} other{{reason} — nothing else could take this message.}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — the answer was cut before any of it was written."
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer,select,yes{The split across your Macs stopped mid-answer} other{The split across your Macs stopped}}"
