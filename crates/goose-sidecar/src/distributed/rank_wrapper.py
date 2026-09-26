@@ -54,6 +54,9 @@
 #   trail, published at every step and printed by the reporter; and, on SIGTERM, every thread's
 #   Python stack. Both land in the rank's durable log (goosed's rank_log.rs), so a stall leaves each
 #   rank's position behind — Q-114's could not be told apart for want of rank 1's.
+# - every batch cache counter a step advanced is evaluated with the step (Q-114, `settle_counters`):
+#   mlx_lm's lazy `left_padding -= N` pinned one Metal buffer per unread linear-attention layer per
+#   decode step, and the 27B hit MLX's 499,000-buffer limit at ~10.5k generated tokens.
 group = mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -160,6 +163,7 @@ for owner, name in (
     (server.BatchGenerator, "close"),
     (server.BatchGenerator, "remove"),
     (server.BatchGenerator, "prompt_cache_nbytes"),
+    (ArraysCache, "advance"),
 ):
     if not hasattr(owner, name):
         raise SystemExit(
@@ -279,6 +283,36 @@ live_batch = []
 # The bounded prompt cache mlx_lm's `run` built (one per process).
 prompt_caches = []
 
+# Q-114, measured: mlx_lm 0.31.3's `ArraysCache.advance` decrements a batch cache's
+# `left_padding` (every batch cache carries one — `_make_cache` sets it even for one row) and
+# `lengths` LAZILY, and each `-= N` materialises N as a new constant: one Metal buffer. The
+# qwen3_5 27B has 48 linear-attention layers and only the first one's counter is ever read
+# (`create_ssm_mask(..., cache[ssm_idx])`), so the other 47 grow an unevaluated chain that pins
+# one buffer per decode step each — until MLX's `resource_limit` (499,000) refuses the next
+# allocation: `[metal::malloc] Resource limit (499000) exceeded` from inside a step's
+# async_eval, at ~10.5k generated tokens (E2E #3b 10,447; repro A1 10,522, B2 10,537). MLX
+# 0.32.2's eval_impl then deadlocks in its own error path (it synchronizes the CPU stream behind
+# a fence wait whose GPU signal the aborted step never committed), swallowing the error: the
+# rank stops in `async_eval`, the peer spins in the step's all_sum, and the peer's GPU times out.
+# Every counter a step advanced is evaluated with the step (one async_eval of the step's scalars),
+# so each chain is one node long and holds nothing. Values and collectives are unchanged.
+upstream_advance = ArraysCache.advance
+advanced_counters = []
+
+
+def advance(self, N):
+    upstream_advance(self, N)
+    advanced_counters.extend(c for c in (self.left_padding, self.lengths) if c is not None)
+
+
+def settle_counters():
+    if advanced_counters:
+        mx.async_eval(advanced_counters)
+        advanced_counters.clear()
+
+
+ArraysCache.advance = advance
+
 
 class TrackedBatchGenerator(server.BatchGenerator):
     def __init__(self, *args, **kwargs):
@@ -307,6 +341,7 @@ class TrackedBatchGenerator(server.BatchGenerator):
 
     def next(self):
         responses = super().next()
+        settle_counters()
         for response in responses[1]:
             loop.fold(response.uid, response.token, response.finish_reason)
         # Generation grows every row one token a step, past what the last admission charged: the

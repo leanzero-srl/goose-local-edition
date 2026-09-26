@@ -1192,3 +1192,192 @@ async fn live_flash_at_the_ceiling_rule_after_compaction() {
         "not every request was answered: {answers:?}"
     );
 }
+
+/// Q-114 on the real pair: one decode long enough to pass the step at which mlx_lm 0.31.3's
+/// unread `ArraysCache.left_padding` chains exhausted MLX's Metal `resource_limit` (499,000) on
+/// the 27B — 47 buffers a step, measured hanging at 10,447 / 10,522 / 10,537 generated tokens
+/// (E2E #3b, repro A1, repro B2) with `[metal::malloc] Resource limit (499000) exceeded` thrown
+/// inside the step's async_eval on both ranks. With the wrapper settling each step's counters the
+/// same decode runs to its budget and ends with `[DONE]`, and the supervisor reports no hang.
+/// `GOOSE_Q114_MAX_TOKENS` (default twice the latest measured hang point) sets the budget.
+#[tokio::test]
+#[ignore = "needs both Macs and the owner's 27B on each; one decode of ~22k tokens (~35 min)"]
+async fn live_q114_a_decode_runs_past_the_metal_resource_limit() {
+    use goose_sidecar::distributed::EventKind;
+    const LATEST_MEASURED_HANG_TOKENS: u64 = 10_537;
+    let max_tokens: u64 = std::env::var("GOOSE_Q114_MAX_TOKENS")
+        .ok()
+        .map(|v| v.parse().unwrap())
+        .unwrap_or(2 * LATEST_MEASURED_HANG_TOKENS);
+    let config = recorded_config();
+    let base = config.base_url();
+    let model = unaliased(&config);
+    let manager = DistributedManager::new(Arc::new(SystemExec));
+    match manager.start(config.clone(), model.clone()).await.unwrap() {
+        StartOutcome::Started { .. } => {}
+        StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
+    }
+    wait_serving(&manager, None).await;
+    let t0 = Instant::now();
+    let mut resp = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "model": model,
+                "messages": [{"role": "user", "content": "Count from 1 to 30000, one number per line, nothing else."}],
+                "max_tokens": max_tokens,
+                "stream": true,
+                "stream_options": {"include_usage": true},
+                "chat_template_kwargs": {"enable_thinking": false},
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    let mut text = String::new();
+    let mut reported = 0;
+    while let Some(bytes) = resp.chunk().await.unwrap() {
+        text.push_str(&String::from_utf8_lossy(&bytes));
+        let chunks = text.matches("data: {").count();
+        if chunks >= reported + 1000 {
+            reported = chunks;
+            println!("{:>7.1}s {chunks} chunks", t0.elapsed().as_secs_f64());
+        }
+    }
+    let elapsed = t0.elapsed().as_secs_f64();
+    let usage: serde_json::Value = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("data: "))
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|j| j.get("usage").cloned())
+        .next_back()
+        .unwrap_or_else(|| {
+            panic!(
+                "no usage in the stream's tail: {}",
+                &text[text.len().saturating_sub(600)..]
+            )
+        });
+    let completion = usage["completion_tokens"].as_u64().unwrap();
+    println!(
+        "done={} completion {completion} tokens in {elapsed:.0}s ({:.2} tok/s) usage {usage}",
+        text.contains("data: [DONE]"),
+        completion as f64 / elapsed
+    );
+    let events = manager.status().events;
+    for event in &events {
+        println!(
+            "event {:?} {:?}: {}",
+            event.kind,
+            event.node,
+            event.message.lines().next().unwrap_or_default()
+        );
+    }
+    let stop = manager.stop().await;
+    assert!(stop.verified, "{stop:#?}");
+    assert!(
+        text.contains("data: [DONE]"),
+        "the decode ended without [DONE]"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::Hang | EventKind::RankDied)),
+        "the supervisor saw the pair stop"
+    );
+    assert!(
+        completion > LATEST_MEASURED_HANG_TOKENS,
+        "the decode ended at {completion} tokens, before the point it used to hang"
+    );
+}
+
+/// Q-114's second road into the same silent hang, and the blind spot it went through: any stall
+/// of one rank longer than Metal's command-buffer wait (~5 s) times out the GPUs waiting on the
+/// step's collective, MLX poisons their encoders, and the next encode throws into the eval error
+/// path that deadlocks (repro B1, 2026-09-26 15:47:26: a `vmmap` of rank 0 suspended it; the pair
+/// then sat 4 min 19 s with rank 0 `S` and rank 1 `R`, and the progress-ratio rule never fired —
+/// both ranks' CPU time kept moving). Here rank 0 is SIGSTOPped for twice that wait, then
+/// continued (`GOOSE_Q114_STALL_RANK=1`: the peer); `hang_ratio_only` keeps the ps-stat-T fast path out of it. The pair must end LOUDLY
+/// (a `hang` read on GPU time, or a rank's own death) — never sit silent.
+#[tokio::test]
+#[ignore = "needs both Macs and the owner's 27B on each; stalls rank 0 for 10 s mid-decode"]
+async fn live_q114_a_transient_rank_stall_ends_loudly() {
+    use goose_sidecar::distributed::EventKind;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    const METAL_COMMAND_BUFFER_WAIT: Duration = Duration::from_secs(5);
+    let mut config = recorded_config();
+    config.hang_ratio_only = true;
+    let base = config.base_url();
+    let model = unaliased(&config);
+    let manager = DistributedManager::new(Arc::new(SystemExec));
+    match manager.start(config.clone(), model.clone()).await.unwrap() {
+        StartOutcome::Started { .. } => {}
+        StartOutcome::Refused { code, message, .. } => panic!("refused {code:?}: {message}"),
+    }
+    wait_serving(&manager, None).await;
+    // `GOOSE_Q114_STALL_RANK=1` stalls the peer (over ssh) instead of this Mac's rank 0.
+    let stalled_rank: usize = std::env::var("GOOSE_Q114_STALL_RANK")
+        .map(|r| r.parse().unwrap())
+        .unwrap_or(0);
+    let pid = manager.status().nodes[stalled_rank]
+        .pid
+        .expect("the stalled rank runs");
+    let seen = Arc::new(AtomicUsize::new(0));
+    let stream = tokio::spawn(stream_completion(
+        base.clone(),
+        model.clone(),
+        3000,
+        Arc::clone(&seen),
+    ));
+    while seen.load(Ordering::SeqCst) < 300 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let signal = |name: &str| {
+        if stalled_rank == 0 {
+            let out = std::process::Command::new("/bin/kill")
+                .args([&format!("-{name}"), &pid.to_string()])
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+        } else {
+            ssh_signal(name, pid);
+        }
+    };
+    let stalled_at = Instant::now();
+    signal("STOP");
+    tokio::time::sleep(2 * METAL_COMMAND_BUFFER_WAIT).await;
+    signal("CONT");
+    println!(
+        "rank {stalled_rank} pid {pid} stopped for {:?} after {} chunks",
+        stalled_at.elapsed(),
+        seen.load(Ordering::SeqCst)
+    );
+    let ended = loop {
+        let status = manager.status();
+        if matches!(status.state, RunState::Failed | RunState::Stopped) {
+            break status;
+        }
+        assert!(
+            stalled_at.elapsed() < Duration::from_secs(300),
+            "silent: 300 s after the stall the pair is still {:?}, liveness {:?}",
+            status.state,
+            status.liveness
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    let (chunks, done, how) = stream.await.unwrap();
+    println!(
+        "ended {:?} {:?} after the stall; client {chunks} chunks, [DONE]={done}, {how}",
+        ended.state,
+        stalled_at.elapsed()
+    );
+    print_events(&manager, 0);
+    let loud = ended
+        .events
+        .iter()
+        .find(|e| matches!(e.kind, EventKind::Hang | EventKind::RankDied))
+        .expect("the pair ended on a hang or a rank's death");
+    println!("loud: {:?}: {}", loud.kind, loud.message);
+    manager.stop().await;
+}

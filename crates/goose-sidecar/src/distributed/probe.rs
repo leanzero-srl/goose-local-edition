@@ -225,6 +225,20 @@ impl ProcSample {
     }
 }
 
+/// A process's GPU time in ns: the sum of every `accumulatedGPUTime` in the `AppUsage` lines
+/// `sample_script`'s `@@gputime` section printed for its Metal clients (none yet = 0).
+pub fn parse_gpu_ns(text: &str) -> Result<u64> {
+    text.split("\"accumulatedGPUTime\"=")
+        .skip(1)
+        .map(|rest| {
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            digits
+                .parse::<u64>()
+                .with_context(|| format!("unreadable accumulatedGPUTime in: {text}"))
+        })
+        .sum()
+}
+
 pub fn parse_ps_row(text: &str) -> Result<Option<ProcSample>> {
     let Some(line) = text.lines().map(str::trim).find(|l| !l.is_empty()) else {
         return Ok(None);
@@ -854,6 +868,15 @@ Pages occupied by compressor:                 649325.
             SseVerdict::Truncated { chunks: 54 }
         );
         assert_eq!(sse_verdict(""), SseVerdict::Truncated { chunks: 0 });
+    }
+
+    /// The AppUsage lines the sample printed for the 27B's rank 1 on the Studio (2026-09-26,
+    /// mid-decode) and a client that has not submitted yet: every entry summed, an empty one is 0.
+    #[test]
+    fn gpu_time_sums_every_metal_client_of_the_rank() {
+        let text = "      \"AppUsage\" = ({\"API\"=\"Metal\",\"lastSubmittedTime\"=0,\"accumulatedGPUTime\"=0},{\"API\"=\"Metal\",\"lastSubmittedTime\"=294351842493625,\"accumulatedGPUTime\"=79033999958})\n      \"AppUsage\" = ({\"API\"=\"Metal\",\"lastSubmittedTime\"=1,\"accumulatedGPUTime\"=42})\n      \"AppUsage\" = ()\n";
+        assert_eq!(parse_gpu_ns(text).unwrap(), 79_033_999_958 + 42);
+        assert_eq!(parse_gpu_ns("").unwrap(), 0);
     }
 
     #[test]

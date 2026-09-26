@@ -1538,6 +1538,7 @@ from mlx_lm.generate import GenerationBatch, SequenceStateMachine
 from mlx_lm.models.cache import LRUPromptCache
 
 assert server.run is run and issubclass(server.BatchGenerator, mlx_generate.BatchGenerator)
+assert ArraysCache.advance is advance
 assert issubclass(server.LRUPromptCache, LRUPromptCache)
 assert mlx_generate.PromptProcessingBatch.prompt is prompt
 assert mlx_generate.PromptProcessingBatch.split is split
@@ -1721,7 +1722,7 @@ print("GOOSE_TEST " + json.dumps({
                 .find("\nserved = spec[")
                 .expect("the prelude ends where the spec is read");
         let program = format!(
-            "import types\nfrom mlx_lm.models.cache import BatchKVCache\n\
+            "import types\nfrom mlx_lm.models.cache import ArraysCache, BatchKVCache\n\
              spec = {{\"prefill\": {{}}, \"prompt_cache_limit_bytes\": 1}}\n{}\n\
              assert isinstance(mlx_generate, types.ModuleType), mlx_generate\n\
              assert isinstance(server, types.ModuleType), server\nprint(\"ok\")\n",
@@ -1737,6 +1738,93 @@ print("GOOSE_TEST " + json.dumps({
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Q-114's cause against the REAL mlx_lm 0.31.3 and MLX 0.32.2 allocator: the 27B's decode
+    /// step shape — mlx_lm's own `_make_cache` over 48 linear-attention caches, each advanced one
+    /// token a step, only the first one's counter read (as `create_ssm_mask` reads
+    /// `cache[ssm_idx]`). Upstream's `advance` pins one Metal buffer per unread counter per step
+    /// until MLX refuses an allocation at its `resource_limit` (the rank's
+    /// `[metal::malloc] Resource limit (499000) exceeded`, E2E #3b at 10,447 tokens); with the
+    /// wrapper's `advance` + `settle_counters` per step the same steps run past that point.
+    /// The step count is derived from the device's own limit, not typed.
+    #[test]
+    fn a_step_settles_the_counters_it_advanced_so_metal_resources_stay_flat() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("upstream_advance = ArraysCache.advance")
+            .expect("the wrapper keeps upstream's advance");
+        let end = start
+            + wrapper[start..]
+                .find("ArraysCache.advance = advance\n")
+                .expect("the wrapper installs its advance")
+            + "ArraysCache.advance = advance\n".len();
+        let checks = r#"
+import json
+import types
+mx.set_default_device(mx.cpu)
+from mlx_lm.generate import _make_cache
+
+LAYERS = 48
+limit = int(mx.device_info(mx.gpu)["resource_limit"])
+
+def caches():
+    model = types.SimpleNamespace(make_cache=lambda: [ArraysCache(2) for _ in range(LAYERS)])
+    return _make_cache(model, [0], None)
+
+def run(steps, advance_one, after_step):
+    layers = caches()
+    for step in range(1, steps + 1):
+        mx.eval(layers[0].make_mask(1))
+        for layer in layers:
+            advance_one(layer)
+        after_step()
+    return [int(layers[0].left_padding.item()), int(layers[-1].left_padding.item())]
+
+# Past the step at which upstream exhausts the device's resources, with margin.
+steps = limit // (LAYERS - 1) + limit // (10 * (LAYERS - 1))
+settled = run(steps, lambda layer: layer.advance(1), settle_counters)
+threw_at = None
+try:
+    run(steps, lambda layer: upstream_advance(layer, 1), lambda: None)
+except RuntimeError as refusal:
+    threw_at = str(refusal)
+print("GOOSE_TEST " + json.dumps({"steps": steps, "limit": limit, "settled": settled, "upstream": threw_at}))
+"#;
+        let program = format!(
+            "import mlx.core as mx\n{}{}{checks}",
+            include_str!("rank_batch.py"),
+            &wrapper[start..end]
+        );
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(program)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{stdout}{stderr}");
+        let seen: serde_json::Value = serde_json::from_str(
+            stdout
+                .lines()
+                .find_map(|l| l.strip_prefix("GOOSE_TEST "))
+                .unwrap_or_else(|| panic!("{stdout}{stderr}")),
+        )
+        .unwrap();
+        let steps = seen["steps"].as_i64().unwrap();
+        assert_eq!(
+            seen["settled"],
+            serde_json::json!([-steps, -steps]),
+            "every counter still reads its true value after the settled steps: {seen}"
+        );
+        let upstream = seen["upstream"].as_str().unwrap_or_default();
+        assert!(
+            upstream.contains("Resource limit"),
+            "negative control: upstream's advance exhausts MLX's resources within the same steps: {seen}"
         );
     }
 
@@ -2055,7 +2143,8 @@ print("ok")
              def clear_cache(): pass\n\
              class array: pass\n\
              def contiguous(x): return x\n\
-             def eval(*arrays): pass\n",
+             def eval(*arrays): pass\n\
+             def async_eval(*arrays): pass\n",
         )
         .unwrap();
         std::fs::write(site.join("mlx_lm/__init__.py"), "__version__ = '0.31.3'\n").unwrap();
@@ -2064,7 +2153,8 @@ print("ok")
         std::fs::write(
             site.join("mlx_lm/models/cache.py"),
             "class KVCache: pass\n\
-             class ArraysCache: pass\n\
+             class ArraysCache:\n\
+             \x20   def advance(self, N): pass\n\
              class BatchKVCache:\n\
              \x20   step = 256\n",
         )
