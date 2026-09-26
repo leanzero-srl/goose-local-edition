@@ -50,9 +50,22 @@ const i18n = defineMessages({
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export type MlxTrayRendererAction = 'mount' | 'unmount' | 'stop-distributed' | 'stop-remote';
+export type MlxTrayRendererAction =
+  | 'mount'
+  | 'unmount'
+  | 'stop-distributed'
+  | 'stop-remote'
+  | 'run-here'
+  | 'stop-waiting';
 
-const RENDERER_ACTIONS: readonly string[] = ['mount', 'unmount', 'stop-distributed', 'stop-remote'];
+const RENDERER_ACTIONS: readonly string[] = [
+  'mount',
+  'unmount',
+  'stop-distributed',
+  'stop-remote',
+  'run-here',
+  'stop-waiting',
+];
 
 /** A stop whose ranks were not all observed gone — the steps say which pid was left. */
 export class DistributedStopNotVerified extends Error {
@@ -75,6 +88,14 @@ export async function runMlxTrayAction(action: MlxTrayRendererAction): Promise<v
     // its Mac is not answering; a peer that keeps its model is the quiet PeerHeldLine, not a toast.
     await dropRoute().routeGone;
     return;
+  }
+  if (action === 'stop-waiting' || action === 'run-here') {
+    // Offered only while the route's Mac is gone (mlxTray `peerGoneModel`): withdrawn here, that
+    // Mac never asked. "Run on this Mac instead" then brings this Mac's engine up unless it is.
+    await dropRoute('gone').routeGone;
+    if (action === 'stop-waiting') return;
+    const here = await mlxEngineStatus();
+    if (here.state === 'running' || here.state === 'mounting') return;
   }
   if (action === 'stop-distributed') {
     const { stop } = await mlxDistributedStop();
@@ -177,11 +198,11 @@ export function useMlxTrayActions(): void {
         }
         const noModel = error instanceof Error && error.message === 'no-model';
         const title =
-          action === 'mount'
+          action === 'mount' || action === 'run-here'
             ? i18n.mountFailed
             : action === 'unmount'
               ? i18n.unmountFailed
-              : action === 'stop-remote'
+              : action === 'stop-remote' || action === 'stop-waiting'
                 ? i18n.remoteStopFailed
                 : i18n.stopFailed;
         toastError({

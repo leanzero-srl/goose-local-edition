@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "En attente de l'enregistrement des images..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "goose ne tourne pas sur {peer}"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "Ce Mac"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "Le dernier montage a échoué : {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} a quitté goose{turn, select, yes {, cette réponse s’arrête donc} other {}}} other {Aucune réponse depuis {elapsed}}} — ouvrez goose là-bas, ou exécutez le chat sur ce Mac. goose se reconnecte tout seul dès son retour"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} redémarre goose} other {{peer} a quitté goose}}{turn, select, yes { — cette réponse s’arrête} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "Démarrage de la répartition…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "Ne plus l’attendre"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "Impossible d’arrêter d’attendre {peer} : {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "N’envoie plus le chat à {peer}"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Impossible de déplacer le chat vers ce Mac : {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "Vérification que {mac} a encore votre réponse…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "goose ne tourne pas sur {mac} — ouvrez goose là-bas, ou exécutez le chat sur ce Mac"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} lit votre prompt ({tokens} jetons) — {elapsed} jusqu’ici"

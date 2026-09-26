@@ -499,6 +499,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
         rates: EMPTY_BOOK,
         serving: null,
         failedError: null,
+        contact: null,
       }),
     };
     mockExtMethod.mockResolvedValue({ status: { ...ROUTE, state: 'ready' } });
@@ -527,6 +528,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
         rates: EMPTY_BOOK,
         serving: { clients: [], unattributed: 0, swarmRuns: [], error: null },
         failedError: null,
+        contact: null,
       }),
     };
     mockExtMethod.mockResolvedValue({
@@ -555,6 +557,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
       rates: EMPTY_BOOK,
       serving: null,
       failedError: null,
+      contact: null,
     };
     (window as unknown as { electron: unknown }).electron = {
       mlxEngineActivity: async () => lost,
@@ -626,6 +629,109 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
     expect(screen.queryByTestId('peer-held')).toBeNull();
   });
 
+  describe('Q-111: the Mac’s goose is gone — a steady state in the chip’s words, with two ways out', () => {
+    const SEC = 1000;
+    const mainLostFor = (lostForMs: number): MlxEngineSnapshot => ({
+      engine: 'remote',
+      mode: 'reconnecting',
+      modelId: null,
+      baseUrl: ROUTE.baseUrl,
+      stats: null,
+      statusDetail: 'unreachable: connect ECONNREFUSED',
+      rates: EMPTY_BOOK,
+      serving: null,
+      failedError: null,
+      contact: { lostForMs, longestComebackMs: 25 * SEC, comebacks: 1, saidQuit: false },
+    });
+
+    it('unreachable hours past its measured 25 s comeback: held, no spinner, the words, Load here and Stop waiting', async () => {
+      (window as unknown as { electron: unknown }).electron = {
+        mlxEngineActivity: async () => mainLostFor(2 * 3600 * SEC + 14 * 60 * SEC),
+      };
+      mockExtMethod.mockResolvedValue({ status: { ...ROUTE, state: 'reconnecting' } });
+      await mlxRemoteSingleStatus();
+      const { container } = wrap('swarm');
+      const strip = await screen.findByTestId('composer-readiness');
+      await waitFor(() => expect(strip).toHaveAttribute('data-readiness', 'peer-gone'));
+      expect(strip.textContent).toContain("Work's Mac Studio’s goose isn’t running");
+      expect(strip.textContent).not.toContain('reconnecting…');
+      expect(strip.className).toContain('bg-lz-phase-held');
+      expect(screen.queryByTestId('composer-readiness-spinner')).toBeNull();
+      expect(screen.getByTestId('composer-readiness-detail').textContent).toBe(
+        'No answer for 2h 14m — open goose there, or run chat on this Mac. goose reconnects on its own once it is back'
+      );
+      expect(screen.getByTestId('composer-readiness-stop-waiting')).toHaveTextContent(
+        'Stop waiting for it'
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId('composer-readiness-run-here')).toHaveTextContent(
+          'Load Qwen3.8-27B-Atlassian-Q8-mlx here (31.0 GB)'
+        )
+      );
+      assertStudioClean(container);
+    });
+
+    it('the Mac said it quit goose (Q-51): gone at once, in its own word', async () => {
+      mockExtMethod.mockResolvedValue({
+        status: {
+          ...ROUTE,
+          state: 'reconnecting',
+          lastError:
+            "Work's Mac Studio does not answer over LeanZero Link right now: Work's Mac Studio quit goose",
+        },
+      });
+      await mlxRemoteSingleStatus();
+      wrap('swarm');
+      const strip = await screen.findByTestId('composer-readiness');
+      await waitFor(() => expect(strip).toHaveAttribute('data-readiness', 'peer-gone'));
+      expect(screen.getByTestId('composer-readiness-detail').textContent).toBe(
+        "Work's Mac Studio quit goose — open goose there, or run chat on this Mac. goose reconnects on its own once it is back"
+      );
+    });
+
+    it('Stop waiting drops the route and nothing else — that Mac is never asked, no "still holds the model"', async () => {
+      (window as unknown as { electron: unknown }).electron = {
+        mlxEngineActivity: async () => mainLostFor(3600 * SEC),
+      };
+      const stops: unknown[] = [];
+      mockExtMethod.mockImplementation(async (method: string, params: unknown) => {
+        if (method.endsWith('remoteSingleStop')) {
+          stops.push(params);
+          return { unmounted: false, unmountError: null, status: { state: 'off' } };
+        }
+        return { status: { ...ROUTE, state: 'reconnecting' } };
+      });
+      await mlxRemoteSingleStatus();
+      wrap('swarm');
+      await userEvent.click(await screen.findByTestId('composer-readiness-stop-waiting'));
+      await waitFor(() => expect(stops).toEqual([{ keepMounted: true }]));
+      expect(mockUnmount).not.toHaveBeenCalled();
+      expect(mockMount).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('peer-held')).toBeNull();
+    });
+
+    it('Run on this Mac instead, while gone: route dropped, loaded here, the gone Mac never asked', async () => {
+      (window as unknown as { electron: unknown }).electron = {
+        mlxEngineActivity: async () => mainLostFor(3600 * SEC),
+      };
+      mockExtMethod.mockImplementation(async (method: string) => {
+        if (method.endsWith('remoteSingleStop')) {
+          return { unmounted: false, unmountError: null, status: { state: 'off' } };
+        }
+        return { status: { ...ROUTE, state: 'reconnecting' } };
+      });
+      await mlxRemoteSingleStatus();
+      wrap('swarm');
+      const strip = await screen.findByTestId('composer-readiness');
+      await waitFor(() => expect(strip).toHaveAttribute('data-readiness', 'peer-gone'));
+      // Offered once this Mac's own engine status is read (what Run here would do depends on it).
+      await userEvent.click(await screen.findByTestId('composer-readiness-run-here'));
+      await waitFor(() => expect(mockMount).toHaveBeenCalledWith(HF));
+      expect(mockUnmount).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('peer-held')).toBeNull();
+    });
+  });
+
   it('a switch whose stop is refused says why in the bar and keeps the route’s state', async () => {
     mockExtMethod.mockImplementation(async (method: string) => {
       if (method.endsWith('remoteSingleStop'))
@@ -671,6 +777,7 @@ describe('ComposerReadinessStrip — the engine busy with another client (Q-17)'
       rates: EMPTY_BOOK,
       serving,
       failedError: null,
+      contact: null,
     };
   }
   afterEach(async () => {

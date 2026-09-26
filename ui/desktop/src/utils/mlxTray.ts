@@ -34,8 +34,8 @@ import type {
 } from './mlxDistributedReport';
 import type { MlxClient, MlxServing } from './mlxServing';
 import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
-import { leaveCause } from './leaveCause';
-import { routeContactLost } from './routeContact';
+import { leaveCause, type LeaveCause } from './leaveCause';
+import { routeContactLost, routePeerGone, type PeerGone } from './routeContact';
 import { restoreTrayLine, type MlxRestoreReport } from './mlxRestoreReport';
 
 /**
@@ -52,7 +52,9 @@ export type MlxTrayAction =
   | 'mount'
   | 'unmount'
   | 'stop-distributed'
-  | 'stop-remote';
+  | 'stop-remote'
+  | 'run-here'
+  | 'stop-waiting';
 
 export type MlxTrayItem =
   | { type: 'info'; label: string; phase?: EnginePhase }
@@ -159,28 +161,70 @@ function remoteReconnecting(snapshot: MlxEngineSnapshot, report: MlxRemoteReport
 /**
  * The title names the Mac that serves chat — its one name (`routePeerName`, carried as
  * `peerName`) — never "Remote", which said a route exists without saying where (Q-27).
+ * `reconnecting` is why contact is lost (the Mac's own word, or just lost); null = it answers.
  */
 function remoteTrayTitle(
   report: MlxRemoteReport,
   live: MlxEngineSnapshot | null,
-  reconnecting: boolean
+  reconnecting: LeaveCause | 'lost' | null
 ): string {
   const mac = report.peerName;
+  // A Mac that said it quit is gone (peerGoneModel); one restarting goose is a blip.
   if (reconnecting) {
-    const cause = leaveCause(report.lastError);
-    if (cause === 'restart') return `${mac} is restarting goose`;
-    if (cause === 'quit') return `${mac} quit goose`;
-    return `Reconnecting to ${mac}`;
+    return reconnecting === 'restart' ? `${mac} is restarting goose` : `Reconnecting to ${mac}`;
   }
   if (report.state === 'ready') return live ? `${mac} · ${mlxTrayTitle(live)}` : mac;
   return report.state === 'failed' ? `${mac} · failed` : `${mac} · ${report.state}`;
+}
+
+/** The composer bar's steady words for a Mac whose goose is gone (Q-111), in the tray's English. */
+export function peerGoneText(mac: string): string {
+  return `${mac}’s goose isn’t running`;
+}
+
+/**
+ * The route's Mac is gone, not a blip (routeContact.ts `routePeerGone`): a steady state with the
+ * two ways out — chat on this Mac, or stop waiting for that one — instead of "reconnecting…" for
+ * hours. The Mac coming back still restores the route on its own.
+ */
+function peerGoneModel(
+  mac: string,
+  gone: PeerGone,
+  canAct: boolean,
+  mountModelId: string | null
+): MlxTrayModel {
+  const phase: EnginePhase = 'held';
+  const why =
+    gone.because === 'said-quit'
+      ? `${mac} quit goose`
+      : `No answer for ${formatElapsed(gone.lostForMs / 1000)}`;
+  const items: MlxTrayItem[] = [
+    { type: 'info', label: clip(peerGoneText(mac)), phase },
+    { type: 'info', label: clip(`${why} — open goose there, or run chat on this Mac`) },
+    { type: 'separator' },
+  ];
+  // This Mac runs chat only with a model to load (or one already up, which the renderer checks).
+  if (mountModelId != null) {
+    items.push({
+      type: 'action',
+      label: 'Run on this Mac instead',
+      action: 'run-here',
+      enabled: canAct,
+    });
+  }
+  items.push(
+    { type: 'action', label: 'Stop waiting for it', action: 'stop-waiting', enabled: canAct },
+    { type: 'action', label: 'Open Providers', action: 'open-providers', enabled: canAct }
+  );
+  return { title: peerGoneText(mac), phase, items };
 }
 
 /** Chat is served by a linked Mac's engine: the tray speaks for THAT engine, and offers its Stop. */
 function remoteModel(
   snapshot: MlxEngineSnapshot,
   report: MlxRemoteReport,
-  canAct: boolean
+  canAct: boolean,
+  mountModelId: string | null
 ): MlxTrayModel {
   const reconnecting = remoteReconnecting(snapshot, report);
   // The registry's lagging mark while main reads the Mac answering: the route main proves (Q-64).
@@ -188,15 +232,19 @@ function remoteModel(
     report.state === 'reconnecting' && !reconnecting
       ? { ...report, state: 'ready', lastError: null }
       : report;
-  const live = remoteLive(snapshot, remote);
-  const phase = reconnecting
-    ? 'loading'
-    : remotePhase(remote.state, live?.stats ? mlxActivity(live.stats) : null);
   // The composer bar's words (ComposerReadiness), never the raw read (Q-58): a Mac that said it
   // quit or is restarting goose is named with that; otherwise contact is lost and goose keeps
   // trying. The raw reason stays in the app, behind the bar's Details.
   const cause = reconnecting ? leaveCause(remote.lastError ?? snapshot.statusDetail) : null;
   const mac = remote.peerName;
+  const gone = reconnecting
+    ? routePeerGone(snapshot.engine === 'remote' ? snapshot.contact : null, cause)
+    : null;
+  if (gone) return peerGoneModel(mac, gone, canAct, mountModelId);
+  const live = remoteLive(snapshot, remote);
+  const phase = reconnecting
+    ? 'loading'
+    : remotePhase(remote.state, live?.stats ? mlxActivity(live.stats) : null);
   const items: MlxTrayItem[] = [
     {
       type: 'info',
@@ -205,9 +253,7 @@ function remoteModel(
           ? remoteTrayLine(remote)
           : cause === 'restart'
             ? `${mac} is restarting goose`
-            : cause === 'quit'
-              ? `${mac} quit goose`
-              : `Lost contact with ${mac} — reconnecting…`
+            : `Lost contact with ${mac} — reconnecting…`
       ),
       phase,
     },
@@ -242,7 +288,11 @@ function remoteModel(
       enabled: canAct,
     }
   );
-  return { title: remoteTrayTitle(remote, live, reconnecting), phase, items };
+  return {
+    title: remoteTrayTitle(remote, live, reconnecting ? (cause ?? 'lost') : null),
+    phase,
+    items,
+  };
 }
 
 /**
@@ -685,7 +735,9 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
       ],
     };
   }
-  if (options.remote) return remoteModel(snapshot, options.remote, options.canAct);
+  if (options.remote) {
+    return remoteModel(snapshot, options.remote, options.canAct, options.mountModelId);
+  }
   // A read of the distributed rank 0 never speaks for the single engine (a run that just stopped).
   const singleSnap = snapshot.engine === 'single' ? snapshot : INITIAL_SNAPSHOT;
   const items: MlxTrayItem[] = [];

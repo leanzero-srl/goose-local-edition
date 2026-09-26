@@ -8,6 +8,10 @@ const i18n = defineMessages({
     id: 'turnCue.reconnecting',
     defaultMessage: 'Waiting for {mac} to reconnect…',
   },
+  gone: {
+    id: 'turnCue.gone',
+    defaultMessage: '{mac}’s goose isn’t running — open goose there, or run chat on this Mac',
+  },
   checking: {
     id: 'turnCue.checking',
     defaultMessage: 'Checking whether {mac} still has your answer…',
@@ -40,6 +44,8 @@ export function turnCueText(intl: IntlShape, cue: TurnCue): string {
   switch (cue.kind) {
     case 'reconnecting':
       return intl.formatMessage(i18n.reconnecting, { mac: cue.mac });
+    case 'gone':
+      return intl.formatMessage(i18n.gone, { mac: cue.mac });
     case 'checking':
       return intl.formatMessage(i18n.checking, { mac: cue.mac });
     case 'silent':

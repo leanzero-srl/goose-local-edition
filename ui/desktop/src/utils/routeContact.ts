@@ -1,4 +1,4 @@
-import { leaveCause } from './leaveCause';
+import { leaveCause, type LeaveCause } from './leaveCause';
 
 /**
  * Has contact with the Mac a route serves chat from been LOST — the one rule the composer bar
@@ -43,4 +43,62 @@ export function routeContactLost(
   if (routeSays) return { why: route.lastError ?? null };
   if (routeReadError != null) return { why: routeReadError };
   return null;
+}
+
+/**
+ * What main has MEASURED about the route's contact with its Mac (utils/mlxEngineMonitor.ts): how
+ * long the current wait has lasted, the longest wait this route ever came back from, and whether
+ * the Mac said it quit goose during this wait. It rides main's snapshot of the route, so the tray
+ * and every chat surface read the same numbers.
+ */
+export interface RouteContact {
+  /** How long main has read the route not answering, as of this read; null while it answers. */
+  lostForMs: number | null;
+  /**
+   * The longest wait — a mount or a lost contact — after which this route answered again, as main
+   * measured it in this app's life; null = none measured yet. A wait already past the verdict below
+   * is never one of them: it measured a Mac that was gone, not a blip.
+   */
+  longestComebackMs: number | null;
+  /** How many waits came back. */
+  comebacks: number;
+  /** The Mac said "quit goose" during this wait (Q-51's notice), kept until it answers again. */
+  saidQuit: boolean;
+}
+
+/**
+ * ratio: a wait this many times the longest this route ever came back from is no blip. Receipt:
+ * Q-111 — the Studio's goose, relaunched, re-mounted the route in ~25 s with no click, so a Mac whose
+ * longest comeback is that relaunch is called gone at ~75 s; the overnight quit said
+ * "reconnecting…" for hours.
+ */
+export const GONE_PAST_LONGEST_COMEBACK = 3;
+
+/** The wait is well past every comeback this route has been measured to make. */
+export function waitedPastComebacks(waitedMs: number, longestComebackMs: number | null): boolean {
+  return longestComebackMs != null && waitedMs > longestComebackMs * GONE_PAST_LONGEST_COMEBACK;
+}
+
+/**
+ * The route's Mac is not a blip away: its goose SAID it quit, or it has stayed unreachable well past
+ * every wait this Mac has measured it come back from. Null = "reconnecting" — including while
+ * nothing has been measured yet, when no wait can honestly be called too long.
+ */
+export type PeerGone =
+  | { because: 'said-quit' }
+  | { because: 'unreachable'; lostForMs: number; longestComebackMs: number };
+
+export function routePeerGone(
+  contact: RouteContact | null,
+  cause: LeaveCause | null
+): PeerGone | null {
+  if (cause === 'quit' || contact?.saidQuit) return { because: 'said-quit' };
+  if (contact?.lostForMs == null || contact.longestComebackMs == null) return null;
+  return waitedPastComebacks(contact.lostForMs, contact.longestComebackMs)
+    ? {
+        because: 'unreachable',
+        lostForMs: contact.lostForMs,
+        longestComebackMs: contact.longestComebackMs,
+      }
+    : null;
 }

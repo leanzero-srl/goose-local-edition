@@ -2143,6 +2143,7 @@ const mlxMonitor = new MlxEngineMonitor({
     return () => clearTimeout(timer);
   },
   intervalMs: MLX_STATUS_POLL_MS,
+  now: () => Date.now(),
 });
 
 const runMlxTrayAction = (action: MlxTrayAction) => {
@@ -2151,7 +2152,8 @@ const runMlxTrayAction = (action: MlxTrayAction) => {
   if (action === 'open-providers') {
     if (!win.isVisible()) win.show();
     win.focus();
-    win.webContents.send('set-view', 'leanzero-swarm');
+    // At the Engine tab by name: a view already open on another tab stays there otherwise.
+    win.webContents.send('set-view', 'leanzero-swarm', 'mlx');
     return;
   }
   // Mount/unmount/stop are ACP calls, and the ACP client lives in the renderer (useMlxTrayActions).
@@ -2178,16 +2180,14 @@ const mlxTrayMenuItem = (item: MlxTrayItem): MenuItemConstructorOptions => {
     case 'separator':
       return { type: 'separator' };
     case 'info':
-      // A state line with its phase dot is ENABLED (it opens the engine's page): macOS draws a
-      // disabled item's image dimmed, and the palette is solid colour, never a faded one.
-      return item.phase
-        ? {
-            label: item.label,
-            icon: phaseDot(item.phase),
-            enabled: mlxActionWindow() != null,
-            click: () => runMlxTrayAction('open-providers'),
-          }
-        : { label: item.label, enabled: false };
+      // Every engine line is ENABLED and opens the Engine tab: macOS draws a disabled item grey and
+      // its image dimmed, and the palette is solid colour, never a faded one (Q-111).
+      return {
+        label: item.label,
+        ...(item.phase ? { icon: phaseDot(item.phase) } : {}),
+        enabled: mlxActionWindow() != null,
+        click: () => runMlxTrayAction('open-providers'),
+      };
     case 'action':
       return {
         label: item.label,
@@ -2254,7 +2254,10 @@ const linkTrayMenuItems = (): MenuItemConstructorOptions[] => {
   }
   if (!linkTray) return [];
   const { line, action, actionLabel } = linkTray;
-  const items: MenuItemConstructorOptions[] = [{ label: line, enabled: false }];
+  // Enabled, opening Link: a disabled item is drawn grey, a faded colour (Q-111).
+  const items: MenuItemConstructorOptions[] = [
+    { label: line, enabled: mlxActionWindow() != null, click: () => runLinkTrayAction('open') },
+  ];
   if (action && actionLabel) {
     items.push({
       label: actionLabel,

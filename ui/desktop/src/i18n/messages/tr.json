@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Resimlerin kaydedilmesi bekleniyor..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "{peer} üzerinde goose çalışmıyor"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "Bu Mac"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "Son takma başarısız oldu: {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} goose’u kapattı{turn, select, yes {, bu yüzden bu yanıt durur} other {}}} other {{elapsed} süredir yanıt yok}} — goose’u orada açın ya da sohbeti bu Mac’te çalıştırın. geri geldiğinde goose kendiliğinden yeniden bağlanır"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} goose’u yeniden başlatıyor} other {{peer} goose’dan çıktı}}{turn, select, yes { — bu yanıt burada durur} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "Bölme başlatılıyor…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "Beklemeyi bırak"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "{peer} beklenmesi durdurulamadı: {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "Sohbeti artık {peer} cihazına göndermez"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Sohbet bu Mac'e taşınamadı: {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "{mac} yanıtınızı hâlâ tutuyor mu diye bakılıyor…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "{mac} üzerinde goose çalışmıyor — goose’u orada açın ya da sohbeti bu Mac’te çalıştırın"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} isteminizi okuyor ({tokens} token) — şu ana kadar {elapsed}"

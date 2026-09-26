@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Đang chờ lưu hình ảnh..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "goose trên {peer} không chạy"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "Mac này"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "Lần gắn gần nhất thất bại: {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} đã thoát goose{turn, select, yes {, nên câu trả lời này dừng lại} other {}}} other {Không có phản hồi trong {elapsed}}} — hãy mở goose ở đó, hoặc chạy cuộc trò chuyện trên Mac này. goose sẽ tự kết nối lại khi nó quay lại"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} đang khởi động lại goose} other {{peer} đã thoát goose}}{turn, select, yes { — câu trả lời này dừng lại} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "Đang khởi động phần chia…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "Thôi chờ"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "Không thể thôi chờ {peer}: {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "Ngừng gửi cuộc trò chuyện tới {peer}"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Không thể chuyển cuộc trò chuyện sang Mac này: {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "Đang kiểm tra xem {mac} còn giữ câu trả lời của bạn không…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "goose trên {mac} không chạy — hãy mở goose ở đó, hoặc chạy cuộc trò chuyện trên Mac này"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} đang đọc lời nhắc của bạn ({tokens} token) — đã {elapsed}"

@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Esperando a que se guarden las imágenes..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "goose no se está ejecutando en {peer}"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "Este Mac"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "El último montaje falló: {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} cerró goose{turn, select, yes {, así que esta respuesta se detiene} other {}}} other {Sin respuesta desde hace {elapsed}}} — abre goose allí o ejecuta el chat en este Mac. goose se reconecta solo en cuanto vuelva"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} está reiniciando goose} other {{peer} cerró goose}}{turn, select, yes { — esta respuesta se detiene} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "Iniciando la división…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "Dejar de esperar"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "No se pudo dejar de esperar a {peer}: {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "Deja de enviar el chat a {peer}"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "No se pudo mover el chat a este Mac: {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "Comprobando si {mac} aún tiene tu respuesta…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "goose no se está ejecutando en {mac} — abre goose allí o ejecuta el chat en este Mac"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} está leyendo tu prompt ({tokens} tokens) — {elapsed} hasta ahora"

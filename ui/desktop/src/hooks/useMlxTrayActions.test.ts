@@ -101,6 +101,49 @@ describe('runMlxTrayAction — the tray’s Stop for a route to another Mac', ()
   });
 });
 
+describe('runMlxTrayAction — Q-111: the two ways out while the route’s Mac is gone', () => {
+  beforeEach(() => {
+    trayRoute.current = {
+      state: 'reconnecting',
+      peer: 'worksmacstudio-lan-6a972f',
+      peerComputerName: "Work's Mac Studio",
+    };
+    remoteStop.mockReset().mockResolvedValue({ unmounted: false, status: { state: 'off' } });
+    unmount.mockReset();
+    mount.mockReset().mockResolvedValue(undefined);
+    status.mockReset();
+    settingsRead.mockReset().mockResolvedValue({ modelId: 'Mihai-LeanZero/Qwen3.8-27B' });
+    dismissPeerHeld();
+  });
+
+  it('Stop waiting for it: the route withdrawn here, that Mac never asked, nothing mounted', async () => {
+    await runMlxTrayAction('stop-waiting');
+    expect(remoteStop).toHaveBeenCalledWith(true);
+    expect(unmount).not.toHaveBeenCalled();
+    expect(mount).not.toHaveBeenCalled();
+    expect(latestPeerHeld()).toBeNull();
+  });
+
+  it('Run on this Mac instead: the route withdrawn, then this Mac’s saved model mounted and followed', async () => {
+    status
+      .mockResolvedValueOnce({ state: 'stopped' })
+      .mockResolvedValueOnce({ state: 'mounting' })
+      .mockResolvedValueOnce({ state: 'running' });
+    await runMlxTrayAction('run-here');
+    expect(remoteStop).toHaveBeenCalledWith(true);
+    expect(unmount).not.toHaveBeenCalled();
+    expect(mount).toHaveBeenCalledWith('Mihai-LeanZero/Qwen3.8-27B');
+    expect(status).toHaveBeenCalledTimes(3);
+  });
+
+  it('Run on this Mac instead with this Mac already serving: the route drop is all', async () => {
+    status.mockResolvedValueOnce({ state: 'running' });
+    await runMlxTrayAction('run-here');
+    expect(remoteStop).toHaveBeenCalledWith(true);
+    expect(mount).not.toHaveBeenCalled();
+  });
+});
+
 describe('runMlxTrayAction — the tray’s Mount/Unmount through the renderer’s ACP client', () => {
   beforeEach(() => {
     mount.mockReset().mockResolvedValue(undefined);

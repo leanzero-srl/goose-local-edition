@@ -120,6 +120,7 @@ function snapshot(
     rates: EMPTY_BOOK,
     serving,
     failedError: null,
+    contact: null,
   };
 }
 
@@ -487,6 +488,7 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
       status: { ...ROUTE, state: 'reconnecting', lastError: 'Link peer refused' },
       why: 'Link peer refused',
       cause: null,
+      gone: null,
       instead: { kind: 'switch', mount: HF },
     });
   });
@@ -513,6 +515,7 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
       rates: EMPTY_BOOK,
       serving: null,
       failedError: null,
+      contact: null,
     };
     const served = deriveChatServedBy(inputs({ remote: ROUTE, main: lost }));
     expect(served.readiness).toMatchObject({
@@ -532,6 +535,61 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
       reconnectingMac(deriveChatServedBy(inputs({ remote: { ...ROUTE, state: 'reconnecting' } })))
     ).toBe("Work's Mac Studio");
     expect(reconnectingMac(deriveChatServedBy(inputs({ remote: ROUTE })))).toBeNull();
+  });
+
+  it('Q-111: main measured the wait past 3× the route’s longest comeback — gone, held, and the same Run here', () => {
+    const SEC = 1000;
+    const lostFor = (lostForMs: number, saidQuit = false): MlxEngineSnapshot => ({
+      engine: 'remote',
+      mode: 'reconnecting',
+      modelId: null,
+      baseUrl: ROUTE.baseUrl ?? null,
+      stats: null,
+      statusDetail: 'unreachable: connect ECONNREFUSED',
+      rates: EMPTY_BOOK,
+      serving: null,
+      failedError: null,
+      contact: { lostForMs, longestComebackMs: 25 * SEC, comebacks: 1, saidQuit },
+    });
+    const blip = deriveChatServedBy(inputs({ remote: ROUTE, main: lostFor(60 * SEC) }));
+    expect(blip.phase).toBe('loading');
+    expect(blip.readiness).toMatchObject({ kind: 'reconnecting', gone: null });
+
+    const gone = deriveChatServedBy(inputs({ remote: ROUTE, main: lostFor(3 * 3600 * SEC) }));
+    expect(gone.phase).toBe('held');
+    expect(gone.readiness).toMatchObject({
+      kind: 'reconnecting',
+      gone: { because: 'unreachable', lostForMs: 3 * 3600 * SEC, longestComebackMs: 25 * SEC },
+      instead: { kind: 'switch', mount: HF },
+    });
+    // Still lost contact: the context counter holds, the turn cue names the Mac.
+    expect(reconnectingMac(gone)).toBe("Work's Mac Studio");
+
+    // The Mac's own "quit goose" (Q-51), kept by main after the mesh overwrote the route's words.
+    const quit = deriveChatServedBy(inputs({ remote: ROUTE, main: lostFor(2 * SEC, true) }));
+    expect(quit.readiness).toMatchObject({ gone: { because: 'said-quit' } });
+    // …or in the route's own words right now.
+    const words = (tail: string) =>
+      `Work's Mac Studio does not answer over LeanZero Link right now: Work's Mac Studio ${tail}`;
+    const said = deriveChatServedBy(
+      inputs({ remote: { ...ROUTE, state: 'reconnecting', lastError: words('quit goose') } })
+    );
+    expect(said.readiness).toMatchObject({ cause: 'quit', gone: { because: 'said-quit' } });
+    expect(said.phase).toBe('held');
+    // Restarting goose is a blip by its own word.
+    const restart = deriveChatServedBy(
+      inputs({
+        remote: { ...ROUTE, state: 'reconnecting', lastError: words('is restarting goose') },
+      })
+    );
+    expect(restart.readiness).toMatchObject({ cause: 'restart', gone: null });
+    expect(restart.phase).toBe('loading');
+
+    // Back: main reads the Mac answering — nothing gone, whatever was measured before.
+    const back = deriveChatServedBy(
+      inputs({ remote: ROUTE, main: snapshot('remote', IDLE_STATUS) })
+    );
+    expect(back.readiness.kind).toBe('remote');
   });
 
   it('`failed` stays red: the peer answered that its engine failed', () => {

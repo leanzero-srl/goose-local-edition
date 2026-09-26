@@ -3,11 +3,13 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   MlxEngineMonitor,
   isMlxEngineReport,
+  isMlxEngineSnapshot,
   mlxEngineConfigFromYaml,
   type MlxEngineMonitorDeps,
   type MlxEngineSnapshot,
 } from './mlxEngineMonitor';
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
+import { routePeerGone } from './routeContact';
 import type { MlxServingRead } from './mlxServing';
 import {
   DIST_READING_STATUS,
@@ -23,9 +25,13 @@ function harness(opts: {
   configBaseUrl?: string | null;
   distributedBaseUrl?: () => string | null;
   /** A published route; a bare string is a READY route on that relay. */
-  remoteRoute?: () => { state: string; baseUrl: string | null } | string | null;
+  remoteRoute?: () =>
+    | { state: string; baseUrl: string | null; peerName?: string; lastError?: string | null }
+    | string
+    | null;
 }) {
   const snapshots: MlxEngineSnapshot[] = [];
+  const clock = { ms: 0 };
   const scheduled: Array<() => void> = [];
   const readServing = vi.fn(async () => opts.serving?.() ?? { ok: true as const, rows: [] });
   const readStatus = vi.fn(async (_baseUrl: string) => opts.status());
@@ -48,8 +54,16 @@ function harness(opts: {
       };
     },
     intervalMs: 2000,
+    now: () => clock.ms,
   };
-  return { monitor: new MlxEngineMonitor(deps), snapshots, scheduled, readServing, readStatus };
+  return {
+    monitor: new MlxEngineMonitor(deps),
+    snapshots,
+    scheduled,
+    readServing,
+    readStatus,
+    clock,
+  };
 }
 
 const answered = (body: unknown): MlxLiveStatusResult => ({ ok: true, url: BASE, body });
@@ -390,6 +404,155 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
     await h.monitor.tick();
     expect(h.monitor.current()).toMatchObject({ engine: 'remote', mode: 'reconnecting' });
     expect(h.readStatus).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MlxEngineMonitor — Q-111: how long the route waited, measured against its own comebacks', () => {
+  const RELAY = 'http://127.0.0.1:61001/relay/cafe';
+  const STUDIO = 'Work’s Mac Studio';
+  const SEC = 1000;
+
+  it('a relaunch that re-mounted in 25 s is a comeback; a later wait is gone only past 3× that, and an 8 h wait never becomes a comeback', async () => {
+    let route: { state: string; baseUrl: string | null; peerName: string } = {
+      state: 'mounting',
+      baseUrl: RELAY,
+      peerName: STUDIO,
+    };
+    let answer: MlxLiveStatusResult = refused;
+    const h = harness({ status: () => answer, remoteRoute: () => route });
+    // The owner's measurement: relaunched 08:28:58, the route mounted again 08:29:23 — 25 s.
+    await h.monitor.tick();
+    expect(h.monitor.current().contact).toEqual({
+      lostForMs: null,
+      longestComebackMs: null,
+      comebacks: 0,
+      saidQuit: false,
+    });
+    h.clock.ms = 25 * SEC;
+    route = { ...route, state: 'ready' };
+    answer = answered(IDLE_STATUS);
+    await h.monitor.tick();
+    expect(h.monitor.current().contact).toMatchObject({
+      lostForMs: null,
+      longestComebackMs: 25 * SEC,
+      comebacks: 1,
+    });
+
+    // The Studio's goose quit overnight with no notice reaching this Mac: contact lost.
+    answer = refused;
+    h.clock.ms = 100 * SEC;
+    await h.monitor.tick();
+    expect(h.monitor.current().contact?.lostForMs).toBe(0);
+    h.clock.ms = 175 * SEC;
+    await h.monitor.tick();
+    const blip = h.monitor.current().contact;
+    expect(blip?.lostForMs).toBe(75 * SEC);
+    expect(routePeerGone(blip ?? null, null)).toBeNull();
+    h.clock.ms = 176 * SEC;
+    await h.monitor.tick();
+    expect(routePeerGone(h.monitor.current().contact, null)).toEqual({
+      because: 'unreachable',
+      lostForMs: 76 * SEC,
+      longestComebackMs: 25 * SEC,
+    });
+
+    // Eight hours later the Studio's goose is opened again: back, and that wait measured a Mac
+    // that was gone — never a comeback that would stretch the next verdict to a day.
+    h.clock.ms = 100 * SEC + 8 * 3600 * SEC;
+    answer = answered(IDLE_STATUS);
+    await h.monitor.tick();
+    expect(h.monitor.current().contact).toEqual({
+      lostForMs: null,
+      longestComebackMs: 25 * SEC,
+      comebacks: 1,
+      saidQuit: false,
+    });
+  });
+
+  it('the Mac’s own “quit goose” is kept for the whole wait, though the mesh overwrites the route’s reason', async () => {
+    let route: { state: string; baseUrl: string; peerName: string; lastError: string | null } = {
+      state: 'reconnecting',
+      baseUrl: RELAY,
+      peerName: STUDIO,
+      lastError: `${STUDIO} does not answer over LeanZero Link right now: ${STUDIO} quit goose`,
+    };
+    let answer: MlxLiveStatusResult = refused;
+    const h = harness({ status: () => answer, remoteRoute: () => route });
+    await h.monitor.tick();
+    expect(h.monitor.current().contact?.saidQuit).toBe(true);
+    route = {
+      ...route,
+      lastError: `${STUDIO} does not answer over LeanZero Link right now: the LeanZero Link mesh cannot reach it (connect timeout)`,
+    };
+    h.clock.ms = 3600 * SEC;
+    await h.monitor.tick();
+    expect(routePeerGone(h.monitor.current().contact, null)).toEqual({ because: 'said-quit' });
+    route = { ...route, state: 'ready', lastError: null };
+    answer = answered(IDLE_STATUS);
+    await h.monitor.tick();
+    expect(h.monitor.current().contact?.saidQuit).toBe(false);
+  });
+
+  it('with nothing measured yet no wait is called too long — it stays reconnecting, however long', async () => {
+    const h = harness({
+      status: () => refused,
+      remoteRoute: () => ({ state: 'ready', baseUrl: RELAY, peerName: STUDIO }),
+    });
+    await h.monitor.tick();
+    h.clock.ms = 8 * 3600 * SEC;
+    await h.monitor.tick();
+    const contact = h.monitor.current().contact;
+    expect(contact).toMatchObject({ lostForMs: 8 * 3600 * SEC, longestComebackMs: null });
+    expect(routePeerGone(contact, null)).toBeNull();
+  });
+
+  it('a route dropped mid-wait (Stop waiting) never lends that wait to the next route’s mount', async () => {
+    let route: { state: string; baseUrl: string | null; peerName: string } | null = {
+      state: 'ready',
+      baseUrl: RELAY,
+      peerName: STUDIO,
+    };
+    let answer: MlxLiveStatusResult = refused;
+    const h = harness({ status: () => answer, remoteRoute: () => route });
+    await h.monitor.tick();
+    h.clock.ms = 3600 * SEC;
+    route = null;
+    await h.monitor.tick();
+    h.clock.ms = 2 * 3600 * SEC;
+    route = { state: 'mounting', baseUrl: RELAY, peerName: STUDIO };
+    await h.monitor.tick();
+    h.clock.ms = 2 * 3600 * SEC + 30 * SEC;
+    route = { ...route, state: 'ready' };
+    answer = answered(IDLE_STATUS);
+    await h.monitor.tick();
+    expect(h.monitor.current().contact).toMatchObject({
+      longestComebackMs: 30 * SEC,
+      comebacks: 1,
+    });
+  });
+
+  it('a route that FAILED there answered: the wait closes without a comeback', async () => {
+    let route = { state: 'mounting', baseUrl: RELAY, peerName: STUDIO };
+    const h = harness({ status: () => refused, remoteRoute: () => route });
+    await h.monitor.tick();
+    h.clock.ms = 40 * SEC;
+    route = { ...route, state: 'failed' };
+    await h.monitor.tick();
+    expect(h.monitor.current().contact).toMatchObject({
+      lostForMs: null,
+      longestComebackMs: null,
+      comebacks: 0,
+    });
+  });
+
+  it('a read of this Mac’s own engine carries no contact', async () => {
+    const h = harness({ status: () => answered(IDLE_STATUS) });
+    await h.monitor.tick();
+    expect(h.monitor.current().contact).toBeNull();
+    expect(isMlxEngineSnapshot(h.monitor.current())).toBe(true);
+    expect(isMlxEngineSnapshot({ ...h.monitor.current(), contact: { lostForMs: 'x' } })).toBe(
+      false
+    );
   });
 });
 

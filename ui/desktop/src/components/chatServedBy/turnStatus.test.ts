@@ -62,6 +62,7 @@ const reconnecting = served({
     status: { ...ROUTE, state: 'reconnecting' },
     why: 'timeout: no answer within 1500 ms',
     cause: null,
+    gone: null,
     instead: { kind: 'none' },
   },
 });
@@ -153,6 +154,29 @@ describe('useTurnCue — one cue from the drop until the turn streams again or e
     );
     rerender({ s: served(), text: 'He climbed the stairs', state: ChatState.Streaming });
     expect(result.current).toBeNull();
+  });
+
+  it('Q-111: a Mac whose goose is gone is named so under the composer — not "waiting to reconnect"', () => {
+    const gone = served({
+      phase: 'held',
+      readiness: {
+        ...(reconnecting.readiness as Extract<ChatServedBy['readiness'], { kind: 'reconnecting' }>),
+        gone: { because: 'unreachable', lostForMs: 3_600_000, longestComebackMs: 25_000 },
+      },
+    });
+    const { result, rerender } = renderHook(
+      ({ s }: { s: ChatServedBy }) => useTurnCue(s, ChatState.Streaming, [assistant('He climbed')]),
+      { initialProps: { s: reconnecting } }
+    );
+    expect(result.current).toEqual({ kind: 'reconnecting', mac: MAC });
+    rerender({ s: gone });
+    expect(result.current).toEqual({ kind: 'gone', mac: MAC });
+    expect(turnCueText(intl, result.current!)).toBe(
+      "Work's Mac Studio’s goose isn’t running — open goose there, or run chat on this Mac"
+    );
+    // It comes back on its own: the turn is then checked as after any lost contact.
+    rerender({ s: served() });
+    expect(result.current).toEqual({ kind: 'checking', mac: MAC });
   });
 
   it('the turn ends (the dropped-turn notice) — the check ends with it, no lingering', () => {

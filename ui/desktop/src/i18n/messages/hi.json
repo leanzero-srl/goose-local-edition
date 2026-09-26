@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "छवियों को सहेजने की प्रतीक्षा की जा रही है..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "{peer} पर goose नहीं चल रहा है"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "यह Mac"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "पिछला माउंट विफल रहा: {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} ने goose बंद कर दिया{turn, select, yes {, इसलिए यह उत्तर रुक जाएगा} other {}}} other {{elapsed} से कोई उत्तर नहीं}} — वहाँ goose खोलें, या इस Mac पर चैट चलाएँ। उसके लौटते ही goose अपने आप फिर से जुड़ जाएगा"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} goose को फिर से शुरू कर रहा है} other {{peer} ने goose बंद कर दिया}}{turn, select, yes { — यह उत्तर यहीं रुकता है} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "विभाजन शुरू हो रहा है…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "इंतज़ार बंद करें"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "{peer} का इंतज़ार बंद नहीं किया जा सका: {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "चैट को {peer} पर भेजना बंद करता है"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "चैट को इस Mac पर नहीं ले जाया जा सका: {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "जाँच रहे हैं कि {mac} के पास अभी भी आपका उत्तर है या नहीं…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "{mac} पर goose नहीं चल रहा है — वहाँ goose खोलें, या इस Mac पर चैट चलाएँ"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} आपका प्रॉम्प्ट पढ़ रहा है ({tokens} टोकन) — अब तक {elapsed}"

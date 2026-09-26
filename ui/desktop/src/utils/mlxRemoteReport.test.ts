@@ -212,6 +212,92 @@ describe('the tray while chat is served from a linked Mac', () => {
     ]);
   });
 
+  describe('Q-111: a Mac whose goose is gone is a steady state with two ways out, not "reconnecting…" for hours', () => {
+    const report = toMlxRemoteReport(READY)!;
+    const SEC = 1000;
+    const lostFor = (lostForMs: number, longestComebackMs: number | null): MlxEngineSnapshot => ({
+      ...INITIAL_SNAPSHOT,
+      engine: 'remote',
+      mode: 'reconnecting',
+      statusDetail: 'unreachable: connect ECONNREFUSED',
+      contact: {
+        lostForMs,
+        longestComebackMs,
+        comebacks: longestComebackMs ? 1 : 0,
+        saidQuit: false,
+      },
+    });
+    const actionsOf = (model: ReturnType<typeof buildMlxTrayModel>) =>
+      model.items.flatMap((i) => (i.type === 'action' ? [[i.action, i.label, i.enabled]] : []));
+
+    it('unreachable past 3× its measured 25 s comeback: the owner’s screenshot, rewritten', () => {
+      const model = buildMlxTrayModel(
+        lostFor(2 * 3600 * SEC + 14 * 60 * SEC, 25 * SEC),
+        options(report)
+      );
+      expect(model.title).toBe("Work's Mac Studio’s goose isn’t running");
+      expect(model.phase).toBe('held');
+      expect(model.items[0]).toEqual({
+        type: 'info',
+        label: "Work's Mac Studio’s goose isn’t running",
+        phase: 'held',
+      });
+      expect(labels(model)).toContain(
+        'No answer for 2h 14m — open goose there, or run chat on this Mac'
+      );
+      expect(labels(model).some((l) => /reconnecting|keeps trying/.test(l))).toBe(false);
+      expect(actionsOf(model)).toEqual([
+        ['run-here', 'Run on this Mac instead', true],
+        ['stop-waiting', 'Stop waiting for it', true],
+        ['open-providers', 'Open Providers', true],
+      ]);
+    });
+
+    it('a blip within 3× the measured comeback still says reconnecting — and so does any wait with nothing measured', () => {
+      const blip = buildMlxTrayModel(lostFor(75 * SEC, 25 * SEC), options(report));
+      expect(blip.title).toBe("Reconnecting to Work's Mac Studio");
+      expect(blip.phase).toBe('loading');
+      const unmeasured = buildMlxTrayModel(lostFor(8 * 3600 * SEC, null), options(report));
+      expect(unmeasured.title).toBe("Reconnecting to Work's Mac Studio");
+    });
+
+    it('the Mac SAID it quit goose (Q-51): gone at once, its word named', () => {
+      const quit = toMlxRemoteReport({
+        ...READY,
+        state: 'reconnecting',
+        lastError:
+          "Work's Mac Studio does not answer over LeanZero Link right now: Work's Mac Studio quit goose",
+      })!;
+      const model = buildMlxTrayModel(INITIAL_SNAPSHOT, options(quit));
+      expect(model.title).toBe("Work's Mac Studio’s goose isn’t running");
+      expect(labels(model)).toContain(
+        "Work's Mac Studio quit goose — open goose there, or run chat on this Mac"
+      );
+      // Kept by main after the mesh overwrote the route's words.
+      const kept = buildMlxTrayModel(
+        {
+          ...lostFor(5 * SEC, null),
+          contact: { lostForMs: 5 * SEC, longestComebackMs: null, comebacks: 0, saidQuit: true },
+        },
+        options(report)
+      );
+      expect(kept.title).toBe("Work's Mac Studio’s goose isn’t running");
+    });
+
+    it('with no model to load here, "Run on this Mac instead" is not offered; no window, the actions wait for one', () => {
+      const noModel = buildMlxTrayModel(lostFor(3600 * SEC, 25 * SEC), {
+        ...options(report),
+        mountModelId: null,
+      });
+      expect(actionsOf(noModel).map(([a]) => a)).toEqual(['stop-waiting', 'open-providers']);
+      const noWindow = buildMlxTrayModel(lostFor(3600 * SEC, 25 * SEC), {
+        ...options(report),
+        canAct: false,
+      });
+      expect(actionsOf(noWindow).every(([, , enabled]) => enabled === false)).toBe(true);
+    });
+  });
+
   it('`failed` stays red and means the peer answered that its engine failed — never "reconnecting"', () => {
     const failed = toMlxRemoteReport({ ...READY, state: 'failed', lastError: 'exit 137' })!;
     const f = buildMlxTrayModel(

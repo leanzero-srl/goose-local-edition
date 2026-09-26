@@ -8,6 +8,8 @@ import {
 } from '../components/leanzero-swarm/mlxLiveStats';
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
 import { remoteLiveBase } from './mlxRemoteReport';
+import { leaveCause } from './leaveCause';
+import { waitedPastComebacks, type RouteContact } from './routeContact';
 import {
   attributeServing,
   servingRowsForEngine,
@@ -80,6 +82,8 @@ export interface MlxEngineSnapshot {
   /** Null until the engine has been read at least once while running. */
   serving: MlxServing | null;
   failedError: string | null;
+  /** A route's contact with its Mac, as this loop measured it (Q-111); null = not a route read. */
+  contact: RouteContact | null;
 }
 
 export interface MlxEngineMonitorDeps {
@@ -99,11 +103,15 @@ export interface MlxEngineMonitorDeps {
     /** The Mac it serves from and the model — the run book's key; absent = the relay names it. */
     peerName?: string;
     modelId?: string | null;
+    /** The route's reason — carries the Mac's own "quit goose" (Q-51) while it says so. */
+    lastError?: string | null;
   } | null;
   swarmRuns(): string[];
   onSnapshot(snapshot: MlxEngineSnapshot): void;
   schedule(fn: () => void, ms: number): () => void;
   intervalMs: number;
+  /** Wall-clock ms: how long a route waited is measured with it (a sleeping Mac included). */
+  now(): number;
 }
 
 /** The IPC channel main pushes every snapshot on, the moment it lands. */
@@ -122,7 +130,20 @@ export function isMlxEngineSnapshot(value: unknown): value is MlxEngineSnapshot 
     typeof v.mode === 'string' &&
     SNAPSHOT_MODES.has(v.mode) &&
     typeof v.rates === 'object' &&
-    v.rates != null
+    v.rates != null &&
+    (v.contact === null || isRouteContact(v.contact))
+  );
+}
+
+function isRouteContact(value: unknown): value is RouteContact {
+  if (value == null || typeof value !== 'object') return false;
+  const c = value as Record<string, unknown>;
+  const msOrNull = (v: unknown) => v === null || (typeof v === 'number' && Number.isFinite(v));
+  return (
+    msOrNull(c.lostForMs) &&
+    msOrNull(c.longestComebackMs) &&
+    typeof c.comebacks === 'number' &&
+    typeof c.saidQuit === 'boolean'
   );
 }
 
@@ -136,6 +157,7 @@ export const INITIAL_SNAPSHOT: MlxEngineSnapshot = {
   rates: EMPTY_BOOK,
   serving: null,
   failedError: null,
+  contact: null,
 };
 
 /**
@@ -183,8 +205,56 @@ export class MlxEngineMonitor {
    * away from and back finds its runs again (Q-44). A handful of keys for the process's life.
    */
   private readonly books = new Map<string, RateBook>();
+  /**
+   * Each linked Mac's contact history, by its name: the waits it came back from, and the one in
+   * progress. A handful of Macs for the process's life.
+   */
+  private readonly contacts = new Map<string, ContactBook>();
 
   constructor(private readonly deps: MlxEngineMonitorDeps) {}
+
+  /**
+   * Fold one route read into its Mac's contact history. A wait opens at the first read that finds
+   * the route not answering (mounting there, or contact lost) and closes at the first that finds it
+   * answering: its length is a comeback — unless it had already run past the verdict in force, when
+   * it measured a Mac that was gone, not a blip. A route that failed there answered: no wait.
+   */
+  private trackContact(mac: string, mode: MlxEngineMode, said: string[]): RouteContact {
+    const now = this.deps.now();
+    const book = this.contacts.get(mac) ?? {
+      longestComebackMs: null,
+      comebacks: 0,
+      waitSinceMs: null,
+      saidQuit: false,
+    };
+    this.contacts.set(mac, book);
+    if (mode === 'running') {
+      if (book.waitSinceMs != null) {
+        const waited = now - book.waitSinceMs;
+        if (!waitedPastComebacks(waited, book.longestComebackMs)) {
+          book.longestComebackMs = Math.max(book.longestComebackMs ?? 0, waited);
+          book.comebacks += 1;
+        }
+      }
+      book.waitSinceMs = null;
+      book.saidQuit = false;
+    } else if (mode === 'reconnecting' || mode === 'mounting') {
+      book.waitSinceMs ??= now;
+      // The Mac's own "quit goose" is kept for the whole wait: the route's reason is overwritten by
+      // the mesh's next transport error, and the fact it quit does not stop being true.
+      if (said.some((text) => leaveCause(text) === 'quit')) book.saidQuit = true;
+    } else if (mode === 'failed') {
+      book.waitSinceMs = null;
+      book.saidQuit = false;
+    }
+    return {
+      lostForMs:
+        mode === 'reconnecting' && book.waitSinceMs != null ? now - book.waitSinceMs : null,
+      longestComebackMs: book.longestComebackMs,
+      comebacks: book.comebacks,
+      saidQuit: book.saidQuit,
+    };
+  }
 
   private fold(key: string, stats: MlxLiveStats): RateBook {
     const book = advanceRateBook(this.books.get(key) ?? EMPTY_BOOK, stats);
@@ -237,9 +307,18 @@ export class MlxEngineMonitor {
     const route = this.deps.remoteRoute();
     if (route) {
       const base = remoteLiveBase(route);
-      return base
-        ? this.readRouted('remote', base, route.peerName ?? base, route.modelId ?? null)
+      const read = base
+        ? await this.readRouted('remote', base, route.peerName ?? base, route.modelId ?? null)
         : this.routeUnread(route.state);
+      const said = [route.lastError, read.statusDetail].filter((t): t is string => t != null);
+      const mac = route.peerName ?? base ?? '';
+      return { ...read, contact: this.trackContact(mac, read.mode, said) };
+    }
+    // A wait belongs to a published route: one dropped mid-wait (Stop waiting) never lends its
+    // start to the next route's mount, which would measure hours as a comeback.
+    for (const book of this.contacts.values()) {
+      book.waitSinceMs = null;
+      book.saidQuit = false;
     }
     return { ...(await this.readSingle()), engine: 'single' };
   }
@@ -313,6 +392,7 @@ export class MlxEngineMonitor {
       rates: this.fold(`${engine}\n${mac}\n${model}`, stats),
       serving: await this.attribute(stats, engine === 'remote'),
       failedError: null,
+      contact: null,
     };
   }
 
@@ -395,6 +475,15 @@ export class MlxEngineMonitor {
       rates: this.fold(`single\n\n${engineModel ?? reportedModel ?? ''}`, stats),
       serving,
       failedError: null,
+      contact: null,
     };
   }
+}
+
+interface ContactBook {
+  longestComebackMs: number | null;
+  comebacks: number;
+  /** When the wait in progress began (main's clock); null while the route answers. */
+  waitSinceMs: number | null;
+  saidQuit: boolean;
 }

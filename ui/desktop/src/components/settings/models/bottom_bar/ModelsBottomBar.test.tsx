@@ -494,6 +494,48 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     );
   });
 
+  it('Q-111: the Studio’s goose is gone — the chip says the composer bar’s words, held, and names only the model', () => {
+    const ROUTE = {
+      state: 'reconnecting',
+      peer: 'worksmacstudio-lan-9c1e2a',
+      peerHostname: 'WorksMacStudio.lan',
+      peerComputerName: "Work's Mac Studio",
+    };
+    const gone: ChatServedBy = {
+      ...STUDIO,
+      phase: 'held',
+      activity: null,
+      readiness: {
+        kind: 'reconnecting',
+        status: ROUTE,
+        why: 'unreachable: connect ECONNREFUSED',
+        cause: null,
+        gone: { because: 'unreachable', lostForMs: 3_600_000, longestComebackMs: 25_000 },
+        instead: { kind: 'none' },
+      },
+    };
+    const { container } = renderChip(gone);
+    const words = "Work's Mac Studio’s goose isn’t running";
+    const phase = screen.getByTestId('model-chip-phase');
+    expect(phase.textContent).toBe(words);
+    expect(phase).toHaveAttribute('title', words);
+    expect(screen.getByTestId('model-chip-served').textContent).toBe(
+      'Qwen3.8-27B-Atlassian-Q8-mlx'
+    );
+    expect(screen.getAllByTestId('lz-status-dot')[0]).toHaveAttribute('data-phase', 'held');
+    expect(screen.getByTestId('model-menu-served')).toHaveTextContent(words);
+    expect(screen.queryByText(/Reconnecting|Queued/)).toBeNull();
+    assertStudioClean(container);
+
+    // A blip keeps its own word.
+    renderChip({
+      ...gone,
+      phase: 'loading',
+      readiness: { ...gone.readiness, gone: null } as ChatServedBy['readiness'],
+    });
+    expect(screen.getAllByTestId('model-chip-phase')[1].textContent).toBe('Reconnecting');
+  });
+
   it('a cloud provider (nothing served): the chip is the provider’s own label, no Open Engine', () => {
     renderChip(null);
     expect(screen.queryByTestId('model-chip-served')).toBeNull();

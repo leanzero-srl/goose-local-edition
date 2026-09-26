@@ -18,7 +18,8 @@ import { routePeerName } from './macs';
  * unmount or ended "switch failed" with the route already gone; a Stop spun on it). So:
  *  - reachable: the route's Stop as before (withdraw + unmount there, answered in one call);
  *  - not answering (route `reconnecting`, or the last route read failed): withdraw only, then ask
- *    that Mac to free its engine in the background.
+ *    that Mac to free its engine in the background;
+ *  - gone (its goose quit, or away well past every comeback): withdraw only — nothing to free.
  * Either way a peer that keeps its model is a quiet fact (`PeerHeld`), never the switch's failure.
  * Throws only when the route itself could not be withdrawn (another window owns it).
  */
@@ -67,11 +68,25 @@ export interface RouteDrop {
   settled: Promise<void>;
 }
 
-export function dropRoute(peerUnreachable: boolean = routeUnreachable()): RouteDrop {
+/**
+ * How the route's Mac stands: `answers`; `unreachable` — not answering now, asked to free its
+ * engine in the background; `gone` — its goose quit or has stayed away well past every comeback
+ * (routeContact.ts `routePeerGone`): its engine went with the app (Q-34), so it is not asked at all
+ * and no "still holds the model" line is raised about a Mac that holds nothing (Q-111).
+ */
+export type PeerReach = 'answers' | 'unreachable' | 'gone';
+
+export function dropRoute(
+  peer: PeerReach = routeUnreachable() ? 'unreachable' : 'answers'
+): RouteDrop {
   const route = latestMlxRemoteSingleStatus();
   const peerNodeId = route?.peer ?? null;
   const peerName = route ? routePeerName(route) : '';
-  if (!peerUnreachable) {
+  if (peer === 'gone') {
+    const routeGone = mlxRemoteSingleStop(true).then(() => publish(null));
+    return { routeGone, settled: routeGone.catch(() => undefined) };
+  }
+  if (peer === 'answers') {
     const routeGone = mlxRemoteSingleStop(false).then(({ unmountError }) => {
       publish(
         unmountError && peerNodeId

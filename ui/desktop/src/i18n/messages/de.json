@@ -428,6 +428,9 @@
   "chatInput.waitingForImages": {
     "defaultMessage": "Warten auf das Speichern der Bilder..."
   },
+  "chatServedBy.peerGone": {
+    "defaultMessage": "goose auf {peer} läuft nicht"
+  },
   "chatServedBy.thisMac": {
     "defaultMessage": "Dieser Mac"
   },
@@ -722,6 +725,9 @@
   "composerReadiness.failed": {
     "defaultMessage": "Das letzte Einbinden ist fehlgeschlagen: {error}"
   },
+  "composerReadiness.goneDetail": {
+    "defaultMessage": "{because, select, quit {{peer} hat goose beendet{turn, select, yes {, diese Antwort endet hier} other {}}} other {Keine Antwort seit {elapsed}}} — öffne goose dort oder führe den Chat auf diesem Mac aus. goose verbindet sich von selbst wieder, sobald er zurück ist"
+  },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} startet goose neu} other {{peer} hat goose beendet}}{turn, select, yes { — diese Antwort endet hier} other {}}"
   },
@@ -790,6 +796,15 @@
   },
   "composerReadiness.splitStarting": {
     "defaultMessage": "Aufteilung wird gestartet…"
+  },
+  "composerReadiness.stopWaiting": {
+    "defaultMessage": "Nicht mehr darauf warten"
+  },
+  "composerReadiness.stopWaitingFailed": {
+    "defaultMessage": "Warten auf {peer} konnte nicht beendet werden: {error}"
+  },
+  "composerReadiness.stopWaitingHint": {
+    "defaultMessage": "Sendet den Chat nicht mehr an {peer}"
   },
   "composerReadiness.switchFailed": {
     "defaultMessage": "Chat konnte nicht auf diesen Mac verlegt werden: {error}"
@@ -7705,6 +7720,9 @@
   },
   "turnCue.checking": {
     "defaultMessage": "Prüfe, ob {mac} deine Antwort noch hat…"
+  },
+  "turnCue.gone": {
+    "defaultMessage": "goose auf {mac} läuft nicht — öffne goose dort oder führe den Chat auf diesem Mac aus"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} liest deinen Prompt ({tokens} Tokens) — bisher {elapsed}"
