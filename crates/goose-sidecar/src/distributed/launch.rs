@@ -1679,7 +1679,7 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
         };
         let spec = pipeline_rank_specs(
             &pipeline_config(),
-            "node-alias",
+            &ServedNames::only("node-alias"),
             32_768,
             "19",
             2_048,
