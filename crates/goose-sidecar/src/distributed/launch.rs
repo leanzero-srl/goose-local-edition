@@ -1063,7 +1063,10 @@ pub(crate) mod tests {
     /// The REAL pipeline program (prelude + pipeline_rank.py), booted exactly as a rank is, against
     /// stand-in `mlx.core` and `pipeline_qwen4_serve` modules: it sets the JACCL env, parses goose's
     /// argv with the fork's parser, starts the memory reporter, hands serve() goose's emit, and
-    /// exits with serve()'s code — without ever calling mx.distributed.init itself.
+    /// exits with serve()'s code — without ever calling mx.distributed.init itself. macOS only,
+    /// like every test that boots a real rank program: it takes the load lock through libproc
+    /// (`rank_load_lock.py`), which Linux does not have.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn the_pipeline_program_runs_serve_with_the_parsed_args_and_exits_with_its_code() {
         let root = tempfile::tempdir().unwrap();
@@ -2025,6 +2028,7 @@ print("ok")
     /// server.py:1743). Returns what that `run` saw — argv, the cache's max_size / max_bytes, the
     /// trims an insert made beside a live batch of 7 bytes — plus the rank's `caps`, its `fatal`
     /// line and exit `code`. `generation_dies`: the stand-in generation loop raises a Metal OOM.
+    #[cfg(target_os = "macos")]
     async fn boot_against_stand_ins(
         mut spec: RankSpec,
         generation_dies: bool,
@@ -2161,6 +2165,7 @@ print("ok")
         served
     }
 
+    #[cfg(target_os = "macos")]
     fn flag(served: &serde_json::Value, name: &str) -> Option<String> {
         let argv: Vec<String> = serde_json::from_value(served["argv"].clone()).unwrap();
         let at = argv.iter().position(|a| a == name)?;
@@ -2169,6 +2174,7 @@ print("ok")
 
     /// The server receives both flags from the spec (E2E #1's figures), and the cache it builds is
     /// bounded by the same bytes, which mlx_lm itself never passes.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn the_tensor_program_hands_mlx_lm_both_prompt_cache_bounds() {
         let config = two_mac_config();
@@ -2213,6 +2219,7 @@ print("ok")
 
     /// An older requester's spec runs the policy its own rank 0 runs — its one number as the flag,
     /// mlx_lm's default count, no max_bytes — so the two ranks evict alike.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn an_older_requesters_spec_runs_its_own_prompt_cache_policy() {
         let config = two_mac_config();
@@ -2264,6 +2271,7 @@ print("ok")
     /// E2E #2's Studio rank: mlx_lm's generation thread raised a Metal OOM, the worker's main
     /// thread only joins it, and the rank exited 0. Now the death is named and the exit is not a
     /// success.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_generation_thread_that_dies_ends_the_rank_named_and_non_zero() {
         let config = two_mac_config();
