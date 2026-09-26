@@ -45,6 +45,9 @@ pub const PIPELINE_FORK: &str =
 /// which nothing here imports.
 pub const MLX_VLM_VERSION: &str = "0.7.1";
 
+/// The fork env's directory name before its Python version.
+const PIPELINE_ENV_STEM: &str = "rapid-mlx-pipeline-qwen4-py";
+
 /// Where every goose-managed env lives, relative to the node's `$HOME`.
 pub const ENVS_DIR: &str = ".goose/distributed";
 
@@ -82,7 +85,7 @@ impl EnvSpec {
     /// provisioning reinstalls it in place instead of leaving a stale server behind.
     pub fn pipeline() -> Self {
         Self {
-            name: format!("rapid-mlx-pipeline-qwen4-py{PYTHON_VERSION}"),
+            name: format!("{PIPELINE_ENV_STEM}{PYTHON_VERSION}"),
             packages: vec![
                 PIPELINE_FORK.to_string(),
                 format!("mlx=={MLX_VERSION}"),
@@ -120,6 +123,59 @@ impl EnvSpec {
         [Self::tensor(), Self::pipeline()]
             .into_iter()
             .find(|spec| python.ends_with(&format!("/{ENVS_DIR}/{}/bin/python", spec.name)))
+    }
+
+    /// The current spec by its directory name.
+    pub fn named(name: &str) -> Option<Self> {
+        [Self::tensor(), Self::pipeline()]
+            .into_iter()
+            .find(|spec| spec.name == name)
+    }
+
+    /// Whether `name` is this env's directory or one an EARLIER goose gave it: the tensor env's
+    /// name carries its pins (`mlx<v>-mlxlm<v>-py<v>`) and the fork env's its Python, so a bump
+    /// renames the directory while a saved config keeps naming the old one.
+    fn family_has(&self, name: &str) -> bool {
+        if self.name == Self::tensor().name {
+            name.starts_with("mlx") && name.contains("-mlxlm") && name.contains("-py")
+        } else {
+            name.starts_with(PIPELINE_ENV_STEM)
+        }
+    }
+
+    /// The goose-managed env `python` lives in — ANY interpreter under a node's
+    /// `$HOME/.goose/distributed/<env>/bin/python` whose `<env>` is this env or an earlier goose's
+    /// name for it — with the current pin it must prove and the path goose builds it at. One rule
+    /// for both runners: such an env that fails its pinned proof is goose's to rebuild; an
+    /// interpreter anywhere else is the operator's, never rebuilt.
+    pub fn goose_managed(python: &str) -> Option<ManagedPython> {
+        let (home, rest) = python.split_once(&format!("/{ENVS_DIR}/"))?;
+        let name = rest.strip_suffix("/bin/python")?;
+        if home.is_empty() || name.is_empty() || name.contains('/') {
+            return None;
+        }
+        [Self::tensor(), Self::pipeline()]
+            .into_iter()
+            .find(|spec| spec.family_has(name))
+            .map(|spec| ManagedPython {
+                spec,
+                home: home.to_string(),
+            })
+    }
+}
+
+/// A goose-managed interpreter as configured: the env's CURRENT spec and the node's home.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedPython {
+    pub spec: EnvSpec,
+    pub home: String,
+}
+
+impl ManagedPython {
+    /// Where goose builds this env now; differs from the configured path when an earlier goose
+    /// named the directory (a pin bump), and the config is pointed here once it is built.
+    pub fn target(&self) -> String {
+        self.spec.python(&self.home)
     }
 }
 
@@ -201,6 +257,21 @@ pub fn parse_progress(line: &str) -> Option<ProgressLine> {
         step: step.to_string(),
         detail: detail.to_string(),
     })
+}
+
+/// Build `spec` on a node, streaming every output line to `on_line`: a LeanZero Link node builds
+/// it itself from its own pins (`link_control::provision`); ssh and this Mac run
+/// [`provision_script`]. The one path both "Save and provision" and a Run that finds a stale env
+/// take.
+pub async fn provision_on(
+    host: Option<&str>,
+    spec: &EnvSpec,
+    on_line: &mut (dyn FnMut(&str) + Send),
+) -> Result<Option<i32>> {
+    match super::link_control::link_peer(host) {
+        Some(peer) => super::link_control::provision(peer, spec, on_line).await,
+        None => run_streaming(host, &provision_script(spec), on_line).await,
+    }
 }
 
 /// Run `script` on a node, handing every output line (stdout and stderr) to `on_line` as it
@@ -287,6 +358,40 @@ mod tests {
             EnvSpec::managed_by("/tmp/jaccl-smoke/.venv/bin/python"),
             None
         );
+    }
+
+    /// Goose-managed = under a node's `~/.goose/distributed`, in this env's directory or one an
+    /// earlier goose named for it; the target is always the CURRENT pin's path. Anything else is
+    /// the operator's.
+    #[test]
+    fn goose_managed_recognises_its_envs_under_any_name_an_earlier_goose_gave_them() {
+        let managed =
+            EnvSpec::goose_managed(&EnvSpec::pipeline().python("/Users/workhorse")).unwrap();
+        assert_eq!(managed.spec, EnvSpec::pipeline());
+        assert_eq!(
+            managed.target(),
+            EnvSpec::pipeline().python("/Users/workhorse")
+        );
+
+        let older_tensor = "/Users/w/.goose/distributed/mlx0.31.0-mlxlm0.30.2-py3.11/bin/python";
+        let managed = EnvSpec::goose_managed(older_tensor).unwrap();
+        assert_eq!(managed.spec, EnvSpec::tensor());
+        assert_eq!(managed.target(), EnvSpec::tensor().python("/Users/w"));
+
+        let older_fork = "/Users/w/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.11/bin/python";
+        assert_eq!(
+            EnvSpec::goose_managed(older_fork).unwrap().target(),
+            EnvSpec::pipeline().python("/Users/w")
+        );
+
+        for own in [
+            "/tmp/jaccl-smoke/.venv/bin/python",
+            "/Users/w/.goose/distributed/my-own-env/bin/python",
+            "/Users/w/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python3",
+            "/Users/w/.goose/distributed/a/b/bin/python",
+        ] {
+            assert_eq!(EnvSpec::goose_managed(own), None, "{own}");
+        }
     }
 
     #[test]

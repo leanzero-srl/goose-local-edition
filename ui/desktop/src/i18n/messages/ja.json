@@ -3002,6 +3002,12 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "キャンセル"
   },
+  "mlxDistributed.check.details": {
+    "defaultMessage": "詳細"
+  },
+  "mlxDistributed.check.useGooseRunner": {
+    "defaultMessage": "goose のランナーを使う"
+  },
   "mlxDistributed.checksPassed": {
     "defaultMessage": "{count,plural,one{# 件のチェックに合格} other{# 件のチェックに合格}}"
   },
@@ -3040,6 +3046,9 @@
   },
   "mlxDistributed.error.unmount": {
     "defaultMessage": "アンマウントのエラー"
+  },
+  "mlxDistributed.error.useGooseRunner": {
+    "defaultMessage": "このランナーを goose に引き渡せませんでした"
   },
   "mlxDistributed.event.admissionClosed": {
     "defaultMessage": "受付停止"
@@ -3085,6 +3094,15 @@
   },
   "mlxDistributed.event.restart": {
     "defaultMessage": "再起動"
+  },
+  "mlxDistributed.event.runnerUpdateFailed": {
+    "defaultMessage": "ランナーの更新に失敗しました"
+  },
+  "mlxDistributed.event.runnerUpdated": {
+    "defaultMessage": "ランナーを更新しました"
+  },
+  "mlxDistributed.event.runnerUpdating": {
+    "defaultMessage": "ランナーを更新中"
   },
   "mlxDistributed.event.startFailed": {
     "defaultMessage": "起動失敗"
@@ -3427,6 +3445,9 @@
   },
   "mlxDistributed.room.shortByNoApps": {
     "defaultMessage": "{gib} GiB 不足 — 空きを作るか、アプリを閉じてください"
+  },
+  "mlxDistributed.runnerUpdate.title": {
+    "defaultMessage": "分割のランナーを更新中"
   },
   "mlxDistributed.save": {
     "defaultMessage": "構成を保存"
@@ -5246,6 +5267,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "プランがないため速度の数値はありませんが、どの方法でも起動できます。"
   },
+  "placementCard.noticeDetails": {
+    "defaultMessage": "詳細"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{他の分割 # 件} other{他の分割 # 件}}"
   },
@@ -5290,6 +5314,12 @@
   },
   "placementCard.runOn": {
     "defaultMessage": "{name} で実行"
+  },
+  "placementCard.runnerStep": {
+    "defaultMessage": "{step, select, check {確認中} uv {uv を検索中} venv {環境を作成中} install {インストール中} done {完了} fail {失敗} other {開始中}}"
+  },
+  "placementCard.runnerUpdating": {
+    "defaultMessage": "{nodes} で分割のランナーを更新中…"
   },
   "placementCard.short": {
     "defaultMessage": "収まりません：{node} で {gb} 不足"

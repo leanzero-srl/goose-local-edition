@@ -189,6 +189,7 @@ import type {
   MlxEngineModelDeleteRequest_unstable,
   MlxEngineModelsListRequest_unstable,
   MlxEngineModelsListResponse_unstable,
+  MlxEngineMountAfterLoadRequest_unstable,
   MlxEngineMountRequest_unstable,
   MlxEngineMountResponse_unstable,
   MlxEnginePlacementPlanRequest_unstable,
@@ -216,6 +217,8 @@ import type {
   MlxEngineSpeedHistoryResponse_unstable,
   MlxEngineStatusRequest_unstable,
   MlxEngineStatusResponse_unstable,
+  MlxEngineStopOtherEngineRequest_unstable,
+  MlxEngineStopOtherEngineResponse_unstable,
   MlxEngineUnmountRequest_unstable,
   OnboardingImportApplyRequest_unstable,
   OnboardingImportApplyResponse_unstable,
@@ -377,6 +380,7 @@ import {
   zMlxEngineSettingsResponse_unstable,
   zMlxEngineSpeedHistoryResponse_unstable,
   zMlxEngineStatusResponse_unstable,
+  zMlxEngineStopOtherEngineResponse_unstable,
   zOnboardingImportApplyResponse_unstable,
   zOnboardingImportScanResponse_unstable,
   zParseRecipeResponse_unstable,
@@ -1612,6 +1616,30 @@ export class GooseExtClient {
     return zMlxEngineMountResponse_unstable.parse(
       raw,
     ) as MlxEngineMountResponse_unstable;
+  }
+
+  async mlxEngineMountAfterLoad_unstable(
+    params: MlxEngineMountAfterLoadRequest_unstable,
+  ): Promise<MlxEngineMountResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/mountAfterLoad",
+      params,
+    );
+    return zMlxEngineMountResponse_unstable.parse(
+      raw,
+    ) as MlxEngineMountResponse_unstable;
+  }
+
+  async mlxEngineStopOtherEngine_unstable(
+    params: MlxEngineStopOtherEngineRequest_unstable,
+  ): Promise<MlxEngineStopOtherEngineResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/mlxEngine/stopOtherEngine",
+      params,
+    );
+    return zMlxEngineStopOtherEngineResponse_unstable.parse(
+      raw,
+    ) as MlxEngineStopOtherEngineResponse_unstable;
   }
 
   async mlxEngineUnmount_unstable(

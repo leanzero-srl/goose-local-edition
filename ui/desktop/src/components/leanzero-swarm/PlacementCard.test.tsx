@@ -352,6 +352,124 @@ describe('Run across both Macs for a model the split is not set up with', () => 
     await waitFor(() => expect(mockDistributedStart).toHaveBeenCalledWith(null));
     expect(mockDiscover).not.toHaveBeenCalled();
   });
+
+  /**
+   * Q-116, 3.0.46: the saved split's runner envs were built by an older goose. Run updates them
+   * itself — the card says so by Mac while it runs — and then follows the start.
+   */
+  describe('the split’s runner from an older goose (Q-116)', () => {
+    const SETUP_MATCHES: PlacementPlan = {
+      ...PLAN_27B,
+      candidates: (PLAN_27B.candidates ?? []).map((c) =>
+        c.key.kind === 'tensor' ? { ...c, action: { kind: 'startSplit', setupMatches: true } } : c
+      ),
+    };
+    const UPDATING = {
+      ...STOPPED_FLASH,
+      state: 'preflight',
+      runnerUpdate: {
+        state: 'running',
+        startedMs: 1,
+        nodes: [
+          {
+            rank: 0,
+            name: 'Mihai Macbook',
+            python:
+              '/Users/mihaiperdum/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python',
+            state: 'running',
+            step: 'install',
+            detail: 'rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@b7bd1afc2…',
+            lines: ['GOOSE_PROV install rapid-mlx @ git+…', 'Resolved 31 packages in 1.2s'],
+            startedMs: 1,
+          },
+          {
+            rank: 1,
+            name: 'Work’s Mac Studio',
+            python:
+              '/Users/workhorse/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python',
+            state: 'done',
+            step: 'done',
+            detail: 'installed',
+            lines: ['GOOSE_PROV done installed'],
+            startedMs: 1,
+            finishedMs: 2,
+          },
+        ],
+      },
+    } as unknown as MlxDistributedStatus;
+
+    it('Run updates the runner on both Macs, says so by Mac while it runs, then follows the start', async () => {
+      mockPlan.mockResolvedValue(answer(SETUP_MATCHES));
+      let finish: (value: unknown) => void = () => undefined;
+      mockDistributedStart.mockReturnValue(
+        new Promise((resolve) => {
+          finish = resolve;
+        })
+      );
+      renderCard({ distributed: UPDATING });
+      const split = await screen.findByTestId('placement-way-split');
+      // Nothing of the update shows before this card pressed Run.
+      expect(screen.queryByTestId('placement-runner-update')).toBeNull();
+      await userEvent.click(within(split).getByTestId('placement-run-split'));
+      const notice = await screen.findByTestId('placement-runner-update');
+      expect(
+        within(notice).getByText(
+          'Updating the split’s runner on Mihai Macbook and Work’s Mac Studio…'
+        )
+      ).toBeInTheDocument();
+      const rows = within(notice).getAllByTestId('placement-runner-node');
+      expect(rows.map((r) => r.getAttribute('data-state'))).toEqual(['running', 'done']);
+      expect(within(rows[0]).getByText('installing')).toBeInTheDocument();
+      expect(within(rows[0]).getByText('Resolved 31 packages in 1.2s')).toBeInTheDocument();
+      expect(within(rows[1]).getByText('done')).toBeInTheDocument();
+      // Plain words: no commit, no path.
+      expect(notice.textContent).not.toMatch(/2f02ac645|b7bd1afc2|\.goose\/distributed/);
+      expect(mockProvision).not.toHaveBeenCalled();
+
+      await act(async () => finish({ started: true }));
+      expect(await screen.findByText('Starting — this card follows it.')).toBeInTheDocument();
+      expect(screen.queryByTestId('placement-runner-update')).toBeNull();
+    });
+
+    it('an update that fails names the Mac in plain words; the node’s output waits under Details', async () => {
+      mockPlan.mockResolvedValue(answer(SETUP_MATCHES));
+      mockDistributedStart.mockResolvedValue({
+        started: false,
+        refusal: {
+          code: 'runnerUpdateFailed',
+          message: 'Updating the split’s runner on Work’s Mac Studio failed',
+          node: 'Work’s Mac Studio',
+          detail:
+            '/Users/workhorse/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python (rapid-mlx-pipeline-qwen4-py3.12): uv pip install exited 1\nGOOSE_PROV fail uv pip install exited 1',
+        },
+      });
+      const { container } = render(
+        <IntlTestWrapper>
+          <PlacementCard
+            modelId={MODEL}
+            single={null}
+            distributed={STOPPED_FLASH}
+            onMountHere={vi.fn()}
+            onStopHere={vi.fn()}
+            mountBusy={false}
+            distributedCapability
+          />
+        </IntlTestWrapper>
+      );
+      await userEvent.click(
+        within(await screen.findByTestId('placement-way-split')).getByTestId('placement-run-split')
+      );
+      expect(
+        await screen.findByText('Updating the split’s runner on Work’s Mac Studio failed')
+      ).toBeInTheDocument();
+      const details = screen.getByTestId('placement-notice-detail');
+      expect(details).toHaveAttribute('data-state', 'closed');
+      expect(within(details).getByText(/uv pip install exited 1/)).not.toBeVisible();
+      await userEvent.click(within(details).getByRole('button', { name: 'Details' }));
+      expect(within(details).getByText(/GOOSE_PROV fail uv pip install exited 1/)).toBeVisible();
+      assertStudioClean(container);
+    });
+  });
 });
 
 describe('Run it on the real 27B plan', () => {

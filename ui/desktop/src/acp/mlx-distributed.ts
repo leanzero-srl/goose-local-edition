@@ -20,6 +20,7 @@ import type {
   MlxDistributedOwnerDto,
   MlxDistributedPreflightDto,
   MlxDistributedRankPlanDto,
+  MlxDistributedRunnerEnvDto,
   MlxDistributedStatusDto,
   MlxEngineDistributedMakeRoomResponse_unstable,
   MlxEngineDistributedStartResponse_unstable,
@@ -48,6 +49,7 @@ export type MlxDistributedPreflight = MlxDistributedPreflightDto;
 export type MlxDistributedNodePreflight = MlxDistributedNodePreflightDto;
 export type MlxDistributedRankPlan = MlxDistributedRankPlanDto;
 export type MlxDistributedCheck = MlxDistributedCheckDto;
+export type MlxDistributedRunnerEnv = MlxDistributedRunnerEnvDto;
 export type MlxDistributedEvent = MlxDistributedEventDto;
 export type MlxDistributedStartResponse = MlxEngineDistributedStartResponse_unstable;
 export type MlxDistributedStopResponse = MlxEngineDistributedStopResponse_unstable;

@@ -576,6 +576,16 @@
       "responseType": "MlxEngineMountResponse_unstable"
     },
     {
+      "method": "_goose/unstable/mlxEngine/mountAfterLoad",
+      "requestType": "MlxEngineMountAfterLoadRequest_unstable",
+      "responseType": "MlxEngineMountResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/mlxEngine/stopOtherEngine",
+      "requestType": "MlxEngineStopOtherEngineRequest_unstable",
+      "responseType": "MlxEngineStopOtherEngineResponse_unstable"
+    },
+    {
       "method": "_goose/unstable/mlxEngine/unmount",
       "requestType": "MlxEngineUnmountRequest_unstable",
       "responseType": "EmptyResponse"

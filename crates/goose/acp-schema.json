@@ -6928,6 +6928,23 @@
             "string",
             "null"
           ]
+        },
+        "machineLoad": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxMachineLoadDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Another process loading a model on this Mac right now (it holds the Mac's load lock, its\npid proven alive): a Mount is refused — or waits, with `waitForLoad` — until it ends.\nAbsent when no one else is loading (and from a goose before it), or exactly when\n`machineLoadError` says why the lock could not be read."
+        },
+        "machineLoadError": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -7013,6 +7030,12 @@
           "type": "integer",
           "description": "Metal's recommended working-set ceiling on this Mac.",
           "minimum": 0
+        },
+        "otherEnginesBytes": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "description": "The resident bytes the OTHER MLX engines on this Mac hold, charged against the ceiling:\n`budgetBytes = min(availableBytes − marginBytes, ceilingBytes − otherEnginesBytes)`."
         },
         "marginBytes": {
           "type": "integer",
@@ -7207,6 +7230,52 @@
       ],
       "description": "What the owner last started serving MLX chat from on this Mac and did not stop — the thing a\nrelaunch brings back. `kind`: `single` (this Mac's engine) · `remoteSingle` (the single engine\non Link peer `peer`, whom the owner calls `peerName`) · `split` (the saved distributed config)."
     },
+    "MlxMachineLoadDto": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "startedAt": {
+          "type": "integer",
+          "description": "The holder's process start, unix seconds.",
+          "minimum": 0
+        },
+        "since": {
+          "type": "integer",
+          "description": "When it took the lock, unix seconds.",
+          "minimum": 0
+        },
+        "what": {
+          "type": "string",
+          "description": "What is loading, in words (\"goose (pid 4321) is loading … as a single engine on port 8124\"\n| \"goose rank 1 of 2 (pid …) is loading …\")."
+        },
+        "port": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The single engine's port, when one is loading.",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "group": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A split's launch identity, when a rank is loading."
+        }
+      },
+      "required": [
+        "pid",
+        "startedAt",
+        "since",
+        "what"
+      ],
+      "description": "Who holds this Mac's load lock (goose-sidecar `machine::LoadHolder`)."
+    },
     "MlxEngineMountRequest_unstable": {
       "type": "object",
       "properties": {
@@ -7224,7 +7293,7 @@
       "required": [
         "modelId"
       ],
-      "description": "Mount a local model into the MLX engine. Returns once mounting has started; poll status for\nrunning/failed. A memory-gate refusal is NOT an error: it is `refusal` (and status's\n`gateVerdict: \"block\"` / `gateMessage` carry the same verdict) — one failure, one carrier of\nits text. Every other failure (unknown or incomplete model, a foreign listener) is an error.",
+      "description": "Mount a local model into the MLX engine. Returns once mounting has started; poll status for\nrunning/failed. A memory-gate refusal is NOT an error: it is `refusal` (and status's\n`gateVerdict: \"block\"` / `gateMessage` carry the same verdict) — one failure, one carrier of\nits text. Every other failure (unknown or incomplete model, a foreign listener) is an error —\nincluding another load holding this Mac (one model loads at a time per Mac, Q-106): the error\nnames the holder and says to wait (`mlxEngine/mountAfterLoad`) or stop it, and status's\n`machineLoad` carries the holder.",
       "x-side": "agent",
       "x-method": "_goose/unstable/mlxEngine/mount"
     },
@@ -7243,8 +7312,7 @@
           "description": "Set when the mount gate refused; absent = mounting started."
         }
       },
-      "x-side": "agent",
-      "x-method": "_goose/unstable/mlxEngine/mount"
+      "x-side": "agent"
     },
     "MlxMountRefusalDto": {
       "type": "object",
@@ -7279,6 +7347,13 @@
             "null"
           ],
           "description": "Why no alternative could be planned (the planner failed, or nothing fits anywhere)."
+        },
+        "otherEngines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MlxOtherEngineDto"
+          },
+          "description": "The other MLX engines whose memory the refusal charged — what the owner could stop\n(`mlxEngine/stopOtherEngine`) to make room."
         }
       },
       "required": [
@@ -7861,6 +7936,111 @@
         }
       ],
       "description": "The model-picker badge. Internally tagged on `kind`."
+    },
+    "MlxOtherEngineDto": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "startedAt": {
+          "type": "integer",
+          "description": "Unix seconds; a stop must name it with the pid.",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "description": "\"singleServer\" | \"distributed\"."
+        },
+        "command": {
+          "type": "string",
+          "description": "Its command line, cut for display."
+        },
+        "port": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "residentBytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "pid",
+        "startedAt",
+        "kind",
+        "command",
+        "residentBytes"
+      ],
+      "description": "Another MLX engine on this Mac (goose-sidecar `machine::OtherEngine`): its real footprint, and\nthe identity `mlxEngine/stopOtherEngine` needs."
+    },
+    "MlxEngineMountAfterLoadRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "modelId"
+      ],
+      "description": "`mlxEngine/mount`, except that another load holding this Mac is WAITED for instead of refused:\nthe call returns at once, status reads `mounting` with load phase `waitingForLoad` (and\n`machineLoad` naming the holder), and the mount — its gate judged on the memory the finished\nload left — starts when the holder lets go (a refusal then lands as status `failed` with\n`gateVerdict`/`gateMessage`). Unmount or another Mount ends the wait. A lock held by a process\nthat is not its recorded holder is refused, never waited for. Local only (no `nodeId`).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/mountAfterLoad"
+    },
+    "MlxEngineStopOtherEngineRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "startedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "pid",
+        "startedAt"
+      ],
+      "description": "Stop ANOTHER MLX engine on this Mac (not this goose's own — Unmount stops that), per-pid:\nSIGTERM, a grace window, then SIGKILL. Only the exact process the owner was shown is signalled\n— it must still be an MLX engine and still have started at `startedAt`; anything else is an\nerror and nothing is signalled. Local only (no `nodeId`).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/stopOtherEngine"
+    },
+    "MlxEngineStopOtherEngineResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "signal": {
+          "type": "string",
+          "description": "\"SIGTERM\" (it left inside the grace window) | \"SIGKILL\"."
+        },
+        "residentBytes": {
+          "type": "integer",
+          "description": "What it held when stopped.",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pid",
+        "signal",
+        "residentBytes",
+        "message"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/mlxEngine/stopOtherEngine"
     },
     "MlxEngineUnmountRequest_unstable": {
       "type": "object",
@@ -9208,6 +9388,17 @@
           ],
           "description": "The last (or running) provisioning of the nodes' goose-managed Python."
         },
+        "runnerUpdate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedProvisionDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The runner rebuild the last start ran by itself — goose-managed runner envs on an older\npin, rebuilt before the start preflights again (Q-116); live while `state` is \"preflight\".\nRows are per env, `python` the path built."
+        },
         "owner": {
           "anyOf": [
             {
@@ -9602,6 +9793,24 @@
         },
         "message": {
           "type": "string"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The raw evidence behind a plain `message`, for a Details disclosure."
+        },
+        "env": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxDistributedRunnerEnvDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`runnerEnv` only: the interpreter it is about and whether goose rebuilds it."
         }
       },
       "required": [
@@ -9609,7 +9818,41 @@
         "verdict",
         "message"
       ],
-      "description": "One preflight check. `verdict`: \"pass\" | \"warn\" | \"fail\". `id`: \"reachable\" |\n\"foreignEngines\" | \"memory\" | \"model\" | \"modelManifest\" | \"python\" | \"tbIpv4\" | \"ping\" |\n\"rdmaGid\" | \"linkRepair\" | \"portRange\" | \"ports\" | \"runner\" | \"plan\". `message` carries the numbers."
+      "description": "One preflight check. `verdict`: \"pass\" | \"warn\" | \"fail\". `id`: \"reachable\" |\n\"foreignEngines\" | \"memory\" | \"model\" | \"modelManifest\" | \"python\" | \"tbIpv4\" | \"ping\" |\n\"rdmaGid\" | \"linkRepair\" | \"portRange\" | \"ports\" | \"runner\" | \"runnerEnv\" | \"plan\". `message`\ncarries the numbers — except `runnerEnv`, which reads plainly and keeps paths, versions and\ncommits in `detail`."
+    },
+    "MlxDistributedRunnerEnvDto": {
+      "type": "object",
+      "properties": {
+        "env": {
+          "type": "string",
+          "description": "The env goose pins for it now (its directory name)."
+        },
+        "field": {
+          "type": "string",
+          "description": "The node config field naming the interpreter: \"python\" | \"pipelinePython\"."
+        },
+        "python": {
+          "type": "string",
+          "description": "The interpreter as configured."
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Where goose builds it on that node; absent when the node's home is unknown."
+        },
+        "managed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "env",
+        "field",
+        "python",
+        "managed"
+      ],
+      "description": "A split runner's interpreter that fails the pin goose ships. `managed`: under the node's\n`~/.goose/distributed` — a FAIL goose rebuilds when Run is pressed (the start rebuilds it and\npreflights again when nothing else blocks). Not managed: the operator's own interpreter, a\nWARN goose never rebuilds; setting `field` to `target` on that node (\"use goose's runner\")\nhands it to goose."
     },
     "MlxDistributedNodePreflightDto": {
       "type": "object",
@@ -10333,7 +10576,7 @@
         "code",
         "message"
       ],
-      "description": "Why a start was refused. `code`: \"singleEngineMounted\" (unmount the single engine, then start\nagain — the UI's \"unmount and continue\") | \"alreadyRunning\" | \"preflightFailed\" |\n\"previousSplitShuttingDown\" (this install's previous split still runs on `node` under a live\nparent; nothing was signalled — a start once its pids are gone goes through) | \"foreignSplit\"\n(a distributed MLX process this install did not launch runs on `node`; stop it first) |\n\"hostingRank\" | \"ownedByAnotherWindow\"."
+      "description": "Why a start was refused. `code`: \"singleEngineMounted\" (unmount the single engine, then start\nagain — the UI's \"unmount and continue\") | \"alreadyRunning\" | \"preflightFailed\" |\n\"previousSplitShuttingDown\" (this install's previous split still runs on `node` under a live\nparent; nothing was signalled — a start once its pids are gone goes through) | \"foreignSplit\"\n(a distributed MLX process this install did not launch runs on `node`; stop it first) |\n\"modelLoading\" | \"runnerUpdateFailed\" (the start rebuilt a stale goose-managed runner env and\nthat failed on `node`; `detail` carries the node's output) | \"provisioning\" (a \"Save and\nprovision\" build is still running) | \"hostingRank\" | \"ownedByAnotherWindow\"."
     },
     "MlxEngineDistributedStopRequest_unstable": {
       "type": "object",
@@ -14225,6 +14468,24 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/MlxEngineMountAfterLoadRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/mountAfterLoad",
+                  "title": "MlxEngineMountAfterLoadRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/MlxEngineStopOtherEngineRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/mlxEngine/stopOtherEngine",
+                  "title": "MlxEngineStopOtherEngineRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/MlxEngineUnmountRequest_unstable"
                     }
                   ],
@@ -15298,6 +15559,14 @@
                         }
                       ],
                       "title": "MlxEngineMountResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/MlxEngineStopOtherEngineResponse_unstable"
+                        }
+                      ],
+                      "title": "MlxEngineStopOtherEngineResponse_unstable"
                     },
                     {
                       "allOf": [

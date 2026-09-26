@@ -3002,6 +3002,12 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "Отмена"
   },
+  "mlxDistributed.check.details": {
+    "defaultMessage": "Подробности"
+  },
+  "mlxDistributed.check.useGooseRunner": {
+    "defaultMessage": "Использовать раннер goose"
+  },
   "mlxDistributed.checksPassed": {
     "defaultMessage": "{count,plural,one{# проверка пройдена} few{# проверки пройдены} many{# проверок пройдено} other{# проверки пройдено}}"
   },
@@ -3040,6 +3046,9 @@
   },
   "mlxDistributed.error.unmount": {
     "defaultMessage": "Ошибка выгрузки"
+  },
+  "mlxDistributed.error.useGooseRunner": {
+    "defaultMessage": "Не удалось передать этот раннер goose"
   },
   "mlxDistributed.event.admissionClosed": {
     "defaultMessage": "Приём закрыт"
@@ -3085,6 +3094,15 @@
   },
   "mlxDistributed.event.restart": {
     "defaultMessage": "Перезапуск"
+  },
+  "mlxDistributed.event.runnerUpdateFailed": {
+    "defaultMessage": "Не удалось обновить раннер"
+  },
+  "mlxDistributed.event.runnerUpdated": {
+    "defaultMessage": "Раннер обновлён"
+  },
+  "mlxDistributed.event.runnerUpdating": {
+    "defaultMessage": "Обновление раннера"
   },
   "mlxDistributed.event.startFailed": {
     "defaultMessage": "Запуск не удался"
@@ -3427,6 +3445,9 @@
   },
   "mlxDistributed.room.shortByNoApps": {
     "defaultMessage": "Не хватает {gib} ГиБ — освободите место или закройте приложения"
+  },
+  "mlxDistributed.runnerUpdate.title": {
+    "defaultMessage": "Обновление раннера разделения"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Сохранить конфигурацию"
@@ -5246,6 +5267,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Без плана нет оценки скорости — но любой способ всё равно можно запустить."
   },
+  "placementCard.noticeDetails": {
+    "defaultMessage": "Подробности"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{Ещё # разделение} few{Ещё # разделения} many{Ещё # разделений} other{Ещё # разделения}}"
   },
@@ -5290,6 +5314,12 @@
   },
   "placementCard.runOn": {
     "defaultMessage": "Запустить на {name}"
+  },
+  "placementCard.runnerStep": {
+    "defaultMessage": "{step, select, check {проверка} uv {поиск uv} venv {создание окружения} install {установка} done {готово} fail {ошибка} other {запуск}}"
+  },
+  "placementCard.runnerUpdating": {
+    "defaultMessage": "Обновление раннера разделения на {nodes}…"
   },
   "placementCard.short": {
     "defaultMessage": "Не помещается: не хватает {gb} на {node}"

@@ -3002,6 +3002,12 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "İptal"
   },
+  "mlxDistributed.check.details": {
+    "defaultMessage": "Ayrıntılar"
+  },
+  "mlxDistributed.check.useGooseRunner": {
+    "defaultMessage": "goose çalıştırıcısını kullan"
+  },
   "mlxDistributed.checksPassed": {
     "defaultMessage": "{count,plural,one{# denetim geçti} other{# denetim geçti}}"
   },
@@ -3040,6 +3046,9 @@
   },
   "mlxDistributed.error.unmount": {
     "defaultMessage": "Kaldırma hatası"
+  },
+  "mlxDistributed.error.useGooseRunner": {
+    "defaultMessage": "Bu çalıştırıcı goose’a devredilemedi"
   },
   "mlxDistributed.event.admissionClosed": {
     "defaultMessage": "Kabul kapandı"
@@ -3085,6 +3094,15 @@
   },
   "mlxDistributed.event.restart": {
     "defaultMessage": "Yeniden başlatma"
+  },
+  "mlxDistributed.event.runnerUpdateFailed": {
+    "defaultMessage": "Çalıştırıcı güncellemesi başarısız"
+  },
+  "mlxDistributed.event.runnerUpdated": {
+    "defaultMessage": "Çalıştırıcı güncellendi"
+  },
+  "mlxDistributed.event.runnerUpdating": {
+    "defaultMessage": "Çalıştırıcı güncelleniyor"
   },
   "mlxDistributed.event.startFailed": {
     "defaultMessage": "Başlatma başarısız"
@@ -3427,6 +3445,9 @@
   },
   "mlxDistributed.room.shortByNoApps": {
     "defaultMessage": "{gib} GiB eksik — yer açın veya uygulamaları kapatın"
+  },
+  "mlxDistributed.runnerUpdate.title": {
+    "defaultMessage": "Bölmenin çalıştırıcısı güncelleniyor"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Yapılandırmayı kaydet"
@@ -5246,6 +5267,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Plan olmadan hız rakamı yok — yine de her yol başlatılabilir."
   },
+  "placementCard.noticeDetails": {
+    "defaultMessage": "Ayrıntılar"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# diğer bölme} other{# diğer bölme}}"
   },
@@ -5290,6 +5314,12 @@
   },
   "placementCard.runOn": {
     "defaultMessage": "{name} üzerinde çalıştır"
+  },
+  "placementCard.runnerStep": {
+    "defaultMessage": "{step, select, check {denetleniyor} uv {uv aranıyor} venv {ortam oluşturuluyor} install {kuruluyor} done {tamam} fail {başarısız} other {başlıyor}}"
+  },
+  "placementCard.runnerUpdating": {
+    "defaultMessage": "Bölmenin çalıştırıcısı {nodes} üzerinde güncelleniyor…"
   },
   "placementCard.short": {
     "defaultMessage": "Sığmıyor: {node} üzerinde {gb} eksik"

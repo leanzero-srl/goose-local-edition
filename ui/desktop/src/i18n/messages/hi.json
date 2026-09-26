@@ -3002,6 +3002,12 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "रद्द करें"
   },
+  "mlxDistributed.check.details": {
+    "defaultMessage": "विवरण"
+  },
+  "mlxDistributed.check.useGooseRunner": {
+    "defaultMessage": "goose का रनर इस्तेमाल करें"
+  },
   "mlxDistributed.checksPassed": {
     "defaultMessage": "{count,plural,one{# जाँच पास} other{# जाँचें पास}}"
   },
@@ -3040,6 +3046,9 @@
   },
   "mlxDistributed.error.unmount": {
     "defaultMessage": "अनमाउंट त्रुटि"
+  },
+  "mlxDistributed.error.useGooseRunner": {
+    "defaultMessage": "यह रनर goose को नहीं सौंपा जा सका"
   },
   "mlxDistributed.event.admissionClosed": {
     "defaultMessage": "प्रवेश बंद हुआ"
@@ -3085,6 +3094,15 @@
   },
   "mlxDistributed.event.restart": {
     "defaultMessage": "रीस्टार्ट"
+  },
+  "mlxDistributed.event.runnerUpdateFailed": {
+    "defaultMessage": "रनर अपडेट विफल"
+  },
+  "mlxDistributed.event.runnerUpdated": {
+    "defaultMessage": "रनर अपडेट हुआ"
+  },
+  "mlxDistributed.event.runnerUpdating": {
+    "defaultMessage": "रनर अपडेट हो रहा है"
   },
   "mlxDistributed.event.startFailed": {
     "defaultMessage": "शुरू होना विफल"
@@ -3427,6 +3445,9 @@
   },
   "mlxDistributed.room.shortByNoApps": {
     "defaultMessage": "{gib} GiB कम — जगह बनाएं, या ऐप्स बंद करें"
+  },
+  "mlxDistributed.runnerUpdate.title": {
+    "defaultMessage": "स्प्लिट का रनर अपडेट हो रहा है"
   },
   "mlxDistributed.save": {
     "defaultMessage": "कॉन्फ़िगरेशन सहेजें"
@@ -5246,6 +5267,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "योजना के बिना गति का कोई आँकड़ा नहीं — फिर भी हर तरीका शुरू किया जा सकता है।"
   },
+  "placementCard.noticeDetails": {
+    "defaultMessage": "विवरण"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# अन्य विभाजन} other{# अन्य विभाजन}}"
   },
@@ -5290,6 +5314,12 @@
   },
   "placementCard.runOn": {
     "defaultMessage": "{name} पर चलाएँ"
+  },
+  "placementCard.runnerStep": {
+    "defaultMessage": "{step, select, check {जाँच रहा है} uv {uv ढूँढ रहा है} venv {एनवायरनमेंट बना रहा है} install {इंस्टॉल कर रहा है} done {पूरा} fail {विफल} other {शुरू हो रहा है}}"
+  },
+  "placementCard.runnerUpdating": {
+    "defaultMessage": "{nodes} पर स्प्लिट का रनर अपडेट हो रहा है…"
   },
   "placementCard.short": {
     "defaultMessage": "नहीं समाता: {node} पर {gb} कम"

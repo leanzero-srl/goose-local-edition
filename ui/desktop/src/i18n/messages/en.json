@@ -3002,6 +3002,12 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "Cancel"
   },
+  "mlxDistributed.check.details": {
+    "defaultMessage": "Details"
+  },
+  "mlxDistributed.check.useGooseRunner": {
+    "defaultMessage": "Use goose’s runner"
+  },
   "mlxDistributed.checksPassed": {
     "defaultMessage": "{count,plural,one{# check passed} other{# checks passed}}"
   },
@@ -3040,6 +3046,9 @@
   },
   "mlxDistributed.error.unmount": {
     "defaultMessage": "Unmount error"
+  },
+  "mlxDistributed.error.useGooseRunner": {
+    "defaultMessage": "Could not hand this runner to goose"
   },
   "mlxDistributed.event.admissionClosed": {
     "defaultMessage": "Admission closed"
@@ -3085,6 +3094,15 @@
   },
   "mlxDistributed.event.restart": {
     "defaultMessage": "Restart"
+  },
+  "mlxDistributed.event.runnerUpdateFailed": {
+    "defaultMessage": "Runner update failed"
+  },
+  "mlxDistributed.event.runnerUpdated": {
+    "defaultMessage": "Runner updated"
+  },
+  "mlxDistributed.event.runnerUpdating": {
+    "defaultMessage": "Updating the runner"
   },
   "mlxDistributed.event.startFailed": {
     "defaultMessage": "Start failed"
@@ -3427,6 +3445,9 @@
   },
   "mlxDistributed.room.shortByNoApps": {
     "defaultMessage": "Short by {gib} GiB — Make room, or close apps"
+  },
+  "mlxDistributed.runnerUpdate.title": {
+    "defaultMessage": "Updating the split’s runner"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Save configuration"
@@ -5246,6 +5267,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Without a plan there is no speed figure — every way can still be started."
   },
+  "placementCard.noticeDetails": {
+    "defaultMessage": "Details"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# other split} other{# other splits}}"
   },
@@ -5290,6 +5314,12 @@
   },
   "placementCard.runOn": {
     "defaultMessage": "Run on {name}"
+  },
+  "placementCard.runnerStep": {
+    "defaultMessage": "{step,select,check{checking} uv{finding uv} venv{making the env} install{installing} done{done} fail{failed} other{starting}}"
+  },
+  "placementCard.runnerUpdating": {
+    "defaultMessage": "Updating the split’s runner on {nodes}…"
   },
   "placementCard.short": {
     "defaultMessage": "Does not fit: short {gb} on {node}"

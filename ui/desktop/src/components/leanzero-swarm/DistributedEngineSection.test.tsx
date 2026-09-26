@@ -19,8 +19,10 @@ import {
 } from './mlxDistributed.fixtures';
 import type { MlxEngineStatus } from '../../acp/mlx-engine';
 import type {
+  MlxDistributedCheck,
   MlxDistributedDiscovery,
   MlxDistributedLinkPeer,
+  MlxDistributedPreflight,
   MlxDistributedStatus,
 } from '../../acp/mlx-distributed';
 // What the backend's Detect returned for the real pair (exported by the goose crate's
@@ -1248,5 +1250,126 @@ describe('DistributedEngineSection — the engine-phase palette on the run and e
     expect(
       within(screen.getByTestId('mlx-dist-mode')).getByText('Failed').closest('[data-phase]')
     ).toHaveAttribute('data-phase', 'failed');
+  });
+});
+
+/**
+ * Q-116 on 3.0.46: goose moved the pipeline pin to b7bd1afc2 and both Macs' goose-managed runner
+ * envs still answered 2f02ac645. The check reads plainly with the evidence behind Details; a start
+ * that rebuilds shows its progress; an interpreter the owner chose is handed to goose only by a press.
+ */
+describe('DistributedEngineSection — the split’s runner (Q-116)', () => {
+  const MANAGED = '/Users/workhorse/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python';
+  const OWN = FLASH_CONFIG.nodes[1].pipelinePython as string;
+  const STALE_DETAIL = `${MANAGED} answers '0.32.2 0.31.3 2f02ac645a8d8a54bc184d008cfdcec855d09c80'; goose pins '0.32.2 0.31.3 b7bd1afc2fd1d75ed366c09c3e41b96be2cfbb68' (mlx, mlx_lm, fork commit)`;
+  const withWorkhorseCheck = (check: MlxDistributedCheck): MlxDistributedPreflight => ({
+    ...FLASH_PREFLIGHT_OK,
+    ok: check.verdict !== 'fail',
+    nodes: FLASH_PREFLIGHT_OK.nodes.map((n) =>
+      n.rank === 1 ? { ...n, checks: [...n.checks, check] } : n
+    ),
+  });
+
+  it('a goose-managed runner on an older pin reads plainly; the commit and the path wait under Details', async () => {
+    const report = withWorkhorseCheck({
+      id: 'runnerEnv',
+      verdict: 'fail',
+      message:
+        'this Mac’s split runner is from an older goose — goose updates it when you press Run',
+      detail: STALE_DETAIL,
+      env: {
+        env: 'rapid-mlx-pipeline-qwen4-py3.12',
+        field: 'pipelinePython',
+        python: MANAGED,
+        target: MANAGED,
+        managed: true,
+      },
+    });
+    const { container } = section({ status: { ...STOPPED_WITH_CONFIG, lastPreflight: report } });
+    const row = within(screen.getByTestId('mlx-dist-failing')).getByTestId('mlx-dist-check');
+    expect(row).toHaveTextContent(
+      'workhorse · runnerEnvthis Mac’s split runner is from an older goose — goose updates it when you press Run'
+    );
+    // No "Use goose's runner": goose already owns this one and rebuilds it on Run.
+    expect(within(row).queryByTestId('mlx-dist-use-goose-runner')).toBeNull();
+    const details = within(row).getByTestId('mlx-dist-check-detail');
+    expect(details).toHaveAttribute('data-state', 'closed');
+    expect(within(details).getByText(STALE_DETAIL)).not.toBeVisible();
+    await userEvent.click(within(details).getByRole('button', { name: 'Details' }));
+    expect(within(details).getByText(STALE_DETAIL)).toBeVisible();
+    await expectDesigned(container);
+  });
+
+  it('a Python the owner chose is never rebuilt on its own: it warns, and “Use goose’s runner” hands it over on a press', async () => {
+    const report = withWorkhorseCheck({
+      id: 'runnerEnv',
+      verdict: 'warn',
+      message:
+        'this Mac runs the split on a Python you chose, which is not the runner goose pins — goose never rebuilds your own interpreter; switch this Mac to goose’s runner to have goose keep it current',
+      detail: `${OWN} answers '0.32.2 0.31.3 2f02ac645a8d8a54bc184d008cfdcec855d09c80'`,
+      env: {
+        env: 'rapid-mlx-pipeline-qwen4-py3.12',
+        field: 'pipelinePython',
+        python: OWN,
+        target: MANAGED,
+        managed: false,
+      },
+    });
+    mockConfigUpdate.mockResolvedValue({ config: FLASH_CONFIG });
+    mockPreflight.mockResolvedValue(FLASH_PREFLIGHT_OK);
+    section({ status: { ...STOPPED_WITH_CONFIG, lastPreflight: report } });
+    expect(mockConfigUpdate).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByTestId('mlx-dist-use-goose-runner'));
+    await waitFor(() => expect(mockConfigUpdate).toHaveBeenCalledTimes(1));
+    const saved = mockConfigUpdate.mock.calls[0][0];
+    expect(saved.nodes[1].pipelinePython).toBe(MANAGED);
+    expect(saved.nodes[0].pipelinePython).toBe(FLASH_CONFIG.nodes[0].pipelinePython);
+    expect(saved.nodes[1].python).toBe(FLASH_CONFIG.nodes[1].python);
+    await waitFor(() => expect(mockPreflight).toHaveBeenCalledWith(null, false));
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockProvision).not.toHaveBeenCalled();
+  });
+
+  it('a start that rebuilds the runner shows it by Mac; a failed rebuild names the Mac, its output under Details', async () => {
+    const running = {
+      state: 'running',
+      startedMs: 1,
+      nodes: [
+        {
+          rank: 0,
+          name: 'MacBook Pro',
+          python:
+            '/Users/mihaiperdum/.goose/distributed/rapid-mlx-pipeline-qwen4-py3.12/bin/python',
+          state: 'running',
+          step: 'install',
+          detail: 'rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@b7bd1afc2…',
+          lines: ['GOOSE_PROV install rapid-mlx @ git+…', 'Resolved 31 packages in 1.2s'],
+          startedMs: 1,
+        },
+      ],
+    };
+    mockStart.mockResolvedValue({
+      started: false,
+      refusal: {
+        code: 'runnerUpdateFailed',
+        message: 'Updating the split’s runner on workhorse failed',
+        node: 'workhorse',
+        detail: `${MANAGED} (rapid-mlx-pipeline-qwen4-py3.12): uv pip install exited 1\nGOOSE_PROV fail uv pip install exited 1`,
+      },
+    });
+    section({ status: { ...STOPPED_WITH_CONFIG, runnerUpdate: running } });
+    const panel = screen.getByTestId('mlx-dist-runner-update');
+    expect(panel).toHaveAttribute('data-state', 'running');
+    expect(within(panel).getByText('Updating the split’s runner')).toBeInTheDocument();
+    expect(within(panel).getByText('Resolved 31 packages in 1.2s')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start' }));
+    expect(await screen.findByTestId('mlx-dist-refusal')).toHaveTextContent(
+      'Updating the split’s runner on workhorse failed'
+    );
+    expect(screen.getByTestId('mlx-dist-refusal')).not.toHaveTextContent('uv pip install');
+    const details = screen.getByTestId('mlx-dist-refusal-detail');
+    await userEvent.click(within(details).getByRole('button', { name: 'Details' }));
+    expect(details).toHaveTextContent('GOOSE_PROV fail uv pip install exited 1');
   });
 });

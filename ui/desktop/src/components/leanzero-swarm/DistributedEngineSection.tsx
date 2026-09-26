@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Loader2,
   MemoryStick,
@@ -62,6 +62,7 @@ import {
   type MlxDistributedOwner,
   type MlxDistributedPreflight,
   type MlxDistributedProvision,
+  type MlxDistributedRunnerEnv,
   type MlxDistributedStartResponse,
   type MlxDistributedStatus,
   type MlxDistributedStopResponse,
@@ -90,6 +91,7 @@ import {
   sameConfig,
   verdictTone,
   withFreeMemory,
+  withGooseRunner,
   withModel,
   type LayerSpan,
   type MissingField,
@@ -400,6 +402,19 @@ const i18n = defineMessages({
   startError: { id: 'mlxDistributed.error.start', defaultMessage: 'Start error' },
   stopError: { id: 'mlxDistributed.error.stop', defaultMessage: 'Stop error' },
   saveError: { id: 'mlxDistributed.error.save', defaultMessage: 'Save error' },
+  runnerUpdateTitle: {
+    id: 'mlxDistributed.runnerUpdate.title',
+    defaultMessage: 'Updating the split’s runner',
+  },
+  checkDetails: { id: 'mlxDistributed.check.details', defaultMessage: 'Details' },
+  useGooseRunner: {
+    id: 'mlxDistributed.check.useGooseRunner',
+    defaultMessage: 'Use goose’s runner',
+  },
+  useGooseRunnerError: {
+    id: 'mlxDistributed.error.useGooseRunner',
+    defaultMessage: 'Could not hand this runner to goose',
+  },
   unmountError: { id: 'mlxDistributed.error.unmount', defaultMessage: 'Unmount error' },
   unmountTitle: {
     id: 'mlxDistributed.unmountTitle',
@@ -512,6 +527,16 @@ const EVENT_WORDS = defineMessages({
     id: 'mlxDistributed.event.localNetworkBlocked',
     defaultMessage: 'Local network blocked',
   },
+  runnerUpdating: {
+    id: 'mlxDistributed.event.runnerUpdating',
+    defaultMessage: 'Updating the runner',
+  },
+  runnerUpdated: { id: 'mlxDistributed.event.runnerUpdated', defaultMessage: 'Runner updated' },
+  runnerUpdateFailed: {
+    id: 'mlxDistributed.event.runnerUpdateFailed',
+    defaultMessage: 'Runner update failed',
+  },
+  // formatjs reads the literal entries above; these two borrow ROOM's and must stay last.
   memoryCompacted: ROOM.memoryCompacted,
   compactionSkipped: ROOM.compactionSkipped,
 });
@@ -628,18 +653,61 @@ function budgetTone(fraction: number): Tone {
 // Checks and the preflight report
 // ---------------------------------------------------------------------------
 
+/**
+ * Hands an interpreter the operator chose over to goose ("Use goose's runner" on a `runnerEnv`
+ * WARN): provided by the section, which owns the config. goose never rebuilds such an interpreter
+ * on its own (Q-116).
+ */
+const AdoptRunnerContext = createContext<{
+  adopt: (env: MlxDistributedRunnerEnv) => void;
+  disabled: boolean;
+} | null>(null);
+
 function CheckRow({ check, node }: { check: MlxDistributedCheck; node?: string }) {
   const intl = useIntl();
+  const adopter = useContext(AdoptRunnerContext);
+  const env = check.env;
+  const offerAdopt = adopter != null && env != null && !env.managed && env.target != null;
   return (
     <li
       data-testid="mlx-dist-check"
       data-verdict={check.verdict}
       data-check={check.id}
-      className="flex min-w-0 items-start gap-2"
+      className="flex min-w-0 flex-col gap-1"
     >
-      <Chip tone={verdictTone(check.verdict)}>{verdictWord(intl, check.verdict)}</Chip>
-      <span className={cx('shrink-0', TYPE.mono)}>{node ? `${node} · ${check.id}` : check.id}</span>
-      <span className={cx('min-w-0 break-words', TYPE.body, TNUM)}>{check.message}</span>
+      <span className="flex min-w-0 items-start gap-2">
+        <Chip tone={verdictTone(check.verdict)}>{verdictWord(intl, check.verdict)}</Chip>
+        <span className={cx('shrink-0', TYPE.mono)}>
+          {node ? `${node} · ${check.id}` : check.id}
+        </span>
+        <span className={cx('min-w-0 break-words', TYPE.body, TNUM)}>{check.message}</span>
+      </span>
+      {(check.detail || offerAdopt) && (
+        <span className="flex min-w-0 flex-col gap-1 pl-2">
+          {offerAdopt && (
+            <span>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => adopter.adopt(env)}
+                disabled={adopter.disabled}
+                data-testid="mlx-dist-use-goose-runner"
+              >
+                {intl.formatMessage(i18n.useGooseRunner)}
+              </Button>
+            </span>
+          )}
+          {check.detail && (
+            <Disclosure
+              variant="plain"
+              title={intl.formatMessage(i18n.checkDetails)}
+              testId="mlx-dist-check-detail"
+            >
+              <p className={cx('whitespace-pre-wrap break-all', TYPE.mono)}>{check.detail}</p>
+            </Disclosure>
+          )}
+        </span>
+      )}
     </li>
   );
 }
@@ -1648,7 +1716,14 @@ function provisionTone(state: string): Tone {
 }
 
 /** The nodes' goose-managed Python: one row per env, its state, the step and the last line. */
-function ProvisionPanel({ provision }: { provision: MlxDistributedProvision }) {
+function ProvisionPanel({
+  provision,
+  runnerUpdate = false,
+}: {
+  provision: MlxDistributedProvision;
+  /** The rebuild a start ran by itself (Q-116), not the owner's "Save and provision". */
+  runnerUpdate?: boolean;
+}) {
   const intl = useIntl();
   const word: Record<string, MessageDescriptor> = {
     running: i18n.provisionRunning,
@@ -1658,11 +1733,15 @@ function ProvisionPanel({ provision }: { provision: MlxDistributedProvision }) {
   };
   return (
     <div
-      data-testid="mlx-dist-provision"
+      data-testid={runnerUpdate ? 'mlx-dist-runner-update' : 'mlx-dist-provision'}
       data-state={provision.state}
       className="flex flex-col gap-2"
     >
-      <span className={TYPE.zone}>{intl.formatMessage(i18n.provisionTitle)}</span>
+      <span className={TYPE.zone}>
+        {runnerUpdate
+          ? intl.formatMessage(i18n.runnerUpdateTitle)
+          : intl.formatMessage(i18n.provisionTitle)}
+      </span>
       <ul className="flex flex-col gap-2">
         {provision.nodes.map((n) => {
           const last = n.lines.length ? n.lines[n.lines.length - 1] : null;
@@ -1952,6 +2031,27 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
       setDraft(null);
     });
 
+  /**
+   * "Use goose's runner": the interpreter the operator chose is replaced by goose's own path on
+   * that Mac — saved at once (or into the open draft), then checked again, so the row turns into
+   * "goose builds it when you press Run". The one way goose ever touches an interpreter it did not
+   * choose: the owner pressed this.
+   */
+  const onAdoptRunner = (env: MlxDistributedRunnerEnv) =>
+    void run('save', i18n.useGooseRunnerError, async () => {
+      if (!config) return;
+      const next = withGooseRunner(config, env);
+      if (!next) throw new Error(`no Mac in this setup runs ${env.python} any more`);
+      if (dirty) {
+        setDraft(next);
+        return;
+      }
+      await mlxDistributedConfigUpdate(cleanConfig(next));
+      await touchLocalNetwork();
+      setFreshPreflight(await mlxDistributedPreflight(null, repairLink));
+    });
+  const adoptRunner = { adopt: onAdoptRunner, disabled: busy != null || owning };
+
   // The section says what IT is: the distributed engine as configured (or running), never the
   // single engine's "Single · this Mac" — that chip lives on the tab row and the tile.
   const configured = configuredModeSummary(status);
@@ -2045,6 +2145,15 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
           text={refusal.message}
           testId="mlx-dist-refusal"
         />
+      )}
+      {refusal?.detail && (
+        <Disclosure
+          variant="plain"
+          title={intl.formatMessage(i18n.checkDetails)}
+          testId="mlx-dist-refusal-detail"
+        >
+          <p className={cx('whitespace-pre-wrap break-all', TYPE.mono)}>{refusal.detail}</p>
+        </Disclosure>
       )}
       {stopReport && (
         <div data-testid="mlx-dist-stop-report" className="flex flex-col gap-1">
@@ -2172,13 +2281,16 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
         <div className="flex flex-col gap-2">
           <span className={TYPE.zone}>{intl.formatMessage(i18n.preflightTitle)}</span>
           {preflight ? (
-            <PreflightReportView report={preflight} room={room} nodes={!liveRun} />
+            <AdoptRunnerContext.Provider value={adoptRunner}>
+              <PreflightReportView report={preflight} room={room} nodes={!liveRun} />
+            </AdoptRunnerContext.Provider>
           ) : (
             <p className={TYPE.bodyMuted}>{intl.formatMessage(i18n.preflightNone)}</p>
           )}
         </div>
       )}
 
+      {status?.runnerUpdate && <ProvisionPanel provision={status.runnerUpdate} runnerUpdate />}
       {status?.provision && <ProvisionPanel provision={status.provision} />}
 
       {status && (

@@ -3002,6 +3002,12 @@
   "mlxDistributed.cancel": {
     "defaultMessage": "Hủy"
   },
+  "mlxDistributed.check.details": {
+    "defaultMessage": "Chi tiết"
+  },
+  "mlxDistributed.check.useGooseRunner": {
+    "defaultMessage": "Dùng runner của goose"
+  },
   "mlxDistributed.checksPassed": {
     "defaultMessage": "{count,plural,one{# kiểm tra đạt} other{# kiểm tra đạt}}"
   },
@@ -3040,6 +3046,9 @@
   },
   "mlxDistributed.error.unmount": {
     "defaultMessage": "Lỗi khi gỡ"
+  },
+  "mlxDistributed.error.useGooseRunner": {
+    "defaultMessage": "Không thể giao runner này cho goose"
   },
   "mlxDistributed.event.admissionClosed": {
     "defaultMessage": "Ngừng nhận yêu cầu"
@@ -3085,6 +3094,15 @@
   },
   "mlxDistributed.event.restart": {
     "defaultMessage": "Khởi động lại"
+  },
+  "mlxDistributed.event.runnerUpdateFailed": {
+    "defaultMessage": "Cập nhật runner thất bại"
+  },
+  "mlxDistributed.event.runnerUpdated": {
+    "defaultMessage": "Đã cập nhật runner"
+  },
+  "mlxDistributed.event.runnerUpdating": {
+    "defaultMessage": "Đang cập nhật runner"
   },
   "mlxDistributed.event.startFailed": {
     "defaultMessage": "Khởi động thất bại"
@@ -3427,6 +3445,9 @@
   },
   "mlxDistributed.room.shortByNoApps": {
     "defaultMessage": "Thiếu {gib} GiB — giải phóng bộ nhớ, hoặc đóng ứng dụng"
+  },
+  "mlxDistributed.runnerUpdate.title": {
+    "defaultMessage": "Đang cập nhật runner của bản chia"
   },
   "mlxDistributed.save": {
     "defaultMessage": "Lưu cấu hình"
@@ -5246,6 +5267,9 @@
   "placementCard.noPlanWays": {
     "defaultMessage": "Không có kế hoạch thì không có con số tốc độ — nhưng vẫn có thể khởi chạy mọi cách."
   },
+  "placementCard.noticeDetails": {
+    "defaultMessage": "Chi tiết"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# cách chia khác} other{# cách chia khác}}"
   },
@@ -5290,6 +5314,12 @@
   },
   "placementCard.runOn": {
     "defaultMessage": "Chạy trên {name}"
+  },
+  "placementCard.runnerStep": {
+    "defaultMessage": "{step, select, check {đang kiểm tra} uv {đang tìm uv} venv {đang tạo môi trường} install {đang cài đặt} done {xong} fail {thất bại} other {đang bắt đầu}}"
+  },
+  "placementCard.runnerUpdating": {
+    "defaultMessage": "Đang cập nhật runner của bản chia trên {nodes}…"
   },
   "placementCard.short": {
     "defaultMessage": "Không vừa: thiếu {gb} trên {node}"

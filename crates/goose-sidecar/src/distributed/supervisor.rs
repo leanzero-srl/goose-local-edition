@@ -35,6 +35,7 @@ use super::local_network;
 use super::node_op::{NodeOp, Signal};
 use super::preflight::{self, now_ms, PreflightReport};
 use super::probe::{self, Pressure, SseVerdict};
+use super::runner_update::{self, Preflighted, RunnerUpdate};
 use super::{HANG_MEDIAN_MULTIPLE, HANG_MIN_SAMPLES};
 use crate::{SidecarConfig, GIB, GRACE_TICK, GRACE_TICKS};
 
@@ -169,6 +170,13 @@ pub enum EventKind {
     RankOverPlan,
     /// After a memory death, every node is back above its WARN reserve: the pair restarts.
     MemoryRecovered,
+    /// A start found goose-managed runner envs on an older pin and nothing else blocking: goose
+    /// rebuilds them (Q-116); the message names the Macs.
+    RunnerUpdating,
+    /// They were rebuilt; the start preflights again.
+    RunnerUpdated,
+    /// A rebuild failed; the message names the Mac, the refusal's `detail` carries its output.
+    RunnerUpdateFailed,
 }
 
 impl EventKind {
@@ -203,6 +211,9 @@ impl EventKind {
             EventKind::MemoryGrowth => "memoryGrowth",
             EventKind::RankOverPlan => "rankOverPlan",
             EventKind::MemoryRecovered => "memoryRecovered",
+            EventKind::RunnerUpdating => "runnerUpdating",
+            EventKind::RunnerUpdated => "runnerUpdated",
+            EventKind::RunnerUpdateFailed => "runnerUpdateFailed",
         }
     }
 }
@@ -312,6 +323,8 @@ pub struct DistributedStatus {
     pub making_room: Vec<String>,
     /// While `state` is `recovering`: what the restart after a memory death waits for, per node.
     pub memory_recovery: Option<String>,
+    /// The runner rebuild the last start ran (Q-116), live while it runs.
+    pub runner_update: Option<RunnerUpdate>,
 }
 
 impl DistributedStatus {
@@ -341,6 +354,7 @@ impl DistributedStatus {
             compactions: Vec::new(),
             making_room: Vec::new(),
             memory_recovery: None,
+            runner_update: None,
         }
     }
 
@@ -372,6 +386,9 @@ pub enum RefusalCode {
     /// replaces is stopped by the switch before the split starts, so what reaches this is a load
     /// the split does not own (another app's, a third party's, that Mac's own).
     ModelLoading,
+    /// The start rebuilt a stale goose-managed runner env and the rebuild failed on `node`: the
+    /// message says so in plain words, `detail` carries that node's output.
+    RunnerUpdateFailed,
 }
 
 impl RefusalCode {
@@ -383,6 +400,7 @@ impl RefusalCode {
             RefusalCode::PreviousSplitShuttingDown => "previousSplitShuttingDown",
             RefusalCode::ForeignSplit => "foreignSplit",
             RefusalCode::ModelLoading => "modelLoading",
+            RefusalCode::RunnerUpdateFailed => "runnerUpdateFailed",
         }
     }
 }
@@ -2430,9 +2448,38 @@ impl DistributedManager {
             .await
     }
 
-    pub(crate) async fn start_with_single_state(
+    /// This install's previous ranks first: an orphan is reclaimed per pid and the preflight runs
+    /// again over the freed node; one still under a live parent is returned for the caller's
+    /// refusal — a start never signals a rank some goose is still stopping.
+    async fn preflight_settled(
         &self,
         config: DistributedConfig,
+        owner: Option<String>,
+    ) -> Result<(PreflightReport, Option<SettledLeftovers>)> {
+        loop {
+            let report =
+                preflight_making_room(&config, &self.exec, &self.shared, true, owner.as_deref())
+                    .await?;
+            let settled = settle_leftovers(self.exec.as_ref(), &config, &report).await;
+            if !settled.reclaimed.is_empty() {
+                self.shared.lock().unwrap().event(
+                    EventKind::OrphanReclaimed,
+                    None,
+                    settled.reclaimed.join("; "),
+                );
+            }
+            if !settled.waiting.is_empty() {
+                return Ok((report, Some(settled)));
+            }
+            if settled.clear() {
+                return Ok((report, None));
+            }
+        }
+    }
+
+    pub(crate) async fn start_with_single_state(
+        &self,
+        mut config: DistributedConfig,
         served_id: String,
         single_state: &str,
         single_model: Option<&str>,
@@ -2480,40 +2527,74 @@ impl DistributedManager {
             shared.event(EventKind::Preflight, None, "preflight before launch");
         }
         let owner = self.owner();
-        // This install's previous ranks first: an orphan is reclaimed per pid and the preflight
-        // runs again over the freed node; one still under a live parent is a refusal the caller
-        // retries — a start never signals a rank some goose is still stopping.
-        let (report, waiting) = loop {
-            let report = match preflight_making_room(
-                &config,
-                &self.exec,
-                &self.shared,
-                true,
-                owner.as_deref(),
-            )
-            .await
-            {
-                Ok(report) => report,
-                Err(e) => {
-                    let mut shared = self.shared.lock().unwrap();
-                    shared.status.state = RunState::Stopped;
-                    shared.status.last_error = Some(format!("{e:#}"));
-                    return Err(e);
-                }
-            };
-            let settled = settle_leftovers(self.exec.as_ref(), &config, &report).await;
-            if !settled.reclaimed.is_empty() {
-                self.shared.lock().unwrap().event(
-                    EventKind::OrphanReclaimed,
+        // A goose-managed runner env on an older pin, blocking nothing else, is rebuilt here and
+        // the preflight asked again (Q-116); the rebuild's progress rides `runner_update`.
+        let progress_shared = Arc::clone(&self.shared);
+        let on_progress = move |update: &RunnerUpdate| {
+            let mut shared = progress_shared.lock().unwrap();
+            if shared.status.runner_update.is_none() {
+                shared.event(
+                    EventKind::RunnerUpdating,
                     None,
-                    settled.reclaimed.join("; "),
+                    format!(
+                        "updating the split's runner on {}",
+                        update.nodes().join(" and ")
+                    ),
                 );
             }
-            if !settled.waiting.is_empty() {
-                break (report, Some(settled));
+            shared.status.runner_update = Some(update.clone());
+        };
+        let preflighted = runner_update::preflight_updating_runners(
+            &mut config,
+            self.exec.as_ref(),
+            &on_progress,
+            |config| Box::pin(self.preflight_settled(config, owner.clone())),
+        )
+        .await;
+        let (report, waiting) = match preflighted {
+            Ok(Preflighted::Ready {
+                report,
+                extra,
+                updated,
+            }) => {
+                if let Some(update) = updated {
+                    let mut shared = self.shared.lock().unwrap();
+                    shared.status.config = Some(config.clone());
+                    shared.event(
+                        EventKind::RunnerUpdated,
+                        None,
+                        format!(
+                            "the split's runner is up to date on {}",
+                            update.nodes().join(" and ")
+                        ),
+                    );
+                }
+                (report, extra)
             }
-            if settled.clear() {
-                break (report, None);
+            Ok(Preflighted::UpdateFailed { failure, report }) => {
+                let mut shared = self.shared.lock().unwrap();
+                shared.status.last_preflight = Some(report.clone());
+                shared.status.runner = report.runner;
+                shared.status.state = RunState::Stopped;
+                shared.status.last_error = Some(failure.message.clone());
+                shared.event(
+                    EventKind::RunnerUpdateFailed,
+                    Some(&failure.node),
+                    failure.message.clone(),
+                );
+                return Ok(StartOutcome::Refused {
+                    code: RefusalCode::RunnerUpdateFailed,
+                    message: failure.message,
+                    preflight: Some(report),
+                    node: Some(failure.node),
+                    detail: Some(failure.detail),
+                });
+            }
+            Err(e) => {
+                let mut shared = self.shared.lock().unwrap();
+                shared.status.state = RunState::Stopped;
+                shared.status.last_error = Some(format!("{e:#}"));
+                return Err(e);
             }
         };
         let mut shared = self.shared.lock().unwrap();
