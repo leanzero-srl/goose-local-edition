@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Necesita {gb} GB más de memoria libre"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Sin ejecuciones desde que se reinició: la próxima respuesta dará una velocidad de escritura"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Aún no hay ejecuciones medidas: la próxima respuesta dará una velocidad de escritura"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Aún no hay ejecuciones medidas de esta forma: «Medir velocidad» en «Ejecutar» registra una"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "de {gb} GB"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} de {max} tokens"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Leyendo las ejecuciones medidas de goose…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "No se pudieron leer las ejecuciones medidas de goose: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Atendiendo a"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Deja {model} en este chat"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Llamada auxiliar de goose en curso"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Atendiendo otro trabajo"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Compartido con otro trabajo"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Ocupado, no se sabe para quién"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Borra el modelo y los ajustes de proveedor seleccionados para empezar de cero"

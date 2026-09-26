@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "{gb} GB daha boş bellek gerekiyor"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Yeniden başladığından beri çalıştırma yok — sonraki yanıt bir yazma hızı verir"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Henüz ölçülen çalıştırma yok — sonraki yanıt bir yazma hızı verir"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Bu yolda henüz ölçülmüş çalıştırma yok — Çalıştır'daki Hızı ölç bir tane kaydeder"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "/ {gb} GB"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} / {max} token"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "goose'un ölçtüğü çalıştırmalar okunuyor…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "goose'un ölçtüğü çalıştırmalar okunamadı: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Hizmet veriyor"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Bu sohbet için {model} bırakılır"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "goose yardımcı çağrısı çalışıyor"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Başka bir işe hizmet ediyor"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Başka işle paylaşılıyor"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Meşgul, kimin işi bilinmiyor"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Yeni bir başlangıç yapmak için seçtiğiniz model ve sağlayıcı ayarlarını temizleyin"

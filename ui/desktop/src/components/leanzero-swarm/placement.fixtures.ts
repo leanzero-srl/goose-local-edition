@@ -1,4 +1,4 @@
-import type { PlacementNode, PlacementPlan } from '../../acp/mlx-placement';
+import type { PlacementCandidate, PlacementNode, PlacementPlan } from '../../acp/mlx-placement';
 
 /**
  * REAL `placementPlan` answers (goosed built at bf03d52c1, isolated profile, peer over ssh
@@ -589,3 +589,44 @@ export const NODES: PlacementNode[] = [
     ceilingBytes: 83494174720,
   },
 ];
+
+/** One way's runs as goose measured them: [median, slowest, fastest, runs]. */
+export type MeasuredRunsFixture = readonly [number, number, number, number];
+
+/**
+ * A chat plan for `modelId` whose ways carry MEASURED figures — PLAN_27B's first candidate re-keyed
+ * per way, so every other field is one goose really sent.
+ */
+export function measuredPlan(
+  modelId: string,
+  ways: ReadonlyArray<{
+    key: PlacementCandidate['key'];
+    decode?: MeasuredRunsFixture;
+    prefill?: MeasuredRunsFixture;
+  }>
+): PlacementPlan {
+  const base = (PLAN_27B.candidates ?? [])[0];
+  const figure = (m: MeasuredRunsFixture | undefined, value: number) =>
+    m
+      ? {
+          estimate: { value: m[0], low: m[1], high: m[2] },
+          measured: true,
+          runs: m[3],
+          lastMeasuredMs: 1_790_000_000_000,
+        }
+      : { estimate: { value, low: value, high: value }, measured: false, runs: 0 };
+  return {
+    ...PLAN_27B,
+    modelId,
+    candidates: ways.map((way) => ({
+      ...base,
+      id: `${way.key.kind}:${way.key.nodes.join('+')}`,
+      key: way.key,
+      speed: {
+        ...base.speed,
+        decode: figure(way.decode, base.speed.decode?.estimate.value ?? 0),
+        prefill: figure(way.prefill, base.speed.prefill?.estimate.value ?? 0),
+      },
+    })),
+  };
+}

@@ -341,11 +341,38 @@ function splitNames(distributed: MlxDistributedStatus): string[] {
   return summary.mode === 'distributed' ? summary.nodeNames : [];
 }
 
+/**
+ * WHOSE work the serving engine is doing, from THIS chat's seat (Q-124: the chip said "Reading a
+ * prompt" at the moment this chat's turn had ended — goose's own title and reviewer calls, or
+ * another chat's turn, read as this chat's). null = the engine is idle, not loaded, or not read.
+ *
+ * How requests are attributed, and why this is the honest limit today: Rapid-MLX's `/v1/status`
+ * request id IS the chat stream's response id (`chatcmpl-<hex>`; 0.14.3 routes/chat.py: "One
+ * request identity crosses the public SSE and scheduler surfaces"), and goose's OpenAI parser puts
+ * that id on the streamed message — but goose's in-flight list (`/mlx-engine/serving`,
+ * providers/mlx_serving.rs) carries no engine request id, so the desktop cannot match a row to a
+ * request. What it has is that list (which session leased the engine) and whether THIS chat's turn
+ * is in flight (its stream is open). So:
+ *  - `thisChat`: this chat's own request, proven (`turnRequest`);
+ *  - `shared`: this chat's turn is on the engine beside someone else's — which one is ours cannot
+ *    be proven, so the engine's colour is shown and the word says it is shared;
+ *  - `helper`: only goose's own calls with no turn of this chat on the engine — a title, a tool
+ *    summary, the end-of-turn reviewer (no session, a hidden one, or this chat's session between
+ *    turns);
+ *  - `others`: another chat, an external /v1 client, a sub-agent, or requests goose did not send;
+ *  - `unattributed`: this chat's turn is in flight but goose's list could not be read.
+ */
+export type ChatWork = 'thisChat' | 'shared' | 'helper' | 'others' | 'unattributed';
+
 export interface ChatServedBy extends MlxEngineServing {
-  /** The colour it is in (lz ENGINE PHASE); null = no claim (nothing read, or unreadable). */
+  /**
+   * The colour it is in (lz ENGINE PHASE), as THIS chat sees it: this chat's own request's phase,
+   * grey (or held, while a request waits) when the engine works only for others; null = no claim.
+   */
   phase: EnginePhase | null;
-  /** What it is doing, from main's live read of THAT engine; null when main has none. */
+  /** What the ENGINE is doing, from main's live read of it — anyone's request; null when unread. */
   activity: MlxActivity | null;
+  work: ChatWork | null;
   busyWithOthers: ChatBusy | null;
   /**
    * THIS chat's turn on that engine, from main's live read (`turnRequest`); null when no turn is
@@ -425,7 +452,7 @@ function holdsARequestWaiting(stats: MlxLiveStats): boolean {
  * omlx provider, the unattributed request of our own turn) with NO other client on the engine —
  * with someone else there, which request is ours cannot be proven and nothing is claimed. goose's
  * own background calls may run beside the turn (the reviewer, a title); the turn carries the whole
- * conversation, so its prompt is the largest of the running requests.
+ * conversation, so its prompt is the largest of the engine's requests, running or waiting.
  */
 function turnRequestOf(
   main: MlxEngineSnapshot,
@@ -444,11 +471,71 @@ function turnRequestOf(
   }
   if (own === 0 && serving.unattributed === 0) return null;
   if (own > 0 && serving.unattributed > 0) return null;
-  const running = stats.requests.filter((r) => r.status !== 'waiting');
-  return running.reduce<MlxLiveRequest | null>(
+  // Waiting requests count too: a turn queued behind goose's own small call is still the largest
+  // prompt, and naming the helper's running request instead made the chip say "Writing" (Q-124).
+  return stats.requests.reduce<MlxLiveRequest | null>(
     (best, r) => (best == null || (r.promptTokens ?? 0) > (best.promptTokens ?? 0) ? r : best),
     null
   );
+}
+
+/** The phase of this chat's own request, in the engine's activity words. */
+function requestActivity(request: MlxLiveRequest): MlxActivity {
+  if (request.status === 'waiting' || request.phase === 'queued') return 'queued';
+  return request.phase === 'prefill' ? 'prefill' : 'generating';
+}
+
+function workOf(
+  main: MlxEngineSnapshot,
+  activity: MlxActivity,
+  sessionId: string | null,
+  turnInFlight: boolean,
+  turnRequest: MlxLiveRequest | null
+): ChatWork | null {
+  if (activity === 'idle' || activity === 'not_loaded') return null;
+  if (turnRequest) return 'thisChat';
+  const serving = main.serving;
+  // No turn of this chat is in flight: whatever the engine runs is not this chat's turn, even
+  // unread. With a turn in flight and no list, nothing can be told apart.
+  if (!serving || serving.error) return turnInFlight ? 'unattributed' : 'others';
+  let own = 0;
+  let others = 0;
+  for (const client of serving.clients) {
+    const mine = client.kind !== 'external' && sessionId != null && client.sessionId === sessionId;
+    if (mine) own += client.count;
+    else if (!gooseBackground(client)) others += client.count;
+  }
+  if (!turnInFlight) {
+    // Between turns this chat's own session on the engine is a helper (its title), never a turn.
+    return others + serving.unattributed > 0 ? 'others' : 'helper';
+  }
+  // The turn runs, but none of the engine's requests is its: a tool running here, say.
+  if (own === 0 && serving.unattributed === 0) return others > 0 ? 'others' : 'helper';
+  // Ours is on the engine with no one else's beside it; `turnRequest` is null here only when the
+  // engine counts a waiting request (num_waiting) without listing it — ours, queued.
+  if (others === 0 && !(own > 0 && serving.unattributed > 0)) return 'thisChat';
+  return 'shared';
+}
+
+/** The activity THIS chat's chip is coloured by, from whose work the engine is doing. */
+function chatActivity(
+  activity: MlxActivity | null,
+  work: ChatWork | null,
+  turnRequest: MlxLiveRequest | null,
+  stats: MlxLiveStats | null
+): MlxActivity | null {
+  switch (work) {
+    case null:
+    case 'shared':
+    case 'unattributed':
+      return activity;
+    case 'thisChat':
+      return turnRequest ? requestActivity(turnRequest) : 'queued';
+    case 'helper':
+    case 'others':
+      // Nothing of this chat's runs: grey — held while a request waits, since a new turn waits too.
+      return stats && holdsARequestWaiting(stats) ? 'queued' : 'idle';
+  }
 }
 
 function busyWith(
@@ -516,6 +603,7 @@ const NOT_MLX: ChatServedBy = {
   ...NO_ENGINE,
   phase: null,
   activity: null,
+  work: null,
   busyWithOthers: null,
   turnRequest: null,
   readTps: null,
@@ -589,6 +677,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
       where: stop.macs,
       phase: 'failed',
       activity: null,
+      work: null,
       busyWithOthers: null,
       turnRequest: null,
       readTps: null,
@@ -613,6 +702,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
       where: named ? [thisMac] : [],
       phase: named ? phaseOf(NO_ENGINE, inputs, null, readiness) : null,
       activity: null,
+      work: null,
       busyWithOthers: null,
       turnRequest: null,
       readTps: null,
@@ -622,15 +712,20 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
 
   const stats = liveStatsOf(main, serving.engine);
   const activity = stats ? mlxActivity(stats) : null;
+  const turnRequest =
+    stats && main ? turnRequestOf(main, stats, sessionId, inputs.turnInFlight) : null;
+  const work =
+    main && activity ? workOf(main, activity, sessionId, inputs.turnInFlight, turnRequest) : null;
   return {
     ...serving,
-    phase: phaseOf(serving, inputs, activity, readiness),
+    phase: phaseOf(serving, inputs, chatActivity(activity, work, turnRequest, stats), readiness),
     activity,
+    work,
     busyWithOthers:
       stats && activity && main
         ? busyWith(main, stats, activity, sessionId, inputs.turnInFlight)
         : null,
-    turnRequest: stats && main ? turnRequestOf(main, stats, sessionId, inputs.turnInFlight) : null,
+    turnRequest,
     readTps: stats && main ? (bookSpreads(main.rates).reading?.median ?? null) : null,
     readiness,
   };

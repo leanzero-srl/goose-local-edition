@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Нужно ещё {gb} ГБ свободной памяти"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Запусков после перезапуска нет — следующий ответ даст скорость записи"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Запусков пока не измерено — следующий ответ даст скорость записи"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "На этом способе запусков пока не измерено — «Измерить скорость» в «Запуск» запишет один"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "из {gb} ГБ"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} из {max} токенов"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Читаем измеренные goose запуски…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "Не удалось прочитать измеренные goose запуски: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Обслуживает"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Уходит с {model} в этом чате"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Идёт вспомогательный вызов goose"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Обслуживает другую работу"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Делит с другой работой"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Занят, чья работа — неизвестно"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Очистить выбранную модель и настройки провайдера, чтобы начать заново"

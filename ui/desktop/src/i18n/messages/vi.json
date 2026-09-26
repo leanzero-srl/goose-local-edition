@@ -4151,11 +4151,8 @@
   "mlxStateTile.needsMore": {
     "defaultMessage": "Cần thêm {gb} GB bộ nhớ trống"
   },
-  "mlxStateTile.noRunsSinceRestart": {
-    "defaultMessage": "Chưa có lượt chạy nào từ khi khởi động lại — câu trả lời tiếp theo sẽ cho tốc độ viết"
-  },
-  "mlxStateTile.noRunsYet": {
-    "defaultMessage": "Chưa đo lượt chạy nào — câu trả lời tiếp theo sẽ cho tốc độ viết"
+  "mlxStateTile.noRunsOnThisWay": {
+    "defaultMessage": "Chưa có lượt chạy nào được đo theo cách này — Đo tốc độ trong Chạy sẽ ghi một lượt"
   },
   "mlxStateTile.ofGb": {
     "defaultMessage": "trên {gb} GB"
@@ -4213,6 +4210,12 @@
   },
   "mlxStateTile.row.writtenOf": {
     "defaultMessage": "{written} / {max} token"
+  },
+  "mlxStateTile.runsPending": {
+    "defaultMessage": "Đang đọc các lượt chạy goose đã đo…"
+  },
+  "mlxStateTile.runsUnread": {
+    "defaultMessage": "Không đọc được các lượt chạy goose đã đo: {detail}"
   },
   "mlxStateTile.serving": {
     "defaultMessage": "Đang phục vụ"
@@ -4756,6 +4759,18 @@
   },
   "modelsBottomBar.useCloudInsteadHint": {
     "defaultMessage": "Rời {model} cho cuộc trò chuyện này"
+  },
+  "modelsBottomBar.work.helper": {
+    "defaultMessage": "Lệnh gọi phụ của goose đang chạy"
+  },
+  "modelsBottomBar.work.others": {
+    "defaultMessage": "Đang phục vụ việc khác"
+  },
+  "modelsBottomBar.work.shared": {
+    "defaultMessage": "Dùng chung với việc khác"
+  },
+  "modelsBottomBar.work.unattributed": {
+    "defaultMessage": "Đang bận, không rõ việc của ai"
   },
   "modelsSection.resetDescription": {
     "defaultMessage": "Xóa các cài đặt mô hình và nhà cung cấp đã chọn để bắt đầu lại từ đầu"
