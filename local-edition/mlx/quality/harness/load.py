@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """R2 load through goose's Link relay (the path chat uses to a linked Mac's engine).
 
-usage: load.py <out-dir> --workers N --minutes M --prompt-tokens T [--abort-ratio 0.2] [--max-tokens 128]
+usage: load.py <out-dir> [--base http://127.0.0.1:8091] --workers N --minutes M --prompt-tokens T [--abort-ratio 0.2] [--max-tokens 128]
 Reads the relay base URL from goose's route record. Every request: a UNIQUE prompt (so the engine's
 prefix cache churns), streamed; per request one CSV row: start, status, ttft_s, tokens, max_gap_s,
 total_s, aborted, error. A 1-token CANARY runs every 60 s in its own thread — it, not any health
@@ -13,10 +13,17 @@ ap = argparse.ArgumentParser()
 ap.add_argument('out'); ap.add_argument('--workers', type=int, default=2)
 ap.add_argument('--minutes', type=float, default=20); ap.add_argument('--prompt-tokens', type=int, default=13000)
 ap.add_argument('--abort-ratio', type=float, default=0.2); ap.add_argument('--max-tokens', type=int, default=128)
+ap.add_argument('--base', help='an engine root such as http://127.0.0.1:8091 (the split); default: the Link relay')
 a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)
-route = json.load(open(os.path.expanduser('~/.local/state/goose/mlx-remote-route.json')))
-base = urllib.parse.urlparse(route['base_url']); model = route['served_model_id']
+if a.base:
+    base = urllib.parse.urlparse(a.base.rstrip('/'))
+    # the engine's own name for the model (Q-131: a split answers to one id form only)
+    c = http.client.HTTPConnection(base.hostname, base.port, timeout=30); c.request('GET', base.path + '/v1/models')
+    model = json.loads(c.getresponse().read())['data'][0]['id']; c.close()
+else:
+    route = json.load(open(os.path.expanduser('~/.local/state/goose/mlx-remote-route.json')))
+    base = urllib.parse.urlparse(route['base_url']); model = route['served_model_id']
 WORDS = open('/usr/share/dict/words').read().split()
 lock = threading.Lock(); stop_at = time.time() + a.minutes * 60
 rows = open(os.path.join(a.out, 'requests.csv'), 'w', newline=''); w = csv.writer(rows)
