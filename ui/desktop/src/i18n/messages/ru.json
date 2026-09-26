@@ -4164,7 +4164,7 @@
     "defaultMessage": "токенов промпта, читается {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "ток/с чтение, медленнее–быстрее"
+    "defaultMessage": "ток/с чтение, средняя половина запусков"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s при чтении этого промпта"
@@ -4272,7 +4272,7 @@
     "defaultMessage": "ГБ весов"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "ток/с запись, медленнее–быстрее"
+    "defaultMessage": "ток/с запись, средняя половина запусков"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s при записи"
@@ -5290,6 +5290,9 @@
   },
   "placementCard.measuring": {
     "defaultMessage": "Измерение: запрос на ~2k токенов, затем 256 токенов…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} средняя половина"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "Нет данных о скорости"

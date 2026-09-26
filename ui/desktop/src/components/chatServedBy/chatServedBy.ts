@@ -3,6 +3,7 @@ import { foreignOwner, type MlxDistributedStatus } from '../../acp/mlx-distribut
 import { remoteRouteUp, type MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
 import type { MlxServing } from '../../utils/mlxServing';
+import { readingForPrompt } from '../../utils/mlxMeasuredRuns';
 import { leaveCause, type LeaveCause } from '../../utils/leaveCause';
 import { routeContactLost, routePeerGone, type PeerGone } from '../../utils/routeContact';
 import type { EnginePhase } from '../lz/tokens';
@@ -11,7 +12,6 @@ import { routePeerName } from '../leanzero-swarm/macs';
 import { activityPhase, remotePhase, runPhase, singlePhase } from '../leanzero-swarm/mlxPhase';
 import {
   MLX_STATUS_POLL_MS,
-  bookSpreads,
   mlxActivity,
   type MlxActivity,
   type MlxLiveRequest,
@@ -379,7 +379,10 @@ export interface ChatServedBy extends MlxEngineServing {
    * in flight or it cannot be told apart from someone else's.
    */
   turnRequest: MlxLiveRequest | null;
-  /** The engine's measured prompt-reading rate (median of its runs, tok/s); null = none measured. */
+  /**
+   * goose's measured reading rate for THIS turn's prompt on this way — the median of its runs at the
+   * prompt's size (goose's measurement store, via main); null = none measured at that size.
+   */
   readTps: number | null;
   /** Can the active provider answer — the readiness bar's actions hang off it. */
   readiness: ComposerReadiness;
@@ -726,7 +729,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
         ? busyWith(main, stats, activity, sessionId, inputs.turnInFlight)
         : null,
     turnRequest,
-    readTps: stats && main ? (bookSpreads(main.rates).reading?.median ?? null) : null,
+    readTps: main && turnRequest ? readingForPrompt(main.measured, turnRequest.promptTokens) : null,
     readiness,
   };
 }

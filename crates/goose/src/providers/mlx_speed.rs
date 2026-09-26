@@ -92,29 +92,41 @@ pub(crate) fn observe(inner: MessageStream) -> MessageStream {
     })
 }
 
+/// The way an MLX chat turn this goose answers runs NOW: the key a finished turn is recorded
+/// under, and the key its measured runs are read back by (`GET /mlx-engine/measured-runs`) — one
+/// function, so the writer and the reader can never key a way differently.
 #[cfg(unix)]
-async fn record(turn: Turn) {
-    use goose_sidecar::placement::store::{
-        context_bucket, PlacementKey, PlacementKind, RecordSource, SpeedRecord,
-    };
-    use goose_sidecar::placement::{chip, planner};
+pub(crate) struct ServingWay {
+    pub key: goose_sidecar::placement::store::PlacementKey,
+    pub model_id: String,
+    pub node_names: Vec<String>,
+    /// Nodes beyond this Mac (a split's peers; 0 for a single engine, here or on a peer).
+    pub peers: usize,
+}
 
-    let (Some(usage), Some(first), Some(last)) = (turn.usage, turn.first, turn.last) else {
-        return;
-    };
-    let (Some(input), Some(output)) = (usage.usage.input_tokens, usage.usage.output_tokens) else {
-        return;
-    };
-    let (input, output) = (input.max(0) as u64, output.max(0) as u64);
+/// Which engine serves this Mac's MLX chat: the peer's single engine while a remote-single route
+/// is live, else this goosed's distributed engine when it owns the Mac, else the single engine.
+/// `Err` says why none does.
+#[cfg(unix)]
+pub(crate) async fn serving_way() -> Result<ServingWay, String> {
+    use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
+
     let dist = goose_sidecar::distributed::global_manager().status();
-    let (key, model_id, node_names, peers) = if let Some(route) = super::mlx_remote::read().live() {
-        let key = PlacementKey::single(&format!("link:{}", route.peer));
-        (key, route.model_id, vec![route.peer_hostname], 0)
-    } else if dist.state.owns_the_mac() {
+    if let Some(route) = super::mlx_remote::read().live() {
+        return Ok(ServingWay {
+            key: PlacementKey::single(&format!("link:{}", route.peer)),
+            model_id: route.model_id,
+            node_names: vec![route.peer_hostname],
+            peers: 0,
+        });
+    }
+    if dist.state.owns_the_mac() {
         let (Some(config), Some(model), Some(runner)) =
             (dist.config.clone(), dist.model_id.clone(), dist.runner)
         else {
-            return;
+            return Err(
+                "the split owns this Mac but names no setup, model or runner yet".to_string(),
+            );
         };
         let kind = match runner {
             goose_sidecar::distributed::Runner::MlxLmTensor => PlacementKind::Tensor,
@@ -135,19 +147,50 @@ async fn record(turn: Turn) {
                 .to_string(),
             ),
         };
-        let names = config.nodes.iter().map(|n| n.name.clone()).collect();
-        (key, model, names, config.nodes.len() - 1)
-    } else {
-        let single = goose_sidecar::engine::global_manager().status().await;
-        let (true, Some(model)) = (single.state == "running", single.model_id) else {
-            return;
-        };
-        (
-            PlacementKey::single("local"),
-            model,
-            vec![local_name().await],
-            0,
-        )
+        return Ok(ServingWay {
+            key,
+            model_id: model,
+            node_names: config.nodes.iter().map(|n| n.name.clone()).collect(),
+            peers: config.nodes.len() - 1,
+        });
+    }
+    let single = goose_sidecar::engine::global_manager().status().await;
+    match (single.state.as_str(), single.model_id) {
+        ("running", Some(model)) => Ok(ServingWay {
+            key: PlacementKey::single("local"),
+            model_id: model,
+            node_names: vec![local_name().await],
+            peers: 0,
+        }),
+        ("running", None) => Err("this Mac's engine runs but names no model".to_string()),
+        (state, _) => Err(format!(
+            "no MLX engine serves this Mac's chat (this Mac's engine is {state}, no route to a linked Mac, no split owns it)"
+        )),
+    }
+}
+
+#[cfg(unix)]
+async fn record(turn: Turn) {
+    use goose_sidecar::placement::store::{
+        context_bucket, PlacementKind, RecordSource, SpeedRecord,
+    };
+    use goose_sidecar::placement::{chip, planner};
+
+    let (Some(usage), Some(first), Some(last)) = (turn.usage, turn.first, turn.last) else {
+        return;
+    };
+    let (Some(input), Some(output)) = (usage.usage.input_tokens, usage.usage.output_tokens) else {
+        return;
+    };
+    let (input, output) = (input.max(0) as u64, output.max(0) as u64);
+    let Ok(ServingWay {
+        key,
+        model_id,
+        node_names,
+        peers,
+    }) = serving_way().await
+    else {
+        return;
     };
     let remote =
         key.nodes.first().is_some_and(|n| n != "local") && key.kind == PlacementKind::Single;

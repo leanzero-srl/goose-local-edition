@@ -1,4 +1,3 @@
-import { bookSpreads } from '../components/leanzero-swarm/mlxLiveStats';
 import { describe, expect, it, vi } from 'vitest';
 import {
   MlxEngineMonitor,
@@ -11,6 +10,7 @@ import {
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
 import { routePeerGone } from './routeContact';
 import type { MlxServingRead } from './mlxServing';
+import { measuredFigure, type MeasuredRunsFetch, type MlxMeasuredRead } from './mlxMeasuredRuns';
 import {
   DIST_READING_STATUS,
   GENERATING_STATUS,
@@ -18,6 +18,45 @@ import {
 } from '../components/leanzero-swarm/mlxLiveStatus.fixtures';
 
 const BASE = 'http://127.0.0.1:8090';
+
+/** A goosed's measured-runs answer for one way: `writing` is the median over `runs` runs. */
+function wayAnswer(
+  kind: 'single' | 'tensor',
+  nodes: string[],
+  writing: number,
+  runs: number
+): MeasuredRunsFetch {
+  const figure = {
+    estimate: { value: writing, low: writing * 0.9, high: writing * 1.1 },
+    measured: true,
+    runs,
+  };
+  return {
+    ok: true,
+    answer: {
+      way: {
+        placementId: `${kind}:${nodes.join('+')}`,
+        placement: { kind, nodes },
+        modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+        nodeNames: nodes,
+      },
+      wayError: null,
+      recorded: runs,
+      writing: figure,
+      writingBasis: null,
+      reading: null,
+      readingByBucket: [],
+      storeErrors: [],
+    },
+  };
+}
+
+const HERE = wayAnswer('single', ['local'], 21.5, 12);
+const STUDIO = wayAnswer('single', ['link:studio'], 26.96, 303);
+const SPLIT = wayAnswer('tensor', ['local', 'link:studio'], 8.19, 91);
+
+const writingOf = (read: MlxMeasuredRead) =>
+  read.kind === 'read' ? (measuredFigure(read.answer.writing)?.median ?? null) : null;
 
 function harness(opts: {
   status: () => MlxLiveStatusResult;
@@ -29,15 +68,19 @@ function harness(opts: {
     | { state: string; baseUrl: string | null; peerName?: string; lastError?: string | null }
     | string
     | null;
+  /** Every goose backend's measured-runs answer (one per backend). */
+  measured?: () => MeasuredRunsFetch[];
 }) {
   const snapshots: MlxEngineSnapshot[] = [];
   const clock = { ms: 0 };
   const scheduled: Array<() => void> = [];
   const readServing = vi.fn(async () => opts.serving?.() ?? { ok: true as const, rows: [] });
   const readStatus = vi.fn(async (_baseUrl: string) => opts.status());
+  const readMeasured = vi.fn(async () => opts.measured?.() ?? [HERE, STUDIO, SPLIT]);
   const deps: MlxEngineMonitorDeps = {
     readStatus,
     readServing,
+    readMeasured,
     configBaseUrl: () => (opts.configBaseUrl === undefined ? BASE : opts.configBaseUrl),
     distributedBaseUrl: () => opts.distributedBaseUrl?.() ?? null,
     remoteRoute: () => {
@@ -62,6 +105,7 @@ function harness(opts: {
     scheduled,
     readServing,
     readStatus,
+    readMeasured,
     clock,
   };
 }
@@ -199,37 +243,54 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
     });
   });
 
-  it('measured runs survive into idle and are dropped when the engine goes away', async () => {
-    let result: MlxLiveStatusResult = answered(GENERATING_STATUS);
-    const h = harness({ status: () => result });
-    await h.monitor.tick();
-    result = answered({ ...IDLE_STATUS, uptime_s: 1990 });
-    await h.monitor.tick();
-    expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBe(19.9);
-    result = refused;
-    await h.monitor.tick();
-    expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBeNull();
+  it('Q-129: the runs are goose’s kept runs for this way — a relaunched monitor reads them at its first read', async () => {
+    const first = harness({ status: () => answered(GENERATING_STATUS) });
+    await first.monitor.tick();
+    expect(writingOf(first.monitor.current().measured)).toBe(21.5);
+    // The app relaunches: a new monitor, nothing in memory — goose's store still holds the runs.
+    const relaunched = harness({ status: () => answered({ ...IDLE_STATUS, uptime_s: 12 }) });
+    await relaunched.monitor.tick();
+    expect(writingOf(relaunched.monitor.current().measured)).toBe(21.5);
   });
 
-  it('Q-44: the same model back after a stop or a restart finds its runs; another model starts its own book', async () => {
-    let result: MlxLiveStatusResult = answered(GENERATING_STATUS);
+  it('reads goose’s runs again when a turn ends (and once more as goose records it), not every tick', async () => {
+    let result: MlxLiveStatusResult = answered({ ...IDLE_STATUS, total_requests_processed: 5 });
     const h = harness({ status: () => result });
     await h.monitor.tick();
-    expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBe(19.9);
-    // The engine goes away (a relaunch), then answers again with a younger uptime.
+    await h.monitor.tick();
+    await h.monitor.tick();
+    expect(h.readMeasured).toHaveBeenCalledTimes(2);
+    result = answered({ ...IDLE_STATUS, total_requests_processed: 6 });
+    await h.monitor.tick();
+    await h.monitor.tick();
+    await h.monitor.tick();
+    expect(h.readMeasured).toHaveBeenCalledTimes(4);
+  });
+
+  it('an engine that goes away keeps its runs said; a failed read says why, never "none"', async () => {
+    let result: MlxLiveStatusResult = answered(GENERATING_STATUS);
+    let answers: MeasuredRunsFetch[] = [HERE];
+    const h = harness({ status: () => result, measured: () => answers });
+    await h.monitor.tick();
     result = refused;
     await h.monitor.tick();
-    expect(bookSpreads(h.monitor.current().rates).writing).toBeNull();
-    result = answered({ ...IDLE_STATUS, uptime_s: 12 });
+    expect(writingOf(h.monitor.current().measured)).toBe(21.5);
+    answers = [{ ok: false, detail: 'goose backend returned 500: reading the store failed' }];
+    result = answered({ ...IDLE_STATUS, model: 'another-model' });
     await h.monitor.tick();
-    const back = h.monitor.current().rates;
-    expect(bookSpreads(back).writing?.median ?? null).toBe(19.9);
-    expect(back.restarted).toBe(true);
-    // Another model on the same port: its own, empty book.
-    result = answered({ ...IDLE_STATUS, model: 'another-model', uptime_s: 5 });
+    expect(h.monitor.current().measured).toEqual({
+      kind: 'unread',
+      detail: 'goose backend returned 500: reading the store failed',
+    });
+  });
+
+  it('a backend whose chat runs another way is never read as this engine’s runs', async () => {
+    const h = harness({ status: () => answered(IDLE_STATUS), measured: () => [STUDIO] });
     await h.monitor.tick();
-    expect(bookSpreads(h.monitor.current().rates).writing).toBeNull();
-    expect(h.monitor.current().rates.restarted).toBe(false);
+    expect(h.monitor.current().measured).toEqual({
+      kind: 'unread',
+      detail: "goose records this Mac's chat on single:link:studio, not on the engine read here",
+    });
   });
 
   it('no port anywhere: nothing is read, the state is unknown', async () => {
@@ -252,7 +313,7 @@ describe('MlxEngineMonitor — one loop, running only while the engine answers',
 });
 
 describe('MlxEngineMonitor — the distributed run is read on its own base while it owns the Mac', () => {
-  it("reads rank 0's /v1/status, tags the read distributed, and drops the single engine's rates", async () => {
+  it("reads rank 0's /v1/status, tags the read distributed, and reads the split way's runs", async () => {
     let dist: string | null = null;
     const bodies: Record<string, unknown> = {
       [BASE]: GENERATING_STATUS,
@@ -265,7 +326,7 @@ describe('MlxEngineMonitor — the distributed run is read on its own base while
     h.readStatus.mockImplementation(async (url: string) => answered(bodies[url]));
     await h.monitor.tick();
     expect(h.monitor.current().engine).toBe('single');
-    expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBe(19.9);
+    expect(writingOf(h.monitor.current().measured)).toBe(21.5);
 
     dist = 'http://127.0.0.1:8091';
     await h.monitor.tick();
@@ -275,15 +336,14 @@ describe('MlxEngineMonitor — the distributed run is read on its own base while
     expect(s.mode).toBe('running');
     expect(s.modelId).toBeNull();
     expect(s.stats?.requests[0]).toMatchObject({ prefilledTokens: 2048, promptTps: 152.4 });
-    // The single engine's last writing rate is not the split's.
-    expect(bookSpreads(s.rates).writing?.median ?? null).toBeNull();
-    expect(bookSpreads(s.rates).reading?.median ?? null).toBe(152.4);
+    // The single engine's runs are not the split's: goose's runs for the split's way.
+    expect(writingOf(s.measured)).toBe(8.19);
     expect(h.scheduled.length).toBeGreaterThan(0);
 
     dist = null;
     await h.monitor.tick();
     expect(h.monitor.current().engine).toBe('single');
-    expect(bookSpreads(h.monitor.current().rates).reading?.median ?? null).not.toBe(152.4);
+    expect(writingOf(h.monitor.current().measured)).toBe(21.5);
   });
 
   it('an unanswering rank 0 is UNKNOWN with the reason, and never falls back to the single port', async () => {
@@ -301,7 +361,7 @@ describe('MlxEngineMonitor — the distributed run is read on its own base while
 describe('MlxEngineMonitor — a remote single is read through the relay while it serves chat', () => {
   const RELAY = 'http://127.0.0.1:61001/relay/cafe';
 
-  it("reads the peer engine's /v1/status on the relay, tags it remote, and keeps its own rates", async () => {
+  it("reads the peer engine's /v1/status on the relay, tags it remote, and reads the peer way's runs", async () => {
     let relay: string | null = null;
     const bodies: Record<string, unknown> = { [BASE]: IDLE_STATUS, [RELAY]: GENERATING_STATUS };
     const h = harness({ status: () => answered(null), remoteRoute: () => relay });
@@ -315,13 +375,13 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
     expect(h.readStatus).toHaveBeenLastCalledWith(RELAY);
     expect(s.engine).toBe('remote');
     expect(s.mode).toBe('running');
-    expect(bookSpreads(s.rates).writing?.median ?? null).toBe(19.9);
+    expect(writingOf(s.measured)).toBe(26.96);
     expect(h.scheduled.length).toBeGreaterThan(0);
 
     relay = null;
     await h.monitor.tick();
     expect(h.monitor.current().engine).toBe('single');
-    expect(bookSpreads(h.monitor.current().rates).writing?.median ?? null).toBeNull();
+    expect(writingOf(h.monitor.current().measured)).toBe(21.5);
   });
 
   it('the distributed run owns the Mac first: a stale remote base is never read over it', async () => {

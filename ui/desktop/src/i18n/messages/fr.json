@@ -4164,7 +4164,7 @@
     "defaultMessage": "jetons de prompt, lecture depuis {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s en lecture, plus lente–plus rapide"
+    "defaultMessage": "tok/s en lecture, moitié centrale des passes"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s en lisant ce prompt"
@@ -4272,7 +4272,7 @@
     "defaultMessage": "Go de poids"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s en écriture, plus lente–plus rapide"
+    "defaultMessage": "tok/s en écriture, moitié centrale des passes"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s en écriture"
@@ -5283,13 +5283,16 @@
     "defaultMessage": "En marche et pas encore mesuré — Mesurer la vitesse remplace l’estimation par le chiffre propre à ce Mac."
   },
   "placementCard.measured": {
-    "defaultMessage": "{runs, plural, one {mesuré} other {mesuré · # passes}}"
+    "defaultMessage": "{runs, plural, one {mesuré · # passe} other {mesuré · # passes}}"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "Mesuré : {decode} tok/s en écriture, {prefill} tok/s en lecture"
   },
   "placementCard.measuring": {
     "defaultMessage": "Mesure : un prompt d’environ 2k jetons, puis 256 jetons…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} moitié centrale"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "Aucun chiffre de vitesse"

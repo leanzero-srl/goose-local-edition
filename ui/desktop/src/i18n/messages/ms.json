@@ -4164,7 +4164,7 @@
     "defaultMessage": "token prompt, dibaca selama {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s membaca, paling perlahan–paling pantas"
+    "defaultMessage": "tok/s membaca, separuh tengah larian"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s membaca prompt ini"
@@ -4272,7 +4272,7 @@
     "defaultMessage": "GB pemberat"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s menulis, paling perlahan–paling pantas"
+    "defaultMessage": "tok/s menulis, separuh tengah larian"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s menulis"
@@ -5290,6 +5290,9 @@
   },
   "placementCard.measuring": {
     "defaultMessage": "Mengukur: prompt ~2k token, kemudian 256 token…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} separuh tengah"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "Tiada angka kelajuan"

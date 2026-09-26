@@ -4164,7 +4164,7 @@
     "defaultMessage": "tokens del prompt, leyendo desde hace {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s leyendo, más lenta–más rápida"
+    "defaultMessage": "tok/s leyendo, mitad central de las ejecuciones"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s leyendo este prompt"
@@ -4272,7 +4272,7 @@
     "defaultMessage": "GB de pesos"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s escribiendo, más lenta–más rápida"
+    "defaultMessage": "tok/s escribiendo, mitad central de las ejecuciones"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s escribiendo"
@@ -5283,13 +5283,16 @@
     "defaultMessage": "En marcha y sin medir todavía — Medir velocidad sustituye la estimación por la cifra propia de este Mac."
   },
   "placementCard.measured": {
-    "defaultMessage": "{runs, plural, one {medido} other {medido · # ejecuciones}}"
+    "defaultMessage": "{runs, plural, one {medido · # ejecución} other {medido · # ejecuciones}}"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "Medido: {decode} tok/s escribiendo, {prefill} tok/s leyendo"
   },
   "placementCard.measuring": {
     "defaultMessage": "Midiendo: un prompt de ~2k tokens y luego 256 tokens…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} mitad central"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "Sin cifra de velocidad"

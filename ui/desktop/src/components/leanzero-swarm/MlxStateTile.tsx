@@ -49,7 +49,6 @@ import {
   measuredPrefillTps,
   mlxActivity,
   sparklinePoints,
-  type RateBook,
   type MlxLiveRead,
   type MlxLiveRequest,
   type MlxLiveStats,
@@ -110,7 +109,10 @@ const i18n = defineMessages({
     id: 'mlxStateTile.writeRateMedian',
     defaultMessage: 'tok/s writing, {count, plural, one {# run} other {median of # runs}}',
   },
-  writeRange: { id: 'mlxStateTile.writeRange', defaultMessage: 'tok/s writing, slowest–fastest' },
+  writeRange: {
+    id: 'mlxStateTile.writeRange',
+    defaultMessage: 'tok/s writing, middle half of runs',
+  },
   noRunsYet: {
     id: 'mlxStateTile.noRunsOnThisWay',
     defaultMessage: 'No measured runs on this way yet — Measure speed in Run it records one',
@@ -128,7 +130,7 @@ const i18n = defineMessages({
     id: 'mlxStateTile.readRateMedian',
     defaultMessage: 'tok/s reading, {count, plural, one {# prompt} other {median of # prompts}}',
   },
-  readRange: { id: 'mlxStateTile.readRange', defaultMessage: 'tok/s reading, slowest–fastest' },
+  readRange: { id: 'mlxStateTile.readRange', defaultMessage: 'tok/s reading, middle half of runs' },
   promptSize: {
     id: 'mlxStateTile.promptSize',
     defaultMessage: 'prompt tokens, reading for {elapsed}',
@@ -333,12 +335,6 @@ export interface MlxStateTileProps {
   live: MlxLiveRead | null;
   /** RUNNING: the writing rate per read, oldest first. */
   history: readonly TpsSample[];
-  /**
-   * NOT READ by the tile since Q-123: its measured runs are goose's, from the plan the Run it card
-   * draws (`measuredRuns.ts`). Kept only because MlxEngineView still passes its in-memory book;
-   * delete the prop together with that book.
-   */
-  rates: RateBook;
   /** RUNNING: who the engine is serving, from main's read of goose's in-flight list. */
   serving: MlxServing | null;
   /** MOUNTING: the memory the engine has claimed against the model's size. */
