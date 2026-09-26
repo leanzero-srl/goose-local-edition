@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Đang phục vụ từ {peer} — engine của chính Mac này được tạm gác lại khi trò chuyện đi tới đó."
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "Trò chuyện giờ đi tới {peer}"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "Mô hình đang chạy lại — thử lại để gửi tin nhắn của bạn."
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — câu trả lời ở trên dừng tại đó.} other {{reason} — không có gì khác nhận được tin nhắn này.}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — câu trả lời bị cắt trước khi viết được phần nào."
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {Phần chia trên các Mac của bạn đã dừng giữa câu trả lời} other {Phần chia trên các Mac của bạn đã dừng}}"

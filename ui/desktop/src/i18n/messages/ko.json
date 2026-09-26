@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "{peer}에서 제공 중 — 채팅이 그쪽으로 가는 동안 이 Mac의 자체 엔진은 사용되지 않습니다."
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "이제 채팅은 {peer}(으)로 갑니다"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "모델이 다시 실행 중입니다 — 다시 시도하여 메시지를 보내세요."
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — 위의 답변은 거기서 끝납니다.} other {{reason} — 이 메시지를 받을 수 있는 다른 곳이 없었습니다.}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — 답변이 작성되기 전에 끊겼습니다."
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {Mac 간 분할이 답변 도중에 중지되었습니다} other {Mac 간 분할이 중지되었습니다}}"

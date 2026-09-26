@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Servido desde {peer}: el motor propio de este Mac queda a un lado mientras el chat va allí."
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "El chat va ahora a {peer}"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "El modelo vuelve a funcionar — reintenta para enviar tu mensaje."
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — la respuesta de arriba se queda ahí.} other {{reason} — nada más pudo atender este mensaje.}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — la respuesta se cortó antes de que se escribiera nada."
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {La división entre tus Macs se detuvo a mitad de la respuesta} other {La división entre tus Macs se detuvo}}"

@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "由 {peer} 提供 — 聊天发往那里期间，这台 Mac 自己的引擎不参与。"
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "聊天现在发往 {peer}"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "模型已重新运行 — 重试以发送你的消息。"
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — 上面的回答到此为止。} other {{reason} — 没有其他节点能接收这条消息。}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — 回答在写出任何内容之前就被中断了。"
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {跨 Mac 的拆分在回答途中停止了} other {跨 Mac 的拆分已停止}}"

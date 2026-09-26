@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Servito da {peer} — il motore di questo Mac resta da parte finché la chat va lì."
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "La chat ora va a {peer}"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "Il modello è di nuovo in esecuzione — riprova per inviare il messaggio."
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — la risposta qui sopra si ferma lì.} other {{reason} — nient’altro poteva accettare questo messaggio.}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — la risposta è stata interrotta prima che ne fosse scritta una parte."
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {La suddivisione sui tuoi Mac si è fermata a metà risposta} other {La suddivisione sui tuoi Mac si è fermata}}"

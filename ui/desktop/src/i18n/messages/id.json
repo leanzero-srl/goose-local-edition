@@ -4946,11 +4946,17 @@
   "noNodeNotice.routedRemote": {
     "defaultMessage": "Dilayani dari {peer} — mesin Mac ini sendiri dikesampingkan selama chat diarahkan ke sana."
   },
+  "noNodeNotice.servedElsewhere": {
+    "defaultMessage": "Obrolan sekarang ke {peer}"
+  },
   "noNodeNotice.splitBack": {
     "defaultMessage": "Model berjalan lagi — coba lagi untuk mengirim pesan Anda."
   },
   "noNodeNotice.splitSummary": {
     "defaultMessage": "{answer, select, yes {{reason} — jawaban di atas berhenti di situ.} other {{reason} — tidak ada yang lain yang bisa menerima pesan ini.}}"
+  },
+  "noNodeNotice.splitSummaryCut": {
+    "defaultMessage": "{reason} — jawaban terputus sebelum ada bagian yang tertulis."
   },
   "noNodeNotice.splitTitle": {
     "defaultMessage": "{answer, select, yes {Pembagian di Mac Anda berhenti di tengah jawaban} other {Pembagian di Mac Anda berhenti}}"
