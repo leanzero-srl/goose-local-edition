@@ -3074,6 +3074,7 @@ export const zMlxPlacementFitDto = z.object({
         z.string(),
         z.null()
     ]).optional(),
+    afterStopping: z.array(z.string()).optional(),
     nodes: z.array(zMlxNodeFitDto).optional().default([]),
     detail: z.string()
 });
@@ -5105,6 +5106,7 @@ export const zMlxPlacementPlanDto = z.object({
         zMlxPlacementBadgeDto,
         z.null()
     ]).optional(),
+    badgeAfterStopping: z.array(z.string()).optional(),
     notes: z.array(z.string()).optional().default([]),
     error: z.union([
         z.string(),

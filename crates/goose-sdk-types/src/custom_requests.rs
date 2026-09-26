@@ -5243,6 +5243,10 @@ pub struct MlxPlacementFitDto {
     pub short_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub short_node: Option<String>,
+    /// The OTHER models whose engines Run stops first, when this fit holds only with the memory
+    /// they give back ("fits once the 27B stops"). Empty = it fits beside whatever serves now.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after_stopping: Vec<String>,
     #[serde(default)]
     pub nodes: Vec<MlxNodeFitDto>,
     /// The arithmetic in words (English), a refusal's message verbatim.
@@ -5349,6 +5353,10 @@ pub struct MlxPlacementPlanDto {
     pub best_available: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub badge: Option<MlxPlacementBadgeDto>,
+    /// The OTHER models Run stops first for the badge's fit to hold: the picker says "fits once
+    /// <model> stops" instead of "too big".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub badge_after_stopping: Vec<String>,
     #[serde(default)]
     pub notes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

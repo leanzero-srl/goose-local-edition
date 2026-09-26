@@ -478,7 +478,7 @@ pub(super) fn fit_to_dto(model_id: &str, fit: &FitVerdict) -> MlxMountFitDto {
         context_tokens: fit.need.context_tokens,
         kv_error: fit.need.kv_gap.clone(),
         budget_bytes: fit.budget_bytes,
-        available_bytes: fit.facts.available_bytes,
+        available_bytes: fit.facts.available_after_switch_bytes(),
         total_bytes: fit.facts.total_bytes,
         ceiling_bytes: fit.facts.ceiling_bytes,
         other_engines_bytes: fit.facts.other_engines_bytes,

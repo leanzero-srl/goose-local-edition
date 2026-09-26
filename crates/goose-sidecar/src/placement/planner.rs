@@ -59,6 +59,25 @@ pub struct NodeMemory {
     pub available_bytes: u64,
     /// Metal's working-set ceiling; `Err` = it could not be read on that node.
     pub ceiling_bytes: Result<u64, String>,
+    /// The engine Run stops on this Mac before it starts anything (a switch replaces, never adds
+    /// a second model): its model and the resident bytes it holds, which the fit rule counts as
+    /// available (`fit::NodeMemoryFacts::freed_by_switch_bytes`). `None` = nothing serves here.
+    pub freed_by_switch: Option<SwitchFrees>,
+}
+
+impl NodeMemory {
+    /// Available once the switch has stopped what serves on this Mac.
+    pub fn available_after_switch(&self) -> u64 {
+        self.available_bytes
+            .saturating_add(self.freed_by_switch.as_ref().map_or(0, |f| f.bytes))
+    }
+}
+
+/// What stopping the serving engine on a Mac gives back to a switch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchFrees {
+    pub model_id: String,
+    pub bytes: u64,
 }
 
 /// One Mac as measured just now. `nodes[0]` of a plan input is this Mac.
@@ -168,6 +187,11 @@ pub struct Fit {
     pub short_bytes: Option<u64>,
     /// The node that is short (by name).
     pub short_node: Option<String>,
+    /// The OTHER models whose engines Run stops first, when this fit holds only with the memory
+    /// they give back: "fits once the 27B stops", never "too big" (Q-120). Empty = it fits beside
+    /// whatever serves now, or nothing is replaced.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after_stopping: Vec<String>,
     pub nodes: Vec<NodeFit>,
     /// The arithmetic in words, with its source; a refusal's own message verbatim.
     pub detail: String,
@@ -320,6 +344,10 @@ pub struct Plan {
     /// piece that has not landed).
     pub best_available: Option<String>,
     pub badge: Badge,
+    /// The OTHER models Run stops first for the badge's fit to hold (the deciding candidate's
+    /// `fit.afterStopping`): the picker says "fits once <model> stops" instead of "too big".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub badge_after_stopping: Vec<String>,
     /// Things the plan could not consider, in words ("no second Mac is set up").
     pub notes: Vec<String>,
 }
@@ -330,6 +358,8 @@ fn gib(bytes: u64) -> String {
 
 struct Budget {
     budget: u64,
+    /// The budget while the engine a switch replaces still holds its memory.
+    before: u64,
     facts: NodeMemoryFacts,
 }
 
@@ -347,11 +377,37 @@ fn node_budget(node: &NodeInput) -> Result<Budget, String> {
         total_bytes: memory.total_bytes,
         ceiling_bytes: *ceiling,
         other_engines_bytes: 0,
+        freed_by_switch_bytes: memory.freed_by_switch.as_ref().map_or(0, |f| f.bytes),
     };
     Ok(Budget {
         budget: facts.budget_bytes(),
+        before: facts.budget_before_switch_bytes(),
         facts,
     })
+}
+
+/// The OTHER models whose engines a switch stops on `nodes` — named when a fit needs the memory
+/// they give back. The planned model itself is a move, not a replacement (its note says so).
+fn stopped_models(input: &PlanInput, nodes: &[&NodeInput]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for node in nodes {
+        let Ok(memory) = &node.memory else { continue };
+        if let Some(frees) = &memory.freed_by_switch {
+            if frees.bytes > 0 && frees.model_id != input.model_id && !out.contains(&frees.model_id)
+            {
+                out.push(frees.model_id.clone());
+            }
+        }
+    }
+    out
+}
+
+fn after_stopping_if(relies: bool, input: &PlanInput, nodes: &[&NodeInput]) -> Vec<String> {
+    if relies {
+        stopped_models(input, nodes)
+    } else {
+        Vec::new()
+    }
 }
 
 /// The smallest context a placement must hold to be useful: the chat benchmark's shape.
@@ -387,6 +443,7 @@ fn unknown_fit(reason: String) -> Fit {
         context: None,
         short_bytes: None,
         short_node: None,
+        after_stopping: Vec::new(),
         nodes: Vec::new(),
         detail: reason,
     }
@@ -429,10 +486,12 @@ fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
             context: None,
             short_bytes: verdict.short_bytes(),
             short_node: Some(node.name.clone()),
+            after_stopping: Vec::new(),
             nodes: node_fit(verdict.need.total_bytes()),
             detail: format!("{}: {}", node.name, verdict.message),
         };
     }
+    let after_stopping = after_stopping_if(verdict.needs_switch(), input, &[node]);
     let model_max = input.model.max_context;
     match kv_bytes_per_token(input.model, input.kv_mode) {
         Ok(per_token) if per_token > 0 => {
@@ -445,6 +504,11 @@ fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
                 context,
                 short_bytes: None,
                 short_node: None,
+                after_stopping: if status.fits() {
+                    after_stopping
+                } else {
+                    Vec::new()
+                },
                 nodes: node_fit(weights + per_token * context.unwrap_or(min_useful)),
                 detail: format!(
                     "{}: {} of weights + {} of KV per 1k tokens; {}",
@@ -465,6 +529,7 @@ fn single_fit(input: &PlanInput, node: &NodeInput, min_useful: u64) -> Fit {
                 context: None,
                 short_bytes: None,
                 short_node: None,
+                after_stopping,
                 nodes: node_fit(weights),
                 detail: format!(
                     "{}: context not sized ({reason}); {}",
@@ -489,6 +554,13 @@ fn tensor_fit(input: &PlanInput, facts: &TensorModelFacts, min_useful: u64) -> F
         .unwrap_or(0);
     let wanted = input.context.unwrap_or(facts.max_position);
     let (status, context) = status_for(max_fit, wanted, min_useful);
+    let max_fit_before = budgets
+        .iter()
+        .map(|b| facts.max_context(ranks, b.before))
+        .min()
+        .unwrap_or(0);
+    let relies = status.fits() && !status_for(max_fit_before, wanted, min_useful).0.fits();
+    let all: Vec<&NodeInput> = input.nodes.iter().collect();
     let at = context.unwrap_or(min_useful);
     let nodes: Vec<NodeFit> = input
         .nodes
@@ -521,6 +593,7 @@ fn tensor_fit(input: &PlanInput, facts: &TensorModelFacts, min_useful: u64) -> F
         short_node: (status == FitStatus::Short)
             .then(|| worst.map(|w| w.name))
             .flatten(),
+        after_stopping: after_stopping_if(relies, input, &all),
         detail: format!(
             "the tensor runner's arithmetic: every rank holds 1/{ranks} of each layer plus the \
              unsharded embeddings and head, KV and a prompt cache for the context, × the measured \
@@ -558,6 +631,18 @@ fn pipeline_fit(
                 .iter()
                 .max_by_key(|n| n.need_bytes.saturating_sub(n.budget_bytes))
                 .cloned();
+            // The fork planned against the budgets the switch leaves; a stage whose need is above
+            // its budget less what the switch frees on that Mac holds only once it has stopped.
+            let relies = status.fits()
+                && input
+                    .nodes
+                    .iter()
+                    .zip(&plan.stages)
+                    .any(|(node, (need, budget))| {
+                        let freed = node_budget(node).map_or(0, |b| b.budget - b.before);
+                        *need > budget.saturating_sub(freed)
+                    });
+            let all: Vec<&NodeInput> = input.nodes.iter().collect();
             let fit = Fit {
                 status,
                 context: status.fits().then_some(plan.context).flatten(),
@@ -571,6 +656,7 @@ fn pipeline_fit(
                 short_node: (status == FitStatus::Short)
                     .then(|| worst.map(|w| w.name))
                     .flatten(),
+                after_stopping: after_stopping_if(relies, input, &all),
                 nodes,
                 detail: format!(
                     "the fork's planner (pipeline_qwen4 plan) at {} slots: {}",
@@ -596,19 +682,32 @@ fn pipeline_fit(
                 .as_ref()
                 .map(|kv| kv.bf16_bytes_per_token * cluster.slots as u64)
                 .unwrap_or(0);
-            let largest_ok = budgets
-                .iter()
-                .any(|b| b.budget >= input.model.largest_layer_bytes);
-            let room = total_budget.saturating_sub(resident);
-            let max_fit = if !largest_ok {
-                0
-            } else if per_token == 0 {
-                input.model.max_context.unwrap_or(0)
-            } else {
-                (room / per_token).min(input.model.max_context.unwrap_or(u64::MAX))
+            let max_fit_of = |budget_of: fn(&Budget) -> u64| {
+                if !budgets
+                    .iter()
+                    .any(|b| budget_of(b) >= input.model.largest_layer_bytes)
+                {
+                    return 0;
+                }
+                let room = budgets
+                    .iter()
+                    .map(budget_of)
+                    .sum::<u64>()
+                    .saturating_sub(resident);
+                if per_token == 0 {
+                    input.model.max_context.unwrap_or(0)
+                } else {
+                    (room / per_token).min(input.model.max_context.unwrap_or(u64::MAX))
+                }
             };
+            let max_fit = max_fit_of(|b| b.budget);
             let wanted = input.context.or(input.model.max_context).unwrap_or(max_fit);
             let (status, context) = status_for(max_fit, wanted, min_useful);
+            let relies = status.fits()
+                && !status_for(max_fit_of(|b| b.before), wanted, min_useful)
+                    .0
+                    .fits();
+            let all: Vec<&NodeInput> = input.nodes.iter().collect();
             let need = resident + per_token * context.unwrap_or(min_useful);
             let shares: Vec<f64> = budgets
                 .iter()
@@ -619,6 +718,7 @@ fn pipeline_fit(
                 context,
                 short_bytes: (status == FitStatus::Short).then(|| need.saturating_sub(total_budget)),
                 short_node: None,
+                after_stopping: after_stopping_if(relies, input, &all),
                 nodes: input
                     .nodes
                     .iter()
@@ -1075,6 +1175,7 @@ pub fn plan(input: &PlanInput) -> Plan {
                 context: context.or(c.fit.context),
                 short_bytes: None,
                 short_node: None,
+                after_stopping: Vec::new(),
                 nodes: c.fit.nodes.clone(),
                 detail: "running now — its memory is already in use".to_string(),
             };
@@ -1108,7 +1209,7 @@ pub fn plan(input: &PlanInput) -> Plan {
         }
     }
     let (best, best_available) = pick(&mut candidates, input.goal);
-    let badge = badge(&candidates);
+    let (badge, badge_after_stopping) = badge(&candidates);
     Plan {
         model_id: input.model_id.to_string(),
         goal: input.goal,
@@ -1116,6 +1217,7 @@ pub fn plan(input: &PlanInput) -> Plan {
         best,
         best_available,
         badge,
+        badge_after_stopping,
         notes,
     }
 }
@@ -1289,53 +1391,66 @@ pub fn alternative_to_this_mac(candidates: &[Candidate]) -> Option<&Candidate> {
         .or_else(|| candidates.iter().find(elsewhere))
 }
 
-fn badge(candidates: &[Candidate]) -> Badge {
+/// The picker's badge, and the other models Run stops first for its fit to hold (the deciding
+/// candidate's `fit.after_stopping`).
+fn badge(candidates: &[Candidate]) -> (Badge, Vec<String>) {
     let fits = |c: &&Candidate| c.supported && c.fit.status.fits();
-    if candidates
+    let decided = |badge: Badge, by: &Candidate| (badge, by.fit.after_stopping.clone());
+    if let Some(local) = candidates
         .iter()
         .filter(fits)
-        .any(|c| c.key.kind == PlacementKind::Single && c.key.nodes[0] == "local")
+        .find(|c| c.key.kind == PlacementKind::Single && c.key.nodes[0] == "local")
     {
-        return Badge::FitsThisMac;
+        return decided(Badge::FitsThisMac, local);
     }
     if let Some(peer) = candidates
         .iter()
         .filter(fits)
         .find(|c| c.key.kind == PlacementKind::Single)
     {
-        return Badge::FitsPeer {
-            name: peer.node_names[0].clone(),
-        };
+        return decided(
+            Badge::FitsPeer {
+                name: peer.node_names[0].clone(),
+            },
+            peer,
+        );
     }
     if let Some(split) = split_that_fits(candidates) {
-        return Badge::NeedsBothMacs {
-            needs: match &split.action {
-                Action::Unavailable { reason } => Some(reason.clone()),
-                Action::StartSplit {
-                    setup_matches: false,
-                } => Some(
-                    "set up the distributed engine with this model (Set up → the model)"
-                        .to_string(),
-                ),
-                _ => None,
+        return decided(
+            Badge::NeedsBothMacs {
+                needs: match &split.action {
+                    Action::Unavailable { reason } => Some(reason.clone()),
+                    Action::StartSplit {
+                        setup_matches: false,
+                    } => Some(
+                        "set up the distributed engine with this model (Set up → the model)"
+                            .to_string(),
+                    ),
+                    _ => None,
+                },
             },
-        };
+            split,
+        );
     }
     let supported: Vec<&Candidate> = candidates.iter().filter(|c| c.supported).collect();
     if let Some(unknown) = supported
         .iter()
         .find(|c| c.fit.status == FitStatus::Unknown)
     {
-        return Badge::Unknown {
-            reason: unknown.fit.detail.clone(),
-        };
+        return (
+            Badge::Unknown {
+                reason: unknown.fit.detail.clone(),
+            },
+            Vec::new(),
+        );
     }
-    match supported.iter().filter_map(|c| c.fit.short_bytes).min() {
+    let badge = match supported.iter().filter_map(|c| c.fit.short_bytes).min() {
         Some(short_bytes) => Badge::TooBig { short_bytes },
         None => Badge::Unknown {
             reason: "no placement could be sized".to_string(),
         },
-    }
+    };
+    (badge, Vec::new())
 }
 
 #[cfg(test)]
@@ -1373,6 +1488,7 @@ mod tests {
                     total_bytes: gib(128.0),
                     available_bytes: gib(macbook_avail),
                     ceiling_bytes: Ok(M4_CEILING),
+                    freed_by_switch: None,
                 }),
                 has_model: Ok(true),
                 remote_single: Ok(()),
@@ -1386,6 +1502,7 @@ mod tests {
                     total_bytes: gib(96.0),
                     available_bytes: gib(studio_avail),
                     ceiling_bytes: Ok(M3_CEILING),
+                    freed_by_switch: None,
                 }),
                 has_model: Ok(true),
                 remote_single: Ok(()),
@@ -1790,6 +1907,86 @@ mod tests {
         assert!((decode.estimate.value - 22.5).abs() < 2.5, "{decode:?}");
     }
 
+    /// Q-120 (3.0.47, 2026-09-26): with the 27B served from Work's Mac Studio (~30 GB there),
+    /// Flash's badge read "Too big, short 1.6 GB" — only a switch to the SAME model counted that
+    /// memory. Run replaces whatever serves, so the split fits once the 27B stops, and the plan says
+    /// exactly that; the Studio alone still cannot hold Flash, freed memory or not.
+    #[test]
+    fn memory_the_replaced_model_frees_counts_and_the_fit_names_it() {
+        const THE_27B: &str = "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx";
+        let serving_27b = |mut nodes: Vec<NodeInput>, model: &str| {
+            if let Ok(memory) = nodes[1].memory.as_mut() {
+                memory.freed_by_switch = Some(SwitchFrees {
+                    model_id: model.into(),
+                    bytes: gib(30.0),
+                });
+            }
+            nodes
+        };
+        let fixture = |nodes: Vec<NodeInput>| Fixture {
+            model: flash(),
+            nodes,
+            cluster: Some(cluster("m")),
+            tensor: None,
+            pipeline: None,
+            records: Vec::new(),
+            bytes_on_disk: gib(97.5),
+            cal: Calibration::fit(&BTreeMap::new()),
+            running: None,
+        };
+        let split = "pipeline:jaccl:local+link:worksmacstudio";
+
+        let held = fixture(macs(70.0, 44.2)).plan(Goal::Chat);
+        assert!(
+            matches!(held.badge, Badge::TooBig { .. }),
+            "{:?}",
+            held.badge
+        );
+        assert_eq!(by_id(&held, split).fit.status, FitStatus::Short);
+
+        let switch = fixture(serving_27b(macs(70.0, 44.2), THE_27B)).plan(Goal::Chat);
+        assert_eq!(switch.badge, Badge::NeedsBothMacs { needs: None });
+        assert_eq!(switch.badge_after_stopping, vec![THE_27B.to_string()]);
+        let fits = by_id(&switch, split);
+        assert!(fits.fit.status.fits(), "{:?}", fits.fit);
+        assert_eq!(fits.fit.after_stopping, vec![THE_27B.to_string()]);
+        assert_eq!(switch.best.as_deref(), Some(split));
+        let studio = by_id(&switch, "single:link:worksmacstudio");
+        assert_eq!(studio.fit.status, FitStatus::Short, "{}", studio.fit.detail);
+        assert!(
+            studio.fit.detail.contains("+ 30.0 GB the switch frees"),
+            "{}",
+            studio.fit.detail
+        );
+
+        // Roomy Macs: the split fits beside the 27B, so nothing waits on stopping it.
+        let roomy = fixture(serving_27b(macs(100.0, 67.0), THE_27B)).plan(Goal::Chat);
+        assert!(by_id(&roomy, split).fit.after_stopping.is_empty());
+        assert!(roomy.badge_after_stopping.is_empty());
+
+        // The same model on the Studio is a move, not a replacement: its own note says so.
+        let moving = fixture(serving_27b(macs(70.0, 44.2), "m")).plan(Goal::Chat);
+        assert!(by_id(&moving, split).fit.status.fits());
+        assert!(by_id(&moving, split).fit.after_stopping.is_empty());
+
+        // The fork's planner decides the stages; a stage above its budget less what stopping the
+        // 27B frees on that Mac holds only once it stops.
+        let forked = Fixture {
+            pipeline: Some(Ok(PipelineFitInput {
+                fits: true,
+                context: Some(65_536),
+                stages: vec![(gib(50.0), gib(58.0)), (gib(55.0), gib(56.0))],
+                layer_shares: vec![22.0 / 48.0, 26.0 / 48.0],
+            })),
+            ..fixture(serving_27b(macs(70.0, 44.2), THE_27B))
+        };
+        let plan = forked.plan(Goal::Chat);
+        assert_eq!(
+            by_id(&plan, split).fit.after_stopping,
+            vec![THE_27B.to_string()]
+        );
+    }
+
     #[test]
     fn a_model_too_big_for_both_macs_names_its_shortfall() {
         let mut big = flash();
@@ -1860,6 +2057,7 @@ mod tests {
             total_bytes: gib(128.0),
             available_bytes: gib(39.0),
             ceiling_bytes: Ok(M4_CEILING),
+            freed_by_switch: None,
         });
         let before = f.plan(Goal::Chat);
         assert_eq!(by_id(&before, "single:local").fit.status, FitStatus::Short);
@@ -1882,6 +2080,7 @@ mod tests {
             total_bytes: gib(128.0),
             available_bytes: gib(55.0),
             ceiling_bytes: Ok(M4_CEILING),
+            freed_by_switch: None,
         });
         let plan = f.plan(Goal::Chat);
         let here = &plan.candidates[0];
@@ -1918,6 +2117,7 @@ mod tests {
                 total_bytes: gib(128.0),
                 ceiling_bytes: M4_CEILING,
                 other_engines_bytes: 0,
+                freed_by_switch_bytes: 0,
             },
         );
         assert_eq!(gate.verdict, Verdict::Block);

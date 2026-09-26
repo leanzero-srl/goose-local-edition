@@ -2955,6 +2955,11 @@ export type MlxPlacementFitDto = {
     context?: number | null;
     shortBytes?: number | null;
     shortNode?: string | null;
+    /**
+     * The OTHER models whose engines Run stops first, when this fit holds only with the memory
+     * they give back ("fits once the 27B stops"). Empty = it fits beside whatever serves now.
+     */
+    afterStopping?: Array<string>;
     nodes?: Array<MlxNodeFitDto>;
     /**
      * The arithmetic in words (English), a refusal's message verbatim.
@@ -4990,6 +4995,11 @@ export type MlxPlacementPlanDto = {
      */
     bestAvailable?: string | null;
     badge?: MlxPlacementBadgeDto | null;
+    /**
+     * The OTHER models Run stops first for the badge's fit to hold: the picker says "fits once
+     * <model> stops" instead of "too big".
+     */
+    badgeAfterStopping?: Array<string>;
     notes?: Array<string>;
     error?: string | null;
 };

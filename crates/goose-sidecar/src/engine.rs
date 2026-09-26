@@ -1066,10 +1066,11 @@ impl MlxEngineManager {
         let mut verdict = fit::judge(
             need,
             NodeMemoryFacts {
-                available_bytes: reading.available_bytes.saturating_add(freed),
+                available_bytes: reading.available_bytes,
                 total_bytes: reading.total_bytes,
                 ceiling_bytes: ceiling,
                 other_engines_bytes: machine::other_engines_bytes(&others),
+                freed_by_switch_bytes: freed,
             },
         );
         if let Some(note) = note {

@@ -234,6 +234,7 @@ mod tests {
                     total_bytes: M4_MAX_TOTAL,
                     ceiling_bytes: M4_MAX_CEILING,
                     other_engines_bytes: 0,
+                    freed_by_switch_bytes: 0,
                 },
             )
         };
