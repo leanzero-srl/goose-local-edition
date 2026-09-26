@@ -105,9 +105,13 @@ describe('the tray while chat is served from a linked Mac', () => {
       phase: 'writing',
     });
     expect(labels(model)).toContain('Writing 19.9 tok/s');
+    // Q-148: the Studio is writing, so its Stop names the cut above it and asks ("…").
+    expect(labels(model)).toContain(
+      'Stopping cuts 3 requests in flight, the longest (26m 14s, 28k tokens written)'
+    );
     expect(model.items).toContainEqual({
       type: 'action',
-      label: "Stop serving from Work's Mac Studio",
+      label: "Stop serving from Work's Mac Studio…",
       action: 'stop-remote',
       enabled: true,
     });
