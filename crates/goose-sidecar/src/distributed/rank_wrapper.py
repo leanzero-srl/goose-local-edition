@@ -69,7 +69,14 @@
 #   minutes of silence — so a relay sends the call's open frame and its arguments as OpenAI
 #   `tool_calls` deltas, the single engine's shape, and the call the client assembles is the one
 #   mlx_lm's parser reads from the whole text.
-group = mx.distributed.init(strict=True, backend=spec["backend"])
+# - a chat request's stable prefix is kept (Q-142, rank_boundary.py): a spec that asks for it
+#   (`transient_tail_boundary`) declares `rapid_mlx_transient_tail` + `..._on_tool` on /v1/models as
+#   the single engine does, so goose names the turn-context block its request ends on; every rank
+#   then ends a prompt segment where the prompt stops agreeing with the conversation minus that
+#   block, and mlx_lm's own segment snapshot stores the entry the next request extends. Upstream
+#   kept only the system prompt reusable across an agent's tool steps on this hybrid model (E2E
+#   #3c: 31,385 of ~59k tokens read from cache per call).
+group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
 # 2026-09-24: a reporter thread read 21.9 of 31.0 GB active mid `mx.eval(model.parameters())` —
@@ -170,7 +177,9 @@ for owner, name in (
     (server.APIHandler, "validate_model_parameters"),
     (server.APIHandler, "_set_completion_headers"),
     (server.APIHandler, "handle_completion"),
+    (server.APIHandler, "handle_chat_completions"),
     (server.APIHandler, "generate_response"),
+    (server, "process_message_content"),
     (qwen3_coder, "parse_tool_call"),
     (qwen3_coder, "_convert_param_value"),
     (qwen3_coder, "_get_arguments_config"),
@@ -691,6 +700,60 @@ def _share_request(self, request):
 original_tokenize = server.ResponseGenerator._tokenize
 server.ResponseGenerator._share_request = _share_request
 
+# Q-142 (rank_boundary.py): only a launch whose every rank cuts at the boundary asks for it — the
+# cut ends a prefill chunk, and a peer that did not cut would run a different number of steps.
+transient_tail_boundary = bool(spec.get("transient_tail_boundary"))
+
+
+def _tokenize(self, tokenizer, request, args):
+    """mlx_lm's tokenization, with a segment ending at the stable boundary of a request that names
+    its transient tail (rank_boundary.py). `settle` counts with the upstream one."""
+    tail = getattr(request, "transient_tail", None)
+    if not tail or request.request_type != "chat" or not tokenizer.has_chat_template:
+        return original_tokenize(self, tokenizer, request, args)
+    # Upstream rewrites the messages in place (content lists joined, tool-call arguments parsed);
+    # the stable conversation is rendered from the same rewrite of an untouched copy.
+    messages = copy.deepcopy(request.messages)
+    prompt, segments, segment_types, initial_state = original_tokenize(
+        self, tokenizer, request, args
+    )
+    server.process_message_content(messages)
+    try:
+        stable = stable_messages(messages, tail)
+    except TailIgnored as ignored:
+        if group.rank() == 0:
+            emit("RANK_TRANSIENT_TAIL_IGNORED", {"why": str(ignored), "tail_chars": len(tail)})
+        return prompt, segments, segment_types, initial_state
+    template_args = self.model_provider.cli_args.chat_template_args
+    if args.chat_template_kwargs:
+        template_args = {**template_args, **args.chat_template_kwargs}
+    future = tokenizer.apply_chat_template(
+        [*stable, {"role": "assistant", "content": BOUNDARY_PROBE}],
+        tools=request.tools,
+        tokenize=True,
+        add_generation_prompt=False,
+        **template_args,
+    )
+    segments, segment_types = cut_at_boundary(
+        segments, segment_types, stable_boundary(prompt, future)
+    )
+    return prompt, segments, segment_types, initial_state
+
+
+original_chat_request = server.APIHandler.handle_chat_completions
+
+
+def handle_chat_completions(self):
+    # The tail rides the request every rank receives (`_share_request` pickles it whole).
+    request = original_chat_request(self)
+    request.transient_tail = self.body.get(TRANSIENT_TAIL)
+    return request
+
+
+if transient_tail_boundary:
+    server.ResponseGenerator._tokenize = _tokenize
+    server.APIHandler.handle_chat_completions = handle_chat_completions
+
 
 # A BaseException so mlx_lm's handle_completion (`except Exception` → 404) lets it through to
 # do_POST, which answers with the status it names.
@@ -754,6 +817,11 @@ def do_GET(self):
                         "object": "model",
                         "owned_by": "goose-distributed",
                         "context_window": spec["context_window"],
+                        **(
+                            {"request_extensions": list(TRANSIENT_TAIL_EXTENSIONS)}
+                            if transient_tail_boundary
+                            else {}
+                        ),
                     }
                     for name in served_names
                 ],
@@ -826,6 +894,14 @@ def validate_model_parameters(self):
         self.requested_model = served
     if self.adapter is not None or self.body.get("draft_model") not in (None, "default_model"):
         raise Refused(400, "adapters and draft models are not supported by the distributed engine")
+    tail = self.body.get(TRANSIENT_TAIL)
+    if transient_tail_boundary and tail is not None and not isinstance(tail, str):
+        raise Refused(
+            400,
+            f"{TRANSIENT_TAIL} must be the exact text the last user or tool message ends on, "
+            f"not {type(tail).__name__}",
+            "invalid_request_error",
+        )
     if self.path in ("/v1/chat/completions", "/chat/completions"):
         # rank_thinking.py: the single engine's thinking resolution. Set on rank 0 before the
         # request is shared, so every rank renders the same prompt.
