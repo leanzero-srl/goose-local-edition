@@ -37,6 +37,7 @@ use super::preflight::{self, now_ms, PreflightReport};
 use super::probe::{self, Pressure, SseVerdict};
 use super::runner_update::{self, Preflighted, RunnerUpdate};
 use super::{HANG_MEDIAN_MULTIPLE, HANG_MIN_SAMPLES};
+use crate::model_identity::ServedNames;
 use crate::{SidecarConfig, GIB, GRACE_TICK, GRACE_TICKS};
 
 /// The supervisor's sampling cadence (memory, pressure, rank processes, the step counter) and the
@@ -939,7 +940,8 @@ struct RunContext {
     http: reqwest::Client,
     stream_http: reqwest::Client,
     config: DistributedConfig,
-    served_id: String,
+    /// Every name the split answers to; `served.id` is the one it advertises and chat names.
+    served: ServedNames,
     runner: Runner,
     /// This install's owner token, written on every rank this run launches.
     owner: Option<String>,
@@ -1181,7 +1183,7 @@ async fn wait_ready(
             ping = Some(tokio::spawn(readiness_ping(
                 ctx.stream_http.clone(),
                 base.clone(),
-                ctx.served_id.clone(),
+                ctx.served.id.clone(),
             )));
         }
         if ping.as_ref().is_some_and(JoinHandle::is_finished) {
@@ -1858,13 +1860,7 @@ fn launch_specs(
     let mut specs = match ctx.runner {
         Runner::MlxLmTensor => {
             let launches = preflight.tensor_launches()?;
-            launch::rank_specs(
-                &ctx.config,
-                &ctx.served_id,
-                &launches,
-                context,
-                report_seconds,
-            )
+            launch::rank_specs(&ctx.config, &ctx.served, &launches, context, report_seconds)
         }
         Runner::PipelineQwen4 => {
             let starts = preflight
@@ -1901,7 +1897,7 @@ fn launch_specs(
                 .collect::<Result<Vec<u64>>>()?;
             launch::pipeline_rank_specs(
                 &ctx.config,
-                &ctx.served_id,
+                &ctx.served,
                 context,
                 &super::plan::split_arg(starts),
                 prefill_step,
@@ -1962,7 +1958,7 @@ async fn supervise(
         let link_launch = link_control::LinkLaunch {
             run_id: format!("{}-{}", std::process::id(), now_ms()),
             model_id: ctx.config.model_id.clone(),
-            served_model_id: ctx.served_id.clone(),
+            served_model_id: ctx.served.id.clone(),
             runner: ctx.runner,
         };
         for (node, spec) in ctx.config.nodes.iter().zip(&specs) {
@@ -2479,15 +2475,15 @@ impl DistributedManager {
 
     /// Preflight (repairing the TB link when needed), then launch under supervision. Refused —
     /// with a code the UI acts on — while the single engine is mounted, while a run is live, or
-    /// when a preflight check fails. `served_id` is `engine::served_model_id(settings,
-    /// config.model_id)` — the SPLIT's model, never the single engine's — the caller reads them.
+    /// when a preflight check fails. `served` is `ServedNames::of(settings, config.model_id,
+    /// pool nodes)` — the SPLIT's model, never the single engine's — the caller reads them.
     pub async fn start(
         &self,
         config: DistributedConfig,
-        served_id: String,
+        served: ServedNames,
     ) -> Result<StartOutcome> {
         let single = crate::engine::global_manager().status().await;
-        self.start_with_single_state(config, served_id, &single.state, single.model_id.as_deref())
+        self.start_with_single_state(config, served, &single.state, single.model_id.as_deref())
             .await
     }
 
@@ -2523,7 +2519,7 @@ impl DistributedManager {
     pub(crate) async fn start_with_single_state(
         &self,
         mut config: DistributedConfig,
-        served_id: String,
+        served: ServedNames,
         single_state: &str,
         single_model: Option<&str>,
     ) -> Result<StartOutcome> {
@@ -2566,7 +2562,7 @@ impl DistributedManager {
             shared.status.config = Some(config.clone());
             shared.status.backend = Some(config.backend);
             shared.status.model_id = Some(config.model_id.clone());
-            shared.status.served_model_id = Some(served_id.clone());
+            shared.status.served_model_id = Some(served.id.clone());
             shared.event(EventKind::Preflight, None, "preflight before launch");
         }
         let owner = self.owner();
@@ -2779,7 +2775,7 @@ impl DistributedManager {
                 .build()
                 .expect("reqwest client with static configuration"),
             config,
-            served_id,
+            served,
             runner,
             owner,
         };
@@ -3302,7 +3298,7 @@ mod tests {
             http: reqwest::Client::new(),
             stream_http: reqwest::Client::new(),
             config: two_mac_config(),
-            served_id: "node-alias".into(),
+            served: ServedNames::only("node-alias"),
             runner: Runner::PipelineQwen4,
             owner: None,
         };
@@ -3354,7 +3350,7 @@ mod tests {
             http: reqwest::Client::new(),
             stream_http: reqwest::Client::new(),
             config,
-            served_id: "node-alias".into(),
+            served: ServedNames::only("node-alias"),
             runner: Runner::MlxLmTensor,
             owner: None,
         };
@@ -3801,7 +3797,7 @@ mod tests {
         let outcome = manager
             .start_with_single_state(
                 two_mac_config(),
-                "node-alias".to_string(),
+                ServedNames::only("node-alias"),
                 "running",
                 Some("org/model"),
             )
@@ -3930,7 +3926,12 @@ mod tests {
         let manager = DistributedManager::new(Arc::clone(nodes) as Arc<dyn NodeExec>);
         manager.set_owner(OWNER.to_string());
         let outcome = manager
-            .start_with_single_state(two_mac_config(), "node-alias".to_string(), "stopped", None)
+            .start_with_single_state(
+                two_mac_config(),
+                ServedNames::only("node-alias"),
+                "stopped",
+                None,
+            )
             .await
             .unwrap();
         (manager, outcome)

@@ -21,6 +21,7 @@ use crate::kv_cache::{self, KvCacheMode};
 use crate::machine::{
     self, LoadClaim, LoadHolder, LoadLock, LoadLockAttempt, LoadLockHeld, OtherEngine,
 };
+use crate::model_identity::{NodeModel, ServedNames};
 use crate::{
     listening_pids, measure, port_has_listener, MemoryReading, Sidecar, SidecarConfig, StartCancel,
     StartupWatch, GIB,
@@ -60,6 +61,11 @@ pub fn hybrid_cache_entries() -> u32 {
     MAX_CONCURRENT_REQUESTS * PREFIX_ENTRIES_PER_REQUEST
 }
 
+/// v0.14.3-lz.9 = lz.8 + `serve --served-model-alias NAME` (repeatable; fork lz/served-names, goose
+/// Q-131): the served model answers to every name goose's one identity gives it
+/// (`model_identity::ServedNames`). lz.8 answered only `--served-model-name`, so a model served
+/// under its node alias refused its own HF id with 404 "does not exist"; /v1/models lists the
+/// served name first, then each alias, and any other name is still that 404.
 /// v0.14.3-lz.8 = lz.7 + a prefix-cache entry owns exactly the bytes it is charged for (fork
 /// lz/cache-owns-bytes, Q-110 — the Q-79 mechanism inside the engine). mlx-lm hands the cache one
 /// row of a live batch as a VIEW, which keeps every row of the batch buffer alive while the ledger
@@ -106,7 +112,7 @@ pub fn hybrid_cache_entries() -> u32 {
 pub const ENGINE_LAUNCHER: [&str; 4] = [
     "uvx",
     "--from",
-    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.8",
+    "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.9",
     "rapid-mlx",
 ];
 
@@ -173,6 +179,12 @@ pub const SUPERSEDED_ENGINE_LAUNCHERS: &[[&str; 4]] = &[
         "uvx",
         "--from",
         "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.7",
+        "rapid-mlx",
+    ],
+    [
+        "uvx",
+        "--from",
+        "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.8",
         "rapid-mlx",
     ],
 ];
@@ -501,9 +513,16 @@ fn validated_adapter_dir(raw: &str) -> Result<Option<PathBuf>> {
 /// The engine argv for `model_id` under `settings`, read together with the model
 /// directory (`inspect_model_dir`). Fails only when the profile names an adapter directory
 /// that is not one, when checkpoint parser metadata cannot be read, or when the profile asks for
-/// a compressed KV cache the model's KV layout cannot take.
-pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Result<Vec<String>> {
+/// a compressed KV cache the model's KV layout cannot take. The engine answers to every name of
+/// the model (`ServedNames::of` over `nodes`, the swarm pool): `--served-model-name` is the id it
+/// advertises and each other name rides a `--served-model-alias` (fork v0.14.3-lz.9, Q-131).
+pub fn build_serve_command(
+    settings: &EngineSettings,
+    model_id: &str,
+    nodes: &[NodeModel],
+) -> Result<Vec<String>> {
     let model_path = expand_tilde(&settings.models_dir).join(model_id);
+    let names = ServedNames::of(settings, model_id, nodes);
     let mut argv = settings.spawn_command.clone();
     argv.extend([
         "serve".to_string(),
@@ -511,7 +530,12 @@ pub fn build_serve_command(settings: &EngineSettings, model_id: &str) -> Result<
         "--port".to_string(),
         settings.port.to_string(),
         "--served-model-name".to_string(),
-        served_model_id(settings, model_id),
+        names.id,
+    ]);
+    for alias in names.also {
+        argv.extend(["--served-model-alias".to_string(), alias]);
+    }
+    argv.extend([
         "--enable-prefix-cache".to_string(),
         "--cache-memory-percent".to_string(),
         PREFIX_CACHE_SHARE_OF_FREE.to_string(),
@@ -901,6 +925,9 @@ fn engine_exit_message(exit: &crate::SidecarExit) -> String {
 pub struct MlxEngineManager {
     state: Arc<Mutex<ManagerState>>,
     settings: StdMutex<EngineSettings>,
+    /// The swarm pool's nodes (`swarm.devices`): every name they give the mounted model is one the
+    /// engine answers to (`build_serve_command`). Empty until the owner of the config hands them over.
+    nodes: StdMutex<Vec<NodeModel>>,
     last_gate: StdMutex<Option<FitVerdict>>,
     /// The model a mount is making room for (macOS compaction runs before the gate judges again).
     making_room: StdMutex<Option<(String, u64)>>,
@@ -939,6 +966,7 @@ impl MlxEngineManager {
         Self {
             state: Arc::new(Mutex::new(ManagerState::Stopped)),
             settings: StdMutex::new(EngineSettings::default()),
+            nodes: StdMutex::new(Vec::new()),
             last_gate: StdMutex::new(None),
             making_room: StdMutex::new(None),
             waiting_for_load: StdMutex::new(None),
@@ -1007,6 +1035,14 @@ impl MlxEngineManager {
 
     pub fn settings(&self) -> EngineSettings {
         self.settings.lock().unwrap().clone()
+    }
+
+    pub fn set_nodes(&self, nodes: Vec<NodeModel>) {
+        *self.nodes.lock().unwrap() = nodes;
+    }
+
+    pub fn nodes(&self) -> Vec<NodeModel> {
+        self.nodes.lock().unwrap().clone()
     }
 
     fn local_model(&self, settings: &EngineSettings, model_id: &str) -> Result<LocalModel> {
@@ -1258,7 +1294,7 @@ impl MlxEngineManager {
         }
         let weights_bytes = model.size_bytes;
 
-        let argv = build_serve_command(&settings, model_id)?;
+        let argv = build_serve_command(&settings, model_id, &self.nodes())?;
         let mut state = self.state.lock().await;
         if self.unmounts_seen() != unmounts {
             return Err(MountStopped {
@@ -1590,7 +1626,11 @@ impl MlxEngineManager {
             // that vanished all flip this. An adapter the profile names but that no longer
             // validates cannot be mounted as configured — that IS a restart-required fact,
             // and the remount says exactly what is missing.
-            status.restart_required = match build_serve_command(&settings, desired_model) {
+            status.restart_required = match build_serve_command(
+                &settings,
+                desired_model,
+                &self.nodes(),
+            ) {
                 Ok(desired) => desired != running_argv,
                 Err(e) => {
                     tracing::warn!(model = desired_model, error = %format!("{e:#}"), "desired serve argv cannot be built; reporting restart required");
@@ -1800,7 +1840,8 @@ mod tests {
             served_model_name: Some("workhorse-qwen3.5-9b-4bit-mlx".to_string()),
             ..Default::default()
         };
-        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit").unwrap();
+        let argv =
+            build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit", &[]).unwrap();
         let pos = argv
             .iter()
             .position(|a| a == "--served-model-name")
@@ -1828,7 +1869,8 @@ mod tests {
             served_model_id(&settings, "rapid-mlx/Qwen3.8-Flash-Next-4bit"),
             "rapid-mlx/Qwen3.8-Flash-Next-4bit"
         );
-        let argv = build_serve_command(&settings, "rapid-mlx/Qwen3.8-Flash-Next-4bit").unwrap();
+        let argv =
+            build_serve_command(&settings, "rapid-mlx/Qwen3.8-Flash-Next-4bit", &[]).unwrap();
         let pos = argv
             .iter()
             .position(|a| a == "--served-model-name")
@@ -1839,6 +1881,58 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(served_model_id(&no_model, "pub/small"), "pub/small");
+    }
+
+    fn served_aliases(argv: &[String]) -> Vec<&str> {
+        argv.windows(2)
+            .filter(|w| w[0] == "--served-model-alias")
+            .map(|w| w[1].as_str())
+            .collect()
+    }
+
+    /// Q-131: the single engine is told every name of the model it serves — the HF id beside the
+    /// alias, and a pool node's Add-node alias whose own alias is bound elsewhere — and nothing
+    /// for another model; an unaliased model with no pool gets no flag (lz.8's argv, byte for byte).
+    #[test]
+    fn the_engine_is_told_every_name_of_its_model_and_no_other() {
+        let settings = EngineSettings {
+            model_id: Some("rapid-mlx/Qwen3.8-Flash-Next-4bit".to_string()),
+            served_model_name: Some("mihai-flash-qwen3.8-flash-next-4bit-mlx".to_string()),
+            ..Default::default()
+        };
+        let pool = [
+            ("mihai-mlx", "mihai-qwen3.8-27b-atlassian-q8-mlx"),
+            ("mihai-flash-mlx", "mihai-flash-qwen3.8-flash-next-4bit-mlx"),
+            ("studio-mlx", "studio-qwen3.8-flash-next-4bit-mlx"),
+        ]
+        .map(|(id, model_id)| NodeModel {
+            id: id.to_string(),
+            model_id: model_id.to_string(),
+        });
+        let flash =
+            build_serve_command(&settings, "rapid-mlx/Qwen3.8-Flash-Next-4bit", &pool).unwrap();
+        let pos = flash
+            .iter()
+            .position(|a| a == "--served-model-name")
+            .unwrap();
+        assert_eq!(flash[pos + 1], "mihai-flash-qwen3.8-flash-next-4bit-mlx");
+        assert_eq!(flash[pos + 2], "--served-model-alias", "{flash:?}");
+        assert_eq!(
+            served_aliases(&flash),
+            [
+                "rapid-mlx/Qwen3.8-Flash-Next-4bit",
+                "studio-qwen3.8-flash-next-4bit-mlx"
+            ]
+        );
+        let q8 = build_serve_command(
+            &settings,
+            "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx",
+            &pool,
+        )
+        .unwrap();
+        assert_eq!(served_aliases(&q8), ["mihai-qwen3.8-27b-atlassian-q8-mlx"]);
+        let plain = build_serve_command(&EngineSettings::default(), "pub/model", &[]).unwrap();
+        assert!(served_aliases(&plain).is_empty(), "{plain:?}");
     }
 
     fn full_profile() -> ModelProfile {
@@ -1926,13 +2020,14 @@ mod tests {
             )]),
             ..Default::default()
         };
-        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit").unwrap();
+        let argv =
+            build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit", &[]).unwrap();
         assert_eq!(
             argv,
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.8",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.9",
                 "rapid-mlx",
                 "serve",
                 "/opt/models/mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -1968,7 +2063,7 @@ mod tests {
     #[test]
     fn serve_command_omits_unset_sampling_flags_and_expands_tilde() {
         let settings = EngineSettings::default();
-        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         assert!(
             argv.iter().all(|a| !a.starts_with("--default-")),
             "absent profile must emit no sampling flags: {argv:?}"
@@ -1989,7 +2084,7 @@ mod tests {
             presence_penalty: Some(1.2),
             ..Default::default()
         };
-        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         assert!(
             argv.iter().all(|a| !a.starts_with("--default-")),
             "legacy flats must not reach argv — profiles are the source of truth: {argv:?}"
@@ -2018,8 +2113,8 @@ mod tests {
             ]),
             ..Default::default()
         };
-        let alpha = build_serve_command(&settings, "pub/alpha").unwrap();
-        let beta = build_serve_command(&settings, "pub/beta").unwrap();
+        let alpha = build_serve_command(&settings, "pub/alpha", &[]).unwrap();
+        let beta = build_serve_command(&settings, "pub/beta", &[]).unwrap();
 
         let flag_value = |argv: &[String], flag: &str| {
             argv.iter()
@@ -2084,7 +2179,7 @@ mod tests {
     #[test]
     fn mtp_head_plus_vision_config_yields_speculative_config_with_the_dir_and_text_only() {
         let (root, settings) = model_dir_with(QWEN3_5_VISION_CONFIG, &[MTP_SIDECAR_FILE]);
-        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         let dir = root.path().join("pub").join("model");
         let expected_json = format!(
             r#"{{"method":"mtp","model":"{}","num_speculative_tokens":3}}"#,
@@ -2109,6 +2204,7 @@ mod tests {
                 ..Default::default()
             },
             "pub/model",
+            &[],
         )
         .unwrap();
         assert_eq!(&argv[..base.len() - 1], &base[..base.len() - 1]);
@@ -2132,7 +2228,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         assert!(
             !argv.iter().any(|a| a == "--speculative-config"),
             "{argv:?}"
@@ -2158,7 +2254,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         assert!(
             !argv.iter().any(|a| a == "--speculative-config"),
             "{argv:?}"
@@ -2175,7 +2271,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         assert!(!argv.iter().any(|a| a == "--text-only"), "{argv:?}");
     }
 
@@ -2183,7 +2279,7 @@ mod tests {
     fn a_qwen3_5_conditional_generation_config_without_vision_config_still_pins_the_text_lane() {
         let cfg = r#"{"model_type":"qwen3_5","architectures":["Qwen3_5ForConditionalGeneration"]}"#;
         let (_root, settings) = model_dir_with(cfg, &[]);
-        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         assert!(argv.iter().any(|a| a == "--text-only"), "{argv:?}");
         let facts = inspect_model_dir(&expand_tilde(&settings.models_dir).join("pub/model"));
         assert_eq!(
@@ -2210,7 +2306,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         assert_eq!(
             flag_value(&argv, "--adapter-path"),
             Some(adapter.to_string_lossy().into_owned()),
@@ -2231,7 +2327,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let err = build_serve_command(&settings, "pub/model").unwrap_err();
+        let err = build_serve_command(&settings, "pub/model", &[]).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("adapters.safetensors"), "{msg}");
         assert!(!msg.contains("missing adapter_config.json"), "{msg}");
@@ -2242,7 +2338,7 @@ mod tests {
             .get_mut("pub/model")
             .unwrap()
             .adapter_path = Some(missing_dir.to_string_lossy().into_owned());
-        let err = build_serve_command(&settings, "pub/model").unwrap_err();
+        let err = build_serve_command(&settings, "pub/model", &[]).unwrap_err();
         assert!(format!("{err:#}").contains("not a directory"), "{err:#}");
 
         // A blank adapter path is "none", never an error.
@@ -2251,7 +2347,7 @@ mod tests {
             .get_mut("pub/model")
             .unwrap()
             .adapter_path = Some("   ".to_string());
-        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         assert!(!argv.iter().any(|a| a == "--adapter-path"), "{argv:?}");
     }
 
@@ -2261,14 +2357,14 @@ mod tests {
     #[test]
     fn a_plain_model_dir_keeps_the_pre_lane_argv_byte_identical() {
         let (root, settings) = model_dir_with(PLAIN_TEXT_CONFIG, &[]);
-        let argv = build_serve_command(&settings, "pub/model").unwrap();
+        let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
         let model_path = root.path().join("pub").join("model");
         assert_eq!(
             argv,
             vec![
                 "uvx",
                 "--from",
-                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.8",
+                "rapid-mlx[mtp] @ git+https://github.com/leanzero-srl/Rapid-MLX@v0.14.3-lz.9",
                 "rapid-mlx",
                 "serve",
                 &model_path.to_string_lossy(),
@@ -2324,9 +2420,9 @@ mod tests {
             model_id: Some(model.to_string()),
             ..Default::default()
         };
-        let before = build_serve_command(&settings, model).unwrap();
+        let before = build_serve_command(&settings, model, &[]).unwrap();
         settings.model_profiles.insert(model.to_string(), profile);
-        assert_eq!(build_serve_command(&settings, model).unwrap(), before);
+        assert_eq!(build_serve_command(&settings, model, &[]).unwrap(), before);
     }
 
     /// The owner's 27B shape as far as the KV facts read it: 16 of 64 layers full attention.
@@ -2335,7 +2431,7 @@ mod tests {
     #[test]
     fn a_kv_cache_choice_reaches_the_argv_as_the_engine_dtype_and_off_sends_nothing() {
         let (_root, mut settings) = model_dir_with(QWEN3_5_KV_CONFIG, &[]);
-        let off = build_serve_command(&settings, "pub/model").unwrap();
+        let off = build_serve_command(&settings, "pub/model", &[]).unwrap();
         assert!(!off.iter().any(|a| a == "--kv-cache-dtype"), "{off:?}");
         for (mode, dtype) in [(KvCacheMode::Int8, "int8"), (KvCacheMode::Int4, "int4")] {
             settings.model_profiles.insert(
@@ -2345,7 +2441,7 @@ mod tests {
                     ..Default::default()
                 },
             );
-            let argv = build_serve_command(&settings, "pub/model").unwrap();
+            let argv = build_serve_command(&settings, "pub/model", &[]).unwrap();
             assert_eq!(
                 flag_value(&argv, "--kv-cache-dtype").as_deref(),
                 Some(dtype)
@@ -2367,7 +2463,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let err = build_serve_command(&settings, "pub/model").unwrap_err();
+        let err = build_serve_command(&settings, "pub/model", &[]).unwrap_err();
         assert!(format!("{err:#}").contains("head_dim 80"), "{err:#}");
     }
 
@@ -2384,7 +2480,7 @@ mod tests {
         assert_eq!(legacy.kv_cache, None);
     }
 
-    /// `status()` computes `restart_required = build_serve_command(&settings, mounted) != running_argv`;
+    /// `status()` computes `restart_required = build_serve_command(&settings, mounted, &[]) != running_argv`;
     /// this test pins that comparison's per-model semantics: editing the MOUNTED model's
     /// profile changes its argv (flips restart_required), editing a DIFFERENT model's
     /// profile leaves the mounted argv identical (does not).
@@ -2402,7 +2498,7 @@ mod tests {
             )]),
             ..Default::default()
         };
-        let running_argv = build_serve_command(&settings, mounted).unwrap();
+        let running_argv = build_serve_command(&settings, mounted, &[]).unwrap();
 
         settings.model_profiles.insert(
             "pub/other".to_string(),
@@ -2413,7 +2509,7 @@ mod tests {
             },
         );
         assert_eq!(
-            build_serve_command(&settings, mounted).unwrap(),
+            build_serve_command(&settings, mounted, &[]).unwrap(),
             running_argv,
             "a different model's profile edit must not require a restart"
         );
@@ -2424,7 +2520,7 @@ mod tests {
             .unwrap()
             .temperature = Some(0.9);
         assert_ne!(
-            build_serve_command(&settings, mounted).unwrap(),
+            build_serve_command(&settings, mounted, &[]).unwrap(),
             running_argv,
             "the mounted model's profile edit must require a restart"
         );
@@ -2483,7 +2579,8 @@ mod tests {
         let profile = &settings.model_profiles["mlx-community/Qwen3.5-9B-MLX-4bit"];
         assert_eq!(profile.presence_penalty, Some(1.2));
 
-        let argv = build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit").unwrap();
+        let argv =
+            build_serve_command(&settings, "mlx-community/Qwen3.5-9B-MLX-4bit", &[]).unwrap();
         let pos = argv
             .iter()
             .position(|a| a == "--default-presence-penalty")

@@ -17,7 +17,8 @@ use goose_sidecar::distributed::{
     NodeConfig, PreflightReport, RankPlan, StartOutcome, StopReport,
 };
 use goose_sidecar::distributed::{NodeExec, SystemExec};
-use goose_sidecar::engine::{expand_tilde, served_model_id};
+use goose_sidecar::engine::expand_tilde;
+use goose_sidecar::model_identity::ServedNames;
 use goose_sidecar::GIB;
 use std::collections::BTreeMap;
 use std::sync::Mutex as StdMutex;
@@ -740,15 +741,18 @@ impl GooseAcpAgent {
         // One naming rule for both engines: the swarm node that names this Mac's MLX engine
         // (`mihai-mlx` → `mihai-qwen3.8-…`) must find the SAME id whichever engine owns the Mac —
         // and only when that engine serves the model the alias names; a split of another model
-        // serves its own HF id.
-        let served = served_model_id(
+        // serves its own HF id. The split answers to every other name of the model too — its HF
+        // id and each pool node's name for it (Q-131) — so which name works never depends on how
+        // it was started.
+        let served = ServedNames::of(
             &super::mlx_engine::load_engine_settings()?,
             &config.model_id,
+            &super::mlx_engine::swarm_nodes()?,
         );
         let published = PublishedEngine {
             pid: std::process::id(),
             base_url: config.base_url(),
-            served_model_id: served.clone(),
+            served_model_id: served.id.clone(),
             model_id: config.model_id.clone(),
             backend: config.backend.as_str().to_string(),
             node_names: config.nodes.iter().map(|n| n.name.clone()).collect(),

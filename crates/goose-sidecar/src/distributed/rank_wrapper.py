@@ -12,9 +12,10 @@
 #   bound was enforced on a figure several times smaller than what it held;
 # - a generation thread that dies ends the rank with RANK_FATAL and a non-zero exit (Q-79: the
 #   Studio rank's Metal OOM exited 0);
-# - rank 0's HTTP surface: /v1/models serves ONLY the goose model id (mlx_lm lists the HF cache,
-#   and a request naming any of those would make every rank try to load it), the goose id maps to
-#   each rank's OWN --model path (paths differ per node), /goose/progress exposes the
+# - rank 0's HTTP surface: /v1/models serves ONLY the goose model's names — its id, then every
+#   other name goose's identity gives the same model (mlx_lm lists the HF cache, and a request
+#   naming any of those would make every rank try to load it), the goose id maps to each rank's
+#   OWN --model path (paths differ per node) and an alias is answered as the id, /goose/progress exposes the
 #   generation loop's step counter (the supervisor's liveness measure), /goose/admission lets the
 #   memory watchdog stop admitting new requests;
 # - the generation budget (rank_budget.py): a request with no max_tokens generates until the model
@@ -188,6 +189,10 @@ if prefill is not None:
         )
 
 served = spec["served_id"]
+# Every other name of the served model (goose's one identity, model_identity.rs ServedNames), rank
+# 0's only; an older requester's spec carries none (Q-131).
+served_aliases = [name for name in spec.get("served_aliases", []) if name != served]
+served_names = [served, *served_aliases]
 state = {"steps": 0, "inflight": 0, "admission_open": True, "admission_reason": None}
 # Where this rank's generation loop is (rank_state.py), published at each step for the reporter.
 loop = LoopState(group.rank())
@@ -671,11 +676,12 @@ def do_GET(self):
                 "object": "list",
                 "data": [
                     {
-                        "id": served,
+                        "id": name,
                         "object": "model",
                         "owned_by": "goose-distributed",
                         "context_window": spec["context_window"],
                     }
+                    for name in served_names
                 ],
             },
         )
@@ -733,11 +739,17 @@ def validate_model_parameters(self):
     original_validate(self)
     if absent:
         self.max_tokens = None
-    if self.requested_model not in (served, "default_model"):
+    if self.requested_model not in (*served_names, "default_model"):
+        also = f" (also answering to {', '.join(repr(n) for n in served_aliases)})" if served_aliases else ""
         raise Refused(
             404,
-            f"model '{self.requested_model}' is not served here; this distributed engine serves '{served}'",
+            f"model '{self.requested_model}' is not served here; this distributed engine serves '{served}'{also}",
         )
+    # The shared request names the model to every rank, and only the served id maps to each rank's
+    # own --model path (`run`): an alias is answered as the served id, so no rank — a peer running
+    # an older wrapper included — ever loads by a name it cannot resolve.
+    if self.requested_model in served_aliases:
+        self.requested_model = served
     if self.adapter is not None or self.body.get("draft_model") not in (None, "default_model"):
         raise Refused(400, "adapters and draft models are not supported by the distributed engine")
 

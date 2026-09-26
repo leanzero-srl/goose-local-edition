@@ -2903,15 +2903,28 @@ devices:
             ]
         }))
         .unwrap();
-        let served = served_model_id(&settings, &config.model_id);
+        let served =
+            goose_sidecar::model_identity::ServedNames::of(&settings, &config.model_id, &[]);
         let specs = rank_specs(&config, &served, &[launch, launch], 65_536, 2.0);
         assert!(specs.iter().all(|s| s.served_id == NODE_MODEL), "{specs:?}");
+        assert_eq!(
+            specs[0].served_aliases,
+            [HF],
+            "the split answers to its HF id too (Q-131)"
+        );
 
-        let wrapper = |id: &str| {
-            format!(
-                r#"{{"object":"list","data":[{{"id":"{id}","object":"model","owned_by":"goose-distributed","context_window":65536}}]}}"#
-            )
+        let listing = |ids: &[&str]| {
+            let data: Vec<String> = ids
+                .iter()
+                .map(|id| {
+                    format!(
+                        r#"{{"id":"{id}","object":"model","owned_by":"goose-distributed","context_window":65536}}"#
+                    )
+                })
+                .collect();
+            format!(r#"{{"object":"list","data":[{}]}}"#, data.join(","))
         };
+        let wrapper = |id: &str| listing(&[id]);
         let probe = LiveProbe {
             http: reqwest::Client::new(),
             providers: Arc::new(LiveProviders::new()),
@@ -2919,7 +2932,10 @@ devices:
         let engine = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/v1/models"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(wrapper(&specs[0].served_id)))
+            .respond_with(ResponseTemplate::new(200).set_body_string(listing(&[
+                specs[0].served_id.as_str(),
+                specs[0].served_aliases[0].as_str(),
+            ])))
             .mount(&engine)
             .await;
         Mock::given(method("GET"))
@@ -2968,8 +2984,12 @@ devices:
             model_id: FLASH.to_string(),
             ..config.clone()
         };
-        let flash_served = served_model_id(&settings, &flash_config.model_id);
-        assert_eq!(flash_served, FLASH);
+        let flash_served =
+            goose_sidecar::model_identity::ServedNames::of(&settings, &flash_config.model_id, &[]);
+        assert_eq!(
+            flash_served,
+            goose_sidecar::model_identity::ServedNames::only(FLASH)
+        );
         let flash_specs = rank_specs(&flash_config, &flash_served, &[launch, launch], 65_536, 2.0);
         assert!(
             flash_specs.iter().all(|s| s.served_id == FLASH),

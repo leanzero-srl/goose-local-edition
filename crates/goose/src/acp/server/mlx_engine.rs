@@ -15,6 +15,7 @@ use goose_sidecar::hf::{self, DownloadTracker};
 use goose_sidecar::kv_cache::{
     self, KvCacheFacts, KvCacheMeasurement, KvCacheMode, KvModeMeasurement,
 };
+use goose_sidecar::model_identity::NodeModel;
 use goose_sidecar::thinking::{self, ThinkingCapabilities};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -231,6 +232,34 @@ pub(super) async fn shutdown_supervised_engine() -> String {
 fn synced_manager() -> Result<&'static MlxEngineManager, agent_client_protocol::Error> {
     let manager = global_manager();
     manager.set_settings(load_engine_settings()?);
+    Ok(manager)
+}
+
+/// The swarm pool's nodes (`swarm.devices`) as the engines' one identity reads them: every name
+/// they give a served model is one the engine answers to (`ServedNames::of`, Q-131). No `swarm`
+/// block is no pool — the engine still answers to its served id and its HF id. An unreadable block
+/// is an error: serving on would silently refuse names the owner configured.
+pub(super) fn swarm_nodes() -> Result<Vec<NodeModel>, agent_client_protocol::Error> {
+    match Config::global().get_param::<crate::providers::swarm_router::PoolConfig>("swarm") {
+        Ok(pool) => Ok(pool
+            .devices
+            .into_iter()
+            .map(|device| NodeModel {
+                id: device.id,
+                model_id: device.model_id,
+            })
+            .collect()),
+        Err(ConfigError::NotFound(_)) => Ok(Vec::new()),
+        Err(e) => Err(e).internal_err_ctx(
+            "reading the `swarm` config block (the names a served model answers to come from swarm.devices)",
+        ),
+    }
+}
+
+/// The manager a mount starts from: its settings AND the pool whose names the engine answers to.
+fn mounting_manager() -> Result<&'static MlxEngineManager, agent_client_protocol::Error> {
+    let manager = synced_manager()?;
+    manager.set_nodes(swarm_nodes()?);
     Ok(manager)
 }
 
@@ -590,7 +619,7 @@ async fn core_mount(
     req: MlxEngineMountRequest,
 ) -> Result<MlxEngineMountResponse, agent_client_protocol::Error> {
     super::mlx_distributed::refuse_single_mount_while_distributed().await?;
-    let manager = synced_manager()?;
+    let manager = mounting_manager()?;
     mount_response(manager.mount(&req.model_id).await).await
 }
 
@@ -599,7 +628,7 @@ async fn core_mount_after_load(
     req: MlxEngineMountAfterLoadRequest,
 ) -> Result<MlxEngineMountResponse, agent_client_protocol::Error> {
     super::mlx_distributed::refuse_single_mount_while_distributed().await?;
-    let manager = synced_manager()?;
+    let manager = mounting_manager()?;
     mount_response(manager.mount_after_load(&req.model_id).await).await
 }
 
