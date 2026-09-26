@@ -1,7 +1,6 @@
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { defineMessages, useIntl } from '../../i18n';
-import { SURFACE, SectionHeader, TYPE, WEIGHT, cx } from '../lz';
-import { treeRowClass } from '../Layout/tree';
+import { FOCUS, MOTION, RADIUS, SURFACE, SectionHeader, TYPE, WEIGHT, cx } from '../lz';
 import { displaySessionListName } from '../../sessions';
 import { NeedsYouPill, RunningPill } from './ActivityPills';
 import { activeSessions, sessionHref, useSessionActivity } from './sessionActivityStore';
@@ -65,8 +64,11 @@ export default function ActiveNowSection({ className }: { className?: string }) 
               title={`${name}${detail ? ` — ${detail}` : ''}`}
               onClick={() => navigate(sessionHref(row.sessionId))}
               className={cx(
-                treeRowClass,
-                'h-auto min-h-11 flex-col items-stretch gap-0.5 py-1.5',
+                // Two lines (name + folder/question), so not the tree's fixed-height dense row.
+                'flex w-full flex-col items-stretch gap-0.5 px-2 py-1.5 text-left',
+                RADIUS.control,
+                MOTION,
+                FOCUS,
                 current ? SURFACE.selectedRing : SURFACE.hover
               )}
             >
