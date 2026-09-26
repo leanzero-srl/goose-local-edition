@@ -22,3 +22,4 @@
 | E2E #1 | split (mlx_lm) | 23 | 3 | 2 × web page 404 (model-guessed URLs), 1 shell |
 | E2E #2 | split (mlx_lm) | 11 | 2 | 2 × edit old_str mismatch (model; goose offered "Did you mean") |
 | E2E #2b | Studio single (Rapid-MLX, qwen3_coder_xml parser) | 71 | 36 | ~22 `</parameter>\n!` appended to shell args + 3 × write "missing field `path`" (Q-85, engine parser) · cascades (files never written) · model: `cat -A` on macOS, analyze on .md |
+| E2E #3d | 3.0.52 | split tensor 27B, 262,144, deferral — GREEDY (Q-159) | jira-migration-readiness | 0 | ~2,700 (one answer of 57 tool calls: 54 identical ledger_append, ~24k tokens, 40 min) | — | next call read 39,591 of 52,805 cached (75%) | — | halted after turn 0: Q-159 greedy sampling confounds every split E2E; Q-146 reframed; live critic round 1 walked it (Q-147..Q-158); chat ledger (54 dupes) archived + deleted |
