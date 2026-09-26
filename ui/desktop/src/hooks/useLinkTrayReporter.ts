@@ -10,6 +10,8 @@ import {
 } from '../acp/leanzero-link';
 import type { LinkState } from '../acp/leanzero-link';
 import { mlxEngineStatus } from '../acp/mlx-engine';
+import { latestMlxDistributedStatus, mlxDistributedStatus } from '../acp/mlx-distributed';
+import { macSummaryInput } from '../components/leanzero-swarm/useMacSummary';
 import { toastError } from '../toasts';
 import { macTarget, macsFrom, peerRefuses } from '../components/leanzero-swarm/macs';
 import {
@@ -54,8 +56,10 @@ function sendMacs(report: MacsTrayReport | null): void {
 
 /**
  * One tray line per linked Mac, read the way My Macs reads it: the roster (names, switches), then
- * each reachable Mac's engine status. A Mac whose owner turned model management off is not asked —
- * its line says Off. Not connected: null, and the tray keeps the Link line.
+ * each reachable Mac's engine status — and, for this Mac, the split it supervises (Q-149: the line
+ * read "Mihai Macbook — No model loaded" right above "Mihai Macbook: shard 1/2" while the split
+ * served). A Mac whose owner turned model management off is not asked — its line says Off. Not
+ * connected: null, and the tray keeps the Link line.
  */
 export async function readMacsTrayReport(
   intl: IntlShape,
@@ -84,7 +88,15 @@ export async function readMacsTrayReport(
           decodeTps = liveDecodeTps(live.stats);
         }
       }
-      const summary = summarizeMac(mac, { status, statusError, activity, decodeTps });
+      // The latest read any surface took; with none yet, one read here (a backend without the
+      // split answers with an error: no split is claimed).
+      const distributed = mac.isSelf
+        ? (latestMlxDistributedStatus() ?? (await mlxDistributedStatus().catch(() => null)))
+        : null;
+      const summary = summarizeMac(
+        mac,
+        macSummaryInput(mac, { status, statusError, activity, decodeTps }, distributed)
+      );
       return { name: mac.name, phase: summary.phase, text: macTrayText(intl, mac, summary) };
     })
   );

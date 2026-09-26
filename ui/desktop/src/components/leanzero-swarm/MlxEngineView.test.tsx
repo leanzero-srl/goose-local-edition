@@ -90,9 +90,37 @@ vi.mock('../../contexts/FeaturesContext', () => ({
 }));
 
 const mockDistributedStatus = vi.fn();
+// The latest distributed read, as every surface shares it (acp/mlx-distributed.ts): each mocked
+// status read publishes here, exactly as the real read does.
+const distStore = vi.hoisted(() => {
+  let latest: unknown = null;
+  const listeners = new Set<() => void>();
+  return {
+    latest: () => latest,
+    subscribe: (fn: () => void) => {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    publish: (status: unknown) => {
+      latest = status;
+      for (const fn of listeners) fn();
+    },
+  };
+});
 vi.mock('../../acp/mlx-distributed', async (importOriginal) => ({
   foreignOwner: (await importOriginal<typeof import('../../acp/mlx-distributed')>()).foreignOwner,
-  mlxDistributedStatus: (...a: unknown[]) => mockDistributedStatus(...a),
+  latestMlxDistributedStatus: () => distStore.latest(),
+  subscribeMlxDistributedStatus: (fn: () => void) => distStore.subscribe(fn),
+  mlxDistributedStatus: async (...a: unknown[]) => {
+    try {
+      const status = await mockDistributedStatus(...a);
+      distStore.publish(status ?? null);
+      return status;
+    } catch (e) {
+      distStore.publish(null);
+      throw e;
+    }
+  },
   mlxDistributedPreflight: vi.fn(),
   mlxDistributedStart: vi.fn(),
   mlxDistributedStop: vi.fn(),
@@ -273,6 +301,7 @@ beforeEach(() => {
   sessionStorage.clear();
   vi.clearAllMocks();
   remoteStore.publish(null);
+  distStore.publish(null);
   mockFeatures.leanzeroLink = false;
   mockFeatures.mlxDistributed = false;
   mockLinkStatus.mockResolvedValue({ auth: { state: 'loggedOut' }, nodeCount: 0 });
@@ -3192,6 +3221,61 @@ describe('MlxEngineView — the memory under "Serving on <peer>" is the peer’s
     expect(within(memory).queryByText(/Memory on/)).toBeNull();
     expect(screen.getByRole('button', { name: 'Engine details' })).toBeInTheDocument();
     expect(screen.queryByTestId('mlx-details-elsewhere')).toBeNull();
+    unmount();
+  });
+});
+
+/**
+ * Q-149, the 3.0.52 live round: while the 27B split served, the Models table said "On disk" on
+ * both Macs and Sampling said "no model mounted" beside a green Writing tab. Both now read what a
+ * Mac serves through the one derivation My Macs and the tray read (useMacSummary → summarizeMac).
+ */
+describe('Q-149: a split reads as served on Models and Sampling, this Mac and the Mac holding part of it', () => {
+  const SPLIT = { ...FLASH_READY, modelId: QWEN, state: 'serving' };
+  const HOSTING = {
+    rank: 1,
+    size: 2,
+    requesterName: LAPTOP,
+    requesterNodeId: 'self-node',
+    requesterHostname: 'this-mac',
+    modelId: QWEN,
+    servedModelId: QWEN,
+    backend: 'jaccl',
+    runner: 'mlxLmTensor',
+    state: 'serving',
+  };
+
+  it('Models: “Split” on this Mac and “Part of a split” on the Studio — never “On disk” for the served model', async () => {
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockResolvedValue(SPLIT);
+    withMesh([peerNode({ computer_name: STUDIO })], ME);
+    peerHolds([MODELS[0]]);
+    mockStatus.mockImplementation(async (nodeId?: string) =>
+      nodeId === PEER ? statusOf({ state: 'stopped', hosting: HOSTING } as never) : statusOf({})
+    );
+    const { unmount } = render(<MlxEngineView />);
+    await openModelsTab();
+    const here = await screen.findByTestId(`model-cell-self-${QWEN}`);
+    await waitFor(() => expect(here).toHaveAttribute('data-role', 'split'));
+    expect(here).toHaveTextContent('Split');
+    expect(here).not.toHaveTextContent('On disk');
+    const studio = await screen.findByTestId(`model-cell-${PEER}-${QWEN}`);
+    await waitFor(() => expect(studio).toHaveAttribute('data-role', 'hosting'));
+    expect(studio).toHaveTextContent('Part of a split');
+    // The model the split does not serve stays quiet.
+    expect(screen.getByTestId(`model-cell-self-${HALF}`)).not.toHaveAttribute('data-role', 'split');
+    unmount();
+  });
+
+  it('Sampling: names the split this Mac serves instead of “no model mounted”', async () => {
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockResolvedValue(SPLIT);
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    const serves = await screen.findByTestId('mlx-sampling-serves');
+    await waitFor(() => expect(serves).toHaveAttribute('data-state', 'split'));
+    expect(serves).toHaveTextContent('Serving: Qwen3-30B-A3B-4bit · split across 2 Macs');
+    expect(screen.queryByText('no model mounted')).toBeNull();
     unmount();
   });
 });

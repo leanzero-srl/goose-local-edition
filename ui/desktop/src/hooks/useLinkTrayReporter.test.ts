@@ -15,6 +15,16 @@ vi.mock('../acp/mlx-engine', async (importActual) => ({
   ...(await importActual<typeof import('../acp/mlx-engine')>()),
   mlxEngineStatus: (...a: unknown[]) => mockStatus(...a),
 }));
+// The latest distributed read (acp/mlx-distributed.ts); no read yet = one read here, which the
+// tests answer with the same value.
+const dist = vi.hoisted(() => ({ latest: null as unknown }));
+vi.mock('../acp/mlx-distributed', () => ({
+  latestMlxDistributedStatus: () => dist.latest,
+  mlxDistributedStatus: async () => {
+    if (dist.latest == null) throw new Error('no split capability');
+    return dist.latest;
+  },
+}));
 vi.mock('../components/leanzero-swarm/mlxLiveStats', async (importActual) => ({
   ...(await importActual<typeof import('../components/leanzero-swarm/mlxLiveStats')>()),
   readMlxLiveStatus: (...a: unknown[]) => mockLive(...a),
@@ -59,6 +69,7 @@ const connected = { auth: { state: 'connected' } } as unknown as LinkState;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  dist.latest = null;
   mockNodes.mockResolvedValue(ROSTER);
 });
 
@@ -115,6 +126,42 @@ describe('the tray reads every Mac the way My Macs does', () => {
     expect(report?.lines[1]).toMatchObject({
       phase: 'failed',
       text: 'Work’s Mac Studio — Can’t read',
+    });
+  });
+
+  it('Q-149: this Mac serving the split reads as the split — never “No model loaded” above its shard', async () => {
+    // The 3.0.52 live round: "Mihai Macbook — No model loaded" directly above "Mihai Macbook:
+    // shard 1/2" — the single engine is stopped while the split owns the Mac.
+    dist.latest = {
+      mode: 'distributed',
+      state: 'serving',
+      admissionOpen: true,
+      modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+      nodes: [{ name: 'Mihai’s MacBook' }, { name: 'Work’s Mac Studio' }],
+    };
+    mockStatus.mockImplementation(async (nodeId?: string) =>
+      nodeId === 'studio-1'
+        ? {
+            ...running('m'),
+            state: 'stopped',
+            modelId: undefined,
+            hosting: {
+              rank: 1,
+              size: 2,
+              requesterName: 'Mihai’s MacBook',
+              modelId: 'Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx',
+              state: 'serving',
+            },
+          }
+        : { ...running('m'), state: 'stopped', modelId: undefined }
+    );
+    const report = await readMacsTrayReport(intl, connected);
+    expect(report?.lines[0]).toMatchObject({
+      phase: 'writing',
+      text: 'Mihai’s MacBook — Qwen3.8-27B-Atlassian-Q8-mlx · split across 2 Macs',
+    });
+    expect(report?.lines[1]).toMatchObject({
+      text: 'Work’s Mac Studio — Qwen3.8-27B-Atlassian-Q8-mlx · part of Mihai’s MacBook’s split',
     });
   });
 

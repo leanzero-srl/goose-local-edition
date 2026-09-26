@@ -123,6 +123,8 @@ import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import { PeerHeldLine } from './PeerHeldLine';
 import { dropRoute } from './routeSwitch';
 import { useCutGuard } from './cutGuard';
+import { macLine, macStateWord, type MacSummary } from './macSummary';
+import { modelRoleOn, useMacSummary } from './useMacSummary';
 import { routeServesChat } from '../chatServedBy/chatServedBy';
 import {
   PlacementBadge,
@@ -1204,6 +1206,8 @@ interface SamplingSectionProps {
   onSaveSettings: () => void;
   saving: boolean;
   saveError: string | null;
+  /** What the Mac these profiles belong to serves — the one derivation (Q-149). */
+  summary: MacSummary;
 }
 
 function SamplingSection(props: SamplingSectionProps) {
@@ -1222,12 +1226,17 @@ function SamplingSection(props: SamplingSectionProps) {
     onSaveSettings,
     saving,
     saveError,
+    summary,
   } = props;
+  const intl = useIntl();
 
   const dirty = drafts != null && savedDrafts != null && !draftsEqual(drafts, savedDrafts);
   const profileIds = Object.keys(settings?.modelProfiles ?? {});
-  const selectedIsMounted =
-    status?.modelId != null && selectedModelId != null && status.modelId === selectedModelId;
+  const selectedRole = selectedModelId != null ? modelRoleOn(summary, selectedModelId) : null;
+  // A split (or a part of one) serves the model: said as the Mac's own line, never "no model
+  // mounted" beside a green Writing tab (Q-149).
+  const splitLine =
+    summary.state === 'split' || summary.state === 'hosting' ? macLine(intl, summary) : null;
 
   return (
     <div className="flex flex-col gap-4 pb-8">
@@ -1244,8 +1253,13 @@ function SamplingSection(props: SamplingSectionProps) {
           Sampling is PER MODEL: each model mounts with the flags from its own profile, and
           per-request values sent by goose override them.
         </p>
-        <p className={TYPE.body}>
-          {status?.modelId ? (
+        <p className={TYPE.body} data-testid="mlx-sampling-serves" data-state={summary.state}>
+          {splitLine && summary.modelId ? (
+            <>
+              <span className="text-lz-ink-3">Serving: </span>
+              <span className={cx('font-mono text-lz-mono', WEIGHT.semibold)}>{splitLine}</span>
+            </>
+          ) : status?.modelId ? (
             <>
               <span className="text-lz-ink-3">Currently mounted: </span>
               <span className={cx('font-mono text-lz-mono', WEIGHT.semibold)}>
@@ -1262,7 +1276,11 @@ function SamplingSection(props: SamplingSectionProps) {
         title="Model profile"
         headerRight={
           <>
-            {selectedIsMounted && <Chip tone="ok">mounted</Chip>}
+            {selectedRole === 'loaded' || selectedRole === 'loading' ? (
+              <Chip tone="ok">mounted</Chip>
+            ) : selectedRole ? (
+              <Chip tone="ok">{macStateWord(intl, summary.state)}</Chip>
+            ) : null}
             {dirty && <Chip tone="warn">unsaved</Chip>}
             <Button
               size="sm"
@@ -2621,6 +2639,7 @@ function MlxEngineViewBody() {
     [samplingIsSelf, models, macsCtx, samplingMac]
   );
   const samplingStatus = samplingIsSelf ? status : macsCtx.factsOf(samplingMac).status;
+  const samplingSummary = useMacSummary(samplingMacObj);
 
   useEffect(() => {
     if (samplingIsSelf || peerSettings[samplingMac]) return;
@@ -2965,6 +2984,7 @@ function MlxEngineViewBody() {
           onSaveSettings={onSaveProfile}
           saving={saving}
           saveError={saveError}
+          summary={samplingSummary}
         />
       )}
     </div>

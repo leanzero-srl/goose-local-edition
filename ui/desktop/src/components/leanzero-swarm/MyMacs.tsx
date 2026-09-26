@@ -23,7 +23,8 @@ import { formatGb } from './primitives';
 import { mlxErrorMessage } from './mlxErrorMessage';
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import { PERMISSIONS, PERMISSION_KEY, allowsOf, type Mac, type Permission } from './macs';
-import { macLine, macStateWord, summarizeMac } from './macSummary';
+import { macLine, macStateWord } from './macSummary';
+import { useMacSummary } from './useMacSummary';
 import { PERMISSION_LABEL, useMacs, type MacFacts } from './useMacs';
 
 /**
@@ -335,15 +336,11 @@ function MacCard({ mac, props }: { mac: Mac; props: MyMacsProps }) {
   const intl = useIntl();
   const macsCtx = useMacs();
   const { mlxDistributed } = useFeatures();
-  const distributed = useMlxDistributedStatus(mlxDistributed && mac.isSelf);
+  // Polled here so the card is current while it is open; every read lands in the latest status
+  // the one derivation reads (useMacSummary, Q-149).
+  useMlxDistributedStatus(mlxDistributed && mac.isSelf);
   const facts = macsCtx.factsOf(mac.key);
-  const summary = summarizeMac(mac, {
-    status: facts.status,
-    statusError: facts.statusError,
-    activity: facts.activity,
-    decodeTps: facts.decodeTps,
-    distributed: distributed.status,
-  });
+  const summary = useMacSummary(mac);
   const line = macLine(intl, summary);
   const word = macStateWord(intl, summary.state);
   const { linkState } = props;
