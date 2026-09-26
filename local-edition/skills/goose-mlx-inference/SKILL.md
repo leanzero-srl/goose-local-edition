@@ -462,3 +462,17 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   `tests/test_pipeline_qwen4_serve_transient_tail.py` is the template. TRAP: a digit word-level test vocab ("w10") is split by
   transformers 5's fast wrapper into "w1"+"0" — use letters-only words. Pipeline fork tags so far: .1 prefix cache,
   .2 cache budget, .3 aliases, .4 refused_tool_calls, .5 continuous admission, .6 tail on tool.
+- 2026-09-26 Q-145 (fork c24f6b55e, branch q145-srpf, untagged at write time): PIPELINE PREFILL ORDER IS
+  SHORTEST-REMAINING-FIRST at chunk granularity. Several rows may prefill at once (`_Engine.prefilling`, each its own
+  cache + slot + KV reservation); every rank runs the chunk of `_shortest` (fewest prompt tokens left, then earliest
+  admitted) — derived from ranges all ranks hold, NO new collective word; rank 0 admits the queued head (`_order`:
+  protected oldest-first, then fewest left) only when it would be that pick. Aging is in prefill TOKENS, not seconds:
+  `_Job.waited` >= own tokens left ⇒ protected (nothing later jumps it). `_Plan.abort` is a per-slot flag list; the plan
+  header is [cmd, leave×slots, abort×slots, joiner×6, evictions]. `_State.held` is GONE → `_State.waiting` (goose's
+  pipeline_rank.py must read it — companion branch q145-pin-companion, lands WITH the pin bump). A canary arriving
+  while BOTH slots are held (one decoding, one prefilling) still waits for a row to leave — slot-bound, not order-bound.
+  TRAP (cost: ranks launched beside a live Flash split): in the fork's tests, `test_pipeline_qwen4.py`,
+  `test_pipeline_qwen4_serve.py` and `test_pipeline_qwen4_vision.py` launch REAL ranks via `mlx.launch --backend ring`
+  on localhost; only `test_pipeline_qwen4_continuous.py` and `test_pipeline_qwen4_srpf.py` are in-process. While a split
+  holds the Mac, run only those two, on CPU: a runner that does `mx.set_default_device(mx.cpu)` then `pytest.main`,
+  with the worktree first on sys.path (the venv's editable finder points at the main checkout).
