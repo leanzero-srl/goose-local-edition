@@ -12,7 +12,7 @@
 //! every rank), `rank_formation.py` (a JACCL group's formation handshake, Q-136), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
 //! `rank_thinking.py` (a chat request's thinking switch, resolved as the single engine resolves it),
 //! then the runner's program — `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
-//! `rank_state.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
+//! `rank_state.py` + `rank_tool_stream.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
 //! what an absent max_tokens generates, the prefill modules what a step and a batch may hold) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
 //! layer split, under `NodeConfig::pipeline_python`).
 
@@ -52,6 +52,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_prefill.py"),
     include_str!("rank_batch.py"),
     include_str!("rank_state.py"),
+    include_str!("rank_tool_stream.py"),
     include_str!("rank_wrapper.py")
 );
 const PIPELINE_PROGRAM: &str = concat!(
@@ -2450,7 +2451,7 @@ print("GOOSE_TEST " + json.dumps({
 }))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}\
+            "{}{}{}{}{}{}{}{}{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
             include_str!("rank_load_lock.py"),
@@ -2461,6 +2462,7 @@ print("GOOSE_TEST " + json.dumps({
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
             include_str!("rank_state.py"),
+            include_str!("rank_tool_stream.py"),
             &wrapper[start..end],
             qwen = serde_json::to_string(QWEN38).unwrap(),
         );
@@ -2551,6 +2553,333 @@ print("GOOSE_TEST " + json.dumps({
             seen["untranslated"]
         );
         assert_eq!(seen["status"][1]["status"], "idle");
+    }
+
+    /// Q-141: the streamer against the REAL qwen3_coder parser of mlx_lm 0.31.3. For every call
+    /// shape the parser accepts — a long file write (quotes, backslashes, tabs, non-ASCII, text
+    /// that looks like the close tag and the next header), typed parameters, the word "null", an
+    /// undeclared tool, no tools at all, no newlines, no parameters — and every chunking (the
+    /// whole text, one character at a time, seeded random pieces), what was streamed is exactly
+    /// `json.dumps` of what the parser reads from the whole text, and a long string value was
+    /// sent while it was written (all but the held tail before its close). What the parser
+    /// refuses (a typed value it cannot convert, a call cut before `</function>`) or reads
+    /// differently from what was already sent (a parameter written twice) is named, and what was
+    /// streamed stays unterminated, so the client fails the call instead of running it.
+    #[test]
+    fn the_tool_stream_sends_exactly_what_mlx_lms_parser_reads() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+import random
+from mlx_lm.tool_parsers import qwen3_coder as q
+
+def schema(name, **props):
+    return {"type": "function", "function": {"name": name, "parameters": {"type": "object", "properties": props}}}
+
+TOOLS = [
+    schema("shell", command={"type": "string"}, timeout={"type": "integer"}, ratio={"type": "number"},
+           force={"type": "boolean"}, env={"type": "object"}, paths={"type": "array"}, note={}),
+    schema("write", path={"type": "string"}, content={"type": "string"}),
+]
+LONG = "".join(
+    f'line {i}: echo "quoted" \\ back ünïcödé \U0001f9a2\ttab </param <parameter=x> </function>\n'
+    for i in range(300)
+)
+
+def call(name, *params):
+    body = "".join(f"<parameter={key}>\n{value}\n</parameter>\n" for key, value in params)
+    return f"\n<function={name}>\n{body}</function>\n"
+
+EXACT = {
+    "shell": (call("shell", ("command", "cd /work && ls -la")), TOOLS),
+    "long_write": (call("write", ("path", "/tmp/x.py"), ("content", LONG)), TOOLS),
+    "typed": (call("shell", ("command", "echo a command long enough to stream"), ("timeout", "30"),
+                   ("ratio", "2.5"), ("force", "true"), ("env", '{"A": 1}'), ("paths", '["a", "b"]')), TOOLS),
+    "typed_first": (call("shell", ("timeout", "7"), ("command", "echo the string after a typed value")), TOOLS),
+    "null_word": (call("shell", ("command", "null")), TOOLS),
+    "null_upper": (call("shell", ("command", "NULL")), TOOLS),
+    "untyped_note": (call("shell", ("note", '{"looks": "like json but the schema has no type"}')), TOOLS),
+    "undeclared": (call("bash", ("cmd", "rm -rf build && make -j8 all install")), TOOLS),
+    "no_tools": (call("shell", ("command", "echo no tools were declared at all")), None),
+    "no_newlines": ("<function=shell><parameter=command>ls -la /very/long/path/somewhere</parameter></function>", TOOLS),
+    "two_newlines": ("<function=shell><parameter=command>\n\nkeeps one newline each side\n\n</parameter></function>", TOOLS),
+    "no_parameters": ("\n<function=list_files>\n</function>\n", TOOLS),
+    "short": (call("shell", ("command", "ls")), TOOLS),
+}
+REFUSED = {
+    "bad_int": (call("shell", ("command", "echo sleep then stop"), ("timeout", "soon")), TOOLS),
+    "cut_mid_value": (call("write", ("path", "/tmp/y"), ("content", LONG))[:-2000], TOOLS),
+    "written_twice": (call("shell", ("command", "echo the first of two values"), ("command", "echo the second")), TOOLS),
+}
+
+def chunkings(text):
+    yield "whole", [text]
+    yield "chars", list(text)
+    rng = random.Random(141)
+    for seed in range(3):
+        pieces, i = [], 0
+        while i < len(text):
+            n = rng.randint(1, 9)
+            pieces.append(text[i:i + n])
+            i += n
+        yield f"random{seed}", pieces
+
+def run(pieces, tools):
+    stream = ToolCallStream(q._convert_param_value, q._get_arguments_config)
+    opened, sent = [], ""
+    for piece in pieces:
+        name, fragment = stream.feed(piece, tools)
+        if name is not None:
+            opened.append(name)
+        sent += fragment
+    rest, why = stream.close(q.parse_tool_call, tools)
+    return opened, sent, rest, why
+
+for case, (text, tools) in EXACT.items():
+    whole = q.parse_tool_call(text, tools)
+    expected = json.dumps(whole["arguments"], ensure_ascii=False)
+    for how, pieces in chunkings(text):
+        assert "".join(pieces) == text
+        opened, sent, rest, why = run(pieces, tools)
+        assert why is None, (case, how, why)
+        assert opened == [whole["name"]], (case, how, opened)
+        assert sent + rest == expected, (case, how, sent + rest, expected)
+        if case == "long_write" and how != "whole":
+            assert len(rest) <= 2 * ToolCallStream.HOLD, (how, len(rest), "the long value was held back")
+
+for case, (text, tools) in REFUSED.items():
+    for how, pieces in chunkings(text):
+        opened, sent, rest, why = run(pieces, tools)
+        assert rest is None and why, (case, how, rest)
+        try:
+            json.loads(sent)
+        except json.JSONDecodeError:
+            pass
+        else:
+            raise AssertionError(f"{case}/{how}: the client could run {sent!r}")
+print("ok")
+"#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_tool_stream.py")))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "ok",
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Q-141 through the REAL mlx_lm 0.31.3 handler: a streamed chat answer whose tool call is
+    /// written token by token (the generation is a stand-in feeding mlx_lm's own Response objects
+    /// through its own control-token buffer). The generation pauses halfway through the call until
+    /// the client has seen part of its arguments. Through the wrapper the client sees them — the
+    /// open frame (id, `shell`) and dozens of argument fragments before `</tool_call>` — and the
+    /// call it assembles is exactly the parser's; the answer's words, finish_reason `tool_calls`
+    /// and the one call are mlx_lm's. NEGATIVE CONTROL: the same generation through mlx_lm's own
+    /// handle_completion sends nothing until the call closes (E2E #3c's 18 minutes of silence),
+    /// then the whole call in one frame.
+    #[test]
+    fn a_streamed_tool_call_reaches_the_client_while_it_is_written() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let tensor = TensorLaunch {
+            planned_bytes: 27_456_216_576,
+            prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_entries: 110,
+            mlx_cache_limit_bytes: 2_745_621_658,
+            prefill: e2e_prefill(),
+        };
+        let mut spec = rank_specs(
+            &config,
+            &ServedNames::only("node-alias"),
+            &[tensor, tensor],
+            141_568,
+            2.0,
+        )
+        .remove(0);
+        if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
+            *doorbell = false;
+        }
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let checks = r#"
+import argparse
+import http.server
+import types
+import urllib.request
+from queue import Queue
+
+mx.set_default_device(mx.cpu)
+
+class Parsed(Exception):
+    pass
+
+real_parse_args = argparse.ArgumentParser.parse_args
+
+def parse_and_stop(self, args=None, namespace=None):
+    raise Parsed(real_parse_args(self, args, namespace))
+
+argparse.ArgumentParser.parse_args = parse_and_stop
+try:
+    server.main()
+    raise SystemExit("mlx_lm's main() never parsed its argv")
+except Parsed as parsed:
+    cli = parsed.args[0]
+argparse.ArgumentParser.parse_args = real_parse_args
+
+TOOLS = [{"type": "function", "function": {"name": "shell", "parameters": {
+    "type": "object", "properties": {"command": {"type": "string"}}}}}]
+COMMAND = "".join(
+    f'printf "%s\\n" "row {i}: ünï \U0001f9a2 \\\\ \\"q\\"" >> /tmp/out.txt\n' for i in range(120)
+).rstrip("\n")
+TOOL = f"\n<function=shell>\n<parameter=command>\n{COMMAND}\n</parameter>\n</function>\n"
+TOKENS = [TOOL[i:i + 3] for i in range(0, len(TOOL), 3)]
+HALF = len(TOKENS) // 2
+EXPECTED = json.dumps(qwen3_coder.parse_tool_call(TOOL, TOOLS)["arguments"], ensure_ascii=False)
+
+responses = server.ResponseGenerator.__new__(server.ResponseGenerator)
+responses.model_provider = types.SimpleNamespace(cli_args=cli, tokenizer=types.SimpleNamespace(chat_template=QWEN38))
+responses.requests = Queue()
+httpd = http.server.ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    lambda *args, **kwargs: server.APIHandler(responses, *args, system_fingerprint="test", **kwargs),
+)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+seen_args = []
+waited = []
+
+def token(text, state, match=None, finish=None):
+    return server.Response(text, 7, state, match, 0.0, finish, ())
+
+def generation_thread():
+    while True:
+        rqueue, request, args = responses.requests.get()
+        rqueue.put(server.GenerationContext(
+            has_tool_calling=True, has_thinking=False, tool_parser=qwen3_coder.parse_tool_call,
+            sequences={(1,): "<tool_call>", (2,): "</tool_call>", (3,): "<|im_end|>"},
+            prompt=[0] * 8, prompt_cache_count=0,
+        ))
+        for piece in ("I'll", " write", " it.\n"):
+            rqueue.put(token(piece, "normal"))
+        rqueue.put(token("<tool_call>", "tool", (1,)))
+        for piece in TOKENS[:HALF]:
+            rqueue.put(token(piece, "tool"))
+        # The client's own reading decides: seen while the call is still being written, or not.
+        waited.append(seen_args[-1].wait(3))
+        for piece in TOKENS[HALF:]:
+            rqueue.put(token(piece, "tool"))
+        rqueue.put(token("</tool_call>", "normal", (2,)))
+        rqueue.put(token("<|im_end|>", None, (3,), "stop"))
+        rqueue.put(None)
+
+threading.Thread(target=generation_thread, daemon=True).start()
+
+def stream():
+    seen = threading.Event()
+    seen_args.append(seen)
+    body = {"model": served, "stream": True, "tools": TOOLS,
+            "messages": [{"role": "user", "content": "write the rows"}]}
+    url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/chat/completions"
+    request = urllib.request.Request(url, data=json.dumps(body).encode())
+    text, calls, finish, arg_frames = "", {}, None, 0
+    with urllib.request.urlopen(request, timeout=60) as reply:
+        for raw in reply:
+            line = raw.decode().strip()
+            if not line.startswith("data: ") or line == "data: [DONE]":
+                continue
+            frame = json.loads(line[len("data: "):])
+            if not frame["choices"]:
+                continue
+            choice = frame["choices"][0]
+            finish = choice["finish_reason"] or finish
+            text += choice["delta"].get("content", "")
+            for delta in choice["delta"].get("tool_calls", []):
+                call = calls.setdefault(delta["index"], {"ids": [], "names": [], "arguments": ""})
+                if "id" in delta:
+                    call["ids"].append(delta["id"])
+                if "name" in delta["function"]:
+                    call["names"].append(delta["function"]["name"])
+                call["arguments"] += delta["function"].get("arguments", "")
+                arg_frames += 1
+            if any(len(call["arguments"]) > len("{") for call in calls.values()):
+                seen.set()
+    return {"text": text, "calls": [calls[i] for i in sorted(calls)], "finish": finish,
+            "arg_frames": arg_frames, "seen_while_written": waited[-1]}
+
+streamed = stream()
+server.APIHandler.handle_completion = original_handle_completion
+upstream = stream()
+print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "expected": EXPECTED,
+                                   "command": COMMAND}))
+"#;
+        let program = format!(
+            "{}{}{}{}{}{}{}{}{}\
+             class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+             group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
+            include_str!("rank_load_lock.py"),
+            include_str!("rank_env.py"),
+            include_str!("rank_live.py"),
+            include_str!("rank_thinking.py"),
+            include_str!("rank_budget.py"),
+            include_str!("rank_prefill.py"),
+            include_str!("rank_batch.py"),
+            include_str!("rank_state.py"),
+            include_str!("rank_tool_stream.py"),
+            &wrapper[start..end],
+            qwen = serde_json::to_string(QWEN38).unwrap(),
+        );
+        let seen = run_against_real_packages(&python, &program, &spec);
+        let expected = seen["expected"].as_str().unwrap();
+        let streamed = &seen["streamed"];
+        assert_eq!(
+            streamed["seen_while_written"], true,
+            "the client read the call's arguments while the model was still writing them"
+        );
+        assert!(
+            streamed["arg_frames"].as_u64().unwrap() > 50,
+            "argument fragments arrive as they are written: {streamed}"
+        );
+        assert_eq!(streamed["text"], "I'll write it.\n");
+        assert_eq!(streamed["finish"], "tool_calls");
+        let calls = streamed["calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 1, "{streamed}");
+        assert_eq!(calls[0]["names"], serde_json::json!(["shell"]));
+        assert_eq!(
+            calls[0]["ids"].as_array().unwrap().len(),
+            1,
+            "one open frame"
+        );
+        assert_eq!(
+            calls[0]["arguments"], expected,
+            "the call assembled from the fragments is the parser's own"
+        );
+        let arguments: serde_json::Value =
+            serde_json::from_str(calls[0]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(arguments["command"], seen["command"]);
+
+        let upstream = &seen["upstream"];
+        assert_eq!(
+            upstream["seen_while_written"], false,
+            "unpatched mlx_lm sends nothing while the call is written"
+        );
+        assert_eq!(
+            upstream["arg_frames"], 1,
+            "then the whole call in one frame"
+        );
+        assert_eq!(upstream["calls"][0]["arguments"], expected);
+        assert_eq!(upstream["text"], streamed["text"]);
+        assert_eq!(upstream["finish"], streamed["finish"]);
     }
 
     /// The tensor wrapper's own module prelude — its imports and both upstream-attribute checks,
@@ -2812,6 +3141,7 @@ print("ok")
                 include_str!("rank_prefill.py"),
                 include_str!("rank_batch.py"),
                 include_str!("rank_state.py"),
+                include_str!("rank_tool_stream.py"),
                 include_str!("rank_wrapper.py")
             )
         );
@@ -3050,6 +3380,15 @@ print("ok")
              \x20   step = 256\n",
         )
         .unwrap();
+        std::fs::create_dir_all(site.join("mlx_lm/tool_parsers")).unwrap();
+        std::fs::write(site.join("mlx_lm/tool_parsers/__init__.py"), "").unwrap();
+        std::fs::write(
+            site.join("mlx_lm/tool_parsers/qwen3_coder.py"),
+            "def parse_tool_call(model_output, tools=None): pass\n\
+             def _convert_param_value(param_value, param_name, param_config): pass\n\
+             def _get_arguments_config(func_name, tools): pass\n",
+        )
+        .unwrap();
         std::fs::write(
             site.join("mlx_lm/generate.py"),
             "class PromptProcessingBatch:\n\
@@ -3089,6 +3428,8 @@ print("ok")
              \x20   def do_POST(self): pass\n\
              \x20   def validate_model_parameters(self): pass\n\
              \x20   def _set_completion_headers(self, status): pass\n\
+             \x20   def handle_completion(self, request, stop_words): pass\n\
+             \x20   def generate_response(self, text, finish_reason, **kwargs): pass\n\
              class ModelProvider:\n\
              \x20   def __init__(self, cli_args): self.cli_args, self._model_map = cli_args, {}\n\
              \x20   def load(self, *a): pass\n\
@@ -3460,7 +3801,7 @@ threading.Thread(target=responses._next_request, args=(0.1,), daemon=True).start
 threading.Event().wait()
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{prelude}{}{steps}",
+            "{}{}{}{}{}{}{}{}{}{prelude}{}{steps}",
             include_str!("rank_load_lock.py"),
             include_str!("rank_env.py"),
             include_str!("rank_live.py"),
@@ -3469,6 +3810,7 @@ threading.Event().wait()
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
             include_str!("rank_state.py"),
+            include_str!("rank_tool_stream.py"),
             &wrapper[start..end]
         );
         let tmp = tempfile::tempdir().unwrap();

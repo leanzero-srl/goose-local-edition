@@ -2012,8 +2012,9 @@ fn send_status_message_update(
     Ok(())
 }
 
-/// The loading line for a response whose tool calls are still forming, built only from the counts
-/// the decoder has received (see `FormingProgress`). `None` until there is something to report.
+/// The loading line for a response whose tool calls are still forming, built only from what the
+/// decoder has received (see `FormingProgress`): the tool being written and the counts. `None` until
+/// there is something to report.
 fn forming_progress_text(
     progress: &goose_providers::formats::openai::FormingProgress,
 ) -> Option<String> {
@@ -2026,9 +2027,12 @@ fn forming_progress_text(
         n => format!("{:.1}k chars", n as f64 / 1000.0),
     };
     let calls = if progress.tool_calls == 1 {
-        "1 tool call".to_string()
+        format!("a tool call to {}", progress.writing)
     } else {
-        format!("{} tool calls", progress.tool_calls)
+        format!(
+            "{} tool calls, the latest to {}",
+            progress.tool_calls, progress.writing
+        )
     };
     let mut parts = Vec::new();
     if progress.argument_chars > 0 {
@@ -3252,7 +3256,8 @@ mod tests {
     }
 
     /// The measured response's end state (session 20260923_20): 36 calls, about 11k chars of arguments, and
-    /// the rest of 28,035 tokens as text that never reached the chat. The line says each as a count.
+    /// the rest of 28,035 tokens as text that never reached the chat. The line says each as a count, and
+    /// names the tool being written (Q-141: 12,556 tokens of one call showed only "Writing").
     #[test]
     fn forming_progress_text_states_each_channel_as_a_count() {
         use goose_providers::formats::openai::FormingProgress;
@@ -3260,41 +3265,45 @@ mod tests {
         assert_eq!(
             forming_progress_text(&FormingProgress {
                 tool_calls: 1,
+                writing: "shell".to_string(),
                 argument_chars: 40,
                 ..Default::default()
             })
             .as_deref(),
-            Some("goose is writing 1 tool call — 40 chars of arguments")
+            Some("goose is writing a tool call to shell — 40 chars of arguments")
         );
         // Q-100: the first chunk of a call's arguments read "1 chars of arguments".
         assert_eq!(
             forming_progress_text(&FormingProgress {
                 tool_calls: 1,
+                writing: "shell".to_string(),
                 argument_chars: 1,
                 ..Default::default()
             })
             .as_deref(),
-            Some("goose is writing 1 tool call — 1 char of arguments")
+            Some("goose is writing a tool call to shell — 1 char of arguments")
         );
         assert_eq!(
             forming_progress_text(&FormingProgress {
                 tool_calls: 2,
+                writing: "developer__text_editor".to_string(),
                 ..Default::default()
             })
             .as_deref(),
-            Some("goose is writing 2 tool calls")
+            Some("goose is writing 2 tool calls, the latest to developer__text_editor")
         );
         assert_eq!(
             forming_progress_text(&FormingProgress {
                 tool_calls: 36,
+                writing: "memory__remember_memory".to_string(),
                 argument_chars: 11_046,
                 reasoning_chars: 2_100,
                 unplaced_text_chars: 82_400,
             })
             .as_deref(),
             Some(
-                "goose is writing 36 tool calls — 11.0k chars of arguments, 2.1k chars of reasoning, \
-                 82.4k chars of text not shown in the chat"
+                "goose is writing 36 tool calls, the latest to memory__remember_memory — 11.0k chars \
+                 of arguments, 2.1k chars of reasoning, 82.4k chars of text not shown in the chat"
             )
         );
     }

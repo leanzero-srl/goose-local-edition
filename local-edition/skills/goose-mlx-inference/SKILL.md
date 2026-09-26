@@ -118,6 +118,18 @@ versions, but every new engine version re-runs the bench `prefix_probe` before a
   competed at kernel WARN/CRITICAL. A test that needs only cache ops runs on `mx.cpu` so it can never
   hang on the GPU.
 - TRAP (2026-09-26, Q-113 — shipped in 3.0.44, every tensor split died at startup): `import mlx_lm.generate as g` binds the re-exported `generate` FUNCTION (mlx_lm/__init__.py), so `g.PromptProcessingBatch` raised AttributeError in the rank prelude. The tests passed because they stubbed mlx_lm or used `from mlx_lm.generate import …` (which resolves the module). RULE: every rank-program line that runs without a model — imports, hasattr checks, monkeypatch targets, signatures — gets a test that runs the SHIPPED text against the REAL provisioned venv (`the_wrapper_prelude_binds_real_mlx_lm_modules` is the pattern; skip loudly when the venv is absent). Bind submodules with `importlib.import_module`. And a split fix is not proven until a real split STARTS on the installed build — Q-104 was merged with no live launch.
+- TOOL CALLS STREAM ON EVERY WAY (Q-141, 2026-09-26). mlx_lm 0.31.3's `handle_completion` sends NOTHING while its
+  state machine is in "tool" (`gen.state != "tool"`, server.py:1478) — E2E #3c's rank 0 generated 21,910 tokens of one
+  call (RANK_STATE uid 15, ended "removed") with zero chunks at goose. rank_tool_stream.py + the relay in
+  rank_wrapper.py (`StreamedToolCalls`, wraps mlx_lm's own handle_completion) send the open frame (id, name, `{`) and
+  argument fragments as OpenAI `tool_calls` deltas, like Rapid-MLX and the pipeline; the end reconciles against
+  `qwen3_coder.parse_tool_call` on the whole text and sends the remainder, so the call is byte-identical; on a
+  refusal nothing more is sent (the client fails the call; rank log `GOOSE_RANK_TOOL_CALL_UNPARSED`). Only
+  string-typed values stream before their close (typed ones are converted whole); a call whose text never forms
+  `<function=NAME>` stays silent until it ends (the fork does the same). goose's forming line names the tool
+  ("goose is writing a tool call to shell — 4.2k chars of arguments", FormingProgress.writing). Tests:
+  `the_tool_stream_sends_exactly_what_mlx_lms_parser_reads`, `a_streamed_tool_call_reaches_the_client_while_it_is_written`
+  (negative control: unpatched handler, 1 frame after the close).
 
 ## The Swarm provider and the provider surface (2026-09-05, owner's rule)
 - **Only the defined providers exist in the local edition:** Goose Swarm (`swarm`) plus the swarm's four cloud
