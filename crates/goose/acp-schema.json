@@ -13294,6 +13294,172 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/memory_proposals/answer"
     },
+    "SessionActivityRequest_unstable": {
+      "type": "object",
+      "description": "What the person's sessions are doing right now — the one source every session list, the pinned\ncard and the top bar read. `running`: the sessions holding an in-flight turn in the engine's busy\nset (the token map LeanZero Link reads too), user-visible sessions only. `needsYou`: every open\nitem, oldest first.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/session_activity/get"
+    },
+    "SessionActivityResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "running": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RunningSessionDto"
+          }
+        },
+        "needsYou": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NeedsYouItemDto"
+          }
+        }
+      },
+      "required": [
+        "running",
+        "needsYou"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/session_activity/get"
+    },
+    "RunningSessionDto": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "sessionName": {
+          "type": "string"
+        },
+        "workingDir": {
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "string",
+          "description": "RFC 3339: when the turn in flight began."
+        }
+      },
+      "required": [
+        "sessionId",
+        "sessionName",
+        "workingDir",
+        "startedAt"
+      ]
+    },
+    "NeedsYouItemDto": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "sessionName": {
+          "type": "string"
+        },
+        "workingDir": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        },
+        "recommendedAnswer": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "RFC 3339."
+        },
+        "status": {
+          "$ref": "#/$defs/NeedsYouStatus"
+        },
+        "answer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "sessionId",
+        "sessionName",
+        "workingDir",
+        "question",
+        "why",
+        "recommendedAnswer",
+        "options",
+        "createdAt",
+        "status"
+      ]
+    },
+    "NeedsYouStatus": {
+      "type": "string",
+      "enum": [
+        "open",
+        "answered",
+        "dismissed"
+      ]
+    },
+    "ResolveNeedsYouRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/NeedsYouAction"
+        },
+        "answer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "sessionId",
+        "itemId",
+        "action"
+      ],
+      "description": "Close an open item. `Answer` records the person's text (required); `Dismiss` records nothing.\nThe answer itself reaches the model as the person's next chat message, sent by the client.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/needs_you/resolve"
+    },
+    "NeedsYouAction": {
+      "type": "string",
+      "enum": [
+        "answer",
+        "dismiss"
+      ]
+    },
+    "ResolveNeedsYouResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/NeedsYouItemDto"
+        }
+      },
+      "required": [
+        "item"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/needs_you/resolve"
+    },
     "LeanzeroLinkRemoteExecuteRequest_unstable": {
       "type": "object",
       "properties": {
@@ -14998,6 +15164,24 @@
                 {
                   "allOf": [
                     {
+                      "$ref": "#/$defs/SessionActivityRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/session_activity/get",
+                  "title": "SessionActivityRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/ResolveNeedsYouRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/needs_you/resolve",
+                  "title": "ResolveNeedsYouRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
                       "$ref": "#/$defs/LeanzeroLinkRemoteExecuteRequest_unstable"
                     }
                   ],
@@ -15937,6 +16121,22 @@
                         }
                       ],
                       "title": "AnswerMemoryProposalResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/SessionActivityResponse_unstable"
+                        }
+                      ],
+                      "title": "SessionActivityResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/ResolveNeedsYouResponse_unstable"
+                        }
+                      ],
+                      "title": "ResolveNeedsYouResponse_unstable"
                     },
                     {
                       "allOf": [

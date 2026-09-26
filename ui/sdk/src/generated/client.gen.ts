@@ -263,6 +263,8 @@ import type {
   RenameSessionRequest_unstable,
   RequestRecipeParams_unstable,
   ResetPromptRequest_unstable,
+  ResolveNeedsYouRequest_unstable,
+  ResolveNeedsYouResponse_unstable,
   RunScheduleNowRequest_unstable,
   RunScheduleNowResponse_unstable,
   SavePromptRequest_unstable,
@@ -271,6 +273,8 @@ import type {
   ScanRecipeRequest_unstable,
   ScanRecipeResponse_unstable,
   ScheduleRecipeRequest_unstable,
+  SessionActivityRequest_unstable,
+  SessionActivityResponse_unstable,
   SetConfigExtensionEnabledRequest_unstable,
   SetRecipeSlashCommandRequest_unstable,
   SetSessionSystemPromptRequest_unstable,
@@ -398,9 +402,11 @@ import {
   zRecipeToYamlResponse_unstable,
   zRefreshProviderInventoryResponse_unstable,
   zRequestRecipeParams_unstable,
+  zResolveNeedsYouResponse_unstable,
   zRunScheduleNowResponse_unstable,
   zSaveRecipeResponse_unstable,
   zScanRecipeResponse_unstable,
+  zSessionActivityResponse_unstable,
   zSetToolPermissionsResponse_unstable,
   zShareSessionNostrResponse_unstable,
   zSteerSessionResponse_unstable,
@@ -2156,6 +2162,30 @@ export class GooseExtClient {
     return zAnswerMemoryProposalResponse_unstable.parse(
       raw,
     ) as AnswerMemoryProposalResponse_unstable;
+  }
+
+  async sessionActivityGet_unstable(
+    params: SessionActivityRequest_unstable,
+  ): Promise<SessionActivityResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/session_activity/get",
+      params,
+    );
+    return zSessionActivityResponse_unstable.parse(
+      raw,
+    ) as SessionActivityResponse_unstable;
+  }
+
+  async needsYouResolve_unstable(
+    params: ResolveNeedsYouRequest_unstable,
+  ): Promise<ResolveNeedsYouResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/needs_you/resolve",
+      params,
+    );
+    return zResolveNeedsYouResponse_unstable.parse(
+      raw,
+    ) as ResolveNeedsYouResponse_unstable;
   }
 
   async leanzeroLinkRemoteExecute_unstable(
