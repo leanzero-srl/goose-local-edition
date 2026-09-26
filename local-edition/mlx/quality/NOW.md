@@ -1,9 +1,12 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-26 23:15 (real clock) · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
+Updated: 2026-09-26 23:30 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
 
 ## Live
-- Installed on both Macs: 3.0.52 (Q-107, Q-138, Q-130, Q-140, Q-141, Q-142). Split-start smoke: 27B tensor up in 17 s.
+- Installed on both Macs: 3.0.53 (+ Q-139, Q-143/144/145; pipeline fork 419306f70 on both). Flash pipeline smoke: up in 57 s.
+- LOAD 26d RUNNING (Q-145 proof): same shape as 26c (3×30k + canary, 20 min) → canary TTFT vs 347 s (pred. 6–12 s).
+- CI: 31a457b5b red on ONE test (developer_client_uses_working_dir_for_shell_tool, is_error true; markdown-only commit;
+  passes locally ×3) → job re-run; a second red = a Q-140-class row + agent.
   (The relaunch restored the previous Flash split first; split-start now refuses a split serving another model.)
 - E2E #3d ENDED at turn 0 (recorded): the "silent" 40-min answer was 54 IDENTICAL ledger_append calls — Q-159: the
   split samples GREEDY (no --temp; goose sends none; generation_config says temp 1.0/top_k 20/top_p 0.95). Every
