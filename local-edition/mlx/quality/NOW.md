@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-26 23:15 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
+Updated: 2026-09-26 23:30 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
 
 ## Live
 - Installed on both Macs: 3.0.52 (Q-107, Q-138, Q-130, Q-140, Q-141, Q-142). Split-start smoke: 27B tensor up in 17 s.
@@ -21,7 +21,10 @@ Updated: 2026-09-26 23:15 · heartbeat: session cron 90b0083a (:04/:14/…/:54, 
 ## Agents (worktree, NO GPU)
 - Q-146 instrument MERGED 56ae7ca19 (/v1/status `stream`: parser_state, withheld chars, text tail; GOOSE_RANK_WITHHELD) → ships in 3.0.54.
 - Method sent to the CogniRunner (cognirunner-86) and lz-ppm (projects-bd) sessions at the owner's ask.
-- LIVE critic round 1 (whole app, while #3d's call generates) → ROUND-2026-09-26-live-1.md.
+- LIVE critic round 1 DONE: 14 rows → Q-148..Q-158 + Q-147 reach; Q-146 reframed (tool deltas reach goose; ~80% of
+  tokens do not; one answer holds 41 tool calls). Test node mihai-flash-mlx removed from config (backup .bak-2026-09-26-2330).
+- Engine-surfaces agent: Q-148 (Run/tray Stop cut a live answer, no confirm), Q-149, Q-150, Q-154..Q-157.
+- Chat-surfaces agent: Q-151 (live progress line), Q-152, Q-153, Q-158.
 - Q-146 instrument: parser state + withheld chars + text tail in /v1/status, withholding-path table.
 - NEEDS-YOU + Q-147 RUNNING state (owner asks 22:3x / 22:5x) in ONE agent (same sidebar files): ask_user tool + persistent card above composer + sidebar marker + app-wide count;
   never in benchmark/swarm sessions.
