@@ -128,9 +128,11 @@ tokio::task_local! {
     pub static FORMING_PROGRESS_OBSERVER: FormingProgressObserver
 }
 
-fn notify_forming_progress(progress: FormingProgress) {
-    // Unset is the designed default, as with TOOL_FORMING_OBSERVER: a pure side channel.
-    let _ = FORMING_PROGRESS_OBSERVER.try_with(|observer| observer(progress));
+fn notify_forming_progress(progress: &FormingProgress) {
+    // Unset is the designed default, as with TOOL_FORMING_OBSERVER: a pure side channel. The copy
+    // is made only for an observer: the progress carries every call and the text beside them, and
+    // the swarm's workers, which set none, decode every chunk through here.
+    let _ = FORMING_PROGRESS_OBSERVER.try_with(|observer| observer(progress.clone()));
 }
 
 /// The end of text that arrived while tool calls formed, for the warning that reports it: the log
@@ -1543,7 +1545,7 @@ where
                     }
                 }
 
-                notify_forming_progress(forming.clone());
+                notify_forming_progress(&forming);
 
                 let is_complete = chunk.choices[0].finish_reason == Some("tool_calls".to_string());
 
@@ -1640,7 +1642,7 @@ where
                                             }
                                         }
                                     }
-                                    notify_forming_progress(forming.clone());
+                                    notify_forming_progress(&forming);
                                     if tool_chunk.choices[0].finish_reason.is_some() {
                                         done = true;
                                     }
