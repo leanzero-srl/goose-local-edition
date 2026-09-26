@@ -13314,11 +13314,19 @@
           "items": {
             "$ref": "#/$defs/NeedsYouItemDto"
           }
+        },
+        "failed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FailedSessionDto"
+          },
+          "description": "User/scheduled sessions whose LAST turn failed (a later completed turn clears it)."
         }
       },
       "required": [
         "running",
-        "needsYou"
+        "needsYou",
+        "failed"
       ],
       "x-side": "agent",
       "x-method": "_goose/unstable/session_activity/get"
@@ -13410,6 +13418,37 @@
         "open",
         "answered",
         "dismissed"
+      ]
+    },
+    "FailedSessionDto": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "sessionName": {
+          "type": "string"
+        },
+        "workingDir": {
+          "type": "string"
+        },
+        "failedAt": {
+          "type": "string",
+          "description": "RFC 3339: when the failed turn ended."
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The failure text the chat showed, when it had one."
+        }
+      },
+      "required": [
+        "sessionId",
+        "sessionName",
+        "workingDir",
+        "failedAt"
       ]
     },
     "ResolveNeedsYouRequest_unstable": {

@@ -12,17 +12,20 @@ use goose::agents::{Agent, AgentConfig, ExtensionConfig, GoosePlatform, SessionC
 use goose::config::permission::PermissionManager;
 use goose::config::GooseMode;
 use goose::conversation::message::{Message, MessageContent};
+use goose::execution::manager::AgentManager;
 use goose::needs_you::{self, NeedsYouState, NeedsYouStatus, NewQuestion, Resolution};
 use goose::providers::base::{
     MessageStream, Provider, ProviderDef, ProviderDescriptor, ProviderMetadata,
 };
 use goose::session::extension_data::ExtensionState;
 use goose::session::{SessionManager, SessionType, TodoState};
+use goose::turn_outcome::{self, TurnOutcomeState};
 use goose_providers::conversation::token_usage::{ProviderUsage, Usage};
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
 use rmcp::model::{CallToolRequestParams, Role, Tool};
 use rmcp::object;
+use tokio_util::sync::CancellationToken;
 
 #[ctor::ctor]
 fn hermetic_path_root() {
@@ -436,5 +439,191 @@ async fn concurrent_extension_writes_never_erase_an_item() -> Result<()> {
         .await?
         .extension_data;
     assert!(TodoState::from_extension_data(&data).is_some());
+    Ok(())
+}
+
+/// Fails the first call the way a cut split does, then answers.
+struct FlakyProvider {
+    calls: AtomicUsize,
+}
+
+impl ProviderDescriptor for FlakyProvider {
+    fn metadata() -> ProviderMetadata {
+        ProviderMetadata {
+            name: "flaky-mock".to_string(),
+            display_name: "Flaky Mock".to_string(),
+            description: "Fails once".to_string(),
+            default_model: "mock-model".to_string(),
+            known_models: vec![],
+            model_doc_link: String::new(),
+            config_keys: vec![],
+            setup_steps: vec![],
+            model_selection_hint: None,
+            fast_model: None,
+        }
+    }
+}
+
+impl ProviderDef for FlakyProvider {
+    type Provider = Self;
+
+    fn from_env(
+        _extensions: Vec<goose::config::ExtensionConfig>,
+        _tls_config: Option<goose::providers::api_client::TlsConfig>,
+    ) -> futures::future::BoxFuture<'static, anyhow::Result<Self>> {
+        unimplemented!()
+    }
+}
+
+#[async_trait]
+impl Provider for FlakyProvider {
+    async fn stream(
+        &self,
+        _model_config: &ModelConfig,
+        _system_prompt: &str,
+        _messages: &[Message],
+        _tools: &[Tool],
+    ) -> Result<MessageStream, ProviderError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Err(ProviderError::NetworkError(
+                "the split across your Macs stopped mid-answer".to_string(),
+            ));
+        }
+        let usage = ProviderUsage::new(
+            "mock-model".to_string(),
+            Usage::new(Some(10), Some(5), Some(15)),
+        );
+        Ok(Box::pin(futures::stream::once(async move {
+            Ok((Some(Message::assistant().with_text("done")), Some(usage)))
+        })))
+    }
+
+    fn get_name(&self) -> &str {
+        "flaky-mock"
+    }
+}
+
+async fn run_turn(agent: &Agent, session_id: &str, text: &str) -> Result<()> {
+    let reply = agent
+        .reply(
+            Message::user().with_text(text),
+            SessionConfig {
+                id: session_id.to_string(),
+                schedule_id: None,
+                max_turns: None,
+                retry_config: None,
+            },
+            None,
+        )
+        .await?;
+    tokio::pin!(reply);
+    while let Some(event) = reply.next().await {
+        event?;
+    }
+    Ok(())
+}
+
+async fn flaky_agent(
+    session_manager: &Arc<SessionManager>,
+    swarm_worker: bool,
+) -> Result<(Agent, String)> {
+    let agent = Agent::with_config(AgentConfig::new(
+        session_manager.clone(),
+        PermissionManager::instance(),
+        None,
+        GooseMode::Auto,
+        true,
+        GoosePlatform::GooseDesktop,
+    ));
+    if swarm_worker {
+        agent.configure_swarm_worker(None);
+    }
+    let session = session_manager
+        .create_session(
+            PathBuf::default(),
+            "flaky".to_string(),
+            SessionType::User,
+            GooseMode::default(),
+        )
+        .await?;
+    agent
+        .update_provider(
+            Arc::new(FlakyProvider {
+                calls: AtomicUsize::new(0),
+            }),
+            ModelConfig::new("mock-model"),
+            &session.id,
+        )
+        .await?;
+    Ok((agent, session.id))
+}
+
+#[tokio::test]
+async fn a_failed_turn_reads_failed_until_a_turn_completes() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let session_manager = Arc::new(SessionManager::new(temp_dir.path().to_path_buf()));
+    let (agent, session_id) = flaky_agent(&session_manager, false).await?;
+
+    run_turn(&agent, &session_id, "write the notes").await?;
+    let failed = turn_outcome::failed_sessions(&session_manager).await?;
+    assert_eq!(failed.len(), 1, "the cut turn must read failed");
+    assert_eq!(failed[0].session_id, session_id);
+    assert!(
+        failed[0]
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("stopped mid-answer")),
+        "the reason is what the chat showed: {:?}",
+        failed[0].reason
+    );
+
+    run_turn(&agent, &session_id, "try again").await?;
+    assert!(turn_outcome::failed_sessions(&session_manager)
+        .await?
+        .is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_swarm_worker_never_records_a_turn_outcome() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let session_manager = Arc::new(SessionManager::new(temp_dir.path().to_path_buf()));
+    let (agent, session_id) = flaky_agent(&session_manager, true).await?;
+
+    run_turn(&agent, &session_id, "write the notes").await?;
+    let data = session_manager
+        .get_session(&session_id, false)
+        .await?
+        .extension_data;
+    assert!(TurnOutcomeState::from_extension_data(&data).is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_busy_set_says_when_each_turn_began() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let manager = AgentManager::new(
+        AgentConfig::new(
+            Arc::new(SessionManager::new(temp_dir.path().to_path_buf())),
+            PermissionManager::instance(),
+            None,
+            GooseMode::Auto,
+            true,
+            GoosePlatform::GooseDesktop,
+        ),
+        None,
+    )
+    .await?;
+    let before = chrono::Utc::now();
+    manager
+        .try_register_cancel_token("session-a", CancellationToken::new())
+        .await?;
+    let busy = manager.busy_sessions().await;
+    assert_eq!(busy.len(), 1);
+    assert_eq!(busy[0].0, "session-a");
+    assert!(busy[0].1 >= before);
+
+    manager.unregister_cancel_token("session-a").await;
+    assert!(manager.busy_sessions().await.is_empty());
     Ok(())
 }

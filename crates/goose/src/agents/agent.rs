@@ -2054,6 +2054,10 @@ impl Agent {
             let mut consecutive_stop_hook_blocks = 0u32;
             let stop_hook_block_cap = self.stop_hook_block_cap();
             let mut can_drain_pending_steers = false;
+            // The last provider call's fate: Some when it failed and nothing recovered it, carrying
+            // what the person saw when there was text. Recorded once the turn ends so every session
+            // list can say FAILED.
+            let mut turn_failure: Option<crate::turn_outcome::Failure> = None;
 
             loop {
                 if is_token_cancelled(&cancel_token) {
@@ -2267,6 +2271,7 @@ impl Agent {
 
                     match next {
                         Ok((response, usage)) => {
+                            turn_failure = None;
                             compaction_attempts = 0;
                             last_call_usage = if usage
                                 .as_ref()
@@ -2835,6 +2840,15 @@ impl Agent {
                     }
                 }
                 can_drain_pending_steers = true;
+                if provider_errored && !did_recovery_compact_this_iteration {
+                    turn_failure = Some(crate::turn_outcome::Failure {
+                        shown: messages_to_add
+                            .messages()
+                            .last()
+                            .map(|message| message.as_concat_text())
+                            .filter(|text| !text.is_empty()),
+                    });
+                }
 
                 if tools_updated {
                     (tools, toolshim_tools, system_prompt, _) =
@@ -3215,6 +3229,20 @@ impl Agent {
 
             if !last_assistant_text.is_empty() {
                 tracing::Span::current().record("trace_output", last_assistant_text.as_str());
+            }
+
+            // Swarm workers are left byte-identical (the golden engine); every other session
+            // records how its turn ended.
+            if !self.is_swarm_worker() {
+                if let Err(error) = crate::turn_outcome::record(
+                    &session_manager,
+                    &session_config.id,
+                    turn_failure,
+                )
+                .await
+                {
+                    warn!("Failed to record the turn outcome: {}", error);
+                }
             }
 
             if !stop_hook_handled_for_exit {

@@ -5718,9 +5718,21 @@ export const zNeedsYouItemDto = z.object({
     ]).optional()
 });
 
+export const zFailedSessionDto = z.object({
+    sessionId: z.string(),
+    sessionName: z.string(),
+    workingDir: z.string(),
+    failedAt: z.string(),
+    reason: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
 export const zSessionActivityResponse_unstable = z.object({
     running: z.array(zRunningSessionDto),
-    needsYou: z.array(zNeedsYouItemDto)
+    needsYou: z.array(zNeedsYouItemDto),
+    failed: z.array(zFailedSessionDto)
 });
 
 export const zNeedsYouAction = z.enum(['answer', 'dismiss']);

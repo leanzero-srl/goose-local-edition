@@ -54,11 +54,26 @@ pub struct RunningSessionDto {
 #[serde(rename_all = "camelCase")]
 pub struct SessionActivityRequest {}
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedSessionDto {
+    pub session_id: String,
+    pub session_name: String,
+    pub working_dir: String,
+    /// RFC 3339: when the failed turn ended.
+    pub failed_at: String,
+    /// The failure text the chat showed, when it had one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionActivityResponse {
     pub running: Vec<RunningSessionDto>,
     pub needs_you: Vec<NeedsYouItemDto>,
+    /// User/scheduled sessions whose LAST turn failed (a later completed turn clears it).
+    pub failed: Vec<FailedSessionDto>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

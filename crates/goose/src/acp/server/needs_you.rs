@@ -4,8 +4,9 @@
 use std::collections::HashMap;
 
 use goose_sdk_types::custom_requests::{
-    NeedsYouAction, NeedsYouItemDto, NeedsYouStatus as NeedsYouStatusDto, ResolveNeedsYouRequest,
-    ResolveNeedsYouResponse, RunningSessionDto, SessionActivityRequest, SessionActivityResponse,
+    FailedSessionDto, NeedsYouAction, NeedsYouItemDto, NeedsYouStatus as NeedsYouStatusDto,
+    ResolveNeedsYouRequest, ResolveNeedsYouResponse, RunningSessionDto, SessionActivityRequest,
+    SessionActivityResponse,
 };
 use tracing::warn;
 
@@ -101,7 +102,24 @@ impl GooseAcpAgent {
                 )
             })
             .collect();
-        Ok(SessionActivityResponse { running, needs_you })
+
+        let failed = crate::turn_outcome::failed_sessions(&self.session_manager)
+            .await
+            .internal_err_ctx("Failed to list failed sessions")?
+            .into_iter()
+            .map(|failed| FailedSessionDto {
+                session_id: failed.session_id,
+                session_name: failed.session_name,
+                working_dir: failed.working_dir.to_string_lossy().to_string(),
+                failed_at: failed.at.to_rfc3339(),
+                reason: failed.reason,
+            })
+            .collect();
+        Ok(SessionActivityResponse {
+            running,
+            needs_you,
+            failed,
+        })
     }
 
     pub(super) async fn on_resolve_needs_you(

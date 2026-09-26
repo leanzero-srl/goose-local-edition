@@ -5550,6 +5550,10 @@ export type SessionActivityRequest_unstable = {
 export type SessionActivityResponse_unstable = {
     running: Array<RunningSessionDto>;
     needsYou: Array<NeedsYouItemDto>;
+    /**
+     * User/scheduled sessions whose LAST turn failed (a later completed turn clears it).
+     */
+    failed: Array<FailedSessionDto>;
 };
 
 export type RunningSessionDto = {
@@ -5580,6 +5584,20 @@ export type NeedsYouItemDto = {
 };
 
 export type NeedsYouStatus = 'open' | 'answered' | 'dismissed';
+
+export type FailedSessionDto = {
+    sessionId: string;
+    sessionName: string;
+    workingDir: string;
+    /**
+     * RFC 3339: when the failed turn ended.
+     */
+    failedAt: string;
+    /**
+     * The failure text the chat showed, when it had one.
+     */
+    reason?: string | null;
+};
 
 /**
  * Close an open item. `Answer` records the person's text (required); `Dismiss` records nothing.
