@@ -28,7 +28,11 @@ async fn main() -> Result<()> {
     manager.set_settings(settings.clone());
     println!(
         "argv: {}",
-        serde_json::to_string(&build_serve_command(&manager.settings(), &model_id)?)?
+        serde_json::to_string(&build_serve_command(
+            &manager.settings(),
+            &model_id,
+            &manager.nodes()
+        )?)?
     );
     manager.mount(&model_id).await?;
     loop {

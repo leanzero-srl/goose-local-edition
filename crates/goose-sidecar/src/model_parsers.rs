@@ -133,7 +133,7 @@ mod tests {
             models_dir: root.path().to_string_lossy().into(),
             ..Default::default()
         };
-        let argv = build_serve_command(&settings, "publisher/renamed-checkpoint").unwrap();
+        let argv = build_serve_command(&settings, "publisher/renamed-checkpoint", &[]).unwrap();
         assert!(argv.windows(3).any(|part| part
             == [
                 "--enable-auto-tool-choice",

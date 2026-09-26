@@ -879,9 +879,16 @@ mod tests {
         let mut config = crate::distributed::config::tests::two_mac_config();
         config.nodes[1] = node.clone();
         config.nodes[0].pipeline_python = Some("/unused/rank0/python".to_string());
-        let spec =
-            launch::pipeline_rank_specs(&config, "served-id", 8_192, "19", 2_048, &[0, 0], 0.05)
-                .remove(1);
+        let spec = launch::pipeline_rank_specs(
+            &config,
+            &crate::model_identity::ServedNames::only("served-id"),
+            8_192,
+            "19",
+            2_048,
+            &[0, 0],
+            0.05,
+        )
+        .remove(1);
         RankStartRequest {
             run_id: "run-1".to_string(),
             requester: Requester {

@@ -23,10 +23,11 @@ fn env_or(key: &str, default: &str) -> String {
 
 /// These runs set no `served_model_name`, so the ranks serve the HF id — through the same rule the
 /// app applies (`engine::served_model_id`), never a copy of it.
-fn unaliased(config: &DistributedConfig) -> String {
-    goose_sidecar::engine::served_model_id(
+fn unaliased(config: &DistributedConfig) -> goose_sidecar::model_identity::ServedNames {
+    goose_sidecar::model_identity::ServedNames::of(
         &goose_sidecar::engine::EngineSettings::default(),
         &config.model_id,
+        &[],
     )
 }
 
@@ -1113,7 +1114,7 @@ async fn live_flash_at_the_ceiling_rule_after_compaction() {
     let ask = |prompt: String, max_tokens: u32| {
         let http = http.clone();
         let base = base.clone();
-        let served = served.clone();
+        let served = served.id.clone();
         async move {
             let started = Instant::now();
             let resp = http

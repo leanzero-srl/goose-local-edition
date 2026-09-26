@@ -38,12 +38,15 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// MLX's buffer cache bounded by the rank's MEASURED budget less its plan less the attention
 /// scores goose charges (`serve --attention-scores-bytes`; 66ccd37a6, branch
 /// lz/pipeline-cache-budget, tag lz-pipeline-qwen4.2, Q-127 — it was the GPU ceiling less the
-/// plan, and the Flash split's rank 0 cached 49.5 GB beside ~60 GB active on a 81.4 GB budget).
+/// plan, and the Flash split's rank 0 cached 49.5 GB beside ~60 GB active on a 81.4 GB budget),
+/// and `serve --served-model-alias` — rank 0 answers to every name goose's identity gives the model
+/// (a863c60c5, branch lz/served-names-pipeline, tag lz-pipeline-qwen4.3, Q-131 — 3.0.49's Flash
+/// split served its node alias and refused its own HF id with 404).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "66ccd37a6d2e07e7dfb9cb3705e5c43266675bea";
+pub const PIPELINE_FORK_COMMIT: &str = "a863c60c5db1ae69b6fee22311e205d940daf6b9";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@66ccd37a6d2e07e7dfb9cb3705e5c43266675bea";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@a863c60c5db1ae69b6fee22311e205d940daf6b9";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.

@@ -5,7 +5,8 @@
 #
 # The server carries everything the tensor wrapper adds around mlx_lm.server itself — its own
 # `mx.distributed.init` (then GOOSE_RANK_GROUP), its caps as ratios of this node's RAM (then
-# GOOSE_RANK_CAPS), a kernel warm-up, then GOOSE_READY; rank 0's /v1/models (the served id only),
+# GOOSE_RANK_CAPS), a kernel warm-up, then GOOSE_READY; rank 0's /v1/models (the served id, then
+# each `--served-model-alias` goose's identity passes rank 0 — the only names its chat accepts),
 # /v1/status, /goose/progress, /goose/admission and /v1/chat/completions; SIGTERM on rank 0
 # broadcasts a shutdown every rank obeys. So this program only parses goose's argv with the fork's
 # OWN parser (the exact `pipeline_qwen4 serve` arguments, the split preflight approved included)

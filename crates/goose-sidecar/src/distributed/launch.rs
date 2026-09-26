@@ -28,6 +28,7 @@ use tokio::process::{Child, Command};
 use super::config::{Backend, DistributedConfig, NodeConfig};
 use super::exec::{sh_quote, SSH_OPTIONS};
 use super::plan::{RankPlan, TensorPrefill};
+use crate::model_identity::ServedNames;
 
 /// The literal every goose rank carries on its command line, so `ps` can name a rank a previous
 /// goosed left behind (and `stop` can reclaim it per-pid).
@@ -143,6 +144,10 @@ pub struct RankSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ring_hosts: Option<Vec<Vec<String>>>,
     pub served_id: String,
+    /// Every other name of the served model (`model_identity::ServedNames::also`): rank 0 answers
+    /// to each as to `served_id` (Q-131). Absent in an older requester's spec: the served id only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub served_aliases: Vec<String>,
     pub model_dir: String,
     pub port: u16,
     pub memory_report_seconds: f64,
@@ -258,12 +263,12 @@ impl TensorLaunch {
 /// The per-rank tensor specs. See [`base_specs`] for the backend env.
 pub fn rank_specs(
     config: &DistributedConfig,
-    served_id: &str,
+    served: &ServedNames,
     per_rank: &[TensorLaunch],
     context_window: u64,
     memory_report_seconds: f64,
 ) -> Vec<RankSpec> {
-    base_specs(config, served_id, memory_report_seconds, |rank, _| {
+    base_specs(config, served, memory_report_seconds, |rank, _| {
         let launch = per_rank[rank];
         RankProgram::MlxLmServer {
             context_window,
@@ -289,16 +294,20 @@ pub fn rank_specs(
 /// and this rank's scores at that chunk (`--attention-scores-bytes`,
 /// `RankPlan::attention_scores_bytes`): the fork's buffer cache holds its measured budget less
 /// its plan less these, so a prefill's scores and the cache never share the same room (Q-127).
+/// `aliases` — every other name of the served model — go to rank 0 only, the one rank that serves
+/// HTTP (`--served-model-alias`, fork lz-pipeline-qwen4.3, Q-131).
+#[allow(clippy::too_many_arguments)]
 pub fn pipeline_serve_args(
     config: &DistributedConfig,
     node: &NodeConfig,
     served_id: &str,
+    aliases: &[String],
     context: u64,
     split: &str,
     prefill_step: u64,
     attention_scores_bytes: u64,
 ) -> Vec<String> {
-    [
+    let mut args: Vec<String> = [
         "--model",
         &node.model_dir,
         "--served-model-name",
@@ -322,26 +331,31 @@ pub fn pipeline_serve_args(
     ]
     .iter()
     .map(|a| a.to_string())
-    .collect()
+    .collect();
+    for alias in aliases {
+        args.extend(["--served-model-alias".to_string(), alias.clone()]);
+    }
+    args
 }
 
 /// The per-rank pipeline specs for the plan preflight approved; `attention_scores_bytes[rank]`
 /// is that rank's `RankPlan::attention_scores_bytes`.
 pub fn pipeline_rank_specs(
     config: &DistributedConfig,
-    served_id: &str,
+    served: &ServedNames,
     context: u64,
     split: &str,
     prefill_step: u64,
     attention_scores_bytes: &[u64],
     memory_report_seconds: f64,
 ) -> Vec<RankSpec> {
-    base_specs(config, served_id, memory_report_seconds, |rank, node| {
+    base_specs(config, served, memory_report_seconds, |rank, node| {
         RankProgram::PipelineServe {
             serve_args: pipeline_serve_args(
                 config,
                 node,
-                served_id,
+                &served.id,
+                if rank == 0 { &served.also } else { &[] },
                 context,
                 split,
                 prefill_step,
@@ -356,7 +370,7 @@ pub fn pipeline_rank_specs(
 /// list gives rank r the port `coordinator_port + r` on its TB IP.
 fn base_specs(
     config: &DistributedConfig,
-    served_id: &str,
+    served: &ServedNames,
     memory_report_seconds: f64,
     program: impl Fn(usize, &NodeConfig) -> RankProgram,
 ) -> Vec<RankSpec> {
@@ -399,7 +413,12 @@ fn base_specs(
             coordinator: (config.backend == Backend::Jaccl)
                 .then(|| format!("{}:{}", config.nodes[0].tb_ip, config.coordinator_port)),
             ring_hosts: (config.backend == Backend::Ring).then(|| ring_hosts.clone()),
-            served_id: served_id.to_string(),
+            served_id: served.id.clone(),
+            served_aliases: if rank == 0 {
+                served.also.clone()
+            } else {
+                Vec::new()
+            },
             model_dir: node.model_dir.clone(),
             port: config.port,
             memory_report_seconds,
@@ -804,7 +823,7 @@ pub(crate) mod tests {
         let config = two_mac_config();
         let specs = rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             &[launch(20, 2), launch(21, 2)],
             65_536,
             2.0,
@@ -843,7 +862,7 @@ pub(crate) mod tests {
         config.backend = Backend::Ring;
         let specs = rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             &[launch(1, 1), launch(1, 1)],
             8_192,
             2.0,
@@ -863,7 +882,7 @@ pub(crate) mod tests {
         let config = two_mac_config();
         let spec = &rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             &[launch(1, 1), launch(1, 1)],
             8_192,
             2.0,
@@ -888,7 +907,7 @@ pub(crate) mod tests {
         let config = two_mac_config();
         let mut spec = rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             &[launch(1, 1), launch(1, 1)],
             8_192,
             2.0,
@@ -958,6 +977,47 @@ pub(crate) mod tests {
         config
     }
 
+    /// Q-131: rank 0 — the one rank serving HTTP — is told every other name of the model; the
+    /// others are handed nothing new, so a peer running an older program reads the spec it knows.
+    #[test]
+    fn only_rank_zero_is_told_the_models_other_names() {
+        let served = ServedNames {
+            id: "node-alias".to_string(),
+            also: vec!["Org/Model-HF".to_string()],
+        };
+        let tensor = rank_specs(
+            &two_mac_config(),
+            &served,
+            &[launch(20, 2), launch(21, 2)],
+            65_536,
+            2.0,
+        );
+        assert_eq!(tensor[0].served_aliases, ["Org/Model-HF"]);
+        assert!(tensor[1].served_aliases.is_empty());
+        let peer = serde_json::to_value(&tensor[1]).unwrap();
+        assert!(peer.get("served_aliases").is_none(), "{peer}");
+        let pipeline = pipeline_rank_specs(
+            &pipeline_config(),
+            &served,
+            8_192,
+            "19",
+            2_048,
+            &[0, 0],
+            2.0,
+        );
+        let aliases = |spec: &RankSpec| match &spec.program {
+            RankProgram::PipelineServe { serve_args } => serve_args
+                .windows(2)
+                .filter(|w| w[0] == "--served-model-alias")
+                .map(|w| w[1].clone())
+                .collect::<Vec<_>>(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(aliases(&pipeline[0]), ["Org/Model-HF"]);
+        assert!(aliases(&pipeline[1]).is_empty());
+        assert!(pipeline.iter().all(|s| s.served_id == "node-alias"));
+    }
+
     #[test]
     fn a_pipeline_rank_serves_the_approved_split_under_the_forks_interpreter() {
         let config = pipeline_config();
@@ -968,7 +1028,7 @@ pub(crate) mod tests {
         let scores = [805_306_368u64, 0];
         let specs = pipeline_rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             32_768,
             &plan.split_arg(),
             2_048,
@@ -1029,8 +1089,16 @@ pub(crate) mod tests {
 
         let mut four = config.clone();
         four.slots = Some(4);
-        let RankProgram::PipelineServe { serve_args } =
-            &pipeline_rank_specs(&four, "node-alias", 8_192, "19", 2_048, &[0, 0], 2.0)[0].program
+        let RankProgram::PipelineServe { serve_args } = &pipeline_rank_specs(
+            &four,
+            &ServedNames::only("node-alias"),
+            8_192,
+            "19",
+            2_048,
+            &[0, 0],
+            2.0,
+        )[0]
+        .program
         else {
             unreachable!()
         };
@@ -1049,7 +1117,7 @@ pub(crate) mod tests {
         assert!(err.contains("pipeline_python"), "{err}");
         let tensor = &rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             &[launch(1, 1), launch(1, 1)],
             8_192,
             2.0,
@@ -1121,7 +1189,7 @@ pub(crate) mod tests {
         config.nodes[1].pipeline_python = Some("/usr/bin/python3".into());
         let mut spec = pipeline_rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             32_768,
             "19",
             2_048,
@@ -1399,8 +1467,12 @@ print("ok")
             return;
         };
         let config = pipeline_config();
+        let served = ServedNames {
+            id: "node-alias".to_string(),
+            also: vec!["Org/Model-HF".to_string()],
+        };
         let spec =
-            pipeline_rank_specs(&config, "node-alias", 32_768, "19", 2_048, &[0, 0], 2.0).remove(0);
+            pipeline_rank_specs(&config, &served, 32_768, "19", 2_048, &[0, 0], 2.0).remove(0);
         let rank = include_str!("pipeline_rank.py");
         let serves = rank
             .find("threading.Thread(target=report_memory")
@@ -1436,13 +1508,24 @@ class Tokenizer:
     chat_template = ""
     eos_token_ids = [0]
 
-state = serve._State(served=options.served_model_name, context=options.context, max_batch=options.max_batch)
+state = serve._State(served=options.served_model_name, aliases=tuple(options.served_model_alias or ()),
+                     context=options.context, max_batch=options.max_batch)
 app = serve._build_app(state, Tokenizer(), {0})
+client = TestClient(app)
+models = [m["id"] for m in client.get("/v1/models").json()["data"]]
+# The stand-in tokenizer declares no tool contract, so the tools refusal that follows the fork's
+# model check says a name got past it without generating.
+def chat(model):
+    answer = client.post("/v1/chat/completions", json={"model": model, "messages": [{"role": "user",
+        "content": "hi"}], "tools": [{"type": "function", "function": {"name": "f", "parameters": {}}}]})
+    return [answer.status_code, answer.json()["error"]]
+names = {name: chat(name) for name in ("node-alias", "Org/Model-HF", "other")}
 state.active = [job]
 state.jobs.put(serve._Job(serve._Row([1] * 5, 4, 0.0, 1.0), loop, asyncio.Queue()))
-status = TestClient(app).get("/v1/status").json()
+status = client.get("/v1/status").json()
 print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "walked": walked,
-      "first_token": job.first_token is not None, "prefilled": job.prefilled, "status": status}))
+      "first_token": job.first_token is not None, "prefilled": job.prefilled, "status": status,
+      "models": models, "names": names}))
 "#;
         let program = format!(
             "{}{}{}{}{checks}",
@@ -1455,8 +1538,31 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
         let options = &seen["options"];
         assert_eq!(options["model"], config.nodes[0].model_dir.as_str());
         assert_eq!(options["served_model_name"], "node-alias");
+        assert_eq!(
+            options["served_model_alias"],
+            serde_json::json!(["Org/Model-HF"]),
+            "rank 0 is told every other name of the model"
+        );
         assert_eq!(options["port"], 8190);
         assert_eq!(options["context"], 32_768);
+        assert_eq!(
+            seen["models"],
+            serde_json::json!(["node-alias", "Org/Model-HF"]),
+            "the fork lists the served id first, then the alias"
+        );
+        let names = &seen["names"];
+        for accepted in ["node-alias", "Org/Model-HF"] {
+            assert_eq!(
+                names[accepted][1]["type"], "tools_unsupported",
+                "{accepted} passes the fork's model check: {names}"
+            );
+        }
+        assert_eq!(
+            names["other"],
+            serde_json::json!([404, {"message": "model 'other' is not served here; this engine \
+                serves 'node-alias' (also answering to 'Org/Model-HF')", "type": "model_not_found"}]),
+            "another model is still refused, naming every name served"
+        );
         assert_eq!(options["slots"], 2);
         assert_eq!(options["max_batch"], 2);
         assert_eq!(options["prefill_step"], 2_048);
@@ -1500,10 +1606,17 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
     /// mlx_lm's own BatchGenerator / LRUPromptCache carry the live-batch bound, and mlx_lm's own
     /// HTTP handler serves the wrapper's routes and refusals — the `Refused` BaseException
     /// passing through `handle_completion`'s `except Exception` is upstream's code, not a copy.
+    /// Q-131: the spec names the model twice (the node alias it is served under, its HF id);
+    /// mlx_lm's own handler admits both, the request every rank receives names the served id, and
+    /// another model is refused naming both.
     #[test]
     fn the_wrapper_serves_through_real_mlx_lm() {
         let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
             return;
+        };
+        let served = ServedNames {
+            id: "node-alias".to_string(),
+            also: vec!["Org/Model-HF".to_string()],
         };
         let config = two_mac_config();
         let tensor = TensorLaunch {
@@ -1517,7 +1630,7 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
                 ..e2e_prefill()
             },
         };
-        let mut spec = rank_specs(&config, "node-alias", &[tensor, tensor], 141_568, 2.0).remove(0);
+        let mut spec = rank_specs(&config, &served, &[tensor, tensor], 141_568, 2.0).remove(0);
         if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
             *doorbell = false;
         }
@@ -1611,10 +1724,14 @@ httpd = http.server.ThreadingHTTPServer(
 threading.Thread(target=httpd.serve_forever, daemon=True).start()
 shared = []
 
+shared_models = []
+
 def generation_thread():
-    rqueue, request, args = responses.requests.get()
-    shared.append(args.max_tokens)
-    rqueue.put(ContextFull("no room"))
+    while True:
+        rqueue, request, args = responses.requests.get()
+        shared.append(args.max_tokens)
+        shared_models.append(args.model.model)
+        rqueue.put(ContextFull("no room"))
 
 threading.Thread(target=generation_thread, daemon=True).start()
 
@@ -1639,6 +1756,8 @@ print("GOOSE_TEST " + json.dumps({
     "models": call("/v1/models"),
     "wrong_model": call("/v1/chat/completions", {"model": "other", "messages": messages}),
     "no_room": call("/v1/chat/completions", {"model": served, "messages": messages}),
+    "alias_no_room": call("/v1/chat/completions", {"model": "Org/Model-HF", "messages": messages}),
+    "shared_models": shared_models,
     "shared_max_tokens": shared,
     "status": call("/v1/status"),
 }))
@@ -1689,18 +1808,46 @@ print("GOOSE_TEST " + json.dumps({
             "beside the live batch the cache keeps what the KV charge leaves"
         );
         assert_eq!(seen["models"][0], 200);
-        assert_eq!(seen["models"][1]["data"][0]["id"], "node-alias");
-        assert_eq!(seen["models"][1]["data"][0]["context_window"], 141_568);
-        assert_eq!(seen["wrong_model"][0], 404);
+        let listed: Vec<(&str, u64)> = seen["models"][1]["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| {
+                (
+                    m["id"].as_str().unwrap(),
+                    m["context_window"].as_u64().unwrap(),
+                )
+            })
+            .collect();
         assert_eq!(
-            seen["no_room"],
-            serde_json::json!([400, {"error": {"message": "no room", "code": "context_length_exceeded",
-                "type": "invalid_request_error"}}]),
+            listed,
+            [("node-alias", 141_568), ("Org/Model-HF", 141_568)],
+            "the served id first, then every other name of the same model"
+        );
+        assert_eq!(
+            seen["wrong_model"],
+            serde_json::json!([404, {"error": {"message": "model 'other' is not served here; this \
+                distributed engine serves 'node-alias' (also answering to 'Org/Model-HF')"}}]),
+            "another model is refused, naming every name that is served"
+        );
+        let no_room = serde_json::json!([400, {"error": {"message": "no room",
+            "code": "context_length_exceeded", "type": "invalid_request_error"}}]);
+        assert_eq!(
+            seen["no_room"], no_room,
             "the refusal passes mlx_lm's own handle_completion to do_POST"
         );
         assert_eq!(
+            seen["alias_no_room"], no_room,
+            "the HF id passes the same validation to the same generation"
+        );
+        assert_eq!(
+            seen["shared_models"],
+            serde_json::json!(["node-alias", "node-alias"]),
+            "every rank is handed the served id, whichever name the client used"
+        );
+        assert_eq!(
             seen["shared_max_tokens"],
-            serde_json::json!([null]),
+            serde_json::json!([null, null]),
             "an absent max_tokens stays absent through mlx_lm's own validation"
         );
         assert_eq!(seen["status"][1]["status"], "idle");
@@ -1858,7 +2005,7 @@ print("ok")
         let config = two_mac_config();
         let specs = rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             &[launch(1, 2), launch(3, 2)],
             262_144,
             2.0,
@@ -1892,7 +2039,7 @@ print("ok")
         let config = two_mac_config();
         let spec = rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             &[launch(1, 2), launch(3, 2)],
             8_192,
             2.0,
@@ -2185,7 +2332,14 @@ print("ok")
             mlx_cache_limit_bytes: 2_745_621_658,
             prefill: e2e_prefill(),
         };
-        let spec = rank_specs(&config, "node-alias", &[e2e, e2e], 141_568, 2.0).remove(1);
+        let spec = rank_specs(
+            &config,
+            &ServedNames::only("node-alias"),
+            &[e2e, e2e],
+            141_568,
+            2.0,
+        )
+        .remove(1);
         let served = boot_against_stand_ins(spec, false).await;
         assert_eq!(
             served["caps"]["cache_limit"], 2_745_621_658u64,
@@ -2225,7 +2379,7 @@ print("ok")
         let config = two_mac_config();
         let mut spec = rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             &[launch(1, 1), launch(1, 1)],
             8_192,
             2.0,
@@ -2277,7 +2431,7 @@ print("ok")
         let config = two_mac_config();
         let spec = rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             &[launch(1, 1), launch(1, 1)],
             8_192,
             2.0,
@@ -2429,7 +2583,7 @@ print("ok")
         let config = two_mac_config();
         let mut spec = rank_specs(
             &config,
-            "node-alias",
+            &ServedNames::only("node-alias"),
             &[launch(1, 1), launch(1, 1)],
             8_192,
             2.0,
