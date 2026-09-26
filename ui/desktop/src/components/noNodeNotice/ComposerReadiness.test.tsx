@@ -10,7 +10,8 @@ import { ComposerReadinessStrip } from './ComposerReadiness';
 import { mlxProviderReadiness, swarmReadiness } from '../chatServedBy/chatServedBy';
 import { useChatServedBy } from '../chatServedBy/useChatServedBy';
 import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
-import { parseMlxLiveStatus, EMPTY_BOOK } from '../leanzero-swarm/mlxLiveStats';
+import { parseMlxLiveStatus } from '../leanzero-swarm/mlxLiveStats';
+import { MEASURED_PENDING } from '../../utils/mlxMeasuredRuns';
 import { GENERATING_STATUS, PREFILL_STATUS } from '../leanzero-swarm/mlxLiveStatus.fixtures';
 import type { MountLookup } from './mlxMount';
 import { mlxDistributedStatus, type MlxDistributedStatus } from '../../acp/mlx-distributed';
@@ -496,7 +497,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
         baseUrl: ROUTE.baseUrl,
         stats: null,
         statusDetail: 'timeout: no answer within 1500 ms',
-        rates: EMPTY_BOOK,
+        measured: MEASURED_PENDING,
         serving: null,
         failedError: null,
         contact: null,
@@ -525,7 +526,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
         baseUrl: ROUTE.baseUrl,
         stats: idle.stats,
         statusDetail: null,
-        rates: EMPTY_BOOK,
+        measured: MEASURED_PENDING,
         serving: { clients: [], unattributed: 0, swarmRuns: [], error: null },
         failedError: null,
         contact: null,
@@ -554,7 +555,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
       baseUrl: ROUTE.baseUrl,
       stats: null,
       statusDetail: 'timeout: no answer within 1500 ms',
-      rates: EMPTY_BOOK,
+      measured: MEASURED_PENDING,
       serving: null,
       failedError: null,
       contact: null,
@@ -646,7 +647,7 @@ describe('ComposerReadinessStrip — the Mac that serves chat stopped answering 
       baseUrl: ROUTE.baseUrl,
       stats: null,
       statusDetail: 'unreachable: connect ECONNREFUSED',
-      rates: EMPTY_BOOK,
+      measured: MEASURED_PENDING,
       serving: null,
       failedError: null,
       contact: {
@@ -812,7 +813,7 @@ describe('ComposerReadinessStrip — the engine busy with another client (Q-17)'
       baseUrl: 'http://127.0.0.1:61001/relay/cafe',
       stats: read.stats,
       statusDetail: null,
-      rates: EMPTY_BOOK,
+      measured: MEASURED_PENDING,
       serving,
       failedError: null,
       contact: null,

@@ -114,29 +114,7 @@ export function resetPlacementPlansSeen(): void {
   publish({ plans: new Map(), failure: null });
 }
 
-/**
- * A MEASURED figure as every surface says it: how many runs, their median, and the slowest–fastest
- * only when the runs differ — one run is "1 run · 29.6 tok/s", never a "29.6–29.6" range (Q-123).
- * null for an estimate or a figure with no run behind it: an estimate is never called a measurement.
- */
-export interface MeasuredFigure {
-  runs: number;
-  median: number;
-  /** Absent when there is one run, or every run measured the same. */
-  spread?: { low: number; high: number };
-  lastMeasuredMs: number | null;
-}
-
-export function measuredFigure(figure: SpeedFigure | null | undefined): MeasuredFigure | null {
-  if (!figure || !figure.measured || figure.runs < 1) return null;
-  const { value, low, high } = figure.estimate;
-  return {
-    runs: figure.runs,
-    median: value,
-    spread: figure.runs > 1 && high > low ? { low, high } : undefined,
-    lastMeasuredMs: figure.lastMeasuredMs ?? null,
-  };
-}
+export { measuredFigure, type MeasuredFigure } from '../utils/mlxMeasuredRuns';
 
 /**
  * The fixed, token-counted workload on the RUNNING engine of `placementId`: ~1.9k prompt tokens then

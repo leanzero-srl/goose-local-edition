@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  EMPTY_BOOK,
   SPARK_WINDOW,
-  advanceRateBook,
-  bookSpreads,
-  mergeRateBooks,
-  rateSpread,
   advanceMountWatch,
   compactTokens,
   formatElapsed,
@@ -337,88 +332,6 @@ describe("the distributed engine's reported prefill — read live, through the s
     expect(readingNowTps(writing)).toBe(0);
     expect(measuredPrefillTps(writing)).toBe(5503.35);
     expect(liveDecodeTps(writing)).toBe(171.1);
-  });
-});
-
-describe('the run book — every run a read caught, summarised as a median and a range', () => {
-  const gen = (id: string, tps: number, uptime: number) =>
-    statsOf({
-      status: 'generating',
-      uptime_s: uptime,
-      requests: [
-        {
-          request_id: id,
-          status: 'running',
-          phase: 'generation',
-          prompt_tokens: 1000,
-          completion_tokens: 40,
-          tokens_per_second: tps,
-          ttft_s: 5,
-          cached_tokens: 0,
-        },
-      ],
-    });
-
-  it('keeps each run once, at its latest rate, through idle reads', () => {
-    let book = advanceRateBook(EMPTY_BOOK, statsOf(GENERATING_STATUS));
-    book = advanceRateBook(book, statsOf({ ...IDLE_STATUS, uptime_s: 1990 }));
-    const { writing, reading } = bookSpreads(book);
-    expect(writing?.median).toBe(19.9);
-    expect(reading?.median).toBeCloseTo(195.6, 1);
-    expect(book.uptimeS).toBe(1990);
-  });
-
-  it('the median leads and the range brackets it — a fast short run does not become "the" rate', () => {
-    let book = EMPTY_BOOK;
-    book = advanceRateBook(book, gen('a', 21.0, 10));
-    book = advanceRateBook(book, gen('a', 22.4, 12)); // the same run, read again: one entry
-    book = advanceRateBook(book, gen('b', 51.4, 20));
-    book = advanceRateBook(book, gen('c', 24.1, 30));
-    expect(book.runs.size).toBe(3);
-    expect(bookSpreads(book).writing).toEqual({ median: 24.1, min: 22.4, max: 51.4, runs: 3 });
-    expect(bookSpreads(book).reading).toEqual({ median: 200, min: 200, max: 200, runs: 3 });
-  });
-
-  it('an even count takes the mean of the middle two', () => {
-    expect(rateSpread([10, 20, 30, 40])).toEqual({ median: 25, min: 10, max: 40, runs: 4 });
-    expect(rateSpread([])).toBeNull();
-  });
-
-  it('nothing measured yet is nothing — never the sticky engine aggregate', () => {
-    const book = advanceRateBook(EMPTY_BOOK, statsOf(IDLE_STATUS));
-    expect(bookSpreads(book)).toEqual({ writing: null, reading: null });
-  });
-
-  it('main’s runs and the page’s of one engine join — a chat served while the tab was closed counts', () => {
-    const page = advanceRateBook(EMPTY_BOOK, gen('a', 22.0, 50));
-    const main = advanceRateBook(
-      advanceRateBook(EMPTY_BOOK, gen('b', 51.4, 20)),
-      gen('a', 22.0, 50)
-    );
-    const both = mergeRateBooks(page, advanceRateBook(main, gen('c', 24.1, 60)));
-    expect(both.runs.size).toBe(3);
-    expect(both.uptimeS).toBe(60);
-    expect(bookSpreads(both).writing?.median).toBe(24.1);
-  });
-
-  /**
-   * Q-44: after the Studio relaunched at 13:58 the tile showed "274 requests served … 11m 7s engine
-   * uptime" and no rate — the 8-run median was dropped with the engine's uptime. The readers key a
-   * book by Mac and model, so a restart of the same model keeps its runs and says it restarted.
-   */
-  it('an engine whose uptime went backwards restarted: its runs stay, and the book says it restarted', () => {
-    const before = advanceRateBook(EMPTY_BOOK, statsOf(GENERATING_STATUS));
-    expect(before.restarted).toBe(false);
-    const after = advanceRateBook(before, statsOf({ ...IDLE_STATUS, uptime_s: 3 }));
-    expect(after.runs.size).toBe(1);
-    expect(bookSpreads(after).writing?.median).toBe(19.9);
-    expect(after.uptimeS).toBe(3);
-    expect(after.restarted).toBe(true);
-    // A run of the new life joins the old ones.
-    const next = advanceRateBook(after, gen('fresh', 23.0, 40));
-    expect(next.runs.size).toBe(2);
-    expect(next.restarted).toBe(true);
-    expect(mergeRateBooks(EMPTY_BOOK, next).restarted).toBe(true);
   });
 });
 

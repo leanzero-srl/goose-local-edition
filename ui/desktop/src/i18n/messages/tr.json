@@ -4164,7 +4164,7 @@
     "defaultMessage": "istem tokenı, {elapsed} süredir okunuyor"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s okuma, en yavaş–en hızlı"
+    "defaultMessage": "tok/s okuma, çalıştırmaların orta yarısı"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s (bu istemi okuma)"
@@ -4272,7 +4272,7 @@
     "defaultMessage": "GB ağırlık"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s yazma, en yavaş–en hızlı"
+    "defaultMessage": "tok/s yazma, çalıştırmaların orta yarısı"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s (yazma)"
@@ -5283,13 +5283,16 @@
     "defaultMessage": "Çalışıyor ve henüz ölçülmedi — Hızı ölç, tahmini bu Mac’in kendi sayısıyla değiştirir."
   },
   "placementCard.measured": {
-    "defaultMessage": "{runs, plural, one {ölçüldü} other {ölçüldü · # çalıştırma}}"
+    "defaultMessage": "{runs, plural, one {ölçüldü · # çalıştırma} other {ölçüldü · # çalıştırma}}"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "Ölçüldü: yazma {decode} tok/sn, okuma {prefill} tok/sn"
   },
   "placementCard.measuring": {
     "defaultMessage": "Ölçülüyor: ~2k token’lık bir istem, ardından 256 token…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} orta yarı"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "Hız verisi yok"

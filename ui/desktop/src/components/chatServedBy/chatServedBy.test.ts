@@ -6,7 +6,8 @@ import type { MlxEngineSnapshot } from '../../utils/mlxEngineMonitor';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import type { MountLookup } from '../noNodeNotice/mlxMount';
 import { FLASH_READY } from '../leanzero-swarm/mlxDistributed.fixtures';
-import { EMPTY_BOOK, parseMlxLiveStatus } from '../leanzero-swarm/mlxLiveStats';
+import { parseMlxLiveStatus } from '../leanzero-swarm/mlxLiveStats';
+import { MEASURED_PENDING, type SpeedFigure } from '../../utils/mlxMeasuredRuns';
 import {
   GENERATING_STATUS,
   IDLE_STATUS,
@@ -117,7 +118,7 @@ function snapshot(
     baseUrl: null,
     stats: read.stats,
     statusDetail: null,
-    rates: EMPTY_BOOK,
+    measured: MEASURED_PENDING,
     serving,
     failedError: null,
     contact: null,
@@ -524,7 +525,7 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
       baseUrl: ROUTE.baseUrl ?? null,
       stats: null,
       statusDetail: 'timeout: no answer within 1500 ms',
-      rates: EMPTY_BOOK,
+      measured: MEASURED_PENDING,
       serving: null,
       failedError: null,
       contact: null,
@@ -559,7 +560,7 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
       baseUrl: ROUTE.baseUrl ?? null,
       stats: null,
       statusDetail: 'unreachable: connect ECONNREFUSED',
-      rates: EMPTY_BOOK,
+      measured: MEASURED_PENDING,
       serving: null,
       failedError: null,
       contact: {
@@ -651,16 +652,35 @@ describe('THIS turn on the engine (Q-13) and the Mac that said it is leaving (Q-
     sessionType: null,
     count: 1,
   };
+  const measured = (value: number, runs: number): SpeedFigure => ({
+    estimate: { value, low: value, high: value },
+    measured: true,
+    runs,
+  });
+  // goose's measured runs for the Studio way (its store, via main): reading per prompt size — a
+  // 32k prompt's estimate must come from the 32k bucket, never the 2k one (Q-129).
   const withRates = (snap: MlxEngineSnapshot): MlxEngineSnapshot => ({
     ...snap,
-    rates: {
-      uptimeS: 900,
-      runs: new Map([
-        ['a', { decodeTps: 19.9, prefillTps: 300 }],
-        ['b', { decodeTps: 20.1, prefillTps: 318 }],
-        ['c', { decodeTps: null, prefillTps: 340 }],
-      ]),
-      restarted: false,
+    measured: {
+      kind: 'read',
+      answer: {
+        way: {
+          placementId: 'single:link:studio',
+          placement: { kind: 'single', nodes: ['link:studio'] },
+          modelId: 'm',
+          nodeNames: ['Studio'],
+        },
+        wayError: null,
+        recorded: 12,
+        writing: measured(20.1, 3),
+        writingBasis: null,
+        reading: measured(999, 2),
+        readingByBucket: [
+          { bucket: 2048, figure: measured(999, 2) },
+          { bucket: 32768, figure: measured(318, 3) },
+        ],
+        storeErrors: [],
+      },
     },
   });
 

@@ -18,12 +18,8 @@ import {
 } from '../components/leanzero-swarm/mlxDistributed.fixtures';
 import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
 import { attributeServing, type MlxServingRow } from './mlxServing';
-import {
-  EMPTY_BOOK,
-  advanceRateBook,
-  parseMlxLiveStatus,
-  type MlxLiveStats,
-} from '../components/leanzero-swarm/mlxLiveStats';
+import { parseMlxLiveStatus, type MlxLiveStats } from '../components/leanzero-swarm/mlxLiveStats';
+import type { MeasuredRunsAnswer, MlxMeasuredRead, SpeedFigure } from './mlxMeasuredRuns';
 import {
   DIST_READING_STATUS,
   DIST_WRITING_STATUS,
@@ -49,7 +45,6 @@ function running(body: unknown, over: Partial<MlxEngineSnapshot> = {}): MlxEngin
     modelId: MODEL,
     baseUrl: 'http://127.0.0.1:8090',
     stats,
-    rates: advanceRateBook(EMPTY_BOOK, stats),
     serving: attributeServing([], 0, [], null),
     ...over,
   };
@@ -138,14 +133,61 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
     ]);
   });
 
-  it('idle: the measured runs as facts, no live rate invented', () => {
+  const figure = (value: number, low: number, high: number, runs: number): SpeedFigure => ({
+    estimate: { value, low, high },
+    measured: true,
+    runs,
+  });
+  const goose = (answer: Partial<MeasuredRunsAnswer>): MlxMeasuredRead => ({
+    kind: 'read',
+    answer: {
+      way: {
+        placementId: 'single:local',
+        placement: { kind: 'single', nodes: ['local'] },
+        modelId: CONFIGURED,
+        nodeNames: ['Mihai Macbook'],
+      },
+      wayError: null,
+      recorded: 0,
+      writing: null,
+      writingBasis: null,
+      reading: null,
+      readingByBucket: [],
+      storeErrors: [],
+      ...answer,
+    },
+  });
+
+  it('idle: goose’s measured runs as facts, no live rate invented — one run is a run, never a range', () => {
     const idle = running(IDLE_STATUS, {
-      rates: advanceRateBook(EMPTY_BOOK, statsOf(GENERATING_STATUS)),
+      measured: goose({ writing: figure(29.6, 29.6, 29.6, 1), reading: figure(196, 196, 196, 1) }),
     });
     const got = labels(buildMlxTrayModel(idle, OPTS).items);
     expect(got[0]).toBe('LeanZero MLX: idle');
-    expect(got).toContain('1 run: writes 19.9 tok/s, reads 196 tok/s');
+    expect(got).toContain('Writes 29.6 tok/s · 1 run');
+    expect(got).toContain('Reads 196 tok/s · 1 run');
+    expect(got.some((l) => l.includes('29.6–29.6'))).toBe(false);
     expect(got.some((l) => l.startsWith('Writing '))).toBe(false);
+  });
+
+  it('Q-129: after a relaunch the tray says the Studio’s 303 kept runs — the median and their middle half', () => {
+    const idle = running(IDLE_STATUS, {
+      measured: goose({ recorded: 468, writing: figure(26.96, 24.14, 30.74, 303) }),
+    });
+    const got = labels(buildMlxTrayModel(idle, OPTS).items);
+    expect(got).toContain('Writes 27.0 tok/s · median of 303 runs, middle half 24.1–30.7');
+  });
+
+  it('goose’s runs still being read say nothing; unread says why; none says none', () => {
+    const lines = (measured: MlxMeasuredRead) =>
+      labels(buildMlxTrayModel(running(IDLE_STATUS, { measured }), OPTS).items);
+    expect(
+      lines({ kind: 'pending' }).some((l) => /run/i.test(l) && l !== 'LeanZero MLX: idle')
+    ).toBe(false);
+    expect(lines({ kind: 'unread', detail: 'no goose backend is running' })).toContain(
+      'Measured runs unread: no goose backend is running'
+    );
+    expect(lines(goose({ recorded: 3 }))).toContain('No measured runs on this way yet');
   });
 
   it('an external client routed to the engine is named as such', () => {

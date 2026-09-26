@@ -5159,8 +5159,8 @@ pub struct MlxEstimateDto {
     pub high: f64,
 }
 
-/// `measured` = goose timed this placement (median of `runs`, range = their extremes); else the
-/// calibrated formula's estimate.
+/// `measured` = goose timed this placement (median of `runs`, range = their middle half, rounded
+/// out to whole runs — all of them up to four); else the calibrated formula's estimate.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxSpeedFigureDto {
@@ -5174,7 +5174,8 @@ pub struct MlxSpeedFigureDto {
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MlxPlacementSpeedDto {
-    /// Writing speed of one conversation (tok/s) at a ~2k-token prompt.
+    /// Writing speed of one conversation (tok/s): measured over this way's timed turns of any
+    /// prompt size (each timed over enough tokens), else estimated at a ~2k-token prompt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decode: Option<MlxSpeedFigureDto>,
     /// Prompt reading speed (tok/s) at the goal's prompt size.

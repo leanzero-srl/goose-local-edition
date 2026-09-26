@@ -595,23 +595,29 @@ impl Estimate {
         }
     }
 
-    /// The middle and the extremes of measured values.
+    /// The median of measured values and their MIDDLE HALF — the runs from the lower to the upper
+    /// quartile, rounded out to whole runs (so up to four runs it is slowest–fastest). Hundreds of
+    /// real chat turns carry stalls and bursts (the Studio's 27B: 9.6 and 189.6 tok/s around a
+    /// median of 26.5), and a slowest–fastest range over them overlaps every other way, which the
+    /// planner reads as a tie.
     pub fn of_measurements(values: &[f64]) -> Option<Self> {
         let mut sorted: Vec<f64> = values.iter().copied().filter(|v| v.is_finite()).collect();
         if sorted.is_empty() {
             return None;
         }
         sorted.sort_by(f64::total_cmp);
-        let mid = sorted.len() / 2;
-        let value = if sorted.len() % 2 == 1 {
+        let n = sorted.len();
+        let mid = n / 2;
+        let value = if n % 2 == 1 {
             sorted[mid]
         } else {
             (sorted[mid - 1] + sorted[mid]) / 2.0
         };
+        let last = n - 1;
         Some(Self {
             value,
-            low: sorted[0],
-            high: sorted[sorted.len() - 1],
+            low: sorted[last / 4],
+            high: sorted[(3 * last).div_ceil(4)],
         })
     }
 }
@@ -1051,9 +1057,22 @@ mod tests {
     }
 
     #[test]
-    fn measurements_summarise_to_their_median_and_extremes() {
+    fn measurements_summarise_to_their_median_and_middle_half() {
         let e = Estimate::of_measurements(&[21.0, 23.0, 22.0]).unwrap();
         assert_eq!((e.value, e.low, e.high), (22.0, 21.0, 23.0));
+        let four = Estimate::of_measurements(&[20.0, 21.0, 22.0, 90.0]).unwrap();
+        assert_eq!(
+            (four.low, four.high),
+            (20.0, 90.0),
+            "up to four runs: all of them"
+        );
+        let nine = [9.6, 20.0, 24.0, 25.0, 26.0, 27.0, 28.0, 30.0, 189.6];
+        let e = Estimate::of_measurements(&nine).unwrap();
+        assert_eq!(
+            (e.value, e.low, e.high),
+            (26.0, 24.0, 28.0),
+            "a stall and a burst stay out"
+        );
         assert_eq!(
             Estimate::of_measurements(&[20.0, 22.0]).unwrap().value,
             21.0

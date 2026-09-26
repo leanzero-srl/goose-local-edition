@@ -4164,7 +4164,7 @@
     "defaultMessage": "prompt tokens, reading for {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s reading, slowest–fastest"
+    "defaultMessage": "tok/s reading, middle half of runs"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s reading this prompt"
@@ -4272,7 +4272,7 @@
     "defaultMessage": "GB of weights"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s writing, slowest–fastest"
+    "defaultMessage": "tok/s writing, middle half of runs"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s writing"
@@ -5283,13 +5283,16 @@
     "defaultMessage": "Running and not measured yet — Measure speed replaces the estimate with this Mac’s own number."
   },
   "placementCard.measured": {
-    "defaultMessage": "{runs,plural,one{measured} other{measured · # runs}}"
+    "defaultMessage": "{runs,plural,one{measured · # run} other{measured · # runs}}"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "Measured: {decode} tok/s writing, {prefill} tok/s reading"
   },
   "placementCard.measuring": {
     "defaultMessage": "Measuring: a ~2k-token prompt, then 256 tokens…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} middle half"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "No speed figure"

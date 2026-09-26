@@ -4164,7 +4164,7 @@
     "defaultMessage": "プロンプトトークン、{elapsed} 読み込み中"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s 読み取り、最遅–最速"
+    "defaultMessage": "tok/s 読み取り、実行の中央半分"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s（このプロンプトの読み込み）"
@@ -4272,7 +4272,7 @@
     "defaultMessage": "GB の重み"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s 書き込み、最遅–最速"
+    "defaultMessage": "tok/s 書き込み、実行の中央半分"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s（書き込み）"
@@ -5290,6 +5290,9 @@
   },
   "placementCard.measuring": {
     "defaultMessage": "測定中：約 2k トークンのプロンプトの後に 256 トークン…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} 中央半分"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "速度データなし"

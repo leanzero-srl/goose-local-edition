@@ -12,6 +12,7 @@ use super::bench::Workload;
 use super::chip::ChipIdentity;
 use super::model::ModelFacts;
 use super::predict::{self, Calibration, Estimate, PlacedNode};
+use super::runs::WayRuns;
 use super::store::{PlacementKey, PlacementKind, RecordSource, SpeedRecord};
 use crate::distributed::plan::TensorModelFacts;
 use crate::distributed::Runner;
@@ -808,25 +809,6 @@ pub fn turn_figure(speed: &Speed, shape: TurnShape) -> Option<Figure> {
     })
 }
 
-/// Goose's measurements for this placement at the goal's shape.
-fn measured(
-    records: &[&SpeedRecord],
-    bucket: u64,
-    pick: impl Fn(&SpeedRecord) -> Option<f64>,
-) -> Option<Figure> {
-    let hits: Vec<&&SpeedRecord> = records
-        .iter()
-        .filter(|r| r.context_bucket == bucket)
-        .collect();
-    let values: Vec<f64> = hits.iter().filter_map(|r| pick(r)).collect();
-    Estimate::of_measurements(&values).map(|estimate| Figure {
-        estimate,
-        measured: true,
-        runs: values.len() as u32,
-        last_measured_ms: hits.iter().map(|r| r.recorded_at_ms).max(),
-    })
-}
-
 fn estimated(estimate: Option<Estimate>) -> Option<Figure> {
     estimate.map(|estimate| Figure {
         estimate,
@@ -883,12 +865,7 @@ fn kv_per_token(input: &PlanInput) -> u64 {
 }
 
 fn speed_for(input: &PlanInput, key: &PlacementKey, nodes: &[&NodeInput], shares: &[f64]) -> Speed {
-    let backend = backend_of(key.kind);
-    let mine: Vec<&SpeedRecord> = input
-        .records
-        .iter()
-        .filter(|r| r.model_id == input.model_id && &r.placement == key && r.backend == backend)
-        .collect();
+    let runs = WayRuns::of(input.records, input.model_id, key);
     let chat_bucket = Workload::Chat.bucket();
     let goal_bucket = input.goal.workload().bucket();
     let mut speed = Speed::default();
@@ -955,12 +932,11 @@ fn speed_for(input: &PlanInput, key: &PlacementKey, nodes: &[&NodeInput], shares
         speed.basis.extend(f.basis.iter().cloned());
         speed.concurrency = f.concurrency;
     }
-    speed.decode =
-        measured(&mine, chat_bucket, |r| r.decode_tps).or_else(|| estimated(decode_estimate));
-    speed.prefill = measured(&mine, goal_bucket, |r| r.prefill_tps)
-        .or_else(|| {
-            measured(&mine, chat_bucket, |r| r.prefill_tps).filter(|_| goal_bucket == chat_bucket)
-        })
+    let writing = runs.writing();
+    speed.basis.extend(writing.basis());
+    speed.decode = writing.figure.or_else(|| estimated(decode_estimate));
+    speed.prefill = runs
+        .reading_at(goal_bucket)
         .or_else(|| estimated(prefill_estimate));
     // Many requests: one stream's decode × the concurrency gain we measured for this stack.
     let gain = match (&formula, &speed.decode) {
@@ -1646,6 +1622,64 @@ mod tests {
             .iter()
             .find(|c| c.id == id)
             .unwrap_or_else(|| panic!("no {id} in {:#?}", plan.candidates))
+    }
+
+    /// Real rows of the measurement store (runs.rs's fixture), keyed to this fixture's Macs.
+    fn real_turns() -> Vec<SpeedRecord> {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/mlx-speed-measurements.sample.jsonl"
+        );
+        let mut records = crate::placement::store::SpeedStore::new(path)
+            .read()
+            .unwrap()
+            .records;
+        for r in &mut records {
+            r.model_id = "m".into();
+            for node in &mut r.placement.nodes {
+                if node == "link:studio-peer" {
+                    *node = "link:worksmacstudio".into();
+                }
+            }
+        }
+        records
+    }
+
+    /// Q-129: the Studio's chat turns reached the plan only when their prompt fell in the 2,048
+    /// bucket — 1 of 428 on the real store. Every timed turn timed over enough tokens counts now,
+    /// whatever its prompt size, and the split's turns (none at 2,048) reach its figure too.
+    #[test]
+    fn the_plan_reads_the_ways_real_turns_not_one_bucket() {
+        let mut f = the_27b();
+        f.records = real_turns();
+        let plan = f.plan(Goal::Chat);
+        let studio = by_id(&plan, "single:link:worksmacstudio");
+        let decode = studio.speed.decode.as_ref().unwrap();
+        let expected = WayRuns::of(&f.records, "m", &studio.key).writing();
+        assert!(decode.measured);
+        assert_eq!(Some(decode), expected.figure.as_ref());
+        assert_eq!(
+            decode.runs, 36,
+            "of 55 timed rows; the 2,048-bucket reader counted 1"
+        );
+        assert!(
+            studio
+                .speed
+                .basis
+                .iter()
+                .any(|b| b.starts_with("writing: the median of")),
+            "{:?}",
+            studio.speed.basis
+        );
+        let split = by_id(&plan, "tensor:jaccl:local+link:worksmacstudio");
+        let split_decode = split.speed.decode.as_ref().unwrap();
+        assert!(split_decode.measured, "{split_decode:?}");
+        assert!(split_decode.runs > 1);
+        assert_eq!(plan.best.as_deref(), Some("single:link:worksmacstudio"));
+        assert!(
+            decode.estimate.high < 60.0 && decode.estimate.low > 15.0,
+            "the middle half, not the stalls and bursts: {decode:?}"
+        );
     }
 
     #[test]

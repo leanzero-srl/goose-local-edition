@@ -4164,7 +4164,7 @@
     "defaultMessage": "프롬프트 토큰, {elapsed}째 읽는 중"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s 읽기, 최저–최고"
+    "defaultMessage": "tok/s 읽기, 실행의 중간 절반"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s (이 프롬프트 읽기)"
@@ -4272,7 +4272,7 @@
     "defaultMessage": "GB 가중치"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s 쓰기, 최저–최고"
+    "defaultMessage": "tok/s 쓰기, 실행의 중간 절반"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s (작성)"
@@ -5290,6 +5290,9 @@
   },
   "placementCard.measuring": {
     "defaultMessage": "측정 중: 약 2k 토큰 프롬프트 후 256 토큰…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} 중간 절반"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "속도 수치 없음"

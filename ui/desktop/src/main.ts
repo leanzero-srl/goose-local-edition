@@ -129,6 +129,7 @@ import {
   type MlxEngineSnapshot,
 } from './utils/mlxEngineMonitor';
 import { fetchMlxServing, serveHttpBase, type MlxServingRow } from './utils/mlxServing';
+import { fetchMlxMeasuredRuns, type MeasuredRunsFetch } from './utils/mlxMeasuredRuns';
 import {
   MLX_DISTRIBUTED_STALE_MS,
   buildMlxTrayModel,
@@ -2120,6 +2121,20 @@ const mlxMonitor = new MlxEngineMonitor({
       rows.push(...read.rows);
     }
     return { ok: true, rows };
+  },
+  // goose's measured runs for the way each backend's chat runs — its measurement store, read by
+  // goose's one reader; the tray never keeps a book of its own (Q-129).
+  readMeasured: async () => {
+    const answers: MeasuredRunsFetch[] = [];
+    for (const lease of gooseServeLeases.liveLeases()) {
+      const base = serveHttpBase(lease.acpUrl);
+      answers.push(
+        base
+          ? await fetchMlxMeasuredRuns(base, lease.secretKey, mainFetch, MLX_LIVE_STATUS_TIMEOUT_MS)
+          : { ok: false, detail: 'a goose backend has no http address' }
+      );
+    }
+    return answers;
   },
   configBaseUrl: () => mlxEngineConfig().baseUrl,
   // A stale report claims nothing: the run may have stopped since the renderer last read it.

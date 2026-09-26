@@ -2977,7 +2977,8 @@ export type MlxNodeFitDto = {
 
 export type MlxPlacementSpeedDto = {
     /**
-     * Writing speed of one conversation (tok/s) at a ~2k-token prompt.
+     * Writing speed of one conversation (tok/s): measured over this way's timed turns of any
+     * prompt size (each timed over enough tokens), else estimated at a ~2k-token prompt.
      */
     decode?: MlxSpeedFigureDto | null;
     /**
@@ -3001,8 +3002,8 @@ export type MlxPlacementSpeedDto = {
 };
 
 /**
- * `measured` = goose timed this placement (median of `runs`, range = their extremes); else the
- * calibrated formula's estimate.
+ * `measured` = goose timed this placement (median of `runs`, range = their middle half, rounded
+ * out to whole runs — all of them up to four); else the calibrated formula's estimate.
  */
 export type MlxSpeedFigureDto = {
     estimate: MlxEstimateDto;

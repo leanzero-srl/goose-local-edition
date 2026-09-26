@@ -4164,7 +4164,7 @@
     "defaultMessage": "個提示詞 token，已讀取 {elapsed}"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s 讀取，最慢–最快"
+    "defaultMessage": "tok/s 讀取，中間一半的執行"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s（讀取此提示詞）"
@@ -4272,7 +4272,7 @@
     "defaultMessage": "GB 權重"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s 寫入，最慢–最快"
+    "defaultMessage": "tok/s 寫入，中間一半的執行"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s（生成）"
@@ -5290,6 +5290,9 @@
   },
   "placementCard.measuring": {
     "defaultMessage": "測量中：約 2k token 的提示，然後 256 個 token…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} 中間一半"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "無速度資料"

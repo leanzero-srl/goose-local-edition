@@ -1,11 +1,13 @@
 import * as yaml from 'yaml';
+import { parseMlxLiveStatus, type MlxLiveStats } from '../components/leanzero-swarm/mlxLiveStats';
 import {
-  EMPTY_BOOK,
-  advanceRateBook,
-  parseMlxLiveStatus,
-  type RateBook,
-  type MlxLiveStats,
-} from '../components/leanzero-swarm/mlxLiveStats';
+  MEASURED_PENDING,
+  isMlxMeasuredRead,
+  pickMeasured,
+  type MeasuredEngine,
+  type MeasuredRunsFetch,
+  type MlxMeasuredRead,
+} from './mlxMeasuredRuns';
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
 import { remoteLiveBase } from './mlxRemoteReport';
 import { leaveCause } from './leaveCause';
@@ -77,8 +79,12 @@ export interface MlxEngineSnapshot {
   stats: MlxLiveStats | null;
   /** Why `stats` is absent or stale, verbatim. */
   statusDetail: string | null;
-  /** Every run the reads caught on this engine's Mac and model: the tray's median and range. */
-  rates: RateBook;
+  /**
+   * goose's measured runs for the way this engine runs (its measurement store, read through goosed's
+   * `GET /mlx-engine/measured-runs`): the tray's median and middle half, and the chat's reading
+   * estimate. Persisted by goose, so a relaunch keeps them (Q-129: main's own book lost them all).
+   */
+  measured: MlxMeasuredRead;
   /** Null until the engine has been read at least once while running. */
   serving: MlxServing | null;
   failedError: string | null;
@@ -89,6 +95,8 @@ export interface MlxEngineSnapshot {
 export interface MlxEngineMonitorDeps {
   readStatus(baseUrl: string): Promise<MlxLiveStatusResult>;
   readServing(): Promise<MlxServingRead>;
+  /** Every goose backend's `GET /mlx-engine/measured-runs`, one answer or failure each. */
+  readMeasured(): Promise<MeasuredRunsFetch[]>;
   /** `http://127.0.0.1:<mlx_engine.port>` from goose's config, or null when it names none. */
   configBaseUrl(): string | null;
   /** Rank 0's base while the distributed run owns this Mac and is up (`distributedLiveBase`). */
@@ -129,8 +137,7 @@ export function isMlxEngineSnapshot(value: unknown): value is MlxEngineSnapshot 
     SNAPSHOT_ENGINES.has(v.engine) &&
     typeof v.mode === 'string' &&
     SNAPSHOT_MODES.has(v.mode) &&
-    typeof v.rates === 'object' &&
-    v.rates != null &&
+    isMlxMeasuredRead(v.measured) &&
     (v.contact === null || isRouteContact(v.contact))
   );
 }
@@ -157,7 +164,7 @@ export const INITIAL_SNAPSHOT: MlxEngineSnapshot = {
   baseUrl: null,
   stats: null,
   statusDetail: null,
-  rates: EMPTY_BOOK,
+  measured: MEASURED_PENDING,
   serving: null,
   failedError: null,
   contact: null,
@@ -204,10 +211,17 @@ export class MlxEngineMonitor {
   private cancelNext: (() => void) | null = null;
   private inFlight: Promise<void> | null = null;
   /**
-   * The run books, one per (engine kind, Mac, model): an engine that restarts, stops or is switched
-   * away from and back finds its runs again (Q-44). A handful of keys for the process's life.
+   * The last read of goose's measured runs and what it was read for: the engine (kind, Mac, model)
+   * and its lifetime request count. Read again when either changes — a finished turn is a new run —
+   * and once more on the read after, since goose records a turn as its stream closes; until then the
+   * held read stands. Nothing is counted here: goose's store is the history.
    */
-  private readonly books = new Map<string, RateBook>();
+  private measuredFor: {
+    key: string;
+    total: number | null;
+    settled: boolean;
+    read: MlxMeasuredRead;
+  } | null = null;
   /**
    * Each linked Mac's contact history, by its name: the waits it came back from, and the one in
    * progress. A handful of Macs for the process's life.
@@ -262,10 +276,25 @@ export class MlxEngineMonitor {
     return contact;
   }
 
-  private fold(key: string, stats: MlxLiveStats): RateBook {
-    const book = advanceRateBook(this.books.get(key) ?? EMPTY_BOOK, stats);
-    this.books.set(key, book);
-    return book;
+  private async measure(
+    key: string,
+    engine: MeasuredEngine,
+    stats: MlxLiveStats
+  ): Promise<MlxMeasuredRead> {
+    const total = stats.totalRequests ?? null;
+    const held = this.measuredFor;
+    if (held && held.key === key && held.read.kind === 'read') {
+      if (held.total === total && held.settled) return held.read;
+    }
+    const changed = !held || held.key !== key || held.total !== total;
+    const read = pickMeasured(await this.deps.readMeasured(), engine);
+    this.measuredFor = { key, total, settled: !changed, read };
+    return read;
+  }
+
+  /** What a read that could not reach the engine keeps: the same engine's runs, else pending. */
+  private heldMeasured(engine: MlxEngineSnapshot['engine']): MlxMeasuredRead {
+    return this.snapshot.engine === engine ? this.snapshot.measured : MEASURED_PENDING;
   }
 
   current(): MlxEngineSnapshot {
@@ -335,7 +364,7 @@ export class MlxEngineMonitor {
       engine: 'remote',
       mode,
       statusDetail: mode === 'unknown' ? `the route is ${state} and names no relay to read` : null,
-      rates: this.snapshot.engine === 'remote' ? this.snapshot.rates : EMPTY_BOOK,
+      measured: this.heldMeasured('remote'),
     };
   }
 
@@ -351,7 +380,7 @@ export class MlxEngineMonitor {
     routeModel: string | null
   ): Promise<MlxEngineSnapshot> {
     const held = this.snapshot.engine === engine ? this.snapshot : null;
-    const rates = held?.rates ?? EMPTY_BOOK;
+    const measured = this.heldMeasured(engine);
     const result = await this.deps.readStatus(baseUrl);
     if (!result.ok) {
       // A split's rank 0 on this Mac that is slow keeps its last read; a linked Mac's engine read
@@ -370,7 +399,7 @@ export class MlxEngineMonitor {
         baseUrl,
         stats: hold ? (held?.stats ?? null) : null,
         statusDetail: `${result.error}: ${result.detail}`,
-        rates,
+        measured,
       };
     }
     const parsed = parseMlxLiveStatus(result.body);
@@ -380,7 +409,7 @@ export class MlxEngineMonitor {
         engine,
         baseUrl,
         statusDetail: parsed.detail,
-        rates,
+        measured,
       };
     }
     const stats = parsed.stats;
@@ -392,7 +421,7 @@ export class MlxEngineMonitor {
       baseUrl,
       stats,
       statusDetail: null,
-      rates: this.fold(`${engine}\n${mac}\n${model}`, stats),
+      measured: await this.measure(`${engine}\n${mac}\n${model}`, engine, stats),
       serving: await this.attribute(stats, engine === 'remote'),
       failedError: null,
       contact: null,
@@ -414,7 +443,7 @@ export class MlxEngineMonitor {
 
   private async readSingle(): Promise<MlxEngineSnapshot> {
     const report = this.report;
-    const rates = this.snapshot.engine === 'single' ? this.snapshot.rates : EMPTY_BOOK;
+    const measured = this.heldMeasured('single');
     const baseUrl = report?.baseUrl ?? this.deps.configBaseUrl();
     const reportedModel = report?.servedModelId ?? report?.modelId ?? null;
     const failedError = report?.state === 'failed' ? (report.lastError ?? null) : null;
@@ -424,7 +453,7 @@ export class MlxEngineMonitor {
         mode: report?.state === 'failed' ? 'failed' : 'unknown',
         modelId: reportedModel,
         statusDetail: 'goose names no port for the MLX engine yet',
-        rates,
+        measured,
         failedError,
       };
     }
@@ -439,7 +468,7 @@ export class MlxEngineMonitor {
           modelId: mode === 'off' ? null : reportedModel,
           baseUrl,
           statusDetail: `${result.error}: ${result.detail}`,
-          rates: mode === 'off' ? EMPTY_BOOK : rates,
+          measured,
           failedError,
         };
       }
@@ -462,7 +491,7 @@ export class MlxEngineMonitor {
         modelId: reportedModel,
         baseUrl,
         statusDetail: parsed.detail,
-        rates,
+        measured,
       };
     }
     const stats = parsed.stats;
@@ -475,7 +504,11 @@ export class MlxEngineMonitor {
       baseUrl,
       stats,
       statusDetail: null,
-      rates: this.fold(`single\n\n${engineModel ?? reportedModel ?? ''}`, stats),
+      measured: await this.measure(
+        `single\n\n${engineModel ?? reportedModel ?? ''}`,
+        'single',
+        stats
+      ),
       serving,
       failedError: null,
       contact: null,

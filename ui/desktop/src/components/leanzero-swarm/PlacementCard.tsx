@@ -23,6 +23,7 @@ import { defineMessages, useIntl } from '../../i18n';
 import {
   goalFigure,
   linkPeerOf,
+  measuredFigure,
   mlxMeasureSpeed,
   mlxPlacementPlan,
   type PlacementBadge as PlacementBadgeDto,
@@ -119,10 +120,11 @@ const i18n = defineMessages({
     defaultMessage: '~{value} tok/s total at {concurrency} at once',
   },
   range: { id: 'placementCard.range', defaultMessage: '{low}–{high}' },
+  middleHalf: { id: 'placementCard.middleHalf', defaultMessage: '{low}–{high} middle half' },
   context: { id: 'placementCard.context', defaultMessage: '{tokens} context' },
   measured: {
     id: 'placementCard.measured',
-    defaultMessage: '{runs, plural, one {measured} other {measured · # runs}}',
+    defaultMessage: '{runs, plural, one {measured · # run} other {measured · # runs}}',
   },
   estimated: { id: 'placementCard.estimated', defaultMessage: 'estimated' },
   run: { id: 'placementCard.run', defaultMessage: 'Run' },
@@ -445,6 +447,32 @@ function figureText(
   if (goal === 'manyRequests')
     return intl.formatMessage(i18n.total, { value, concurrency: concurrency ?? '—' });
   return intl.formatMessage(i18n.writes, { value });
+}
+
+/**
+ * The range beside a figure: an estimate's error, or — for a measured figure — the runs' middle half,
+ * only when there is more than one run and they differ (measuredFigure, the rule the Engine tile and
+ * the tray use). One run is never drawn as "29.6–29.6" (Q-129).
+ */
+function FigureRange({ figure }: { figure: SpeedFigure }) {
+  const intl = useIntl();
+  if (figure.measured) {
+    const spread = measuredFigure(figure)?.spread;
+    if (!spread) return null;
+    return (
+      <span className={cx(TYPE.meta, TNUM)} data-testid="placement-figure-range">
+        {intl.formatMessage(i18n.middleHalf, { low: tps(spread.low), high: tps(spread.high) })}
+      </span>
+    );
+  }
+  return (
+    <span className={cx(TYPE.meta, TNUM)} data-testid="placement-figure-range">
+      {intl.formatMessage(i18n.range, {
+        low: tps(figure.estimate.low),
+        high: tps(figure.estimate.high),
+      })}
+    </span>
+  );
 }
 
 function SourceChip({ figure }: { figure: SpeedFigure }) {
@@ -1401,12 +1429,7 @@ function PlacementCardBody({
                 <span className={cx('text-lz-body', WEIGHT.semibold, TNUM, TONE_TEXT.accent)}>
                   {figureText(intl, goal, figure, c)}
                 </span>
-                <span className={cx(TYPE.meta, TNUM)}>
-                  {intl.formatMessage(i18n.range, {
-                    low: tps(figure.estimate.low),
-                    high: tps(figure.estimate.high),
-                  })}
-                </span>
+                <FigureRange figure={figure} />
                 <SourceChip figure={figure} />
               </>
             )}

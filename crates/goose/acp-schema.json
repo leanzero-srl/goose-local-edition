@@ -7558,7 +7558,7 @@
               "type": "null"
             }
           ],
-          "description": "Writing speed of one conversation (tok/s) at a ~2k-token prompt."
+          "description": "Writing speed of one conversation (tok/s): measured over this way's timed turns of any\nprompt size (each timed over enough tokens), else estimated at a ~2k-token prompt."
         },
         "prefill": {
           "anyOf": [
@@ -7636,7 +7636,7 @@
         "measured",
         "runs"
       ],
-      "description": "`measured` = goose timed this placement (median of `runs`, range = their extremes); else the\ncalibrated formula's estimate."
+      "description": "`measured` = goose timed this placement (median of `runs`, range = their middle half, rounded\nout to whole runs — all of them up to four); else the calibrated formula's estimate."
     },
     "MlxEstimateDto": {
       "type": "object",

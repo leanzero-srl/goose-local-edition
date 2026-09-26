@@ -4164,7 +4164,7 @@
     "defaultMessage": "प्रॉम्प्ट टोकन, {elapsed} से पढ़ रहा है"
   },
   "mlxStateTile.readRange": {
-    "defaultMessage": "tok/s पढ़ना, सबसे धीमा–सबसे तेज़"
+    "defaultMessage": "tok/s पढ़ना, बीच के आधे रन"
   },
   "mlxStateTile.readRate": {
     "defaultMessage": "tok/s इस प्रॉम्प्ट को पढ़ते हुए"
@@ -4272,7 +4272,7 @@
     "defaultMessage": "GB वेट्स"
   },
   "mlxStateTile.writeRange": {
-    "defaultMessage": "tok/s लिखना, सबसे धीमा–सबसे तेज़"
+    "defaultMessage": "tok/s लिखना, बीच के आधे रन"
   },
   "mlxStateTile.writeRate": {
     "defaultMessage": "tok/s लिखते हुए"
@@ -5283,13 +5283,16 @@
     "defaultMessage": "चल रहा है और अभी मापा नहीं गया — गति मापें अनुमान को इस Mac की अपनी संख्या से बदल देता है।"
   },
   "placementCard.measured": {
-    "defaultMessage": "{runs, plural, one {मापा गया} other {मापा गया · # बार}}"
+    "defaultMessage": "{runs, plural, one {मापा गया · # बार} other {मापा गया · # बार}}"
   },
   "placementCard.measuredResult": {
     "defaultMessage": "मापा गया: लिखना {decode} tok/s, पढ़ना {prefill} tok/s"
   },
   "placementCard.measuring": {
     "defaultMessage": "माप रहे हैं: ~2k टोकन का प्रॉम्प्ट, फिर 256 टोकन…"
+  },
+  "placementCard.middleHalf": {
+    "defaultMessage": "{low}–{high} बीच का आधा"
   },
   "placementCard.noFigureReason": {
     "defaultMessage": "गति का आँकड़ा नहीं"

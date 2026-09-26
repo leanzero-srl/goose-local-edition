@@ -10,7 +10,6 @@ import { attributeServing, type MlxServingRow } from '../../utils/mlxServing';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
 import {
-  EMPTY_BOOK,
   advanceMountWatch,
   mountCostOf,
   mountFill,
@@ -71,7 +70,6 @@ function tile(overrides: Partial<MlxStateTileProps>) {
     unreachable: false,
     live: null,
     history: [],
-    rates: EMPTY_BOOK,
     serving: null,
     mount: null,
     cost: null,
@@ -182,21 +180,21 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     expect(within(t).getByText('tok/s writing, 1 run')).toBeInTheDocument();
     expect(within(t).getByText('tok/s reading, 1 prompt')).toBeInTheDocument();
     // One run is no range.
-    expect(within(t).queryByText('tok/s writing, slowest–fastest')).toBeNull();
+    expect(within(t).queryByText('tok/s writing, middle half of runs')).toBeNull();
     expect(screen.queryAllByTestId('mlx-live-request')).toHaveLength(0);
     expect(within(t).getByText('54.3 GB')).toBeInTheDocument();
     expect(within(t).getByText('20%')).toBeInTheDocument();
     await expectDesigned(container);
   });
 
-  it('idle after several runs: the MEDIAN is the big number, slowest–fastest sits in the facts', () => {
+  it('idle after several runs: the MEDIAN is the big number, the middle half sits in the facts', () => {
     goose([24.1, 22.0, 51.4, 3], [144, 139.5, 150.2, 3]);
     tile({ live: parseMlxLiveStatus({ ...IDLE_STATUS, uptime_s: 40 }) });
     const t = screen.getByTestId('mlx-state-badge');
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('24.1');
     expect(within(t).getByText('tok/s writing, median of 3 runs')).toBeInTheDocument();
     expect(within(t).getByText('22.0–51.4')).toBeInTheDocument();
-    expect(within(t).getByText('tok/s writing, slowest–fastest')).toBeInTheDocument();
+    expect(within(t).getByText('tok/s writing, middle half of runs')).toBeInTheDocument();
     expect(screen.getByTestId('mlx-live-pps')).toHaveTextContent('144');
     expect(within(t).getByText('tok/s reading, median of 3 prompts')).toBeInTheDocument();
   });
@@ -235,9 +233,9 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
   });
 
   it('Q-123: after a relaunch the tile reads goose’s kept runs — one run is "1 run", never a range', () => {
-    // The relaunch: the page's own run book is empty and goose has not answered the plan yet —
+    // The relaunch: goose has not answered the plan yet —
     // the tile says it is reading, never "No runs measured yet".
-    tile({ live: parseMlxLiveStatus({ ...IDLE_STATUS, uptime_s: 12 }), rates: EMPTY_BOOK });
+    tile({ live: parseMlxLiveStatus({ ...IDLE_STATUS, uptime_s: 12 }) });
     expect(screen.getByTestId('mlx-no-runs')).toHaveTextContent("Reading goose's measured runs…");
     expect(screen.queryByText(/No runs measured yet/)).toBeNull();
     // goose answers the plan the Run it card draws, from the runs it kept across the relaunch.
@@ -246,7 +244,7 @@ describe('MlxStateTile RUNNING — the fill is what the engine is DOING', () => 
     expect(screen.getByTestId('mlx-live-tps')).toHaveTextContent('29.6');
     expect(within(t).getByText('tok/s writing, 1 run')).toBeInTheDocument();
     expect(within(t).queryByText('29.6–29.6')).toBeNull();
-    expect(within(t).queryByText('tok/s writing, slowest–fastest')).toBeNull();
+    expect(within(t).queryByText('tok/s writing, middle half of runs')).toBeNull();
     expect(screen.queryByTestId('mlx-no-runs')).toBeNull();
   });
 
