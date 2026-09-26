@@ -1,32 +1,29 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-26 20:28 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
+Updated: 2026-09-26 21:46 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
 
 ## Live
-- Installed on both Macs: 3.0.51. PROVEN on it: Q-137 (Link over tailnet with the Funnel dead), Q-136 (split
-  restores + answers), Q-135 (plain "OK", no reasoning block). Ladder 7/7 to 39k.
-- Studio public Funnel still dead (Tailscale on the Studio needs the owner's password to restart) — not needed now.
-- main = b4b325848 pushed: Q-138, Q-130, Windows fix (CI green), Link tests deterministic (CI running).
-- 3.0.52 build SCHEDULED waits on: E2E #3c ending (a release compile on the MacBook would skew rank 0's timing).
-  Note for #3c's record: agents' cargo builds ran alongside (CPU load on rank 0's Mac).
+- Installed on both Macs: 3.0.51. PROVEN on it: Q-114 (no stall past 2× the old hang, E2E #3c), Q-135, Q-136, Q-137.
+- Building 3.0.52 from main 5baa065fa: Q-107 (tool loads keep the prefix), Q-138 (orphan MCPs), Q-130, Q-140,
+  Q-141 (split streams tool calls), Q-142 (split keeps the prefix to the turn-context block). Log
+  ~/goose-builds/release-3.0.52.log · DONE watcher running.
+- E2E #3c stopped after turn 5 (recorded in E2E-RUNS.md; its memory deleted). GPUs idle until 3.0.52.
+- Studio public Funnel still dead; Link runs over the tailnet (Q-137).
 
-## Running
-- E2E #3c: tensor 27B split, jira brief → ~/goose-builds/quality/RU-2026-09-26-3c-split-tensor
-  (r1.mjs, sampler, calls.py). GPU OWNER: this run. Watch: turn 0 secs (#4 Studio 170 s), no stall past 10.5k
-  generated tokens, checker rows reasoning-off in calls.csv, rank logs ~/.local/state/goose/logs/distributed/.
-- Agents (worktree, NO GPU): Q-139 web-search cwd; Q-141 tensor split streams nothing during a tool call; Q-140 load-flaky tests.
-- E2E #3c turn 0: the agent call ran 21,741 tokens / 32 min with ZERO streamed (Q-141); stopped from the chat's Stop
-  at 20:27 (engine released it within ~15 s). Q-114 proven live (2× the old hang point). Run continues: turn 1.
+## Agents (worktree, NO GPU)
+- Q-139 web-search writes docs/technical/ into the user's cwd.
+- Q-143 pipeline split: take the turn-context tail + checkpoint before it (fork + pin).
 
 ## Next actions (in order)
-1. CI on cf48aaf46 green? (red → fix first). E2E #3c ends → build 3.0.52 (Q-138 + whatever merged) with a DONE watcher.
-2. Tick E2E #3c every tick: read the last turn's WORDS; stop rules; after it ends → E2E-RUNS.md row, delete
-   the run's memories (find ~/.config/goose/memory ~/.goose/memory -newermt @start), critic pass.
-3. Then E2E #5b Flash pipeline (stdlib brief) + load.py 3 workers → proves Q-127/128/131/133/134.
-4. Q-139 and Q-130 agents return → merge → gate → push (with Q-138 in 3.0.52 if in time).
+1. 3.0.52 DONE → install.sh 3.0.52 → Link connected? → split-start.mjs --model 27B answers.
+2. E2E #3d: tensor 27B, jira brief, on 3.0.52. Prove: calls read ≥90% cached after turn 1 (Q-142), a tool call
+   streams with "writing a tool call to shell" (Q-141), load_tools keeps the cache (Q-107), turn times vs #3c
+   (110/690/1380/516/924 s) and #4 Studio (170/81/1333 s). diskio.py on goosed (Q-115).
+3. Then E2E #5b Flash pipeline (stdlib brief) + load.py 3 workers → Q-127/128/131/133/134 (+Q-143 once merged).
+4. Critic pass (mlx-ux-critic) on 3.0.52 after #3d.
+5. Agents return → read log → merge → gate (clippy, tests, wincheck.sh) → push → CI.
 
 ## Standing rules for every tick
-- CI status, agent audit (processes, disk, pushes, ~/.config/goose), clean.sh orphan scan on both Macs.
-- A build that is DONE is installed + split-start smoked in the same tick. Never install without the smoke.
-- Before pushing a merge that touches Rust: harness/wincheck.sh (Windows compile) — CI went red twice on Windows.
-- One GPU user at a time (named above). Nothing waits for the owner.
+- CI status, agent audit (processes, disk ≥ 30 GB, pushes, ~/.config/goose), clean.sh orphan scan on both Macs.
+- A DONE build is installed + split-start smoked in the same tick. Never install without the smoke.
+- Before pushing a Rust merge: harness/wincheck.sh. One GPU user at a time. Nothing waits for the owner.
