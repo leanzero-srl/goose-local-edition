@@ -108,12 +108,35 @@ it('gives the main executable and each helper of a bundle its own UUID', () => {
   expect(new Set(afters).size).toBe(3);
 });
 
-it.skipIf(process.platform !== 'darwin')('agrees with dwarfdump on a real Mach-O', () => {
-  const file = join(scratch(), 'true');
-  copyFileSync('/usr/bin/true', file);
-  const [{ after }] = rewriteMachoUuid(file, 'seed').filter(
-    (c: { arch: string }) => c.arch === 'arm64'
-  );
-  const report = execFileSync('/usr/bin/dwarfdump', ['--uuid', file], { encoding: 'utf8' });
-  expect(report).toContain(`UUID: ${after} (arm64`);
-});
+// Apple's dwarfdump reads the rewritten UUID back. Its xcrun shim builds a cache on first use: on
+// GitHub's macOS runners this file took 2.0-3.0 s on green runs and passed the 5 s default on run
+// 36239643591, so the test carries its own timeout. Anywhere the tool cannot run, the skip names why.
+const DWARFDUMP_TEST_TIMEOUT_MS = 120_000;
+
+it(
+  'agrees with dwarfdump on a real Mach-O',
+  (ctx) => {
+    ctx.skip(
+      process.platform !== 'darwin',
+      `dwarfdump and /usr/bin/true are macOS tools; this is ${process.platform}`
+    );
+    let dwarfdump = '';
+    let missing = '';
+    try {
+      dwarfdump = execFileSync('/usr/bin/xcrun', ['--find', 'dwarfdump'], {
+        encoding: 'utf8',
+      }).trim();
+    } catch (err) {
+      missing = String(err);
+    }
+    ctx.skip(missing !== '', `no dwarfdump on this Mac: xcrun --find dwarfdump failed: ${missing}`);
+    const file = join(scratch(), 'true');
+    copyFileSync('/usr/bin/true', file);
+    const [{ after }] = rewriteMachoUuid(file, 'seed').filter(
+      (c: { arch: string }) => c.arch === 'arm64'
+    );
+    const report = execFileSync(dwarfdump, ['--uuid', file], { encoding: 'utf8' });
+    expect(report).toContain(`UUID: ${after} (arm64`);
+  },
+  DWARFDUMP_TEST_TIMEOUT_MS
+);

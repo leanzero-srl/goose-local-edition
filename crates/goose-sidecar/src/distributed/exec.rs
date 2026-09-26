@@ -188,9 +188,14 @@ mod tests {
         let absent = ps(gone.to_string()).await;
         assert_eq!(absent.ps_answer().unwrap(), None, "{absent:?}");
 
-        let refused = ps("999999999".into()).await;
-        let err = refused.ps_answer().unwrap_err().to_string();
-        assert!(err.contains("ps could not answer"), "{err}");
+        // macOS ps refuses a pid past its range by name ("process id too large"); Linux procps
+        // answers the same pid as absent (exit 1, silent), which is a true proof of absence there.
+        #[cfg(target_os = "macos")]
+        {
+            let refused = ps("999999999".into()).await;
+            let err = refused.ps_answer().unwrap_err().to_string();
+            assert!(err.contains("ps could not answer"), "{err}");
+        }
 
         let missing = SystemExec
             .run(None, "/bin/ps-not-installed -o command= -p 1")

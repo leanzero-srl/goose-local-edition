@@ -1078,7 +1078,9 @@ fn test_developer_fs_requests_use_acp_session_id() {
                     include_str!("acp_test_data/openai_fs_read_tool_call.txt"),
                 ),
                 (
-                    r#""content":"test-read-content-12345""#.into(),
+                    // No closing quote: a chat request ending on tool results carries the
+                    // `<turn-context>` block joined to the tool message ("\n" + block, Q-94).
+                    r#""content":"test-read-content-12345"#.into(),
                     include_str!("acp_test_data/openai_fs_read_tool_result.txt"),
                 ),
             ],

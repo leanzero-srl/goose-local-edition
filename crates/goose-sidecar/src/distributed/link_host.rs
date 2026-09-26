@@ -785,7 +785,8 @@ mod tests {
 
     /// Gate 4 through the real `/bin/ps`: a pid ps cannot answer for (`process id too large`,
     /// exit 1 with stderr) is refused by name and nothing is signalled — the failed proof never
-    /// reads as "no such process".
+    /// reads as "no such process". macOS only: Linux procps answers the same pid as absent.
+    #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_signal_whose_pid_ps_cannot_answer_for_is_refused_unsent() {
         let err = dispatch(
