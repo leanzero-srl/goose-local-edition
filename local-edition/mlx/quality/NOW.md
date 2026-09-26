@@ -1,12 +1,13 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-26 23:30 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
+Updated: 2026-09-26 23:40 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
 
 ## Live
 - Installed on both Macs: 3.0.53 (+ Q-139, Q-143/144/145; pipeline fork 419306f70 on both). Flash pipeline smoke: up in 57 s.
-- LOAD 26d RUNNING (Q-145 proof): same shape as 26c (3×30k + canary, 20 min) → canary TTFT vs 347 s (pred. 6–12 s).
-- CI: 31a457b5b red on ONE test (developer_client_uses_working_dir_for_shell_tool, is_error true; markdown-only commit;
-  passes locally ×3) → job re-run; a second red = a Q-140-class row + agent.
+- LOAD 26d (Q-145): canaries 1–2 at 3.3 / 1.5 s (was 347 s) — then canary 3 stuck 290+ s at the queue head: the aging
+  bound counts FIFO wait, so in steady state nothing can jump. Q-145 REOPENED, fork agent on the aging rule → 26e.
+- CI green; the one red (developer_client_uses_working_dir_for_shell_tool) passed on re-run — a flake, watched.
+- lz-ppm session adopted the live method: first live round found 5 defects (B-119..B-125); its trap is in quality-hunt-loop.
   (The relaunch restored the previous Flash split first; split-start now refuses a split serving another model.)
 - E2E #3d ENDED at turn 0 (recorded): the "silent" 40-min answer was 54 IDENTICAL ledger_append calls — Q-159: the
   split samples GREEDY (no --temp; goose sends none; generation_config says temp 1.0/top_k 20/top_p 0.95). Every
