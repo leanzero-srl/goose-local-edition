@@ -8,9 +8,21 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 const SHIM_DIR = path.resolve(__dirname, '..', 'bin');
+const SHIMS = ['node', 'npx', 'uvx', 'jbang'];
+const HERMIT_TOOLS = ['node', 'npx', 'uvx', 'uv', 'jbang', 'java'];
+
+// Q-140: macOS holds the FIRST exec of a freshly written (or freshly checked-out) script for an
+// exec-time assessment, and the holds serialize machine-wide, so with parallel builds emitting new
+// binaries a shim run that execs fresh fakes took seconds and tripped vitest's 5 s default. The fakes
+// are therefore written ONCE per file and every test's hermit tree links to them, and the fakes and
+// the real shims are all exec'd once in beforeAll, before any test's clock starts. What remains of
+// time is a hang guard: spawnSync kills a shim that outlives SHIM_HANG_MS, and no test is failed
+// for being slow while its output is right.
+const SHIM_HANG_MS = 60_000;
+const SHIM_RUNS_PER_TEST = 2;
 
 const FAKE_HERMIT = `#!/bin/bash
 echo "hermit stdout noise: $*"
@@ -32,6 +44,7 @@ printf '${name} cwd=%s args=%s stdin=%s\\n' "$PWD" "$*" "$(cat)"
 exit "\${FAKE_TOOL_STATUS:-0}"
 `;
 
+let fakesDir: string;
 let root: string;
 let callerDir: string;
 
@@ -45,6 +58,7 @@ const runShim = (shim: string, args: string[], env: Record<string, string> = {})
     cwd: callerDir,
     input: 'jsonrpc-in',
     encoding: 'utf8',
+    timeout: SHIM_HANG_MS,
     env: {
       PATH: `${SHIM_DIR}:/usr/bin:/bin`,
       HOME: root,
@@ -55,86 +69,124 @@ const runShim = (shim: string, args: string[], env: Record<string, string> = {})
 
 const logText = () => fs.readFileSync(path.join(root, 'state', 'logs', 'mcp-shims.log'), 'utf8');
 
-beforeEach(() => {
+const makeRoot = () => {
   root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'goose-shims-')));
   const hermitBin = path.join(root, 'config', 'mcp-hermit', 'bin');
   fs.mkdirSync(hermitBin, { recursive: true });
   // Without the marker the Linux one-time cleanup would delete the fake tree.
   fs.writeFileSync(path.join(root, 'config', '.mcp-hermit-cleanup-v1'), '');
-  writeExecutable(path.join(hermitBin, 'hermit'), FAKE_HERMIT);
-  for (const tool of ['node', 'npx', 'uvx', 'uv', 'jbang', 'java']) {
-    writeExecutable(path.join(hermitBin, tool), fakeTool(tool));
+  for (const name of ['hermit', ...HERMIT_TOOLS]) {
+    fs.symlinkSync(path.join(fakesDir, name), path.join(hermitBin, name));
   }
   callerDir = path.join(root, 'project');
   fs.mkdirSync(callerDir);
-});
+};
 
-afterEach(() => {
+const removeRoot = () => {
   fs.rmSync(root, { recursive: true, force: true });
-});
+};
 
-describe.skipIf(process.platform === 'win32')('bundled tool shims', () => {
-  it.each([
-    ['node', 'node'],
-    ['npx', 'npx'],
-    ['uvx', 'uvx'],
-    ['jbang', 'jbang'],
-  ])('%s: output, cwd and stdin are the command’s; setup goes to the log', (shim, tool) => {
-    const result = runShim(shim, ['scripts/run.js', '--flag']);
+const writeAndWarmFakes = () => {
+  fakesDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'goose-shim-fakes-')));
+  writeExecutable(path.join(fakesDir, 'hermit'), FAKE_HERMIT);
+  for (const tool of HERMIT_TOOLS) {
+    writeExecutable(path.join(fakesDir, tool), fakeTool(tool));
+  }
+  for (const name of ['hermit', ...HERMIT_TOOLS]) {
+    const warmed = spawnSync(path.join(fakesDir, name), [], { input: '', timeout: SHIM_HANG_MS });
+    if (warmed.status !== 0) throw new Error(`warm exec of fake ${name} failed: ${warmed.error}`);
+  }
+  makeRoot();
+  try {
+    for (const shim of SHIMS) {
+      const warmed = runShim(shim, ['--warm']);
+      if (warmed.status !== 0) {
+        throw new Error(`warm run of the ${shim} shim failed: ${warmed.stderr || warmed.error}`);
+      }
+    }
+  } finally {
+    removeRoot();
+  }
+};
 
-    const expectedArgs =
-      shim === 'jbang' ? '--fresh --quiet scripts/run.js --flag' : 'scripts/run.js --flag';
-    expect(result.stderr).toBe('');
-    expect(result.stdout).toBe(`${tool} cwd=${callerDir} args=${expectedArgs} stdin=jsonrpc-in\n`);
-    expect(result.status).toBe(0);
+describe.skipIf(process.platform === 'win32')(
+  'bundled tool shims',
+  { timeout: SHIM_HANG_MS * SHIM_RUNS_PER_TEST },
+  () => {
+    beforeAll(writeAndWarmFakes, SHIM_HANG_MS * (HERMIT_TOOLS.length + 1 + SHIMS.length));
 
-    const log = logText();
-    expect(log).toContain(`[${shim} `);
-    expect(log).toContain('hermit stdout noise: init');
-    expect(log).toContain('hermit stderr noise: init');
-    expect(log).toContain('hermit stdout noise: install');
-    expect(log).toContain(`Executing ${path.join(root, 'config', 'mcp-hermit', 'bin', tool)}`);
-  });
+    afterAll(() => {
+      fs.rmSync(fakesDir, { recursive: true, force: true });
+    });
 
-  it.each(['node', 'npx', 'uvx', 'jbang'])(
-    '%s: a failing command keeps its own exit status',
-    (shim) => {
-      const result = runShim(shim, ['missing.js'], { FAKE_TOOL_STATUS: '3' });
+    beforeEach(makeRoot);
 
-      expect(result.status).toBe(3);
+    afterEach(removeRoot);
+
+    it.each([
+      ['node', 'node'],
+      ['npx', 'npx'],
+      ['uvx', 'uvx'],
+      ['jbang', 'jbang'],
+    ])('%s: output, cwd and stdin are the command’s; setup goes to the log', (shim, tool) => {
+      const result = runShim(shim, ['scripts/run.js', '--flag']);
+
+      const expectedArgs =
+        shim === 'jbang' ? '--fresh --quiet scripts/run.js --flag' : 'scripts/run.js --flag';
       expect(result.stderr).toBe('');
-      expect(logText()).not.toContain('Setup failed');
-    }
-  );
+      expect(result.stdout).toBe(
+        `${tool} cwd=${callerDir} args=${expectedArgs} stdin=jsonrpc-in\n`
+      );
+      expect(result.status).toBe(0);
 
-  it('a second run with hermit already initialised is just as quiet', () => {
-    runShim('node', ['--version']);
-    const result = runShim('node', ['--version']);
+      const log = logText();
+      expect(log).toContain(`[${shim} `);
+      expect(log).toContain('hermit stdout noise: init');
+      expect(log).toContain('hermit stderr noise: init');
+      expect(log).toContain('hermit stdout noise: install');
+      expect(log).toContain(`Executing ${path.join(root, 'config', 'mcp-hermit', 'bin', tool)}`);
+    });
 
-    expect(result.stderr).toBe('');
-    expect(result.stdout).toBe(`node cwd=${callerDir} args=--version stdin=jsonrpc-in\n`);
-  });
+    it.each(['node', 'npx', 'uvx', 'jbang'])(
+      '%s: a failing command keeps its own exit status',
+      (shim) => {
+        const result = runShim(shim, ['missing.js'], { FAKE_TOOL_STATUS: '3' });
 
-  it.each(['node', 'uvx', 'jbang'])(
-    '%s: a failed setup says so in one stderr line naming the log, and never runs the tool',
-    (shim) => {
-      const result = runShim(shim, ['app.js'], { FAKE_HERMIT_INSTALL_FAILS: '1' });
+        expect(result.status).toBe(3);
+        expect(result.stderr).toBe('');
+        expect(logText()).not.toContain('Setup failed');
+      }
+    );
 
-      const logFile = path.join(root, 'state', 'logs', 'mcp-shims.log');
-      expect(result.status).toBe(42);
-      expect(result.stdout).toBe('');
-      expect(result.stderr).toBe(`goose: ${shim} setup failed (status 42); see ${logFile}\n`);
-      expect(logText()).toContain('Setup failed with status 42.');
-      expect(fs.existsSync(path.join(root, 'config', '.mcp-hermit-setup.lock'))).toBe(false);
-    }
-  );
+    it('a second run with hermit already initialised is just as quiet', () => {
+      runShim('node', ['--version']);
+      const result = runShim('node', ['--version']);
 
-  it('appends to the log instead of truncating it per invocation', () => {
-    runShim('node', ['first.js']);
-    runShim('uvx', ['second']);
+      expect(result.stderr).toBe('');
+      expect(result.stdout).toBe(`node cwd=${callerDir} args=--version stdin=jsonrpc-in\n`);
+    });
 
-    const log = logText();
-    expect(log).toContain('first.js');
-    expect(log).toContain('second');
-  });
-});
+    it.each(['node', 'uvx', 'jbang'])(
+      '%s: a failed setup says so in one stderr line naming the log, and never runs the tool',
+      (shim) => {
+        const result = runShim(shim, ['app.js'], { FAKE_HERMIT_INSTALL_FAILS: '1' });
+
+        const logFile = path.join(root, 'state', 'logs', 'mcp-shims.log');
+        expect(result.status).toBe(42);
+        expect(result.stdout).toBe('');
+        expect(result.stderr).toBe(`goose: ${shim} setup failed (status 42); see ${logFile}\n`);
+        expect(logText()).toContain('Setup failed with status 42.');
+        expect(fs.existsSync(path.join(root, 'config', '.mcp-hermit-setup.lock'))).toBe(false);
+      }
+    );
+
+    it('appends to the log instead of truncating it per invocation', () => {
+      runShim('node', ['first.js']);
+      runShim('uvx', ['second']);
+
+      const log = logText();
+      expect(log).toContain('first.js');
+      expect(log).toContain('second');
+    });
+  }
+);

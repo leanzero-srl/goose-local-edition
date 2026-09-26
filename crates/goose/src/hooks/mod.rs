@@ -532,9 +532,17 @@ async fn run_command_hook(
     timeout: Duration,
     use_login_shell_path: bool,
 ) -> Result<std::process::Output> {
+    // The login-shell probe is goose's own one-time setup, bounded by its own read window in
+    // `probe_login_shell_path`. The plugin's timeout is the budget for its command alone, so the
+    // first hook of a session is not charged for sourcing the user's shell profile.
+    let path = if use_login_shell_path {
+        hook_path().await
+    } else {
+        None
+    };
     match tokio::time::timeout(
         timeout,
-        run_command_hook_inner(raw_command, plugin_root, payload, use_login_shell_path),
+        run_command_hook_inner(raw_command, plugin_root, payload, path.as_deref()),
     )
     .await
     {
@@ -547,15 +555,10 @@ async fn run_command_hook_inner(
     raw_command: &str,
     plugin_root: &Path,
     payload: &str,
-    use_login_shell_path: bool,
+    path: Option<&str>,
 ) -> Result<std::process::Output> {
     let command = expand_plugin_root(raw_command, plugin_root);
-    let path = if use_login_shell_path {
-        hook_path().await
-    } else {
-        None
-    };
-    let mut process = hook_command(&command, plugin_root, path.as_deref());
+    let mut process = hook_command(&command, plugin_root, path);
     process
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -806,6 +809,17 @@ mod tests {
                 std::fs::set_permissions(path, perms).unwrap();
             }
         }
+        // macOS holds the FIRST exec of a freshly written script for an exec-time assessment, and
+        // those holds serialize machine-wide: under parallel builds the first execs of the fake
+        // login shell and the helper outlasted the hook's 5 s timeout (Q-140). Exec each once
+        // here, before anything is timed.
+        for path in [&fake_shell, &helper] {
+            let warmed = std::process::Command::new(path)
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+            assert!(warmed.status.success(), "warm exec of {}", path.display());
+        }
 
         let fake_shell = fake_shell.to_string_lossy().into_owned();
         let fake_login_path = format!("{}:/usr/bin:/bin", login_bin.display());
@@ -824,7 +838,7 @@ mod tests {
             "hook-visible-tool",
             tmp.path(),
             "{}",
-            Duration::from_secs(5),
+            Duration::from_secs(DEFAULT_HOOK_TIMEOUT_SECS),
             true,
         )
         .await
