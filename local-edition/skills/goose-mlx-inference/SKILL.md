@@ -359,3 +359,8 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
       waits 256–428 s behind 17k prompts. Fork lz/fair-prefill keeps admission open until a request decodes alone.
   (3) Q-106 — several 27B engines loading at once under memory pressure (swap 47.5/49 GB) WEDGED the MacBook GPU
       (Metal hangs uninterruptibly; reboot only). One engine load at a time per Mac.
+- 2026-09-26 Q-85 CLOSED: Rapid-MLX v0.14.3-lz.7 (eb9ed506d = lz.6 + XML tool-call skeleton guard) is pinned. Proof on the
+  Studio: guard off 3/3 junk on the replay and 17/46 in a warm census → guard on 0 junk in 153 calls. The model escaped the
+  format at FOUR different points across rounds (after `</parameter>\n`, right after `</parameter>`, after `</function>` →
+  an open call and 28 looping calls); the guard now pins all of them. Fork tags so far: lz.5 (32768 cap fix), lz.6
+  (transient tail may end a tool message), lz.7 (the guard). Never create a tag another agent already pushed.
