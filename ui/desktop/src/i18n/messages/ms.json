@@ -7802,6 +7802,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Output"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "Dilangkau — sama dengan panggilan terdahulu dalam jawapan yang sama"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "Panggilan dan output sama seperti panggilan terdahulu dalam giliran ini — model telah dimaklumkan"
   },

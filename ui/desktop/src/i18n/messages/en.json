@@ -7802,6 +7802,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Output"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "Skipped — identical to an earlier call in this same answer"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "Same call and same output as an earlier call this turn — the model was told"
   },

@@ -33,6 +33,17 @@ const TAIL_ENTRIES: usize = 5;
 // ratio: a read returns at most twenty entries — four tails — so one call cannot flood the window.
 const READ_MAX_ENTRIES: usize = 20;
 
+/// The turn context of an empty ledger. It once read "is empty — ledger_append the first finding,
+/// decision or dead end you meet": an order that an empty ledger turns into a task. Q-159 (E2E #3d,
+/// 2026-09-26): the answer that carried 54 identical `ledger_append` calls was written with that
+/// order in its context — its first append returned "(1 entries)". Greedy sampling is the measured
+/// cause of the loop; the order is only what it looped on. The ledger takes an entry when there is
+/// something to keep, not because it has none.
+const EMPTY_LEDGER: &str = "has no entries yet. Append to it when you learn something a later \
+                            turn would otherwise rediscover — a measurement, a decision and its \
+                            reason, a dead end — one entry per fact. There is nothing to append \
+                            until then.";
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct LedgerAppendParams {
     /// finding | decision | tried | fact
@@ -117,6 +128,30 @@ impl LedgerFile {
         Ok(parse_entries(&std::fs::read_to_string(&self.path)?))
     }
 
+    /// Appends the entry unless the same kind and words are already in the ledger. The check and
+    /// the write hold one lock, so identical appends racing each other still land once.
+    ///
+    /// Why (Q-159, E2E #3d, 2026-09-26): one response carried 54 `ledger_append` calls with the same
+    /// `{"kind":"fact","text":"Harbourline Freight DC→Cloud readiness: …"}`; every one was written,
+    /// and the chat ledger held the line 54 times.
+    fn append_new(&self, kind: &str, text: &str) -> std::io::Result<Appended> {
+        static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _held = WRITE.lock().unwrap_or_else(|e| e.into_inner());
+        let entries = self.read_all()?;
+        if let Some(index) = entries
+            .iter()
+            .position(|entry| same_entry(entry, kind, text))
+        {
+            return Ok(Appended::AlreadyThere {
+                number: index + 1,
+                total: entries.len(),
+            });
+        }
+        Ok(Appended::Added {
+            total: self.append(kind, text)?,
+        })
+    }
+
     fn append(&self, kind: &str, text: &str) -> std::io::Result<usize> {
         use std::io::Write;
         if let Some(parent) = self.path.parent() {
@@ -153,12 +188,11 @@ impl LedgerFile {
             Ok(entries) if entries.is_empty() => {
                 if self.chat_only {
                     format!(
-                        "<ledger>\n{where_}This chat's ledger ({}) is empty — ledger_append the first finding, decision or dead end you meet.\n</ledger>\n",
+                        "<ledger>\n{where_}This chat's ledger ({}) {EMPTY_LEDGER}\n</ledger>\n",
                         self.path.display()
                     )
                 } else {
-                    "<ledger>\nThe project ledger (.goose/ledger.md) is empty — ledger_append the first finding, decision or dead end you meet.\n</ledger>\n"
-                        .to_string()
+                    format!("<ledger>\nThe project ledger (.goose/ledger.md) {EMPTY_LEDGER}\n</ledger>\n")
                 }
             }
             Ok(entries) => {
@@ -210,8 +244,31 @@ pub fn parse_entries(content: &str) -> Vec<String> {
 }
 
 pub fn format_entry(when: &str, kind: &str, text: &str) -> String {
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    format!("- {when} [{kind}] {text}\n")
+    format!("- {when} [{kind}] {}\n", normalized_text(text))
+}
+
+fn normalized_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// What `append_new` did: wrote the entry, or found the same kind and words at 1-based `number`.
+#[derive(Debug, PartialEq, Eq)]
+enum Appended {
+    Added { total: usize },
+    AlreadyThere { number: usize, total: usize },
+}
+
+/// An entry parsed by `parse_entries` (`<date> <time> [<kind>] <text>`) holds this kind and these
+/// words, whitespace-normalized as `format_entry` writes them. The date is not part of what the
+/// entry says.
+fn same_entry(entry: &str, kind: &str, text: &str) -> bool {
+    let mut fields = entry.splitn(3, ' ');
+    let (Some(_date), Some(_time), Some(body)) = (fields.next(), fields.next(), fields.next())
+    else {
+        return false;
+    };
+    body.strip_prefix(&format!("[{kind}] "))
+        .is_some_and(|words| words == normalized_text(text))
 }
 
 /// Newest first, at most `limit`; with a query, only entries sharing at least half its terms.
@@ -249,7 +306,7 @@ impl LedgerClient {
                 what was tried and why it is not coming back, facts learned. Its newest entries are in
                 every turn's context and it survives compaction and sessions. Append to it with
                 ledger_append the moment you learn something a future session would otherwise rediscover:
-                a measurement, a dead end, a decision with its reason. Read further back with
+                a measurement, a dead end, a decision with its reason — once each. Read further back with
                 ledger_read. Facts that should be recalled by topic belong in memory; the ledger is
                 what happened, in order.
             "#}
@@ -291,7 +348,9 @@ impl LedgerClient {
                 "ledger_append".to_string(),
                 "Append one dated entry to the project ledger (.goose/ledger.md): a finding, a decision \
                  with its reason, something tried that is not coming back, or a fact learned. Do it the \
-                 moment you learn it — a future session, or you after a compaction, reads this first."
+                 moment you learn it — a future session, or you after a compaction, reads this first. \
+                 One call per entry: an entry the ledger already holds word for word is not appended \
+                 again."
                     .to_string(),
                 append_schema.as_object().unwrap().clone(),
             )
@@ -368,14 +427,20 @@ impl McpClientTrait for LedgerClient {
                         } else if params.text.trim().is_empty() {
                             Err("text must not be empty".to_string())
                         } else {
-                            match ledger.append(&kind, &params.text) {
-                                Ok(total) => {
+                            match ledger.append_new(&kind, &params.text) {
+                                Ok(Appended::Added { total }) => {
                                     tracing::info!(kind, total, "ledger appended");
                                     Ok(format!(
                                         "Appended [{kind}] to {} ({total} entries).",
                                         ledger.label()
                                     ))
                                 }
+                                Ok(Appended::AlreadyThere { number, total }) => Ok(format!(
+                                    "Not appended: this [{kind}] entry is already in {} as entry \
+                                     {number} of {total}, word for word. Append only what the \
+                                     ledger does not hold yet.",
+                                    ledger.label()
+                                )),
                                 Err(e) => Err(format!("ledger write failed: {e}")),
                             }
                         }
@@ -531,12 +596,75 @@ mod tests {
         assert!(!a.chat_only);
         assert_eq!(
             a.moim(),
-            "<ledger>\nThe project ledger (.goose/ledger.md) is empty — ledger_append the first finding, decision or dead end you meet.\n</ledger>\n",
-            "a project's turn context is unchanged"
+            format!("<ledger>\nThe project ledger (.goose/ledger.md) {EMPTY_LEDGER}\n</ledger>\n"),
+            "a project's turn context names no chat folder"
         );
         assert_eq!(
             LedgerFile::for_chat(home.path(), "a/../b", Some(home.path())).path,
             home.path().join(".goose/ledgers/a____b.md")
         );
+    }
+
+    /// Q-159: an empty ledger's turn context invites an entry when there is one to keep; it does not
+    /// order "the first finding" as a task.
+    #[test]
+    fn an_empty_ledger_is_not_an_order_to_append() {
+        let home = tempfile::tempdir().unwrap();
+        for ledger in [
+            LedgerFile::for_chat(home.path(), "20260926_19", Some(home.path())),
+            LedgerFile::for_chat(&home.path().join("work"), "20260926_19", Some(home.path())),
+        ] {
+            let moim = ledger.moim();
+            assert!(moim.contains("has no entries yet"), "{moim}");
+            assert!(moim.contains("one entry per fact"), "{moim}");
+            assert!(!moim.contains("the first finding"), "{moim}");
+        }
+    }
+
+    /// Q-159 (E2E #3d): the 54 identical `ledger__ledger_append` calls of one answer. The ledger holds
+    /// the line once; every later identical append is refused with where it already is. The same
+    /// words under another kind, or reflowed whitespace under the same kind, decide as the stored
+    /// line does.
+    #[test]
+    fn an_entry_already_in_the_ledger_is_not_appended_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = LedgerFile::for_chat(dir.path(), "20260926_19", None);
+        let text = "Harbourline Freight DC→Cloud readiness: Jira DC 9.12.x single node + postgres, ~15 projects";
+
+        assert_eq!(
+            ledger
+                .append_new("decision", "migrate Confluence first")
+                .unwrap(),
+            Appended::Added { total: 1 }
+        );
+        assert_eq!(
+            ledger.append_new("fact", text).unwrap(),
+            Appended::Added { total: 2 }
+        );
+        for _ in 0..53 {
+            assert_eq!(
+                ledger.append_new("fact", text).unwrap(),
+                Appended::AlreadyThere {
+                    number: 2,
+                    total: 2
+                }
+            );
+        }
+        assert_eq!(
+            ledger
+                .append_new("fact", &text.replace(": ", ":\n  "))
+                .unwrap(),
+            Appended::AlreadyThere {
+                number: 2,
+                total: 2
+            },
+            "the ledger stores words whitespace-normalized, so a reflow is the same entry"
+        );
+        assert_eq!(
+            ledger.append_new("finding", text).unwrap(),
+            Appended::Added { total: 3 },
+            "the same words under another kind are another entry"
+        );
+        assert_eq!(ledger.read_all().unwrap().len(), 3);
     }
 }

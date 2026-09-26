@@ -7802,6 +7802,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "आउटपुट"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "छोड़ा गया — इसी उत्तर में पहले की एक कॉल के समान"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "इस टर्न के एक पिछले कॉल जैसा ही कॉल और वही आउटपुट — मॉडल को बताया गया"
   },

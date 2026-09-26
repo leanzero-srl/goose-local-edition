@@ -104,6 +104,61 @@ pub struct FormingProgress {
     /// Characters of `content` that arrived while a call was forming. The decoder does not place
     /// this text in the message; it is counted here and logged when the calls are yielded.
     pub unplaced_text_chars: usize,
+    /// Finished calls that repeat an earlier call of the response word for word.
+    pub repeats: RepeatedCalls,
+}
+
+/// Calls of one response that repeat an earlier call of it: same tool, JSON-equal arguments (byte
+/// equal when they do not parse). Counted over FINISHED calls only — the one being written may still
+/// grow. Q-159 (E2E #3d, 2026-09-26): one 40-minute answer formed 57 calls, 54 of them the same
+/// `ledger__ledger_append`, while the line said only "writing 57 tool calls".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RepeatedCalls {
+    /// Finished calls identical to an earlier one.
+    pub count: usize,
+    /// The tool of the repeated call when every repeat copies that ONE earlier call.
+    pub one_original: Option<String>,
+}
+
+impl RepeatedCalls {
+    /// `calls` in the order the response opened them: (tool name, raw arguments).
+    pub fn of<'a>(calls: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
+        let parsed: Vec<(&str, Result<serde_json::Value, &str>)> = calls
+            .into_iter()
+            .map(|(name, raw)| (name, serde_json::from_str(raw).map_err(|_| raw)))
+            .collect();
+        let mut count = 0;
+        let mut originals: Vec<usize> = Vec::new();
+        for (index, call) in parsed.iter().enumerate() {
+            if let Some(original) = parsed[..index].iter().position(|earlier| earlier == call) {
+                count += 1;
+                if !originals.contains(&original) {
+                    originals.push(original);
+                }
+            }
+        }
+        let one_original = match originals.as_slice() {
+            [only] => Some(parsed[*only].0.to_string()),
+            _ => None,
+        };
+        Self {
+            count,
+            one_original,
+        }
+    }
+}
+
+/// The repeats among `tool_call_data`'s calls; the last one opened counts only once `finished`.
+fn repeated_calls(tool_call_data: &ToolCallData, finished: bool) -> RepeatedCalls {
+    let mut indices: Vec<&i32> = tool_call_data.keys().collect();
+    indices.sort();
+    if !finished {
+        indices.pop();
+    }
+    RepeatedCalls::of(indices.into_iter().map(|index| {
+        let (_, name, args, _) = &tool_call_data[index];
+        (name.as_str(), args.as_str())
+    }))
 }
 
 pub type FormingProgressObserver = std::sync::Arc<dyn Fn(FormingProgress) + Send + Sync>;
@@ -1524,6 +1579,8 @@ where
                     }
                 }
 
+                forming.repeats = repeated_calls(&tool_call_data, chunk.choices[0].finish_reason.is_some());
+                let mut repeats_counted_at = forming.tool_calls;
                 notify_forming_progress(forming.clone());
 
                 let is_complete = chunk.choices[0].finish_reason == Some("tool_calls".to_string());
@@ -1613,8 +1670,15 @@ where
                                             }
                                         }
                                     }
+                                    let finished = tool_chunk.choices[0].finish_reason.is_some();
+                                    // A call opening finishes the one before it: recount then, not
+                                    // on every argument fragment.
+                                    if finished || forming.tool_calls != repeats_counted_at {
+                                        forming.repeats = repeated_calls(&tool_call_data, finished);
+                                        repeats_counted_at = forming.tool_calls;
+                                    }
                                     notify_forming_progress(forming.clone());
-                                    if tool_chunk.choices[0].finish_reason.is_some() {
+                                    if finished {
                                         done = true;
                                     }
                                 } else {
@@ -3672,6 +3736,7 @@ data: [DONE]
                 argument_chars: "{\"category\":".chars().count(),
                 reasoning_chars: 0,
                 unplaced_text_chars: 0,
+                repeats: RepeatedCalls::default(),
             }),
             "the open frame is reported the moment it arrives"
         );
@@ -3683,7 +3748,18 @@ data: [DONE]
                 argument_chars: "{\"category\":\"releases\"}".chars().count() * 2,
                 reasoning_chars: 0,
                 unplaced_text_chars: "Let me verify it landed.Done.".chars().count(),
-            })
+                repeats: RepeatedCalls {
+                    count: 1,
+                    one_original: Some("memory__remember_memory".to_string()),
+                },
+            }),
+            "the second call spells the first's arguments: once it finishes it is a repeat"
+        );
+        assert!(
+            seen.iter()
+                .filter(|p| p.tool_calls == 2)
+                .any(|p| p.repeats.count == 0),
+            "the call still being written is not counted before it finishes: {seen:?}"
         );
         assert!(
             seen.windows(2).all(|w| w[0].tool_calls <= w[1].tool_calls
@@ -3725,6 +3801,52 @@ data: [DONE]
             .count();
         assert_eq!(calls, 2);
         Ok(())
+    }
+
+    /// Q-159 (E2E #3d): 1 write, then the same `ledger__ledger_append` 54 times. Arguments compare as
+    /// JSON (key order and spacing do not make a call new); different arguments are a different call.
+    #[test]
+    fn repeated_calls_counts_word_for_word_copies_of_an_earlier_call() {
+        let ledger =
+            r#"{"kind":"fact","text":"Harbourline Freight DC→Cloud readiness: Jira DC 9.12.x"}"#;
+        let reordered = r#"{ "text": "Harbourline Freight DC→Cloud readiness: Jira DC 9.12.x", "kind": "fact" }"#;
+        let mut calls = vec![(
+            "developer__write",
+            r##"{"path":"readiness.md","content":"# Readiness"}"##,
+        )];
+        calls.extend(std::iter::repeat_n(("ledger__ledger_append", ledger), 54));
+        calls.push(("ledger__ledger_append", reordered));
+        assert_eq!(
+            RepeatedCalls::of(calls.iter().copied()),
+            RepeatedCalls {
+                count: 54,
+                one_original: Some("ledger__ledger_append".to_string()),
+            }
+        );
+
+        let several = [
+            ("shell", r#"{"command":"ls"}"#),
+            ("shell", r#"{"command":"ls -la"}"#),
+            ("shell", r#"{"command":"ls"}"#),
+            ("shell", r#"{"command":"ls -la"}"#),
+            ("ledger__ledger_append", ledger),
+        ];
+        assert_eq!(
+            RepeatedCalls::of(several),
+            RepeatedCalls {
+                count: 2,
+                one_original: None,
+            },
+            "two different calls each repeated once: no single original to name"
+        );
+        assert_eq!(
+            RepeatedCalls::of([("shell", "{\"command\":"), ("shell", "{\"command\":")]),
+            RepeatedCalls {
+                count: 1,
+                one_original: Some("shell".to_string()),
+            },
+            "unparseable arguments compare byte for byte"
+        );
     }
 
     /// Q-141: the tensor split's rank 0 (goose-sidecar rank_tool_stream.py) now streams a tool call

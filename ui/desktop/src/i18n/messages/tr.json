@@ -7802,6 +7802,9 @@
   "toolCallWithResponse.output": {
     "defaultMessage": "Çıkış"
   },
+  "toolCallWithResponse.repeatInAnswer": {
+    "defaultMessage": "Atlandı — aynı yanıttaki önceki bir çağrıyla aynı"
+  },
   "toolCallWithResponse.repeatSameOutput": {
     "defaultMessage": "Bu turdaki önceki bir çağrıyla aynı çağrı ve aynı çıktı — modele bildirildi"
   },

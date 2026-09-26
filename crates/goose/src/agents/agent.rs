@@ -992,7 +992,7 @@ impl Agent {
                         .iter()
                         .all(|r| r.inspector_name == REPETITION_INSPECTOR_NAME) =>
                 {
-                    crate::tool_monitor::skipped_result(&first.reason)
+                    crate::tool_monitor::skipped_result(&first.reason, first.finding_id.as_deref())
                 }
                 _ => CallToolResult::error(vec![rmcp::model::Content::text(DECLINED_RESPONSE)]),
             };

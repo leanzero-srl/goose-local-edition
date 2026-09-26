@@ -194,7 +194,8 @@ function toolResponseMetadata(
 }
 
 // The engine's repeat guard marks a call that repeated the previous one with the same output
-// ('same_output') or was not run for that reason ('skipped'); it rides the trusted `_meta.goose`.
+// ('same_output') or was not run for that reason ('skipped'), and a call not run because it copies
+// an earlier call of the same answer ('in_answer'); it rides the trusted `_meta.goose`.
 function repeatMarker(update: ToolCallUpdate): string | undefined {
   if (!isRecord(update._meta)) return undefined;
   const goose = update._meta.goose;
