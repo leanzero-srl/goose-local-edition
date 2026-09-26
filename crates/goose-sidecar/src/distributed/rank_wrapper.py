@@ -61,6 +61,9 @@
 # - every batch cache counter a step advanced is evaluated with the step (Q-114, `settle_counters`):
 #   mlx_lm's lazy `left_padding -= N` pinned one Metal buffer per unread linear-attention layer per
 #   decode step, and the 27B hit MLX's 499,000-buffer limit at ~10.5k generated tokens.
+# - the group's formation handshake (Q-136, rank_formation.py) before the doorbell's port all_sum:
+#   after an abnormal end the next group's first message could go nowhere and every collective
+#   then paired one message off.
 group = mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -72,6 +75,10 @@ if group.rank() != spec["rank"] or group.size() != spec["size"]:
         f"goose rank wrapper: MLX reports rank {group.rank()} of {group.size()}, "
         f"goose launched rank {spec['rank']} of {spec['size']}"
     )
+# Before any collective (rank_formation.py, Q-136): a message the last group's connection swallowed
+# is absorbed here, where nothing pairs by it, instead of shifting every collective by one.
+if spec.get("formation") is not None:
+    form_group(group, spec["formation"])
 
 
 import faulthandler  # noqa: E402
@@ -251,6 +258,23 @@ def run(host, port, model_provider, *args, **kwargs):
 
 
 server.run = run
+
+# The generation thread loads the model (server.py `_generate` → `load_default`) after rank 0's
+# HTTP server is already up, so a request can arrive before the tokenizer exists. mlx_lm queues
+# such a request until the load is done; the thinking resolution below needs the template first,
+# so its handler waits for the same moment. A load that fails ends the rank (RANK_FATAL), and the
+# waiting handler with it.
+model_loaded = threading.Event()
+original_load = server.ModelProvider.load
+
+
+def load(self, *args, **kwargs):
+    loaded = original_load(self, *args, **kwargs)
+    model_loaded.set()
+    return loaded
+
+
+server.ModelProvider.load = load
 
 def owned(value):
     """`value` with every array replaced by one that owns exactly its own bytes."""
@@ -793,9 +817,10 @@ def validate_model_parameters(self):
     if self.path in ("/v1/chat/completions", "/chat/completions"):
         # rank_thinking.py: the single engine's thinking resolution. Set on rank 0 before the
         # request is shared, so every rank renders the same prompt.
-        tokenizer = self.response_generator.model_provider.tokenizer
-        if tokenizer is None:
-            raise Refused(503, "the distributed engine has not loaded its tokenizer yet")
+        provider = self.response_generator.model_provider
+        if provider.tokenizer is None:
+            model_loaded.wait()
+        tokenizer = provider.tokenizer
         try:
             self.chat_template_kwargs = resolved_template_kwargs(
                 self.body, template_reasons(tokenizer.chat_template)

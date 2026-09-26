@@ -10,7 +10,11 @@
 # /v1/status, /goose/progress, /goose/admission and /v1/chat/completions; SIGTERM on rank 0
 # broadcasts a shutdown every rank obeys. So this program only parses goose's argv with the fork's
 # OWN parser (the exact `pipeline_qwen4 serve` arguments, the split preflight approved included)
-# and hands the server goose's `emit`. It must NOT call mx.distributed.init: serve() does. Rank 0's
+# and hands the server goose's `emit`. serve() forms the group (`mx.distributed.init(strict=True)`,
+# then GOOSE_RANK_GROUP); a launch whose spec carries `formation` initialises it first, on the
+# spec's backend, and runs the formation handshake (rank_formation.py, Q-136) before the fork's first
+# collective — MLX caches an initialised group under its backend and "any", so serve()'s init
+# returns that same group. Rank 0's
 # /v1/chat/completions is goose's too, only to resolve the thinking switch the way the single
 # engine does (rank_thinking.py, Q-135) before the fork's own handler reads the request.
 import argparse  # noqa: E402
@@ -171,6 +175,8 @@ parser = argparse.ArgumentParser(prog="python -m rapid_mlx.distributed.pipeline_
 pipeline_qwen4_serve.add_arguments(parser)
 options = parser.parse_args(spec["serve_args"])
 threading.Thread(target=report_memory, daemon=True).start()
+if spec.get("formation") is not None:
+    form_group(mx.distributed.init(strict=True, backend=spec["backend"]), spec["formation"])
 try:
     code = pipeline_qwen4_serve.serve(options, emit=emit)
 except BaseException:

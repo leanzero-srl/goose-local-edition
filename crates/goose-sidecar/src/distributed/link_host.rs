@@ -880,7 +880,7 @@ mod tests {
         let mut config = crate::distributed::config::tests::two_mac_config();
         config.nodes[1] = node.clone();
         config.nodes[0].pipeline_python = Some("/unused/rank0/python".to_string());
-        let spec = launch::pipeline_rank_specs(
+        let mut spec = launch::pipeline_rank_specs(
             &config,
             &crate::model_identity::ServedNames::only("served-id"),
             8_192,
@@ -890,6 +890,8 @@ mod tests {
             0.05,
         )
         .remove(1);
+        // The stand-in serve() has no peer to form a group with.
+        spec.formation = None;
         RankStartRequest {
             run_id: "run-1".to_string(),
             requester: Requester {
