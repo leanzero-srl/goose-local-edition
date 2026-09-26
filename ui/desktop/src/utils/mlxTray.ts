@@ -56,7 +56,8 @@ export type MlxTrayAction =
   | 'stop-waiting';
 
 export type MlxTrayItem =
-  | { type: 'info'; label: string; phase?: EnginePhase }
+  /** `sessionId`: the line is a chat of this app, and clicking it opens that exact session. */
+  | { type: 'info'; label: string; phase?: EnginePhase; sessionId?: string }
   | { type: 'action'; label: string; action: MlxTrayAction; enabled: boolean }
   | { type: 'separator' };
 
@@ -433,6 +434,7 @@ function servingItems(serving: MlxServing | null): MlxTrayItem[] {
   const items: MlxTrayItem[] = serving.clients.map((c) => ({
     type: 'info' as const,
     label: clientLabel(c),
+    ...(c.kind === 'chat' ? { sessionId: c.sessionId } : {}),
   }));
   if (serving.unattributed > 0) {
     items.push({

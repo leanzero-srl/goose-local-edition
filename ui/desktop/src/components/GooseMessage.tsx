@@ -31,6 +31,7 @@ import { splitLinkDrop } from './linkDropNotice/parseLinkDrop';
 import { takeSplitRecord } from './chatServedBy/splitRecord';
 import { splitNetworkCut } from './noNodeNotice/parseNetworkCut';
 import SplitCutNotice from './noNodeNotice/SplitCutNotice';
+import { useElicitationIsPinned } from './sessionActivity/sessionActivityStore';
 
 interface GooseMessageProps {
   sessionId: string;
@@ -118,6 +119,7 @@ export default function GooseMessage({
           isCancelled?: boolean;
         })
       : undefined;
+  const elicitationPinned = useElicitationIsPinned(elicitationData?.id);
 
   const toolConfirmationShownInline = useMemo(() => {
     if (!toolConfirmationContent) return false;
@@ -350,7 +352,7 @@ export default function GooseMessage({
           />
         )}
 
-        {hasElicitation && submitElicitationResponse && (
+        {hasElicitation && submitElicitationResponse && !elicitationPinned && (
           <ElicitationRequest
             isCancelledMessage={elicitationData?.isCancelled === true}
             isClicked={elicitationData?.isSubmitted === true}

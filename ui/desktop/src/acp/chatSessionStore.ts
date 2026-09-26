@@ -13,6 +13,7 @@ import {
 import type { ElicitationStatus } from './adapter/elicitations';
 import { cloneMessage } from './adapter/shared';
 import type { AcpElicitationRequest } from './elicitationRequests';
+import { AppEvents } from '../constants/events';
 
 export interface AcpChatSessionSnapshot {
   session: Session | undefined;
@@ -621,6 +622,9 @@ function applyChatStateChanges(entry: StoreEntry, changes: AcpChatStateChange[])
           entry.session = { ...entry.session, name: change.name };
         }
         if (change.activeRunId !== undefined) {
+          if (change.activeRunId !== entry.activeRunId && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(AppEvents.SESSION_ACTIVITY_CHANGED));
+          }
           entry.activeRunId = change.activeRunId;
         }
         break;

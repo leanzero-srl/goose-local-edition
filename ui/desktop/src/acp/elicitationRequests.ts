@@ -28,6 +28,34 @@ interface PendingElicitationRequest {
 const pendingRequests = new Map<string, PendingElicitationRequest>();
 export const ACP_ELICITATION_TIMEOUT_SECONDS = 300;
 
+type PendingElicitationsListener = () => void;
+const pendingListeners = new Set<PendingElicitationsListener>();
+
+/** The live MCP elicitations still waiting for the person, oldest first. Live only: each dies with
+ *  the tool call that asked, so a history replay never resurrects one. */
+export function pendingAcpElicitations(sessionId?: string): AcpElicitationRequest[] {
+  const out: AcpElicitationRequest[] = [];
+  for (const pending of pendingRequests.values()) {
+    if (!sessionId || pending.request.sessionId === sessionId) {
+      out.push(pending.request);
+    }
+  }
+  return out;
+}
+
+export function subscribePendingAcpElicitations(listener: PendingElicitationsListener): () => void {
+  pendingListeners.add(listener);
+  return () => {
+    pendingListeners.delete(listener);
+  };
+}
+
+function notifyPendingChanged(): void {
+  for (const listener of pendingListeners) {
+    listener();
+  }
+}
+
 export async function requestAcpElicitation(
   request: CreateElicitationRequest
 ): Promise<CreateElicitationResponse> {
@@ -50,6 +78,7 @@ export async function requestAcpElicitation(
       }
 
       pendingRequests.delete(key);
+      notifyPendingChanged();
       acpChatSessionActions.setElicitationStatus(
         elicitationRequest.sessionId,
         elicitationRequest.id,
@@ -63,6 +92,7 @@ export async function requestAcpElicitation(
     }, ACP_ELICITATION_TIMEOUT_SECONDS * 1000);
 
     pendingRequests.set(key, { request: elicitationRequest, resolve, timeoutId });
+    notifyPendingChanged();
     acpChatSessionActions.applyElicitationRequest(elicitationRequest);
   });
 }
@@ -80,6 +110,7 @@ export function resolveAcpElicitationRequest(
 
   pendingRequests.delete(key);
   clearTimeout(pending.timeoutId);
+  notifyPendingChanged();
   acpChatSessionActions.setElicitationStatus(sessionId, elicitationId, 'submitted');
   acpChatSessionActions.resolveUserInputRequest(
     sessionId,
@@ -90,13 +121,18 @@ export function resolveAcpElicitationRequest(
 }
 
 export function cancelAcpElicitationRequestsForSession(sessionId: string): void {
+  let changed = false;
   for (const [key, pending] of pendingRequests) {
     if (pending.request.sessionId === sessionId) {
       pendingRequests.delete(key);
       clearTimeout(pending.timeoutId);
+      changed = true;
       acpChatSessionActions.setElicitationStatus(sessionId, pending.request.id, 'cancelled');
       pending.resolve(cancelledElicitationResponse());
     }
+  }
+  if (changed) {
+    notifyPendingChanged();
   }
 }
 

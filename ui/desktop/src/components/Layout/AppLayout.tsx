@@ -14,6 +14,7 @@ import { NAV_DIMENSIONS, Z_INDEX } from './constants';
 import { cn } from '../../utils';
 import { RADIUS, SURFACE, cx } from '../lz/tokens';
 import { UserInput } from '../../types/message';
+import SessionActivityIndicator from '../sessionActivity/SessionActivityIndicator';
 
 const i18n = defineMessages({
   openNavigation: {
@@ -109,6 +110,8 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
         >
           {isNavExpanded ? <PanelLeft className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </Button>
+        {/* On every view: what is running and what waits on the person, each a jump to it. */}
+        <SessionActivityIndicator />
       </div>
 
       {/* Main content with navigation. Shared canvas; the sidebar is the Studio card frame —

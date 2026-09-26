@@ -23,6 +23,7 @@ import { trackScheduleRunNow, getErrorType } from '../../utils/analytics';
 import { errorMessage } from '../../utils/conversionUtils';
 import { defineMessages, useIntl } from '../../i18n';
 import { useNavigation } from '../../hooks/useNavigation';
+import { SessionActivityMarker } from '../sessionActivity/ActivityPills';
 
 const i18n = defineMessages({
   scheduleNotFound: { id: 'scheduleDetailView.scheduleNotFound', defaultMessage: 'Schedule Not Found' },
@@ -481,6 +482,7 @@ const ScheduleDetailView: React.FC<ScheduleDetailViewProps> = ({ scheduleId, onN
                       >
                         {sessionName || intl.formatMessage(i18n.sessionId, { id: sessionId })}
                       </h3>
+                      <SessionActivityMarker sessionId={sessionId} className="mt-1" />
                       <p className="text-xs text-text-secondary mt-1">
                         {intl.formatMessage(i18n.created, { date: createdAt ? formatToLocalDateWithTimezone(createdAt) : 'N/A' })}
                       </p>

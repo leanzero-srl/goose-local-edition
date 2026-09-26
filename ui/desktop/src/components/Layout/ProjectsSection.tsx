@@ -37,8 +37,8 @@ import type { ProjectEntry } from '../../utils/projectDirs';
 import {
   Button,
   SectionHeader,
-  StatusDot,
   Toolbar,
+  PHASE_FILL,
   RADIUS,
   ROW,
   SURFACE,
@@ -62,6 +62,12 @@ import {
 } from './tree';
 import { defineMessages, useIntl } from '../../i18n';
 import { RenameDialog } from './RenameDialog';
+import { SessionActivityMarker, useSessionStateAttrs } from '../sessionActivity/ActivityPills';
+import {
+  activityOf,
+  disambiguatedNames,
+  useSessionActivity,
+} from '../sessionActivity/sessionActivityStore';
 import { useStartChatAbout } from './useStartChatAbout';
 
 const i18n = defineMessages({
@@ -72,6 +78,10 @@ const i18n = defineMessages({
   addProject: {
     id: 'projectsSection.addProject',
     defaultMessage: 'Add a project folder',
+  },
+  activeInFolder: {
+    id: 'projectsSection.activeInFolder',
+    defaultMessage: '{count, plural, one {# session active now} other {# sessions active now}}',
   },
   emptyState: {
     id: 'projectsSection.emptyState',
@@ -149,10 +159,6 @@ const i18n = defineMessages({
   untitledSession: {
     id: 'projectsSection.untitledSession',
     defaultMessage: 'Untitled session',
-  },
-  currentSession: {
-    id: 'projectsSection.currentSession',
-    defaultMessage: 'Current session',
   },
   openSession: { id: 'projectsSection.openSession', defaultMessage: 'Open' },
   renameSession: { id: 'projectsSection.renameSession', defaultMessage: 'Rename' },
@@ -341,13 +347,15 @@ export interface ProjectSessionsState {
 
 const SessionLeafRow: React.FC<{
   session: SessionListItem;
+  /** The row's name, disambiguated against its same-title siblings (" · 2"). */
+  label?: string;
   active: boolean;
   onClick: () => void;
   onRenamed: (name: string) => void;
   onDeleted: () => void;
   onForked: (newSessionId: string) => void;
   onAsk: () => void;
-}> = ({ session, active, onClick, onRenamed, onDeleted, onForked, onAsk }) => {
+}> = ({ session, label, active, onClick, onRenamed, onDeleted, onForked, onAsk }) => {
   const intl = useIntl();
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -355,6 +363,8 @@ const SessionLeafRow: React.FC<{
   const [busy, setBusy] = useState(false);
   const when = timeAgo(sessionActivityAt(session));
   const name = displaySessionListName(session.name);
+  const shownName = label ?? name;
+  const stateAttrs = useSessionStateAttrs(session.id);
 
   const rename = async (value: string) => {
     setBusy(true);
@@ -407,14 +417,19 @@ const SessionLeafRow: React.FC<{
     >
       <button
         onClick={onClick}
-        title={name}
+        title={shownName}
         aria-current={active ? 'true' : undefined}
         data-testid={`session-row-${session.id}`}
+        {...stateAttrs}
         className={cx(treeRowClass, active ? SURFACE.selectedRing : SURFACE.hover)}
       >
-        <span className="flex-1 truncate text-lz-body text-lz-ink">{name}</span>
-        {active && <StatusDot tone="accent" label={intl.formatMessage(i18n.currentSession)} />}
-        {when ? <span className={cx('shrink-0', TYPE.meta, TNUM)}>{when}</span> : null}
+        {/* The open row is marked by its ring alone: a dot here read as "running" (critic round
+            2026-09-26 row 5). What IS running carries the solid green pill beside the name. */}
+        <span className="flex-1 truncate text-lz-body text-lz-ink">{shownName}</span>
+        <SessionActivityMarker
+          sessionId={session.id}
+          idle={when ? <span className={cx('shrink-0', TYPE.meta, TNUM)}>{when}</span> : null}
+        />
       </button>
       {menu && (
         <TreeContextMenu
@@ -564,7 +579,28 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
     return [...project.sessions, ...paged];
   }, [project.sessions, state?.sessions]);
   const filtering = matches != null;
-  const shown = filtering ? matches : showAll ? known : known.slice(0, PREVIEW_COUNT);
+  // A running or waiting session is pinned first and never folded behind "Show more".
+  const activity = useSessionActivity();
+  const ordered = useMemo(() => {
+    const isActive = (s: SessionListItem) => {
+      const a = activityOf(activity, s.id);
+      return a.needsYou > 0 || a.runningSince !== undefined;
+    };
+    return [...known.filter(isActive), ...known.filter((s) => !isActive(s))];
+  }, [known, activity]);
+  const activeCount = ordered.filter((s) => {
+    const a = activityOf(activity, s.id);
+    return a.needsYou > 0 || a.runningSince !== undefined;
+  }).length;
+  const shown = filtering
+    ? matches
+    : showAll
+      ? ordered
+      : ordered.slice(0, Math.max(PREVIEW_COUNT, activeCount));
+  const labels = useMemo(
+    () => disambiguatedNames(known, (s) => displaySessionListName(s.name)),
+    [known]
+  );
   const hiddenKnown = known.length - shown.length;
   // The server may hold sessions older than the recent list; it is asked only once the folder is
   // at least a full preview (a two-session folder is not hiding anything).
@@ -597,7 +633,22 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
             <Folder className="size-4 shrink-0 text-lz-ink-2" />
           )}
           <span className={cx('truncate text-lz-body text-lz-ink', WEIGHT.medium)}>{name}</span>
-          {!expanded && known.length > 0 && (
+          {!expanded && activeCount > 0 && (
+            <span
+              data-testid="project-active-count"
+              className={cx(
+                'ml-auto inline-flex h-5 shrink-0 items-center px-1.5 text-lz-meta',
+                WEIGHT.semibold,
+                TNUM,
+                RADIUS.pill,
+                PHASE_FILL.writing
+              )}
+              title={intl.formatMessage(i18n.activeInFolder, { count: activeCount })}
+            >
+              {activeCount}
+            </span>
+          )}
+          {!expanded && activeCount === 0 && known.length > 0 && (
             <span className={cx('ml-auto', TYPE.meta, TNUM)}>{known.length}</span>
           )}
         </button>
@@ -688,6 +739,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
             <SessionLeafRow
               key={session.id}
               session={session}
+              label={labels.get(session.id)}
               active={session.id === activeSessionId}
               onClick={() => onOpenSession(session.id)}
               onRenamed={() => undefined}
@@ -819,14 +871,19 @@ export const ProjectsSection: React.FC<{ className?: string }> = ({ className })
       return next;
     });
   }, []);
+  const activity = useSessionActivity();
   const isExpanded = useCallback(
     (project: DerivedProject, index: number) => {
       const defaultOpen =
         index < DEFAULT_OPEN_FOLDERS ||
-        (activeSessionId != null && project.sessions.some((s) => s.id === activeSessionId));
+        (activeSessionId != null && project.sessions.some((s) => s.id === activeSessionId)) ||
+        project.sessions.some((s) => {
+          const a = activityOf(activity, s.id);
+          return a.needsYou > 0 || a.runningSince !== undefined;
+        });
       return toggled.has(project.path) ? !defaultOpen : defaultOpen;
     },
-    [toggled, activeSessionId]
+    [toggled, activeSessionId, activity]
   );
 
   // "Show more" first reveals what the recent list already knows, then pages the server (the

@@ -32,6 +32,14 @@ import {
   cx,
 } from './lz';
 import { LEANZERO_MARK_VIEWBOX, LeanZeroMarkContent } from './icons/leanzeroMark';
+import { SessionActivityMarker } from './sessionActivity/ActivityPills';
+import {
+  activityOf,
+  disambiguatedNames,
+  isActive,
+  sessionStates,
+  useSessionActivity,
+} from './sessionActivity/sessionActivityStore';
 
 const i18n = defineMessages({
   headline: {
@@ -198,6 +206,11 @@ function ContinuePage({
   const { extensionsList } = useConfig();
   const latest = projects[0];
   const projectOf = (s: SessionListItem) => folderName(s.workingDir ?? '') || s.workingDir || '';
+  // Running and waiting sessions lead the recents; same-title rows get " · 2".
+  const activity = useSessionActivity();
+  const leads = (s: SessionListItem) => isActive(activityOf(activity, s.id));
+  const ordered = [...sessions.filter(leads), ...sessions.filter((s) => !leads(s))];
+  const labels = disambiguatedNames(sessions, (s) => displaySessionListName(s.name));
 
   const newSession = async () => {
     if (!latest) return;
@@ -279,25 +292,32 @@ function ContinuePage({
             </p>
           ) : (
             <ul data-testid="landing-recent-sessions">
-              {sessions.map((s) => (
+              {ordered.map((s) => (
                 <li key={s.id}>
                   <button
                     type="button"
                     data-testid={`landing-session-${s.id}`}
+                    data-state={sessionStates(activityOf(activity, s.id)).join(' ')}
+                    aria-busy={activityOf(activity, s.id).runningSince ? true : undefined}
                     className={rowButtonClass}
                     onClick={() => navigate(`/pair?resumeSessionId=${encodeURIComponent(s.id)}`)}
                     title={s.workingDir}
                   >
                     <MessageSquare aria-hidden className="size-4 shrink-0 text-lz-ink-3" />
                     <span className={cx(TYPE.body, 'min-w-0 flex-1 truncate')}>
-                      {displaySessionListName(s.name)}
+                      {labels.get(s.id) ?? displaySessionListName(s.name)}
                     </span>
                     <span className={cx(TYPE.meta, 'max-w-[40%] shrink-0 truncate')}>
                       {projectOf(s)}
                     </span>
-                    <span className={cx(TYPE.meta, TNUM, 'w-16 shrink-0 text-right')}>
-                      {timeAgo(sessionActivityAt(s))}
-                    </span>
+                    <SessionActivityMarker
+                      sessionId={s.id}
+                      idle={
+                        <span className={cx(TYPE.meta, TNUM, 'w-16 shrink-0 text-right')}>
+                          {timeAgo(sessionActivityAt(s))}
+                        </span>
+                      }
+                    />
                   </button>
                 </li>
               ))}
