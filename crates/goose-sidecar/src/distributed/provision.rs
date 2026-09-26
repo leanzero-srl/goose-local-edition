@@ -52,12 +52,28 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// `/v1/models` also declares `rapid_mlx_transient_tail_on_tool` and the omlx provider keeps the
 /// turn-context block joined to the tool results (Q-94) instead of posting it as a user turn of its
 /// own; a non-string tail is a 400. Prefix reuse was already right in the own-turn shape (E2E #3c's
-/// requests on Flash's template: 93.8-98.7% either way); the shape is what changes.
+/// requests on Flash's template: 93.8-98.7% either way); the shape is what changes. And the
+/// single engine's fixes this line had missed since it branched at lz.2 (b1bc3b8d9, branch
+/// lz/pipeline-single-line-port, tag lz-pipeline-qwen4.7, Q-144): lz.7's XML tool-call skeleton
+/// guard (Q-85) on the last rank — the one that samples — for rows whose plan says tools, derived
+/// from the checkpoint's own tokenizer (Flash's arms 12 rules); lz.8's rule that a prefix snapshot
+/// owns exactly the bytes it is charged for (Q-110), adapted to the pipeline's own store (its QSA
+/// index raw ring was a view: 1.346x charged → 1.025x, CPU); and a fork test that fails on any
+/// single-line commit the pipeline neither carries nor reviews
+/// (tests/pipeline_single_line_ports.json, reviewed through
+/// [`PIPELINE_SINGLE_LINE_REVIEWED_THROUGH`]).
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "09f645526621f3b1aca5f09c431e31f490d82d24";
+pub const PIPELINE_FORK_COMMIT: &str = "b1bc3b8d90a6bc2c22dc9c016c28a26d98e691e0";
+/// The newest single-engine tag (`v*-lz.*`) whose fixes the pipeline fork at
+/// [`PIPELINE_FORK_COMMIT`] carries or has reviewed as not applying — the fork's
+/// `tests/pipeline_single_line_ports.json` `reviewed_through`. The pipeline line branched from the
+/// single one at lz.2 and missed lz.6..lz.8 silently (Q-143, Q-144); a test pins this equal to
+/// [`crate::engine::ENGINE_LAUNCHER`]'s tag, so bumping the single engine without reviewing the
+/// pipeline fails `cargo test -p goose-sidecar`.
+pub const PIPELINE_SINGLE_LINE_REVIEWED_THROUGH: &str = "v0.14.3-lz.9";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@09f645526621f3b1aca5f09c431e31f490d82d24";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@b1bc3b8d90a6bc2c22dc9c016c28a26d98e691e0";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.
@@ -410,6 +426,24 @@ mod tests {
         ] {
             assert_eq!(EnvSpec::goose_managed(own), None, "{own}");
         }
+    }
+
+    /// Q-144: the pipeline line branched from the single engine at lz.2 and silently missed
+    /// lz.6, lz.7 and lz.8. The fork's audit test fails on a single-line commit it has not
+    /// reviewed; this fails on a single-engine pin the pipeline pin was never reviewed against.
+    #[test]
+    fn the_pipeline_pin_was_reviewed_against_the_single_engine_pin() {
+        let pinned = crate::engine::ENGINE_LAUNCHER[2]
+            .rsplit_once('@')
+            .map(|(_, tag)| tag)
+            .expect("the single engine is pinned by tag");
+        assert_eq!(
+            pinned, PIPELINE_SINGLE_LINE_REVIEWED_THROUGH,
+            "the single engine now runs {pinned}, but the pipeline fork at {PIPELINE_FORK_COMMIT} \
+             was reviewed only through {PIPELINE_SINGLE_LINE_REVIEWED_THROUGH}: port or review \
+             the new single-line commits on the pipeline line (Rapid-MLX \
+             tests/pipeline_single_line_ports.json), then move both pins"
+        );
     }
 
     #[test]

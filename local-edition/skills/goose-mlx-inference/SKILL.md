@@ -462,3 +462,20 @@ The Thunderbolt copy UI renders NOTHING unless Link is signed in and a peer is o
   `tests/test_pipeline_qwen4_serve_transient_tail.py` is the template. TRAP: a digit word-level test vocab ("w10") is split by
   transformers 5's fast wrapper into "w1"+"0" — use letters-only words. Pipeline fork tags so far: .1 prefix cache,
   .2 cache budget, .3 aliases, .4 refused_tool_calls, .5 continuous admission, .6 tail on tool.
+- 2026-09-26 Q-144 (fork b1bc3b8d9, tag lz-pipeline-qwen4.7, branch lz/pipeline-single-line-port): THE AUDIT OF
+  lz.3..lz.9 AGAINST THE PIPELINE. lz.3 KV-quant n/a (no --kv-cache-dtype on the pipeline), lz.4 MTP logprobs n/a (no
+  MTP/logprobs; only ints cross threads), lz.5 unset max_tokens equivalent since 5675768ea, lz.6 ported (Q-143), lz.7
+  XML skeleton guard PORTED — it runs on the LAST rank (the one that samples; `_sample`), armed per row by a `tools`
+  word in the plan header (`_PLAN_TAIL` 8), rules from the checkpoint's own tokenizer (Flash arms 12; log line
+  `[pipeline] rank N: xml tool-call skeleton guard armed (12 rules)`), lz.8 PORTED ADAPTED — the pipeline's own
+  `_PrefixStore.put` held the QSAIndexCache raw ring as a VIEW of the chunk's raw keys (entry 1.346x charged at
+  512-token chunks → 1.025x with `_own_bytes`), lz.9 equivalent a863c60c5. THE GUARD THAT REFUSES A REPEAT: the fork's
+  `tests/test_pipeline_single_line_ports_audit.py` fails on any `git rev-list <newest v*-lz.*> ^HEAD ^v0.14.3` commit
+  missing from `tests/pipeline_single_line_ports.json` (review = ported/equivalent naming pipeline commits in HEAD, or
+  n/a with a reason); goose's `the_pipeline_pin_was_reviewed_against_the_single_engine_pin` fails when ENGINE_LAUNCHER's
+  tag != `PIPELINE_SINGLE_LINE_REVIEWED_THROUGH` (provision.rs). A single-engine pin bump therefore = review the new
+  single-line commits on the pipeline line, bump `reviewed_through` in the fork manifest AND the goose constant.
+  Offline method: in-process singleton group + a real tiny `PipelineStage` (float32 — CPU gather_mm takes nothing else)
+  with a scripted logit bias (`tests/test_pipeline_qwen4_single_line_ports.py`); bytes held = `mx.get_active_memory()`
+  deltas after gc + clear_cache, per cache member. TRAP: a scratch script named `attrs.py` or `bisect.py` on sys.path
+  shadows the stdlib/attrs package and breaks pytest/fastapi imports — name scratch files `m_*.py`.
