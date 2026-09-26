@@ -1675,10 +1675,7 @@ impl SessionStorage {
 
         let keywords = keyword_terms(filters.keyword);
         let mut where_clauses = Vec::new();
-        let mut having_clauses = Vec::new();
-        let normalized_message_timestamp = normalized_message_timestamp_sql("m.created_timestamp");
-        let sort_timestamp_sql =
-            format!("COALESCE(MAX({normalized_message_timestamp}), unixepoch(s.updated_at))");
+        let mut page_clauses = Vec::new();
         if let Some(types) = filters.types {
             let placeholders = types.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
             where_clauses.push(format!("s.session_type IN ({})", placeholders));
@@ -1689,10 +1686,11 @@ impl SessionStorage {
         if !keywords.is_empty() {
             where_clauses.push(message_keyword_clause(keywords.len()));
         }
+        if filters.only_sessions_with_messages {
+            page_clauses.push("message_count > 0");
+        }
         if query.cursor.is_some() {
-            having_clauses.push(format!(
-                "({sort_timestamp_sql} < ? OR ({sort_timestamp_sql} = ? AND s.id < ?))"
-            ));
+            page_clauses.push("(sort_timestamp < ? OR (sort_timestamp = ? AND id < ?))");
         }
 
         let where_clause = if where_clauses.is_empty() {
@@ -1700,74 +1698,110 @@ impl SessionStorage {
         } else {
             format!("WHERE {}", where_clauses.join(" AND "))
         };
-        let having_clause = if having_clauses.is_empty() {
+        let page_clause = if page_clauses.is_empty() {
             String::new()
         } else {
-            format!("HAVING {}", having_clauses.join(" AND "))
+            format!("WHERE {}", page_clauses.join(" AND "))
         };
-        let message_join = if filters.only_sessions_with_messages {
-            "JOIN messages m ON s.id = m.session_id"
-        } else {
-            "LEFT JOIN messages m ON s.id = m.session_id"
-        };
-        let order_by = "ORDER BY sort_timestamp DESC, s.id DESC";
         let limit_clause = if query.limit.is_some() { "LIMIT ?" } else { "" };
+        let normalized_message_timestamp = normalized_message_timestamp_sql("m.created_timestamp");
 
-        let sql = format!(
+        // Q-115: the per-session aggregates are correlated lookups on idx_messages_session and
+        // the sort carries only (id, counts, timestamps); the wide columns are fetched after,
+        // by id. The previous `sessions LEFT JOIN messages GROUP BY s.id` grouped one row per
+        // MESSAGE, each carrying the session's wide columns, through a SQLite temp B-tree:
+        // 106 MB of temp-file writes per call on the owner's 1.9 GB store. The LeanZero Link
+        // pollers and the session list call it continuously — macOS measured 137 GB in 21 min.
+        let page_sql = format!(
             r#"
-            SELECT s.id, s.working_dir, s.name, s.description, s.user_set_name, s.session_type, s.created_at, s.updated_at, s.extension_data,
-                   s.total_tokens, s.input_tokens, s.output_tokens,
-                   s.cache_read_tokens, s.cache_write_tokens,
-                   s.accumulated_total_tokens, s.accumulated_input_tokens, s.accumulated_output_tokens,
-                   s.accumulated_cache_read_tokens, s.accumulated_cache_write_tokens,
-                   s.accumulated_cost,
-                   s.schedule_id, s.recipe_json, s.user_recipe_values_json,
-                   s.provider_name, s.model_config_json, s.goose_mode,
-                   s.archived_at, s.project_id,
-                   COUNT(m.id) as message_count,
-                   MAX({}) as last_message_timestamp,
-                   {} as sort_timestamp
-            FROM sessions s
-            {}
-            {}
-            GROUP BY s.id
-            {}
-            {}
-            {}
-            "#,
-            normalized_message_timestamp,
-            sort_timestamp_sql,
-            message_join,
-            where_clause,
-            having_clause,
-            order_by,
-            limit_clause
+            WITH ranked AS (
+                SELECT s.id AS id,
+                       (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) AS message_count,
+                       (SELECT MAX({normalized_message_timestamp}) FROM messages m WHERE m.session_id = s.id) AS last_message_timestamp,
+                       s.updated_at AS updated_at
+                FROM sessions s
+                {where_clause}
+            )
+            SELECT id, message_count, last_message_timestamp
+            FROM (
+                SELECT id, message_count, last_message_timestamp,
+                       COALESCE(last_message_timestamp, unixepoch(updated_at)) AS sort_timestamp
+                FROM ranked
+            )
+            {page_clause}
+            ORDER BY sort_timestamp DESC, id DESC
+            {limit_clause}
+            "#
         );
 
-        let mut q = sqlx::query_as::<_, Session>(&sql);
+        let mut page_query = sqlx::query_as::<_, (String, i64, Option<i64>)>(&page_sql);
         if let Some(types) = filters.types {
             for session_type in types {
-                q = q.bind(session_type.to_string());
+                page_query = page_query.bind(session_type.to_string());
             }
         }
         if let Some(working_dir) = filters.working_dir {
-            q = q.bind(working_dir.to_string_lossy().to_string());
+            page_query = page_query.bind(working_dir.to_string_lossy().to_string());
         }
         for term in keywords {
-            q = q.bind(term);
+            page_query = page_query.bind(term);
         }
         if let Some(cursor) = query.cursor {
             let sort_at = cursor.sort_at.timestamp();
-            q = q.bind(sort_at);
-            q = q.bind(sort_at);
-            q = q.bind(&cursor.session_id);
+            page_query = page_query.bind(sort_at);
+            page_query = page_query.bind(sort_at);
+            page_query = page_query.bind(&cursor.session_id);
         }
         if let Some(limit) = query.limit {
-            q = q.bind(limit as i64);
+            page_query = page_query.bind(limit as i64);
         }
 
         let pool = self.pool().await?;
-        q.fetch_all(pool).await.map_err(Into::into)
+        // One read transaction: both statements see the same WAL snapshot, so every id the
+        // page names is present when its row is fetched.
+        let mut tx = pool.begin().await?;
+        let page = page_query.fetch_all(&mut *tx).await?;
+        if page.is_empty() {
+            tx.commit().await?;
+            return Ok(Vec::new());
+        }
+
+        let ids = serde_json::to_string(&page.iter().map(|(id, _, _)| id).collect::<Vec<_>>())?;
+        let rows = sqlx::query_as::<_, Session>(
+            r#"
+            SELECT id, working_dir, name, description, user_set_name, session_type, created_at, updated_at, extension_data,
+                   total_tokens, input_tokens, output_tokens,
+                   cache_read_tokens, cache_write_tokens,
+                   accumulated_total_tokens, accumulated_input_tokens, accumulated_output_tokens,
+                   accumulated_cache_read_tokens, accumulated_cache_write_tokens,
+                   accumulated_cost,
+                   schedule_id, recipe_json, user_recipe_values_json,
+                   provider_name, model_config_json, goose_mode,
+                   archived_at, project_id
+            FROM sessions
+            WHERE id IN (SELECT value FROM json_each(?))
+            "#,
+        )
+        .bind(ids)
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+
+        let mut by_id: HashMap<String, Session> = rows
+            .into_iter()
+            .map(|session| (session.id.clone(), session))
+            .collect();
+        page.into_iter()
+            .map(|(id, message_count, last_message_timestamp)| {
+                let mut session = by_id.remove(&id).ok_or_else(|| {
+                    anyhow::anyhow!("session {id} listed by the page query has no sessions row")
+                })?;
+                session.message_count = message_count as usize;
+                session.last_message_at =
+                    last_message_timestamp.and_then(message_timestamp_to_datetime);
+                Ok(session)
+            })
+            .collect()
     }
 
     async fn list_sessions_by_types(&self, types: Option<&[SessionType]>) -> Result<Vec<Session>> {
