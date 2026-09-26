@@ -306,9 +306,14 @@ describe('ProjectLanding — the continue page once anything exists', () => {
 });
 
 describe('ProjectLanding — the recents carry each session state', () => {
+  // ONE instant for the pinned clock and every timestamp built from it: a second Date.now() taken a few
+  // milliseconds later made 27 minutes read "26m" on a busy CI runner.
+  let pinned = 0;
+  const pinnedAgo = (m: number) => new Date(pinned - m * 60_000).toISOString();
   beforeEach(() => {
     vi.clearAllMocks();
-    resetNowForTests(Date.now());
+    pinned = Date.now();
+    resetNowForTests(pinned);
   });
 
   it('a running session leads the recents with a live Running pill, a failed one says Failed, and same titles differ', async () => {
@@ -321,14 +326,14 @@ describe('ProjectLanding — the recents carry each session state', () => {
     ]);
     seedSessionActivityForTests({
       running: [
-        { sessionId: 'run', sessionName: 'Notes', workingDir: '/proj/a', startedAt: minutesAgo(27) },
+        { sessionId: 'run', sessionName: 'Notes', workingDir: '/proj/a', startedAt: pinnedAgo(27) },
       ],
       failed: [
         {
           sessionId: 'fail',
           sessionName: 'Cut short',
           workingDir: '/proj/a',
-          failedAt: minutesAgo(30),
+          failedAt: pinnedAgo(30),
         },
       ],
     });

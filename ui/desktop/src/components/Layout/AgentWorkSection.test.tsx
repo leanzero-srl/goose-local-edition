@@ -113,8 +113,10 @@ describe('AgentWorkSection', () => {
   });
 
   it('a ticking desk and its tick in flight carry the solid Running pill with the live elapsed', async () => {
-    resetNowForTests(Date.now());
-    const startedAt = new Date(Date.now() - 27 * 60_000).toISOString();
+    // One instant for the pinned clock and the start time (a second Date.now() read "26m" on a busy runner).
+    const pinned = Date.now();
+    resetNowForTests(pinned);
+    const startedAt = new Date(pinned - 27 * 60_000).toISOString();
     const ticking = {
       ...DESK,
       state: {
