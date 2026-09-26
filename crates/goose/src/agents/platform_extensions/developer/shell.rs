@@ -1122,6 +1122,18 @@ mod tests {
             &fake_shell,
             "#!/bin/sh\nif [ \"$1\" = -l ]; then printf '%s\\n' \"$PROFILE_BIN:$PATH\"; exit 0; fi\nexec /bin/sh \"$@\"\n",
         );
+        // macOS holds the FIRST exec of a freshly written script for an exec-time assessment, and
+        // the holds serialize machine-wide; the fake login shell's first exec races the probe's
+        // read window exactly as the hooks PATH test's did under parallel builds (Q-140). Exec
+        // each fake once before anything is timed.
+        for exe in [&fake_shell, &shims.join("node"), &user_bin.join("node")] {
+            let warmed = std::process::Command::new(exe)
+                .arg("-l")
+                .stdin(Stdio::null())
+                .output()
+                .unwrap();
+            assert!(warmed.status.success(), "warm exec of {}", exe.display());
+        }
 
         let shims_s = shims.to_string_lossy().into_owned();
         let inherited = format!("{shims_s}:/usr/bin:/bin");

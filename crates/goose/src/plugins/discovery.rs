@@ -50,14 +50,32 @@ enum SettingsScope {
 /// `project_root`, when supplied, enables project + local scope settings and
 /// project-scope `.agents/plugins/` lookups.
 pub fn discover_enabled_plugins(project_root: Option<&Path>) -> Vec<DiscoveredPlugin> {
-    discover_enabled_plugins_with_config(project_root, Config::global())
+    discover_enabled_plugins_with_config(project_root, &UserScope::resolve(), Config::global())
+}
+
+/// Where the user-scope settings file and installed plugins live. Resolved from goose's paths
+/// (which honour `GOOSE_PATH_ROOT`) in the product; tests hand in their own so that parallel tests
+/// never read a process env another test is changing (Q-140).
+struct UserScope {
+    settings: Option<PathBuf>,
+    install_dir: PathBuf,
+}
+
+impl UserScope {
+    fn resolve() -> Self {
+        Self {
+            settings: user_settings_path(),
+            install_dir: plugin_install_dir(),
+        }
+    }
 }
 
 fn discover_enabled_plugins_with_config(
     project_root: Option<&Path>,
+    user: &UserScope,
     config: &Config,
 ) -> Vec<DiscoveredPlugin> {
-    let scoped_settings = load_all_settings(project_root);
+    let scoped_settings = load_all_settings(project_root, user.settings.as_deref());
     let mut found: HashMap<String, DiscoveredPlugin> = HashMap::new();
 
     if let Some(root) = project_root {
@@ -69,7 +87,7 @@ fn discover_enabled_plugins_with_config(
             });
         }
     }
-    for (name, root) in list_dir_children(&plugin_install_dir()) {
+    for (name, root) in list_dir_children(&user.install_dir) {
         found.entry(name.clone()).or_insert(DiscoveredPlugin {
             name,
             root,
@@ -168,10 +186,13 @@ fn list_dir_children(dir: &Path) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
-fn load_all_settings(project_root: Option<&Path>) -> Vec<(SettingsScope, PluginSettings)> {
+fn load_all_settings(
+    project_root: Option<&Path>,
+    user_settings: Option<&Path>,
+) -> Vec<(SettingsScope, PluginSettings)> {
     let mut paths: Vec<(SettingsScope, PathBuf)> = Vec::new();
-    if let Some(path) = user_settings_path() {
-        paths.push((SettingsScope::User, path));
+    if let Some(path) = user_settings {
+        paths.push((SettingsScope::User, path.to_path_buf()));
     }
     if let Some(root) = project_root {
         paths.push((SettingsScope::Project, project_settings_path(root, false)));
@@ -249,9 +270,24 @@ mod tests {
         Config::new(dir.join("config.yaml"), "goose-discovery-test").unwrap()
     }
 
+    /// The user scope laid out under `home` the way `GOOSE_PATH_ROOT` lays it out, handed in rather
+    /// than read from the env: a parallel test that set the env once made its siblings read its
+    /// fake home, which disables "demo" (Q-140).
+    fn user_scope_at(home: &Path) -> UserScope {
+        UserScope {
+            settings: Some(home.join(".config").join("goose").join("settings.json")),
+            install_dir: home.join("plugins"),
+        }
+    }
+
+    fn discover_with_config(project: &Path, config: &Config) -> Vec<DiscoveredPlugin> {
+        let home = tempfile::tempdir().unwrap();
+        discover_enabled_plugins_with_config(Some(project), &user_scope_at(home.path()), config)
+    }
+
     fn discover(project: &Path) -> Vec<DiscoveredPlugin> {
         let cfg_dir = tempfile::tempdir().unwrap();
-        discover_enabled_plugins_with_config(Some(project), &test_config(cfg_dir.path()))
+        discover_with_config(project, &test_config(cfg_dir.path()))
     }
 
     #[test]
@@ -340,13 +376,12 @@ mod tests {
             r#"{"enabledPlugins":["demo"]}"#,
         );
 
-        let prev = std::env::var("GOOSE_PATH_ROOT").ok();
-        unsafe { std::env::set_var("GOOSE_PATH_ROOT", fake_home.path()) };
-        let found = discover(project);
-        match prev {
-            Some(v) => unsafe { std::env::set_var("GOOSE_PATH_ROOT", v) },
-            None => unsafe { std::env::remove_var("GOOSE_PATH_ROOT") },
-        }
+        let cfg_dir = tempfile::tempdir().unwrap();
+        let found = discover_enabled_plugins_with_config(
+            Some(project),
+            &user_scope_at(fake_home.path()),
+            &test_config(cfg_dir.path()),
+        );
 
         assert!(
             found.iter().any(|p| p.name == "demo"),
@@ -364,7 +399,7 @@ mod tests {
         let cfg_dir = tempfile::tempdir().unwrap();
         let config = test_config(cfg_dir.path());
 
-        let found = discover_enabled_plugins_with_config(Some(project), &config);
+        let found = discover_with_config(project, &config);
         assert!(found.iter().any(|p| p.name == "demo"));
 
         let entries: HashMap<String, PluginConfigEntry> =
@@ -398,7 +433,7 @@ mod tests {
         let entries = HashMap::from([(key, PluginConfigEntry { enabled: false })]);
         config.set_param(PLUGINS_CONFIG_KEY, entries).unwrap();
 
-        let found = discover_enabled_plugins_with_config(Some(project), &config);
+        let found = discover_with_config(project, &config);
         assert!(found.iter().all(|p| p.name != "demo"));
     }
 
@@ -423,7 +458,7 @@ mod tests {
             )
             .unwrap();
 
-        let found = discover_enabled_plugins_with_config(Some(project), &config);
+        let found = discover_with_config(project, &config);
         assert!(found.iter().any(|p| p.name == "demo"));
 
         let entries: HashMap<String, PluginConfigEntry> =
