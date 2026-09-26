@@ -1,13 +1,13 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-26 23:30 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
+Updated: 2026-09-26 23:15 (real clock) · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
 
 ## Live
 - Installed on both Macs: 3.0.52 (Q-107, Q-138, Q-130, Q-140, Q-141, Q-142). Split-start smoke: 27B tensor up in 17 s.
   (The relaunch restored the previous Flash split first; split-start now refuses a split serving another model.)
-- E2E #3d HALTED at turn 0 (r1 killed 22:45: the window had been moved to the Engine tab, so r1 was blind). Its
-  first agent call is STILL generating on the split (10k+ tokens, nothing streamed, Q-146); watcher b99ercb8g reads
-  the words when it ends. Ladder-0 all OK to 39k. Re-run #3d after Q-146's instrument + fix.
+- E2E #3d ENDED at turn 0 (recorded): the "silent" 40-min answer was 54 IDENTICAL ledger_append calls — Q-159: the
+  split samples GREEDY (no --temp; goose sends none; generation_config says temp 1.0/top_k 20/top_p 0.95). Every
+  split E2E so far was greedy → re-run #3d only on a build with Q-159 + Q-146's instrument (3.0.54).
 - The Engine-tab move was the owner looking at Providers (Q-147 screenshot). r1.mjs must re-open its own session when
   the view is not its chat, and share the app with the owner.
 - Building 3.0.53 from main 4e3d8c228: Q-139 (MCPs out of the cwd), Q-144+Q-145 (pipeline pin lz-pipeline-qwen4.8:
@@ -24,6 +24,7 @@ Updated: 2026-09-26 23:30 · heartbeat: session cron 90b0083a (:04/:14/…/:54, 
 - LIVE critic round 1 DONE: 14 rows → Q-148..Q-158 + Q-147 reach; Q-146 reframed (tool deltas reach goose; ~80% of
   tokens do not; one answer holds 41 tool calls). Test node mihai-flash-mlx removed from config (backup .bak-2026-09-26-2330).
 - Engine-surfaces agent: Q-148 (Run/tray Stop cut a live answer, no confirm), Q-149, Q-150, Q-154..Q-157.
+- Q-159 agents: split sampling defaults (sidecar + pipeline fork) · goose duplicate-tool-call guard + ledger dedupe.
 - Chat-surfaces agent: Q-151 (live progress line), Q-152, Q-153, Q-158.
 - Q-146 instrument: parser state + withheld chars + text tail in /v1/status, withholding-path table.
 - NEEDS-YOU + Q-147 RUNNING state (owner asks 22:3x / 22:5x) in ONE agent (same sidebar files): ask_user tool + persistent card above composer + sidebar marker + app-wide count;
