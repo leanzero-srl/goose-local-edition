@@ -446,7 +446,7 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
   it('distributed READY: slate at rest, the mode, the model, in flight, each rank’s peak of its budget', async () => {
     const { container } = tile({
       state: 'stopped',
-      modeLabel: 'Distributed · 2 nodes · JACCL',
+      modeLabel: 'Split across 2 Macs · JACCL',
       distributed: FLASH_READY,
     });
     const t = screen.getByTestId('mlx-state-badge');
@@ -454,7 +454,7 @@ describe('MlxStateTile — the mode is always said, and a distributed run IS the
     expect(t).toHaveAttribute('data-state', 'ready');
     expect(t.className).toContain('bg-lz-phase-idle');
     expect(within(t).getByRole('status')).toHaveTextContent('Ready');
-    expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Distributed · 2 nodes · JACCL');
+    expect(screen.getByTestId('mlx-mode')).toHaveTextContent('Split across 2 Macs · JACCL');
     expect(t).toHaveTextContent('rapid-mlx/Qwen3.8-Flash-Next-4bit');
     expect(screen.getByTestId('mlx-dist-tile-inflight')).toHaveTextContent('0');
     expect(screen.getByTestId('mlx-dist-tile-load')).toHaveTextContent('slots 0 of 2 · 0 waiting');
@@ -641,8 +641,7 @@ describe('MlxStateTile — this Mac serving a rank of another Mac over LeanZero 
   it('the tile names the rank, whose run and the model; Mount is not offered', async () => {
     const { container } = tile({
       state: 'stopped',
-      modeLabel:
-        "Rank 1 of MacBook Pro's distributed engine · Qwen3.8-27B-Atlassian-Q8-mlx · JACCL",
+      modeLabel: "Rank 1 of MacBook Pro's split · Qwen3.8-27B-Atlassian-Q8-mlx · JACCL",
       distributed: HOSTING_RANK_1,
       action: <button type="button">Mount</button>,
     });
@@ -651,7 +650,7 @@ describe('MlxStateTile — this Mac serving a rank of another Mac over LeanZero 
     expect(t).toHaveAttribute('data-state', 'stopped');
     const hosting = screen.getByTestId('mlx-hosting-tile');
     expect(hosting).toHaveTextContent('Rank 1 of 2');
-    expect(hosting).toHaveTextContent("for MacBook Pro's distributed engine over LeanZero Link");
+    expect(hosting).toHaveTextContent("for MacBook Pro's split over LeanZero Link");
     expect(hosting).toHaveTextContent('Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx');
     expect(hosting).toHaveTextContent('rank pid 4242');
     expect(within(t).getByRole('status')).toHaveTextContent('Serving');

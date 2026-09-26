@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "분산 엔진은 {served}을(를) 제공하지만 노드는 {wanted}을(를) 원합니다."
+    "defaultMessage": "분할이 {served}을(를) 제공합니다. 노드는 {wanted}을(를) 원합니다."
   },
   "composerReadiness.failed": {
     "defaultMessage": "마지막 마운트에 실패했습니다: {error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "클러스터 점검"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "저장된 분산 구성이 아직 없습니다."
+    "defaultMessage": "아직 설정된 분할이 없습니다."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "구성"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "{total} GB 중 {done} GB 로드됨"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "분산 엔진이 이 Mac을 사용하는 동안 구성이 잠깁니다. 노드나 모델을 바꾸려면 중지하세요."
+    "defaultMessage": "분할이 이 Mac을 사용하는 동안 구성이 잠깁니다. Mac이나 모델을 바꾸려면 중지하세요."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "메모리를 읽지 못함: {error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "랭크 {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "분산 엔진을 읽는 중…"
+    "defaultMessage": "분할을 읽는 중…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "{name} 제거"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "{nodes}의 모든 랭크를 중지하고 pid별로 종료를 확인합니다. 처리 중인 요청은 중단됩니다."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "분산 엔진을 중지할까요?"
+    "defaultMessage": "분할을 중지할까요?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "중지가 확인되지 않음"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "이 Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "분산 엔진"
+    "defaultMessage": "내 Mac에 분할"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "이 goose 백엔드는 분산 엔진을 제공하지 않습니다. mlxDistributed 기능이 없으므로 이를 추가한 빌드보다 오래된 버전입니다. 하나의 모델을 여러 Mac에 나누려면 goose를 업데이트하세요."
+    "defaultMessage": "이 goose 백엔드는 분할을 제공하지 않습니다. mlxDistributed 기능이 없으므로 이를 추가한 빌드보다 오래된 버전입니다. 하나의 모델을 여러 Mac에 나누려면 goose를 업데이트하세요."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "분산 추론을 사용할 수 없습니다"
+    "defaultMessage": "모델을 여러 Mac에 분할할 수 없습니다"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "단일 엔진 유지"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "마운트 해제 후 계속"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "이 Mac에 단일 MLX 엔진이 마운트되어 있습니다({detail}). 한 Mac은 한 번에 하나의 엔진만 사용할 수 있습니다. 마운트를 해제하면 그 모델이 중지되어 분산 엔진을 시작할 수 있습니다."
+    "defaultMessage": "이 Mac에 단일 MLX 엔진이 마운트되어 있습니다({detail}). 한 Mac은 한 번에 하나의 엔진만 사용할 수 있습니다. 마운트를 해제하면 그 모델이 중지되어 분할을 시작할 수 있습니다."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "단일 엔진을 마운트 해제할까요?"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "이 Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "분산 엔진 설정"
+    "defaultMessage": "분할 설정"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "연결할 수 없음"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "채팅은 여러 Mac에 나눈 엔진이 응답합니다. 그 수치는 위 타일에 있습니다. 이 행들은 이 Mac 자체 단일 엔진의 것입니다."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "분산"
+    "defaultMessage": "분할"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "분산 엔진이 이 Mac을 사용 중입니다. 아래의 분산 엔진 섹션에서 중지할 때까지 단일 엔진을 마운트할 수 없습니다."
+    "defaultMessage": "분할이 이 Mac을 사용 중입니다. 분할을 중지할 때까지 여기서 단독으로 실행되는 모델은 없습니다(아래 실행의 중지)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "엔진 세부 정보"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "놓침"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "컨텍스트와 함께 커지고 압축되는 것은 {attention}개의 풀 어텐션 레이어뿐입니다. {state}개의 선형 어텐션 레이어는 고정 크기 상태를 유지합니다. 다음 마운트부터 적용됩니다. 분산 실행은 bf16 캐시를 유지합니다."
+    "defaultMessage": "컨텍스트와 함께 커지고 압축되는 것은 {attention}개의 풀 어텐션 레이어뿐입니다. {state}개의 선형 어텐션 레이어는 고정 크기 상태를 유지합니다. 다음 마운트부터 적용됩니다. 분할은 bf16 캐시를 유지합니다."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV 캐시 압축을 사용할 수 없습니다: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {분산 · 노드 #개 · {backend}}}"
+    "defaultMessage": "{count, plural, other {Mac #대에 분할 · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {분산 · 노드 #개}}"
+    "defaultMessage": "{count, plural, other {Mac #대에 분할}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "{requester}의 분산 엔진 랭크 {rank} · {model} · {backend}"
+    "defaultMessage": "{requester} 분할의 랭크 {rank} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "{requester}의 분산 엔진 랭크 {rank} · {model}"
+    "defaultMessage": "{requester} 분할의 랭크 {rank} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer}에서 제공 중"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "엔진 {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "LeanZero Link를 통한 {requester}의 분산 엔진용"
+    "defaultMessage": "LeanZero Link를 통한 {requester}의 분할용"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "{requester}의 랭크 {rank} 로드 중"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "사고 제어를 사용할 수 없음: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "분산 엔진을 중지하지 못했습니다"
+    "defaultMessage": "분할을 중지할 수 없습니다"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "분산 엔진 중지가 확인되지 않았습니다: {steps}"
+    "defaultMessage": "분할 중지가 확인되지 않았습니다: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX 엔진을 마운트할 수 없습니다"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "분산 엔진은 {served}을(를) 제공하지만 이 노드는 {wanted}을(를) 원합니다."
+    "defaultMessage": "분할이 {served}을(를) 제공합니다. 이 노드는 {wanted}을(를) 원합니다."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model}이(가) 이 노드가 가리키는 서버에 로드되어 있지 않습니다."

@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Công cụ phân tán phục vụ {served}; nút cần {wanted}."
+    "defaultMessage": "Bản chia đang phục vụ {served}; node muốn {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Lần gắn gần nhất thất bại: {error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "Kiểm tra cụm"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Chưa lưu cấu hình phân tán nào."
+    "defaultMessage": "Chưa có bản chia nào được thiết lập."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Cấu hình"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "Đã tải {done} / {total} GB"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "Cấu hình bị khóa khi engine phân tán đang chiếm máy Mac này. Hãy dừng nó để đổi node hoặc mô hình."
+    "defaultMessage": "Cấu hình bị khóa khi bản chia đang chiếm máy Mac này. Hãy dừng nó để đổi các máy Mac hoặc mô hình."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Chưa đọc được bộ nhớ: {error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Đang đọc engine phân tán…"
+    "defaultMessage": "Đang đọc bản chia…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "Xóa {name}"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "Mọi rank trên {nodes} sẽ bị dừng và được xác minh đã kết thúc, từng pid một. Các yêu cầu đang xử lý sẽ bị cắt."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Dừng engine phân tán?"
+    "defaultMessage": "Dừng bản chia?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Chưa xác minh được việc dừng"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "máy Mac này"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Engine phân tán"
+    "defaultMessage": "Chia trên các máy Mac của bạn"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Backend goose này không cung cấp engine phân tán: thiếu khả năng mlxDistributed, nghĩa là nó cũ hơn bản dựng đã thêm tính năng này. Hãy cập nhật goose để chia một mô hình trên nhiều máy Mac."
+    "defaultMessage": "Backend goose này không cung cấp bản chia: thiếu khả năng mlxDistributed, nghĩa là nó cũ hơn bản dựng đã thêm tính năng này. Hãy cập nhật goose để chia một mô hình trên nhiều máy Mac."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "Suy luận phân tán không khả dụng"
+    "defaultMessage": "Không thể chia một mô hình trên nhiều máy Mac"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Giữ engine đơn"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "Gỡ và tiếp tục"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Engine MLX đơn đang được gắn trên máy Mac này ({detail}). Mỗi máy Mac chỉ thuộc một engine tại một thời điểm: gỡ nó sẽ dừng mô hình đó để engine phân tán có thể khởi động."
+    "defaultMessage": "Engine MLX đơn đang được gắn trên máy Mac này ({detail}). Mỗi máy Mac chỉ thuộc một engine tại một thời điểm: gỡ nó sẽ dừng mô hình đó để bản chia có thể khởi động."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Gỡ engine đơn?"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "máy Mac này"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Thiết lập engine phân tán"
+    "defaultMessage": "Thiết lập bản chia"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "không truy cập được"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "Cuộc trò chuyện do bản chia trên các máy Mac của bạn phục vụ — số liệu ở ô phía trên. Các dòng này là engine đơn của chính máy Mac này."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Phân tán"
+    "defaultMessage": "Bản chia"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Engine phân tán đang chiếm máy Mac này: engine đơn không thể gắn cho đến khi nó được dừng trong mục Engine phân tán bên dưới."
+    "defaultMessage": "Bản chia đang chiếm máy Mac này: không mô hình nào chạy riêng ở đây cho đến khi bản chia dừng (Dừng, trong Chạy bên dưới)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Chi tiết engine"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "BỎ SÓT"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "Chỉ {attention} lớp chú ý đầy đủ tăng theo ngữ cảnh và được nén; {state} lớp chú ý tuyến tính giữ trạng thái kích thước cố định. Áp dụng ở lần gắn tiếp theo. Các lần chạy phân tán giữ bộ nhớ đệm bf16."
+    "defaultMessage": "Chỉ {attention} lớp chú ý đầy đủ tăng theo ngữ cảnh và được nén; {state} lớp chú ý tuyến tính giữ trạng thái kích thước cố định. Áp dụng ở lần gắn tiếp theo. Bản chia giữ bộ nhớ đệm bf16."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Không thể nén bộ nhớ đệm KV: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {Phân tán · # node · {backend}}}"
+    "defaultMessage": "{count, plural, other {Chia trên # máy Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {Phân tán · # node}}"
+    "defaultMessage": "{count, plural, other {Chia trên # máy Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "Rank {rank} của engine phân tán của {requester} · {model} · {backend}"
+    "defaultMessage": "Hạng {rank} của bản chia của {requester} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "Rank {rank} của engine phân tán của {requester} · {model}"
+    "defaultMessage": "Hạng {rank} của bản chia của {requester} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "Đang phục vụ từ {peer}"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "Engine {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "cho engine phân tán của {requester} qua LeanZero Link"
+    "defaultMessage": "cho bản chia của {requester} qua LeanZero Link"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "Đang tải rank {rank} cho {requester}"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "Không có điều khiển suy nghĩ: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Không thể dừng engine phân tán"
+    "defaultMessage": "Không dừng được bản chia"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "Việc dừng engine phân tán chưa được xác minh: {steps}"
+    "defaultMessage": "Chưa xác minh được việc dừng bản chia: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Không nạp được engine MLX"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Công cụ phân tán phục vụ {served}; nút này cần {wanted}."
+    "defaultMessage": "Bản chia đang phục vụ {served}; node này muốn {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} chưa được tải trên máy chủ mà nút này trỏ tới."

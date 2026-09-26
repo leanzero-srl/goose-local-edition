@@ -32,7 +32,7 @@ export function useMlxDistributedStatus(enabled: boolean): {
     } catch (e) {
       if (!enabledRef.current) return;
       setStatus(null);
-      setError(mlxErrorMessage(e, 'Could not read the distributed engine status.'));
+      setError(mlxErrorMessage(e, 'Could not read the split’s status.'));
     } finally {
       inFlight.current = false;
     }

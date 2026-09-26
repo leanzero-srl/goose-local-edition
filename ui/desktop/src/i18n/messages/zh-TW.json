@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "分散式引擎提供 {served}；該節點需要 {wanted}。"
+    "defaultMessage": "分割正在提供 {served}；節點需要 {wanted}。"
   },
   "composerReadiness.failed": {
     "defaultMessage": "上次掛載失敗:{error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "叢集檢查"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "尚未儲存分散式設定。"
+    "defaultMessage": "尚未設定分割。"
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "設定"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "已載入 {done} / {total} GB"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "分散式引擎佔用這台 Mac 時設定會鎖定。停止它才能變更節點或模型。"
+    "defaultMessage": "分割佔用這台 Mac 時設定會鎖定。停止它才能變更它的 Mac 或模型。"
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "未讀取到記憶體：{error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "正在讀取分散式引擎…"
+    "defaultMessage": "正在讀取分割…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "移除 {name}"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "{nodes} 上的每個 rank 都會停止，並逐一依 pid 確認已結束。處理中的請求會中斷。"
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "要停止分散式引擎嗎？"
+    "defaultMessage": "停止分割？"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "停止未經確認"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "這台 Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "分散式引擎"
+    "defaultMessage": "分割到你的 Mac"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "此 goose 後端不提供分散式引擎：缺少 mlxDistributed 能力，表示它早於加入此功能的版本。請更新 goose，才能將一個模型拆分到多台 Mac 上。"
+    "defaultMessage": "此 goose 後端不提供分割：缺少 mlxDistributed 能力，表示它早於加入此功能的版本。請更新 goose，才能將一個模型拆分到多台 Mac 上。"
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "無法使用分散式推論"
+    "defaultMessage": "無法將模型分割到多台 Mac"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "保留單機引擎"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "卸載並繼續"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "這台 Mac 上掛載著單機 MLX 引擎（{detail}）。一台 Mac 同一時間只能屬於一個引擎：卸載會停止該模型，讓分散式引擎可以啟動。"
+    "defaultMessage": "這台 Mac 上掛載著單機 MLX 引擎（{detail}）。一台 Mac 同一時間只能屬於一個引擎：卸載會停止該模型，讓分割可以啟動。"
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "要卸載單機引擎嗎？"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "本機"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "設定分散式引擎"
+    "defaultMessage": "設定分割"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "無法連線"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "聊天由跨多台 Mac 的拆分引擎提供——其數據在上方的卡片中。這些列是此 Mac 自己的單機引擎。"
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "分散式"
+    "defaultMessage": "分割"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "分散式引擎正佔用這台 Mac：在下方「分散式引擎」區段停止它之前，單機引擎無法掛載。"
+    "defaultMessage": "分割正在佔用這台 Mac：在分割停止之前，這裡不會單獨執行任何模型（在下方「執行」中停止）。"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "引擎詳細資料"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "未找到"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "只有 {attention} 個全注意力層會隨上下文成長並被壓縮；{state} 個線性注意力層保持固定大小的狀態。下次掛載時生效。分散式執行保持 bf16 快取。"
+    "defaultMessage": "只有 {attention} 個全注意力層會隨上下文成長並被壓縮；{state} 個線性注意力層保持固定大小的狀態。下次掛載時生效。分割保持 bf16 快取。"
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV 快取壓縮無法使用：{reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {分散式 · # 個節點 · {backend}}}"
+    "defaultMessage": "{count, plural, other {分割到 # 台 Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {分散式 · # 個節點}}"
+    "defaultMessage": "{count, plural, other {分割到 # 台 Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "{requester} 分散式引擎的 rank {rank} · {model} · {backend}"
+    "defaultMessage": "{requester} 分割的第 {rank} 個分片 · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "{requester} 分散式引擎的 rank {rank} · {model}"
+    "defaultMessage": "{requester} 分割的第 {rank} 個分片 · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "由 {peer} 提供"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "引擎 {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "透過 LeanZero Link 服務 {requester} 的分散式引擎"
+    "defaultMessage": "透過 LeanZero Link 用於 {requester} 的分割"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "正在為 {requester} 載入 rank {rank}"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "思考控制無法使用：{reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "無法停止分散式引擎"
+    "defaultMessage": "無法停止分割"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "分散式引擎的停止未經確認：{steps}"
+    "defaultMessage": "未能確認分割已停止：{steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "無法掛載 MLX 引擎"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "分散式引擎提供 {served}；此節點需要 {wanted}。"
+    "defaultMessage": "分割正在提供 {served}；此節點需要 {wanted}。"
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} 未載入在此節點指向的伺服器上。"

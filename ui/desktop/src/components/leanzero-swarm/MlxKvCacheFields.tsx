@@ -46,7 +46,7 @@ const i18n = defineMessages({
   scope: {
     id: 'mlxKvCache.scope',
     defaultMessage:
-      'Only the {attention} full-attention layers grow with the context and are compressed; {state} linear-attention layers keep fixed-size state. Applies at the next mount. Distributed runs keep a bf16 cache.',
+      'Only the {attention} full-attention layers grow with the context and are compressed; {state} linear-attention layers keep fixed-size state. Applies at the next mount. A split keeps a bf16 cache.',
   },
   noGroup: {
     id: 'mlxKvCache.noGroup',

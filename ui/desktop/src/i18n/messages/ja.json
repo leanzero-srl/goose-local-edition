@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "分散エンジンは {served} を提供していますが、ノードは {wanted} を必要としています。"
+    "defaultMessage": "分割は {served} を提供しています。ノードは {wanted} を求めています。"
   },
   "composerReadiness.failed": {
     "defaultMessage": "前回のマウントに失敗しました: {error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "クラスタのチェック"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "分散構成はまだ保存されていません。"
+    "defaultMessage": "分割はまだ設定されていません。"
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "構成"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "{total} GB 中 {done} GB 読み込み済み"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "分散エンジンがこの Mac を使用している間、構成はロックされます。ノードやモデルを変更するには停止してください。"
+    "defaultMessage": "分割がこの Mac を使用している間、構成はロックされます。Mac やモデルを変更するには停止してください。"
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "メモリ未取得: {error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "ランク {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "分散エンジンを読み取り中…"
+    "defaultMessage": "分割を読み込み中…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "{name} を削除"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "{nodes} のすべてのランクを停止し、pid ごとに終了を確認します。処理中のリクエストは中断されます。"
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "分散エンジンを停止しますか？"
+    "defaultMessage": "分割を停止しますか?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "停止を確認できません"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "この Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "分散エンジン"
+    "defaultMessage": "Mac に分割"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "この goose バックエンドは分散エンジンを提供していません。mlxDistributed 機能がないため、追加されたビルドより古いものです。1 つのモデルを複数の Mac に分割するには goose を更新してください。"
+    "defaultMessage": "この goose バックエンドは分割を提供していません。mlxDistributed 機能がないため、追加されたビルドより古いものです。1 つのモデルを複数の Mac に分割するには goose を更新してください。"
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "分散推論は利用できません"
+    "defaultMessage": "モデルを複数の Mac に分割する機能は利用できません"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "単一エンジンを維持"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "アンマウントして続行"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "この Mac には単一の MLX エンジンがマウントされています（{detail}）。1 台の Mac を使えるのは同時に 1 つのエンジンだけです。アンマウントするとそのモデルが停止し、分散エンジンを起動できます。"
+    "defaultMessage": "この Mac には単一の MLX エンジンがマウントされています（{detail}）。1 台の Mac を使えるのは同時に 1 つのエンジンだけです。アンマウントするとそのモデルが停止し、分割を起動できます。"
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "単一エンジンをアンマウントしますか？"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "この Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "分散エンジンのセットアップ"
+    "defaultMessage": "分割を設定"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "到達不能"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "チャットは複数の Mac にまたがる分割エンジンが応答しています。その数値は上のタイルにあります。ここに並ぶのはこの Mac 自身の単体エンジンです。"
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "分散"
+    "defaultMessage": "分割"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "分散エンジンがこの Mac を使用中です。下の「分散エンジン」セクションで停止するまで、単一エンジンはマウントできません。"
+    "defaultMessage": "分割がこの Mac を使用しています。分割を停止するまで、ここで単独で動くモデルはありません（下の「実行」の停止から）。"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "エンジンの詳細"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "見逃し"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "コンテキストとともに増えて圧縮されるのは {attention} 個のフルアテンション層だけです。{state} 個のリニアアテンション層は固定サイズの状態を保持します。次回のマウント時に適用されます。分散実行は bf16 キャッシュのままです。"
+    "defaultMessage": "コンテキストとともに増えて圧縮されるのは {attention} 個のフルアテンション層だけです。{state} 個のリニアアテンション層は固定サイズの状態を保持します。次回のマウント時に適用されます。分割は bf16 キャッシュのままです。"
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV キャッシュ圧縮は利用できません: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {分散 · # ノード · {backend}}}"
+    "defaultMessage": "{count, plural, other {# 台の Mac に分割 · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {分散 · # ノード}}"
+    "defaultMessage": "{count, plural, other {# 台の Mac に分割}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "{requester} の分散エンジンのランク {rank} · {model} · {backend}"
+    "defaultMessage": "{requester} の分割のランク {rank} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "{requester} の分散エンジンのランク {rank} · {model}"
+    "defaultMessage": "{requester} の分割のランク {rank} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer} から提供中"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "エンジン {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "LeanZero Link 経由の {requester} の分散エンジン用"
+    "defaultMessage": "LeanZero Link 経由の {requester} の分割用"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "{requester} のランク {rank} を読み込み中"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "思考の制御を利用できません: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "分散エンジンを停止できませんでした"
+    "defaultMessage": "分割を停止できませんでした"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "分散エンジンの停止を確認できませんでした: {steps}"
+    "defaultMessage": "分割の停止を確認できませんでした: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX エンジンをマウントできませんでした"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "分散エンジンは {served} を提供していますが、このノードは {wanted} を必要としています。"
+    "defaultMessage": "分割は {served} を提供しています。このノードは {wanted} を求めています。"
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} はこのノードが指すサーバーに読み込まれていません。"

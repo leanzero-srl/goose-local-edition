@@ -119,7 +119,7 @@ import {
  */
 
 const i18n = defineMessages({
-  title: { id: 'mlxDistributed.title', defaultMessage: 'Distributed engine' },
+  title: { id: 'mlxDistributed.title', defaultMessage: 'Split across your Macs' },
   intro: {
     id: 'mlxDistributed.intro',
     defaultMessage:
@@ -127,14 +127,14 @@ const i18n = defineMessages({
   },
   unavailableTitle: {
     id: 'mlxDistributed.unavailableTitle',
-    defaultMessage: 'Distributed inference is unavailable',
+    defaultMessage: 'Splitting a model across Macs is unavailable',
   },
   unavailableBody: {
     id: 'mlxDistributed.unavailableBody',
     defaultMessage:
-      'This goose backend does not offer the distributed engine: the mlxDistributed capability is missing, so it predates the build that added it. Update goose to split one model across several Macs.',
+      'This goose backend does not offer the split: the mlxDistributed capability is missing, so it predates the build that added it. Update goose to split one model across several Macs.',
   },
-  reading: { id: 'mlxDistributed.reading', defaultMessage: 'Reading the distributed engine…' },
+  reading: { id: 'mlxDistributed.reading', defaultMessage: 'Reading the split…' },
   unreadable: { id: 'mlxDistributed.unreadable', defaultMessage: 'Status unreadable' },
   retry: { id: 'mlxDistributed.retry', defaultMessage: 'Retry' },
   model: { id: 'mlxDistributed.fact.model', defaultMessage: 'Model' },
@@ -158,7 +158,7 @@ const i18n = defineMessages({
   locked: {
     id: 'mlxDistributed.locked',
     defaultMessage:
-      'The configuration is locked while the distributed engine owns this Mac. Stop it to change nodes or the model.',
+      'The configuration is locked while the split owns this Mac. Stop it to change its Macs or the model.',
   },
   admissionOpen: { id: 'mlxDistributed.admissionOpen', defaultMessage: 'Admitting requests' },
   admissionClosed: { id: 'mlxDistributed.admissionClosed', defaultMessage: 'Admission closed' },
@@ -281,7 +281,7 @@ const i18n = defineMessages({
   configTitle: { id: 'mlxDistributed.configTitle', defaultMessage: 'Configuration' },
   configNone: {
     id: 'mlxDistributed.configNone',
-    defaultMessage: 'No distributed configuration is saved yet.',
+    defaultMessage: 'No split is set up yet.',
   },
   setUp: { id: 'mlxDistributed.setUp', defaultMessage: 'Set up' },
   notConfigured: { id: 'mlxDistributed.notConfigured', defaultMessage: 'Not configured' },
@@ -427,7 +427,7 @@ const i18n = defineMessages({
   unmountMessage: {
     id: 'mlxDistributed.unmountMessage',
     defaultMessage:
-      'The single MLX engine is mounted on this Mac ({detail}). One engine owns a Mac at a time: unmounting stops that model so the distributed engine can start.',
+      'The single MLX engine is mounted on this Mac ({detail}). One engine owns a Mac at a time: unmounting stops that model so the split can start.',
   },
   unmountConfirm: {
     id: 'mlxDistributed.unmountConfirm',
@@ -437,7 +437,7 @@ const i18n = defineMessages({
     id: 'mlxDistributed.unmountCancel',
     defaultMessage: 'Keep the single engine',
   },
-  stopTitle: { id: 'mlxDistributed.stopTitle', defaultMessage: 'Stop the distributed engine?' },
+  stopTitle: { id: 'mlxDistributed.stopTitle', defaultMessage: 'Stop the split?' },
   stopMessage: {
     id: 'mlxDistributed.stopMessage',
     defaultMessage:

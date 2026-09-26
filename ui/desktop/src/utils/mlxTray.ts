@@ -535,12 +535,12 @@ function shortModel(id: string): string {
   return id.split('/').pop() || id;
 }
 
-/** "Distributed · MacBook Pro + workhorse · JACCL" — the mode line the tile and the tab say too. */
+/** "Split across MacBook Pro + workhorse · JACCL" — the mode line the tile and the tab say too. */
 export function distributedModeLine(report: MlxDistributedReport): string {
   const nodes =
     report.nodeNames.length > 0 ? report.nodeNames.join(' + ') : `${report.nodes.length} nodes`;
   const backend = backendName(report.backend);
-  return clip(['Distributed', nodes, backend].filter(Boolean).join(' · '));
+  return clip([`Split across ${nodes}`, backend].filter(Boolean).join(' · '));
 }
 
 function ageText(ms: number): string {
@@ -594,13 +594,13 @@ export function distributedTrayTitle(
   live: MlxEngineSnapshot | null = null
 ): string {
   const { report } = d;
-  if (distributedStale(d)) return 'Dist · stale';
-  if (!report.admissionOpen) return 'Dist · held';
-  if (live) return `Dist · ${mlxTrayTitle(live)}`;
+  if (distributedStale(d)) return 'Split · stale';
+  if (!report.admissionOpen) return 'Split · held';
+  if (live) return `Split · ${mlxTrayTitle(live)}`;
   if (report.state === 'serving') {
-    return report.inflight != null ? `Dist · ${report.inflight} in flight` : 'Dist · serving';
+    return report.inflight != null ? `Split · ${report.inflight} in flight` : 'Split · serving';
   }
-  return `Dist · ${report.state}`;
+  return `Split · ${report.state}`;
 }
 
 function distributedItems(
@@ -613,7 +613,7 @@ function distributedItems(
   const items: MlxTrayItem[] = [
     {
       type: 'info',
-      label: `LeanZero MLX: distributed, ${report.state}`,
+      label: `LeanZero MLX: split across ${plural(report.nodes.length, 'Mac', 'Macs')}, ${report.state}`,
       ...(stale ? {} : { phase: runPhase(report.state, report.admissionOpen, activity) }),
     },
     { type: 'info', label: distributedModeLine(report) },
@@ -660,13 +660,11 @@ function distributedItems(
   return items;
 }
 
-/** "Rank 1 of MacBook Pro's distributed engine · JACCL" (the model has its own line below). */
+/** "Rank 1 of MacBook Pro's split · JACCL" (the model has its own line below). */
 export function hostingLine(hosting: MlxDistributedReportHosting): string {
   const backend = backendName(hosting.backend);
   return clip(
-    [`Rank ${hosting.rank} of ${hosting.requester}'s distributed engine`, backend]
-      .filter(Boolean)
-      .join(' · ')
+    [`Rank ${hosting.rank} of ${hosting.requester}'s split`, backend].filter(Boolean).join(' · ')
   );
 }
 
@@ -763,7 +761,7 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
           action: 'open-providers',
           enabled: options.canAct,
         },
-        ...stopItems(snapshot, 'Stop the distributed engine', 'stop-distributed', options.canAct),
+        ...stopItems(snapshot, 'Stop the split', 'stop-distributed', options.canAct),
       ],
     };
   }
@@ -791,9 +789,7 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
   if (distributed && distributedFailed) {
     items.push({
       type: 'info',
-      label: clip(
-        `Distributed engine failed: ${distributed.report.lastError ?? 'no error was reported'}`
-      ),
+      label: clip(`The split failed: ${distributed.report.lastError ?? 'no error was reported'}`),
     });
   }
   items.push({ type: 'separator' });
@@ -818,6 +814,6 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
   const single = mlxTrayTitle(singleSnap);
   if (single) return { title: single, phase: singlePhase, items };
   return distributedFailed
-    ? { title: 'Dist failed', phase: 'failed', items }
+    ? { title: 'Split failed', phase: 'failed', items }
     : { title: '', phase: null, items };
 }

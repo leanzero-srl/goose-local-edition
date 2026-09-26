@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Dağıtık motor {served} sunuyor; düğüm {wanted} istiyor."
+    "defaultMessage": "Bölme {served} sunuyor; düğüm {wanted} istiyor."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Son takma başarısız oldu: {error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "Küme denetimleri"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Henüz kayıtlı dağıtık yapılandırma yok."
+    "defaultMessage": "Henüz kurulmuş bir bölme yok."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Yapılandırma"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "{total} GB’nin {done} GB’si yüklendi"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "Dağıtık motor bu Mac'i kullanırken yapılandırma kilitlidir. Düğümleri veya modeli değiştirmek için onu durdurun."
+    "defaultMessage": "Bölme bu Mac'i kullanırken yapılandırma kilitlidir. Mac'lerini veya modeli değiştirmek için onu durdurun."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Bellek okunamadı: {error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Dağıtık motor okunuyor…"
+    "defaultMessage": "Bölme okunuyor…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "{name} kaldır"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "{nodes} üzerindeki her rank durdurulur ve pid pid sonlandığı doğrulanır. İşlenmekte olan istekler kesilir."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Dağıtık motor durdurulsun mu?"
+    "defaultMessage": "Bölme durdurulsun mu?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Durdurma doğrulanmadı"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "bu Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Dağıtık motor"
+    "defaultMessage": "Mac'lerinize bölünmüş"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Bu goose arka ucu dağıtık motoru sunmuyor: mlxDistributed yeteneği eksik, yani onu ekleyen derlemeden daha eski. Bir modeli birkaç Mac'e bölmek için goose'u güncelleyin."
+    "defaultMessage": "Bu goose arka ucu bölmeyi sunmuyor: mlxDistributed yeteneği eksik, yani onu ekleyen derlemeden daha eski. Bir modeli birkaç Mac'e bölmek için goose'u güncelleyin."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "Dağıtık çıkarım kullanılamıyor"
+    "defaultMessage": "Bir modeli Mac'lere bölmek kullanılamıyor"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Tekli motoru koru"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "Kaldır ve devam et"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Tekli MLX motoru bu Mac'e bağlı ({detail}). Bir Mac aynı anda tek bir motora aittir: kaldırmak o modeli durdurur, böylece dağıtık motor başlayabilir."
+    "defaultMessage": "Tekli MLX motoru bu Mac'e bağlı ({detail}). Bir Mac aynı anda tek bir motora aittir: kaldırmak o modeli durdurur, böylece bölme başlayabilir."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Tekli motor kaldırılsın mı?"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "bu Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Dağıtık motoru kur"
+    "defaultMessage": "Bölmeyi kur"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "erişilemiyor"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "Sohbete Mac’lerinize bölünmüş motor yanıt veriyor; onun değerleri yukarıdaki kutuda. Bu satırlar bu Mac’in kendi tekil motoruna ait."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Dağıtık"
+    "defaultMessage": "Bölme"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Dağıtık motor bu Mac'i kullanıyor: tekli motor, aşağıdaki Dağıtık motor bölümünde durdurulana kadar bağlanamaz."
+    "defaultMessage": "Bölme bu Mac'i kullanıyor: bölme durdurulana kadar burada tek başına model çalışmaz (Durdur, aşağıdaki Çalıştır altında)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Motor ayrıntıları"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "KAÇIRILDI"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "Yalnızca {attention} tam dikkat katmanı bağlamla büyür ve sıkıştırılır; {state} doğrusal dikkat katmanı sabit boyutlu durum tutar. Bir sonraki bağlamada uygulanır. Dağıtık çalışmalar bf16 önbelleği korur."
+    "defaultMessage": "Yalnızca {attention} tam dikkat katmanı bağlamla büyür ve sıkıştırılır; {state} doğrusal dikkat katmanı sabit boyutlu durum tutar. Bir sonraki bağlamada uygulanır. Bölme bf16 önbelleği korur."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV önbelleği sıkıştırması kullanılamıyor: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, one {Dağıtık · # düğüm · {backend}} other {Dağıtık · # düğüm · {backend}}}"
+    "defaultMessage": "{count, plural, one {# Mac'e bölünmüş · {backend}} other {# Mac'e bölünmüş · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, one {Dağıtık · # düğüm} other {Dağıtık · # düğüm}}"
+    "defaultMessage": "{count, plural, one {# Mac'e bölünmüş} other {# Mac'e bölünmüş}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "{requester} dağıtık motorunun rank {rank} · {model} · {backend}"
+    "defaultMessage": "{requester} bölmesinin {rank}. sırası · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "{requester} dağıtık motorunun rank {rank} · {model}"
+    "defaultMessage": "{requester} bölmesinin {rank}. sırası · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer} üzerinden sunuluyor"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "Motor {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "LeanZero Link üzerinden {requester} dağıtık motoru için"
+    "defaultMessage": "LeanZero Link üzerinden {requester} bölmesi için"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "{requester} için rank {rank} yükleniyor"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "Düşünme denetimleri kullanılamıyor: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Dağıtık motor durdurulamadı"
+    "defaultMessage": "Bölme durdurulamadı"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "Dağıtık motorun durdurulması doğrulanmadı: {steps}"
+    "defaultMessage": "Bölmenin durması doğrulanmadı: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX motoru bağlanamadı"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Dağıtık motor {served} sunuyor; bu düğüm {wanted} istiyor."
+    "defaultMessage": "Bölme {served} sunuyor; bu düğüm {wanted} istiyor."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} bu düğümün işaret ettiği sunucuda yüklü değil."

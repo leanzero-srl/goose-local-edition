@@ -41,11 +41,11 @@ const i18n = defineMessages({
   },
   stopFailed: {
     id: 'mlxTray.distributedStopFailed',
-    defaultMessage: 'Could not stop the distributed engine',
+    defaultMessage: 'Could not stop the split',
   },
   stopUnverified: {
     id: 'mlxTray.distributedStopUnverified',
-    defaultMessage: 'The distributed engine stop was not verified: {steps}',
+    defaultMessage: 'The split’s stop was not verified: {steps}',
   },
   remoteStopFailed: {
     id: 'mlxTray.remoteStopFailed',

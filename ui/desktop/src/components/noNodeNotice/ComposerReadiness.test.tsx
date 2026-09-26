@@ -953,7 +953,7 @@ describe('ComposerReadinessStrip (UX audit C1)', () => {
     await mlxDistributedStatus();
     wrap('swarm');
     const strip = await screen.findByTestId('composer-readiness');
-    expect(strip.textContent).toContain('Distributed · 2 nodes · JACCL · Starting — mihai-mlx');
+    expect(strip.textContent).toContain('Split across 2 Macs · JACCL · Starting — mihai-mlx');
     expect(strip.textContent).not.toContain('No model is mounted');
     expect(screen.getByTestId('composer-readiness-spinner')).toHaveAttribute(
       'data-for',
@@ -979,7 +979,7 @@ describe('ComposerReadinessStrip (UX audit C1)', () => {
     wrap('swarm');
     const strip = await screen.findByTestId('composer-readiness');
     expect(strip.textContent).toContain(
-      'Distributed · 2 nodes · JACCL · Not answering · owned by another window — mihai-mlx'
+      'Split across 2 Macs · JACCL · Not answering · owned by another window — mihai-mlx'
     );
     expect(screen.getByTestId('composer-readiness-detail').textContent).toContain(
       'connection refused'

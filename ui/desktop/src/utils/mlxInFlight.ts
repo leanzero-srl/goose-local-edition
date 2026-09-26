@@ -7,7 +7,7 @@ import type { MlxTrayAction } from './mlxTray';
  * The work a stop or a switch would CUT, from main's one read of the engine that serves this Mac's
  * chat (mlxEngineMonitor): its own request list and goose's in-flight list naming whose work it is.
  * Every door that stops or replaces an engine reads this before it acts (Q-148: Run it's "Run on
- * Work's Mac Studio · Best" and the tray's "Stop the distributed engine" both stopped a split in the
+ * Work's Mac Studio · Best" and the tray's "Stop the distributed engine" (now "Stop the split") both stopped a split in the
  * middle of a 39-minute answer, with no word about it).
  *
  * Pure, so main (the tray) and the renderer (every dialog) name the same work in the same numbers.

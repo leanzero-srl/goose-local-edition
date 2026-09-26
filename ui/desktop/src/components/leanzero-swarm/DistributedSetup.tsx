@@ -36,7 +36,7 @@ export function linkNode(host: string | null | undefined): string | null {
  */
 
 const i18n = defineMessages({
-  title: { id: 'mlxDistributedSetup.title', defaultMessage: 'Set up the distributed engine' },
+  title: { id: 'mlxDistributedSetup.title', defaultMessage: 'Set up the split' },
   intro: {
     id: 'mlxDistributedSetup.intro',
     defaultMessage:

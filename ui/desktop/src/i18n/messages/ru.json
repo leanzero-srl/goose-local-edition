@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Распределённый движок обслуживает {served}; узлу нужна {wanted}."
+    "defaultMessage": "Разделение обслуживает {served}; узлу нужна {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Последнее монтирование не удалось: {error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "Проверки кластера"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Распределённая конфигурация ещё не сохранена."
+    "defaultMessage": "Разделение ещё не настроено."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Конфигурация"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "Загружено {done} из {total} ГБ"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "Конфигурация заблокирована, пока распределённый движок занимает этот Mac. Остановите его, чтобы изменить узлы или модель."
+    "defaultMessage": "Конфигурация заблокирована, пока разделение занимает этот Mac. Остановите его, чтобы изменить его Mac или модель."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Память не прочитана: {error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "ранг {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Чтение распределённого движка…"
+    "defaultMessage": "Чтение разделения…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "Удалить {name}"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "Каждый ранг на {nodes} останавливается, и его завершение проверяется по каждому pid. Запросы в работе будут прерваны."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Остановить распределённый движок?"
+    "defaultMessage": "Остановить разделение?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Остановка не подтверждена"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "этот Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Распределённый движок"
+    "defaultMessage": "Разделено между вашими Mac"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Этот бэкенд goose не предлагает распределённый движок: нет возможности mlxDistributed, значит, он старше сборки, в которой она появилась. Обновите goose, чтобы разделить одну модель между несколькими Mac."
+    "defaultMessage": "Этот бэкенд goose не предлагает разделение: нет возможности mlxDistributed, значит, он старше сборки, в которой она появилась. Обновите goose, чтобы разделить одну модель между несколькими Mac."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "Распределённый инференс недоступен"
+    "defaultMessage": "Разделение модели между Mac недоступно"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Оставить одиночный движок"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "Выгрузить и продолжить"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Одиночный движок MLX загружен на этом Mac ({detail}). Mac одновременно принадлежит только одному движку: выгрузка остановит эту модель, чтобы распределённый движок смог запуститься."
+    "defaultMessage": "Одиночный движок MLX загружен на этом Mac ({detail}). Mac одновременно принадлежит только одному движку: выгрузка остановит эту модель, чтобы разделение смогло запуститься."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Выгрузить одиночный движок?"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "этот Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Настройка распределённого движка"
+    "defaultMessage": "Настроить разделение"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "недоступен"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "Чат обслуживает разделение между вашими Mac — его показатели в плитке выше. Эти строки относятся к одиночному движку этого Mac."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Распределённо"
+    "defaultMessage": "Разделение"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Распределённый движок занимает этот Mac: одиночный движок нельзя загрузить, пока распределённый не остановлен в разделе «Распределённый движок» ниже."
+    "defaultMessage": "Разделение занимает этот Mac: ни одна модель не запустится здесь отдельно, пока разделение не остановлено (Остановить, в разделе «Запуск» ниже)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Сведения о движке"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "ПРОПУЩЕН"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "С контекстом растут и сжимаются только {attention} слоёв полного внимания; {state} слоёв линейного внимания хранят состояние фиксированного размера. Применяется при следующем монтировании. Распределённые запуски сохраняют bf16-кэш."
+    "defaultMessage": "С контекстом растут и сжимаются только {attention} слоёв полного внимания; {state} слоёв линейного внимания хранят состояние фиксированного размера. Применяется при следующем монтировании. Разделение сохраняет bf16-кэш."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Сжатие KV-кэша недоступно: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, one {Распределённо · # узел · {backend}} few {Распределённо · # узла · {backend}} many {Распределённо · # узлов · {backend}} other {Распределённо · # узла · {backend}}}"
+    "defaultMessage": "{count, plural, one {Разделено между # Mac · {backend}} few {Разделено между # Mac · {backend}} many {Разделено между # Mac · {backend}} other {Разделено между # Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, one {Распределённо · # узел} few {Распределённо · # узла} many {Распределённо · # узлов} other {Распределённо · # узла}}"
+    "defaultMessage": "{count, plural, one {Разделено между # Mac} few {Разделено между # Mac} many {Разделено между # Mac} other {Разделено между # Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "Ранг {rank} распределённого движка {requester} · {model} · {backend}"
+    "defaultMessage": "Ранг {rank} разделения {requester} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "Ранг {rank} распределённого движка {requester} · {model}"
+    "defaultMessage": "Ранг {rank} разделения {requester} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "Обслуживается с {peer}"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "Движок: {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "для распределённого движка {requester} через LeanZero Link"
+    "defaultMessage": "для разделения {requester} через LeanZero Link"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "Загрузка ранга {rank} для {requester}"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "Управление размышлением недоступно: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Не удалось остановить распределённый движок"
+    "defaultMessage": "Не удалось остановить разделение"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "Остановка распределённого движка не подтверждена: {steps}"
+    "defaultMessage": "Остановка разделения не подтверждена: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Не удалось смонтировать движок MLX"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Распределённый движок обслуживает {served}; этому узлу нужна {wanted}."
+    "defaultMessage": "Разделение обслуживает {served}; этому узлу нужна {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} не загружена на сервере, на который указывает этот узел."

@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Enjin teragih menyajikan {served}; nod ini mahukan {wanted}."
+    "defaultMessage": "Pembahagian menyajikan {served}; nod mahukan {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "Semakan kluster"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Belum ada konfigurasi teragih yang disimpan."
+    "defaultMessage": "Belum ada pembahagian yang disediakan."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Konfigurasi"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "Dimuatkan {done} daripada {total} GB"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "Konfigurasi dikunci selagi enjin teragih menguasai Mac ini. Hentikannya untuk menukar nod atau model."
+    "defaultMessage": "Konfigurasi dikunci selagi pembahagian menguasai Mac ini. Hentikannya untuk menukar Mac-nya atau model."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Memori tidak dibaca: {error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Membaca enjin teragih…"
+    "defaultMessage": "Membaca pembahagian…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "Buang {name}"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "Setiap rank pada {nodes} dihentikan dan disahkan hilang, pid demi pid. Permintaan yang sedang berjalan akan terputus."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Hentikan enjin teragih?"
+    "defaultMessage": "Hentikan pembahagian?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Henti tidak disahkan"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "Mac ini"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Enjin teragih"
+    "defaultMessage": "Dibahagikan merentas Mac anda"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Backend goose ini tidak menawarkan enjin teragih: keupayaan mlxDistributed tiada, jadi ia lebih lama daripada binaan yang menambahnya. Kemas kini goose untuk membahagikan satu model merentas beberapa Mac."
+    "defaultMessage": "Backend goose ini tidak menawarkan pembahagian: keupayaan mlxDistributed tiada, jadi ia lebih lama daripada binaan yang menambahnya. Kemas kini goose untuk membahagikan satu model merentas beberapa Mac."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "Inferens teragih tidak tersedia"
+    "defaultMessage": "Membahagikan model merentas beberapa Mac tidak tersedia"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Kekalkan enjin tunggal"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "Nyahlekap dan teruskan"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Enjin MLX tunggal dilekapkan pada Mac ini ({detail}). Satu Mac dikuasai satu enjin pada satu masa: menyahlekapnya menghentikan model itu supaya enjin teragih boleh dimulakan."
+    "defaultMessage": "Enjin MLX tunggal dilekapkan pada Mac ini ({detail}). Satu Mac dikuasai satu enjin pada satu masa: menyahlekapnya menghentikan model itu supaya pembahagian boleh dimulakan."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Nyahlekap enjin tunggal?"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "Mac ini"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Sediakan enjin teragih"
+    "defaultMessage": "Sediakan pembahagian"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "tidak dapat dicapai"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "Sembang dilayan oleh pembahagian merentas Mac anda — angkanya dalam jubin di atas. Baris ini milik enjin tunggal Mac ini sendiri."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Teragih"
+    "defaultMessage": "Pembahagian"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Enjin teragih menguasai Mac ini: enjin tunggal tidak boleh dilekapkan sehingga ia dihentikan dalam bahagian Enjin teragih di bawah."
+    "defaultMessage": "Pembahagian menguasai Mac ini: tiada model berjalan di sini secara bersendirian sehingga pembahagian dihentikan (Hentikan, di bawah Jalankan)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Butiran enjin"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "TERLEPAS"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "Hanya {attention} lapisan perhatian penuh yang berkembang bersama konteks dan dimampatkan; {state} lapisan perhatian linear menyimpan keadaan bersaiz tetap. Berkuat kuasa pada lekapan seterusnya. Larian teragih kekal dengan cache bf16."
+    "defaultMessage": "Hanya {attention} lapisan perhatian penuh yang berkembang bersama konteks dan dimampatkan; {state} lapisan perhatian linear menyimpan keadaan bersaiz tetap. Berkuat kuasa pada lekapan seterusnya. Pembahagian kekal dengan cache bf16."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Pemampatan cache KV tidak tersedia: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {Teragih · # nod · {backend}}}"
+    "defaultMessage": "{count, plural, one {Dibahagikan merentas # Mac · {backend}} other {Dibahagikan merentas # Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {Teragih · # nod}}"
+    "defaultMessage": "{count, plural, one {Dibahagikan merentas # Mac} other {Dibahagikan merentas # Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "Rank {rank} enjin teragih {requester} · {model} · {backend}"
+    "defaultMessage": "Kedudukan {rank} pembahagian {requester} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "Rank {rank} enjin teragih {requester} · {model}"
+    "defaultMessage": "Kedudukan {rank} pembahagian {requester} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "Dihidangkan dari {peer}"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "Enjin {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "untuk enjin teragih {requester} melalui LeanZero Link"
+    "defaultMessage": "untuk pembahagian {requester} melalui LeanZero Link"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "Memuatkan rank {rank} untuk {requester}"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "Kawalan berfikir tidak tersedia: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Tidak dapat menghentikan enjin teragih"
+    "defaultMessage": "Tidak dapat menghentikan pembahagian"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "Penghentian enjin teragih tidak disahkan: {steps}"
+    "defaultMessage": "Penghentian pembahagian tidak disahkan: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Enjin MLX tidak dapat dilekapkan"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Enjin teragih menyajikan {served}; nod ini mahukan {wanted}."
+    "defaultMessage": "Pembahagian menyajikan {served}; nod ini mahukan {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} tidak dimuatkan pada pelayan yang ditunjuk nod ini."

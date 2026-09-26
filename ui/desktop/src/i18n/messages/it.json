@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Il motore distribuito serve {served}; il nodo vuole {wanted}."
+    "defaultMessage": "La suddivisione serve {served}; il nodo vuole {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "L’ultimo montaggio non è riuscito: {error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "Controlli del cluster"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Nessuna configurazione distribuita è ancora salvata."
+    "defaultMessage": "Nessuna suddivisione ancora configurata."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Configurazione"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "Caricati {done} di {total} GB"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "La configurazione è bloccata mentre il motore distribuito occupa questo Mac. Fermalo per cambiare i nodi o il modello."
+    "defaultMessage": "La configurazione è bloccata mentre la suddivisione occupa questo Mac. Fermala per cambiare i suoi Mac o il modello."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Memoria non letta: {error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Lettura del motore distribuito…"
+    "defaultMessage": "Lettura della suddivisione…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "Rimuovi {name}"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "Ogni rank su {nodes} viene fermato e verificato come terminato, pid per pid. Le richieste in corso vengono interrotte."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Fermare il motore distribuito?"
+    "defaultMessage": "Fermare la suddivisione?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Arresto non verificato"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "questo Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Motore distribuito"
+    "defaultMessage": "Suddiviso sui tuoi Mac"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Questo backend goose non offre il motore distribuito: manca la capacità mlxDistributed, quindi è precedente alla versione che l’ha introdotta. Aggiorna goose per suddividere un modello su più Mac."
+    "defaultMessage": "Questo backend goose non offre la suddivisione: manca la capacità mlxDistributed, quindi è precedente alla versione che l’ha introdotta. Aggiorna goose per suddividere un modello su più Mac."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "L’inferenza distribuita non è disponibile"
+    "defaultMessage": "Suddividere un modello su più Mac non è disponibile"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Tieni il motore singolo"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "Smonta e continua"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Il motore MLX singolo è montato su questo Mac ({detail}). Un Mac appartiene a un solo motore alla volta: smontarlo ferma quel modello così il motore distribuito può avviarsi."
+    "defaultMessage": "Il motore MLX singolo è montato su questo Mac ({detail}). Un Mac appartiene a un solo motore alla volta: smontarlo ferma quel modello così la suddivisione può avviarsi."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Smontare il motore singolo?"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "questo Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Configura il motore distribuito"
+    "defaultMessage": "Configura la suddivisione"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "non raggiungibile"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "La chat è servita dalla suddivisione sui tuoi Mac: i suoi dati sono nel riquadro sopra. Queste righe sono del motore singolo di questo Mac."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Distribuito"
+    "defaultMessage": "Suddivisione"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Il motore distribuito occupa questo Mac: il motore singolo non può essere montato finché non viene fermato nella sezione Motore distribuito qui sotto."
+    "defaultMessage": "La suddivisione occupa questo Mac: nessun modello gira qui da solo finché la suddivisione non viene fermata (Ferma, in Esegui qui sotto)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Dettagli del motore"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "MANCATO"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "Solo i {attention} strati ad attenzione completa crescono con il contesto e vengono compressi; {state} strati ad attenzione lineare mantengono uno stato di dimensione fissa. Si applica al prossimo mount. Le esecuzioni distribuite mantengono una cache bf16."
+    "defaultMessage": "Solo i {attention} strati ad attenzione completa crescono con il contesto e vengono compressi; {state} strati ad attenzione lineare mantengono uno stato di dimensione fissa. Si applica al prossimo mount. Una suddivisione mantiene una cache bf16."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Compressione della cache KV non disponibile: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, one {Distribuito · # nodo · {backend}} other {Distribuito · # nodi · {backend}}}"
+    "defaultMessage": "{count, plural, one {Suddiviso su # Mac · {backend}} other {Suddiviso su # Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, one {Distribuito · # nodo} other {Distribuito · # nodi}}"
+    "defaultMessage": "{count, plural, one {Suddiviso su # Mac} other {Suddiviso su # Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "Rank {rank} del motore distribuito di {requester} · {model} · {backend}"
+    "defaultMessage": "Rango {rank} della suddivisione di {requester} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "Rank {rank} del motore distribuito di {requester} · {model}"
+    "defaultMessage": "Rango {rank} della suddivisione di {requester} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "Servito da {peer}"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "Motore {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "per il motore distribuito di {requester} tramite LeanZero Link"
+    "defaultMessage": "per la suddivisione di {requester} tramite LeanZero Link"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "Caricamento del rank {rank} per {requester}"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "Controlli di ragionamento non disponibili: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Impossibile fermare il motore distribuito"
+    "defaultMessage": "Impossibile fermare la suddivisione"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "L’arresto del motore distribuito non è stato verificato: {steps}"
+    "defaultMessage": "L’arresto della suddivisione non è stato verificato: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Impossibile montare il motore MLX"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Il motore distribuito serve {served}; questo nodo vuole {wanted}."
+    "defaultMessage": "La suddivisione serve {served}; questo nodo vuole {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} non è caricato sul server a cui punta questo nodo."

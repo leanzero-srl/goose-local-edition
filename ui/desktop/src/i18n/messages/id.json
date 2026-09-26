@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Mesin terdistribusi melayani {served}; node ini meminta {wanted}."
+    "defaultMessage": "Pembagian menyajikan {served}; node menginginkan {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Pemasangan terakhir gagal: {error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "Pemeriksaan klaster"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Belum ada konfigurasi terdistribusi yang disimpan."
+    "defaultMessage": "Belum ada pembagian yang disiapkan."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Konfigurasi"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "Dimuat {done} dari {total} GB"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "Konfigurasi dikunci selama mesin terdistribusi menguasai Mac ini. Hentikan untuk mengubah node atau model."
+    "defaultMessage": "Konfigurasi dikunci selama pembagian menguasai Mac ini. Hentikan untuk mengubah Mac-nya atau model."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Memori tidak terbaca: {error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Membaca mesin terdistribusi…"
+    "defaultMessage": "Membaca pembagian…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "Hapus {name}"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "Setiap rank di {nodes} dihentikan dan dipastikan hilang, pid demi pid. Permintaan yang sedang berjalan akan terputus."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Hentikan mesin terdistribusi?"
+    "defaultMessage": "Hentikan pembagian?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Penghentian tidak terverifikasi"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "Mac ini"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Mesin terdistribusi"
+    "defaultMessage": "Dibagi ke Mac Anda"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Backend goose ini tidak menyediakan mesin terdistribusi: kapabilitas mlxDistributed tidak ada, jadi versinya lebih lama dari build yang menambahkannya. Perbarui goose untuk membagi satu model ke beberapa Mac."
+    "defaultMessage": "Backend goose ini tidak menyediakan pembagian: kapabilitas mlxDistributed tidak ada, jadi versinya lebih lama dari build yang menambahkannya. Perbarui goose untuk membagi satu model ke beberapa Mac."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "Inferensi terdistribusi tidak tersedia"
+    "defaultMessage": "Membagi model ke beberapa Mac tidak tersedia"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Pertahankan mesin tunggal"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "Lepas dan lanjutkan"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Mesin MLX tunggal terpasang di Mac ini ({detail}). Satu Mac hanya dikuasai satu mesin pada satu waktu: melepasnya menghentikan model itu agar mesin terdistribusi bisa dimulai."
+    "defaultMessage": "Mesin MLX tunggal terpasang di Mac ini ({detail}). Satu Mac hanya dikuasai satu mesin pada satu waktu: melepasnya menghentikan model itu agar pembagian bisa dimulai."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Lepas mesin tunggal?"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "Mac ini"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Siapkan mesin terdistribusi"
+    "defaultMessage": "Siapkan pembagian"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "tidak terjangkau"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "Obrolan dilayani pembagian di seluruh Mac Anda — angkanya ada di ubin di atas. Baris ini milik mesin tunggal Mac ini sendiri."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Terdistribusi"
+    "defaultMessage": "Pembagian"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Mesin terdistribusi menguasai Mac ini: mesin tunggal tidak bisa dipasang sampai mesin itu dihentikan di bagian Mesin terdistribusi di bawah."
+    "defaultMessage": "Pembagian menguasai Mac ini: tidak ada model yang berjalan sendiri di sini sampai pembagian dihentikan (Hentikan, di Jalankan di bawah)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Detail mesin"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "TERLEWAT"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "Hanya {attention} lapisan full-attention yang tumbuh bersama konteks dan dikompresi; {state} lapisan linear-attention menyimpan state berukuran tetap. Berlaku pada mount berikutnya. Proses terdistribusi tetap memakai cache bf16."
+    "defaultMessage": "Hanya {attention} lapisan full-attention yang tumbuh bersama konteks dan dikompresi; {state} lapisan linear-attention menyimpan state berukuran tetap. Berlaku pada mount berikutnya. Pembagian tetap memakai cache bf16."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "Kompresi cache KV tidak tersedia: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, other {Terdistribusi · # node · {backend}}}"
+    "defaultMessage": "{count, plural, one {Dibagi ke # Mac · {backend}} other {Dibagi ke # Mac · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, other {Terdistribusi · # node}}"
+    "defaultMessage": "{count, plural, one {Dibagi ke # Mac} other {Dibagi ke # Mac}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "Rank {rank} dari engine terdistribusi {requester} · {model} · {backend}"
+    "defaultMessage": "Peringkat {rank} dari pembagian {requester} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "Rank {rank} dari engine terdistribusi {requester} · {model}"
+    "defaultMessage": "Peringkat {rank} dari pembagian {requester} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "Dilayani dari {peer}"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "Mesin {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "untuk engine terdistribusi {requester} melalui LeanZero Link"
+    "defaultMessage": "untuk pembagian {requester} melalui LeanZero Link"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "Memuat rank {rank} untuk {requester}"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "Kontrol berpikir tidak tersedia: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Tidak dapat menghentikan mesin terdistribusi"
+    "defaultMessage": "Tidak dapat menghentikan pembagian"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "Penghentian mesin terdistribusi tidak terverifikasi: {steps}"
+    "defaultMessage": "Penghentian pembagian tidak terverifikasi: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Mesin MLX tidak dapat dipasang"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Mesin terdistribusi melayani {served}; node ini meminta {wanted}."
+    "defaultMessage": "Pembagian menyajikan {served}; node ini menginginkan {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} tidak dimuat di server yang dituju node ini."

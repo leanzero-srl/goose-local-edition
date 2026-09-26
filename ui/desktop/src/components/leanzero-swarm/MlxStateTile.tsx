@@ -247,7 +247,7 @@ const i18n = defineMessages({
   },
   hostingFor: {
     id: 'mlxStateTile.hosting.for',
-    defaultMessage: "for {requester}'s distributed engine over LeanZero Link",
+    defaultMessage: "for {requester}'s split over LeanZero Link",
   },
   hostingPid: { id: 'mlxStateTile.hosting.pid', defaultMessage: 'rank pid {pid}' },
   hostingLoading: {
@@ -346,7 +346,7 @@ export interface MlxStateTileProps {
   failedError: string | null;
   /** The state's own action (Mount / Retry), drawn on the tile. */
   action: ReactNode;
-  /** Which engine owns this Mac, in words ("Single · this Mac" / "Distributed · 2 nodes · JACCL"). */
+  /** Which engine owns this Mac, in words ("Single · this Mac" / "Split across 2 Macs · JACCL"). */
   modeLabel: string;
   /**
    * The distributed engine's status. While it owns this Mac the tile IS that engine: its state,

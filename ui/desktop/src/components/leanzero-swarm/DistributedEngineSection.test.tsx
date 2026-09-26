@@ -188,7 +188,7 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     const mode = screen.getByTestId('mlx-dist-mode');
     expect(mode).toHaveAttribute('data-mode', 'distributed');
     expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
-      'Distributed · 2 nodes · JACCL'
+      'Split across 2 Macs · JACCL'
     );
     expect(within(mode).getByText('Ready')).toBeInTheDocument();
 
@@ -311,7 +311,7 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     expect(screen.getByRole('combobox', { name: 'Backend' })).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
     expect(mockStop).not.toHaveBeenCalled();
-    expect(await screen.findByText('Stop the distributed engine?')).toBeInTheDocument();
+    expect(await screen.findByText('Stop the split?')).toBeInTheDocument();
     expect(screen.getByText(/Every rank on MacBook Pro, workhorse is stopped/)).toBeInTheDocument();
     const dialog = screen.getByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Stop the split' }));
@@ -452,7 +452,7 @@ describe('DistributedEngineSection — starting', () => {
     const { container } = section({ status: STOPPED_WITH_CONFIG });
     // The section names the engine it configures, even while the Mac belongs to the single one.
     expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
-      'Distributed · 2 nodes · JACCL'
+      'Split across 2 Macs · JACCL'
     );
     await userEvent.click(screen.getByRole('button', { name: 'Start' }));
     expect(mockStart).toHaveBeenCalledWith(null);
@@ -691,7 +691,7 @@ describe('DistributedEngineSection — configuration', () => {
   it('a saved but stopped config: the headline is the configured engine, not the single one', () => {
     section({ status: STOPPED_WITH_CONFIG });
     expect(screen.getByTestId('mlx-dist-mode-text')).toHaveTextContent(
-      'Distributed · 2 nodes · JACCL'
+      'Split across 2 Macs · JACCL'
     );
     expect(within(screen.getByTestId('mlx-dist-mode')).getByText('Stopped')).toBeInTheDocument();
     expect(screen.queryByText('Single · this Mac')).toBeNull();
@@ -886,7 +886,7 @@ describe('DistributedEngineSection — Set up detects everything from one peer n
 describe('DistributedEngineSection — loud absence', () => {
   it('capability missing: the section explains why it is unavailable', async () => {
     const { container } = section({ capability: false, status: null });
-    expect(screen.getByText('Distributed inference is unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Splitting a model across Macs is unavailable')).toBeInTheDocument();
     expect(screen.getByText(/the mlxDistributed capability is missing/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
     await expectDesigned(container);
@@ -919,7 +919,7 @@ describe('DistributedEngineSection — loud absence', () => {
 
   it('embedded under Run it: no title, no second Start or Stop — the row owns them', () => {
     section({ embedded: true, status: STOPPED_WITH_CONFIG });
-    expect(screen.queryByText('Distributed engine')).toBeNull();
+    expect(screen.queryByText('Split across your Macs')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Start' })).toBeNull();
     expect(screen.queryByTestId('mlx-dist-mode')).toBeNull();
     expect(screen.getByRole('button', { name: 'Preflight (dry run)' })).toBeInTheDocument();

@@ -138,11 +138,11 @@ import {
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
 
 const i18n = defineMessages({
-  distributedOwns: { id: 'mlxEngineView.distributedOwns', defaultMessage: 'Distributed' },
+  distributedOwns: { id: 'mlxEngineView.distributedOwns', defaultMessage: 'Split' },
   distributedOwnsText: {
     id: 'mlxEngineView.distributedOwnsText',
     defaultMessage:
-      'The distributed engine owns this Mac: the single engine cannot mount until it is stopped in the Distributed engine section below.',
+      'The split owns this Mac: no model runs here alone until the split is stopped (Stop, under Run it below).',
   },
   servingDistributed: {
     id: 'mlxEngineView.servingDistributed',
@@ -2501,7 +2501,7 @@ function MlxEngineViewBody() {
       setLive({
         ok: false,
         detail: distUp
-          ? 'the distributed engine reported no base URL'
+          ? 'the split reported no base URL'
           : remoteUp
             ? 'this goose does not hand over the relay to the other Mac’s engine (update goose)'
             : 'the running engine reported no base URL',

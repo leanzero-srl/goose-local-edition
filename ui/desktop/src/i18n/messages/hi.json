@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "वितरित इंजन {served} सर्व करता है; नोड को {wanted} चाहिए।"
+    "defaultMessage": "विभाजन {served} सर्व करता है; नोड {wanted} चाहता है।"
   },
   "composerReadiness.failed": {
     "defaultMessage": "पिछला माउंट विफल रहा: {error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "क्लस्टर जाँचें"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "अभी तक कोई वितरित कॉन्फ़िगरेशन सहेजा नहीं गया है।"
+    "defaultMessage": "अभी कोई विभाजन सेट नहीं है।"
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "कॉन्फ़िगरेशन"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "{total} GB में से {done} लोड हुए"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "जब तक वितरित इंजन इस Mac पर है, कॉन्फ़िगरेशन लॉक रहता है। नोड या मॉडल बदलने के लिए इसे रोकें।"
+    "defaultMessage": "जब तक विभाजन इस Mac पर है, कॉन्फ़िगरेशन लॉक रहता है। इसके Mac या मॉडल बदलने के लिए इसे रोकें।"
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "मेमोरी नहीं पढ़ी गई: {error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "रैंक {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "वितरित इंजन पढ़ा जा रहा है…"
+    "defaultMessage": "विभाजन पढ़ा जा रहा है…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "{name} हटाएँ"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "{nodes} पर हर रैंक रोकी जाती है और हर pid के लिए बंद होने की पुष्टि की जाती है। प्रगति में अनुरोध कट जाएँगे।"
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "वितरित इंजन रोकें?"
+    "defaultMessage": "विभाजन रोकें?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "रुकना सत्यापित नहीं"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "यह Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "वितरित इंजन"
+    "defaultMessage": "आपके Mac में विभाजित"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "यह goose बैकएंड वितरित इंजन नहीं देता: mlxDistributed क्षमता मौजूद नहीं है, यानी यह उस बिल्ड से पुराना है जिसने इसे जोड़ा। एक मॉडल को कई Mac में बाँटने के लिए goose अपडेट करें।"
+    "defaultMessage": "यह goose बैकएंड विभाजन नहीं देता: mlxDistributed क्षमता मौजूद नहीं है, यानी यह उस बिल्ड से पुराना है जिसने इसे जोड़ा। एक मॉडल को कई Mac में बाँटने के लिए goose अपडेट करें।"
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "वितरित इन्फ़रेंस उपलब्ध नहीं है"
+    "defaultMessage": "एक मॉडल को कई Mac में विभाजित करना उपलब्ध नहीं है"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "एकल इंजन रखें"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "अनमाउंट करें और जारी रखें"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "इस Mac पर एकल MLX इंजन माउंट है ({detail})। एक Mac एक समय में एक ही इंजन का होता है: अनमाउंट करने से वह मॉडल रुकता है ताकि वितरित इंजन शुरू हो सके।"
+    "defaultMessage": "इस Mac पर एकल MLX इंजन माउंट है ({detail})। एक Mac एक समय में एक ही इंजन का होता है: अनमाउंट करने से वह मॉडल रुकता है ताकि विभाजन शुरू हो सके।"
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "एकल इंजन अनमाउंट करें?"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "यह Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "वितरित इंजन सेट करें"
+    "defaultMessage": "विभाजन सेट करें"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "पहुँच योग्य नहीं"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "चैट आपके Mac पर बँटे इंजन से चल रही है — उसके आँकड़े ऊपर की टाइल में हैं। ये पंक्तियाँ इस Mac के अपने एकल इंजन की हैं।"
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "वितरित"
+    "defaultMessage": "विभाजन"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "वितरित इंजन इस Mac पर है: जब तक इसे नीचे वितरित इंजन अनुभाग में रोका नहीं जाता, एकल इंजन माउंट नहीं हो सकता।"
+    "defaultMessage": "विभाजन इस Mac पर है: जब तक विभाजन रोका नहीं जाता, यहाँ कोई मॉडल अकेले नहीं चलता (रोकें, नीचे Run it में)।"
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "इंजन विवरण"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "छूटा"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "केवल {attention} फुल-अटेंशन लेयर संदर्भ के साथ बढ़ती हैं और संपीड़ित होती हैं; {state} लीनियर-अटेंशन लेयर स्थिर आकार की स्थिति रखती हैं। अगले माउंट पर लागू होता है। वितरित रन bf16 कैश ही रखते हैं।"
+    "defaultMessage": "केवल {attention} फुल-अटेंशन लेयर संदर्भ के साथ बढ़ती हैं और संपीड़ित होती हैं; {state} लीनियर-अटेंशन लेयर स्थिर आकार की स्थिति रखती हैं। अगले माउंट पर लागू होता है। विभाजन bf16 कैश ही रखता है।"
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV कैश संपीड़न उपलब्ध नहीं: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, one {वितरित · # नोड · {backend}} other {वितरित · # नोड · {backend}}}"
+    "defaultMessage": "{count, plural, one {# Mac में विभाजित · {backend}} other {# Mac में विभाजित · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, one {वितरित · # नोड} other {वितरित · # नोड}}"
+    "defaultMessage": "{count, plural, one {# Mac में विभाजित} other {# Mac में विभाजित}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "{requester} के वितरित इंजन का रैंक {rank} · {model} · {backend}"
+    "defaultMessage": "{requester} के विभाजन की रैंक {rank} · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "{requester} के वितरित इंजन का रैंक {rank} · {model}"
+    "defaultMessage": "{requester} के विभाजन की रैंक {rank} · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "{peer} से सर्व हो रहा है"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "इंजन {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "LeanZero Link पर {requester} के वितरित इंजन के लिए"
+    "defaultMessage": "LeanZero Link पर {requester} के विभाजन के लिए"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "{requester} के लिए रैंक {rank} लोड हो रहा है"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "सोचने के नियंत्रण उपलब्ध नहीं: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "वितरित इंजन रोका नहीं जा सका"
+    "defaultMessage": "विभाजन रोका नहीं जा सका"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "वितरित इंजन का रुकना सत्यापित नहीं हुआ: {steps}"
+    "defaultMessage": "विभाजन का रुकना सत्यापित नहीं हुआ: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "MLX इंजन माउंट नहीं हो सका"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "वितरित इंजन {served} सर्व करता है; इस नोड को {wanted} चाहिए।"
+    "defaultMessage": "विभाजन {served} सर्व करता है; यह नोड {wanted} चाहता है।"
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} उस सर्वर पर लोड नहीं है जिसकी ओर यह नोड इशारा करता है।"

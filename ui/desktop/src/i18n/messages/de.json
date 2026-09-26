@@ -723,7 +723,7 @@
     "defaultMessage": "{mode} · {state} — {nodes}"
   },
   "composerReadiness.distributedMismatch": {
-    "defaultMessage": "Die verteilte Engine stellt {served} bereit; der Knoten erwartet {wanted}."
+    "defaultMessage": "Der Split stellt {served} bereit; der Knoten möchte {wanted}."
   },
   "composerReadiness.failed": {
     "defaultMessage": "Das letzte Einbinden ist fehlgeschlagen: {error}"
@@ -3051,7 +3051,7 @@
     "defaultMessage": "Cluster-Prüfungen"
   },
   "mlxDistributed.configNone": {
-    "defaultMessage": "Es ist noch keine verteilte Konfiguration gespeichert."
+    "defaultMessage": "Noch kein Split eingerichtet."
   },
   "mlxDistributed.configTitle": {
     "defaultMessage": "Konfiguration"
@@ -3291,7 +3291,7 @@
     "defaultMessage": "{done} von {total} GB geladen"
   },
   "mlxDistributed.locked": {
-    "defaultMessage": "Die Konfiguration ist gesperrt, solange die verteilte Engine diesen Mac belegt. Stoppe sie, um Nodes oder das Modell zu ändern."
+    "defaultMessage": "Die Konfiguration ist gesperrt, solange der Split diesen Mac belegt. Stoppe ihn, um seine Macs oder das Modell zu ändern."
   },
   "mlxDistributed.memoryUnread": {
     "defaultMessage": "Speicher nicht gelesen: {error}"
@@ -3426,7 +3426,7 @@
     "defaultMessage": "Rank {rank}"
   },
   "mlxDistributed.reading": {
-    "defaultMessage": "Verteilte Engine wird gelesen…"
+    "defaultMessage": "Split wird gelesen…"
   },
   "mlxDistributed.removeNode": {
     "defaultMessage": "{name} entfernen"
@@ -3537,7 +3537,7 @@
     "defaultMessage": "Jeder Rank auf {nodes} wird gestoppt und PID für PID als beendet bestätigt. Laufende Anfragen werden abgebrochen."
   },
   "mlxDistributed.stopTitle": {
-    "defaultMessage": "Verteilte Engine stoppen?"
+    "defaultMessage": "Split stoppen?"
   },
   "mlxDistributed.stopUnverified": {
     "defaultMessage": "Stopp nicht bestätigt"
@@ -3552,13 +3552,13 @@
     "defaultMessage": "dieser Mac"
   },
   "mlxDistributed.title": {
-    "defaultMessage": "Verteilte Engine"
+    "defaultMessage": "Auf deine Macs aufgeteilt"
   },
   "mlxDistributed.unavailableBody": {
-    "defaultMessage": "Dieses goose-Backend bietet die verteilte Engine nicht an: Die Fähigkeit mlxDistributed fehlt, es ist also älter als der Build, der sie eingeführt hat. Aktualisiere goose, um ein Modell auf mehrere Macs zu verteilen."
+    "defaultMessage": "Dieses goose-Backend bietet den Split nicht an: Die Fähigkeit mlxDistributed fehlt, es ist also älter als der Build, der sie eingeführt hat. Aktualisiere goose, um ein Modell auf mehrere Macs zu verteilen."
   },
   "mlxDistributed.unavailableTitle": {
-    "defaultMessage": "Verteilte Inferenz ist nicht verfügbar"
+    "defaultMessage": "Ein Modell auf Macs aufzuteilen ist nicht verfügbar"
   },
   "mlxDistributed.unmountCancel": {
     "defaultMessage": "Einzel-Engine behalten"
@@ -3567,7 +3567,7 @@
     "defaultMessage": "Aushängen und fortfahren"
   },
   "mlxDistributed.unmountMessage": {
-    "defaultMessage": "Die einzelne MLX-Engine ist auf diesem Mac eingehängt ({detail}). Ein Mac gehört jeweils einer Engine: Das Aushängen stoppt dieses Modell, damit die verteilte Engine starten kann."
+    "defaultMessage": "Die einzelne MLX-Engine ist auf diesem Mac eingehängt ({detail}). Ein Mac gehört jeweils einer Engine: Das Aushängen stoppt dieses Modell, damit der Split starten kann."
   },
   "mlxDistributed.unmountTitle": {
     "defaultMessage": "Einzel-Engine aushängen?"
@@ -3759,7 +3759,7 @@
     "defaultMessage": "dieser Mac"
   },
   "mlxDistributedSetup.title": {
-    "defaultMessage": "Verteilte Engine einrichten"
+    "defaultMessage": "Split einrichten"
   },
   "mlxDistributedSetup.unreachable": {
     "defaultMessage": "nicht erreichbar"
@@ -3774,10 +3774,10 @@
     "defaultMessage": "Der Chat wird von der Aufteilung über deine Macs bedient — ihre Werte stehen in der Kachel oben. Diese Zeilen gehören zur Einzel-Engine dieses Mac."
   },
   "mlxEngineView.distributedOwns": {
-    "defaultMessage": "Verteilt"
+    "defaultMessage": "Split"
   },
   "mlxEngineView.distributedOwnsText": {
-    "defaultMessage": "Die verteilte Engine belegt diesen Mac: Die Einzel-Engine kann erst einhängen, wenn sie unten im Abschnitt Verteilte Engine gestoppt wurde."
+    "defaultMessage": "Der Split belegt diesen Mac: Hier läuft kein Modell allein, bis der Split gestoppt ist (Stoppen, unter „Ausführen“ unten)."
   },
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Engine-Details"
@@ -3888,22 +3888,22 @@
     "defaultMessage": "VERFEHLT"
   },
   "mlxKvCache.scope": {
-    "defaultMessage": "Nur die {attention} Full-Attention-Schichten wachsen mit dem Kontext und werden komprimiert; {state} Linear-Attention-Schichten behalten einen Zustand fester Größe. Gilt ab dem nächsten Mount. Verteilte Läufe behalten einen bf16-Cache."
+    "defaultMessage": "Nur die {attention} Full-Attention-Schichten wachsen mit dem Kontext und werden komprimiert; {state} Linear-Attention-Schichten behalten einen Zustand fester Größe. Gilt ab dem nächsten Mount. Ein Split behält einen bf16-Cache."
   },
   "mlxKvCache.unavailable": {
     "defaultMessage": "KV-Cache-Komprimierung nicht verfügbar: {reason}"
   },
   "mlxMode.distributed": {
-    "defaultMessage": "{count, plural, one {Verteilt · # Node · {backend}} other {Verteilt · # Nodes · {backend}}}"
+    "defaultMessage": "{count, plural, one {Auf # Mac aufgeteilt · {backend}} other {Auf # Macs aufgeteilt · {backend}}}"
   },
   "mlxMode.distributedNoBackend": {
-    "defaultMessage": "{count, plural, one {Verteilt · # Node} other {Verteilt · # Nodes}}"
+    "defaultMessage": "{count, plural, one {Auf # Mac aufgeteilt} other {Auf # Macs aufgeteilt}}"
   },
   "mlxMode.hosting": {
-    "defaultMessage": "Rang {rank} der verteilten Engine von {requester} · {model} · {backend}"
+    "defaultMessage": "Rang {rank} von {requester}s Split · {model} · {backend}"
   },
   "mlxMode.hostingNoBackend": {
-    "defaultMessage": "Rang {rank} der verteilten Engine von {requester} · {model}"
+    "defaultMessage": "Rang {rank} von {requester}s Split · {model}"
   },
   "mlxMode.remote": {
     "defaultMessage": "Bereitgestellt von {peer}"
@@ -4164,7 +4164,7 @@
     "defaultMessage": "Engine {state}"
   },
   "mlxStateTile.hosting.for": {
-    "defaultMessage": "für die verteilte Engine von {requester} über LeanZero Link"
+    "defaultMessage": "für {requester}s Split über LeanZero Link"
   },
   "mlxStateTile.hosting.loading": {
     "defaultMessage": "Lade Rang {rank} für {requester}"
@@ -4371,10 +4371,10 @@
     "defaultMessage": "Denk-Steuerung nicht verfügbar: {reason}"
   },
   "mlxTray.distributedStopFailed": {
-    "defaultMessage": "Die verteilte Engine konnte nicht gestoppt werden"
+    "defaultMessage": "Der Split konnte nicht gestoppt werden"
   },
   "mlxTray.distributedStopUnverified": {
-    "defaultMessage": "Der Stopp der verteilten Engine wurde nicht bestätigt: {steps}"
+    "defaultMessage": "Das Stoppen des Splits wurde nicht bestätigt: {steps}"
   },
   "mlxTray.mountFailed": {
     "defaultMessage": "Die MLX-Engine konnte nicht gemountet werden"
@@ -4980,7 +4980,7 @@
     "defaultMessage": "{mode} · {state}"
   },
   "noNodeNotice.distributedWrongModel": {
-    "defaultMessage": "Die verteilte Engine stellt {served} bereit; dieser Knoten erwartet {wanted}."
+    "defaultMessage": "Der Split stellt {served} bereit; dieser Knoten möchte {wanted}."
   },
   "noNodeNotice.lmNotListed": {
     "defaultMessage": "{model} ist auf dem Server, auf den dieser Node zeigt, nicht geladen."
