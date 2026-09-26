@@ -537,8 +537,9 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
     expect(reconnectingMac(deriveChatServedBy(inputs({ remote: ROUTE })))).toBeNull();
   });
 
-  it('Q-111: main measured the wait past 3× the route’s longest comeback — gone, held, and the same Run here', () => {
+  it('Q-111: main measured the silence past 3× the expected comeback — away, held, and the same Run here', () => {
     const SEC = 1000;
+    const LOST_AT = Date.UTC(2026, 8, 25, 23, 14);
     const lostFor = (lostForMs: number, saidQuit = false): MlxEngineSnapshot => ({
       engine: 'remote',
       mode: 'reconnecting',
@@ -549,7 +550,14 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
       rates: EMPTY_BOOK,
       serving: null,
       failedError: null,
-      contact: { lostForMs, longestComebackMs: 25 * SEC, comebacks: 1, saidQuit },
+      contact: {
+        lostSinceMs: LOST_AT,
+        lostForMs,
+        longestComebackMs: 25 * SEC,
+        comebacks: 1,
+        saidQuit,
+        pollMs: 2 * SEC,
+      },
     });
     const blip = deriveChatServedBy(inputs({ remote: ROUTE, main: lostFor(60 * SEC) }));
     expect(blip.phase).toBe('loading');
@@ -559,7 +567,7 @@ describe('RECONNECTING — the Mac that serves chat stopped answering (Q-47/Q-48
     expect(gone.phase).toBe('held');
     expect(gone.readiness).toMatchObject({
       kind: 'reconnecting',
-      gone: { because: 'unreachable', lostForMs: 3 * 3600 * SEC, longestComebackMs: 25 * SEC },
+      gone: { because: 'silent', lostSinceMs: LOST_AT, lostForMs: 3 * 3600 * SEC },
       instead: { kind: 'switch', mount: HF },
     });
     // Still lost contact: the context counter holds, the turn cue names the Mac.

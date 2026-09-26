@@ -429,7 +429,7 @@
     "defaultMessage": "Đang chờ lưu hình ảnh..."
   },
   "chatServedBy.peerGone": {
-    "defaultMessage": "goose trên {peer} không chạy"
+    "defaultMessage": "{because, select, quit {goose trên {peer} không chạy} other {{peer} chưa phản hồi từ {time} — goose có thể đã đóng, hoặc máy đang ngoại tuyến}}"
   },
   "chatServedBy.thisMac": {
     "defaultMessage": "Mac này"
@@ -726,7 +726,7 @@
     "defaultMessage": "Lần gắn gần nhất thất bại: {error}"
   },
   "composerReadiness.goneDetail": {
-    "defaultMessage": "{because, select, quit {{peer} đã thoát goose{turn, select, yes {, nên câu trả lời này dừng lại} other {}}} other {Không có phản hồi trong {elapsed}}} — hãy mở goose ở đó, hoặc chạy cuộc trò chuyện trên Mac này. goose sẽ tự kết nối lại khi nó quay lại"
+    "defaultMessage": "{because, select, quit {{peer} đã thoát goose{turn, select, yes {, nên câu trả lời này dừng lại} other {}} — hãy mở goose ở đó, hoặc chạy cuộc trò chuyện trên Mac này} other {Hãy mở goose ở đó nếu nó đã đóng, hoặc chạy cuộc trò chuyện trên Mac này}}. goose sẽ tự kết nối lại khi nó quay lại"
   },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} đang khởi động lại goose} other {{peer} đã thoát goose}}{turn, select, yes { — câu trả lời này dừng lại} other {}}"
@@ -7722,7 +7722,7 @@
     "defaultMessage": "Đang kiểm tra xem {mac} còn giữ câu trả lời của bạn không…"
   },
   "turnCue.gone": {
-    "defaultMessage": "goose trên {mac} không chạy — hãy mở goose ở đó, hoặc chạy cuộc trò chuyện trên Mac này"
+    "defaultMessage": "{because, select, quit {goose trên {mac} không chạy — hãy mở goose ở đó, hoặc chạy cuộc trò chuyện trên Mac này} other {{mac} chưa phản hồi từ {time} — goose có thể đã đóng, hoặc máy đang ngoại tuyến}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} đang đọc lời nhắc của bạn ({tokens} token) — đã {elapsed}"

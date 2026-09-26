@@ -429,7 +429,7 @@
     "defaultMessage": "正在等待图片保存…"
   },
   "chatServedBy.peerGone": {
-    "defaultMessage": "{peer} 上的 goose 未在运行"
+    "defaultMessage": "{because, select, quit {{peer} 上的 goose 未在运行} other {{peer} 自 {time} 起没有响应 — goose 可能已关闭，或它已离线}}"
   },
   "chatServedBy.thisMac": {
     "defaultMessage": "这台 Mac"
@@ -726,7 +726,7 @@
     "defaultMessage": "上次挂载失败:{error}"
   },
   "composerReadiness.goneDetail": {
-    "defaultMessage": "{because, select, quit {{peer} 已退出 goose{turn, select, yes {，这条回答会停止} other {}}} other {已 {elapsed} 无响应}} — 请在那边打开 goose，或在这台 Mac 上运行聊天。它恢复后 goose 会自动重新连接"
+    "defaultMessage": "{because, select, quit {{peer} 已退出 goose{turn, select, yes {，这条回答会停止} other {}} — 请在那边打开 goose，或在这台 Mac 上运行聊天} other {如果 goose 已关闭，请在那边打开它，或在这台 Mac 上运行聊天}}. 它恢复后 goose 会自动重新连接"
   },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} 正在重启 goose} other {{peer} 已退出 goose}}{turn, select, yes { — 此回答将中止} other {}}"
@@ -7722,7 +7722,7 @@
     "defaultMessage": "正在检查 {mac} 是否仍保留你的回答…"
   },
   "turnCue.gone": {
-    "defaultMessage": "{mac} 上的 goose 未在运行 — 请在那边打开 goose，或在这台 Mac 上运行聊天"
+    "defaultMessage": "{because, select, quit {{mac} 上的 goose 未在运行 — 请在那边打开 goose，或在这台 Mac 上运行聊天} other {{mac} 自 {time} 起没有响应 — goose 可能已关闭，或它已离线}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} 正在读取你的提示（{tokens} 个 token）— 已用 {elapsed}"

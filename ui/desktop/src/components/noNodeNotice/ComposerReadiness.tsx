@@ -19,7 +19,7 @@ import { PeerHeldLine } from '../leanzero-swarm/PeerHeldLine';
 import { dropRoute, type PeerReach } from '../leanzero-swarm/routeSwitch';
 import { routePeerName } from '../leanzero-swarm/macs';
 import { formatMlxMode } from '../leanzero-swarm/mlxModeLabel';
-import { compactTokens, formatElapsed } from '../leanzero-swarm/mlxLiveStats';
+import { compactTokens } from '../leanzero-swarm/mlxLiveStats';
 import { defineMessages, useIntl } from '../../i18n';
 import { Button, PHASE_FILL, RADIUS, TONE_FILL, TYPE, WEIGHT, cx } from '../lz';
 import {
@@ -110,7 +110,7 @@ const i18n = defineMessages({
   goneDetail: {
     id: 'composerReadiness.goneDetail',
     defaultMessage:
-      '{because, select, quit {{peer} quit goose{turn, select, yes {, so this answer stops} other {}}} other {No answer for {elapsed}}} — open goose there, or run chat on this Mac. goose reconnects on its own once it is back',
+      '{because, select, quit {{peer} quit goose{turn, select, yes {, so this answer stops} other {}} — open goose there, or run chat on this Mac} other {Open goose there if it is closed, or run chat on this Mac}}. goose reconnects on its own once it is back',
   },
   stopWaiting: { id: 'composerReadiness.stopWaiting', defaultMessage: 'Stop waiting for it' },
   stopWaitingHint: {
@@ -200,9 +200,12 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [stopWaitError, setStopWaitError] = useState<string | null>(null);
-  // A Mac whose goose is gone holds no engine to free: it is never asked (routeSwitch `gone`).
+  // A Mac whose goose SAID it quit holds no engine to free: it is never asked (routeSwitch `gone`).
+  // One that only went silent may be offline with its model still loaded: asked in the background.
   const reach: PeerReach =
-    readiness.kind === 'reconnecting' && readiness.gone ? 'gone' : 'unreachable';
+    readiness.kind === 'reconnecting' && readiness.gone?.because === 'said-quit'
+      ? 'gone'
+      : 'unreachable';
   const [startingSplit, setStartingSplit] = useState(false);
   const [splitStartError, setSplitStartError] = useState<string | null>(null);
 
@@ -234,13 +237,13 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
     setSwitching(true);
     setStopWaitError(null);
     try {
-      await dropRoute('gone').routeGone;
+      await dropRoute(reach).routeGone;
     } catch (e) {
       setStopWaitError(errorMessage(e, String(e)));
     } finally {
       setSwitching(false);
     }
-  }, []);
+  }, [reach]);
 
   // "Start the split again": the saved split, the same call Run it and the relaunch restore make.
   // Its status is read at once so every surface leaves "stopped" on the run's own state.
@@ -524,12 +527,13 @@ function ReadinessStripBody({
       </>
     );
   } else if (readiness.kind === 'reconnecting' && readiness.gone) {
-    // Not a blip: that Mac's goose said it quit, or has stayed away well past every comeback this
-    // Mac measured (Q-111). A steady state in the chip's words, with the two ways out; the route
-    // still comes back on its own when that Mac does.
+    // Not a blip: that Mac's goose said it quit ("isn't running"), or it has been silent well past
+    // the comeback it is expected to make ("hasn't answered since…", closed or offline — never
+    // called a closed app) (Q-111). A steady state in the chip's words, with the two ways out; the
+    // route still comes back on its own when that Mac does.
     const { gone } = readiness;
     const peer = routePeerName(readiness.status);
-    headline = peerGoneText(intl, peer);
+    headline = peerGoneText(intl, peer, gone);
     fill = PHASE_FILL.held;
     detail = switchError
       ? intl.formatMessage(i18n.switchFailed, { error: switchError })
@@ -537,9 +541,8 @@ function ReadinessStripBody({
         ? intl.formatMessage(i18n.stopWaitingFailed, { peer, error: stopWaitError })
         : intl.formatMessage(i18n.goneDetail, {
             peer,
-            because: gone.because === 'said-quit' ? 'quit' : 'unreachable',
+            because: gone.because === 'said-quit' ? 'quit' : 'silent',
             turn: turnInFlight ? 'yes' : 'no',
-            elapsed: gone.because === 'unreachable' ? formatElapsed(gone.lostForMs / 1000) : '',
           });
     raw = readiness.why;
     action = (

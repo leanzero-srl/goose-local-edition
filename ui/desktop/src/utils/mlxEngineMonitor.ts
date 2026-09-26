@@ -9,7 +9,7 @@ import {
 import type { MlxLiveStatusResult } from './mlxLiveStatus';
 import { remoteLiveBase } from './mlxRemoteReport';
 import { leaveCause } from './leaveCause';
-import { waitedPastComebacks, type RouteContact } from './routeContact';
+import { routePeerGone, type RouteContact } from './routeContact';
 import {
   attributeServing,
   servingRowsForEngine,
@@ -140,10 +140,13 @@ function isRouteContact(value: unknown): value is RouteContact {
   const c = value as Record<string, unknown>;
   const msOrNull = (v: unknown) => v === null || (typeof v === 'number' && Number.isFinite(v));
   return (
+    msOrNull(c.lostSinceMs) &&
     msOrNull(c.lostForMs) &&
     msOrNull(c.longestComebackMs) &&
     typeof c.comebacks === 'number' &&
-    typeof c.saidQuit === 'boolean'
+    typeof c.saidQuit === 'boolean' &&
+    typeof c.pollMs === 'number' &&
+    Number.isFinite(c.pollMs)
   );
 }
 
@@ -216,8 +219,9 @@ export class MlxEngineMonitor {
   /**
    * Fold one route read into its Mac's contact history. A wait opens at the first read that finds
    * the route not answering (mounting there, or contact lost) and closes at the first that finds it
-   * answering: its length is a comeback — unless it had already run past the verdict in force, when
-   * it measured a Mac that was gone, not a blip. A route that failed there answered: no wait.
+   * answering: its length is a comeback — unless the surfaces had already called it away (its goose
+   * said it quit, or it went silent past the verdict), when it measured a Mac that was away, not a
+   * blip. A route that failed there answered: no wait.
    */
   private trackContact(mac: string, mode: MlxEngineMode, said: string[]): RouteContact {
     const now = this.deps.now();
@@ -226,34 +230,36 @@ export class MlxEngineMonitor {
       comebacks: 0,
       waitSinceMs: null,
       saidQuit: false,
+      calledAway: false,
     };
     this.contacts.set(mac, book);
     if (mode === 'running') {
-      if (book.waitSinceMs != null) {
-        const waited = now - book.waitSinceMs;
-        if (!waitedPastComebacks(waited, book.longestComebackMs)) {
-          book.longestComebackMs = Math.max(book.longestComebackMs ?? 0, waited);
-          book.comebacks += 1;
-        }
+      // A wait the surfaces already called away measured a Mac that was gone or offline, not a
+      // blip: it never becomes the comeback the next verdict is measured against.
+      if (book.waitSinceMs != null && !book.calledAway) {
+        book.longestComebackMs = Math.max(book.longestComebackMs ?? 0, now - book.waitSinceMs);
+        book.comebacks += 1;
       }
-      book.waitSinceMs = null;
-      book.saidQuit = false;
+      endWait(book);
     } else if (mode === 'reconnecting' || mode === 'mounting') {
       book.waitSinceMs ??= now;
       // The Mac's own "quit goose" is kept for the whole wait: the route's reason is overwritten by
       // the mesh's next transport error, and the fact it quit does not stop being true.
       if (said.some((text) => leaveCause(text) === 'quit')) book.saidQuit = true;
     } else if (mode === 'failed') {
-      book.waitSinceMs = null;
-      book.saidQuit = false;
+      endWait(book);
     }
-    return {
-      lostForMs:
-        mode === 'reconnecting' && book.waitSinceMs != null ? now - book.waitSinceMs : null,
+    const lost = mode === 'reconnecting' ? book.waitSinceMs : null;
+    const contact: RouteContact = {
+      lostSinceMs: lost,
+      lostForMs: lost != null ? now - lost : null,
       longestComebackMs: book.longestComebackMs,
       comebacks: book.comebacks,
       saidQuit: book.saidQuit,
+      pollMs: this.deps.intervalMs,
     };
+    if (routePeerGone(contact, null)) book.calledAway = true;
+    return contact;
   }
 
   private fold(key: string, stats: MlxLiveStats): RateBook {
@@ -316,10 +322,7 @@ export class MlxEngineMonitor {
     }
     // A wait belongs to a published route: one dropped mid-wait (Stop waiting) never lends its
     // start to the next route's mount, which would measure hours as a comeback.
-    for (const book of this.contacts.values()) {
-      book.waitSinceMs = null;
-      book.saidQuit = false;
-    }
+    for (const book of this.contacts.values()) endWait(book);
     return { ...(await this.readSingle()), engine: 'single' };
   }
 
@@ -486,4 +489,12 @@ interface ContactBook {
   /** When the wait in progress began (main's clock); null while the route answers. */
   waitSinceMs: number | null;
   saidQuit: boolean;
+  /** This wait was already called away (routePeerGone): its length is no comeback. */
+  calledAway: boolean;
+}
+
+function endWait(book: ContactBook): void {
+  book.waitSinceMs = null;
+  book.saidQuit = false;
+  book.calledAway = false;
 }

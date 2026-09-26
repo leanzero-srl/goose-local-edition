@@ -407,12 +407,50 @@ describe('MlxEngineMonitor — a remote single is read through the relay while i
   });
 });
 
-describe('MlxEngineMonitor — Q-111: how long the route waited, measured against its own comebacks', () => {
+describe('MlxEngineMonitor — Q-111: how long the route waited, against the comeback it is expected to make', () => {
   const RELAY = 'http://127.0.0.1:61001/relay/cafe';
   const STUDIO = 'Work’s Mac Studio';
   const SEC = 1000;
+  // The harness reads at 2 s, as main does: a relaunch's worth is 25 s, the verdict 75 s.
 
-  it('a relaunch that re-mounted in 25 s is a comeback; a later wait is gone only past 3× that, and an 8 h wait never becomes a comeback', async () => {
+  it('a FRESH launch — nothing measured, no quit notice: the poll anchors it, away at 76 s, silent', async () => {
+    let answer: MlxLiveStatusResult = answered(IDLE_STATUS);
+    const h = harness({
+      status: () => answer,
+      remoteRoute: () => ({ state: 'ready', baseUrl: RELAY, peerName: STUDIO }),
+    });
+    await h.monitor.tick();
+    expect(h.monitor.current().contact).toEqual({
+      lostSinceMs: null,
+      lostForMs: null,
+      longestComebackMs: null,
+      comebacks: 0,
+      saidQuit: false,
+      pollMs: 2000,
+    });
+    answer = refused;
+    h.clock.ms = 100 * SEC;
+    await h.monitor.tick();
+    h.clock.ms = 175 * SEC;
+    await h.monitor.tick();
+    expect(routePeerGone(h.monitor.current().contact, null)).toBeNull();
+    h.clock.ms = 176 * SEC;
+    await h.monitor.tick();
+    expect(routePeerGone(h.monitor.current().contact, null)).toEqual({
+      because: 'silent',
+      lostSinceMs: 100 * SEC,
+      lostForMs: 76 * SEC,
+    });
+    // Hours later: still the same steady fact, from the same moment.
+    h.clock.ms = 100 * SEC + 8 * 3600 * SEC;
+    await h.monitor.tick();
+    expect(routePeerGone(h.monitor.current().contact, null)).toMatchObject({
+      because: 'silent',
+      lostSinceMs: 100 * SEC,
+    });
+  });
+
+  it('a measured 90 s mount raises the expectation; an 8 h wait never becomes a comeback', async () => {
     let route: { state: string; baseUrl: string | null; peerName: string } = {
       state: 'mounting',
       baseUrl: RELAY,
@@ -420,52 +458,33 @@ describe('MlxEngineMonitor — Q-111: how long the route waited, measured agains
     };
     let answer: MlxLiveStatusResult = refused;
     const h = harness({ status: () => answer, remoteRoute: () => route });
-    // The owner's measurement: relaunched 08:28:58, the route mounted again 08:29:23 — 25 s.
     await h.monitor.tick();
-    expect(h.monitor.current().contact).toEqual({
-      lostForMs: null,
-      longestComebackMs: null,
-      comebacks: 0,
-      saidQuit: false,
-    });
-    h.clock.ms = 25 * SEC;
+    h.clock.ms = 90 * SEC;
     route = { ...route, state: 'ready' };
     answer = answered(IDLE_STATUS);
     await h.monitor.tick();
     expect(h.monitor.current().contact).toMatchObject({
-      lostForMs: null,
-      longestComebackMs: 25 * SEC,
+      longestComebackMs: 90 * SEC,
       comebacks: 1,
     });
-
-    // The Studio's goose quit overnight with no notice reaching this Mac: contact lost.
     answer = refused;
     h.clock.ms = 100 * SEC;
     await h.monitor.tick();
-    expect(h.monitor.current().contact?.lostForMs).toBe(0);
-    h.clock.ms = 175 * SEC;
+    h.clock.ms = 100 * SEC + 200 * SEC;
     await h.monitor.tick();
-    const blip = h.monitor.current().contact;
-    expect(blip?.lostForMs).toBe(75 * SEC);
-    expect(routePeerGone(blip ?? null, null)).toBeNull();
-    h.clock.ms = 176 * SEC;
+    // 200 s is past a relaunch's 75 s, but not past 3 × this route's own 90 s mount.
+    expect(routePeerGone(h.monitor.current().contact, null)).toBeNull();
+    h.clock.ms = 100 * SEC + 271 * SEC;
     await h.monitor.tick();
-    expect(routePeerGone(h.monitor.current().contact, null)).toEqual({
-      because: 'unreachable',
-      lostForMs: 76 * SEC,
-      longestComebackMs: 25 * SEC,
-    });
-
-    // Eight hours later the Studio's goose is opened again: back, and that wait measured a Mac
-    // that was gone — never a comeback that would stretch the next verdict to a day.
+    expect(routePeerGone(h.monitor.current().contact, null)?.because).toBe('silent');
     h.clock.ms = 100 * SEC + 8 * 3600 * SEC;
     answer = answered(IDLE_STATUS);
     await h.monitor.tick();
-    expect(h.monitor.current().contact).toEqual({
+    expect(h.monitor.current().contact).toMatchObject({
+      lostSinceMs: null,
       lostForMs: null,
-      longestComebackMs: 25 * SEC,
+      longestComebackMs: 90 * SEC,
       comebacks: 1,
-      saidQuit: false,
     });
   });
 
@@ -491,19 +510,6 @@ describe('MlxEngineMonitor — Q-111: how long the route waited, measured agains
     answer = answered(IDLE_STATUS);
     await h.monitor.tick();
     expect(h.monitor.current().contact?.saidQuit).toBe(false);
-  });
-
-  it('with nothing measured yet no wait is called too long — it stays reconnecting, however long', async () => {
-    const h = harness({
-      status: () => refused,
-      remoteRoute: () => ({ state: 'ready', baseUrl: RELAY, peerName: STUDIO }),
-    });
-    await h.monitor.tick();
-    h.clock.ms = 8 * 3600 * SEC;
-    await h.monitor.tick();
-    const contact = h.monitor.current().contact;
-    expect(contact).toMatchObject({ lostForMs: 8 * 3600 * SEC, longestComebackMs: null });
-    expect(routePeerGone(contact, null)).toBeNull();
   });
 
   it('a route dropped mid-wait (Stop waiting) never lends that wait to the next route’s mount', async () => {
@@ -545,7 +551,7 @@ describe('MlxEngineMonitor — Q-111: how long the route waited, measured agains
     });
   });
 
-  it('a read of this Mac’s own engine carries no contact', async () => {
+  it('a read of this Mac’s own engine carries no contact; the IPC check refuses a malformed one', async () => {
     const h = harness({ status: () => answered(IDLE_STATUS) });
     await h.monitor.tick();
     expect(h.monitor.current().contact).toBeNull();

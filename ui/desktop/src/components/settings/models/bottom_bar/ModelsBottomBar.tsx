@@ -34,7 +34,7 @@ import { defineMessages, useIntl } from '../../../../i18n';
 import type { Message } from '../../../../types/message';
 import type { ChatServedBy } from '../../../chatServedBy/chatServedBy';
 import { splitStopReason } from '../../../chatServedBy/splitStopText';
-import { peerGoneMac, peerGoneText } from '../../../chatServedBy/peerGoneText';
+import { peerGoneOf, peerGoneText } from '../../../chatServedBy/peerGoneText';
 import { shortModelName } from '../../../noNodeNotice/mlxMount';
 import { compactTokens } from '../../../leanzero-swarm/mlxLiveStats';
 
@@ -306,10 +306,10 @@ export default function ModelsBottomBar({
   // single engine "not running".
   const splitStop = served?.readiness.kind === 'split-stopped' ? served.readiness.stop : null;
   const splitReason = splitStop ? splitStopReason(intl, splitStop) : null;
-  // A Mac whose goose is gone is said in the composer bar's words, and the chip then names only
-  // the model — the Mac is already in the words (Q-111).
-  const goneMac = served ? peerGoneMac(served) : null;
-  const goneWords = goneMac ? peerGoneText(intl, goneMac) : null;
+  // A Mac that is away (its goose quit, or silent well past its comeback) is said in the composer
+  // bar's words, and the chip then names only the model — the Mac is already in the words (Q-111).
+  const away = served ? peerGoneOf(served) : null;
+  const goneWords = away ? peerGoneText(intl, away.mac, away.gone) : null;
   // The amber of a Mac that stopped answering is not "Loading" — it is named for what it is.
   const phaseWord = goneWords
     ? goneWords

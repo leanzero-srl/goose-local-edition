@@ -429,7 +429,7 @@
     "defaultMessage": "छवियों को सहेजने की प्रतीक्षा की जा रही है..."
   },
   "chatServedBy.peerGone": {
-    "defaultMessage": "{peer} पर goose नहीं चल रहा है"
+    "defaultMessage": "{because, select, quit {{peer} पर goose नहीं चल रहा है} other {{peer} ने {time} से जवाब नहीं दिया — हो सकता है उसका goose बंद हो, या वह ऑफ़लाइन हो}}"
   },
   "chatServedBy.thisMac": {
     "defaultMessage": "यह Mac"
@@ -726,7 +726,7 @@
     "defaultMessage": "पिछला माउंट विफल रहा: {error}"
   },
   "composerReadiness.goneDetail": {
-    "defaultMessage": "{because, select, quit {{peer} ने goose बंद कर दिया{turn, select, yes {, इसलिए यह उत्तर रुक जाएगा} other {}}} other {{elapsed} से कोई उत्तर नहीं}} — वहाँ goose खोलें, या इस Mac पर चैट चलाएँ। उसके लौटते ही goose अपने आप फिर से जुड़ जाएगा"
+    "defaultMessage": "{because, select, quit {{peer} ने goose बंद कर दिया{turn, select, yes {, इसलिए यह उत्तर रुक जाएगा} other {}} — वहाँ goose खोलें, या इस Mac पर चैट चलाएँ} other {अगर goose बंद है तो वहाँ खोलें, या इस Mac पर चैट चलाएँ}}. उसके लौटते ही goose अपने आप फिर से जुड़ जाएगा"
   },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} goose को फिर से शुरू कर रहा है} other {{peer} ने goose बंद कर दिया}}{turn, select, yes { — यह उत्तर यहीं रुकता है} other {}}"
@@ -7722,7 +7722,7 @@
     "defaultMessage": "जाँच रहे हैं कि {mac} के पास अभी भी आपका उत्तर है या नहीं…"
   },
   "turnCue.gone": {
-    "defaultMessage": "{mac} पर goose नहीं चल रहा है — वहाँ goose खोलें, या इस Mac पर चैट चलाएँ"
+    "defaultMessage": "{because, select, quit {{mac} पर goose नहीं चल रहा है — वहाँ goose खोलें, या इस Mac पर चैट चलाएँ} other {{mac} ने {time} से जवाब नहीं दिया — हो सकता है उसका goose बंद हो, या वह ऑफ़लाइन हो}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} आपका प्रॉम्प्ट पढ़ रहा है ({tokens} टोकन) — अब तक {elapsed}"

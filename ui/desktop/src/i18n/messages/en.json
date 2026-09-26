@@ -429,7 +429,7 @@
     "defaultMessage": "Waiting for images to save..."
   },
   "chatServedBy.peerGone": {
-    "defaultMessage": "{peer}’s goose isn’t running"
+    "defaultMessage": "{because,select,quit{{peer}’s goose isn’t running} other{{peer} hasn’t answered since {time} — its goose may be closed, or it’s offline}}"
   },
   "chatServedBy.thisMac": {
     "defaultMessage": "This Mac"
@@ -726,7 +726,7 @@
     "defaultMessage": "The last mount failed: {error}"
   },
   "composerReadiness.goneDetail": {
-    "defaultMessage": "{because,select,quit{{turn,select,yes{{peer} quit goose, so this answer stops — open goose there, or run chat on this Mac. goose reconnects on its own once it is back} other{{peer} quit goose — open goose there, or run chat on this Mac. goose reconnects on its own once it is back}}} other{No answer for {elapsed} — open goose there, or run chat on this Mac. goose reconnects on its own once it is back}}"
+    "defaultMessage": "{because,select,quit{{turn,select,yes{{peer} quit goose, so this answer stops — open goose there, or run chat on this Mac. goose reconnects on its own once it is back} other{{peer} quit goose — open goose there, or run chat on this Mac. goose reconnects on its own once it is back}}} other{Open goose there if it is closed, or run chat on this Mac. goose reconnects on its own once it is back}}"
   },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause,select,restart{{turn,select,yes{{peer} is restarting goose — this answer stops} other{{peer} is restarting goose}}} other{{turn,select,yes{{peer} quit goose — this answer stops} other{{peer} quit goose}}}}"
@@ -7722,7 +7722,7 @@
     "defaultMessage": "Checking whether {mac} still has your answer…"
   },
   "turnCue.gone": {
-    "defaultMessage": "{mac}’s goose isn’t running — open goose there, or run chat on this Mac"
+    "defaultMessage": "{because,select,quit{{mac}’s goose isn’t running — open goose there, or run chat on this Mac} other{{mac} hasn’t answered since {time} — its goose may be closed, or it’s offline}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} is reading your prompt ({tokens} tokens) — {elapsed} so far"

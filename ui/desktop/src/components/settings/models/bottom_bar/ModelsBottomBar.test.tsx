@@ -7,6 +7,8 @@ import { assertStudioClean } from '../../../lz/assertStudioClean';
 import userEvent from '@testing-library/user-event';
 import { deriveChatServedBy, type ChatServedBy } from '../../../chatServedBy/chatServedBy';
 import { SPLIT_STOPPED_E2E2 } from '../../../chatServedBy/splitStop.fixtures';
+import type { PeerGone } from '../../../../utils/routeContact';
+import { createIntl } from 'react-intl';
 
 const renderWithIntl = (ui: React.ReactElement, options?: RenderOptions) =>
   render(ui, { wrapper: IntlTestWrapper, ...options });
@@ -494,14 +496,15 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     );
   });
 
-  it('Q-111: the Studio’s goose is gone — the chip says the composer bar’s words, held, and names only the model', () => {
+  it('Q-111: the Studio is away — the chip says the composer bar’s words, held, and names only the model', () => {
+    const LOST_AT = Date.UTC(2026, 8, 25, 23, 14);
     const ROUTE = {
       state: 'reconnecting',
       peer: 'worksmacstudio-lan-9c1e2a',
       peerHostname: 'WorksMacStudio.lan',
       peerComputerName: "Work's Mac Studio",
     };
-    const gone: ChatServedBy = {
+    const away = (gone: PeerGone): ChatServedBy => ({
       ...STUDIO,
       phase: 'held',
       activity: null,
@@ -510,12 +513,19 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
         status: ROUTE,
         why: 'unreachable: connect ECONNREFUSED',
         cause: null,
-        gone: { because: 'unreachable', lostForMs: 3_600_000, longestComebackMs: 25_000 },
+        gone,
         instead: { kind: 'none' },
       },
-    };
-    const { container } = renderChip(gone);
-    const words = "Work's Mac Studio’s goose isn’t running";
+    });
+    const time = createIntl({ locale: 'en' }).formatTime(LOST_AT, {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    // Silent past its expected comeback: closed OR offline — never "isn't running".
+    const silent = renderChip(
+      away({ because: 'silent', lostSinceMs: LOST_AT, lostForMs: 3_600_000 })
+    );
+    const words = `Work's Mac Studio hasn’t answered since ${time} — its goose may be closed, or it’s offline`;
     const phase = screen.getByTestId('model-chip-phase');
     expect(phase.textContent).toBe(words);
     expect(phase).toHaveAttribute('title', words);
@@ -524,16 +534,15 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     );
     expect(screen.getAllByTestId('lz-status-dot')[0]).toHaveAttribute('data-phase', 'held');
     expect(screen.getByTestId('model-menu-served')).toHaveTextContent(words);
-    expect(screen.queryByText(/Reconnecting|Queued/)).toBeNull();
-    assertStudioClean(container);
+    expect(screen.queryByText(/Reconnecting|Queued|isn’t running/)).toBeNull();
+    assertStudioClean(silent.container);
+    silent.unmount();
 
-    // A blip keeps its own word.
-    renderChip({
-      ...gone,
-      phase: 'loading',
-      readiness: { ...gone.readiness, gone: null } as ChatServedBy['readiness'],
-    });
-    expect(screen.getAllByTestId('model-chip-phase')[1].textContent).toBe('Reconnecting');
+    // Its goose SAID it quit: then, and only then, "isn't running".
+    renderChip(away({ because: 'said-quit' }));
+    expect(screen.getByTestId('model-chip-phase').textContent).toBe(
+      "Work's Mac Studio’s goose isn’t running"
+    );
   });
 
   it('a cloud provider (nothing served): the chip is the provider’s own label, no Open Engine', () => {

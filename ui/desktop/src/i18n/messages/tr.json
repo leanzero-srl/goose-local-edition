@@ -429,7 +429,7 @@
     "defaultMessage": "Resimlerin kaydedilmesi bekleniyor..."
   },
   "chatServedBy.peerGone": {
-    "defaultMessage": "{peer} üzerinde goose çalışmıyor"
+    "defaultMessage": "{because, select, quit {{peer} üzerinde goose çalışmıyor} other {{peer} {time} saatinden beri yanıt vermiyor — goose kapalı olabilir ya da çevrimdışı}}"
   },
   "chatServedBy.thisMac": {
     "defaultMessage": "Bu Mac"
@@ -726,7 +726,7 @@
     "defaultMessage": "Son takma başarısız oldu: {error}"
   },
   "composerReadiness.goneDetail": {
-    "defaultMessage": "{because, select, quit {{peer} goose’u kapattı{turn, select, yes {, bu yüzden bu yanıt durur} other {}}} other {{elapsed} süredir yanıt yok}} — goose’u orada açın ya da sohbeti bu Mac’te çalıştırın. geri geldiğinde goose kendiliğinden yeniden bağlanır"
+    "defaultMessage": "{because, select, quit {{peer} goose’u kapattı{turn, select, yes {, bu yüzden bu yanıt durur} other {}} — goose’u orada açın ya da sohbeti bu Mac’te çalıştırın} other {Kapalıysa goose’u orada açın ya da sohbeti bu Mac’te çalıştırın}}. geri geldiğinde goose kendiliğinden yeniden bağlanır"
   },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} goose’u yeniden başlatıyor} other {{peer} goose’dan çıktı}}{turn, select, yes { — bu yanıt burada durur} other {}}"
@@ -7722,7 +7722,7 @@
     "defaultMessage": "{mac} yanıtınızı hâlâ tutuyor mu diye bakılıyor…"
   },
   "turnCue.gone": {
-    "defaultMessage": "{mac} üzerinde goose çalışmıyor — goose’u orada açın ya da sohbeti bu Mac’te çalıştırın"
+    "defaultMessage": "{because, select, quit {{mac} üzerinde goose çalışmıyor — goose’u orada açın ya da sohbeti bu Mac’te çalıştırın} other {{mac} {time} saatinden beri yanıt vermiyor — goose kapalı olabilir ya da çevrimdışı}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} isteminizi okuyor ({tokens} token) — şu ana kadar {elapsed}"

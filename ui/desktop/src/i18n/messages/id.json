@@ -429,7 +429,7 @@
     "defaultMessage": "Menunggu gambar disimpan..."
   },
   "chatServedBy.peerGone": {
-    "defaultMessage": "goose tidak berjalan di {peer}"
+    "defaultMessage": "{because, select, quit {goose tidak berjalan di {peer}} other {{peer} belum menjawab sejak {time} — goose-nya mungkin tertutup, atau sedang offline}}"
   },
   "chatServedBy.thisMac": {
     "defaultMessage": "Mac ini"
@@ -726,7 +726,7 @@
     "defaultMessage": "Pemasangan terakhir gagal: {error}"
   },
   "composerReadiness.goneDetail": {
-    "defaultMessage": "{because, select, quit {{peer} menutup goose{turn, select, yes {, jadi jawaban ini berhenti} other {}}} other {Tidak ada jawaban selama {elapsed}}} — buka goose di sana, atau jalankan chat di Mac ini. goose menyambung kembali dengan sendirinya saat ia kembali"
+    "defaultMessage": "{because, select, quit {{peer} menutup goose{turn, select, yes {, jadi jawaban ini berhenti} other {}} — buka goose di sana, atau jalankan chat di Mac ini} other {Buka goose di sana jika tertutup, atau jalankan chat di Mac ini}}. goose menyambung kembali dengan sendirinya saat ia kembali"
   },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} sedang memulai ulang goose} other {{peer} keluar dari goose}}{turn, select, yes { — jawaban ini berhenti} other {}}"
@@ -7722,7 +7722,7 @@
     "defaultMessage": "Memeriksa apakah {mac} masih menyimpan jawaban Anda…"
   },
   "turnCue.gone": {
-    "defaultMessage": "goose tidak berjalan di {mac} — buka goose di sana, atau jalankan chat di Mac ini"
+    "defaultMessage": "{because, select, quit {goose tidak berjalan di {mac} — buka goose di sana, atau jalankan chat di Mac ini} other {{mac} belum menjawab sejak {time} — goose-nya mungkin tertutup, atau sedang offline}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} sedang membaca prompt Anda ({tokens} token) — {elapsed} sejauh ini"

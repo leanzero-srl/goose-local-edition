@@ -5,7 +5,7 @@ import {
   remoteTrayLine,
   toMlxRemoteReport,
 } from './mlxRemoteReport';
-import { buildMlxTrayModel } from './mlxTray';
+import { buildMlxTrayModel, lostSinceText } from './mlxTray';
 import { INITIAL_SNAPSHOT, type MlxEngineSnapshot } from './mlxEngineMonitor';
 import { EMPTY_BOOK, parseMlxLiveStatus } from '../components/leanzero-swarm/mlxLiveStats';
 import {
@@ -212,40 +212,42 @@ describe('the tray while chat is served from a linked Mac', () => {
     ]);
   });
 
-  describe('Q-111: a Mac whose goose is gone is a steady state with two ways out, not "reconnecting…" for hours', () => {
+  describe('Q-111: a Mac that is away is a steady state with two ways out, not "reconnecting…" for hours', () => {
     const report = toMlxRemoteReport(READY)!;
     const SEC = 1000;
-    const lostFor = (lostForMs: number, longestComebackMs: number | null): MlxEngineSnapshot => ({
+    const LOST_AT = Date.UTC(2026, 8, 25, 23, 14);
+    const lostFor = (
+      lostForMs: number,
+      longestComebackMs: number | null,
+      saidQuit = false
+    ): MlxEngineSnapshot => ({
       ...INITIAL_SNAPSHOT,
       engine: 'remote',
       mode: 'reconnecting',
       statusDetail: 'unreachable: connect ECONNREFUSED',
       contact: {
+        lostSinceMs: LOST_AT,
         lostForMs,
         longestComebackMs,
         comebacks: longestComebackMs ? 1 : 0,
-        saidQuit: false,
+        saidQuit,
+        pollMs: 2 * SEC,
       },
     });
     const actionsOf = (model: ReturnType<typeof buildMlxTrayModel>) =>
       model.items.flatMap((i) => (i.type === 'action' ? [[i.action, i.label, i.enabled]] : []));
 
-    it('unreachable past 3× its measured 25 s comeback: the owner’s screenshot, rewritten', () => {
-      const model = buildMlxTrayModel(
-        lostFor(2 * 3600 * SEC + 14 * 60 * SEC, 25 * SEC),
-        options(report)
-      );
-      expect(model.title).toBe("Work's Mac Studio’s goose isn’t running");
+    it('silent hours on a FRESH launch (nothing measured): "hasn’t answered since", closed OR offline — never "isn’t running"', () => {
+      const model = buildMlxTrayModel(lostFor(2 * 3600 * SEC, null), options(report));
+      const since = `Work's Mac Studio hasn’t answered since ${lostSinceText(LOST_AT)}`;
+      expect(model.title).toBe(since);
       expect(model.phase).toBe('held');
-      expect(model.items[0]).toEqual({
-        type: 'info',
-        label: "Work's Mac Studio’s goose isn’t running",
-        phase: 'held',
-      });
-      expect(labels(model)).toContain(
-        'No answer for 2h 14m — open goose there, or run chat on this Mac'
+      expect(model.items[0]).toEqual({ type: 'info', label: since, phase: 'held' });
+      expect(labels(model)).toContain('Its goose may be closed, or it’s offline');
+      expect(labels(model)).toContain('Open goose there, or run chat on this Mac');
+      expect(labels(model).some((l) => /isn’t running|reconnecting|keeps trying/.test(l))).toBe(
+        false
       );
-      expect(labels(model).some((l) => /reconnecting|keeps trying/.test(l))).toBe(false);
       expect(actionsOf(model)).toEqual([
         ['run-here', 'Run on this Mac instead', true],
         ['stop-waiting', 'Stop waiting for it', true],
@@ -253,15 +255,16 @@ describe('the tray while chat is served from a linked Mac', () => {
       ]);
     });
 
-    it('a blip within 3× the measured comeback still says reconnecting — and so does any wait with nothing measured', () => {
-      const blip = buildMlxTrayModel(lostFor(75 * SEC, 25 * SEC), options(report));
+    it('a blip within 3× the expected comeback still says reconnecting', () => {
+      const blip = buildMlxTrayModel(lostFor(75 * SEC, null), options(report));
       expect(blip.title).toBe("Reconnecting to Work's Mac Studio");
       expect(blip.phase).toBe('loading');
-      const unmeasured = buildMlxTrayModel(lostFor(8 * 3600 * SEC, null), options(report));
-      expect(unmeasured.title).toBe("Reconnecting to Work's Mac Studio");
+      // A measured 90 s mount raises the expectation: 200 s is still a blip there.
+      const slowMount = buildMlxTrayModel(lostFor(200 * SEC, 90 * SEC), options(report));
+      expect(slowMount.title).toBe("Reconnecting to Work's Mac Studio");
     });
 
-    it('the Mac SAID it quit goose (Q-51): gone at once, its word named', () => {
+    it('the Mac SAID it quit goose (Q-51): "isn’t running" at once, its word named', () => {
       const quit = toMlxRemoteReport({
         ...READY,
         state: 'reconnecting',
@@ -270,17 +273,16 @@ describe('the tray while chat is served from a linked Mac', () => {
       })!;
       const model = buildMlxTrayModel(INITIAL_SNAPSHOT, options(quit));
       expect(model.title).toBe("Work's Mac Studio’s goose isn’t running");
-      expect(labels(model)).toContain(
-        "Work's Mac Studio quit goose — open goose there, or run chat on this Mac"
-      );
+      expect(labels(model)).toEqual([
+        "Work's Mac Studio’s goose isn’t running",
+        "Work's Mac Studio quit goose",
+        'Open goose there, or run chat on this Mac',
+        'Run on this Mac instead',
+        'Stop waiting for it',
+        'Open Providers',
+      ]);
       // Kept by main after the mesh overwrote the route's words.
-      const kept = buildMlxTrayModel(
-        {
-          ...lostFor(5 * SEC, null),
-          contact: { lostForMs: 5 * SEC, longestComebackMs: null, comebacks: 0, saidQuit: true },
-        },
-        options(report)
-      );
+      const kept = buildMlxTrayModel(lostFor(5 * SEC, null, true), options(report));
       expect(kept.title).toBe("Work's Mac Studio’s goose isn’t running");
     });
 

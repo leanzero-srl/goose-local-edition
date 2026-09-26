@@ -6,6 +6,7 @@ import type { Message } from '../../types/message';
 import type { MlxLiveRequest } from '../leanzero-swarm/mlxLiveStats';
 import type { MlxRemoteSingleStatus } from '../../acp/mlx-remote-single';
 import type { ChatServedBy } from './chatServedBy';
+import type { PeerGone } from '../../utils/routeContact';
 import {
   SILENCE_GAP_MULTIPLE,
   SILENCE_MIN_GAPS,
@@ -156,21 +157,32 @@ describe('useTurnCue — one cue from the drop until the turn streams again or e
     expect(result.current).toBeNull();
   });
 
-  it('Q-111: a Mac whose goose is gone is named so under the composer — not "waiting to reconnect"', () => {
-    const gone = served({
-      phase: 'held',
-      readiness: {
-        ...(reconnecting.readiness as Extract<ChatServedBy['readiness'], { kind: 'reconnecting' }>),
-        gone: { because: 'unreachable', lostForMs: 3_600_000, longestComebackMs: 25_000 },
-      },
-    });
+  it('Q-111: a Mac that is away is named so under the composer — "isn’t running" only on its own word', () => {
+    const LOST_AT = Date.UTC(2026, 8, 25, 23, 14);
+    const away = (gone: PeerGone) =>
+      served({
+        phase: 'held',
+        readiness: {
+          ...(reconnecting.readiness as Extract<
+            ChatServedBy['readiness'],
+            { kind: 'reconnecting' }
+          >),
+          gone,
+        },
+      });
+    const silent: PeerGone = { because: 'silent', lostSinceMs: LOST_AT, lostForMs: 3_600_000 };
     const { result, rerender } = renderHook(
       ({ s }: { s: ChatServedBy }) => useTurnCue(s, ChatState.Streaming, [assistant('He climbed')]),
       { initialProps: { s: reconnecting } }
     );
     expect(result.current).toEqual({ kind: 'reconnecting', mac: MAC });
-    rerender({ s: gone });
-    expect(result.current).toEqual({ kind: 'gone', mac: MAC });
+    rerender({ s: away(silent) });
+    expect(result.current).toEqual({ kind: 'gone', mac: MAC, gone: silent });
+    const time = intl.formatTime(LOST_AT, { hour: 'numeric', minute: '2-digit' });
+    expect(turnCueText(intl, result.current!)).toBe(
+      `Work's Mac Studio hasn’t answered since ${time} — its goose may be closed, or it’s offline`
+    );
+    rerender({ s: away({ because: 'said-quit' }) });
     expect(turnCueText(intl, result.current!)).toBe(
       "Work's Mac Studio’s goose isn’t running — open goose there, or run chat on this Mac"
     );

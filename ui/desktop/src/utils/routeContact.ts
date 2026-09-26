@@ -52,53 +52,75 @@ export function routeContactLost(
  * and every chat surface read the same numbers.
  */
 export interface RouteContact {
+  /** When main first read the route not answering in this wait (its clock); null while it answers. */
+  lostSinceMs: number | null;
   /** How long main has read the route not answering, as of this read; null while it answers. */
   lostForMs: number | null;
   /**
    * The longest wait — a mount or a lost contact — after which this route answered again, as main
-   * measured it in this app's life; null = none measured yet. A wait already past the verdict below
-   * is never one of them: it measured a Mac that was gone, not a blip.
+   * measured it in this app's life; null = none measured yet. A wait already called away below is
+   * never one of them: it measured a Mac that was away, not a blip.
    */
   longestComebackMs: number | null;
   /** How many waits came back. */
   comebacks: number;
   /** The Mac said "quit goose" during this wait (Q-51's notice), kept until it answers again. */
   saidQuit: boolean;
+  /** The cadence main reads the route at — present from the first read, before any comeback. */
+  pollMs: number;
 }
 
 /**
- * ratio: a wait this many times the longest this route ever came back from is no blip. Receipt:
- * Q-111 — the Studio's goose, relaunched, re-mounted the route in ~25 s with no click, so a Mac whose
- * longest comeback is that relaunch is called gone at ~75 s; the overnight quit said
+ * ratio: a wait this many times the comeback this route is expected to make is no blip. Receipt:
+ * Q-111 — the Studio's goose, relaunched, re-mounted the route in ~25 s with no click, so a route
+ * whose longest comeback is that relaunch is called away at ~75 s; the overnight quit said
  * "reconnecting…" for hours.
  */
-export const GONE_PAST_LONGEST_COMEBACK = 3;
+export const GONE_PAST_LONGEST_COMEBACK = 3; // ratio: of the expected comeback
 
-/** The wait is well past every comeback this route has been measured to make. */
-export function waitedPastComebacks(waitedMs: number, longestComebackMs: number | null): boolean {
-  return longestComebackMs != null && waitedMs > longestComebackMs * GONE_PAST_LONGEST_COMEBACK;
+/**
+ * measured: Q-111 — the relaunch re-mounted the route in ~25 s (08:28:58 → 08:29:23) against the
+ * 2 s status poll main reads it at: 12.5 polls. A relaunch is the longest a Mac takes to come back
+ * on its own, so it is the comeback expected of a route before one has been measured — and the
+ * floor under a measured one (a route that only ever blipped for 2 s still takes a relaunch to
+ * come back from a restart that sent no notice).
+ */
+export const RELAUNCH_IN_POLLS = 12.5; // measured: Q-111 relaunch, 25 s / 2 s poll
+
+/** The comeback expected of this route: the longest measured, never under a relaunch's polls. */
+export function expectedComebackMs(
+  contact: Pick<RouteContact, 'longestComebackMs' | 'pollMs'>
+): number {
+  return Math.max(contact.longestComebackMs ?? 0, RELAUNCH_IN_POLLS * contact.pollMs);
+}
+
+/** The wait is well past the comeback this route is expected to make. */
+export function waitedPastComebacks(
+  waitedMs: number,
+  contact: Pick<RouteContact, 'longestComebackMs' | 'pollMs'>
+): boolean {
+  return waitedMs > expectedComebackMs(contact) * GONE_PAST_LONGEST_COMEBACK;
 }
 
 /**
- * The route's Mac is not a blip away: its goose SAID it quit, or it has stayed unreachable well past
- * every wait this Mac has measured it come back from. Null = "reconnecting" — including while
- * nothing has been measured yet, when no wait can honestly be called too long.
+ * The route's Mac is not a blip away. Two facts, said differently because they ARE different:
+ *  - `said-quit`: its goose said it quit — "its goose isn't running";
+ *  - `silent`: no word from it well past the comeback it is expected to make — "hasn't answered
+ *    since <time>": its goose may be closed, or the Mac is offline; a network outage is never
+ *    reported as a closed app.
+ * Null = "reconnecting", a blip.
  */
 export type PeerGone =
   | { because: 'said-quit' }
-  | { because: 'unreachable'; lostForMs: number; longestComebackMs: number };
+  | { because: 'silent'; lostSinceMs: number; lostForMs: number };
 
 export function routePeerGone(
   contact: RouteContact | null,
   cause: LeaveCause | null
 ): PeerGone | null {
   if (cause === 'quit' || contact?.saidQuit) return { because: 'said-quit' };
-  if (contact?.lostForMs == null || contact.longestComebackMs == null) return null;
-  return waitedPastComebacks(contact.lostForMs, contact.longestComebackMs)
-    ? {
-        because: 'unreachable',
-        lostForMs: contact.lostForMs,
-        longestComebackMs: contact.longestComebackMs,
-      }
+  if (contact?.lostForMs == null || contact.lostSinceMs == null) return null;
+  return waitedPastComebacks(contact.lostForMs, contact)
+    ? { because: 'silent', lostSinceMs: contact.lostSinceMs, lostForMs: contact.lostForMs }
     : null;
 }

@@ -1,5 +1,6 @@
 import type { Message } from '../../types/message';
 import type { MlxLiveRequest } from '../leanzero-swarm/mlxLiveStats';
+import type { PeerGone } from '../../utils/routeContact';
 import { reconnectingMac, type ChatServedBy } from './chatServedBy';
 
 /**
@@ -16,7 +17,7 @@ import { reconnectingMac, type ChatServedBy } from './chatServedBy';
  */
 export type TurnCue =
   | { kind: 'reconnecting'; mac: string }
-  | { kind: 'gone'; mac: string }
+  | { kind: 'gone'; mac: string; gone: PeerGone }
   | { kind: 'checking'; mac: string }
   | { kind: 'silent'; mac: string }
   | ({ kind: 'reading'; mac: string } & ReadingProgress);
@@ -125,8 +126,10 @@ export function pickTurnCue({ served, inFlight, lostTo, silent }: TurnCueInputs)
   if (!inFlight || !served) return null;
   const reconnecting = reconnectingMac(served);
   if (reconnecting) {
-    const gone = served.readiness.kind === 'reconnecting' && served.readiness.gone != null;
-    return { kind: gone ? 'gone' : 'reconnecting', mac: reconnecting };
+    const gone = served.readiness.kind === 'reconnecting' ? served.readiness.gone : null;
+    return gone
+      ? { kind: 'gone', mac: reconnecting, gone }
+      : { kind: 'reconnecting', mac: reconnecting };
   }
   const mac = served.where[0] ?? null;
   if (lostTo) return { kind: 'checking', mac: lostTo };

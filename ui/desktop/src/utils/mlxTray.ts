@@ -177,13 +177,23 @@ function remoteTrayTitle(
   return report.state === 'failed' ? `${mac} · failed` : `${mac} · ${report.state}`;
 }
 
-/** The composer bar's steady words for a Mac whose goose is gone (Q-111), in the tray's English. */
-export function peerGoneText(mac: string): string {
-  return `${mac}’s goose isn’t running`;
+/** The clock time contact was lost at, in this Mac's own time format. */
+export function lostSinceText(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
 /**
- * The route's Mac is gone, not a blip (routeContact.ts `routePeerGone`): a steady state with the
+ * The composer bar's steady words for a Mac that is away (Q-111), in the tray's English: "isn't
+ * running" ONLY when its goose said it quit; a silence says what is known — no answer since when.
+ */
+export function peerGoneText(mac: string, gone: PeerGone): string {
+  return gone.because === 'said-quit'
+    ? `${mac}’s goose isn’t running`
+    : `${mac} hasn’t answered since ${lostSinceText(gone.lostSinceMs)}`;
+}
+
+/**
+ * The route's Mac is away, not a blip (routeContact.ts `routePeerGone`): a steady state with the
  * two ways out — chat on this Mac, or stop waiting for that one — instead of "reconnecting…" for
  * hours. The Mac coming back still restores the route on its own.
  */
@@ -194,13 +204,12 @@ function peerGoneModel(
   mountModelId: string | null
 ): MlxTrayModel {
   const phase: EnginePhase = 'held';
-  const why =
-    gone.because === 'said-quit'
-      ? `${mac} quit goose`
-      : `No answer for ${formatElapsed(gone.lostForMs / 1000)}`;
   const items: MlxTrayItem[] = [
-    { type: 'info', label: clip(peerGoneText(mac)), phase },
-    { type: 'info', label: clip(`${why} — open goose there, or run chat on this Mac`) },
+    { type: 'info', label: clip(peerGoneText(mac, gone)), phase },
+    ...(gone.because === 'said-quit'
+      ? [{ type: 'info' as const, label: clip(`${mac} quit goose`) }]
+      : [{ type: 'info' as const, label: 'Its goose may be closed, or it’s offline' }]),
+    { type: 'info', label: 'Open goose there, or run chat on this Mac' },
     { type: 'separator' },
   ];
   // This Mac runs chat only with a model to load (or one already up, which the renderer checks).
@@ -216,7 +225,7 @@ function peerGoneModel(
     { type: 'action', label: 'Stop waiting for it', action: 'stop-waiting', enabled: canAct },
     { type: 'action', label: 'Open Providers', action: 'open-providers', enabled: canAct }
   );
-  return { title: peerGoneText(mac), phase, items };
+  return { title: peerGoneText(mac, gone), phase, items };
 }
 
 /** Chat is served by a linked Mac's engine: the tray speaks for THAT engine, and offers its Stop. */

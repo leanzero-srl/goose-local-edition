@@ -429,7 +429,7 @@
     "defaultMessage": "A aguardar que as imagens sejam guardadas..."
   },
   "chatServedBy.peerGone": {
-    "defaultMessage": "o goose não está em execução em {peer}"
+    "defaultMessage": "{because, select, quit {o goose não está em execução em {peer}} other {{peer} não responde desde {time} — o goose pode estar fechado, ou está offline}}"
   },
   "chatServedBy.thisMac": {
     "defaultMessage": "Este Mac"
@@ -726,7 +726,7 @@
     "defaultMessage": "A última montagem falhou: {error}"
   },
   "composerReadiness.goneDetail": {
-    "defaultMessage": "{because, select, quit {{peer} fechou o goose{turn, select, yes {, então esta resposta para} other {}}} other {Sem resposta há {elapsed}}} — abra o goose lá ou execute o chat neste Mac. o goose reconecta sozinho assim que ele voltar"
+    "defaultMessage": "{because, select, quit {{peer} fechou o goose{turn, select, yes {, então esta resposta para} other {}} — abra o goose lá ou execute o chat neste Mac} other {Abra o goose lá se estiver fechado, ou execute o chat neste Mac}}. o goose reconecta sozinho assim que ele voltar"
   },
   "composerReadiness.leaving": {
     "defaultMessage": "{cause, select, restart {{peer} está reiniciando o goose} other {{peer} fechou o goose}}{turn, select, yes { — esta resposta para aqui} other {}}"
@@ -7722,7 +7722,7 @@
     "defaultMessage": "Verificando se {mac} ainda tem sua resposta…"
   },
   "turnCue.gone": {
-    "defaultMessage": "o goose não está em execução em {mac} — abra o goose lá ou execute o chat neste Mac"
+    "defaultMessage": "{because, select, quit {o goose não está em execução em {mac} — abra o goose lá ou execute o chat neste Mac} other {{mac} não responde desde {time} — o goose pode estar fechado, ou está offline}}"
   },
   "turnCue.readingElapsed": {
     "defaultMessage": "{mac} está lendo seu prompt ({tokens} tokens) — {elapsed} até agora"

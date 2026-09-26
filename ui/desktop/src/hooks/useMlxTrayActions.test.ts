@@ -101,12 +101,15 @@ describe('runMlxTrayAction — the tray’s Stop for a route to another Mac', ()
   });
 });
 
-describe('runMlxTrayAction — Q-111: the two ways out while the route’s Mac is gone', () => {
+describe('runMlxTrayAction — Q-111: the two ways out while the route’s Mac is away', () => {
+  const QUIT =
+    "Work's Mac Studio does not answer over LeanZero Link right now: Work's Mac Studio quit goose";
   beforeEach(() => {
     trayRoute.current = {
       state: 'reconnecting',
       peer: 'worksmacstudio-lan-6a972f',
       peerComputerName: "Work's Mac Studio",
+      lastError: QUIT,
     };
     remoteStop.mockReset().mockResolvedValue({ unmounted: false, status: { state: 'off' } });
     unmount.mockReset();
@@ -114,14 +117,34 @@ describe('runMlxTrayAction — Q-111: the two ways out while the route’s Mac i
     status.mockReset();
     settingsRead.mockReset().mockResolvedValue({ modelId: 'Mihai-LeanZero/Qwen3.8-27B' });
     dismissPeerHeld();
+    (window as unknown as { electron?: unknown }).electron = undefined;
   });
 
-  it('Stop waiting for it: the route withdrawn here, that Mac never asked, nothing mounted', async () => {
+  it('Stop waiting for a Mac that QUIT goose: the route withdrawn here, that Mac never asked, nothing mounted', async () => {
     await runMlxTrayAction('stop-waiting');
     expect(remoteStop).toHaveBeenCalledWith(true);
     expect(unmount).not.toHaveBeenCalled();
     expect(mount).not.toHaveBeenCalled();
     expect(latestPeerHeld()).toBeNull();
+  });
+
+  it('main’s kept “quit goose” counts though the route’s words were overwritten', async () => {
+    trayRoute.current = { ...trayRoute.current, lastError: 'connect timeout' };
+    (window as unknown as { electron?: unknown }).electron = {
+      mlxEngineActivity: async () => ({ engine: 'remote', contact: { saidQuit: true } }),
+    };
+    await runMlxTrayAction('stop-waiting');
+    expect(remoteStop).toHaveBeenCalledWith(true);
+    expect(unmount).not.toHaveBeenCalled();
+  });
+
+  it('Stop waiting for a SILENT Mac: withdrawn here, then asked in the background — it may be offline with its model loaded', async () => {
+    trayRoute.current = { ...trayRoute.current, lastError: 'connect timeout' };
+    unmount.mockReturnValue(new Promise(() => undefined));
+    await runMlxTrayAction('stop-waiting');
+    expect(remoteStop).toHaveBeenCalledWith(true);
+    await waitFor(() => expect(unmount).toHaveBeenCalledWith('worksmacstudio-lan-6a972f'));
+    dismissPeerHeld();
   });
 
   it('Run on this Mac instead: the route withdrawn, then this Mac’s saved model mounted and followed', async () => {

@@ -1,6 +1,7 @@
 import type { IntlShape } from 'react-intl';
 import { defineMessages } from '../../i18n';
 import { compactTokens, formatElapsed, formatRate } from '../leanzero-swarm/mlxLiveStats';
+import { lostSinceTime } from './peerGoneText';
 import type { TurnCue } from './turnStatus';
 
 const i18n = defineMessages({
@@ -10,7 +11,8 @@ const i18n = defineMessages({
   },
   gone: {
     id: 'turnCue.gone',
-    defaultMessage: '{mac}’s goose isn’t running — open goose there, or run chat on this Mac',
+    defaultMessage:
+      '{because, select, quit {{mac}’s goose isn’t running — open goose there, or run chat on this Mac} other {{mac} hasn’t answered since {time} — its goose may be closed, or it’s offline}}',
   },
   checking: {
     id: 'turnCue.checking',
@@ -45,7 +47,11 @@ export function turnCueText(intl: IntlShape, cue: TurnCue): string {
     case 'reconnecting':
       return intl.formatMessage(i18n.reconnecting, { mac: cue.mac });
     case 'gone':
-      return intl.formatMessage(i18n.gone, { mac: cue.mac });
+      return intl.formatMessage(i18n.gone, {
+        mac: cue.mac,
+        because: cue.gone.because === 'said-quit' ? 'quit' : 'silent',
+        time: lostSinceTime(intl, cue.gone),
+      });
     case 'checking':
       return intl.formatMessage(i18n.checking, { mac: cue.mac });
     case 'silent':
