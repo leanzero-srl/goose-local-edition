@@ -46,12 +46,18 @@ pub const PYTHON_VERSION: &str = "3.12";
 /// every rank's budget — it prefills alone in its own cache, its chunks sharing the pipeline's
 /// time equally with the running rows' decode — instead of waiting for the whole batch to end
 /// (a 69-token canary queued 308 s beside a free slot on 3.0.49). pipeline_rank.py measures the
-/// live table at the fork's `_Engine._start`/`_Engine.prefill` seams since.
+/// live table at the fork's `_Engine._start`/`_Engine.prefill` seams since. And the TAIL ON THE
+/// LAST TOOL MESSAGE (09f645526, branch lz/pipeline-transient-tail-on-tool, tag
+/// lz-pipeline-qwen4.6, Q-143): the single engine's lz.6 rule cherry-picked (8a15af575), so
+/// `/v1/models` also declares `rapid_mlx_transient_tail_on_tool` and the omlx provider keeps the
+/// turn-context block joined to the tool results (Q-94) instead of posting it as a user turn of its
+/// own; a non-string tail is a 400. Prefix reuse was already right in the own-turn shape (E2E #3c's
+/// requests on Flash's template: 93.8-98.7% either way); the shape is what changes.
 /// Pinned by commit, never by branch: the rank program's argv and the plan JSON are a contract.
-pub const PIPELINE_FORK_COMMIT: &str = "c8d6d5faf80ece7e2988a11e7692d328cee48942";
+pub const PIPELINE_FORK_COMMIT: &str = "09f645526621f3b1aca5f09c431e31f490d82d24";
 /// The fork carrying `rapid_mlx.distributed.pipeline_qwen4` at [`PIPELINE_FORK_COMMIT`].
 pub const PIPELINE_FORK: &str =
-    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@c8d6d5faf80ece7e2988a11e7692d328cee48942";
+    "rapid-mlx @ git+https://github.com/leanzero-srl/Rapid-MLX@09f645526621f3b1aca5f09c431e31f490d82d24";
 /// mlx-vlm carries the vision tower, the image processor and the RoPE index rank 0 serves images
 /// with — the fork's own `[vision]` pin, installed alone: the extra also pulls torch/torchvision,
 /// which nothing here imports.
