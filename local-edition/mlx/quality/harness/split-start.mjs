@@ -14,11 +14,18 @@ const owners = await p.evaluate(() => [...document.querySelectorAll('button')].f
   for (let k = 0; k < 8 && n; k++) { n = n.parentElement; const h = n?.innerText.match(/Run on this Mac|Run on Work.s Mac Studio|Run across both Macs/g) || []; if (h.length === 1) return h[0]; if (h.length > 1) return '?'; }
   return 'none';
 }));
+const status = () => p.evaluate(async () => { const s = await window.electron.mlxEngineActivity(); return `${s.engine}/${s.mode} ${s.statusDetail ?? ''}`; });
+const complete = async (secs) => {
+  const r = await fetch('http://127.0.0.1:8091/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'Say OK.' }], max_tokens: 8 }) }).then((x) => x.json()).catch((e) => ({ error: String(e) }));
+  console.log(`${secs}s split up; completion:`, JSON.stringify(r.choices?.[0]?.message ?? r).slice(0, 200));
+  process.exit(r.choices ? 0 : 1);
+};
+// A restore after install may already have brought the split back: then there is no Run to press.
+if (/distributed\/running/.test(await status())) await complete(0);
 const i = owners.indexOf('Run across both Macs');
 if (i < 0) { console.log('no split Run button', JSON.stringify(owners)); process.exit(2); }
 const t0 = Date.now();
 await p.getByRole('button', { name: /^Run$/ }).nth(i).click();
-const status = () => p.evaluate(async () => { const s = await window.electron.mlxEngineActivity(); return `${s.engine}/${s.mode} ${s.statusDetail ?? ''}`; });
 const lastWarn = () => {
   const d = `${process.env.HOME}/.local/state/goose/logs/cli`; const day = readdirSync(d).sort().at(-1);
   const f = readdirSync(`${d}/${day}`).sort().at(-1);
@@ -30,11 +37,7 @@ while (true) {
   const s = await status(); const secs = ((Date.now() - t0) / 1000).toFixed(0);
   // The card's "Failed" badge can be the previous attempt's; only a WARN logged after this click counts.
   const warn = lastWarn(); const failed = warn.at > t0 && /exited|ended|refused|failed/i.test(warn.text);
-  if (/distributed\/running/.test(s)) {
-    const r = await fetch('http://127.0.0.1:8091/v1/chat/completions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: [{ role: 'user', content: 'Say OK.' }], max_tokens: 8 }) }).then((x) => x.json()).catch((e) => ({ error: String(e) }));
-    console.log(`${secs}s split up; completion:`, JSON.stringify(r.choices?.[0]?.message?.content ?? r).slice(0, 200));
-    process.exit(r.choices ? 0 : 1);
-  }
+  if (/distributed\/running/.test(s)) await complete(secs);
   if (failed) { console.log(`${secs}s split FAILED:\n${warn.text}`); process.exit(1); }
   if (Number(secs) % 30 < 5) console.log(`${secs}s ${s}`);
 }
