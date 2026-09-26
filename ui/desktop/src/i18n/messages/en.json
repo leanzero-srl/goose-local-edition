@@ -1373,6 +1373,39 @@
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Value"
   },
+  "cutGuard.keep": {
+    "defaultMessage": "Keep it writing"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} cuts {count} requests in flight ({names}) — the longest {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} cuts {count} requests in flight — the longest {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} cuts the answer being written in “{name}” — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} cuts a request goose could not name — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "{elapsed} in, still reading its {tokens}-token prompt"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "still reading its prompt"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Cut the answer being written?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Cut {count} requests in flight?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "{elapsed} in, {tokens} tokens written"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} tokens written"
+  },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "Configure {name} settings"
   },
@@ -3494,6 +3527,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Start refused"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Stop the split"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Keep running"
   },
@@ -3770,6 +3806,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Pick a model, then start it in Run it below — on this Mac, on another of your Macs, or split across them."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Remount"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Profiles on"
   },
@@ -3785,6 +3824,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Stop"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "Stop serving from {peer}"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Could not stop serving from the other Mac."
   },
@@ -3793,6 +3835,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "This Mac’s engine · not running"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Unmount"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token instead of {bf16} KiB — the same memory holds {ratio}× the context."
@@ -4342,6 +4387,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Could not stop serving from the other Mac"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Run on this Mac instead"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Stop serving from the other Mac"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Stop the split"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Stop waiting for it"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "Unmount the MLX engine"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Could not unmount the MLX engine"
@@ -5441,6 +5501,12 @@
   "placementCard.stop": {
     "defaultMessage": "Stop"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "Stop serving from {name}"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Stop the split"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "Every part on {nodes} is stopped and verified gone. Requests in flight are cut off."
   },
@@ -5467,6 +5533,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "As fast within the error (~{mine} vs ~{best} tok/s), but needs more Macs"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "Its {context} context is under the {live} tokens the conversation being answered holds now."
   },
   "placementCard.total": {
     "defaultMessage": "~{value} tok/s total at {concurrency} at once"

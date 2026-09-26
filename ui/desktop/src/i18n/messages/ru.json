@@ -1373,6 +1373,39 @@
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Значение"
   },
+  "cutGuard.keep": {
+    "defaultMessage": "Пусть пишет дальше"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} оборвёт {count} выполняемых запросов ({names}) — самый долгий {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} оборвёт {count} выполняемых запросов — самый долгий {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} оборвёт ответ, который пишется в «{name}», — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} оборвёт запрос, который goose не смог назвать, — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "уже {elapsed}, всё ещё читает свой промпт на {tokens} токенов"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "всё ещё читает свой промпт"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Оборвать ответ, который сейчас пишется?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Оборвать {count} выполняемых запросов?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "уже {elapsed}, написано {tokens} токенов"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "написано {tokens} токенов"
+  },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "Настроить параметры {name}"
   },
@@ -3494,6 +3527,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Запуск отклонён"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Остановить разделение"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Оставить работать"
   },
@@ -3770,6 +3806,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Выберите модель и запустите её ниже в «Запуске» — на этом Mac, на другом вашем Mac или с разделением между ними."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Смонтировать заново"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Профили на"
   },
@@ -3785,6 +3824,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Остановить"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "Остановить обслуживание с {peer}"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Не удалось остановить обслуживание с другого Mac."
   },
@@ -3793,6 +3835,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Движок этого Mac · не запущен"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Отмонтировать"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} КиБ на токен вместо {bf16} КиБ — в той же памяти помещается в {ratio}× больше контекста."
@@ -4342,6 +4387,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Не удалось остановить обслуживание с другого Mac"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Запустить на этом Mac"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Остановить обслуживание с другого Mac"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Остановить разделение"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Больше не ждать его"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "Отмонтировать движок MLX"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Не удалось отмонтировать движок MLX"
@@ -5441,6 +5501,12 @@
   "placementCard.stop": {
     "defaultMessage": "Остановить"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "Остановить обслуживание с {name}"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Остановить разделение"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "Каждая часть на {nodes} останавливается, и её завершение проверяется. Текущие запросы будут прерваны."
   },
@@ -5467,6 +5533,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Так же быстро в пределах погрешности (~{mine} против ~{best} ток/с), но нужно больше Mac"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "Его контекст {context} меньше {live} токенов, которые уже занимает разговор, на который сейчас идёт ответ."
   },
   "placementCard.total": {
     "defaultMessage": "~{value} ток/с всего при {concurrency} одновременно"

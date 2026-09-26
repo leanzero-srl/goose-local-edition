@@ -36,6 +36,7 @@ import { remoteTrayLine, type MlxRemoteReport } from './mlxRemoteReport';
 import { leaveCause, type LeaveCause } from './leaveCause';
 import { routeContactLost, routePeerGone, type PeerGone } from './routeContact';
 import { restoreTrayLine, type MlxRestoreReport } from './mlxRestoreReport';
+import { TRAY_ACTION_ENGINES, trayCutLine, workCutBy } from './mlxInFlight';
 
 /**
  * The menu-bar presence of the local LeanZero MLX engine, as a PURE function of main's snapshot:
@@ -289,12 +290,7 @@ function remoteModel(
   items.push(
     { type: 'separator' },
     { type: 'action', label: 'Open Providers', action: 'open-providers', enabled: canAct },
-    {
-      type: 'action',
-      label: clip(`Stop serving from ${remote.peerName}`),
-      action: 'stop-remote',
-      enabled: canAct,
-    }
+    ...stopItems(snapshot, clip(`Stop serving from ${remote.peerName}`), 'stop-remote', canAct)
   );
   return {
     title: remoteTrayTitle(remote, live, reconnecting ? (cause ?? 'lost') : null),
@@ -314,6 +310,24 @@ const LABEL_MAX = 80;
 
 function clip(text: string): string {
   return text.length > LABEL_MAX ? `${text.slice(0, LABEL_MAX - 1)}…` : text;
+}
+
+/**
+ * A stop that would cut work in flight says so on the line above it, and its label ends in "…":
+ * the click asks first, in the window (Q-148). Nothing in flight: the action alone, as it was.
+ */
+function stopItems(
+  snapshot: MlxEngineSnapshot,
+  label: string,
+  action: MlxTrayAction,
+  enabled: boolean
+): MlxTrayItem[] {
+  const work = workCutBy(snapshot, TRAY_ACTION_ENGINES[action] ?? []);
+  if (!work) return [{ type: 'action', label, action, enabled }];
+  return [
+    { type: 'info', label: clip(trayCutLine(work)) },
+    { type: 'action', label: `${label}…`, action, enabled },
+  ];
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -749,12 +763,7 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
           action: 'open-providers',
           enabled: options.canAct,
         },
-        {
-          type: 'action',
-          label: 'Stop the distributed engine',
-          action: 'stop-distributed',
-          enabled: options.canAct,
-        },
+        ...stopItems(snapshot, 'Stop the distributed engine', 'stop-distributed', options.canAct),
       ],
     };
   }
@@ -795,12 +804,7 @@ function buildEngineTrayModel(snapshot: MlxEngineSnapshot, options: MlxTrayOptio
     enabled: options.canAct,
   });
   if (singleSnap.mode === 'running' || singleSnap.mode === 'mounting') {
-    items.push({
-      type: 'action',
-      label: 'Unmount the MLX engine',
-      action: 'unmount',
-      enabled: options.canAct,
-    });
+    items.push(...stopItems(singleSnap, 'Unmount the MLX engine', 'unmount', options.canAct));
   } else {
     items.push({
       type: 'action',

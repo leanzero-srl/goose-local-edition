@@ -1373,6 +1373,39 @@
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "值"
   },
+  "cutGuard.keep": {
+    "defaultMessage": "让它继续写"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action}会中断 {count} 个进行中的请求({names})— 最长的一个 {figures}。"
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action}会中断 {count} 个进行中的请求 — 最长的一个 {figures}。"
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action}会中断“{name}”中正在写的回答 — {figures}。"
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action}会中断一个 goose 无法识别的请求 — {figures}。"
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "已进行 {elapsed},仍在读取 {tokens} 个 token 的提示"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "仍在读取提示"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "中断正在写的回答？"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "中断 {count} 个进行中的请求？"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "已进行 {elapsed},已写 {tokens} 个 token"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "已写 {tokens} 个 token"
+  },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "配置 {name} 设置"
   },
@@ -3494,6 +3527,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "启动被拒绝"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "停止拆分"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "继续运行"
   },
@@ -3770,6 +3806,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "选择一个模型，然后在下方“运行”中启动 — 在这台 Mac、你的另一台 Mac 上，或拆分到多台 Mac。"
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "重新挂载"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "配置所在"
   },
@@ -3785,6 +3824,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "停止由 {peer} 提供服务"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "无法停止由另一台 Mac 提供的服务。"
   },
@@ -3793,6 +3835,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "此 Mac 的引擎 · 未运行"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "卸载"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}：每个 token {bytes} KiB，而不是 {bf16} KiB — 同样的内存可容纳 {ratio}× 的上下文。"
@@ -4342,6 +4387,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "无法停止由另一台 Mac 提供的服务"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "改为在这台 Mac 上运行"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "停止由另一台 Mac 提供服务"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "停止拆分"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "不再等待它"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "卸载 MLX 引擎"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "无法卸载 MLX 引擎"
@@ -5441,6 +5501,12 @@
   "placementCard.stop": {
     "defaultMessage": "停止"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "停止由 {name} 提供服务"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "停止拆分"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "{nodes} 上的每个部分都会停止并确认已结束。进行中的请求会被中断。"
   },
@@ -5467,6 +5533,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "在误差范围内同样快（~{mine} 对 ~{best} tok/s），但需要更多 Mac"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "它的 {context} 上下文小于正在回答的对话现在占用的 {live} 个 token。"
   },
   "placementCard.total": {
     "defaultMessage": "同时 {concurrency} 个时总计 ~{value} tok/s"

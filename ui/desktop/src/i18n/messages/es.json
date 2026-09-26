@@ -1373,6 +1373,39 @@
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Valor"
   },
+  "cutGuard.keep": {
+    "defaultMessage": "Dejar que siga escribiendo"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} corta {count} solicitudes en curso ({names}) — la más larga {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} corta {count} solicitudes en curso — la más larga {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} corta la respuesta que se está escribiendo en «{name}» — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} corta una solicitud que goose no pudo identificar — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "{elapsed} en curso, todavía leyendo su prompt de {tokens} tokens"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "todavía leyendo su prompt"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "¿Cortar la respuesta que se está escribiendo?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "¿Cortar {count} solicitudes en curso?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "{elapsed} en curso, {tokens} tokens escritos"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} tokens escritos"
+  },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "Configurar los ajustes de {name}"
   },
@@ -3494,6 +3527,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Inicio rechazado"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Detener la división"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Seguir en marcha"
   },
@@ -3770,6 +3806,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Elige un modelo y ejecútalo abajo en «Ejecutar» — en este Mac, en otro de tus Macs o dividido entre ellos."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Volver a montar"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Perfiles en"
   },
@@ -3785,6 +3824,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Detener"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "Dejar de servir desde {peer}"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "No se pudo detener el servicio desde el otro Mac."
   },
@@ -3793,6 +3835,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Motor de este Mac · no está en marcha"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Desmontar"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB por token en lugar de {bf16} KiB — la misma memoria admite {ratio}× más contexto."
@@ -4342,6 +4387,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "No se pudo detener el servicio desde el otro Mac"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Ejecutar en este Mac en su lugar"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Dejar de servir desde el otro Mac"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Detener la división"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Dejar de esperarlo"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "Desmontar el motor MLX"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "No se pudo desmontar el motor MLX"
@@ -5441,6 +5501,12 @@
   "placementCard.stop": {
     "defaultMessage": "Detener"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "Dejar de servir desde {name}"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Detener la división"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "Cada parte en {nodes} se detiene y se verifica que ha terminado. Las solicitudes en curso se cortan."
   },
@@ -5467,6 +5533,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Igual de rápido dentro del error (~{mine} frente a ~{best} tok/s), pero necesita más Mac"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "Su contexto de {context} es menor que los {live} tokens que ya ocupa la conversación que se está respondiendo."
   },
   "placementCard.total": {
     "defaultMessage": "~{value} tok/s en total con {concurrency} a la vez"

@@ -1373,6 +1373,39 @@
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "मूल्य"
   },
+  "cutGuard.keep": {
+    "defaultMessage": "लिखते रहने दें"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} {count} चल रहे अनुरोधों को काट देगा ({names}) — सबसे लंबा {figures}।"
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} {count} चल रहे अनुरोधों को काट देगा — सबसे लंबा {figures}।"
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} “{name}” में लिखे जा रहे उत्तर को काट देगा — {figures}।"
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} एक ऐसे अनुरोध को काट देगा जिसे goose पहचान नहीं सका — {figures}।"
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "{elapsed} से, अभी भी अपना {tokens}-टोकन प्रॉम्प्ट पढ़ रहा है"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "अभी भी अपना प्रॉम्प्ट पढ़ रहा है"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "लिखे जा रहे उत्तर को काटें?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "{count} चल रहे अनुरोध काटें?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "{elapsed} से, {tokens} टोकन लिखे गए"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} टोकन लिखे गए"
+  },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "{name} सेटिंग्स कॉन्फ़िगर करें"
   },
@@ -3494,6 +3527,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "शुरू करना अस्वीकृत"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "विभाजन रोकें"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "चलने दें"
   },
@@ -3770,6 +3806,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "एक मॉडल चुनें, फिर नीचे “चलाएँ” में उसे शुरू करें — इस Mac पर, अपने किसी दूसरे Mac पर, या उनके बीच विभाजित करके।"
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "फिर से माउंट करें"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "प्रोफ़ाइल कहाँ"
   },
@@ -3785,6 +3824,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "रोकें"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "{peer} से सर्विंग रोकें"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "दूसरे Mac से सर्विंग रोकी नहीं जा सकी।"
   },
@@ -3793,6 +3835,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "इस Mac का इंजन · नहीं चल रहा"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "अनमाउंट करें"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: हर टोकन पर {bf16} KiB की जगह {bytes} KiB — उसी मेमोरी में {ratio}× संदर्भ आता है।"
@@ -4342,6 +4387,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "दूसरे Mac से सर्विंग रोकी नहीं जा सकी"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "इसके बजाय इस Mac पर चलाएँ"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "दूसरे Mac से सर्विंग रोकें"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "विभाजन रोकें"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "इसकी प्रतीक्षा बंद करें"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "MLX इंजन अनमाउंट करें"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "MLX इंजन अनमाउंट नहीं हो सका"
@@ -5441,6 +5501,12 @@
   "placementCard.stop": {
     "defaultMessage": "रोकें"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "{name} से सर्विंग रोकें"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "विभाजन रोकें"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "{nodes} पर हर हिस्सा रोका जाता है और उसके बंद होने की पुष्टि होती है। चल रहे अनुरोध कट जाते हैं।"
   },
@@ -5467,6 +5533,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "त्रुटि की सीमा में उतना ही तेज़ (~{mine} बनाम ~{best} tok/s), पर ज़्यादा Mac चाहिए"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "इसका {context} संदर्भ उन {live} टोकनों से कम है जो अभी उत्तर दी जा रही बातचीत में हैं।"
   },
   "placementCard.total": {
     "defaultMessage": "एक साथ {concurrency} पर कुल ~{value} tok/s"

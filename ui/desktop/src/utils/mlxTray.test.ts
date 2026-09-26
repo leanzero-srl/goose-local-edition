@@ -125,11 +125,13 @@ describe('buildMlxTrayModel — the engine section of the tray menu, per state',
       'Up 31m 14s, 50.7 GB GPU memory',
       '---',
       'Open Providers',
-      'Unmount the MLX engine',
+      // Q-148: the stop names what it would cut, and its "…" says the click asks first.
+      'Stopping cuts 3 requests in flight, the longest (26m 14s, 28k tokens written)',
+      'Unmount the MLX engine…',
     ]);
     expect(actions(model.items)).toEqual([
       ['open-providers', 'Open Providers', true],
-      ['unmount', 'Unmount the MLX engine', true],
+      ['unmount', 'Unmount the MLX engine…', true],
     ]);
   });
 
@@ -332,6 +334,21 @@ describe('the tray while the DISTRIBUTED engine owns this Mac', () => {
     // And a rank 0 read never speaks for the single engine once the run is gone.
     const gone = buildMlxTrayModel(rank0(DIST_WRITING_STATUS), OPTS);
     expect(gone.title).toBe('');
+  });
+
+  it('Q-148: while rank 0 writes, the Stop says what it cuts and asks (its "…"); idle, it is plain', () => {
+    const serving = toMlxDistributedReport({ ...FLASH_SERVING, inflight: 1 });
+    const rank0 = (body: unknown) =>
+      running(body, { engine: 'distributed', modelId: null, baseUrl: 'http://127.0.0.1:8091' });
+    const writing = buildMlxTrayModel(rank0(DIST_WRITING_STATUS), fresh(serving));
+    const tail = labels(writing.items).slice(-3);
+    expect(tail[0]).toBe('Open Providers');
+    expect(tail[1]).toMatch(/^Stopping cuts 2 requests in flight, the longest \(.+\)$/);
+    expect(tail[2]).toBe('Stop the distributed engine…');
+    expect(actions(writing.items).map(([a]) => a)).toEqual(['open-providers', 'stop-distributed']);
+    // Nothing in flight: the Stop acts where it is, as before.
+    const idle = buildMlxTrayModel({ ...INITIAL_SNAPSHOT, mode: 'off' }, fresh());
+    expect(labels(idle.items).slice(-1)).toEqual(['Stop the distributed engine']);
   });
 
   it('a node under pressure or unread says so on its line', () => {

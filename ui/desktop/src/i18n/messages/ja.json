@@ -1373,6 +1373,39 @@
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "値"
   },
+  "cutGuard.keep": {
+    "defaultMessage": "書き続けさせる"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action}で実行中の {count} 件のリクエスト({names})が中断されます — 最長のもの {figures}。"
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action}で実行中の {count} 件のリクエストが中断されます — 最長のもの {figures}。"
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action}で「{name}」で書かれている回答が中断されます — {figures}。"
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action}で goose が特定できなかったリクエストが中断されます — {figures}。"
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "{elapsed} 経過、{tokens} トークンのプロンプトをまだ読み込み中"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "プロンプトをまだ読み込み中"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "書かれている回答を中断しますか?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "実行中の {count} 件のリクエストを中断しますか?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "{elapsed} 経過、{tokens} トークン書き込み済み"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} トークン書き込み済み"
+  },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "{name}の設定を構成"
   },
@@ -3494,6 +3527,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "起動が拒否されました"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "分割を停止"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "実行を続ける"
   },
@@ -3770,6 +3806,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "モデルを選び、下の「実行」で起動します — この Mac、他の Mac、または複数の Mac に分割して。"
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "再マウント"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "プロファイルの対象"
   },
@@ -3785,6 +3824,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "停止"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "{peer} からの提供を停止"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "もう一方の Mac からの提供を停止できませんでした。"
   },
@@ -3793,6 +3835,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "この Mac のエンジン · 停止中"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "アンマウント"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: 1 トークンあたり {bf16} KiB ではなく {bytes} KiB — 同じメモリに {ratio}× のコンテキストが入ります。"
@@ -4342,6 +4387,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "もう一方の Mac からの提供を停止できませんでした"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "代わりにこの Mac で実行"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "もう一方の Mac からの提供を停止"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "分割を停止"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "待つのをやめる"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "MLX エンジンをアンマウント"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "MLX エンジンをアンマウントできませんでした"
@@ -5441,6 +5501,12 @@
   "placementCard.stop": {
     "defaultMessage": "停止"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "{name} からの提供を停止"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "分割を停止"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "{nodes} 上のすべての部分を停止し、終了を確認します。処理中のリクエストは中断されます。"
   },
@@ -5467,6 +5533,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "誤差の範囲で同じ速さ（~{mine} 対 ~{best} tok/s）ですが、より多くの Mac が必要"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "コンテキスト {context} は、回答中の会話が現在保持している {live} トークンより小さいです。"
   },
   "placementCard.total": {
     "defaultMessage": "同時 {concurrency} 件で合計 ~{value} tok/s"

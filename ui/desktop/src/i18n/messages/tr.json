@@ -1373,6 +1373,39 @@
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Değer"
   },
+  "cutGuard.keep": {
+    "defaultMessage": "Yazmaya devam etsin"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action}, süren {count} isteği ({names}) keser — en uzunu {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action}, süren {count} isteği keser — en uzunu {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action}, “{name}” içinde yazılmakta olan yanıtı keser — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action}, goose'un adlandıramadığı bir isteği keser — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "{elapsed} oldu, {tokens} token'lık istemini hâlâ okuyor"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "istemini hâlâ okuyor"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Yazılmakta olan yanıt kesilsin mi?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Süren {count} istek kesilsin mi?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "{elapsed} oldu, {tokens} token yazıldı"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} token yazıldı"
+  },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "{name} ayarlarını yapılandırın"
   },
@@ -3494,6 +3527,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Başlatma reddedildi"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Bölmeyi durdur"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Çalışmaya devam etsin"
   },
@@ -3770,6 +3806,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Bir model seçin, ardından aşağıdaki “Çalıştır” bölümünde başlatın — bu Mac’te, diğer bir Mac’inizde ya da aralarında bölünerek."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Yeniden bağla"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Profillerin yeri"
   },
@@ -3785,6 +3824,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Durdur"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "{peer} üzerinden sunumu durdur"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Diğer Mac üzerinden sunum durdurulamadı."
   },
@@ -3793,6 +3835,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Bu Mac’in motoru · çalışmıyor"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Bağlantıyı kaldır"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: token başına {bf16} KiB yerine {bytes} KiB — aynı bellek {ratio}× bağlam tutar."
@@ -4342,6 +4387,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Diğer Mac üzerinden sunum durdurulamadı"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Bunun yerine bu Mac'te çalıştır"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Diğer Mac üzerinden sunumu durdur"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Bölmeyi durdur"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Onu beklemeyi bırak"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "MLX motorunun bağlantısını kaldır"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "MLX motorunun bağlantısı kaldırılamadı"
@@ -5441,6 +5501,12 @@
   "placementCard.stop": {
     "defaultMessage": "Durdur"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "{name} üzerinden sunumu durdur"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Bölmeyi durdur"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "{nodes} üzerindeki her parça durdurulur ve bittiği doğrulanır. Süren istekler kesilir."
   },
@@ -5467,6 +5533,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Hata payı içinde aynı hızda (~{mine} ile ~{best} tok/sn), ama daha fazla Mac gerekiyor"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "{context} bağlamı, yanıtlanmakta olan konuşmanın şu anda tuttuğu {live} token'dan küçük."
   },
   "placementCard.total": {
     "defaultMessage": "Aynı anda {concurrency} ile toplam ~{value} tok/sn"

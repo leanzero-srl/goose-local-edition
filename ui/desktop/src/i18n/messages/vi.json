@@ -1373,6 +1373,39 @@
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Giá trị"
   },
+  "cutGuard.keep": {
+    "defaultMessage": "Để nó tiếp tục viết"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} sẽ cắt {count} yêu cầu đang chạy ({names}) — yêu cầu lâu nhất {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} sẽ cắt {count} yêu cầu đang chạy — yêu cầu lâu nhất {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} sẽ cắt câu trả lời đang được viết trong “{name}” — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} sẽ cắt một yêu cầu mà goose không xác định được — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "đã {elapsed}, vẫn đang đọc prompt {tokens} token"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "vẫn đang đọc prompt"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Cắt câu trả lời đang được viết?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Cắt {count} yêu cầu đang chạy?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "đã {elapsed}, đã viết {tokens} token"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "đã viết {tokens} token"
+  },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "Cấu hình thiết lập {name}"
   },
@@ -3494,6 +3527,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Từ chối khởi động"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Dừng bản chia"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Tiếp tục chạy"
   },
@@ -3770,6 +3806,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Chọn một mô hình, rồi khởi chạy nó ở mục “Chạy” bên dưới — trên Mac này, trên một Mac khác của bạn, hoặc chia giữa chúng."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Gắn lại"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Hồ sơ trên"
   },
@@ -3785,6 +3824,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Dừng"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "Dừng phục vụ từ {peer}"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Không thể dừng phục vụ từ Mac kia."
   },
@@ -3793,6 +3835,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Engine của máy Mac này · không chạy"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Gỡ"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB mỗi token thay vì {bf16} KiB — cùng bộ nhớ chứa được {ratio}× ngữ cảnh."
@@ -4342,6 +4387,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Không thể dừng phục vụ từ Mac kia"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Chạy trên Mac này thay thế"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Dừng phục vụ từ Mac kia"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Dừng bản chia"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Thôi chờ nó"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "Gỡ engine MLX"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Không gỡ được engine MLX"
@@ -5441,6 +5501,12 @@
   "placementCard.stop": {
     "defaultMessage": "Dừng"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "Dừng phục vụ từ {name}"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Dừng bản chia"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "Mọi phần trên {nodes} sẽ bị dừng và được xác nhận đã tắt. Các yêu cầu đang xử lý bị cắt ngang."
   },
@@ -5467,6 +5533,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Nhanh ngang nhau trong sai số (~{mine} so với ~{best} tok/s), nhưng cần nhiều máy Mac hơn"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "Ngữ cảnh {context} của nó nhỏ hơn {live} token mà cuộc trò chuyện đang được trả lời hiện đang chiếm."
   },
   "placementCard.total": {
     "defaultMessage": "Tổng ~{value} tok/s với {concurrency} cùng lúc"

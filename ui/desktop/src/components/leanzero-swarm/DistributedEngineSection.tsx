@@ -36,7 +36,6 @@ import {
   type KeyValueItem,
   type Tone,
 } from '../lz';
-import { ConfirmationModal } from '../ui/ConfirmationModal';
 import {
   Dialog,
   DialogContent,
@@ -102,6 +101,7 @@ import { nodePhase, runPhase } from './mlxPhase';
 import { DistributedSetup, linkNode } from './DistributedSetup';
 import { formatElapsed } from './mlxLiveStats';
 import { mlxErrorMessage } from './mlxErrorMessage';
+import { useCutGuard } from './cutGuard';
 import { INPUT, StudioSelect, StudioSwitch, ToneBanner, type StudioSelectOption } from './studio';
 import {
   LOCAL_NETWORK_CHECK,
@@ -444,6 +444,7 @@ const i18n = defineMessages({
       'Every rank on {nodes} is stopped and verified gone, pid by pid. Requests in flight are cut off.',
   },
   stopCancel: { id: 'mlxDistributed.stopCancel', defaultMessage: 'Keep running' },
+  stopAction: { id: 'mlxDistributed.stopAction', defaultMessage: 'Stop the split' },
   stopVerified: { id: 'mlxDistributed.stopVerified', defaultMessage: 'Stopped, verified' },
   stopUnverified: { id: 'mlxDistributed.stopUnverified', defaultMessage: 'Stop not verified' },
   eventsTitle: { id: 'mlxDistributed.eventsTitle', defaultMessage: 'Supervisor events' },
@@ -1914,8 +1915,8 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const [refusal, setRefusal] = useState<MlxDistributedStartResponse['refusal']>(null);
   const [freshPreflight, setFreshPreflight] = useState<MlxDistributedPreflight | null>(null);
   const [repairLink, setRepairLink] = useState(false);
-  const [confirmUnmount, setConfirmUnmount] = useState<string | null>(null);
-  const [confirmStop, setConfirmStop] = useState(false);
+  // Both stops here ask first, and name the answer they cut while one is being written (Q-148).
+  const { guard, dialog: cutDialog } = useCutGuard();
   const [stopReport, setStopReport] = useState<MlxDistributedStopResponse['stop'] | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [makingRoom, setMakingRoom] = useState<string | null>(null);
@@ -1992,7 +1993,12 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
     }
     const why = response.refusal ?? null;
     if (why?.code === 'singleEngineMounted' && offerUnmount) {
-      setConfirmUnmount(singleStatus?.servedModelId ?? singleStatus?.modelId ?? why.message);
+      const detail = singleStatus?.servedModelId ?? singleStatus?.modelId ?? why.message;
+      void guard(['single'], intl.formatMessage(i18n.unmountConfirm), onUnmountAndContinue, {
+        title: intl.formatMessage(i18n.unmountTitle),
+        message: intl.formatMessage(i18n.unmountMessage, { detail }),
+        cancel: intl.formatMessage(i18n.unmountCancel),
+      });
       return;
     }
     setRefusal(why);
@@ -2001,7 +2007,6 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   const onStart = () => void run('start', i18n.startError, () => startOnce(true));
 
   const onUnmountAndContinue = () => {
-    setConfirmUnmount(null);
     void run('unmount', i18n.unmountError, async () => {
       await mlxEngineUnmount();
       props.onSingleChanged();
@@ -2010,7 +2015,6 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
   };
 
   const onStop = () => {
-    setConfirmStop(false);
     void run('stop', i18n.stopError, async () => {
       const response = await mlxDistributedStop();
       setStopReport(response.stop);
@@ -2244,7 +2248,13 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
               <Button
                 variant="destructive"
                 icon={busy === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
-                onClick={() => setConfirmStop(true)}
+                onClick={() =>
+                  void guard(['distributed'], intl.formatMessage(i18n.stopAction), onStop, {
+                    title: intl.formatMessage(i18n.stopTitle),
+                    message: intl.formatMessage(i18n.stopMessage, { nodes: nodeNames || '—' }),
+                    cancel: intl.formatMessage(i18n.stopCancel),
+                  })
+                }
                 disabled={busy != null || otherWindow != null}
               >
                 {intl.formatMessage(i18n.stop)}
@@ -2421,26 +2431,7 @@ export function DistributedEngineSection(props: DistributedEngineSectionProps) {
 
       {status && <EventsPanel events={status.events} />}
 
-      <ConfirmationModal
-        isOpen={confirmUnmount != null}
-        title={intl.formatMessage(i18n.unmountTitle)}
-        message={intl.formatMessage(i18n.unmountMessage, { detail: confirmUnmount ?? '' })}
-        confirmLabel={intl.formatMessage(i18n.unmountConfirm)}
-        cancelLabel={intl.formatMessage(i18n.unmountCancel)}
-        confirmVariant="destructive"
-        onConfirm={onUnmountAndContinue}
-        onCancel={() => setConfirmUnmount(null)}
-      />
-      <ConfirmationModal
-        isOpen={confirmStop}
-        title={intl.formatMessage(i18n.stopTitle)}
-        message={intl.formatMessage(i18n.stopMessage, { nodes: nodeNames || '—' })}
-        confirmLabel={intl.formatMessage(i18n.stop)}
-        cancelLabel={intl.formatMessage(i18n.stopCancel)}
-        confirmVariant="destructive"
-        onConfirm={onStop}
-        onCancel={() => setConfirmStop(false)}
-      />
+      {cutDialog}
     </Section>
   );
 }

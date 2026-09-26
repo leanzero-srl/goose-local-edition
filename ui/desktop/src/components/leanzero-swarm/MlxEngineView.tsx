@@ -122,6 +122,7 @@ import {
 import { useMlxDistributedStatus } from './useMlxDistributedStatus';
 import { PeerHeldLine } from './PeerHeldLine';
 import { dropRoute } from './routeSwitch';
+import { useCutGuard } from './cutGuard';
 import { routeServesChat } from '../chatServedBy/chatServedBy';
 import {
   PlacementBadge,
@@ -177,6 +178,12 @@ const i18n = defineMessages({
     defaultMessage: 'Memory unmeasured: {error}',
   },
   stopRemote: { id: 'mlxEngineView.stopRemote', defaultMessage: 'Stop' },
+  stopRemoteAction: {
+    id: 'mlxEngineView.stopRemoteAction',
+    defaultMessage: 'Stop serving from {peer}',
+  },
+  unmountAction: { id: 'mlxEngineView.unmountAction', defaultMessage: 'Unmount' },
+  remountAction: { id: 'mlxEngineView.remountAction', defaultMessage: 'Remount' },
   stopRemoteFailed: {
     id: 'mlxEngineView.stopRemoteFailed',
     defaultMessage: 'Could not stop serving from the other Mac.',
@@ -2666,8 +2673,10 @@ function MlxEngineViewBody() {
     })();
   }, [mountModelId, refreshStatus]);
 
+  // Every stop and remount here asks first while the engine it stops holds work (Q-148).
+  const { guard, dialog: cutDialog } = useCutGuard();
   const [remoteStopError, setRemoteStopError] = useState<string | null>(null);
-  const onStopRemote = useCallback(() => {
+  const stopRemoteNow = useCallback(() => {
     void (async () => {
       setEngineBusy(true);
       setRemoteStopError(null);
@@ -2683,8 +2692,12 @@ function MlxEngineViewBody() {
       }
     })();
   }, [intl, refreshStatus]);
+  const onStopRemote = useCallback(() => {
+    const peer = remote ? routePeerName(remote) : '—';
+    void guard(['remote'], intl.formatMessage(i18n.stopRemoteAction, { peer }), stopRemoteNow);
+  }, [guard, intl, remote, stopRemoteNow]);
 
-  const onUnmount = useCallback(() => {
+  const unmountNow = useCallback(() => {
     void (async () => {
       setEngineBusy(true);
       setMountError(null);
@@ -2698,9 +2711,12 @@ function MlxEngineViewBody() {
       }
     })();
   }, [refreshStatus]);
+  const onUnmount = useCallback(() => {
+    void guard(['single'], intl.formatMessage(i18n.unmountAction), unmountNow);
+  }, [guard, intl, unmountNow]);
 
   /** Remount the Mac whose profiles changed: this Mac's engine, or the other Mac's over Link. */
-  const remountOn = useCallback(
+  const remountNowOn = useCallback(
     (macKey: string) => {
       const mac = macsCtx.macByKey(macKey) ?? macsCtx.self;
       const macStatus = mac.isSelf ? status : macsCtx.factsOf(mac.key).status;
@@ -2723,6 +2739,20 @@ function MlxEngineViewBody() {
       })();
     },
     [macsCtx, peerSettings, refreshStatus, settings, status]
+  );
+  // A remount of this Mac cuts its single engine's work; of another Mac, the route's when that
+  // Mac's engine is the one serving this Mac's chat.
+  const remountOn = useCallback(
+    (macKey: string) => {
+      const mac = macsCtx.macByKey(macKey) ?? macsCtx.self;
+      const servesChat = !mac.isSelf && remote != null && remote.peer === mac.nodeId;
+      void guard(
+        mac.isSelf ? ['single'] : servesChat ? ['remote'] : [],
+        intl.formatMessage(i18n.remountAction),
+        () => remountNowOn(macKey)
+      );
+    },
+    [guard, intl, macsCtx, remote, remountNowOn]
   );
   const onRemount = useCallback(() => remountOn(SELF_KEY), [remountOn]);
 
@@ -2836,6 +2866,7 @@ function MlxEngineViewBody() {
   // scroll area) belongs to LeanZeroSwarmView — this component is the LeanZero MLX tab's content.
   return (
     <div className="flex flex-col gap-4">
+      {cutDialog}
       {/* The engine's own section switch sits UNDER the Providers strip, so it is the subordinate
           underline register, on the row's hairline — never a second solid strip that reads as
           another top nav. */}

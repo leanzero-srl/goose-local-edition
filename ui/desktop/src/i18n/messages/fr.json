@@ -1373,6 +1373,39 @@
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Valeur"
   },
+  "cutGuard.keep": {
+    "defaultMessage": "Le laisser écrire"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} coupe {count} requêtes en cours ({names}) — la plus longue {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} coupe {count} requêtes en cours — la plus longue {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} coupe la réponse en cours d’écriture dans « {name} » — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} coupe une requête que goose n’a pas pu identifier — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "depuis {elapsed}, lit encore son prompt de {tokens} jetons"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "lit encore son prompt"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Couper la réponse en cours d’écriture ?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Couper {count} requêtes en cours ?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "depuis {elapsed}, {tokens} jetons écrits"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} jetons écrits"
+  },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "Configurer les paramètres de {name}"
   },
@@ -3494,6 +3527,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Démarrage refusé"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Arrêter la répartition"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Laisser tourner"
   },
@@ -3770,6 +3806,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Choisissez un modèle, puis lancez-le ci-dessous dans « Exécuter » — sur ce Mac, sur un autre de vos Mac ou réparti entre eux."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Remonter"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Profils sur"
   },
@@ -3785,6 +3824,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Arrêter"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "Arrêter le service depuis {peer}"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Impossible d’arrêter le service depuis l’autre Mac."
   },
@@ -3793,6 +3835,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Moteur de ce Mac · arrêté"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Démonter"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode} : {bytes} Kio par jeton au lieu de {bf16} Kio — la même mémoire contient {ratio}× plus de contexte."
@@ -4342,6 +4387,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Impossible d’arrêter le service depuis l’autre Mac"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Exécuter plutôt sur ce Mac"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Arrêter le service depuis l’autre Mac"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Arrêter la répartition"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Ne plus l’attendre"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "Démonter le moteur MLX"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Impossible de démonter le moteur MLX"
@@ -5441,6 +5501,12 @@
   "placementCard.stop": {
     "defaultMessage": "Arrêter"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "Arrêter le service depuis {name}"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Arrêter la répartition"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "Chaque partie sur {nodes} est arrêtée et son arrêt vérifié. Les requêtes en cours sont interrompues."
   },
@@ -5467,6 +5533,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Aussi rapide à l’erreur près (~{mine} contre ~{best} tok/s), mais demande plus de Mac"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "Son contexte de {context} est inférieur aux {live} jetons que la conversation en cours de réponse occupe déjà."
   },
   "placementCard.total": {
     "defaultMessage": "~{value} tok/s au total à {concurrency} en même temps"

@@ -1373,6 +1373,39 @@
   "customProviderForm.valuePlaceholder": {
     "defaultMessage": "Nilai"
   },
+  "cutGuard.keep": {
+    "defaultMessage": "Biarkan tetap menulis"
+  },
+  "cutGuard.many": {
+    "defaultMessage": "{action} memotong {count} permintaan yang sedang berjalan ({names}) — yang terlama {figures}."
+  },
+  "cutGuard.manyUnnamed": {
+    "defaultMessage": "{action} memotong {count} permintaan yang sedang berjalan — yang terlama {figures}."
+  },
+  "cutGuard.one": {
+    "defaultMessage": "{action} memotong jawaban yang sedang ditulis di “{name}” — {figures}."
+  },
+  "cutGuard.oneUnnamed": {
+    "defaultMessage": "{action} memotong permintaan yang tidak dapat dinamai goose — {figures}."
+  },
+  "cutGuard.reading": {
+    "defaultMessage": "sudah {elapsed}, masih membaca prompt {tokens} token-nya"
+  },
+  "cutGuard.readingNoFigure": {
+    "defaultMessage": "masih membaca prompt-nya"
+  },
+  "cutGuard.title": {
+    "defaultMessage": "Potong jawaban yang sedang ditulis?"
+  },
+  "cutGuard.titleMany": {
+    "defaultMessage": "Potong {count} permintaan yang sedang berjalan?"
+  },
+  "cutGuard.written": {
+    "defaultMessage": "sudah {elapsed}, {tokens} token ditulis"
+  },
+  "cutGuard.writtenNoClock": {
+    "defaultMessage": "{tokens} token ditulis"
+  },
   "defaultCardButtons.configureSettings": {
     "defaultMessage": "Konfigurasikan pengaturan {name}"
   },
@@ -3494,6 +3527,9 @@
   "mlxDistributed.startRefused": {
     "defaultMessage": "Mulai ditolak"
   },
+  "mlxDistributed.stopAction": {
+    "defaultMessage": "Hentikan pembagian"
+  },
   "mlxDistributed.stopCancel": {
     "defaultMessage": "Biarkan berjalan"
   },
@@ -3770,6 +3806,9 @@
   "mlxEngineView.pickThenRun": {
     "defaultMessage": "Pilih model, lalu jalankan di “Jalankan” di bawah — di Mac ini, di Mac Anda yang lain, atau dibagi di antaranya."
   },
+  "mlxEngineView.remountAction": {
+    "defaultMessage": "Pasang ulang"
+  },
   "mlxEngineView.samplingOn": {
     "defaultMessage": "Profil di"
   },
@@ -3785,6 +3824,9 @@
   "mlxEngineView.stopRemote": {
     "defaultMessage": "Hentikan"
   },
+  "mlxEngineView.stopRemoteAction": {
+    "defaultMessage": "Hentikan layanan dari {peer}"
+  },
   "mlxEngineView.stopRemoteFailed": {
     "defaultMessage": "Tidak dapat menghentikan layanan dari Mac lain."
   },
@@ -3793,6 +3835,9 @@
   },
   "mlxEngineView.thisMacEngineStopped": {
     "defaultMessage": "Mesin Mac ini · tidak berjalan"
+  },
+  "mlxEngineView.unmountAction": {
+    "defaultMessage": "Lepas"
   },
   "mlxKvCache.effect": {
     "defaultMessage": "{mode}: {bytes} KiB per token, bukan {bf16} KiB — memori yang sama memuat {ratio}× konteks."
@@ -4342,6 +4387,21 @@
   },
   "mlxTray.remoteStopFailed": {
     "defaultMessage": "Tidak dapat menghentikan layanan dari Mac lain"
+  },
+  "mlxTray.runHereAction": {
+    "defaultMessage": "Jalankan di Mac ini saja"
+  },
+  "mlxTray.stopRemoteAction": {
+    "defaultMessage": "Hentikan layanan dari Mac lain"
+  },
+  "mlxTray.stopSplitAction": {
+    "defaultMessage": "Hentikan pembagian"
+  },
+  "mlxTray.stopWaitingAction": {
+    "defaultMessage": "Berhenti menunggunya"
+  },
+  "mlxTray.unmountAction": {
+    "defaultMessage": "Lepas mesin MLX"
   },
   "mlxTray.unmountFailed": {
     "defaultMessage": "Mesin MLX tidak dapat dilepas"
@@ -5441,6 +5501,12 @@
   "placementCard.stop": {
     "defaultMessage": "Hentikan"
   },
+  "placementCard.stopRouteAction": {
+    "defaultMessage": "Hentikan layanan dari {name}"
+  },
+  "placementCard.stopSplitAction": {
+    "defaultMessage": "Hentikan pembagian"
+  },
   "placementCard.stopSplitMessage": {
     "defaultMessage": "Setiap bagian di {nodes} dihentikan dan dipastikan sudah berhenti. Permintaan yang sedang berjalan akan terputus."
   },
@@ -5467,6 +5533,9 @@
   },
   "placementCard.tied": {
     "defaultMessage": "Sama cepat dalam batas galat (~{mine} vs ~{best} tok/dtk), tetapi perlu lebih banyak Mac"
+  },
+  "placementCard.tooSmallForLive": {
+    "defaultMessage": "Konteks {context}-nya lebih kecil dari {live} token yang kini dimuat percakapan yang sedang dijawab."
   },
   "placementCard.total": {
     "defaultMessage": "Total ~{value} tok/dtk dengan {concurrency} sekaligus"

@@ -18,6 +18,7 @@ import type { MlxDistributedStatus } from '../../acp/mlx-distributed';
 import type { NodesResponse } from '../../acp/leanzero-link';
 import DISCOVERY from './mlxDistributedDiscovery.fixture.json';
 import { dismissPeerHeld, latestPeerHeld } from './routeSwitch';
+import { liveSplitSnapshot } from '../../utils/mlxInFlight.fixtures';
 
 const mockPlan = vi.fn();
 const mockMeasure = vi.fn();
@@ -1234,9 +1235,9 @@ describe('Run it follows the engine it started, in the engine-phase palette', ()
     );
     expect(mockDistributedStop).not.toHaveBeenCalled();
     expect(
-      screen.getByText(/Every part on Mihai Macbook, Work’s Mac Studio is stopped/)
+      await screen.findByText(/Every part on Mihai Macbook, Work’s Mac Studio is stopped/)
     ).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Stop the split' }));
     await waitFor(() => expect(mockDistributedStop).toHaveBeenCalledTimes(1));
   });
 });
@@ -1351,5 +1352,112 @@ describe('Run it for the picked model while another model is served', () => {
     expect(within(local).queryByTestId('placement-live')).toBeNull();
     await userEvent.click(within(local).getByTestId('placement-run-local'));
     await waitFor(() => expect(order).toEqual(['unmount Flash here', 'mount 27B here']));
+  });
+});
+
+/**
+ * Q-148, the live round of 2026-09-26: the split wrote a 39-minute answer while Run it offered
+ * "Run on Work's Mac Studio · Best" — one click that stopped the split first, with no question —
+ * and "Best" fit only at 45,083 context while the answer being written held ~64k.
+ */
+describe('Q-148: a way that would cut the answer being written asks first, and is never "Best" when too small', () => {
+  const bridge = window.electron as unknown as { mlxEngineActivity?: () => Promise<unknown> };
+  const SPLIT_SERVING = {
+    mode: 'distributed',
+    state: 'serving',
+    modelId: MODEL,
+    admissionOpen: true,
+    inflight: 1,
+    nodes: [{ name: 'Mihai Macbook' }, { name: 'Work’s Mac Studio' }],
+    events: [],
+    restarts: 0,
+  } as unknown as MlxDistributedStatus;
+  /** The Studio fits the 27B alone only at 45,083 context — goose's "Best" for chat. */
+  const STUDIO_SMALL: PlacementPlan = {
+    ...PLAN_LINK,
+    candidates: (PLAN_LINK.candidates ?? []).map((c) =>
+      c.id === 'single:link:wh'
+        ? { ...c, fit: { ...c.fit, status: 'smallerContext', context: 45083 } }
+        : c
+    ),
+  };
+  afterEach(() => {
+    delete bridge.mlxEngineActivity;
+  });
+
+  it('while the split writes: the Studio is not "Best", says why, says what Run cuts, and Run asks before it stops anything', async () => {
+    bridge.mlxEngineActivity = vi.fn(async () => liveSplitSnapshot());
+    mockPlan.mockResolvedValue(answer(STUDIO_SMALL));
+    mockDistributedStop.mockResolvedValue({
+      status: { mode: 'single', state: 'stopped', nodes: [] },
+      stop: { verified: true, steps: [] },
+    });
+    mockRemoteStart.mockResolvedValue({ started: true });
+    renderCard({ distributed: SPLIT_SERVING });
+    const peer = await screen.findByTestId('placement-way-peer');
+    expect(await within(peer).findByTestId('placement-too-small-peer')).toHaveTextContent(
+      'Its 45,083 context is under the 64,224 tokens the conversation being answered holds now.'
+    );
+    expect(within(peer).queryByText('Best')).toBeNull();
+    expect(within(peer).getByTestId('placement-cuts-live-peer')).toHaveTextContent(
+      'Run cuts the answer being written in “Jira Migration Kickoff Notes” — 39m 15s in, 24,228 tokens written.'
+    );
+
+    await userEvent.click(within(peer).getByTestId('placement-run-peer'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Cut the answer being written?')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        'Run on Work’s Mac Studio cuts the answer being written in “Jira Migration Kickoff Notes” — 39m 15s in, 24,228 tokens written.'
+      )
+    ).toBeInTheDocument();
+    expect(mockDistributedStop).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Keep it writing' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(mockDistributedStop).not.toHaveBeenCalled();
+    expect(mockRemoteStart).not.toHaveBeenCalled();
+
+    await userEvent.click(within(peer).getByTestId('placement-run-peer'));
+    await userEvent.click(
+      within(await screen.findByRole('dialog')).getByRole('button', {
+        name: 'Run on Work’s Mac Studio',
+      })
+    );
+    await waitFor(() => expect(mockRemoteStart).toHaveBeenCalledTimes(1));
+    expect(mockDistributedStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('the split’s own Stop names the cut too', async () => {
+    bridge.mlxEngineActivity = vi.fn(async () => liveSplitSnapshot());
+    mockDistributedStop.mockResolvedValue({ stop: { verified: true, steps: [] } });
+    renderCard({ distributed: SPLIT_SERVING });
+    const split = await screen.findByTestId('placement-way-split');
+    await userEvent.click(within(split).getByTestId('placement-stop-split'));
+    const dialog = await screen.findByRole('dialog');
+    expect(
+      within(dialog).getByText(
+        'Stop the split cuts the answer being written in “Jira Migration Kickoff Notes” — 39m 15s in, 24,228 tokens written.'
+      )
+    ).toBeInTheDocument();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Stop the split' }));
+    await waitFor(() => expect(mockDistributedStop).toHaveBeenCalledTimes(1));
+  });
+
+  it('with nothing in flight the switch goes on at once, and goose’s "Best" stands', async () => {
+    bridge.mlxEngineActivity = vi.fn(async () => liveSplitSnapshot([]));
+    mockPlan.mockResolvedValue(answer(STUDIO_SMALL));
+    mockDistributedStop.mockResolvedValue({
+      status: { mode: 'single', state: 'stopped', nodes: [] },
+      stop: { verified: true, steps: [] },
+    });
+    mockRemoteStart.mockResolvedValue({ started: true });
+    renderCard({ distributed: SPLIT_SERVING });
+    const peer = await screen.findByTestId('placement-way-peer');
+    expect(await within(peer).findByText('Best')).toBeInTheDocument();
+    expect(within(peer).queryByTestId('placement-too-small-peer')).toBeNull();
+    expect(within(peer).queryByTestId('placement-cuts-live-peer')).toBeNull();
+    await userEvent.click(within(peer).getByTestId('placement-run-peer'));
+    await waitFor(() => expect(mockRemoteStart).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

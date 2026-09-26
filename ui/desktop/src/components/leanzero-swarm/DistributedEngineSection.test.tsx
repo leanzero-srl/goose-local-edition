@@ -311,10 +311,10 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     expect(screen.getByRole('combobox', { name: 'Backend' })).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
     expect(mockStop).not.toHaveBeenCalled();
-    expect(screen.getByText('Stop the distributed engine?')).toBeInTheDocument();
+    expect(await screen.findByText('Stop the distributed engine?')).toBeInTheDocument();
     expect(screen.getByText(/Every rank on MacBook Pro, workhorse is stopped/)).toBeInTheDocument();
     const dialog = screen.getByRole('dialog');
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Stop' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Stop the split' }));
     await waitFor(() => expect(mockStop).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Stopped, verified')).toBeInTheDocument();
   });
@@ -326,7 +326,9 @@ describe('DistributedEngineSection — READY, 2 nodes over JACCL (the recorded F
     });
     section();
     await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
-    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Stop' }));
+    await userEvent.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Stop the split' })
+    );
     expect(await screen.findByText('Stop not verified')).toBeInTheDocument();
     expect(screen.getByText('SIGTERM rank 1 pid 5521 → STILL ALIVE')).toBeInTheDocument();
   });
