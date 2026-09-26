@@ -45,6 +45,7 @@ const served = (over: Partial<ChatServedBy> = {}): ChatServedBy => ({
   activity: 'generating',
   work: 'thisChat',
   busyWithOthers: null,
+  busyIn: null,
   turnRequest: WRITING,
   readTps: null,
   readiness: { kind: 'ready' },

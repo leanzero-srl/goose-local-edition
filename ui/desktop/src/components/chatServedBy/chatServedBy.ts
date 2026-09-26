@@ -54,6 +54,20 @@ import {
  */
 export type ChatEngine = 'single' | 'remote' | 'split' | 'none';
 
+/**
+ * The one other chat of this app the serving engine is answering while this chat has no turn on it
+ * (Q-152: the composer said "Serving other work" beside an enabled Send, and a message sent then
+ * would have shared the engine with a 39-minute answer nobody named).
+ */
+export interface ChatBusyIn {
+  sessionId: string;
+  sessionName: string | null;
+  /** The engine's own age of that chat's request (seconds since it arrived); null = unreported. */
+  elapsedS: number | null;
+  /** The engine holds a request WAITING: a message sent now waits too, rather than running beside. */
+  waits: boolean;
+}
+
 /** Requests on the serving engine that are not this chat's — a new turn waits behind them. */
 export interface ChatBusy {
   requests: number;
@@ -382,6 +396,8 @@ export interface ChatServedBy extends MlxEngineServing {
   activity: MlxActivity | null;
   work: ChatWork | null;
   busyWithOthers: ChatBusy | null;
+  /** The other chat the engine answers, by name, while this one has no turn (`work` `others`). */
+  busyIn: ChatBusyIn | null;
   /**
    * THIS chat's turn on that engine, from main's live read (`turnRequest`); null when no turn is
    * in flight or it cannot be told apart from someone else's.
@@ -579,6 +595,45 @@ function busyWith(
   return { requests: others, readingTokens: reading?.promptTokens ?? null };
 }
 
+/**
+ * The other chat, named, when goose's list proves the engine answers exactly ONE other session of
+ * this app and nothing it cannot attribute — with two, or an unknown request beside it, no one is
+ * named (the chip keeps "Serving other work"). Its request is the largest prompt on the engine, the
+ * rule `turnRequestOf` uses: goose's own small calls may run beside a turn, a turn carries the whole
+ * conversation.
+ */
+function busyInOf(
+  main: MlxEngineSnapshot,
+  stats: MlxLiveStats,
+  activity: MlxActivity,
+  sessionId: string | null,
+  turnInFlight: boolean
+): ChatBusyIn | null {
+  if (turnInFlight || activity === 'idle' || activity === 'not_loaded') return null;
+  const serving = main.serving;
+  if (!serving || serving.error || serving.unattributed > 0) return null;
+  const others = new Map<string, string | null>();
+  for (const client of serving.clients) {
+    if (client.kind === 'external') return null;
+    if (gooseBackground(client) || client.sessionId == null || client.sessionId === sessionId) {
+      continue;
+    }
+    others.set(client.sessionId, client.sessionName);
+  }
+  if (others.size !== 1) return null;
+  const [[otherId, otherName]] = others;
+  const request = stats.requests.reduce<MlxLiveRequest | null>(
+    (best, r) => (best == null || (r.promptTokens ?? 0) > (best.promptTokens ?? 0) ? r : best),
+    null
+  );
+  return {
+    sessionId: otherId,
+    sessionName: otherName,
+    elapsedS: request?.elapsedS ?? null,
+    waits: holdsARequestWaiting(stats),
+  };
+}
+
 function phaseOf(
   serving: MlxEngineServing,
   inputs: ChatServedInputs,
@@ -616,6 +671,7 @@ const NOT_MLX: ChatServedBy = {
   activity: null,
   work: null,
   busyWithOthers: null,
+  busyIn: null,
   turnRequest: null,
   readTps: null,
   readiness: UNKNOWN,
@@ -690,6 +746,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
       activity: null,
       work: null,
       busyWithOthers: null,
+      busyIn: null,
       turnRequest: null,
       readTps: null,
       readiness,
@@ -715,6 +772,7 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
       activity: null,
       work: null,
       busyWithOthers: null,
+      busyIn: null,
       turnRequest: null,
       readTps: null,
       readiness,
@@ -735,6 +793,10 @@ export function deriveChatServedBy(given: ChatServedInputs): ChatServedBy {
     busyWithOthers:
       stats && activity && main
         ? busyWith(main, stats, activity, sessionId, inputs.turnInFlight)
+        : null,
+    busyIn:
+      stats && activity && main && work === 'others'
+        ? busyInOf(main, stats, activity, sessionId, inputs.turnInFlight)
         : null,
     turnRequest,
     readTps: main && turnRequest ? readingForPrompt(main.measured, turnRequest.promptTokens) : null,

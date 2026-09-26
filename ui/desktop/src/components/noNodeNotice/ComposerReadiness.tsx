@@ -5,6 +5,7 @@ import {
   Hourglass,
   Laptop,
   Loader2,
+  MessageSquare,
   Network,
   Play,
   ServerOff,
@@ -31,6 +32,7 @@ import {
 import {
   servedReady,
   type ChatBusy,
+  type ChatBusyIn,
   type ChatServedBy,
   type ComposerReadiness,
   type RunHere,
@@ -38,6 +40,7 @@ import {
 import type { ChatServing } from '../chatServedBy/useChatServedBy';
 import { splitStopHeadline, splitStopMemory } from '../chatServedBy/splitStopText';
 import { peerGoneText } from '../chatServedBy/peerGoneText';
+import { busyInHeadline, busyInSendText } from '../chatServedBy/busyInText';
 import {
   distributedProblem,
   distributedServedId,
@@ -167,6 +170,7 @@ const i18n = defineMessages({
   mount: { id: 'composerReadiness.mount', defaultMessage: 'Mount {model}' },
   mounting: { id: 'composerReadiness.mounting', defaultMessage: 'Mounting {model}' },
   openEngine: { id: 'composerReadiness.openEngine', defaultMessage: 'Open Engine' },
+  openBusyChat: { id: 'composerReadiness.openBusyChat', defaultMessage: 'Open that chat' },
   theEngine: { id: 'composerReadiness.theEngine', defaultMessage: 'The engine' },
 });
 
@@ -293,6 +297,7 @@ function ReadinessBar({ serving }: { serving: ChatServing }) {
     );
   }
   if (servedReady(served)) {
+    if (served.busyIn) return <BusyInBar busy={served.busyIn} />;
     return served.busyWithOthers ? <BusyBar served={served} busy={served.busyWithOthers} /> : null;
   }
   if (readiness.kind === 'unknown' || readiness.kind === 'ready') return null;
@@ -397,6 +402,53 @@ function BusyBar({ served, busy }: { served: ChatServedBy; busy: ChatBusy }) {
         {headline}
       </span>
       <div className="flex shrink-0 items-center gap-2">
+        <OpenEngineButton />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The engine is answering one other chat of this app, named (Q-152): which one, for how long, what a
+ * message sent now does, and the way to that chat. Sending stays open — the bar informs, it never
+ * blocks typing.
+ */
+function BusyInBar({ busy }: { busy: ChatBusyIn }) {
+  const intl = useIntl();
+  const navigate = useNavigate();
+  return (
+    <div
+      role="status"
+      data-testid="composer-readiness"
+      data-readiness="busy-in"
+      className={cx(
+        'mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2',
+        RADIUS.control,
+        PHASE_FILL.held
+      )}
+    >
+      <Hourglass aria-hidden className="size-4 shrink-0" />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span
+          data-testid="composer-readiness-busy-in"
+          className={cx('break-words text-lz-body', WEIGHT.semibold)}
+        >
+          {busyInHeadline(intl, busy)}
+        </span>
+        <span data-testid="composer-readiness-detail" className="text-lz-meta break-words">
+          {busyInSendText(intl, busy)}
+        </span>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<MessageSquare />}
+          data-testid="composer-readiness-open-busy-chat"
+          onClick={() => navigate(`/pair?resumeSessionId=${encodeURIComponent(busy.sessionId)}`)}
+        >
+          {intl.formatMessage(i18n.openBusyChat)}
+        </Button>
         <OpenEngineButton />
       </div>
     </div>

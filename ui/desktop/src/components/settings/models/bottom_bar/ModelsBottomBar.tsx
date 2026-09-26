@@ -35,6 +35,7 @@ import type { Message } from '../../../../types/message';
 import type { ChatServedBy, ChatWork } from '../../../chatServedBy/chatServedBy';
 import { splitStopReason } from '../../../chatServedBy/splitStopText';
 import { peerGoneOf, peerGoneText } from '../../../chatServedBy/peerGoneText';
+import { busyInHeadline } from '../../../chatServedBy/busyInText';
 import { shortModelName } from '../../../noNodeNotice/mlxMount';
 import { compactTokens } from '../../../leanzero-swarm/mlxLiveStats';
 
@@ -335,11 +336,13 @@ export default function ModelsBottomBar({
       ? intl.formatMessage(i18n.phaseReconnecting)
       : splitStop
         ? intl.formatMessage(i18n.phaseSplitStopped)
-        : served?.work && served.work !== 'thisChat'
-          ? intl.formatMessage(WORK_WORD[served.work])
-          : served?.phase
-            ? intl.formatMessage(PHASE_WORD[served.phase])
-            : intl.formatMessage(i18n.phaseUnknown);
+        : served?.busyIn
+          ? busyInHeadline(intl, served.busyIn)
+          : served?.work && served.work !== 'thisChat'
+            ? intl.formatMessage(WORK_WORD[served.work])
+            : served?.phase
+              ? intl.formatMessage(PHASE_WORD[served.phase])
+              : intl.formatMessage(i18n.phaseUnknown);
   const chipLabel =
     servedModel == null
       ? null
@@ -366,11 +369,12 @@ export default function ModelsBottomBar({
                 <span
                   data-testid="model-chip-phase"
                   data-work={served.work ?? undefined}
-                  title={goneWords ?? undefined}
+                  title={goneWords ?? (served.busyIn ? phaseWord : undefined)}
                   className={cx(
                     'mr-1.5 text-lz-meta font-lz-semibold',
-                    // The gone sentence is the chip's longest word: it gives way before the dot.
-                    goneWords ? 'min-w-0 truncate' : 'shrink-0'
+                    // The gone sentence and the busy chat's name are the chip's longest words: they
+                    // give way before the dot.
+                    goneWords || served.busyIn ? 'min-w-0 truncate' : 'shrink-0'
                   )}
                 >
                   {phaseWord}

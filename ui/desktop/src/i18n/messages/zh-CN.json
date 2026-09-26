@@ -362,6 +362,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "搜索扩展…"
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {正在处理“{name}”} other {正在处理另一个聊天}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "现在发送的消息将与该回答共享引擎 — 速度会变慢，若没有空间则会等待。"
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "现在发送的消息会等待，直到引擎有空间处理它。"
+  },
   "cardButtons.configure": {
     "defaultMessage": "配置"
   },
@@ -757,6 +766,9 @@
   },
   "composerReadiness.noTarget": {
     "defaultMessage": "没有已保存的 MLX 模型 — 请在 Providers 中选择一个。"
+  },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "打开那个聊天"
   },
   "composerReadiness.openEngine": {
     "defaultMessage": "打开引擎"

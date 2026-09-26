@@ -362,6 +362,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "поиск расширений..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {Занят в «{name}»} other {Занят в другом чате}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "Сообщение, отправленное сейчас, делит движок с этим ответом — оно идёт медленнее или ждёт, если нет места."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "Сообщение, отправленное сейчас, подождёт, пока у движка появится место."
+  },
   "cardButtons.configure": {
     "defaultMessage": "Настроить"
   },
@@ -757,6 +766,9 @@
   },
   "composerReadiness.noTarget": {
     "defaultMessage": "Нет сохранённой модели MLX — выберите её в Providers."
+  },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "Открыть этот чат"
   },
   "composerReadiness.openEngine": {
     "defaultMessage": "Открыть движок"

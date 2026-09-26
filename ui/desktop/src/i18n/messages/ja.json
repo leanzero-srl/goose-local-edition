@@ -362,6 +362,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "拡張機能を検索..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {「{name}」で処理中} other {別のチャットで処理中}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "今送信したメッセージは、その回答とエンジンを共有します — 遅くなるか、空きがなければ待機します。"
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "今送信したメッセージは、エンジンに空きができるまで待機します。"
+  },
   "cardButtons.configure": {
     "defaultMessage": "設定"
   },
@@ -757,6 +766,9 @@
   },
   "composerReadiness.noTarget": {
     "defaultMessage": "保存された MLX モデルがありません — Providers で選んでください。"
+  },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "そのチャットを開く"
   },
   "composerReadiness.openEngine": {
     "defaultMessage": "エンジンを開く"

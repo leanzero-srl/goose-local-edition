@@ -362,6 +362,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "एक्सटेंशन खोजें..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {‘{name}’ में व्यस्त} other {किसी दूसरी चैट में व्यस्त}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "अभी भेजा गया संदेश उस उत्तर के साथ इंजन साझा करेगा — यह धीमा चलेगा, या जगह न होने पर प्रतीक्षा करेगा।"
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "अभी भेजा गया संदेश तब तक प्रतीक्षा करेगा जब तक इंजन के पास उसके लिए जगह न हो।"
+  },
   "cardButtons.configure": {
     "defaultMessage": "कॉन्फ़िगर करें"
   },
@@ -757,6 +766,9 @@
   },
   "composerReadiness.noTarget": {
     "defaultMessage": "कोई सहेजा MLX मॉडल नहीं — Providers में एक चुनें।"
+  },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "वह चैट खोलें"
   },
   "composerReadiness.openEngine": {
     "defaultMessage": "इंजन खोलें"

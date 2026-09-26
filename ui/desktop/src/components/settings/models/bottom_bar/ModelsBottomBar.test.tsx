@@ -339,6 +339,7 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
     activity: 'idle',
     work: null,
     busyWithOthers: null,
+    busyIn: null,
     turnRequest: null,
     readTps: null,
     readiness: { kind: 'ready' },
@@ -384,6 +385,25 @@ describe('ModelsBottomBar — the chip names what serves chat', () => {
       expect(screen.getAllByTestId('lz-status-dot')[0]).toHaveAttribute('data-phase', over.phase);
       unmount();
     }
+  });
+
+  it('Q-152: the one other chat the engine answers is named, with how long it has been at it', async () => {
+    renderChip({
+      ...STUDIO,
+      phase: 'idle',
+      activity: 'generating',
+      work: 'others',
+      busyIn: {
+        sessionId: '20260926_19',
+        sessionName: 'Jira Migration Kickoff Notes',
+        elapsedS: 2355,
+        waits: false,
+      },
+    });
+    const phase = await screen.findByTestId('model-chip-phase');
+    expect(phase.textContent).toBe('Busy in ‘Jira Migration Kickoff Notes’ · 39m 15s');
+    expect(phase).toHaveAttribute('title', phase.textContent);
+    expect(phase.className).toContain('truncate');
   });
 
   it('a route to the Studio: "<model> · Work\'s Mac Studio" with the phase dot — never "swarm"', () => {

@@ -362,6 +362,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "cari sambungan..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {Sibuk dalam ‘{name}’} other {Sibuk dalam sembang lain}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "Mesej yang dihantar sekarang berkongsi enjin dengan jawapan itu — berjalan lebih perlahan, atau menunggu jika tiada ruang."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "Mesej yang dihantar sekarang menunggu sehingga enjin ada ruang untuknya."
+  },
   "cardButtons.configure": {
     "defaultMessage": "Konfigurasi"
   },
@@ -757,6 +766,9 @@
   },
   "composerReadiness.noTarget": {
     "defaultMessage": "Tiada model MLX tersimpan — pilih satu dalam Providers."
+  },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "Buka sembang itu"
   },
   "composerReadiness.openEngine": {
     "defaultMessage": "Buka Enjin"

@@ -362,6 +362,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "tìm kiếm tiện ích mở rộng..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {Đang bận trong ‘{name}’} other {Đang bận trong cuộc trò chuyện khác}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "Tin nhắn gửi bây giờ dùng chung engine với câu trả lời đó — chạy chậm hơn, hoặc chờ nếu không còn chỗ."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "Tin nhắn gửi bây giờ sẽ chờ cho tới khi engine có chỗ cho nó."
+  },
   "cardButtons.configure": {
     "defaultMessage": "Cấu hình"
   },
@@ -757,6 +766,9 @@
   },
   "composerReadiness.noTarget": {
     "defaultMessage": "Không có mô hình MLX đã lưu — hãy chọn một trong Providers."
+  },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "Mở cuộc trò chuyện đó"
   },
   "composerReadiness.openEngine": {
     "defaultMessage": "Mở Engine"

@@ -362,6 +362,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "익스텐션 검색..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {‘{name}’에서 작업 중} other {다른 채팅에서 작업 중}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "지금 보낸 메시지는 그 답변과 엔진을 나눠 씁니다 — 더 느리게 실행되거나, 여유가 없으면 기다립니다."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "지금 보낸 메시지는 엔진에 여유가 생길 때까지 기다립니다."
+  },
   "cardButtons.configure": {
     "defaultMessage": "구성"
   },
@@ -757,6 +766,9 @@
   },
   "composerReadiness.noTarget": {
     "defaultMessage": "저장된 MLX 모델이 없습니다 — Providers에서 선택하세요."
+  },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "그 채팅 열기"
   },
   "composerReadiness.openEngine": {
     "defaultMessage": "엔진 열기"

@@ -362,6 +362,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "uzantıları ara..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {‘{name}’ içinde meşgul} other {Başka bir sohbette meşgul}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "Şimdi gönderilen bir mesaj motoru o yanıtla paylaşır — daha yavaş çalışır veya yer yoksa bekler."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "Şimdi gönderilen bir mesaj, motorda yer açılana kadar bekler."
+  },
   "cardButtons.configure": {
     "defaultMessage": "Yapılandır"
   },
@@ -757,6 +766,9 @@
   },
   "composerReadiness.noTarget": {
     "defaultMessage": "Kayıtlı MLX modeli yok — Providers’ta bir tane seçin."
+  },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "O sohbeti aç"
   },
   "composerReadiness.openEngine": {
     "defaultMessage": "Motoru aç"

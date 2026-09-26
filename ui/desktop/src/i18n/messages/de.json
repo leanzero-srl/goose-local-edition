@@ -362,6 +362,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "Erweiterungen suchen..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {Beschäftigt in „{name}“} other {Beschäftigt in einem anderen Chat}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "Eine jetzt gesendete Nachricht teilt sich die Engine mit dieser Antwort — sie läuft langsamer oder wartet, wenn kein Platz ist."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "Eine jetzt gesendete Nachricht wartet, bis die Engine Platz dafür hat."
+  },
   "cardButtons.configure": {
     "defaultMessage": "Konfigurieren"
   },
@@ -757,6 +766,9 @@
   },
   "composerReadiness.noTarget": {
     "defaultMessage": "Kein gespeichertes MLX-Modell — wähle eines unter Providers."
+  },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "Diesen Chat öffnen"
   },
   "composerReadiness.openEngine": {
     "defaultMessage": "Engine öffnen"
