@@ -48,7 +48,7 @@ const steps = brief ? brief.turns.map((t) => t.say.replaceAll('{WORK}', work)) :
 // (input, output, cache_read). Read on every poll so no call of a many-tool turn is missed.
 const LOGS = `${process.env.HOME}/.local/state/goose/logs`;
 const seenCalls = new Map();
-const pollCalls = () => { const got = []; for (const f of readdirSync(LOGS)) { if (!/^llm_request\.\d+\.jsonl$/.test(f)) continue; const st = statSync(`${LOGS}/${f}`); const key = `${f}:${st.mtimeMs}`; if (seenCalls.has(key)) continue; try { const L = readFileSync(`${LOGS}/${f}`, 'utf8').trimEnd().split('\n'); const u = JSON.parse(L.at(-1)).usage; if (!u) continue; seenCalls.set(key, 1); got.push(u); } catch {} } return got; };
+const pollCalls = () => { const got = []; for (const f of readdirSync(LOGS)) { if (!/^llm_request\.\d+\.jsonl$/.test(f)) continue; let st; try { st = statSync(`${LOGS}/${f}`); } catch { continue; } /* goose rotates these between readdir and stat (E2E #4b died on ENOENT) */ const key = `${f}:${st.mtimeMs}`; if (seenCalls.has(key)) continue; try { const L = readFileSync(`${LOGS}/${f}`, 'utf8').trimEnd().split('\n'); const u = JSON.parse(L.at(-1)).usage; if (!u) continue; seenCalls.set(key, 1); got.push(u); } catch {} } return got; };
 pollCalls();
 writeFileSync(`${dir}/calls.tsv`, 'turn\tinput\toutput\tcache_read\n');
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
