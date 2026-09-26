@@ -1,27 +1,30 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-26 21:46 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
+Updated: 2026-09-26 22:35 · heartbeat: session cron 90b0083a (:04/:14/…/:54, expires 2026-10-03)
 
 ## Live
-- Installed on both Macs: 3.0.51. PROVEN on it: Q-114 (no stall past 2× the old hang, E2E #3c), Q-135, Q-136, Q-137.
-- Building 3.0.52 from main 5baa065fa: Q-107 (tool loads keep the prefix), Q-138 (orphan MCPs), Q-130, Q-140,
-  Q-141 (split streams tool calls), Q-142 (split keeps the prefix to the turn-context block). Log
-  ~/goose-builds/release-3.0.52.log · DONE watcher running.
-- E2E #3c stopped after turn 5 (recorded in E2E-RUNS.md; its memory deleted). GPUs idle until 3.0.52.
-- Studio public Funnel still dead; Link runs over the tailnet (Q-137).
+- Installed on both Macs: 3.0.52 (Q-107, Q-138, Q-130, Q-140, Q-141, Q-142). Split-start smoke: 27B tensor up in 17 s.
+  (The relaunch restored the previous Flash split first; split-start now refuses a split serving another model.)
+- E2E #3d RUNNING since 22:23: tensor 27B, jira brief, dir ~/goose-builds/quality/RU-2026-09-26-3d-split-tensor
+  (r1.mjs + calls.py <dir> + sampler.sh). Ladder-0 all OK to 39k.
+- Flash load 26c (3.0.51, fixed load.py): decode healthy (gap 0.7 s); prefills FIFO one at a time → canary 347 s (Q-145).
+- Disk 22:30: cleaned 34 → 156 GB free (debug deps > 6 h, incremental > 2 h, ui/desktop/out, uv cache).
+  Not touched (owner's): ~/.goose/models 128 GB, forge-live-harness/evidence 37 GB, ~/.codex 19 GB.
 
 ## Agents (worktree, NO GPU)
 - Q-139 web-search writes docs/technical/ into the user's cwd.
-- Q-143 pipeline split: take the turn-context tail + checkpoint before it (fork + pin).
+- Q-144 pipeline fork line lacks single-engine fixes lz.3..lz.9 → audit + port + tag + guard.
+- Q-145 pipeline shortest-remaining-prefill-first (own fork worktree, branch q145-srpf, untagged → rebase onto Q-144's tag).
+- NEEDS-YOU (owner ask 22:3x): ask_user tool + persistent card above composer + sidebar marker + app-wide count;
+  never in benchmark/swarm sessions.
 
 ## Next actions (in order)
-1. 3.0.52 DONE → install.sh 3.0.52 → Link connected? → split-start.mjs --model 27B answers.
-2. E2E #3d: tensor 27B, jira brief, on 3.0.52. Prove: calls read ≥90% cached after turn 1 (Q-142), a tool call
-   streams with "writing a tool call to shell" (Q-141), load_tools keeps the cache (Q-107), turn times vs #3c
-   (110/690/1380/516/924 s) and #4 Studio (170/81/1333 s). diskio.py on goosed (Q-115).
-3. Then E2E #5b Flash pipeline (stdlib brief) + load.py 3 workers → Q-127/128/131/133/134 (+Q-143 once merged).
-4. Critic pass (mlx-ux-critic) on 3.0.52 after #3d.
-5. Agents return → read log → merge → gate (clippy, tests, wincheck.sh) → push → CI.
+1. Watch E2E #3d every tick. Prove: calls ≥90% cached after turn 1 (Q-142), tool call streams "writing a tool call
+   to shell" (Q-141), load_tools keeps the cache (Q-107); turn times vs #3c (110/690/1380/516/924 s) and #4 Studio
+   (170/81/1333 s). diskio.py on goosed (Q-115).
+2. Q-144 + Q-145 land → one fork tag → pin → 3.0.53 → E2E #5b Flash pipeline + load.py rerun (canary TTFT).
+3. Critic pass (mlx-ux-critic) on 3.0.52 after #3d; include the needs-you surface once merged.
+4. Agents return → read log → merge → gate (clippy, tests, wincheck.sh) → push → CI.
 
 ## Standing rules for every tick
 - CI status, agent audit (processes, disk ≥ 30 GB, pushes, ~/.config/goose), clean.sh orphan scan on both Macs.
