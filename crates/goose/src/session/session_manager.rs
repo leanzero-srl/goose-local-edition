@@ -1988,10 +1988,13 @@ impl SessionStorage {
     ) -> Result<Vec<ExtensionStateRow>> {
         let pool = self.pool().await?;
         let path = extension_state_json_path(key);
+        // The app polls this every few seconds over every session (swarm workers leave thousands):
+        // a plain substring test on the quoted key skips the JSON parse for rows that cannot match.
         let rows: Vec<(String, String, String, String, String)> = sqlx::query_as(
-            "SELECT id, name, working_dir, session_type, extension_data -> ? FROM sessions WHERE json_valid(extension_data) AND json_type(extension_data, ?) IS NOT NULL",
+            "SELECT id, name, working_dir, session_type, extension_data -> ? FROM sessions WHERE instr(extension_data, ?) > 0 AND json_valid(extension_data) AND json_type(extension_data, ?) IS NOT NULL",
         )
         .bind(&path)
+        .bind(format!("\"{key}\""))
         .bind(&path)
         .fetch_all(pool)
         .await?;
