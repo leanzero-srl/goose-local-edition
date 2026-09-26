@@ -53,6 +53,14 @@ if "waiting" not in pipeline_qwen4_serve._State.__dataclass_fields__:
         "was written against fork c24f6b55e (Q-145)"
     )
 
+# Q-159 (fork lz-pipeline-qwen4.9): rank 0 resolves a request's absent sampling fields as the single
+# engine does and keeps them on the row (`_Row.sampling`); each /v1/status row carries them.
+if "sampling" not in pipeline_qwen4_serve._Row.__dataclass_fields__:
+    raise SystemExit(
+        "goose pipeline rank: the fork's _Row keeps no sampling; the status rows were written "
+        "against fork lz-pipeline-qwen4.9 (Q-159)"
+    )
+
 jobs_by_row = weakref.WeakValueDictionary()
 
 
@@ -107,7 +115,7 @@ def prefill(engine, words):
 
 
 def live_row(job, now):
-    return live_request(
+    row = live_request(
         job.id,
         job.arrived,
         now,
@@ -121,6 +129,10 @@ def live_row(job, now):
         last_token=job.__dict__.get("last_token"),
         completion=job.produced,
     )
+    # Every sampling field the row runs with and its layer; the fork marks a penalty its sampler
+    # cannot apply `applied: false`.
+    row["sampling"] = job.row.sampling
+    return row
 
 
 def fork_route(app, path):

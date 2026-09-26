@@ -14,7 +14,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use goose_sidecar::distributed::{
-    Backend, DistributedConfig, DistributedManager, NodeConfig, RunState, StartOutcome, SystemExec,
+    Backend, DistributedConfig, DistributedManager, NodeConfig, RunState, SamplingDefaults,
+    StartOutcome, SystemExec,
 };
 
 fn env_or(key: &str, default: &str) -> String {
@@ -122,7 +123,11 @@ async fn live_start_complete_stop_the_27b_over_the_two_macs() {
     let manager = DistributedManager::new(Arc::new(SystemExec));
     let t0 = Instant::now();
     let preflight = match manager
-        .start(config.clone(), unaliased(&config))
+        .start(
+            config.clone(),
+            unaliased(&config),
+            SamplingDefaults::default(),
+        )
         .await
         .unwrap()
     {
@@ -306,7 +311,11 @@ async fn live_supervisor_detects_a_frozen_and_a_dead_peer_and_restarts() {
     config.restart_on_failure = true;
     let manager = DistributedManager::new(Arc::new(SystemExec));
     match manager
-        .start(config.clone(), unaliased(&config))
+        .start(
+            config.clone(),
+            unaliased(&config),
+            SamplingDefaults::default(),
+        )
         .await
         .unwrap()
     {
@@ -519,7 +528,11 @@ async fn live_hang_rule_and_stream_cut_mid_stream() {
     let model = config.model_id.clone();
     let manager = DistributedManager::new(Arc::new(SystemExec));
     match manager
-        .start(config.clone(), unaliased(&config))
+        .start(
+            config.clone(),
+            unaliased(&config),
+            SamplingDefaults::default(),
+        )
         .await
         .unwrap()
     {
@@ -790,7 +803,11 @@ async fn live_watchdog_warn_then_critical_on_real_workhorse_pressure() {
     let model = config.model_id.clone();
     let manager = DistributedManager::new(Arc::new(SystemExec));
     match manager
-        .start(config.clone(), unaliased(&config))
+        .start(
+            config.clone(),
+            unaliased(&config),
+            SamplingDefaults::default(),
+        )
         .await
         .unwrap()
     {
@@ -1037,7 +1054,11 @@ async fn live_flash_at_the_ceiling_rule_after_compaction() {
         }
     }
     stamp("start (preflight, compaction when short)");
-    let preflight = match manager.start(config.clone(), served.clone()).await.unwrap() {
+    let preflight = match manager
+        .start(config.clone(), served.clone(), SamplingDefaults::default())
+        .await
+        .unwrap()
+    {
         StartOutcome::Started { preflight } => preflight,
         StartOutcome::Refused {
             code,
@@ -1215,7 +1236,11 @@ async fn live_q114_a_decode_runs_past_the_metal_resource_limit() {
     let model = config.model_id.clone();
     let manager = DistributedManager::new(Arc::new(SystemExec));
     match manager
-        .start(config.clone(), unaliased(&config))
+        .start(
+            config.clone(),
+            unaliased(&config),
+            SamplingDefaults::default(),
+        )
         .await
         .unwrap()
     {
@@ -1317,7 +1342,11 @@ async fn live_q114_a_transient_rank_stall_ends_loudly() {
     let model = config.model_id.clone();
     let manager = DistributedManager::new(Arc::new(SystemExec));
     match manager
-        .start(config.clone(), unaliased(&config))
+        .start(
+            config.clone(),
+            unaliased(&config),
+            SamplingDefaults::default(),
+        )
         .await
         .unwrap()
     {
@@ -1440,7 +1469,11 @@ async fn live_q136_every_start_after_an_abnormal_end_forms_a_clean_group() {
         let way = WAYS[cycle % WAYS.len()];
         let manager = DistributedManager::new(Arc::new(SystemExec));
         match manager
-            .start(config.clone(), unaliased(&config))
+            .start(
+                config.clone(),
+                unaliased(&config),
+                SamplingDefaults::default(),
+            )
             .await
             .unwrap()
         {

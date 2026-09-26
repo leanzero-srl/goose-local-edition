@@ -81,6 +81,14 @@
 #   block, and mlx_lm's own segment snapshot stores the entry the next request extends. Upstream
 #   kept only the system prompt reusable across an agent's tool steps on this hybrid model (E2E
 #   #3c: 31,385 of ~59k tokens read from cache per call).
+# - a request that names no sampling field samples as on the single engine (Q-159,
+#   rank_sampling.py): mlx_lm filled the absence with its `--temp` 0.0 — greedy; E2E #3d wrote one
+#   answer of 54 identical tool calls over 40 minutes. Rank 0 resolves each field request > goose's
+#   profile > the checkpoint's generation_config.json > the single engine's fallback before the
+#   request is shared (every rank samples from the arguments rank 0 shares, on the seed mlx_lm
+#   synchronises at the generation loop's start), names a missing or unreadable config, and
+#   /v1/status carries each request's `sampling` (the values that reached the sampler, and their
+#   layer) and the engine's `sampling_defaults`.
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -234,6 +242,17 @@ served = spec["served_id"]
 served_aliases = [name for name in spec.get("served_aliases", []) if name != served]
 served_names = [served, *served_aliases]
 state = {"steps": 0, "inflight": 0, "admission_open": True, "admission_reason": None}
+# rank_sampling.py (Q-159): rank 0's layers under each request's own sampling fields. Only rank 0
+# resolves — the workers sample from the arguments it shares.
+sampling_defaults = None
+if group.rank() == 0:
+    sampling_defaults = SamplingDefaults(spec.get("sampling_defaults"), spec["model_dir"])
+    emit("RANK_SAMPLING_DEFAULTS", sampling_defaults.report())
+    if sampling_defaults.error is not None:
+        emit(
+            "RANK_GENERATION_CONFIG_UNREAD",
+            {"error": sampling_defaults.error, "in_force": SINGLE_ENGINE_FALLBACK},
+        )
 # Where this rank's generation loop is (rank_state.py), published at each step for the reporter.
 loop = LoopState(group.rank())
 lock = threading.Lock()
@@ -245,6 +264,8 @@ live_ids = iter(range(1, 1 << 62))
 # The same requests' stream watches (rank_stream_watch.py, Q-146): None for a request that is not
 # a streamed chat answer — /v1/status's `stream: null`.
 watches = {}
+# The same requests' `sampling` rows (rank_sampling.py `sampling_row`).
+samplings = {}
 
 
 def apply_caps():
@@ -621,6 +642,9 @@ def generate(self, request, generation_args, progress_callback=None, watch=None)
     with lock:
         request_id = f"req-{next(live_ids)}"
         watches[request_id] = watch
+        samplings[request_id] = sampling_row(
+            generation_args, getattr(request, "sampling_sources", None)
+        )
         entry = {
             "arrived": time.monotonic(),
             "max_tokens": generation_args.max_tokens,
@@ -643,6 +667,7 @@ def generate(self, request, generation_args, progress_callback=None, watch=None)
         with lock:
             live.pop(request_id, None)
             watches.pop(request_id, None)
+            samplings.pop(request_id, None)
 
     try:
         ctx, tokens = original_generate(self, request, generation_args, progress)
@@ -833,11 +858,10 @@ def do_GET(self):
             for row in rows:
                 watch = watches.get(row["request_id"])
                 row["stream"] = None if watch is None else watch.report()
-        return send_json(
-            self,
-            200,
-            live_status({"num_running": state["inflight"], "num_waiting": 0}, rows),
-        )
+                row["sampling"] = samplings.get(row["request_id"])
+        body = live_status({"num_running": state["inflight"], "num_waiting": 0}, rows)
+        body["sampling_defaults"] = sampling_defaults.report()
+        return send_json(self, 200, body)
     if self.path.startswith("/v1/models"):
         return send_json(
             self,
@@ -903,7 +927,23 @@ def do_POST(self):
             state["inflight"] -= 1
 
 
+def apply_sampling(handler):
+    """Each sampling field the request left out or sent null, set to its resolved layer's value
+    (mlx_lm had filled it with its own CLI default — temperature 0.0, greedy); returns each
+    field's layer. An unset field keeps the sampler's off value mlx_lm fills an absence with."""
+    cli = handler.response_generator.cli_args
+    sampler_off = {"temperature": cli.temp, "top_p": cli.top_p, "top_k": cli.top_k, "min_p": cli.min_p}
+    layers = {}
+    for key, (value, layer) in sampling_defaults.resolve(handler.body).items():
+        if layer != "request":
+            setattr(handler, key, sampler_off.get(key, 0.0) if value is None else value)
+        layers[key] = layer
+    return layers
+
+
 def validate_model_parameters(self):
+    # rank_sampling.py (Q-159): before mlx_lm validates, so a null resolves instead of failing.
+    self.sampling_sources = apply_sampling(self)
     # mlx_lm read an absent max_tokens as its `--max-tokens` default; the absence is kept instead
     # (None rides the shared request to every rank), and _tokenize turns it into the room left.
     absent = all(
@@ -1051,6 +1091,8 @@ class StreamedToolCalls:
 
 
 def handle_completion(self, request, stop_words):
+    # Each field's layer rides the request to `generate` (and, pickled, to every rank — unread there).
+    request.sampling_sources = self.sampling_sources
     if not (self.stream and self.object_type.startswith("chat.completion")):
         return original_handle_completion(self, request, stop_words)
     # rank_stream_watch.py (Q-146): every frame this handler builds is counted, and the request's

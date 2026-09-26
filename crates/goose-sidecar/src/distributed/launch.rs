@@ -11,7 +11,8 @@
 //! installed beyond its interpreter: `rank_env.py` (the backend env, `emit`, the memory reporter —
 //! every rank), `rank_formation.py` (a JACCL group's formation handshake, Q-136), `rank_live.py` (rank 0's live request table, Rapid-MLX's `/v1/status` shape),
 //! `rank_thinking.py` (a chat request's thinking switch, resolved as the single engine resolves it),
-//! then the runner's program — `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
+//! then the runner's program — `rank_sampling.py` (a request's absent sampling fields, resolved as
+//! the single engine resolves them, Q-159) + `rank_budget.py` + `rank_prefill.py` + `rank_batch.py` +
 //! `rank_state.py` + `rank_boundary.py` + `rank_tool_stream.py` + `rank_stream_watch.py` + `rank_wrapper.py` (`mlx_lm.server`, tensor split, under `NodeConfig::python`; the budget is
 //! what an absent max_tokens generates, the prefill modules what a step and a batch may hold, the
 //! boundary where a chat request's reusable prefix ends) or `pipeline_rank.py` (the fork's `pipeline_qwen4_serve`,
@@ -30,6 +31,7 @@ use tokio::process::{Child, Command};
 use super::config::{Backend, DistributedConfig, NodeConfig};
 use super::exec::{sh_quote, SSH_OPTIONS};
 use super::plan::{RankPlan, TensorPrefill};
+use super::sampling::SamplingDefaults;
 use crate::model_identity::ServedNames;
 
 /// The literal every goose rank carries on its command line, so `ps` can name a rank a previous
@@ -49,6 +51,7 @@ const TENSOR_PROGRAM: &str = concat!(
     include_str!("rank_formation.py"),
     include_str!("rank_live.py"),
     include_str!("rank_thinking.py"),
+    include_str!("rank_sampling.py"),
     include_str!("rank_budget.py"),
     include_str!("rank_prefill.py"),
     include_str!("rank_batch.py"),
@@ -152,6 +155,12 @@ pub enum RankProgram {
         /// the entry goose's next agent request extends on this non-trimmable hybrid cache.
         #[serde(default)]
         transient_tail_boundary: bool,
+        /// goose's sampling profile for the model (Q-159, `rank_sampling.py`): the layer rank 0
+        /// resolves between a request's own fields and the checkpoint's generation_config.json.
+        /// Rank 0 only — the workers sample from the arguments rank 0 shares — so it needs no new
+        /// tag: rank 0 is always the requester's own Mac, whose wrapper reads it.
+        #[serde(default, skip_serializing_if = "SamplingDefaults::is_empty")]
+        sampling_defaults: Box<SamplingDefaults>,
     },
     /// The fork's `pipeline_qwen4_serve.serve` under `pipeline_rank.py` (layer split): the exact
     /// `pipeline_qwen4 serve` arguments, parsed on the rank by the fork's own parser.
@@ -350,6 +359,7 @@ pub fn rank_specs(
             prompt_cache_live_bound: true,
             prefill: Some(launch.prefill),
             transient_tail_boundary: true,
+            sampling_defaults: Box::default(),
         }
     })
 }
@@ -523,6 +533,23 @@ impl RankSpec {
                 )
                 })
             }
+        }
+    }
+
+    /// goose's sampling profile for the split's model (Q-159), on rank 0 — the one rank that
+    /// resolves a request's absent sampling fields and shares the result: the tensor wrapper reads
+    /// it from the spec (`rank_sampling.py`), the pipeline fork as `serve --default-*`
+    /// (lz-pipeline-qwen4.9). The other ranks never see it, so a peer's own program is not asked
+    /// to parse a flag it may predate.
+    pub fn set_sampling_defaults(&mut self, sampling: SamplingDefaults) {
+        if self.rank != 0 {
+            return;
+        }
+        match &mut self.program {
+            RankProgram::MlxLmServer {
+                sampling_defaults, ..
+            } => **sampling_defaults = sampling,
+            RankProgram::PipelineServe { serve_args } => serve_args.extend(sampling.serve_flags()),
         }
     }
 }
@@ -963,8 +990,14 @@ pub(crate) mod tests {
                 prompt_cache_live_bound: true,
                 prefill: Some(_),
                 transient_tail_boundary: true,
+                sampling_defaults: _,
             }
         ));
+        assert!(
+            specs.iter().all(|s| matches!(&s.program,
+                RankProgram::MlxLmServer { sampling_defaults, .. } if sampling_defaults.is_empty())),
+            "the profile is set per launch, on rank 0 only (`set_sampling_defaults`)"
+        );
         assert!(specs[0].ring_hosts.is_none());
         assert!(
             specs.iter().all(|s| s.served_id == "node-alias"),
@@ -1284,6 +1317,9 @@ pub(crate) mod tests {
              @dataclass\n\
              class _State:\n\
              \x20   waiting: list = None\n\
+             @dataclass\n\
+             class _Row:\n\
+             \x20   sampling: object = None\n\
              class _Engine:\n\
              \x20   def _start(self, row): pass\n\
              \x20   def prefill(self, words): pass\n\
@@ -1574,6 +1610,9 @@ print("ok")
              @dataclass\n\
              class _State:\n\
              \x20   waiting: list = None\n\
+             @dataclass\n\
+             class _Row:\n\
+             \x20   sampling: object = None\n\
              class _Engine:\n\
              \x20   def _start(self, row): pass\n\
              \x20   def prefill(self, words): pass\n\
@@ -1842,6 +1881,62 @@ print("ok")
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     }
 
+    /// rank_sampling.py under a real interpreter (Q-159): the checkpoint's generation_config.json
+    /// read and filtered as the single engine's utils/generation_config.py filters it, every way it
+    /// can fail to be read named, and each field resolved request > profile > config > fallback.
+    #[test]
+    fn a_rank_reads_the_checkpoints_sampling_as_the_single_engine_does() {
+        let checks = r#"
+import tempfile
+root = tempfile.mkdtemp()
+
+def checkpoint(content):
+    path = tempfile.mkdtemp(dir=root)
+    if content is not None:
+        with open(os.path.join(path, "generation_config.json"), "w") as handle:
+            handle.write(content)
+    return path
+
+qwen = checkpoint('{"do_sample": true, "temperature": 1.0, "top_k": 20, "top_p": 0.95, "eos_token_id": [1, 2]}')
+path, values, ignored, error = generation_config_sampling(qwen)
+assert values == {"temperature": 1.0, "top_k": 20, "top_p": 0.95} and ignored == [] and error is None, values
+assert isinstance(values["top_k"], int)
+odd = checkpoint('{"temperature": true, "top_p": NaN, "top_k": 20.5, "min_p": "0.1", "repetition_penalty": 1.05, "top_k_extra": 3}')
+_, values, ignored, error = generation_config_sampling(odd)
+assert values == {"repetition_penalty": 1.05}, values
+assert ignored == ["temperature=True", "top_p=nan", "top_k=20.5", "min_p='0.1'"], ignored
+assert error is None
+for content, said in ((None, "is absent"), ("{not json", "is unreadable"), ("[1]", "holds no JSON object")):
+    _, values, _, error = generation_config_sampling(checkpoint(content))
+    assert values == {} and said in error, (content, error)
+
+defaults = SamplingDefaults({"top_p": 0.8, "min_p": None, "bogus": 1}, qwen)
+assert defaults.profile == {"top_p": 0.8}, "unset profile fields and unknown keys are no layer"
+resolved = defaults.resolve({"temperature": None, "top_k": 5})
+assert resolved["temperature"] == (1.0, "generation_config"), "a null is no value"
+assert resolved["top_k"] == (5, "request")
+assert resolved["top_p"] == (0.8, "profile"), "the profile sits above the checkpoint"
+assert resolved["min_p"] == (None, "unset")
+assert defaults.resolve({"temperature": 0})["temperature"] == (0, "request"), "0 is the client's greedy"
+bare = SamplingDefaults(None, checkpoint(None))
+assert bare.resolve({})["temperature"] == (0.7, "engine_fallback")
+assert bare.resolve({})["top_p"] == (0.9, "engine_fallback")
+assert bare.report()["generation_config_error"].endswith("is absent")
+print("ok")
+"#;
+        let out = std::process::Command::new("/usr/bin/python3")
+            .arg("-c")
+            .arg(format!("{}{checks}", include_str!("rank_sampling.py")))
+            .output()
+            .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
     /// rank_prefill.py under a real interpreter, on E2E #2's plan (the 27B over 2 ranks at
     /// 262,144 tokens: KV charge 17,333,813,248 B, workspace one row's 2,048-token chunk) and
     /// Q-104's repro (turn 6: a ~51k-token turn with four summaries raised a rank 35 → 44.8 GB in
@@ -1979,8 +2074,13 @@ print("ok")
             id: "node-alias".to_string(),
             also: vec!["Org/Model-HF".to_string()],
         };
-        let spec =
+        let mut spec =
             pipeline_rank_specs(&config, &served, 32_768, "19", 2_048, &[0, 0], 2.0).remove(0);
+        spec.set_sampling_defaults(SamplingDefaults {
+            top_p: Some(0.8),
+            top_k: Some(20),
+            ..SamplingDefaults::default()
+        });
         let rank = include_str!("pipeline_rank.py");
         let serves = rank
             .find("threading.Thread(target=report_memory")
@@ -2018,6 +2118,8 @@ while engine.joining.ranges:
     serve._Engine.prefill(engine, None)
     walked.append(job.prefilled)
 job.produced += 1
+# Q-159: the fork keeps each admitted row's resolved sampling for goose's status rows.
+row.sampling = {"temperature": {"value": 1.0, "from": "generation_config"}}
 
 class Tokenizer:
     chat_template = ""
@@ -2119,6 +2221,20 @@ print("GOOSE_TEST " + json.dumps({"options": vars(options), "starts": starts, "w
             phases,
             ["generation", "queued", "queued"],
             "goose's table lists the waiting job and the queued one: {status}"
+        );
+        // Q-159: rank 0's argv carries goose's profile in the fork's own flags, the fork's status
+        // names its sampling layers, and each row carries the fields it samples with.
+        assert_eq!(options["default_top_p"], 0.8);
+        assert_eq!(options["default_top_k"], 20);
+        assert_eq!(options["default_temperature"], serde_json::Value::Null);
+        assert_eq!(
+            status["requests"][0]["sampling"],
+            serde_json::json!({"temperature": {"value": 1.0, "from": "generation_config"}})
+        );
+        assert_eq!(status["requests"][1]["sampling"], serde_json::Value::Null);
+        assert!(
+            status["sampling_defaults"]["generation_config_error"].is_string(),
+            "a state built with no checkpoint names it: {status}"
         );
     }
 
@@ -2496,13 +2612,14 @@ print("GOOSE_TEST " + json.dumps({
 }))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}\
+            "{}{}{}{}{}{}{}{}{}{}{}{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
             include_str!("rank_load_lock.py"),
             include_str!("rank_env.py"),
             include_str!("rank_live.py"),
             include_str!("rank_thinking.py"),
+            include_str!("rank_sampling.py"),
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
@@ -2876,13 +2993,14 @@ print("GOOSE_TEST " + json.dumps({
 os._exit(0)
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}\
+            "{}{}{}{}{}{}{}{}{}{}{}{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
             include_str!("rank_load_lock.py"),
             include_str!("rank_env.py"),
             include_str!("rank_live.py"),
             include_str!("rank_thinking.py"),
+            include_str!("rank_sampling.py"),
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
@@ -3221,13 +3339,14 @@ print("GOOSE_TEST " + json.dumps({"streamed": streamed, "upstream": upstream, "e
                                    "command": COMMAND}))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}\
+            "{}{}{}{}{}{}{}{}{}{}{}{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
             include_str!("rank_load_lock.py"),
             include_str!("rank_env.py"),
             include_str!("rank_live.py"),
             include_str!("rank_thinking.py"),
+            include_str!("rank_sampling.py"),
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
@@ -3458,13 +3577,14 @@ print("GOOSE_TEST " + json.dumps({"cases": cases, "hold": ToolCallStream.HOLD, "
                                    "command": COMMAND, "window": READER_TAIL_CHARS}))
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}\
+            "{}{}{}{}{}{}{}{}{}{}{}{}\
              class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
              group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
             include_str!("rank_load_lock.py"),
             include_str!("rank_env.py"),
             include_str!("rank_live.py"),
             include_str!("rank_thinking.py"),
+            include_str!("rank_sampling.py"),
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),
@@ -3605,6 +3725,269 @@ print("GOOSE_TEST " + json.dumps({"cases": cases, "hold": ToolCallStream.HOLD, "
             "a request answered whole has no stream to watch: {not_streamed}"
         );
         assert!(withheld(&not_streamed["request_id"]).is_empty());
+    }
+
+    /// Q-159 through the REAL mlx_lm 0.31.3 handler: what a chat request reaches mlx_lm's own
+    /// `_make_sampler` / `_make_logits_processors` with (the functions its generation loop builds
+    /// every row's sampler from), recorded at the module functions they call. E2E #3d's split
+    /// decoded GREEDY — goose names no sampling field and mlx_lm filled the absence with `--temp`
+    /// 0.0 — and one answer held 54 identical tool calls; the single engine samples the checkpoint's
+    /// generation_config.json (the 27B's, verbatim here: temperature 1.0, top_k 20, top_p 0.95).
+    /// Rank 0 now resolves request > goose's profile (min_p 0.05 here) > the config > the single
+    /// engine's fallback; a request's own value wins, its null is no value, its 0 is its greedy.
+    /// The request's /v1/status row names each value and its layer. NEGATIVE CONTROL: a checkpoint
+    /// with no generation_config.json is named (log line + status field) and samples the single
+    /// engine's fallback — never greedy.
+    #[test]
+    fn a_request_with_no_sampling_field_reaches_the_sampler_with_the_checkpoints_defaults() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let config = two_mac_config();
+        let tensor = TensorLaunch {
+            planned_bytes: 27_456_216_576,
+            prompt_cache_limit_bytes: 9_431_744_512,
+            prompt_cache_entries: 110,
+            mlx_cache_limit_bytes: 2_745_621_658,
+            prefill: e2e_prefill(),
+        };
+        let checkpoint = tempfile::tempdir().unwrap();
+        std::fs::write(
+            checkpoint.path().join("generation_config.json"),
+            r#"{"bos_token_id": 248044, "do_sample": true, "eos_token_id": [248046, 248044],
+                "pad_token_id": 248044, "temperature": 1.0, "top_k": 20, "top_p": 0.95}"#,
+        )
+        .unwrap();
+        let bare = tempfile::tempdir().unwrap();
+        let spec_for = |model_dir: &std::path::Path| {
+            let mut spec = rank_specs(
+                &config,
+                &ServedNames::only("node-alias"),
+                &[tensor, tensor],
+                141_568,
+                2.0,
+            )
+            .remove(0);
+            if let RankProgram::MlxLmServer { doorbell, .. } = &mut spec.program {
+                *doorbell = false;
+            }
+            spec.model_dir = model_dir.display().to_string();
+            spec.set_sampling_defaults(SamplingDefaults {
+                min_p: Some(0.05),
+                ..SamplingDefaults::default()
+            });
+            spec
+        };
+        let wrapper = include_str!("rank_wrapper.py");
+        let start = wrapper
+            .find("import faulthandler  # noqa")
+            .expect("the wrapper's body starts after the group check");
+        let end = wrapper
+            .find("server.main()")
+            .expect("the wrapper ends in mlx_lm's main");
+        let checks = r#"
+import argparse
+import http.server
+import types
+import urllib.request
+from queue import Queue
+
+mx.set_default_device(mx.cpu)
+
+class Parsed(Exception):
+    pass
+
+real_parse_args = argparse.ArgumentParser.parse_args
+
+def parse_and_stop(self, args=None, namespace=None):
+    raise Parsed(real_parse_args(self, args, namespace))
+
+argparse.ArgumentParser.parse_args = parse_and_stop
+try:
+    server.main()
+    raise SystemExit("mlx_lm's main() never parsed its argv")
+except Parsed as parsed:
+    cli = parsed.args[0]
+argparse.ArgumentParser.parse_args = real_parse_args
+
+samplers, processors = [], []
+server.make_sampler = lambda temp, **kw: samplers.append(
+    {"temperature": temp, "top_p": kw["top_p"], "top_k": kw["top_k"], "min_p": kw["min_p"]})
+server.make_logits_processors = lambda bias, rep, rep_n, pres, pres_n, freq, freq_n: processors.append(
+    {"repetition_penalty": rep, "presence_penalty": pres, "frequency_penalty": freq})
+tokenizer = types.SimpleNamespace(chat_template=QWEN38, eos_token_id=3, encode=lambda text: [4])
+
+responses = server.ResponseGenerator.__new__(server.ResponseGenerator)
+responses.model_provider = types.SimpleNamespace(cli_args=cli, tokenizer=tokenizer)
+responses.requests = Queue()
+httpd = http.server.ThreadingHTTPServer(
+    ("127.0.0.1", 0),
+    lambda *args, **kwargs: server.APIHandler(responses, *args, system_fingerprint="test", **kwargs),
+)
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+base = f"http://127.0.0.1:{httpd.server_address[1]}"
+paused = threading.Event()
+resume = threading.Event()
+pause_next = []
+
+def generation_thread():
+    while True:
+        rqueue, request, args = responses.requests.get()
+        # What mlx_lm's own generation loop hands BatchGenerator.insert_segments for this row.
+        server._make_sampler(args, tokenizer)
+        server._make_logits_processors(args)
+        rqueue.put(server.GenerationContext(
+            has_tool_calling=False, has_thinking=False, tool_parser=None,
+            sequences={(3,): "<|im_end|>"}, prompt=[0] * 8, prompt_cache_count=0,
+        ))
+        rqueue.put(server.Response("ok", 7, "normal", None, 0.0, None, ()))
+        if pause_next:
+            pause_next.clear()
+            paused.set()
+            resume.wait()
+            resume.clear()
+        rqueue.put(server.Response("<|im_end|>", 3, None, (3,), 0.0, "stop", ()))
+        rqueue.put(None)
+
+threading.Thread(target=generation_thread, daemon=True).start()
+
+def get(path):
+    with urllib.request.urlopen(base + path, timeout=30) as reply:
+        return json.loads(reply.read())
+
+def chat(**fields):
+    body = {"model": served, "messages": [{"role": "user", "content": "go"}], **fields}
+    request = urllib.request.Request(base + "/v1/chat/completions", data=json.dumps(body).encode())
+    with urllib.request.urlopen(request, timeout=60) as reply:
+        reply.read()
+    return {"sampler": samplers[-1], "processors": processors[-1]}
+
+# The request goose sends, read on /v1/status while it generates.
+pause_next.append(True)
+done = []
+reader = threading.Thread(target=lambda: done.append(chat()))
+reader.start()
+assert paused.wait(30), "the generation never reached its pause"
+row = get("/v1/status")["requests"][0]
+resume.set()
+reader.join(60)
+print("GOOSE_TEST " + json.dumps({
+    "absent": done[0],
+    "row": row,
+    "explicit": chat(temperature=0.3, top_k=7, presence_penalty=0.5),
+    "null": chat(temperature=None, top_p=None),
+    "greedy": chat(temperature=0.0),
+    "defaults": get("/v1/status")["sampling_defaults"],
+}))
+"#;
+        let program = format!(
+            "{}{}{}{}{}{}{}{}{}{}{}{}\
+             class _Group:\n    def rank(self): return 0\n    def size(self): return 2\n\
+             group = _Group()\n{}QWEN38 = {qwen}\n{checks}",
+            include_str!("rank_load_lock.py"),
+            include_str!("rank_env.py"),
+            include_str!("rank_live.py"),
+            include_str!("rank_thinking.py"),
+            include_str!("rank_sampling.py"),
+            include_str!("rank_budget.py"),
+            include_str!("rank_prefill.py"),
+            include_str!("rank_batch.py"),
+            include_str!("rank_state.py"),
+            include_str!("rank_boundary.py"),
+            include_str!("rank_tool_stream.py"),
+            include_str!("rank_stream_watch.py"),
+            &wrapper[start..end],
+            qwen = serde_json::to_string(QWEN38).unwrap(),
+        );
+        let sampled = |t: f64, p: f64, k: u64, m: f64| serde_json::json!({"temperature": t, "top_p": p, "top_k": k, "min_p": m});
+
+        let (seen, printed) =
+            run_against_real_packages_printing(&python, &program, &spec_for(checkpoint.path()));
+        assert_eq!(
+            seen["absent"]["sampler"],
+            sampled(1.0, 0.95, 20, 0.05),
+            "the checkpoint's own sampling under goose's profile — never greedy (was 0.0, 1.0, 0, 0.0)"
+        );
+        assert_eq!(
+            seen["absent"]["processors"],
+            serde_json::json!({"repetition_penalty": 0.0, "presence_penalty": 0.0,
+                               "frequency_penalty": 0.0}),
+            "no layer sets a penalty: mlx_lm's own off"
+        );
+        let row = &seen["row"]["sampling"];
+        for (key, value, layer) in [
+            ("temperature", serde_json::json!(1.0), "generation_config"),
+            ("top_p", serde_json::json!(0.95), "generation_config"),
+            ("top_k", serde_json::json!(20), "generation_config"),
+            ("min_p", serde_json::json!(0.05), "profile"),
+            ("repetition_penalty", serde_json::json!(0.0), "unset"),
+            ("presence_penalty", serde_json::json!(0.0), "unset"),
+            ("frequency_penalty", serde_json::json!(0.0), "unset"),
+        ] {
+            assert_eq!(
+                row[key],
+                serde_json::json!({"value": value, "from": layer}),
+                "{key}: {row}"
+            );
+        }
+        assert_eq!(
+            seen["explicit"]["sampler"],
+            sampled(0.3, 0.95, 7, 0.05),
+            "the request's own values win"
+        );
+        assert_eq!(seen["explicit"]["processors"]["presence_penalty"], 0.5);
+        assert_eq!(
+            seen["null"]["sampler"],
+            sampled(1.0, 0.95, 20, 0.05),
+            "a null is no value (mlx_lm refused it as not a number)"
+        );
+        assert_eq!(
+            seen["greedy"]["sampler"],
+            sampled(0.0, 0.95, 20, 0.05),
+            "an explicit 0 is the client's own greedy"
+        );
+        let defaults = &seen["defaults"];
+        assert_eq!(
+            defaults["generation_config"],
+            serde_json::json!({"temperature": 1.0, "top_k": 20, "top_p": 0.95})
+        );
+        assert_eq!(defaults["generation_config_error"], serde_json::Value::Null);
+        assert_eq!(defaults["profile"], serde_json::json!({"min_p": 0.05}));
+        assert!(
+            printed.contains("GOOSE_RANK_SAMPLING_DEFAULTS "),
+            "{printed}"
+        );
+        assert!(!printed.contains("GOOSE_RANK_GENERATION_CONFIG_UNREAD"));
+
+        let (seen, printed) =
+            run_against_real_packages_printing(&python, &program, &spec_for(bare.path()));
+        assert_eq!(
+            seen["absent"]["sampler"],
+            sampled(0.7, 0.9, 0, 0.05),
+            "no config: the single engine's fallback, never greedy"
+        );
+        assert_eq!(
+            seen["row"]["sampling"]["temperature"]["from"],
+            "engine_fallback"
+        );
+        assert_eq!(seen["row"]["sampling"]["top_k"]["from"], "unset");
+        let error = seen["defaults"]["generation_config_error"]
+            .as_str()
+            .unwrap();
+        assert!(
+            error.ends_with("generation_config.json is absent"),
+            "{error}"
+        );
+        let unread = printed
+            .lines()
+            .find_map(|l| l.strip_prefix("GOOSE_RANK_GENERATION_CONFIG_UNREAD "))
+            .unwrap_or_else(|| panic!("the absence is named in the log: {printed}"));
+        let unread: serde_json::Value = serde_json::from_str(unread).unwrap();
+        assert_eq!(unread["error"], error);
+        assert_eq!(
+            unread["in_force"],
+            serde_json::json!({"temperature": 0.7, "top_p": 0.9})
+        );
     }
 
     /// The tensor wrapper's own module prelude — its imports and both upstream-attribute checks,
@@ -3862,6 +4245,7 @@ print("ok")
                 include_str!("rank_formation.py"),
                 include_str!("rank_live.py"),
                 include_str!("rank_thinking.py"),
+                include_str!("rank_sampling.py"),
                 include_str!("rank_budget.py"),
                 include_str!("rank_prefill.py"),
                 include_str!("rank_batch.py"),
@@ -4575,11 +4959,12 @@ threading.Thread(target=responses._next_request, args=(0.1,), daemon=True).start
 threading.Event().wait()
 "#;
         let program = format!(
-            "{}{}{}{}{}{}{}{}{}{}{}{prelude}{}{steps}",
+            "{}{}{}{}{}{}{}{}{}{}{}{}{prelude}{}{steps}",
             include_str!("rank_load_lock.py"),
             include_str!("rank_env.py"),
             include_str!("rank_live.py"),
             include_str!("rank_thinking.py"),
+            include_str!("rank_sampling.py"),
             include_str!("rank_budget.py"),
             include_str!("rank_prefill.py"),
             include_str!("rank_batch.py"),

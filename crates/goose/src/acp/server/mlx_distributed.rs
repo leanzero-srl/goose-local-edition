@@ -14,7 +14,7 @@ use goose_sidecar::distributed::provision::{self, EnvSpec};
 use goose_sidecar::distributed::runner_update;
 use goose_sidecar::distributed::{
     self, supervisor::Liveness, Backend, CheckVerdict, DistributedConfig, DistributedStatus,
-    NodeConfig, PreflightReport, RankPlan, StartOutcome, StopReport,
+    NodeConfig, PreflightReport, RankPlan, SamplingDefaults, StartOutcome, StopReport,
 };
 use goose_sidecar::distributed::{NodeExec, SystemExec};
 use goose_sidecar::engine::expand_tilde;
@@ -744,11 +744,15 @@ impl GooseAcpAgent {
         // serves its own HF id. The split answers to every other name of the model too — its HF
         // id and each pool node's name for it (Q-131) — so which name works never depends on how
         // it was started.
+        let settings = super::mlx_engine::load_engine_settings()?;
         let served = ServedNames::of(
-            &super::mlx_engine::load_engine_settings()?,
+            &settings,
             &config.model_id,
             &super::mlx_engine::swarm_nodes()?,
         );
+        // Q-159: the split samples under the model's own profile, as the single engine would
+        // mount it — the layer between a request's fields and the checkpoint's defaults.
+        let sampling = SamplingDefaults::of(&settings, &config.model_id);
         let published = PublishedEngine {
             pid: std::process::id(),
             base_url: config.base_url(),
@@ -758,7 +762,10 @@ impl GooseAcpAgent {
             node_names: config.nodes.iter().map(|n| n.name.clone()).collect(),
         };
         let manager = owned_manager()?;
-        let outcome = manager.start(config, served).await.invalid_params_err()?;
+        let outcome = manager
+            .start(config, served, sampling)
+            .await
+            .invalid_params_err()?;
         // A rebuilt runner an earlier goose had named elsewhere is pointed at its new path: the
         // saved setup follows, so the next start does not find the old directory again.
         if let Some(ran) = manager
