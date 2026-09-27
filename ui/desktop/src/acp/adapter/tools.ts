@@ -3,8 +3,12 @@ import type {
   ToolCall,
   ToolCallUpdate,
 } from '@agentclientprotocol/sdk';
-import type { Message } from '../../types/message';
-import type { ContentBlock as GooseContentBlock } from '../../types/message';
+import { isContentForUser } from '../../types/message';
+import type {
+  Annotations as GooseAnnotations,
+  ContentBlock as GooseContentBlock,
+  Message,
+} from '../../types/message';
 import { findMessageForChunk } from './messages';
 import { toolNotificationChange } from './toolNotifications';
 import {
@@ -286,6 +290,22 @@ function toolResultContent(update: ToolCallUpdate): GooseContentBlock[] {
   return [];
 }
 
+// An MCP item's annotations ride the ACP content (Q-212): `audience` decides whether the card shows
+// it (`isContentForUser`), so dropping them here would show assistant-only content to the person.
+function annotationsOf(content: AcpContentBlock): { annotations?: GooseAnnotations } {
+  const annotations = content.annotations;
+  if (!annotations) return {};
+  return {
+    annotations: {
+      ...(annotations.audience ? { audience: annotations.audience } : {}),
+      ...(annotations.priority !== undefined && annotations.priority !== null
+        ? { priority: annotations.priority }
+        : {}),
+      ...(annotations.lastModified ? { lastModified: annotations.lastModified } : {}),
+    },
+  };
+}
+
 function apiContentBlockFromAcpContentBlock(
   content: AcpContentBlock
 ): GooseContentBlock | undefined {
@@ -294,6 +314,7 @@ function apiContentBlockFromAcpContentBlock(
       return {
         type: 'text',
         text: content.text,
+        ...annotationsOf(content),
         ...(content._meta ? { _meta: content._meta } : {}),
       };
     case 'image':
@@ -301,6 +322,7 @@ function apiContentBlockFromAcpContentBlock(
         type: 'image',
         data: content.data,
         mimeType: content.mimeType,
+        ...annotationsOf(content),
         ...(content._meta ? { _meta: content._meta } : {}),
       };
     case 'audio':
@@ -308,6 +330,7 @@ function apiContentBlockFromAcpContentBlock(
         type: 'audio',
         data: content.data,
         mimeType: content.mimeType,
+        ...annotationsOf(content),
       };
     case 'resource_link':
       return {
@@ -318,12 +341,14 @@ function apiContentBlockFromAcpContentBlock(
         ...(content.mimeType ? { mimeType: content.mimeType } : {}),
         ...(content.size !== undefined && content.size !== null ? { size: content.size } : {}),
         ...(content.title ? { title: content.title } : {}),
+        ...annotationsOf(content),
         ...(content._meta ? { _meta: content._meta } : {}),
       };
     case 'resource':
       return {
         type: 'resource',
         resource: apiResourceContentsFromAcpResource(content.resource),
+        ...annotationsOf(content),
         ...(content._meta ? { _meta: content._meta } : {}),
       };
     default:
@@ -357,6 +382,7 @@ function toolError(update: ToolCallUpdate): string {
   }
 
   const contentText = toolResultContent(update)
+    .filter(isContentForUser)
     .flatMap((content) => (content.type === 'text' ? [content.text] : []))
     .filter((text) => text.trim().length > 0)
     .join('\n');
