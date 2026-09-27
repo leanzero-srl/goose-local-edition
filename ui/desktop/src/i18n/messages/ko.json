@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "goose가 작업을 완료했습니다."
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "에이전트 설정"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "자율 에이전트 구성: 루프, 레시피, 스킬"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "컨텍스트 창"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "끌어다 놓은 파일을 처리하는 중..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "레시피 및 루프"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "레시피를 만든 다음 일정에 따라 루프로 실행합니다"
   },
   "chatInput.recording": {
     "defaultMessage": "녹음..."

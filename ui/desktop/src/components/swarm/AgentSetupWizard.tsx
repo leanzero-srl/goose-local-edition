@@ -25,12 +25,13 @@ import {
 } from '../lz';
 
 /**
- * Goose Local Edition — the Agent persona setup wizard. The autonomous Agent runs a LOOP built from a
- * RECIPE, with SKILLS it can call. Ties the app's Loop / Recipe / Skills features together, offering both
- * ways the user asked for to make a recipe:
- *  - Build a recipe WITH THE FLEET (RecipeChatWizard) — a warm local model interviews the user and drafts
- *    it. The swarm *provider* is a build orchestrator and can't hold a conversation, so this talks to LM
- *    Studio directly instead.
+ * Goose Local Edition — RECIPES & LOOPS, the hub the composer's launcher opens (Q-7: it was titled
+ * "Set up the autonomous Agent" and opened from an "Agent" mode that did nothing; it is a hub for
+ * recipes and loops, so it says so). A LOOP runs a RECIPE on a schedule, with SKILLS it can call. Ties
+ * the app's Loop / Recipe / Skills features together, offering both ways to make a recipe:
+ *  - Build a recipe WITH THE FLEET (RecipeChatWizard) — the model goose serves chat with interviews the
+ *    user and drafts it (the swarm *provider* is a build orchestrator and can't hold a conversation, so
+ *    the interview goes to that engine directly — recipeChatTarget).
  *  - Or draft one BY HAND (RecipeWizard) — fill the fields in a form.
  *  - Create a loop from a recipe (LoopModal — recipe + schedule + iterations).
  *  - Skills surface as /commands; link out to manage them.
@@ -137,7 +138,7 @@ export function AgentSetupWizard({
             >
               <LeanZero className="h-4 w-4 text-white" />
             </span>
-            <OverlayDialogTitle className={TYPE.h2}>Set up the autonomous Agent</OverlayDialogTitle>
+            <OverlayDialogTitle className={TYPE.h2}>Recipes &amp; loops</OverlayDialogTitle>
           </div>
           <button
             onClick={onClose}
@@ -150,12 +151,13 @@ export function AgentSetupWizard({
 
         <div className="space-y-3 overflow-y-auto px-4 py-3">
           <p className={TYPE.bodyMuted}>
-            The Agent runs on its own: a{' '}
-            <span className={cx('text-lz-ink', WEIGHT.medium)}>loop</span> built from a{' '}
-            <span className={cx('text-lz-ink', WEIGHT.medium)}>recipe</span>, iterating across your
-            fleet, with <span className={cx('text-lz-ink', WEIGHT.medium)}>skills</span> it can
-            call. Build a recipe by chatting with your fleet, or fill one in by hand, then wrap it
-            in a loop.
+            A <span className={cx('text-lz-ink', WEIGHT.medium)}>recipe</span> is the instructions
+            an agent follows each run. A{' '}
+            <span className={cx('text-lz-ink', WEIGHT.medium)}>loop</span> runs a recipe on a
+            schedule, for as many iterations as you set, with the{' '}
+            <span className={cx('text-lz-ink', WEIGHT.medium)}>skills</span> it can call. Build a
+            recipe by chatting with the model that serves your chats, or fill one in by hand, then
+            wrap it in a loop.
           </p>
 
           {/* Recipe + Loop */}

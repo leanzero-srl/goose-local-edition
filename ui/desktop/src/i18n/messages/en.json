@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose finished the task."
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "Set up agent"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "Configure the autonomous agent: its loop, recipe and skills"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "Context window"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Processing dropped files..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "Recipes & loops"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "Build a recipe, then run it in a loop on a schedule"
   },
   "chatInput.recording": {
     "defaultMessage": "Recording..."

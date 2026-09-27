@@ -33,9 +33,16 @@ export function modelsUrl(endpoint: string): string {
   return cspSafe(`${swarmOriginOf(endpoint)}/api/v0/models`);
 }
 
-/** `<origin>/v1/chat/completions` from a host base — LM Studio's OpenAI-compatible chat route. */
+/**
+ * `<base>/v1/chat/completions` — the OpenAI-compatible chat route. A HOST base (LM Studio's
+ * `http://localhost:1234`) and an OpenAI base ending in `/v1` (an MLX engine's `baseUrl`) give the
+ * same `<origin>/v1/chat/completions` they always did; a base with its own path keeps it — the Link
+ * route's loopback relay is `http://127.0.0.1:<port>/relay/<cap>`, and its origin alone reaches
+ * nothing (Q-7: the recipe interview follows chat onto the route).
+ */
 export function chatCompletionsUrl(endpoint: string): string {
-  return cspSafe(`${swarmOriginOf(endpoint)}/v1/chat/completions`);
+  const prefix = new URL(endpoint).pathname.replace(/\/+$/, '').replace(/\/v1$/, '');
+  return cspSafe(`${swarmOriginOf(endpoint)}${prefix}/v1/chat/completions`);
 }
 
 /** Why a probe produced no JSON — every arm is NAMED so the renderer's offline state is honest. */

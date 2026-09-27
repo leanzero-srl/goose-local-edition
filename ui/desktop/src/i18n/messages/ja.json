@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Gooseがタスクを完了しました。"
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "エージェントを設定"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "自律エージェントを設定:ループ、レシピ、スキル"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "コンテキストウィンドウ"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "ドロップしたファイルを処理中..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "レシピとループ"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "レシピを作成し、スケジュールに沿ってループで実行します"
   },
   "chatInput.recording": {
     "defaultMessage": "録音中..."

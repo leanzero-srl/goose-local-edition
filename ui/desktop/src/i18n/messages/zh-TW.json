@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose 已完成工作。"
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "設定智慧體"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "設定自主智慧體:它的迴圈、配方與技能"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "上下文視窗"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "正在處理拖放的檔案…"
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "配方與循環"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "建立配方，然後依排程在循環中執行"
   },
   "chatInput.recording": {
     "defaultMessage": "錄音中…"

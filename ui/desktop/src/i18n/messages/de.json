@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose hat die Aufgabe abgeschlossen."
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "Agent einrichten"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "Den autonomen Agenten konfigurieren: Schleife, Rezept und Skills"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "Kontextfenster"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Abgelegte Dateien werden verarbeitet..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "Rezepte & Schleifen"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "Ein Rezept erstellen und es dann in einer Schleife nach Zeitplan ausführen"
   },
   "chatInput.recording": {
     "defaultMessage": "Aufnahme läuft..."

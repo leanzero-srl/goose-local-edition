@@ -1,6 +1,6 @@
 import { AppEvents } from '../constants/events';
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
-import { ArrowUp, Bug, ScrollText, Settings2 } from 'lucide-react';
+import { ArrowUp, Bug, ScrollText, Repeat } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/Tooltip';
 import { Button } from './ui/button';
 import type { View } from '../utils/navigationUtils';
@@ -176,13 +176,13 @@ const i18n = defineMessages({
     id: 'chatInput.placeholder',
     defaultMessage: 'Ask goose to build, fix or explain something',
   },
-  agentSetup: {
-    id: 'chatInput.agentSetup',
-    defaultMessage: 'Set up agent',
+  recipesAndLoops: {
+    id: 'chatInput.recipesAndLoops',
+    defaultMessage: 'Recipes & loops',
   },
-  agentSetupTitle: {
-    id: 'chatInput.agentSetupTitle',
-    defaultMessage: 'Configure the autonomous agent: its loop, recipe and skills',
+  recipesAndLoopsTitle: {
+    id: 'chatInput.recipesAndLoopsTitle',
+    defaultMessage: 'Build a recipe, then run it in a loop on a schedule',
   },
 });
 
@@ -1795,12 +1795,12 @@ export default function ChatInput({
           <StudioButton
             variant="ghost"
             size="sm"
-            icon={<Settings2 />}
-            data-testid="agent-setup"
+            icon={<Repeat />}
+            data-testid="recipes-and-loops"
             onClick={() => setAgentWizardOpen(true)}
-            title={intl.formatMessage(i18n.agentSetupTitle)}
+            title={intl.formatMessage(i18n.recipesAndLoopsTitle)}
           >
-            {intl.formatMessage(i18n.agentSetup)}
+            {intl.formatMessage(i18n.recipesAndLoops)}
           </StudioButton>
         )}
         {agentWizardOpen && (

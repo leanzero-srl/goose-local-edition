@@ -151,7 +151,7 @@ describe('the swarm composer has no mode toggle, only a launcher (Q-6)', () => {
 
   it('no pressed-button pair and no "Persona" group', async () => {
     render(input('s1', 'swarm-model', 'swarm'));
-    await screen.findByTestId('agent-setup');
+    await screen.findByTestId('recipes-and-loops');
     expect(screen.queryByRole('group', { name: 'Persona' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^(Coding|Agent)$/ })).toBeNull();
     expect(document.querySelector('[aria-pressed]')).toBeNull();
@@ -159,7 +159,18 @@ describe('the swarm composer has no mode toggle, only a launcher (Q-6)', () => {
 
   it('the launcher is there from the start and opens the hub in one click', async () => {
     render(input('s1', 'swarm-model', 'swarm'));
-    fireEvent.click(await screen.findByTestId('agent-setup'));
+    fireEvent.click(await screen.findByTestId('recipes-and-loops'));
     expect(screen.getByTestId('recipes-and-loops-open')).toBeInTheDocument();
+  });
+
+  // Q-7: "Set up agent" opened a recipes/loops hub, not agent settings. It is named for what it opens.
+  it('the launcher is named for what it opens — never "agent"', async () => {
+    render(input('s1', 'swarm-model', 'swarm'));
+    const launcher = await screen.findByTestId('recipes-and-loops');
+    expect(launcher).toHaveTextContent('Recipes & loops');
+    expect(launcher.getAttribute('title')).toBe(
+      'Build a recipe, then run it in a loop on a schedule'
+    );
+    expect(launcher.textContent + (launcher.getAttribute('title') ?? '')).not.toMatch(/agent/i);
   });
 });

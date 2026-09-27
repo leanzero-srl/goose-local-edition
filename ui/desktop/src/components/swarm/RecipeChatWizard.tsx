@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { X, Send, Loader2, Check, Sparkles, Pencil, ChevronDown } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { LeanZero } from '../icons';
@@ -11,6 +11,14 @@ import {
 import { useFleet } from './useFleet';
 import { useLmStudioFleetVisible } from '../../hooks/useLmStudioFleetVisible';
 import { useMlxEngineStatusPoll } from '../leanzero-swarm/useMlxEngineStatus';
+import { useLatestMlxDistributedStatus } from '../noNodeNotice/mlxMount';
+import { mlxDistributedStatus } from '../../acp/mlx-distributed';
+import {
+  latestMlxRemoteSingleStatus,
+  mlxRemoteSingleStatus,
+  subscribeMlxRemoteSingleStatus,
+} from '../../acp/mlx-remote-single';
+import { recipeChatTarget } from './recipeChatTarget';
 import type { Recipe } from '../../recipe';
 import { saveRecipe } from '../../recipe/recipe_management';
 import { OverlayDialog, OverlayDialogTitle } from '../ui/OverlayDialog';
@@ -30,14 +38,16 @@ import {
 } from '../lz';
 
 /**
- * Goose Local Edition — build a recipe by TALKING TO THE FLEET. A warm local model (LM Studio, the same
- * nodes that power the swarm) interviews the user a couple of turns, then drafts a recipe the user reviews,
- * edits, and saves. This is the "work with the swarm to build it" path, distinct from the by-hand form and
- * from the build orchestrator (which produces apps, not recipes, and cannot hold a conversation).
+ * Goose Local Edition — build a recipe by TALKING TO THE FLEET. The model goose serves chat with (the
+ * split across the Macs, a linked Mac's engine through the route, or this Mac's engine — the one
+ * `mlxEngineServing` rule the chip reads, `recipeChatTarget`) interviews the user a couple of turns,
+ * then drafts a recipe the user reviews, edits, and saves. It is the default pick (Q-7: the wizard used
+ * to see only this Mac's single engine and LM Studio, and read "no fleet model is served" while the
+ * split answered every chat). LM Studio's models are offered beside it only while the legacy LM Studio
+ * fleet is shown; picking one sends the interview to LM Studio's configured endpoint.
  *
- * The model is driven over LM Studio's OpenAI-compatible chat route on the CONFIGURED swarm endpoint
- * (`fleet.endpoint` — the same host the engine and the fleet probe use). The POST is non-streaming and
- * goes through MAIN (`window.electron.fleetChat` → IPC `fleet-chat`): the renderer's CSP is the
+ * Each call is an OpenAI-compatible chat completion at the picked engine's base URL. The POST is
+ * non-streaming and goes through MAIN (`window.electron.fleetChat` → IPC `fleet-chat`): the renderer's CSP is the
  * intersection of index.html's static meta and main's header, which blocks `localhost` and any LAN host
  * from here no matter what the header adds (gate 8, 2026-09-02). Weak local models don't always follow a
  * protocol, so there is always a "Draft the recipe now" escape hatch that forces the JSON, and the parsed
@@ -111,22 +121,31 @@ export function RecipeChatWizard({
   // LEGACY surface: LM Studio model discovery runs only when 'showLmStudioFleet' is on (default
   // off). Off, the wizard shows its honest offline path — it cannot draft without a served model.
   const fleet = useFleet(5000, undefined, useLmStudioFleetVisible());
-  // The LeanZero MLX engine is the OTHER fleet engine: on an MLX-only machine (measured 2026-09-05)
-  // the wizard read "no fleet model is loaded — start LM Studio" while the sidecar served a model.
-  // Its served alias is offered beside the LM Studio models and drives the chat at ITS base URL.
+  // The engine goose serves chat with — the split, a route to a linked Mac, or this Mac's single
+  // engine — read the way the composer's chip reads it (Q-7). The split and the route publish into
+  // shared stores; one read on open fills them when no other surface has yet.
   const { status: mlx } = useMlxEngineStatusPoll(isOpen);
-  const mlxModel =
-    mlx?.state === 'running' && !mlx.probeError ? (mlx.servedModelId ?? mlx.modelId ?? null) : null;
-  const mlxBaseUrl = mlxModel ? (mlx?.baseUrl ?? null) : null;
-  const models = mlxModel && mlxBaseUrl ? [...fleet.models, mlxModel] : fleet.models;
+  const distributed = useLatestMlxDistributedStatus();
+  const remote = useSyncExternalStore(subscribeMlxRemoteSingleStatus, latestMlxRemoteSingleStatus);
+  useEffect(() => {
+    if (!isOpen) return;
+    mlxDistributedStatus().catch(() => undefined);
+    mlxRemoteSingleStatus().catch(() => undefined);
+  }, [isOpen]);
+  const served = recipeChatTarget(mlx, distributed, remote);
+  const mlxModel = served?.model ?? null;
+  const models = mlxModel
+    ? [mlxModel, ...fleet.models.filter((m) => m !== mlxModel)]
+    : fleet.models;
   const [picked, setPicked] = useState<string | null>(null);
-  const autoModel = models.find((m) => /coder/i.test(m)) ?? models[0] ?? null;
-  // Use the user's pick if it's still served, else fall back to the auto-chosen coder model.
+  // Use the user's pick while it is still served, else the model chat is served by, else (legacy
+  // LM Studio fleet only) a coder model.
+  const autoModel = mlxModel ?? models.find((m) => /coder/i.test(m)) ?? models[0] ?? null;
   const model = (picked && models.includes(picked) ? picked : null) ?? autoModel;
-  // The host that serves the picked model: the sidecar's own base URL for its alias, LM Studio's
-  // configured endpoint for everything else (fleetChat takes the origin of either).
+  // The host that serves the picked model: that engine's own base URL for the chat model, LM
+  // Studio's configured endpoint for its models (fleetChat takes the origin of either).
   const chatEndpoint =
-    model != null && model === mlxModel && mlxBaseUrl ? mlxBaseUrl : fleet.endpoint;
+    model != null && model === mlxModel && served ? served.baseUrl : fleet.endpoint;
   const online = models.length > 0 && (model === mlxModel || fleet.online);
 
   const [messages, setMessages] = useState<ChatMsg[]>([]);

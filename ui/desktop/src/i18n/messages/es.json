@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "Goose terminó la tarea."
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "Configurar agente"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "Configura el agente autónomo: su bucle, receta y skills"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "Ventana de contexto"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Procesando archivos soltados..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "Recetas y bucles"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "Crea una receta y ejecútala en un bucle programado"
   },
   "chatInput.recording": {
     "defaultMessage": "Grabando..."

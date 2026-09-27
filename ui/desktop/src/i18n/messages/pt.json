@@ -392,12 +392,6 @@
   "chat.notification.taskComplete.title": {
     "defaultMessage": "O Goose concluiu a tarefa."
   },
-  "chatInput.agentSetup": {
-    "defaultMessage": "Configurar agente"
-  },
-  "chatInput.agentSetupTitle": {
-    "defaultMessage": "Configure o agente autônomo: seu loop, receita e skills"
-  },
   "chatInput.contextWindow": {
     "defaultMessage": "Janela de contexto"
   },
@@ -415,6 +409,12 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "A processar ficheiros largados..."
+  },
+  "chatInput.recipesAndLoops": {
+    "defaultMessage": "Receitas e ciclos"
+  },
+  "chatInput.recipesAndLoopsTitle": {
+    "defaultMessage": "Crie uma receita e execute-a num ciclo agendado"
   },
   "chatInput.recording": {
     "defaultMessage": "A gravar..."

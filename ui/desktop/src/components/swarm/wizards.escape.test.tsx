@@ -50,3 +50,11 @@ describe('the Set up flow’s dialogs close on Escape and hold focus (Q-21)', ()
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('the hub is titled for what it opens (Q-7)', () => {
+  it('"Recipes & loops" — not "Set up the autonomous Agent"', () => {
+    render(<AgentSetupWizard isOpen onClose={() => {}} setView={() => {}} workingDir="/tmp" />);
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Recipes & loops');
+    expect(screen.queryByText(/autonomous Agent|The Agent runs/)).toBeNull();
+  });
+});
