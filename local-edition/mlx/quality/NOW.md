@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 21:40 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-27 21:28 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed: 3.0.61 (both Macs, verified). BUILDING 3.0.62 from a654dfa85 (Q-185 background labels, Q-187/188,
