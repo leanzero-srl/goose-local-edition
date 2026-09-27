@@ -524,12 +524,6 @@
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "A processar ficheiros largados..."
   },
-  "chatInput.recipesAndLoops": {
-    "defaultMessage": "Receitas e ciclos"
-  },
-  "chatInput.recipesAndLoopsTitle": {
-    "defaultMessage": "Crie uma receita e execute-a num ciclo agendado"
-  },
   "chatInput.recording": {
     "defaultMessage": "A gravar..."
   },
@@ -2803,150 +2797,6 @@
   },
   "localNetwork.open": {
     "defaultMessage": "Abrir Privacidade e Segurança"
-  },
-  "loopModal.browseYaml": {
-    "defaultMessage": "Browse for YAML file..."
-  },
-  "loopModal.cancel": {
-    "defaultMessage": "Cancel"
-  },
-  "loopModal.createLoop": {
-    "defaultMessage": "Create Loop"
-  },
-  "loopModal.createNewLoop": {
-    "defaultMessage": "Create New Loop"
-  },
-  "loopModal.creating": {
-    "defaultMessage": "Creating..."
-  },
-  "loopModal.deepLink": {
-    "defaultMessage": "Deep link"
-  },
-  "loopModal.deepLinkPlaceholder": {
-    "defaultMessage": "Paste goose://recipe link here..."
-  },
-  "loopModal.failedParseRecipe": {
-    "defaultMessage": "Failed to parse recipe from file."
-  },
-  "loopModal.failedReadFile": {
-    "defaultMessage": "Failed to read the selected file."
-  },
-  "loopModal.invalidDeepLink": {
-    "defaultMessage": "Invalid deep link. Please use a goose://recipe link."
-  },
-  "loopModal.invalidFileType": {
-    "defaultMessage": "Invalid file type: Please select a YAML file (.yaml or .yml)"
-  },
-  "loopModal.loopIdRequired": {
-    "defaultMessage": "Loop name is required."
-  },
-  "loopModal.maxIterationsHelp": {
-    "defaultMessage": "Hard cap on iterations regardless of the stop check."
-  },
-  "loopModal.maxIterationsLabel": {
-    "defaultMessage": "Max iterations:"
-  },
-  "loopModal.maxIterationsRequired": {
-    "defaultMessage": "Max iterations must be at least 1."
-  },
-  "loopModal.nameLabel": {
-    "defaultMessage": "Name:"
-  },
-  "loopModal.namePlaceholder": {
-    "defaultMessage": "e.g., nightly-refine-loop"
-  },
-  "loopModal.provideValidRecipe": {
-    "defaultMessage": "Please provide a valid recipe source."
-  },
-  "loopModal.recipeDescription": {
-    "defaultMessage": "Description: {description}"
-  },
-  "loopModal.recipeParsed": {
-    "defaultMessage": "Recipe parsed successfully"
-  },
-  "loopModal.recipeTitle": {
-    "defaultMessage": "Title: {title}"
-  },
-  "loopModal.scheduleLabel": {
-    "defaultMessage": "Schedule:"
-  },
-  "loopModal.selected": {
-    "defaultMessage": "Selected: {path}"
-  },
-  "loopModal.sourceLabel": {
-    "defaultMessage": "Recipe:"
-  },
-  "loopModal.stateArtifactHelp": {
-    "defaultMessage": "Optional file the recipe writes each iteration; its contents carry into the next."
-  },
-  "loopModal.stateArtifactLabel": {
-    "defaultMessage": "State artifact:"
-  },
-  "loopModal.stateArtifactPlaceholder": {
-    "defaultMessage": "e.g., state.md"
-  },
-  "loopModal.stopCheckHelp": {
-    "defaultMessage": "Optional shell command run after each iteration; exit 0 stops the loop."
-  },
-  "loopModal.stopCheckLabel": {
-    "defaultMessage": "Stop check command:"
-  },
-  "loopModal.stopCheckPlaceholder": {
-    "defaultMessage": "e.g., test -f done.flag"
-  },
-  "loopModal.subtitle": {
-    "defaultMessage": "A loop runs a recipe repeatedly until a stop check passes or the iteration cap is reached."
-  },
-  "loopModal.yaml": {
-    "defaultMessage": "YAML"
-  },
-  "loopView.confirmDelete": {
-    "defaultMessage": "Remove loop \"{id}\"? The recipe will be kept."
-  },
-  "loopView.createLoop": {
-    "defaultMessage": "Create Loop"
-  },
-  "loopView.deleteConfirm": {
-    "defaultMessage": "Remove"
-  },
-  "loopView.deleteTitle": {
-    "defaultMessage": "Remove loop"
-  },
-  "loopView.description": {
-    "defaultMessage": "Loops run a recipe repeatedly on a schedule until a stop check passes or the iteration cap is reached."
-  },
-  "loopView.errorPrefix": {
-    "defaultMessage": "Error: {error}"
-  },
-  "loopView.lastRun": {
-    "defaultMessage": "Last run: {date}"
-  },
-  "loopView.loop": {
-    "defaultMessage": "Loop"
-  },
-  "loopView.loopCreated": {
-    "defaultMessage": "Loop Created"
-  },
-  "loopView.loopCreatedMsg": {
-    "defaultMessage": "Successfully created loop \"{id}\""
-  },
-  "loopView.maxIterations": {
-    "defaultMessage": "{count} max iterations"
-  },
-  "loopView.noLoops": {
-    "defaultMessage": "No loops yet"
-  },
-  "loopView.refresh": {
-    "defaultMessage": "Refresh"
-  },
-  "loopView.refreshing": {
-    "defaultMessage": "Refreshing..."
-  },
-  "loopView.stateArtifact": {
-    "defaultMessage": "State: {file}"
-  },
-  "loopView.stopCheck": {
-    "defaultMessage": "Stop check: {command}"
   },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Falha ao cancelar."
@@ -8355,7 +8205,10 @@
     "defaultMessage": "Notificações"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Manter o computador ativo enquanto o goose executa uma tarefa (o ecrã ainda pode ser bloqueado)"
+    "defaultMessage": "Impede que o computador entre em repouso enquanto o goose está aberto (a tela ainda pode desligar e bloquear)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Impedir repouso não está funcionando: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Impedir Suspensão"

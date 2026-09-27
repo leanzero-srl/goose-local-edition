@@ -1,23 +1,20 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 22:17 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-27 23:07 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
-- Installed: 3.0.62 (both Macs, verified post-swap pids; diffs + Changes rail, LeanZero pill, report form, Q-185).
-  After install Link was blocked by the 3.0.61 goosed that survived the quit (Q-223): orphans killed per pid,
-  Retry connect → tailscaled 55892, split up "OK". install.sh + clean.sh now reap/scan orphan goosed/tailscaled.
-- E2E #3l RUNNING on 3.0.62 (27B tensor, jira brief) · runwatch. #3k stopped mid-turn 7 for the owner's install.
-- BUILDING 3.0.63 from 2b4e26900 (S1 nav, glance Q-215–218, Q-220/221, Q-211/212, path fixes) · release-3.0.63.log.
-- leanzero.net Q-209/210 live.
+- Installed: 3.0.63 (both Macs; the MacBook's 3.0.62 needed SIGKILL — Q-229, the floating window held the quit open).
+  Split up "OK." · E2E #3m RUNNING on 3.0.63 · runwatch. Disk 63 GB free (target/debug/incremental cleared).
+- Merged + pushed since 3.0.63's cut: S0, S7, Q-224/226 (floating window), Q-211/212 · merged, gate b7bc4csxo: S3
+  (chat routing to node/strategy), L1 (Recipes & loops removed). Next build 3.0.64 once S2/S5 land or the owner asks.
 
 ## CI
-- Green through dc701189c; merges since gated locally (tsc, vitest 3,243, eslint, i18n, cargo check, wincheck).
+- Green through c4639cebf.
 
 ## Agents
-- S0 nodes contract + store (lane D; unblocks S2/S3/S5, S7 after S1) · Q-211/212 audience.
-- Merged + pushed today: Q-185, 187/188, 189/190, 191/192, 197/198/213/214, 215–218, 220, S1 (Q-193/194/202/203).
-  Q-221 merged locally, gate blgf1b8ms. Site Q-209/210 live (probe 413 ok).
-- 3.0.62 at notarization (a654dfa85 — before S1, the glance fixes, Q-220/221): next build 3.0.63 carries those.
+- Nodes: S2 cards + New node (+ S7 leftovers) · S5 loader + holders (+ kind user|tick, S3's two contract items).
+- Loops: design REVISION (17 review findings; L1+L6 cleared) · L6 shared clock.
+- Q-223 + Q-229 app quit orphans / hang · Q-230 keep-awake does nothing.
 
 ## Next actions (in order)
 1. 3.0.61 DONE (glance + Q-183) → install at #3i turn-3 boundary (watcher b3ugzqvvu) → split-start 27B → #3i continues (new session = #3j if needed).

@@ -9,7 +9,7 @@ import type { MemoryOrigin } from './utils/memoryProvenance';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings } from './utils/settings';
 import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL } from './utils/closeGuard';
-import type { FleetChatResult, FleetProbeResult } from './utils/fleetProbe';
+import type { FleetProbeResult } from './utils/fleetProbe';
 import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
 import type { MlxEngineReport, MlxEngineSnapshot } from './utils/mlxEngineMonitor';
 import type { MlxDistributedReport } from './utils/mlxDistributedReport';
@@ -19,6 +19,7 @@ import type { MacsTrayReport } from './utils/macsTrayReport';
 import type { LinkTrayReport } from './utils/linkTrayReport';
 import type { ProblemReportInput, ProblemReportResult } from './utils/problemReport';
 import type { LocalNetworkTouch } from './localNetwork';
+import type { KeepAwakeState } from './keepAwake';
 import type { GlancePrefs, GlancePush, GlanceSessions } from './utils/engineGlance';
 import type { GlancePipAction } from './engineGlanceDesktop';
 
@@ -395,8 +396,8 @@ type ElectronAPI = {
   setSetting: <K extends SettingKey>(key: K, value: Settings[K]) => Promise<void>;
   getSecretKey: () => Promise<string | null>;
   getAcpUrl: () => Promise<string | null>;
-  setWakelock: (enable: boolean) => Promise<boolean>;
-  getWakelockState: () => Promise<boolean>;
+  setWakelock: (enable: boolean) => Promise<KeepAwakeState>;
+  getWakelockState: () => Promise<KeepAwakeState>;
   setSpellcheck: (enable: boolean) => Promise<boolean>;
   getSpellcheckState: () => Promise<boolean>;
   openNotificationsSettings: () => Promise<boolean>;
@@ -493,8 +494,6 @@ type ElectronAPI = {
   /** GET `<endpoint>/api/v0/models` from MAIN (no renderer CSP in the path): LM Studio's `data` array or
    *  a NAMED error. `endpoint` is the configured `swarm.endpoint` host base. */
   fleetProbe: (endpoint: string) => Promise<FleetProbeResult>;
-  /** POST `<endpoint>/v1/chat/completions` (non-streaming) from MAIN; the JSON reply or a named error. */
-  fleetChat: (endpoint: string, body: unknown) => Promise<FleetChatResult>;
   /** GET `<baseUrl>/v1/status` of the LOCAL Rapid-MLX engine from MAIN (loopback only): the raw body
    *  or a NAMED error. Feeds the Providers › LeanZero MLX state tile's live instrument. */
   mlxLiveStatus: (baseUrl: string) => Promise<MlxLiveStatusResult>;
@@ -591,7 +590,6 @@ const electronAPI: ElectronAPI = {
   benchmarkPublish: (args?: { title?: string }) => ipcRenderer.invoke('benchmark-publish', args),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   fleetProbe: (endpoint: string) => ipcRenderer.invoke('fleet-probe', endpoint),
-  fleetChat: (endpoint: string, body: unknown) => ipcRenderer.invoke('fleet-chat', endpoint, body),
   mlxLiveStatus: (baseUrl: string) => ipcRenderer.invoke('mlx-live-status', baseUrl),
   mlxEngineReport: (report: MlxEngineReport) => ipcRenderer.send('mlx-engine-report', report),
   mlxEngineActivity: () => ipcRenderer.invoke('mlx-engine-activity'),

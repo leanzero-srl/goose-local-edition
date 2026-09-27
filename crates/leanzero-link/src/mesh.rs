@@ -70,14 +70,22 @@ pub enum MeshError {
     },
     #[error(
         "a tailscaled already answers on socket '{}' (listener pid {}) — LeanZero Link never \
-         adopts a daemon it did not spawn; stop the other goose (or the stale daemon) first",
+         adopts a daemon it did not spawn; stop the other goose (or the stale daemon) first ({})",
         socket.display(),
-        listener_pid.map_or("unknown".to_string(), |p| p.to_string())
+        listener_pid.map_or("unknown".to_string(), |p| p.to_string()),
+        not_reaped_because
     )]
     AlreadyRunning {
         socket: PathBuf,
         /// The pid the kernel reports behind the socket (peer credentials), when readable.
         listener_pid: Option<u32>,
+        /// Why this start did not stop the holder itself: the rule of
+        /// [`orphan_daemon_proof`] it failed (its goosed is alive, its command line is not
+        /// ours, …), or that it appeared while our own daemon was starting.
+        not_reaped_because: String,
+        /// The goosed that owns the holder, when it is alive — another goose on this Mac
+        /// runs Link, and the step is to quit that goose, not to kill its daemon.
+        live_goosed: Option<u32>,
     },
     /// The supervised daemon is gone — raised by `start` (died before the socket
     /// answered) and by every later `status` read (died under a live connection).
@@ -520,6 +528,29 @@ impl MeshEngine {
     pub async fn start(config: MeshConfig) -> Result<Self, MeshError> {
         config.validate()?;
         prepare_state_dir(&config.state_dir)?;
+        // A daemon a dead goosed left on OUR socket is stopped here, per pid, on proof
+        // (Q-223); anything else on the socket is kept and named in the refusal below.
+        let (not_reaped_because, live_goosed) = match reap_orphaned_daemon(&config).await {
+            OrphanReap::Nobody => (
+                "nobody held the socket when this start looked".to_string(),
+                None,
+            ),
+            OrphanReap::Reaped(reaped) => (
+                format!(
+                    "the orphan on it (pid {}) was stopped by {} but the socket still answers",
+                    reaped.pid, reaped.signal
+                ),
+                None,
+            ),
+            OrphanReap::Kept {
+                not_an_orphan:
+                    NotAnOrphan {
+                        reason,
+                        live_goosed,
+                    },
+                ..
+            } => (reason, live_goosed),
+        };
         // The pre-spawn probe waits the full CLI timeout: a daemon that answers SLOWLY
         // (a loaded machine) still owns the socket, and a probe cut short here would
         // spawn a second daemon on top of it.
@@ -527,6 +558,8 @@ impl MeshEngine {
             return Err(MeshError::AlreadyRunning {
                 listener_pid: listener_pid(&config.socket_path).ok(),
                 socket: config.socket_path.clone(),
+                not_reaped_because,
+                live_goosed,
             });
         }
 
@@ -647,6 +680,10 @@ impl MeshEngine {
                                 return Err(MeshError::AlreadyRunning {
                                     socket: engine.config.socket_path.clone(),
                                     listener_pid: Some(pid),
+                                    not_reaped_because: "it took the socket while this \
+                                                         goosed's own daemon was starting"
+                                        .to_string(),
+                                    live_goosed: None,
                                 });
                             }
                             Err(err) => {
@@ -981,6 +1018,267 @@ pub fn socket_holder(socket_path: &Path) -> std::io::Result<Option<SocketHolder>
             Ok(None)
         }
         Err(err) => Err(err),
+    }
+}
+
+/// The per-pid grace a goose-owned daemon gets between SIGTERM and SIGKILL: the same
+/// 50 × 100 ms leg as goose-sidecar's `GRACE_TICKS` × `GRACE_TICK` and [`terminate_per_pid`],
+/// which the desktop's `MESH_TEARDOWN_CEILING_MS` (ui/desktop/src/gooseServe.ts) sums. It
+/// bounds process teardown, never model work.
+const PER_PID_GRACE_TICKS: u32 = 50;
+const PER_PID_GRACE_TICK: Duration = Duration::from_millis(100);
+
+/// One process as the orphan-daemon proof reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DaemonProcess {
+    pub pid: u32,
+    pub parent: Option<u32>,
+    pub uid: Option<u32>,
+    pub start_time: u64,
+    pub argv: Vec<String>,
+}
+
+/// Why a daemon on our socket is not an orphan this goosed may stop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotAnOrphan {
+    pub reason: String,
+    /// The holder's goosed, when THAT is why (rule 2): another goose on this Mac runs Link.
+    pub live_goosed: Option<u32>,
+}
+
+impl NotAnOrphan {
+    fn because(reason: String) -> Self {
+        Self {
+            reason,
+            live_goosed: None,
+        }
+    }
+}
+
+/// The proof that the daemon the KERNEL reports behind our socket is an orphan this goosed
+/// may stop, as a pure function; `Err` names the first rule it fails (Q-223):
+/// 1. it is neither init nor this goosed;
+/// 2. its parent is init/launchd (pid 1): the goosed that spawned it is gone. A live parent
+///    is another goose on this Mac — a second window's or profile's backend — and is never
+///    touched;
+/// 3. it runs as this user;
+/// 4. its command line ENDS WITH exactly the argv this goosed spawns for this socket
+///    ([`MeshConfig::tailscaled_argv`]: this bundle's tailscaled, this state dir, this
+///    socket). What precedes it is not checked — an interpreter for a script daemon — which
+///    cannot make a stranger ours: the pid is the one the kernel reports listening on OUR
+///    socket, and the argv must still name our binary, state dir and socket.
+pub fn orphan_daemon_proof(
+    process: &DaemonProcess,
+    our_argv: &[String],
+    own_uid: u32,
+    own_pid: u32,
+) -> Result<(), NotAnOrphan> {
+    if process.pid <= 1 || process.pid == own_pid {
+        return Err(NotAnOrphan::because(format!(
+            "pid {} is init or this goosed itself",
+            process.pid
+        )));
+    }
+    match process.parent {
+        Some(1) => {}
+        Some(parent) => {
+            return Err(NotAnOrphan {
+                reason: format!(
+                    "its goosed (pid {parent}) is alive — another goose on this Mac holds the mesh"
+                ),
+                live_goosed: Some(parent),
+            })
+        }
+        None => {
+            return Err(NotAnOrphan::because(
+                "its parent pid could not be read".to_string(),
+            ))
+        }
+    }
+    if process.uid != Some(own_uid) {
+        return Err(NotAnOrphan::because(format!(
+            "it runs as uid {}, not this user's {own_uid}",
+            process
+                .uid
+                .map_or("unknown".to_string(), |uid| uid.to_string())
+        )));
+    }
+    if our_argv.is_empty() || !process.argv.ends_with(our_argv) {
+        return Err(NotAnOrphan::because(format!(
+            "its command line is not the one this goosed spawns for this socket (it runs `{}`)",
+            process.argv.join(" ")
+        )));
+    }
+    Ok(())
+}
+
+/// What the pre-spawn look at our socket found and did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrphanReap {
+    /// Nobody listens behind the socket.
+    Nobody,
+    /// An orphan passed [`orphan_daemon_proof`] and was stopped per pid.
+    Reaped(ReapedDaemon),
+    /// Something holds the socket and was left alone.
+    Kept {
+        listener_pid: Option<u32>,
+        not_an_orphan: NotAnOrphan,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReapedDaemon {
+    pub pid: u32,
+    /// "SIGTERM" when it exited on the TERM, "SIGKILL" when it outlived the grace.
+    pub signal: &'static str,
+}
+
+/// `None` when no live process holds `pid`; a zombie has exited and counts as gone.
+#[cfg(unix)]
+fn daemon_process(pid: u32) -> Option<DaemonProcess> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
+    let mut sys = System::new();
+    let wanted = [Pid::from_u32(pid)];
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&wanted),
+        true,
+        ProcessRefreshKind::nothing()
+            .with_cmd(UpdateKind::Always)
+            .with_user(UpdateKind::Always),
+    );
+    let process = sys.process(wanted[0])?;
+    if process.status() == ProcessStatus::Zombie {
+        return None;
+    }
+    Some(DaemonProcess {
+        pid,
+        parent: process.parent().map(|parent| parent.as_u32()),
+        uid: process.user_id().map(|uid| **uid),
+        start_time: process.start_time(),
+        argv: process
+            .cmd()
+            .iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect(),
+    })
+}
+
+/// [`orphan_daemon_proof`] for `listener_pid` as it is right now — no signal sent. The
+/// launch reconnect asks this BEFORE it spends a join key, so a holder the start would
+/// refuse fails the reconnect with no network call.
+#[cfg(unix)]
+pub fn orphan_proof_for(config: &MeshConfig, listener_pid: u32) -> Result<(), NotAnOrphan> {
+    let Some(process) = daemon_process(listener_pid) else {
+        return Err(NotAnOrphan::because(format!(
+            "pid {listener_pid} could not be read (it may have just exited)"
+        )));
+    };
+    orphan_daemon_proof(
+        &process,
+        &config.tailscaled_argv(),
+        unsafe { libc::getuid() },
+        std::process::id(),
+    )
+}
+
+#[cfg(not(unix))]
+pub fn orphan_proof_for(_config: &MeshConfig, _listener_pid: u32) -> Result<(), NotAnOrphan> {
+    Err(NotAnOrphan::because(
+        "the orphan proof (peer credentials) is not implemented on this platform".to_string(),
+    ))
+}
+
+/// Stop, per pid, the orphan a dead goosed left on OUR socket — only on
+/// [`orphan_daemon_proof`], re-checking before each signal that the pid is still that
+/// process (same start time, still parented by init). SIGTERM, the per-pid grace, SIGKILL
+/// only if it outlived it. Every outcome is logged; nothing is ever adopted.
+#[cfg(unix)]
+pub async fn reap_orphaned_daemon(config: &MeshConfig) -> OrphanReap {
+    let holder = match socket_holder(&config.socket_path) {
+        Ok(None) => return OrphanReap::Nobody,
+        Ok(Some(holder)) => holder,
+        Err(err) => {
+            return OrphanReap::Kept {
+                listener_pid: None,
+                not_an_orphan: NotAnOrphan::because(format!(
+                    "who holds the socket could not be read: {err}"
+                )),
+            }
+        }
+    };
+    let pid = holder.listener_pid;
+    let Some(orphan) = daemon_process(pid) else {
+        return OrphanReap::Kept {
+            listener_pid: Some(pid),
+            not_an_orphan: NotAnOrphan::because(format!(
+                "pid {pid} could not be read (it may have just exited)"
+            )),
+        };
+    };
+    let own_uid = unsafe { libc::getuid() };
+    if let Err(not_an_orphan) = orphan_daemon_proof(
+        &orphan,
+        &config.tailscaled_argv(),
+        own_uid,
+        std::process::id(),
+    ) {
+        tracing::info!(
+            listener_pid = pid,
+            socket = %config.socket_path.display(),
+            reason = %not_an_orphan.reason,
+            "leanzero-link: the daemon on this node's mesh socket is not an orphan this goosed may stop"
+        );
+        return OrphanReap::Kept {
+            listener_pid: Some(pid),
+            not_an_orphan,
+        };
+    }
+    let still_the_orphan = || {
+        daemon_process(pid)
+            .is_some_and(|now| now.start_time == orphan.start_time && now.parent == Some(1))
+    };
+    let mut signal = "SIGTERM";
+    for (sig, name) in [(libc::SIGTERM, "SIGTERM"), (libc::SIGKILL, "SIGKILL")] {
+        if !still_the_orphan() {
+            break;
+        }
+        signal = name;
+        unsafe { libc::kill(pid as libc::pid_t, sig) };
+        for _ in 0..PER_PID_GRACE_TICKS {
+            if !still_the_orphan() {
+                break;
+            }
+            tokio::time::sleep(PER_PID_GRACE_TICK).await;
+        }
+    }
+    if still_the_orphan() {
+        let reason = format!("the orphan (pid {pid}) survived SIGTERM and SIGKILL");
+        tracing::error!(listener_pid = pid, %reason, "leanzero-link: orphaned tailscaled not stopped");
+        return OrphanReap::Kept {
+            listener_pid: Some(pid),
+            not_an_orphan: NotAnOrphan::because(reason),
+        };
+    }
+    tracing::warn!(
+        event = "orphan_tailscaled_reaped",
+        pid,
+        signal,
+        socket = %config.socket_path.display(),
+        argv = %orphan.argv.join(" "),
+        started_at_unix = orphan.start_time,
+        "leanzero-link: stopped a tailscaled that a goosed which is gone left on this node's \
+         mesh socket; connecting with a fresh daemon"
+    );
+    OrphanReap::Reaped(ReapedDaemon { pid, signal })
+}
+
+#[cfg(not(unix))]
+pub async fn reap_orphaned_daemon(_config: &MeshConfig) -> OrphanReap {
+    OrphanReap::Kept {
+        listener_pid: None,
+        not_an_orphan: NotAnOrphan::because(
+            "the orphan proof (peer credentials) is not implemented on this platform".to_string(),
+        ),
     }
 }
 
@@ -1350,11 +1648,11 @@ async fn terminate_per_pid(child: &mut Child) {
         unsafe {
             libc::kill(pid as libc::pid_t, libc::SIGTERM);
         }
-        for _ in 0..50 {
+        for _ in 0..PER_PID_GRACE_TICKS {
             if let Ok(Some(_)) = child.try_wait() {
                 return;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(PER_PID_GRACE_TICK).await;
         }
     }
     let _ = child.start_kill();
@@ -1487,6 +1785,107 @@ mod tests {
             parent_pid: None,
         };
         assert!(!unknown.spawner_alive());
+    }
+
+    /// Q-223's four rules as a pure function over fake records: the only process that may be
+    /// stopped is an init-parented daemon of this user running exactly our argv (behind an
+    /// interpreter at most). Everything else is kept, naming the rule — and a live parent is
+    /// reported as the goosed to quit, never as a daemon to kill.
+    #[test]
+    fn only_an_init_parented_daemon_running_our_exact_argv_may_be_stopped() {
+        use super::{orphan_daemon_proof, DaemonProcess};
+        let ours: Vec<String> = [
+            "/Applications/Goose Swarm.app/Contents/Resources/bin/tailscaled",
+            "--tun=userspace-networking",
+            "--statedir=/Users/me/.leanzero/tailscale",
+            "--socket=/Users/me/.leanzero/tailscale/tailscaled.sock",
+            "--no-logs-no-support",
+            "--socks5-server=127.0.0.1:0",
+        ]
+        .map(str::to_string)
+        .to_vec();
+        const UID: u32 = 501;
+        const GOOSED: u32 = 2352;
+        let q223 = DaemonProcess {
+            pid: 11275,
+            parent: Some(1),
+            uid: Some(UID),
+            start_time: 1_790_531_369,
+            argv: ours.clone(),
+        };
+        assert_eq!(orphan_daemon_proof(&q223, &ours, UID, GOOSED), Ok(()));
+
+        let mut script = q223.clone();
+        script.argv.insert(0, "/usr/bin/python3".to_string());
+        assert_eq!(
+            orphan_daemon_proof(&script, &ours, UID, GOOSED),
+            Ok(()),
+            "an interpreter in front of our argv is still our daemon"
+        );
+
+        let owned = DaemonProcess {
+            parent: Some(10891),
+            ..q223.clone()
+        };
+        let kept = orphan_daemon_proof(&owned, &ours, UID, GOOSED).unwrap_err();
+        assert_eq!(kept.live_goosed, Some(10891));
+        assert!(kept.reason.contains("is alive"), "{}", kept.reason);
+
+        let unknown_parent = DaemonProcess {
+            parent: None,
+            ..q223.clone()
+        };
+        let kept = orphan_daemon_proof(&unknown_parent, &ours, UID, GOOSED).unwrap_err();
+        assert_eq!(kept.live_goosed, None);
+        assert!(kept.reason.contains("parent pid could not be read"));
+
+        let other_user = DaemonProcess {
+            uid: Some(0),
+            ..q223.clone()
+        };
+        assert!(orphan_daemon_proof(&other_user, &ours, UID, GOOSED)
+            .unwrap_err()
+            .reason
+            .contains("uid 0"));
+
+        let other_bundle = DaemonProcess {
+            argv: {
+                let mut argv = ours.clone();
+                argv[0] = "/Users/me/wt/out/Goose Swarm.app/Contents/Resources/bin/tailscaled"
+                    .to_string();
+                argv
+            },
+            ..q223.clone()
+        };
+        assert!(orphan_daemon_proof(&other_bundle, &ours, UID, GOOSED)
+            .unwrap_err()
+            .reason
+            .contains("command line is not the one"));
+
+        let other_socket = DaemonProcess {
+            argv: {
+                let mut argv = ours.clone();
+                argv[3] = "--socket=/tmp/other.sock".to_string();
+                argv
+            },
+            ..q223.clone()
+        };
+        assert!(orphan_daemon_proof(&other_socket, &ours, UID, GOOSED).is_err());
+
+        for pid in [0, 1, GOOSED] {
+            let special = DaemonProcess {
+                pid,
+                ..q223.clone()
+            };
+            assert!(
+                orphan_daemon_proof(&special, &ours, UID, GOOSED).is_err(),
+                "pid {pid} is never signalled"
+            );
+        }
+        assert!(
+            orphan_daemon_proof(&q223, &[], UID, GOOSED).is_err(),
+            "an empty argv to match is no proof"
+        );
     }
 
     #[test]

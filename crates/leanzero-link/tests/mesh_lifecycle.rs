@@ -625,12 +625,19 @@ async fn start_refuses_a_socket_another_daemon_already_answers() {
         MeshError::AlreadyRunning {
             socket,
             listener_pid,
+            live_goosed,
+            ..
         } => {
             assert_eq!(*socket, config.socket_path);
             assert_eq!(
                 *listener_pid,
                 foreign.id(),
                 "the refusal names the foreign listener's pid"
+            );
+            assert_eq!(
+                *live_goosed,
+                Some(std::process::id()),
+                "its parent (this test, standing in for another goosed) is alive: kept, and named"
             );
         }
         other => panic!("expected AlreadyRunning, got {other}"),
@@ -876,4 +883,112 @@ async fn refuses_system_tailscale_paths_before_spawning_anything() {
         MeshEngine::start(config).await,
         Err(MeshError::UnsafeConfig { .. })
     ));
+}
+
+/// Start `argv` (the fake tailscaled) as an ORPHAN listening on `sock`: `sh` backgrounds it
+/// and exits at once, so the kernel reparents it to launchd (pid 1) — the shape a goosed that
+/// died without its teardown leaves (Q-223). Returns its pid, read from the socket's peer
+/// credentials, once the fake is in its accept loop (it marks `ownership-checked` on the first
+/// connection it accepts — this probe's), i.e. with its SIGTERM handler installed, like a
+/// daemon that has been up for an hour.
+#[cfg(target_os = "macos")]
+async fn spawn_orphan_listener(argv: &[String], sock: &Path) -> u32 {
+    let accepted = sock.with_file_name("ownership-checked");
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("\"$@\" </dev/null >/dev/null 2>&1 &")
+        .arg("sh")
+        .args(argv)
+        .status()
+        .expect("sh backgrounds the orphan");
+    assert!(status.success());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(Some(holder)) = leanzero_link::mesh::socket_holder(sock) {
+            if holder.parent_pid == Some(1) && accepted.exists() {
+                std::fs::remove_file(&accepted).unwrap();
+                return holder.listener_pid;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the orphan never listened on {} with parent 1",
+            sock.display()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// Q-223, the recovery: the tailscaled a dead goosed left on OUR socket, running exactly the
+/// argv this goosed spawns, is stopped per pid (it exits on the SIGTERM) and the start goes
+/// on to spawn and prove a daemon of its own — no `kill` for the user to type.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn start_stops_an_orphan_a_dead_goosed_left_and_starts_its_own() {
+    let root = tempfile::tempdir().unwrap();
+    let config = fake_config(root.path());
+    let orphan = spawn_orphan_listener(&config.tailscaled_argv(), &config.socket_path).await;
+    assert_eq!(
+        leanzero_link::mesh::orphan_proof_for(&config, orphan),
+        Ok(()),
+        "the reconnect's pre-check (no signal) agrees before any join key is spent"
+    );
+
+    let engine = MeshEngine::start(config.clone())
+        .await
+        .expect("the orphan was reaped and our own daemon started");
+    assert!(!process_alive(orphan), "the orphan (pid {orphan}) is gone");
+    let ours = engine.pid().await.unwrap();
+    assert_ne!(ours, orphan);
+    let holder = leanzero_link::mesh::socket_holder(&config.socket_path)
+        .unwrap()
+        .expect("our daemon holds the socket");
+    assert_eq!(holder.listener_pid, ours, "the socket is OUR child's now");
+    engine.shutdown().await;
+}
+
+/// The other side of the proof: an orphan on our socket whose command line is NOT the one
+/// this goosed spawns is left alone, and the refusal says which rule kept it.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn start_keeps_an_orphan_whose_command_line_is_not_ours() {
+    let root = tempfile::tempdir().unwrap();
+    let config = fake_config(root.path());
+    // Our exact argv plus one flag: the smallest difference the proof must still refuse.
+    let mut stranger = config.tailscaled_argv();
+    stranger.push("--verbose=2".to_string());
+    let orphan = spawn_orphan_listener(&stranger, &config.socket_path).await;
+    let refused = leanzero_link::mesh::orphan_proof_for(&config, orphan)
+        .expect_err("the reconnect's pre-check refuses it before a join key is spent");
+    assert!(
+        refused.reason.contains("command line is not the one"),
+        "{}",
+        refused.reason
+    );
+
+    let err = match MeshEngine::start(config.clone()).await {
+        Ok(_) => panic!("start adopted or replaced a daemon the proof does not cover"),
+        Err(e) => e,
+    };
+    match &err {
+        MeshError::AlreadyRunning {
+            listener_pid,
+            not_reaped_because,
+            live_goosed,
+            ..
+        } => {
+            assert_eq!(*listener_pid, Some(orphan));
+            assert!(
+                not_reaped_because.contains("command line is not the one"),
+                "{not_reaped_because}"
+            );
+            assert_eq!(*live_goosed, None);
+        }
+        other => panic!("expected AlreadyRunning, got {other}"),
+    }
+    assert!(
+        process_alive(orphan),
+        "a daemon outside the proof is never signalled"
+    );
+    unsafe { libc::kill(orphan as libc::pid_t, libc::SIGTERM) };
 }
