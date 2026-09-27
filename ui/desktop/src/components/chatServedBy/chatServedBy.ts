@@ -14,10 +14,12 @@ import { activityPhase, remotePhase, runPhase, singlePhase } from '../leanzero-s
 import {
   MLX_STATUS_POLL_MS,
   mlxActivity,
+  requestActivity,
   type MlxActivity,
   type MlxLiveRequest,
   type MlxLiveStats,
 } from '../leanzero-swarm/mlxLiveStats';
+import { largestPrompt, readingRequest } from '../leanzero-swarm/engineFigures';
 import { MLX_PROVIDER_ID } from '../settings/models/leanzeroSelectorPolicy';
 import type { SwarmDeviceRow } from '../settings/swarm/golden';
 import { splitStopAt, type SplitStop } from './splitStop';
@@ -503,16 +505,7 @@ function turnRequestOf(
   if (own > 0 && serving.unattributed > 0) return null;
   // Waiting requests count too: a turn queued behind goose's own small call is still the largest
   // prompt, and naming the helper's running request instead made the chip say "Writing" (Q-124).
-  return stats.requests.reduce<MlxLiveRequest | null>(
-    (best, r) => (best == null || (r.promptTokens ?? 0) > (best.promptTokens ?? 0) ? r : best),
-    null
-  );
-}
-
-/** The phase of this chat's own request, in the engine's activity words. */
-function requestActivity(request: MlxLiveRequest): MlxActivity {
-  if (request.status === 'waiting' || request.phase === 'queued') return 'queued';
-  return request.phase === 'prefill' ? 'prefill' : 'generating';
+  return largestPrompt(stats.requests) ?? null;
 }
 
 function workOf(
@@ -589,12 +582,7 @@ function busyWith(
   }
   if (!(turnInFlight && own === 0)) others += serving.unattributed;
   if (others <= 0) return null;
-  const reading =
-    activity === 'prefill' && own === 0
-      ? stats.requests
-          .filter((r) => r.status !== 'waiting' && r.phase === 'prefill')
-          .sort((a, b) => (b.elapsedS ?? 0) - (a.elapsedS ?? 0))[0]
-      : undefined;
+  const reading = activity === 'prefill' && own === 0 ? readingRequest(stats) : undefined;
   return { requests: others, readingTokens: reading?.promptTokens ?? null };
 }
 
@@ -628,10 +616,7 @@ function busyInOf(
   if (others.size !== 1) return null;
   const [[otherId, otherName]] = others;
   const works = worksOf.get(otherId) ?? [];
-  const request = stats.requests.reduce<MlxLiveRequest | null>(
-    (best, r) => (best == null || (r.promptTokens ?? 0) > (best.promptTokens ?? 0) ? r : best),
-    null
-  );
+  const request = largestPrompt(stats.requests) ?? null;
   return {
     sessionId: otherId,
     sessionName: otherName,

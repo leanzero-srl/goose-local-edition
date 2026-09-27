@@ -27,22 +27,22 @@ test.describe('Performance Tests', () => {
     await goosePage.evaluate(() => performance.mark('prompt-submitted'));
 
     // Wait for loading indicator to appear and check if it's "loading conversation..."
-    await goosePage.waitForSelector('[data-testid="loading-indicator"]', {
+    await goosePage.waitForSelector('[data-testid="chat-input-card"]:not([data-chat-state="idle"])', {
       state: 'visible',
       timeout: 5000
     });
 
-    const loadingText = await goosePage.locator('[data-testid="loading-indicator"]').textContent();
-    if (loadingText?.includes('loading conversation')) {
+    const chatState = await goosePage
+      .locator('[data-testid="chat-input-card"]')
+      .getAttribute('data-chat-state');
+    if (chatState === 'loadingConversation') {
       await goosePage.evaluate(() => performance.mark('loading-conversation-start'));
       console.log('✓ Loading conversation detected');
 
       // Wait for it to change or disappear
       await goosePage.waitForFunction(() => {
-        const indicator = document.querySelector('[data-testid="loading-indicator"]');
-        if (!indicator) return true; // Disappeared
-        const text = indicator.textContent || '';
-        return !text.includes('loading conversation'); // Changed to different state
+        const card = document.querySelector('[data-testid="chat-input-card"]');
+        return card?.getAttribute('data-chat-state') !== 'loadingConversation';
       }, { timeout: 30000 });
 
       await goosePage.evaluate(() => performance.mark('loading-conversation-end'));
@@ -79,8 +79,8 @@ test.describe('Performance Tests', () => {
     await firstTokenPromise;
 
     // Wait for response to complete
-    await goosePage.waitForSelector('[data-testid="loading-indicator"]', {
-      state: 'hidden',
+    await goosePage.waitForSelector('[data-testid="chat-input-card"][data-chat-state="idle"]', {
+      state: 'visible',
       timeout: 60000
     });
     await goosePage.evaluate(() => performance.mark('response-complete'));
@@ -161,13 +161,13 @@ test.describe('Performance Tests', () => {
     await goosePage.evaluate(() => performance.mark('cold-prompt-start'));
     await chatInput.press('Enter');
 
-    await goosePage.waitForSelector('[data-testid="loading-indicator"]', {
+    await goosePage.waitForSelector('[data-testid="chat-input-card"]:not([data-chat-state="idle"])', {
       state: 'visible',
       timeout: 5000
     });
 
-    await goosePage.waitForSelector('[data-testid="loading-indicator"]', {
-      state: 'hidden',
+    await goosePage.waitForSelector('[data-testid="chat-input-card"][data-chat-state="idle"]', {
+      state: 'visible',
       timeout: 60000
     });
 
@@ -185,13 +185,13 @@ test.describe('Performance Tests', () => {
     await goosePage.evaluate(() => performance.mark('warm-prompt-start'));
     await chatInput2.press('Enter');
 
-    await goosePage.waitForSelector('[data-testid="loading-indicator"]', {
+    await goosePage.waitForSelector('[data-testid="chat-input-card"]:not([data-chat-state="idle"])', {
       state: 'visible',
       timeout: 5000
     });
 
-    await goosePage.waitForSelector('[data-testid="loading-indicator"]', {
-      state: 'hidden',
+    await goosePage.waitForSelector('[data-testid="chat-input-card"][data-chat-state="idle"]', {
+      state: 'visible',
       timeout: 60000
     });
 
@@ -277,8 +277,8 @@ test.describe('Performance Tests', () => {
     await goosePage.evaluate(() => performance.mark('user-interaction-start'));
     await chatInput.press('Enter');
 
-    await goosePage.waitForSelector('[data-testid="loading-indicator"]', { state: 'visible', timeout: 5000 });
-    await goosePage.waitForSelector('[data-testid="loading-indicator"]', { state: 'hidden', timeout: 60000 });
+    await goosePage.waitForSelector('[data-testid="chat-input-card"]:not([data-chat-state="idle"])', { state: 'visible', timeout: 5000 });
+    await goosePage.waitForSelector('[data-testid="chat-input-card"][data-chat-state="idle"]', { state: 'visible', timeout: 60000 });
 
     await goosePage.evaluate(() => {
       performance.mark('user-interaction-complete');

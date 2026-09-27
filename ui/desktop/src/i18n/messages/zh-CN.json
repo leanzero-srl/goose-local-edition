@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "显示完整卡片"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "正在写的内容 · {count, plural, other {# 个工具调用}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "隐藏正在写的内容"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "引擎：{stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "隐藏此卡片 — 可在侧边栏底部或 设置 › 应用 中恢复"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# 个请求处理中}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "读取此提示词的 tok/s"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "显示引擎卡片"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "引擎卡片已隐藏。在侧边栏底部重新显示。"
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, other {# 个会话运行中}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "同时进行：{work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac 不在线"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "在侧边栏中"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "显示在会话列表下方的空白处；当引擎在工作且侧边栏没有空间时，浮在窗口上方。"
+    "defaultMessage": "在侧边栏底部、会话列表下方。可直接在卡片上隐藏；之后可通过它留在原处的那一行或在这里恢复。"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "引擎一览"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "连接到运行在其他位置的 goose 服务器（需要重启应用）"
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars} 个字符"
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, other {正在生成 # 个工具调用}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "目前已收到：{arguments} 个参数字符{reasoning, select, none {} other {，{reasoning} 个推理字符}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {其中 # 个与之前的调用完全相同} other {其中 # 个与之前的调用完全相同}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {其中 # 个与之前的 {tool} 调用完全相同} other {其中 # 个与之前的 {tool} 调用完全相同}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "与调用一同写出的文本（{chars} 个字符）— 不属于回答"
   },
   "goosehintsModal.close": {
     "defaultMessage": "关闭"
@@ -2642,21 +2678,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose 正在压缩对话…"
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars} 个字符"
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, other {正在生成 # 个工具调用}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "目前已收到：{arguments} 个参数字符{reasoning, select, none {} other {，{reasoning} 个推理字符}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "与调用一同写出的文本（{chars} 个字符）— 不属于回答"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "隐藏"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "goose 正在处理…"
   },
@@ -2665,9 +2686,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "正在重启会话…"
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "显示正在生成的内容"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose 正在处理…"
@@ -8395,57 +8413,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose 想调用 {toolName}，允许吗？"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "正在检查 {mac} 是否仍保留你的回答…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {{mac} 上的 goose 未在运行 — 请在那边打开 goose，或在这台 Mac 上运行聊天} other {{mac} 自 {time} 起没有响应 — goose 可能已关闭，或它已离线}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac} 正在读取你的提示（{tokens} 个 token）— 已用 {elapsed}"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac} 正在读取你的提示（{tokens} 个 token）— 按实测 {rate} tok/s 约需 {expected}，已用 {elapsed}"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac} 正在读取你的提示（{tokens} 个 token）— {percent}%"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac} 正在读取你的提示（{tokens} 个 token）…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "正在等待 {mac} 重新连接…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "{mac} 已有一会儿没有输出 — 正在检查…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "已写 {elapsed} · {tokens} 个 token · {rate} token/秒"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "已写 {elapsed} · {tokens} 个 token"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "正在检查此聊天…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {对 {tool} 的一个工具调用} other {# 个工具调用，最新的是 {tool}}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {其中 # 个与之前的调用完全相同} other {其中 # 个与之前的调用完全相同}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {其中 # 个与之前的 {tool} 调用完全相同} other {其中 # 个与之前的 {tool} 调用完全相同}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}，{repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "集群已暂停 — 在你恢复之前不会运行任何内容"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "更新将在后台自动下载。"

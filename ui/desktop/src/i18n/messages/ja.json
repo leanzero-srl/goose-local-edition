@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "カード全体を表示"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "書いている内容 · {count, plural, other {ツール呼び出し # 件}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "書いている内容を隠す"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "エンジン: {stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "このカードを隠す — サイドバーの下部か 設定 › アプリ から戻せます"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# 件のリクエストを処理中}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "このプロンプトの読み込み tok/s"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "エンジンカードを表示"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "エンジンカードは非表示です。サイドバーの下部に再表示します。"
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, other {# セッション実行中}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "並行して: {work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac 不在"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "サイドバー内"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "セッション一覧の下の空きスペースに表示。エンジンが動いていてサイドバーに余裕がないときはウィンドウ上に浮かびます。"
+    "defaultMessage": "サイドバーの下部、セッション一覧の下に表示。カード自体から隠せます。隠したあとは、その場所に残る行か、ここから戻せます。"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "エンジンをひと目で"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "別の場所で実行中の goose サーバーに接続します（アプリの再起動が必要）"
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars} 文字"
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, other {作成中のツール呼び出し # 件}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "これまでに受信: 引数 {arguments} 文字{reasoning, select, none {} other {、推論 {reasoning} 文字}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {うち # 件は以前の呼び出しと同一} other {うち # 件は以前の呼び出しと同一}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {うち # 件は以前の {tool} 呼び出しと同一} other {うち # 件は以前の {tool} 呼び出しと同一}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "呼び出しと並んで書かれたテキスト ({chars} 文字) — 回答には含まれません"
   },
   "goosehintsModal.close": {
     "defaultMessage": "閉じる"
@@ -2642,21 +2678,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "gooseが会話を圧縮しています..."
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars} 文字"
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, other {作成中のツール呼び出し # 件}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "これまでに受信: 引数 {arguments} 文字{reasoning, select, none {} other {、推論 {reasoning} 文字}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "呼び出しと並んで書かれたテキスト ({chars} 文字) — 回答には含まれません"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "閉じる"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "gooseが処理中です…"
   },
@@ -2665,9 +2686,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "セッションを再起動中..."
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "作成中の内容を表示"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "gooseが処理中です…"
@@ -8395,57 +8413,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Gooseが{toolName}を実行しようとしています。許可しますか？"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "{mac} がまだ回答を保持しているか確認しています…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {{mac} の goose は起動していません — そちらで goose を開くか、この Mac でチャットを実行してください} other {{mac} から {time} 以降応答がありません — goose が閉じているか、オフラインの可能性があります}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac} がプロンプトを読んでいます ({tokens} トークン) — 経過 {elapsed}"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac} がプロンプトを読んでいます ({tokens} トークン) — 計測値 {rate} トークン/秒で約 {expected} のうち {elapsed}"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac} がプロンプトを読んでいます ({tokens} トークン) — {percent}%"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac} がプロンプトを読んでいます ({tokens} トークン)…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "{mac} の再接続を待っています…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "しばらく {mac} から出力がありません — 確認中…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "{elapsed} 書き込み中 · {tokens} トークン · {rate} トークン/秒"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "{elapsed} 書き込み中 · {tokens} トークン"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "このチャットを確認中…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {{tool} へのツール呼び出し 1 件} other {ツール呼び出し # 件、最新は {tool}}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {うち # 件は以前の呼び出しと同一} other {うち # 件は以前の呼び出しと同一}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {うち # 件は以前の {tool} 呼び出しと同一} other {うち # 件は以前の {tool} 呼び出しと同一}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}、{repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "スウォームは一時停止中 — 再開するまで何も実行されません"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "アップデートはバックグラウンドで自動的にダウンロードされます。"

@@ -8,7 +8,7 @@ test.describe('Loading State', () => {
     await chatInput.fill('Respond with the single word hello.');
     await chatInput.press('Enter');
 
-    await goosePage.waitForSelector('[data-testid="loading-indicator"]', {
+    await goosePage.waitForSelector('[data-testid="chat-input-card"]:not([data-chat-state="idle"])', {
       state: 'visible',
       timeout: 10000,
     });

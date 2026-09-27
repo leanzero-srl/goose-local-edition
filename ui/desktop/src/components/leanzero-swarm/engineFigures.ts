@@ -3,6 +3,7 @@ import {
   liveDecodeTps,
   measuredPrefillTps,
   mlxActivity,
+  requestActivity,
   type MlxLiveRequest,
   type MlxLiveStats,
 } from './mlxLiveStats';
@@ -30,19 +31,44 @@ export interface MeasuredPair {
   reading: MeasuredFigure | null;
 }
 
-/** The request still reading its prompt that has waited longest — what a headline names. */
-export function readingRequest(stats: MlxLiveStats): MlxLiveRequest | undefined {
-  return stats.requests
-    .filter((r) => r.status !== 'waiting' && r.phase === 'prefill')
-    .sort((a, b) => (b.elapsedS ?? 0) - (a.elapsedS ?? 0))[0];
+/**
+ * The request with the largest prompt. A chat's turn carries the whole conversation; goose's own
+ * calls beside it (a title, the fact check, a tool label — Q-185) carry a few hundred tokens. So the
+ * largest prompt is the one a person waits on — the rule the composer's `turnRequestOf`, the glance's
+ * lead and every headline below use.
+ */
+export function largestPrompt(requests: readonly MlxLiveRequest[]): MlxLiveRequest | undefined {
+  return requests.reduce<MlxLiveRequest | undefined>(
+    (best, r) => (best == null || (r.promptTokens ?? 0) > (best.promptTokens ?? 0) ? r : best),
+    undefined
+  );
 }
 
+/**
+ * The request still reading its prompt that a headline names: the LARGEST prompt being read. Q-218:
+ * the old rule (the one read longest) named a 174-token side call read for 12 s ("Reading prompt ·
+ * 174 prompt tokens") while the chat's own 77k prompt was 1% in.
+ */
+export function readingRequest(stats: MlxLiveStats): MlxLiveRequest | undefined {
+  return largestPrompt(
+    stats.requests.filter((r) => r.status !== 'waiting' && r.phase === 'prefill')
+  );
+}
+
+/**
+ * The figures. Without `lead` they speak for the ENGINE (the Engine tile, the tray): its activity,
+ * its summed writing rate, its largest prompt being read. With `lead` — the request a chat's turn is
+ * (the glance, engineGlance.ts) — they speak for THAT request: its own phase, writing rate and
+ * reading rate, so a side call running beside it is never read as the turn.
+ */
 export function engineFigures(
   stats: MlxLiveStats,
-  measured: MeasuredPair
+  measured: MeasuredPair,
+  lead: MlxLiveRequest | null = null
 ): { hero: EngineFigure | null; second: EngineFigure | null } {
-  const activity = mlxActivity(stats);
-  const prefillNow = measuredPrefillTps(stats);
+  const activity = lead ? requestActivity(lead) : mlxActivity(stats);
+  const leadReading = lead?.phase === 'prefill' ? (lead.promptTps ?? 0) : 0;
+  const prefillNow = leadReading > 0 ? leadReading : measuredPrefillTps(stats);
   const { writing, reading } = measured;
   const second: EngineFigure | null =
     prefillNow > 0
@@ -51,10 +77,13 @@ export function engineFigures(
         ? { kind: 'readingMedian', median: reading.median, runs: reading.runs }
         : null;
   if (activity === 'generating') {
-    return { hero: { kind: 'writing', tps: liveDecodeTps(stats) }, second };
+    return {
+      hero: { kind: 'writing', tps: lead ? leadWritingTps(lead) : liveDecodeTps(stats) },
+      second,
+    };
   }
   if (activity === 'prefill') {
-    const r = readingRequest(stats);
+    const r = lead ?? readingRequest(stats);
     return {
       hero: { kind: 'prompt', tokens: r?.promptTokens ?? null, elapsedS: r?.elapsedS ?? 0 },
       second,
@@ -69,12 +98,20 @@ export function engineFigures(
   };
 }
 
+/** One request's own writing rate — a rate needs two tokens (liveDecodeTps's rule, for one). */
+function leadWritingTps(lead: MlxLiveRequest): number {
+  return lead.completionTokens >= 2 ? (lead.tokensPerSecond ?? 0) : 0;
+}
+
 /**
- * How far into the prompt the longest read is — the distributed engine reports it; the single engine
+ * How far into the prompt the named read is (the lead's when it is reading, else the largest) — the distributed engine reports it; the single engine
  * reports no per-request progress, so there it is null and no bar is drawn (never a guessed share).
  */
-export function promptProgress(stats: MlxLiveStats): { done: number; total: number } | null {
-  const r = readingRequest(stats);
+export function promptProgress(
+  stats: MlxLiveStats,
+  lead: MlxLiveRequest | null = null
+): { done: number; total: number } | null {
+  const r = lead ? (lead.phase === 'prefill' ? lead : undefined) : readingRequest(stats);
   if (!r || r.prefilledTokens == null || !r.promptTokens) return null;
   return { done: Math.min(r.prefilledTokens, r.promptTokens), total: r.promptTokens };
 }

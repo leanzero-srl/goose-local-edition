@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "Afficher toute la carte"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "Ce qu’il écrit · {count, plural, one {# appel d’outil} other {# appels d’outils}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "Masquer ce qu’il écrit"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "Moteur : {stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "Masquer cette carte — la retrouver au pied de la barre latérale ou dans Paramètres › Application"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# requête en cours} other {# requêtes en cours}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "tok/s pour lire ce prompt"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "Afficher la carte du moteur"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "La carte du moteur est masquée. Réaffichez-la au pied de la barre latérale."
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, one {# session en cours} other {# sessions en cours}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "À côté : {work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac absent"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "Dans la barre latérale"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "Dans l’espace libre sous vos sessions ; flottante au-dessus de la fenêtre quand le moteur travaille et que la barre latérale manque de place."
+    "defaultMessage": "Au pied de la barre latérale, sous vos sessions. Masquez-la depuis la carte elle-même ; elle revient depuis la ligne qu’elle laisse à sa place, ou d’ici."
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "Le moteur d’un coup d’œil"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "Se connecter à un serveur goose exécuté ailleurs (nécessite le redémarrage de l'application)"
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars} caractères"
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, one {# appel d’outil en formation} other {# appels d’outils en formation}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "Reçu jusqu’ici : {arguments} caractères d’arguments{reasoning, select, none {} other {, {reasoning} caractères de raisonnement}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {# d’entre eux est identique à un appel précédent} other {# d’entre eux sont identiques à des appels précédents}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {# d’entre eux est identique à un appel précédent à {tool}} other {# d’entre eux sont identiques à un appel précédent à {tool}}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "Texte écrit à côté des appels ({chars} caractères) — ne fait pas partie de la réponse"
   },
   "goosehintsModal.close": {
     "defaultMessage": "Fermer"
@@ -2642,21 +2678,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose compacte la conversation..."
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars} caractères"
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, one {# appel d’outil en formation} other {# appels d’outils en formation}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "Reçu jusqu’ici : {arguments} caractères d’arguments{reasoning, select, none {} other {, {reasoning} caractères de raisonnement}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "Texte écrit à côté des appels ({chars} caractères) — ne fait pas partie de la réponse"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "Masquer"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "goose y travaille…"
   },
@@ -2665,9 +2686,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "redémarrage de la session..."
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "Afficher ce qui se forme"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose y travaille…"
@@ -8395,57 +8413,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose souhaite appeler {toolName}. Autoriser ?"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "Vérification que {mac} a encore votre réponse…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {goose ne tourne pas sur {mac} — ouvrez goose là-bas, ou exécutez le chat sur ce Mac} other {{mac} ne répond plus depuis {time} — goose y est peut-être fermé, ou il est hors ligne}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac} lit votre prompt ({tokens} jetons) — {elapsed} jusqu’ici"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac} lit votre prompt ({tokens} jetons) — {elapsed} sur environ {expected} à ses {rate} jetons/s mesurés"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac} lit votre prompt ({tokens} jetons) — {percent} %"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac} lit votre prompt ({tokens} jetons)…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "En attente de la reconnexion de {mac}…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "Aucun mot de {mac} depuis un moment — vérification…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "Écrit depuis {elapsed} · {tokens} jetons · {rate} tok/s"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "Écrit depuis {elapsed} · {tokens} jetons"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "vérification de cette discussion…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {un appel à {tool}} other {# appels d’outils, le dernier à {tool}}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {# d’entre eux est identique à un appel précédent} other {# d’entre eux sont identiques à des appels précédents}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {# d’entre eux est identique à un appel précédent à {tool}} other {# d’entre eux sont identiques à un appel précédent à {tool}}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}, {repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "essaim en pause — rien ne tourne tant que vous ne reprenez pas"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose téléchargera la mise à jour en arrière-plan et l'installera lors de votre prochaine fermeture ou redémarrage."

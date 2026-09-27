@@ -1,13 +1,20 @@
 import type { BackgroundWorkKind } from '@aaif/goose-sdk';
-import { mlxActivity, type MlxActivity } from '../components/leanzero-swarm/mlxLiveStats';
+import {
+  mlxActivity,
+  requestActivity,
+  type MlxActivity,
+  type MlxLiveRequest,
+} from '../components/leanzero-swarm/mlxLiveStats';
 import {
   engineFigures,
+  largestPrompt,
   promptProgress,
   type EngineFigure,
   type MeasuredPair,
 } from '../components/leanzero-swarm/engineFigures';
 import type { LoadProgress, MlxModeSummary } from '../components/leanzero-swarm/mlxDistributed';
 import {
+  activityPhase,
   hostingPhase,
   nodePhase,
   remotePhase,
@@ -24,8 +31,8 @@ import { MLX_DISTRIBUTED_STALE_MS, snapshotPhase } from './mlxTray';
 
 /**
  * THE ENGINE GLANCE — the Engine tab's live state tile made small enough to carry everywhere: the
- * sidebar's empty space, a floating card over the window, and a floating mini window on the desktop
- * while goose is in the background.
+ * card at the foot of the sidebar, and a floating mini window on the desktop while goose is in the
+ * background. (The in-app card that floated over the content is deleted, Q-217.)
  *
  * ONE source: main's engine read (utils/mlxEngineMonitor.ts — the loop the menu-bar tray and the
  * composer's "served by" already read, which keeps reading while goose is hidden or minimized) and the
@@ -94,6 +101,12 @@ export interface EngineGlance {
    * for it (`work`, Q-185 — the fact check after the reply is named as that, never as the chat).
    */
   chat: { sessionId: string; name: string; work: BackgroundWorkKind | null } | null;
+  /**
+   * goose's own calls running beside the chat line's work — the fact check, a title, a tool label
+   * (Q-185) — by their kind, each once. They are named, never counted as other clients and never
+   * read as the chat's turn (Q-218).
+   */
+  side: BackgroundWorkKind[];
   /** Everyone else it serves: other clients, and requests from another app. */
   otherClients: number;
   ranges: {
@@ -122,7 +135,10 @@ export type GlanceCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-ri
 
 /** The person's choices, stored in settings.json under `engineGlance`. */
 export interface GlancePrefs {
-  /** The card in the sidebar (and floating over the window when the sidebar has no room). */
+  /**
+   * The card at the foot of the sidebar. false = hidden by the person (the card's hide control, or
+   * Settings › App); the sidebar then offers one row that brings it back (Q-218).
+   */
   inApp: boolean;
   /**
    * The desktop mini window: never; while goose is in the background and something is live
@@ -177,9 +193,14 @@ const BUSY_STAGES: ReadonlySet<GlanceStage> = new Set<GlanceStage>([
   'held',
 ]);
 
-function servingOf(snapshot: MlxEngineSnapshot): Pick<EngineGlance, 'chat' | 'otherClients'> {
+type ServingParts = Pick<EngineGlance, 'chat' | 'side' | 'otherClients'> & {
+  /** The chat line is a chat's own TURN (not goose's call for it): the card leads with it. */
+  turn: boolean;
+};
+
+function servingOf(snapshot: MlxEngineSnapshot): ServingParts {
   const serving = snapshot.serving;
-  if (!serving) return { chat: null, otherClients: 0 };
+  if (!serving) return { chat: null, side: [], otherClients: 0, turn: false };
   const chats = serving.clients.filter((c) => c.kind === 'chat');
   const chatClient = chats.find((c) => c.work == null) ?? chats[0];
   const chat =
@@ -190,10 +211,29 @@ function servingOf(snapshot: MlxEngineSnapshot): Pick<EngineGlance, 'chat' | 'ot
           work: chatClient.work,
         }
       : null;
+  const side: BackgroundWorkKind[] = [];
+  let sideClients = 0;
+  for (const c of serving.clients) {
+    if (c === chatClient || c.kind === 'external' || c.work == null) continue;
+    sideClients += 1;
+    if (!side.includes(c.work)) side.push(c.work);
+  }
   return {
     chat,
-    otherClients: serving.clients.length - (chat ? 1 : 0) + serving.unattributed,
+    side,
+    turn: chat != null && chat.work == null,
+    otherClients: serving.clients.length - (chat ? 1 : 0) - sideClients + serving.unattributed,
   };
+}
+
+/**
+ * The request the card leads with while a chat's turn is on the engine: the largest prompt — the
+ * turn carries the whole conversation (engineFigures.ts `largestPrompt`, the composer's rule). Q-218:
+ * without it the card named the engine's longest-read prompt, a 174-token side call, as "Reading
+ * prompt" beside the chat's own 77k. With no turn on the engine the card speaks for the engine.
+ */
+function leadRequest(requests: readonly MlxLiveRequest[], turn: boolean): MlxLiveRequest | null {
+  return turn ? (largestPrompt(requests) ?? null) : null;
 }
 
 /** The glance of an engine that is up and read: the tile's figures, activity and phase. */
@@ -202,9 +242,10 @@ function liveParts(
   pair: MeasuredPair
 ): Pick<
   EngineGlance,
-  'stage' | 'hero' | 'second' | 'progress' | 'waiting' | 'chat' | 'otherClients'
+  'stage' | 'hero' | 'second' | 'progress' | 'waiting' | 'chat' | 'side' | 'otherClients'
 > & { activity: MlxActivity | null } {
   const stats = snapshot.stats;
+  const { turn, ...named } = servingOf(snapshot);
   if (!stats) {
     return {
       activity: null,
@@ -215,12 +256,13 @@ function liveParts(
       second: null,
       progress: null,
       waiting: null,
-      ...servingOf(snapshot),
+      ...named,
     };
   }
-  const activity = mlxActivity(stats);
-  const { hero, second } = engineFigures(stats, pair);
-  const read = activity === 'prefill' ? promptProgress(stats) : null;
+  const lead = leadRequest(stats.requests, turn);
+  const activity = lead ? requestActivity(lead) : mlxActivity(stats);
+  const { hero, second } = engineFigures(stats, pair, lead);
+  const read = activity === 'prefill' ? promptProgress(stats, lead) : null;
   return {
     activity,
     stage: activity,
@@ -228,7 +270,7 @@ function liveParts(
     second,
     progress: read ? { ...read, unit: 'tokens' } : null,
     waiting: stats.numWaiting ?? stats.requests.filter((r) => r.status === 'waiting').length,
-    ...servingOf(snapshot),
+    ...named,
   };
 }
 
@@ -274,6 +316,7 @@ export function buildEngineGlance(
       waiting: null,
       inflight: null,
       chat: null,
+      side: [],
       otherClients: 0,
       ranges: NO_RANGES,
       nodes: [],
@@ -323,6 +366,7 @@ export function buildEngineGlance(
       waiting: live?.waiting ?? null,
       inflight: live ? null : up ? report.inflight : null,
       chat: live?.chat ?? null,
+      side: live?.side ?? [],
       otherClients: live?.otherClients ?? 0,
       ranges: rangesOf(pair),
       nodes,
@@ -368,6 +412,7 @@ export function buildEngineGlance(
       waiting: live?.waiting ?? null,
       inflight: null,
       chat: live?.chat ?? null,
+      side: live?.side ?? [],
       otherClients: live?.otherClients ?? 0,
       ranges: rangesOf(pair),
       nodes: [],
@@ -390,13 +435,15 @@ export function buildEngineGlance(
     return glance({
       ...base,
       present: true,
-      phase,
+      // The lead request's own colour: reading blue while the turn reads, whatever runs beside it.
+      phase: live.activity ? activityPhase(live.activity) : phase,
       stage: live.stage,
       hero: live.hero,
       second: live.second,
       progress: live.progress,
       waiting: live.waiting,
       chat: live.chat,
+      side: live.side,
       otherClients: live.otherClients,
       detail: single.stats ? null : single.statusDetail,
     });
@@ -419,6 +466,7 @@ export function buildEngineGlance(
     progress: stage === 'loading' ? 'indeterminate' : null,
     waiting: null,
     chat: null,
+    side: [],
     otherClients: 0,
     detail: single.mode === 'failed' ? single.failedError : null,
   });

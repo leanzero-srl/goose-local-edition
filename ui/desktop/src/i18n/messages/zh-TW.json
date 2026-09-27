@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "顯示完整卡片"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "正在寫的內容 · {count, plural, other {# 個工具呼叫}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "隱藏正在寫的內容"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "引擎：{stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "隱藏此卡片 — 可在側邊欄底部或 設定 › 應用程式 中恢復"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# 個請求處理中}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "讀取此提示詞的 tok/s"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "顯示引擎卡片"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "引擎卡片已隱藏。在側邊欄底部重新顯示。"
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, other {# 個工作階段執行中}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "同時進行：{work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac 不在線"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "在側邊欄中"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "顯示在工作階段清單下方的空白處；當引擎在工作且側邊欄沒有空間時，浮在視窗上方。"
+    "defaultMessage": "在側邊欄底部、工作階段清單下方。可直接在卡片上隱藏；之後可透過它留在原處的那一行或在這裡恢復。"
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "引擎一覽"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "連線至在其他位置執行的 goose 伺服器（需要重新啟動應用程式）"
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars} 個字元"
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, other {正在產生 # 個工具呼叫}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "目前已收到：{arguments} 個參數字元{reasoning, select, none {} other {，{reasoning} 個推理字元}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {其中 # 個與先前的呼叫完全相同} other {其中 # 個與先前的呼叫完全相同}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {其中 # 個與先前的 {tool} 呼叫完全相同} other {其中 # 個與先前的 {tool} 呼叫完全相同}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "與呼叫一同寫出的文字（{chars} 個字元）— 不屬於回答"
   },
   "goosehintsModal.close": {
     "defaultMessage": "關閉"
@@ -2642,21 +2678,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose 正在壓縮對話…"
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars} 個字元"
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, other {正在產生 # 個工具呼叫}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "目前已收到：{arguments} 個參數字元{reasoning, select, none {} other {，{reasoning} 個推理字元}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "與呼叫一同寫出的文字（{chars} 個字元）— 不屬於回答"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "隱藏"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "goose 正在處理…"
   },
@@ -2665,9 +2686,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "正在重新啟動工作階段…"
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "顯示正在產生的內容"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose 正在處理…"
@@ -8395,57 +8413,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "Goose 想要呼叫 {toolName}。要允許嗎？"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "正在檢查 {mac} 是否仍保留你的回答…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {{mac} 上的 goose 未在執行 — 請在那邊開啟 goose，或在這台 Mac 上執行聊天} other {{mac} 自 {time} 起沒有回應 — goose 可能已關閉，或它已離線}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac} 正在讀取你的提示（{tokens} 個 token）— 已用 {elapsed}"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac} 正在讀取你的提示（{tokens} 個 token）— 依實測 {rate} tok/s 約需 {expected}，已用 {elapsed}"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac} 正在讀取你的提示（{tokens} 個 token）— {percent}%"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac} 正在讀取你的提示（{tokens} 個 token）…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "正在等待 {mac} 重新連線…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "{mac} 已有一會兒沒有輸出 — 正在檢查…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "已寫 {elapsed} · {tokens} 個 token · {rate} token/秒"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "已寫 {elapsed} · {tokens} 個 token"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "正在檢查此聊天…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {對 {tool} 的一個工具呼叫} other {# 個工具呼叫，最新的是 {tool}}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {其中 # 個與先前的呼叫完全相同} other {其中 # 個與先前的呼叫完全相同}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {其中 # 個與先前的 {tool} 呼叫完全相同} other {其中 # 個與先前的 {tool} 呼叫完全相同}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}，{repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "叢集已暫停 — 在你繼續之前不會執行任何內容"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose 會在背景下載更新，並於您下次結束或重新啟動時安裝。"

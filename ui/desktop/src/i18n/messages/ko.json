@@ -1712,8 +1712,17 @@
   "engineGlance.expand": {
     "defaultMessage": "카드 전체 보기"
   },
+  "engineGlance.forming": {
+    "defaultMessage": "작성 중인 내용 · {count, plural, other {도구 호출 #개}}"
+  },
+  "engineGlance.formingClose": {
+    "defaultMessage": "작성 중인 내용 숨기기"
+  },
   "engineGlance.groupLabel": {
     "defaultMessage": "엔진: {stage}"
+  },
+  "engineGlance.hide": {
+    "defaultMessage": "이 카드 숨기기 — 사이드바 하단이나 설정 › 앱에서 다시 표시"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {요청 #개 처리 중}}"
@@ -1781,8 +1790,17 @@
   "engineGlance.readRate": {
     "defaultMessage": "이 프롬프트를 읽는 tok/s"
   },
+  "engineGlance.restore": {
+    "defaultMessage": "엔진 카드 표시"
+  },
+  "engineGlance.restoreTitle": {
+    "defaultMessage": "엔진 카드가 숨겨져 있습니다. 사이드바 하단에 다시 표시합니다."
+  },
   "engineGlance.sessionsRunning": {
     "defaultMessage": "{count, plural, other {세션 #개 실행 중}}"
+  },
+  "engineGlance.side": {
+    "defaultMessage": "함께 실행 중: {work}"
   },
   "engineGlance.stage.away": {
     "defaultMessage": "Mac 부재"
@@ -1866,7 +1884,7 @@
     "defaultMessage": "사이드바에"
   },
   "engineGlanceSettings.inAppDesc": {
-    "defaultMessage": "세션 목록 아래 빈 공간에 표시하고, 엔진이 일하는데 사이드바에 자리가 없으면 창 위에 띄웁니다."
+    "defaultMessage": "사이드바 하단, 세션 목록 아래에 표시됩니다. 카드에서 바로 숨길 수 있고, 그 자리에 남는 줄이나 여기에서 다시 표시할 수 있습니다."
   },
   "engineGlanceSettings.title": {
     "defaultMessage": "엔진 한눈에 보기"
@@ -2173,6 +2191,24 @@
   },
   "externalBackendSection.useExternalServerDescription": {
     "defaultMessage": "다른 곳에서 실행 중인 goose 서버에 연결합니다. 앱을 다시 시작해야 합니다."
+  },
+  "formingPanel.callChars": {
+    "defaultMessage": "{chars}자"
+  },
+  "formingPanel.callsHeading": {
+    "defaultMessage": "{count, plural, other {작성 중인 도구 호출 #개}}"
+  },
+  "formingPanel.received": {
+    "defaultMessage": "지금까지 받음: 인수 {arguments}자{reasoning, select, none {} other {, 추론 {reasoning}자}}"
+  },
+  "formingPanel.repeatsOfMany": {
+    "defaultMessage": "{count, plural, one {그중 #개는 이전 호출과 동일} other {그중 #개는 이전 호출들과 동일}}"
+  },
+  "formingPanel.repeatsOfOne": {
+    "defaultMessage": "{count, plural, one {그중 #개는 이전 {tool} 호출과 동일} other {그중 #개는 이전 {tool} 호출과 동일}}"
+  },
+  "formingPanel.textHeading": {
+    "defaultMessage": "호출 옆에 작성된 텍스트 ({chars}자) — 답변에 포함되지 않음"
   },
   "goosehintsModal.close": {
     "defaultMessage": "닫기"
@@ -2642,21 +2678,6 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose가 대화를 압축하고 있습니다..."
   },
-  "loadingGoose.formingCallChars": {
-    "defaultMessage": "{chars}자"
-  },
-  "loadingGoose.formingCallsHeading": {
-    "defaultMessage": "{count, plural, other {작성 중인 도구 호출 #개}}"
-  },
-  "loadingGoose.formingReceived": {
-    "defaultMessage": "지금까지 받음: 인수 {arguments}자{reasoning, select, none {} other {, 추론 {reasoning}자}}"
-  },
-  "loadingGoose.formingTextHeading": {
-    "defaultMessage": "호출 옆에 작성된 텍스트 ({chars}자) — 답변에 포함되지 않음"
-  },
-  "loadingGoose.hideForming": {
-    "defaultMessage": "숨기기"
-  },
   "loadingGoose.idle": {
     "defaultMessage": "goose가 작업 중…"
   },
@@ -2665,9 +2686,6 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "세션 다시 시작 중..."
-  },
-  "loadingGoose.showForming": {
-    "defaultMessage": "작성 중인 내용 보기"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose가 작업 중…"
@@ -8395,57 +8413,6 @@
   },
   "toolConfirmation.gooseWouldLikeToCallWithName": {
     "defaultMessage": "goose가 {toolName}을 호출하려고 합니다. 허용하시겠습니까?"
-  },
-  "turnCue.checking": {
-    "defaultMessage": "{mac}에 아직 답변이 있는지 확인하는 중…"
-  },
-  "turnCue.gone": {
-    "defaultMessage": "{because, select, quit {{mac}의 goose가 실행 중이 아닙니다 — 그곳에서 goose를 열거나 이 Mac에서 채팅을 실행하세요} other {{mac}이(가) {time} 이후 응답하지 않습니다 — goose가 닫혔거나 오프라인일 수 있습니다}}"
-  },
-  "turnCue.readingElapsed": {
-    "defaultMessage": "{mac}이(가) 프롬프트를 읽는 중 ({tokens} 토큰) — 지금까지 {elapsed}"
-  },
-  "turnCue.readingEta": {
-    "defaultMessage": "{mac}이(가) 프롬프트를 읽는 중 ({tokens} 토큰) — 측정된 {rate} tok/s 기준 약 {expected} 중 {elapsed}"
-  },
-  "turnCue.readingPercent": {
-    "defaultMessage": "{mac}이(가) 프롬프트를 읽는 중 ({tokens} 토큰) — {percent}%"
-  },
-  "turnCue.readingPlain": {
-    "defaultMessage": "{mac}이(가) 프롬프트를 읽는 중 ({tokens} 토큰)…"
-  },
-  "turnCue.reconnecting": {
-    "defaultMessage": "{mac}이(가) 다시 연결되기를 기다리는 중…"
-  },
-  "turnCue.silent": {
-    "defaultMessage": "잠시 {mac}에서 출력이 없습니다 — 확인 중…"
-  },
-  "turnCue.writing": {
-    "defaultMessage": "{elapsed} 동안 작성 중 · 토큰 {tokens}개 · {rate} 토큰/초"
-  },
-  "turnCue.writingNoRate": {
-    "defaultMessage": "{elapsed} 동안 작성 중 · 토큰 {tokens}개"
-  },
-  "turnLine.checking": {
-    "defaultMessage": "이 채팅을 확인하는 중…"
-  },
-  "turnLine.formingCalls": {
-    "defaultMessage": "{count, plural, one {{tool} 도구 호출 1개} other {도구 호출 #개, 최근 호출은 {tool}}}"
-  },
-  "turnLine.formingRepeatsOfMany": {
-    "defaultMessage": "{count, plural, one {그중 #개는 이전 호출과 동일} other {그중 #개는 이전 호출들과 동일}}"
-  },
-  "turnLine.formingRepeatsOfOne": {
-    "defaultMessage": "{count, plural, one {그중 #개는 이전 {tool} 호출과 동일} other {그중 #개는 이전 {tool} 호출과 동일}}"
-  },
-  "turnLine.formingWithRepeats": {
-    "defaultMessage": "{calls}, {repeats}"
-  },
-  "turnLine.swarmHeld": {
-    "defaultMessage": "스웜 일시 중지됨 — 다시 시작할 때까지 아무것도 실행되지 않음"
-  },
-  "turnLine.withForming": {
-    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "업데이트는 백그라운드에서 자동으로 다운로드됩니다."

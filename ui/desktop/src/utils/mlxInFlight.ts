@@ -1,5 +1,6 @@
 import type { BackgroundWorkKind } from '@aaif/goose-sdk';
 import { compactTokens, formatElapsed } from '../components/leanzero-swarm/mlxLiveStats';
+import { largestPrompt } from '../components/leanzero-swarm/engineFigures';
 import type { MlxEngineSnapshot } from './mlxEngineMonitor';
 import type { MlxClient } from './mlxServing';
 import type { MlxTrayAction } from './mlxTray';
@@ -23,7 +24,10 @@ export interface InFlightWork {
   requests: number;
   /** Whose work it is, as goose listed it — empty when goose's list could not name it. */
   clients: MlxClient[];
-  /** The request longest in flight: its engine-measured seconds, and the tokens it has written. */
+  /**
+   * The request a person waits on — the largest prompt (engineFigures.ts `largestPrompt`, Q-218: a
+   * side call beside the turn is never the work a stop names): its seconds and the tokens it wrote.
+   */
   elapsedS: number | null;
   tokens: number;
   /** It has not written a token yet: reading its prompt, or waiting for a slot. */
@@ -41,7 +45,7 @@ export function inFlightWork(snapshot: MlxEngineSnapshot | null | undefined): In
   if (!snapshot || snapshot.mode !== 'running' || !snapshot.stats) return null;
   const requests = snapshot.stats.requests;
   if (requests.length === 0) return null;
-  const lead = [...requests].sort((a, b) => (b.elapsedS ?? 0) - (a.elapsedS ?? 0))[0];
+  const lead = largestPrompt(requests) ?? requests[0];
   const contexts = requests
     .filter((r) => r.promptTokens != null)
     .map((r) => (r.promptTokens ?? 0) + r.completionTokens);

@@ -293,14 +293,14 @@ test.describe('Goose App', () => {
 
           // Wait for loading indicator to appear and then disappear
           console.log('Waiting for response...');
-          await mainWindow.waitForSelector('[data-testid="loading-indicator"]', {
+          await mainWindow.waitForSelector('[data-testid="chat-input-card"]:not([data-chat-state="idle"])', {
             state: 'visible',
             timeout: 5000
           });
           console.log('Loading indicator appeared');
 
-          await mainWindow.waitForSelector('[data-testid="loading-indicator"]', {
-            state: 'hidden',
+          await mainWindow.waitForSelector('[data-testid="chat-input-card"][data-chat-state="idle"]', {
+            state: 'visible',
             timeout: 30000
           });
           console.log('Loading indicator disappeared');
@@ -331,8 +331,8 @@ test.describe('Goose App', () => {
           await chatInput.press('Enter');
 
           // Wait for loading indicator and response
-          await mainWindow.waitForSelector('[data-testid="loading-indicator"]',
-            { state: 'hidden', timeout: 30000 });
+          await mainWindow.waitForSelector('[data-testid="chat-input-card"][data-chat-state="idle"]',
+            { state: 'visible', timeout: 30000 });
 
           // Get the latest response
           const response = await mainWindow.locator('[data-testid="message-container"]').last();

@@ -47,31 +47,42 @@ export function snoozeAfter(snoozed: boolean, push: GlancePush): boolean {
   return snoozed && glanceLive(push);
 }
 
-export type InAppPlacement = 'hidden' | 'dock' | 'float';
+/**
+ * The card at the foot of the sidebar: shown whenever there is something to show (idle included —
+ * the quiet grey card) and the person has not hidden it. It takes its own place in the sidebar's
+ * column (NavigationPanel.tsx), so the sessions above it end where it begins (Q-216); there is no
+ * "room" to measure and nothing floats over the content when there is none (Q-217).
+ */
+export function dockShown(push: GlancePush): boolean {
+  return push.prefs.inApp && glanceHasContent(push);
+}
 
-export interface InAppFacts {
-  navExpanded: boolean;
-  /** The sidebar's trees leave room below them for the docked card. */
-  dockRoom: boolean;
+/** The card is hidden by the person and would have something to show: offer it back (Q-218). */
+export function dockRestorable(push: GlancePush): boolean {
+  return !push.prefs.inApp && glanceHasContent(push);
+}
+
+export interface GooseWindowFacts {
+  visible: boolean;
+  minimized: boolean;
 }
 
 /**
- * The sidebar's empty space when it has room (idle included — a quiet grey line); a floating card
- * over the window only while something is LIVE (an idle engine never covers content).
+ * goose is the app in front — the fact the "while goose is in the background" desktop window hangs
+ * on. macOS: goose is the ACTIVE app and one of its windows is on screen (neither hidden nor
+ * minimized). Not "a goose window holds focus": while goose's own open-folder panel or an app menu
+ * is up, no BrowserWindow is focused although goose is plainly in front, and the old rule floated the
+ * desktop card over goose itself. Elsewhere there is no app-active event; a focused goose window is
+ * the fact.
  */
-export function inAppPlacement(push: GlancePush, facts: InAppFacts): InAppPlacement {
-  if (!push.prefs.inApp || !glanceHasContent(push)) return 'hidden';
-  if (facts.navExpanded && facts.dockRoom) return 'dock';
-  return glanceLive(push) ? 'float' : 'hidden';
-}
-
-/**
- * Whether the docked card fits: the trees' own height plus the card's must fit the column. The card
- * already docked frees its own height back when it is measured, so a card that fits stays (and one
- * that does not, floats) without flapping at the boundary.
- */
-export function dockFits(column: number, trees: number, card: number): boolean {
-  return card > 0 && trees + card <= column;
+export function gooseInFront(
+  platform: string,
+  appActive: boolean,
+  focusedWindow: boolean,
+  windows: readonly GooseWindowFacts[]
+): boolean {
+  if (platform !== 'darwin') return focusedWindow;
+  return appActive && windows.some((w) => w.visible && !w.minimized);
 }
 
 export interface Rect {

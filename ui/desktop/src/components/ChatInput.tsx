@@ -38,7 +38,6 @@ import { fetchSwarmPoolContextLimit } from './swarm/swarmContextLimit';
 import { MLX_PROVIDER_ID } from './settings/models/leanzeroSelectorPolicy';
 import { ComposerReadinessStrip } from './noNodeNotice/ComposerReadiness';
 import { useChatServedBy } from './chatServedBy/useChatServedBy';
-import type { ChatServedBy } from './chatServedBy/chatServedBy';
 import {
   heldContextLimit,
   nextMeasuredPrompt,
@@ -219,11 +218,6 @@ interface ChatInputProps {
   latestInference?: Message['metadata']['inference'] | null;
   nextChatExtensionDraft?: NextChatExtensionDraft;
   onNextChatExtensionDraftChange?: (draft: NextChatExtensionDraft) => void;
-  /**
-   * Where this chat is served, each time the one derivation changes (useChatServedBy lives here);
-   * the chat's status line reads its turn cues from it (chatServedBy/turnStatus.ts).
-   */
-  onServedChange?: (served: ChatServedBy) => void;
 }
 
 export default function ChatInput({
@@ -259,7 +253,6 @@ export default function ChatInput({
   latestInference,
   nextChatExtensionDraft,
   onNextChatExtensionDraftChange,
-  onServedChange,
 }: ChatInputProps) {
   const [_value, setValue] = useState(initialValue);
   const [displayValue, setDisplayValue] = useState(initialValue); // For immediate visual feedback
@@ -340,9 +333,6 @@ export default function ChatInput({
   const chatServing = useChatServedBy(effectiveProvider, sessionId, isLoading && !checkingSession);
   const servedRef = useRef(chatServing.served);
   servedRef.current = chatServing.served;
-  useEffect(() => {
-    onServedChange?.(chatServing.served);
-  }, [chatServing.served, onServedChange]);
   const [agentWizardOpen, setAgentWizardOpen] = useState(false);
 
   // Clear override when the underlying data catches up (session props for

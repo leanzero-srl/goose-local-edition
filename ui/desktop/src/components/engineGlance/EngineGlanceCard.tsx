@@ -1,8 +1,19 @@
-import type { PointerEventHandler, ReactNode } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEventHandler,
+  type ReactNode,
+  type RefObject,
+} from 'react';
+import { createPortal } from 'react-dom';
+import type { FormingStatus } from '@aaif/goose-sdk';
 import {
   BookOpen,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
+  EyeOff,
   Hand,
   Hourglass,
   Loader2,
@@ -18,23 +29,25 @@ import {
 } from 'lucide-react';
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
-import { FOCUS, MOTION, PHASE_FILL, RADIUS, TNUM, TONE_FILL, WEIGHT, cx } from '../lz';
+import { FOCUS, LAYER, MOTION, PHASE_FILL, RADIUS, TNUM, TONE_FILL, WEIGHT, cx } from '../lz';
 import type { EngineFigure } from '../leanzero-swarm/engineFigures';
 import { formatMlxMode, formatRemoteMode } from '../leanzero-swarm/mlxModeLabel';
 import { formatElapsed, formatRate } from '../leanzero-swarm/mlxLiveStats';
 import type { EngineGlance, GlancePush, GlanceStage } from '../../utils/engineGlance';
-import { backgroundWorkFor } from '../sessionActivity/backgroundWorkText';
+import { backgroundWorkFor, backgroundWorkLabel } from '../sessionActivity/backgroundWorkText';
+import { FormingPanel } from '../forming/FormingPanel';
 
 /**
  * The engine glance — the Engine tab's state tile made small. Pure presentation of main's glance
  * (utils/engineGlance.ts): the same solid engine-phase fill, the tile's figures in fewer words, the
- * chat it serves, and what waits on the person. It leads with what is happening and how fast;
- * the rate ranges and each Mac's memory sit behind "More".
+ * chat it serves, goose's own calls beside it, and what waits on the person. It leads with what is
+ * happening and how fast; the rate ranges and each Mac's memory sit behind "More".
  *
  * The whole card opens the Engine tab (one stretched button under the content); the chat line
- * opens that chat; the small controls sit above it. Three sizes: `dock` (the sidebar's empty
- * space), `float` (over the window when the sidebar has no room) and `desktop` (the floating mini
- * window) — and each collapses to a pill: the stage and its one figure.
+ * opens that chat; the small controls sit above it. Two sizes: `dock` (the foot of the sidebar —
+ * it hides from its own control, and lists what the chat's turn is forming behind "What it's
+ * writing") and `desktop` (the floating mini window, which shrinks to a pill: the stage and its one
+ * figure).
  */
 
 const i18n = defineMessages({
@@ -99,6 +112,16 @@ const i18n = defineMessages({
     id: 'engineGlance.close',
     defaultMessage: 'Hide until the engine is quiet again',
   },
+  hide: {
+    id: 'engineGlance.hide',
+    defaultMessage: 'Hide this card — bring it back from the foot of the sidebar or Settings › App',
+  },
+  side: { id: 'engineGlance.side', defaultMessage: 'Beside it: {work}' },
+  forming: {
+    id: 'engineGlance.forming',
+    defaultMessage: 'What it’s writing · {count, plural, one {# tool call} other {# tool calls}}',
+  },
+  formingClose: { id: 'engineGlance.formingClose', defaultMessage: 'Hide what it’s writing' },
   writeRange: {
     id: 'engineGlance.writeRange',
     defaultMessage: 'Writing {low}–{high} tok/s, middle half of runs',
@@ -413,7 +436,7 @@ function NeedsYouStrip({
   );
 }
 
-export type GlanceVariant = 'dock' | 'float' | 'desktop';
+export type GlanceVariant = 'dock' | 'desktop';
 
 export interface EngineGlanceCardProps {
   push: GlancePush;
@@ -426,7 +449,14 @@ export interface EngineGlanceCardProps {
   onCollapsedChange: (collapsed: boolean) => void;
   /** The desktop window's close: snoozes it for this live spell. Absent = no close control. */
   onClose?: () => void;
-  /** The card is moved by dragging its body (the floating surfaces); a click still opens. */
+  /** The docked card's hide: gone until the person brings it back (Q-218). Absent = no control. */
+  onHide?: () => void;
+  /**
+   * What the served chat's turn is still forming (formingStore.ts) — the docked card lists it
+   * behind "What it's writing" while the chat line is that turn (Q-215). Absent = never offered.
+   */
+  forming?: FormingStatus | null;
+  /** The card is moved by dragging its body (the desktop window); a click still opens. */
   dragHandlers?: {
     onPointerDown: PointerEventHandler<HTMLElement>;
     onPointerMove: PointerEventHandler<HTMLElement>;
@@ -444,14 +474,71 @@ export interface EngineGlanceCardProps {
 
 const WIDTH: Record<GlanceVariant, string> = {
   dock: 'w-full',
-  float: 'w-72',
   desktop: 'w-[300px]',
 };
+
+/** px between the docked card and the forming panel that opens beside it, over the content. */
+const PANEL_GAP_PX = 8;
+/** The panel never grows wider than a reading column, and keeps this much off the window edge. */
+const PANEL_MAX_WIDTH_PX = 560;
+const PANEL_EDGE_PX = 16;
+
+/**
+ * What the turn is forming, opened beside the docked card over the content: the sidebar is too
+ * narrow for call titles and the text beside them, and its frame clips anything that overflows, so
+ * the panel is portalled and placed from the card's own rect (tree.tsx's context menu does the same).
+ */
+function FormingPopover({
+  anchor,
+  forming,
+  onClose,
+}: {
+  anchor: RefObject<HTMLDivElement | null>;
+  forming: FormingStatus;
+  onClose: () => void;
+}) {
+  const [rect, setRect] = useState<{ right: number; bottom: number } | null>(null);
+  useEffect(() => {
+    const place = () => setRect(anchor.current?.getBoundingClientRect() ?? null);
+    place();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('resize', place);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [anchor, onClose]);
+  if (!rect) return null;
+  const left = rect.right + PANEL_GAP_PX;
+  return createPortal(
+    <FormingPanel
+      forming={forming}
+      className={cx('fixed', LAYER.overlay)}
+      style={{
+        left,
+        bottom: window.innerHeight - rect.bottom,
+        width: Math.max(0, Math.min(PANEL_MAX_WIDTH_PX, window.innerWidth - left - PANEL_EDGE_PX)),
+        maxHeight: Math.max(0, rect.bottom - PANEL_EDGE_PX),
+      }}
+    />,
+    document.body
+  );
+}
 
 export function EngineGlanceCard(props: EngineGlanceCardProps) {
   const intl = useIntl();
   const { push, variant, collapsed, expanded } = props;
   const engine = push.engine;
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [formingOpen, setFormingOpen] = useState(false);
+  // Only while the chat line is that chat's TURN: goose's fact check forms nothing of the answer.
+  const forming =
+    engine.chat && engine.chat.work == null && props.forming && props.forming.calls.length > 0
+      ? props.forming
+      : null;
   // No engine to speak of, only a question: the card is the question, in its solid warn fill, and
   // a click opens the chat that asked it.
   const question = engine.present ? null : (push.sessions.needsYou[0] ?? null);
@@ -570,6 +657,7 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
 
   return (
     <div
+      ref={cardRef}
       role="group"
       aria-label={intl.formatMessage(i18n.groupLabel, { stage: word })}
       data-testid="engine-glance"
@@ -635,6 +723,15 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
                 onClick={props.onClose}
               >
                 <X />
+              </Control>
+            )}
+            {props.onHide && (
+              <Control
+                testId="engine-glance-hide"
+                label={intl.formatMessage(i18n.hide)}
+                onClick={props.onHide}
+              >
+                <EyeOff />
               </Control>
             )}
           </span>
@@ -718,6 +815,42 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
             <span className="min-w-0 truncate">{chatText}</span>
           </button>
         )}
+        {forming && (
+          <button
+            type="button"
+            data-testid="engine-glance-forming-toggle"
+            aria-expanded={formingOpen}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setFormingOpen((open) => !open);
+            }}
+            className={cx(
+              'pointer-events-auto flex min-w-0 items-center gap-1 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
+              WEIGHT.semibold,
+              TNUM,
+              RADIUS.control,
+              FOCUS
+            )}
+          >
+            <span className="min-w-0 truncate">
+              {formingOpen
+                ? intl.formatMessage(i18n.formingClose)
+                : intl.formatMessage(i18n.forming, { count: forming.calls.length })}
+            </span>
+            <ChevronRight aria-hidden className={cx(formingOpen && 'rotate-180', MOTION)} />
+          </button>
+        )}
+        {engine.side.length > 0 && (
+          <span data-testid="engine-glance-side" className="break-words text-lz-meta">
+            {intl.formatMessage(i18n.side, {
+              work: intl.formatList(
+                engine.side.map((kind) => backgroundWorkLabel(intl, kind)),
+                { type: 'conjunction' }
+              ),
+            })}
+          </span>
+        )}
         {engine.otherClients > 0 && (
           <span data-testid="engine-glance-others" className={cx('text-lz-meta', TNUM)}>
             {intl.formatMessage(i18n.others, { count: engine.otherClients })}
@@ -726,6 +859,9 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
         {expanded && <Details engine={engine} />}
         {engine.present && <NeedsYouStrip push={push} onOpenSession={props.onOpenSession} />}
       </div>
+      {forming && formingOpen && (
+        <FormingPopover anchor={cardRef} forming={forming} onClose={() => setFormingOpen(false)} />
+      )}
     </div>
   );
 }
