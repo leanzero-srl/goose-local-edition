@@ -2428,8 +2428,21 @@ function MlxEngineViewBody() {
   // Per-model sampling, per Mac: ONLY profiles the user actually edited live here, keyed by Mac and
   // model — two models keep separate unsaved drafts and both survive tab/model/Mac switches.
   const [profileDrafts, setProfileDrafts] = useState<Record<string, NumericDrafts>>({});
-  const [samplingMac, setSamplingMac] = useState<string>(SELF_KEY);
-  const [samplingModelId, setSamplingModelId] = useState<string | null>(null);
+  // The Mac whose profiles the Sampling tab edits: the user's pick, else the Mac whose engine serves
+  // this Mac's chat while a route is up — the profiles that shape the answers (Q-20) — else this Mac.
+  const [pickedSamplingMac, setPickedSamplingMac] = useState<string | null>(null);
+  const routeMac = remote?.peer ? macsCtx.macByKey(remote.peer) : null;
+  const samplingMac =
+    pickedSamplingMac ??
+    (routeMac && routeMac.online && !peerRefuses(routeMac, 'manage') ? routeMac.key : SELF_KEY);
+  // The model is the one picked ON that Mac: when the default Mac changes under a route, the other
+  // Mac's model is never carried over to one that may not hold it.
+  const [samplingPick, setSamplingPick] = useState<{ mac: string; id: string } | null>(null);
+  const samplingModelId = samplingPick?.mac === samplingMac ? samplingPick.id : null;
+  const setSamplingModelId = useCallback(
+    (id: string | null) => setSamplingPick(id == null ? null : { mac: samplingMac, id }),
+    [samplingMac]
+  );
   const [peerSettings, setPeerSettings] = useState<Record<string, MlxEngineSettings>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -2675,7 +2688,13 @@ function MlxEngineViewBody() {
       samplingModels.find((m) => m.complete)?.id ||
       null;
     if (candidate) setSamplingModelId(candidate);
-  }, [samplingModelId, samplingStatus, samplingSettings?.modelId, samplingModels]);
+  }, [
+    samplingModelId,
+    samplingStatus,
+    samplingSettings?.modelId,
+    samplingModels,
+    setSamplingModelId,
+  ]);
 
   const onMount = useCallback(() => {
     if (!mountModelId) return;
@@ -2845,8 +2864,8 @@ function MlxEngineViewBody() {
   }, [samplingSettings, samplingModelId, samplingMac, profileDrafts, saveSettingsOn]);
 
   const openSamplingFor = useCallback((macKey: string, modelId: string) => {
-    setSamplingMac(macKey);
-    setSamplingModelId(modelId);
+    setPickedSamplingMac(macKey);
+    setSamplingPick({ mac: macKey, id: modelId });
     setTab('sampling');
   }, []);
 
@@ -2861,8 +2880,8 @@ function MlxEngineViewBody() {
           options={managed.map((m) => ({ value: m.key, label: m.name }))}
           value={samplingMac}
           onChange={(key) => {
-            setSamplingMac(key);
-            setSamplingModelId(null);
+            setPickedSamplingMac(key);
+            setSamplingPick(null);
           }}
         />
       </div>

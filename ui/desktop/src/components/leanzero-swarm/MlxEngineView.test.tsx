@@ -3244,6 +3244,63 @@ describe('MlxEngineView — the memory under "Serving on <peer>" is the peer’s
     expect(screen.queryByTestId('mlx-details-elsewhere')).toBeNull();
     unmount();
   });
+
+  /**
+   * Q-20: with the Studio serving this Mac's chat, Sampling opened on "Profiles on: Mihai Macbook ·
+   * no model mounted" — the profiles that shape nothing. It opens on the Mac that serves, with its
+   * running model; the user's own pick of a Mac still stands.
+   */
+  it('Q-20: Sampling opens on the Mac that serves chat, with its running model', async () => {
+    withMesh(
+      [
+        peerNode({
+          node_id: STUDIO_ID,
+          hostname: 'WorksMacStudio.lan',
+          computer_name: "Work's Mac Studio",
+        }),
+      ],
+      ME
+    );
+    mockStatus.mockImplementation(async (nodeId?: string) =>
+      nodeId === STUDIO_ID
+        ? statusOf({ state: 'running', modelId: QWEN })
+        : statusOf({ state: 'stopped' })
+    );
+    remoteStore.publish(ROUTE);
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    const on = await screen.findByTestId('mlx-sampling-mac');
+    await waitFor(() =>
+      expect(within(on).getByRole('radio', { name: "Work's Mac Studio" })).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+    );
+    await waitFor(() => expect(mockSettingsRead).toHaveBeenCalledWith(STUDIO_ID));
+
+    await userEvent.click(within(on).getByRole('radio', { name: LAPTOP }));
+    expect(within(on).getByRole('radio', { name: LAPTOP })).toHaveAttribute('aria-checked', 'true');
+    unmount();
+  });
+
+  it('Q-20: with no route up, Sampling opens on this Mac', async () => {
+    withMesh(
+      [
+        peerNode({
+          node_id: STUDIO_ID,
+          hostname: 'WorksMacStudio.lan',
+          computer_name: "Work's Mac Studio",
+        }),
+      ],
+      ME
+    );
+    mockStatus.mockResolvedValue(statusOf({ state: 'running', modelId: QWEN }));
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    const on = await screen.findByTestId('mlx-sampling-mac');
+    expect(within(on).getByRole('radio', { name: LAPTOP })).toHaveAttribute('aria-checked', 'true');
+    unmount();
+  });
 });
 
 /**
