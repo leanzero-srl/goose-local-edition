@@ -134,13 +134,8 @@ import { useCutGuard } from './cutGuard';
 import { macLine, macStateWord, type MacSummary } from './macSummary';
 import { modelRoleOn, useMacSummary } from './useMacSummary';
 import { routeServesChat } from '../chatServedBy/chatServedBy';
-import {
-  PlacementBadge,
-  PlacementCard,
-  badgesOf,
-  usePlacementPlans,
-  type PickerBadge,
-} from './PlacementCard';
+import { PlacementBadge, PlacementCard, badgesOf, type PickerBadge } from './PlacementCard';
+import { usePlacementPlans } from './usePlacementPlans';
 
 // Formatters stay importable from this module — tests and older callers reach them here.
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
@@ -862,6 +857,7 @@ function EngineSection(props: EngineSectionProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Re-planned whenever the model list or what this Mac serves changes: a mount moves every fit.
   const plans = usePlacementPlans(
+    'chat',
     [...models.map((m) => m.id), status?.state ?? '', status?.modelId ?? ''].join('\n')
   );
   const badges = useMemo(() => badgesOf(plans), [plans]);
