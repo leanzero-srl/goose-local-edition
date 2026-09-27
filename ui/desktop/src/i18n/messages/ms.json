@@ -7808,6 +7808,9 @@
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "Gunakan penyedia lain"
   },
+  "systemNotificationInline.check": {
+    "defaultMessage": "semakan goose"
+  },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "Adakah anda ingin berkongsi data penggunaan tanpa nama untuk membantu menambah baik goose? Kami tidak pernah mengumpul perbualan, kod, atau data peribadi anda."
   },

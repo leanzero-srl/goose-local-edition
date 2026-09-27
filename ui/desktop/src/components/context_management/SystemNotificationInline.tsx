@@ -1,14 +1,53 @@
 import React from 'react';
+import { AlertTriangle } from 'lucide-react';
+import { defineMessages, useIntl } from '../../i18n';
+import { Chip, TYPE, cx } from '../lz';
 import type { Message, SystemNotificationContent } from '../../types/message';
+
+const i18n = defineMessages({
+  check: { id: 'systemNotificationInline.check', defaultMessage: 'goose check' },
+});
+
+/** The engine's prefix for a finding about the reply (crates/goose/src/claim_check.rs CHECK_PREFIX). */
+export const CHECK_PREFIX = 'goose check:';
 
 interface SystemNotificationInlineProps {
   notification: SystemNotificationContent;
 }
 
+/**
+ * goose's own line in the transcript. Read as body copy (ink-2), never the faded 12px grey it was
+ * (Q-173). A goose check — the reply contradicting itself or the turn's tool results — leads with a
+ * SOLID warning chip, so a finding never reads like a quiet status line.
+ */
 export const SystemNotificationInline: React.FC<SystemNotificationInlineProps> = ({
   notification,
 }) => {
-  return <div className="text-xs text-gray-400 py-2 text-left">{notification.msg}</div>;
+  const intl = useIntl();
+  const msg = notification.msg;
+  if (msg.startsWith(CHECK_PREFIX)) {
+    return (
+      <div
+        data-testid="system-notification-check"
+        className="flex items-start gap-2 py-2 text-left"
+      >
+        <Chip tone="warn" icon={<AlertTriangle />} className="mt-px">
+          {intl.formatMessage(i18n.check)}
+        </Chip>
+        <span className={cx(TYPE.body, 'min-w-0 whitespace-pre-wrap')}>
+          {msg.slice(CHECK_PREFIX.length).trim()}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div
+      data-testid="system-notification-inline"
+      className={cx(TYPE.bodyMuted, 'whitespace-pre-wrap py-2 text-left')}
+    >
+      {msg}
+    </div>
+  );
 };
 
 export function getInlineSystemNotification(

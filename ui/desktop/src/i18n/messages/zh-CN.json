@@ -7808,6 +7808,9 @@
   "switchModelModal.useOtherProvider": {
     "defaultMessage": "使用其他提供商"
   },
+  "systemNotificationInline.check": {
+    "defaultMessage": "goose 检查"
+  },
   "telemetryConsentPrompt.description": {
     "defaultMessage": "是否愿意分享匿名使用数据帮助改进 goose？我们绝不采集你的对话、代码或个人数据。"
   },
