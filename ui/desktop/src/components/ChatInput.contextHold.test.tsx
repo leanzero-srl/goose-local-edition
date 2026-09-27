@@ -53,7 +53,10 @@ vi.mock('./alerts', () => ({
   useAlerts: () => ({ alerts: [], addAlert: vi.fn(), clearAlerts: vi.fn() }),
   AlertType: { Error: 'error', Warning: 'warning', Info: 'info' },
 }));
-vi.mock('./ui/Diagnostics', () => ({ DiagnosticsModal: () => null }));
+vi.mock('./ui/Diagnostics', async (original) => ({
+  ...(await original<typeof import('./ui/Diagnostics')>()),
+  DiagnosticsModal: () => null,
+}));
 vi.mock('./swarm/usePersona', () => ({
   usePersona: () => ({ persona: 'coding', setPersona: vi.fn() }),
 }));

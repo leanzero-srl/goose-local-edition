@@ -1506,7 +1506,7 @@
     "defaultMessage": "Opening..."
   },
   "diagnosticsModal.reportProblem": {
-    "defaultMessage": "Report a Problem"
+    "defaultMessage": "Report a problem"
   },
   "diagnosticsModal.sensitiveWarning": {
     "defaultMessage": "If your session contains sensitive information, do not share the diagnostics file publicly."

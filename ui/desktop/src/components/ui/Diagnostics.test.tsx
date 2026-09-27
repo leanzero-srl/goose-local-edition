@@ -23,7 +23,7 @@ describe('Report a problem — a real dialog (Q-21)', () => {
     const onClose = vi.fn();
     mount(onClose);
     const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveAccessibleName('Report a Problem');
+    expect(dialog).toHaveAccessibleName('Report a problem');
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
   });

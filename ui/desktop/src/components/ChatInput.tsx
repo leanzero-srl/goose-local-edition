@@ -25,7 +25,7 @@ import { DroppedFile, useFileDrop } from '../hooks/useFileDrop';
 import { Recipe } from '../recipe';
 import { MessageQueue, QueuedMessage } from './MessageQueue';
 import { detectInterruption } from '../utils/interruptionDetector';
-import { DiagnosticsModal } from './ui/Diagnostics';
+import { DiagnosticsModal, reportProblemMessage } from './ui/Diagnostics';
 import type { Message } from '../types/message';
 import { getInitialWorkingDir } from '../utils/workingDir';
 import { getPredefinedModelsFromEnv } from './settings/models/predefinedModelsUtils';
@@ -1875,7 +1875,7 @@ export default function ChatInput({
               />
             )}
 
-            {/* Right: diagnostics */}
+            {/* Right: report a problem — the button, its tooltip and the dialog share one name (Q-9) */}
             {sessionId && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1883,7 +1883,7 @@ export default function ChatInput({
                     variant="ghost"
                     size="sm"
                     className="w-7"
-                    aria-label="Generate diagnostics bundle"
+                    aria-label={intl.formatMessage(reportProblemMessage)}
                     onClick={() => {
                       trackDiagnosticsOpened();
                       setDiagnosticsOpen(true);
@@ -1891,7 +1891,7 @@ export default function ChatInput({
                     icon={<Bug />}
                   />
                 </TooltipTrigger>
-                <TooltipContent>Generate diagnostics bundle</TooltipContent>
+                <TooltipContent>{intl.formatMessage(reportProblemMessage)}</TooltipContent>
               </Tooltip>
             )}
 

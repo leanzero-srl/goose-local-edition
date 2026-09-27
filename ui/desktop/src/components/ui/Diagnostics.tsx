@@ -10,7 +10,7 @@ import { LEANZERO_ISSUES_NEW_URL } from '../../branding';
 const i18n = defineMessages({
   reportProblem: {
     id: 'diagnosticsModal.reportProblem',
-    defaultMessage: 'Report a Problem',
+    defaultMessage: 'Report a problem',
   },
   description: {
     id: 'diagnosticsModal.description',
@@ -79,6 +79,12 @@ const i18n = defineMessages({
     defaultMessage: 'Failed to get system information',
   },
 });
+
+/**
+ * The action's ONE name (Q-9): the composer's button, its tooltip and this dialog's title all read
+ * it, so the bug icon can no longer say "Generate diagnostics bundle" and open "Report a Problem".
+ */
+export const reportProblemMessage = i18n.reportProblem;
 
 interface DiagnosticsModalProps {
   isOpen: boolean;
