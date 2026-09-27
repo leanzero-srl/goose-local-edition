@@ -5,8 +5,8 @@
 use crate::config::paths::Paths;
 use crate::skills::{
     build_skill_md, discover_skills, infer_skill_name, is_global_skill_dir,
-    parse_skill_frontmatter, resolve_discoverable_skill_dir, resolve_skill_dir, scan_skills,
-    skill_base_dir, validate_skill_name, UnreadableSkill,
+    parse_skill_frontmatter, resolve_listed_skill_dir, scan_skills, skill_base_dir,
+    validate_skill_name, UnreadableSkill,
 };
 use crate::source_roots::SourceRoot;
 use agent_client_protocol::Error;
@@ -853,7 +853,10 @@ pub fn update_source_with_roots(
         SourceType::Skill => {
             validate_skill_name(name)?;
 
-            let dir = resolve_discoverable_skill_dir(path)?;
+            let dir = resolve_listed_skill_dir(
+                path,
+                requested_working_dir(options.project_dir).as_deref(),
+            )?;
             let current_dir_name = dir
                 .file_name()
                 .and_then(|value| value.to_str())
@@ -951,7 +954,8 @@ pub fn delete_source_with_roots(
 
     match source_type {
         SourceType::Skill => {
-            let dir = resolve_skill_dir(path)?;
+            let dir =
+                resolve_listed_skill_dir(path, requested_working_dir(project_dir).as_deref())?;
             fs::remove_dir_all(&dir).map_err(|e| {
                 Error::internal_error().data(format!("Failed to delete source: {e}"))
             })?;
@@ -1000,10 +1004,7 @@ pub fn list_sources_with_roots(
     for kind in kinds {
         match kind {
             SourceType::Skill => {
-                let working_dir = project_dir
-                    .map(str::trim)
-                    .filter(|p| !p.is_empty())
-                    .map(PathBuf::from);
+                let working_dir = requested_working_dir(project_dir);
                 let scan = scan_skills(working_dir.as_deref());
                 sources.extend(
                     scan.skills
@@ -1123,7 +1124,8 @@ pub fn export_source_with_roots(
 ) -> Result<(String, String), Error> {
     match source_type {
         SourceType::Skill => {
-            let dir = resolve_discoverable_skill_dir(path)?;
+            let dir =
+                resolve_listed_skill_dir(path, requested_working_dir(project_dir).as_deref())?;
 
             let md = dir.join("SKILL.md");
             let raw = fs::read_to_string(&md).map_err(|e| {
@@ -1449,7 +1451,7 @@ mod tests {
             "step three",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
-                project_dir: None,
+                project_dir: Some(project),
                 additional_roots: &[],
             },
         )
@@ -1457,7 +1459,8 @@ mod tests {
         assert_eq!(updated.description, "now does a different thing");
         assert_eq!(updated.name, "my-skill");
 
-        delete_source(SourceType::Skill, created.path.as_str()).unwrap();
+        delete_source_with_roots(SourceType::Skill, created.path.as_str(), Some(project), &[])
+            .unwrap();
         assert!(!dir.exists());
     }
 
@@ -1524,8 +1527,13 @@ mod tests {
         .unwrap();
 
         let portable_dir = project_a.join(".agents").join("skills").join("portable");
-        let (json, filename) =
-            export_source(SourceType::Skill, portable_dir.to_str().unwrap()).unwrap();
+        let (json, filename) = export_source_with_roots(
+            SourceType::Skill,
+            portable_dir.to_str().unwrap(),
+            project_a.to_str(),
+            &[],
+        )
+        .unwrap();
         assert_eq!(filename, "portable.skill.json");
 
         let imported = import_sources(&json, false, Some(project_b.to_str().unwrap())).unwrap();
@@ -1563,8 +1571,13 @@ mod tests {
             .find(|skill| skill.name == "portable")
             .expect("expected listed skill");
 
-        let (json, filename) =
-            export_source(SourceType::Skill, exported_skill.path.as_str()).unwrap();
+        let (json, filename) = export_source_with_roots(
+            SourceType::Skill,
+            exported_skill.path.as_str(),
+            project.to_str(),
+            &[],
+        )
+        .unwrap();
         assert_eq!(filename, "portable.skill.json");
         assert!(json.contains("\"name\": \"portable\""));
     }
@@ -1594,7 +1607,7 @@ mod tests {
             "updated body",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
-                project_dir: None,
+                project_dir: project.to_str(),
                 additional_roots: &[],
             },
         )
@@ -1844,7 +1857,7 @@ mod tests {
             "new body",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
-                project_dir: None,
+                project_dir: Some(project),
                 additional_roots: &[],
             },
         )
@@ -2022,7 +2035,13 @@ mod tests {
         assert!(matching[0].path.contains(".agents/skills"));
         assert_eq!(matching[0].description, "preferred");
 
-        let exported = export_source(SourceType::Skill, matching[0].path.as_str()).unwrap();
+        let exported = export_source_with_roots(
+            SourceType::Skill,
+            matching[0].path.as_str(),
+            tmp.path().to_str(),
+            &[],
+        )
+        .unwrap();
         assert!(exported.0.contains("preferred"));
     }
 
@@ -2091,12 +2110,15 @@ mod tests {
             "new content",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
-                project_dir: None,
+                project_dir: project.to_str(),
                 additional_roots: &[],
             },
         )
         .unwrap_err();
-        assert!(format!("{:?}", err).contains("not found"));
+        assert!(
+            format!("{:?}", err).contains("outside the skill folders goose lists"),
+            "{err:?}"
+        );
     }
 
     /// Q-197: global agents are listed, created and path-checked under `<GOOSE_PATH_ROOT>` — goose's
@@ -2210,6 +2232,77 @@ mod tests {
         assert_eq!(update(&global, None).unwrap().name, "renamed");
         export_source_with_roots(SourceType::Agent, &local, project_dir, &[]).unwrap();
         delete_source_with_roots(SourceType::Agent, &local, project_dir, &[]).unwrap();
+        assert!(!Path::new(&local).exists());
+    }
+
+    /// Q-221: a skill update, delete or export touches only a folder the skills listing offers for the
+    /// same request. An explicit path into an `.agents/skills` folder the request does not list — the
+    /// owner's home under an isolated root is the case — is refused BY NAME and left on disk.
+    #[test]
+    fn skill_mutations_touch_only_what_the_listing_offers() {
+        let root = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let elsewhere = TempDir::new().unwrap();
+        let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
+        let write_skill = |skills: &Path, name: &str| {
+            let dir = skills.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("SKILL.md"),
+                build_skill_md(name, "d", "body", &HashMap::new()),
+            )
+            .unwrap();
+            dir.to_string_lossy().to_string()
+        };
+        let stray = write_skill(&elsewhere.path().join(".agents").join("skills"), "stray");
+        let global = write_skill(&root.path().join(".agents").join("skills"), "q221-global");
+        let local = write_skill(&project.path().join(".agents").join("skills"), "q221-local");
+        let project_dir = project.path().to_str();
+
+        let refused = |err: Error| {
+            let text = format!("{err:?}");
+            assert!(
+                text.contains("outside the skill folders goose lists"),
+                "{text}"
+            );
+        };
+        let update = |path: &str, name: &str, project_dir: Option<&str>| {
+            update_source_with_roots(
+                SourceType::Skill,
+                path,
+                name,
+                "d",
+                "new body",
+                UpdateSourceOptions {
+                    properties: None,
+                    project_dir,
+                    additional_roots: &[],
+                },
+            )
+        };
+
+        for project_dir in [None, project_dir] {
+            refused(update(&stray, "stray", project_dir).unwrap_err());
+            refused(
+                delete_source_with_roots(SourceType::Skill, &stray, project_dir, &[]).unwrap_err(),
+            );
+            refused(
+                export_source_with_roots(SourceType::Skill, &stray, project_dir, &[]).unwrap_err(),
+            );
+        }
+        let stray_md = Path::new(&stray).join("SKILL.md");
+        assert!(std::fs::read_to_string(&stray_md).unwrap().contains("body"));
+        assert!(!std::fs::read_to_string(&stray_md)
+            .unwrap()
+            .contains("new body"));
+
+        refused(delete_source_with_roots(SourceType::Skill, &local, None, &[]).unwrap_err());
+        assert_eq!(
+            update(&global, "q221-global", None).unwrap().content,
+            "new body"
+        );
+        export_source_with_roots(SourceType::Skill, &local, project_dir, &[]).unwrap();
+        delete_source_with_roots(SourceType::Skill, &local, project_dir, &[]).unwrap();
         assert!(!Path::new(&local).exists());
     }
 }

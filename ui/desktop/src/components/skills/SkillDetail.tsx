@@ -82,6 +82,7 @@ function PersonaEditor({
           name: entry.name,
           description: entry.description,
           content: recomposePersona(base, notes),
+          projectDir,
         });
         setConflict(null);
         onSaved(updated);
@@ -182,6 +183,7 @@ function BodyEditor({
           name: entry.name,
           description: entry.description,
           content: body,
+          projectDir,
         });
         setConflict(null);
         onSaved(updated);
@@ -383,7 +385,7 @@ export function SkillDetail({
   const doDelete = async () => {
     setDeleting(true);
     try {
-      await deleteSkillSource(entry.path);
+      await deleteSkillSource(entry.path, projectDir);
       setConfirmDelete(false);
       onDeleted();
     } catch (e) {

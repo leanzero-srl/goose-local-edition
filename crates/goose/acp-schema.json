@@ -5374,7 +5374,7 @@
             "string",
             "null"
           ],
-          "description": "The project folder the client listed the source under (`sources/list`'s `projectDir`). An\nagent is touched only when it lies in a folder that listing offers — global agent folders,\nthis project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the\nglobal and extra folders (Q-213)."
+          "description": "The project folder the client listed the source under (`sources/list`'s `projectDir`). A\nskill or agent is touched only when it lies in a folder that listing offers — the global\nfolders, this project's `.agents|.goose|.claude/{skills,agents}`, installed plugins' skills,\nthe server's extra agent roots; omitted, only the global ones (Q-213 agents, Q-221 skills)."
         }
       },
       "required": [
@@ -5415,7 +5415,7 @@
             "string",
             "null"
           ],
-          "description": "The project folder the client listed the source under (`sources/list`'s `projectDir`). An\nagent is touched only when it lies in a folder that listing offers — global agent folders,\nthis project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the\nglobal and extra folders (Q-213)."
+          "description": "The project folder the client listed the source under (`sources/list`'s `projectDir`). A\nskill or agent is touched only when it lies in a folder that listing offers — the global\nfolders, this project's `.agents|.goose|.claude/{skills,agents}`, installed plugins' skills,\nthe server's extra agent roots; omitted, only the global ones (Q-213 agents, Q-221 skills)."
         }
       },
       "required": [
@@ -5440,7 +5440,7 @@
             "string",
             "null"
           ],
-          "description": "The project folder the client listed the source under (`sources/list`'s `projectDir`). An\nagent is touched only when it lies in a folder that listing offers — global agent folders,\nthis project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the\nglobal and extra folders (Q-213)."
+          "description": "The project folder the client listed the source under (`sources/list`'s `projectDir`). A\nskill or agent is touched only when it lies in a folder that listing offers — the global\nfolders, this project's `.agents|.goose|.claude/{skills,agents}`, installed plugins' skills,\nthe server's extra agent roots; omitted, only the global ones (Q-213 agents, Q-221 skills)."
         }
       },
       "required": [
