@@ -573,7 +573,7 @@ describe('Add node — the MLX pane says what the product does (Q-130)', () => {
     render();
     const pane = await openMlxPane();
     expect(await screen.findByTestId('add-node-only-this-mac')).toHaveTextContent(
-      'Only this Mac is linked — your other Macs appear here once they join LeanZero Link (Providers › My Macs).'
+      'Only this Mac is linked — your other Macs appear here once they join LeanZero Link (LeanZero MLX › My Macs).'
     );
     await userEvent.click(pane.getAllByRole('combobox')[0]);
     const opts = await screen.findAllByRole('option');

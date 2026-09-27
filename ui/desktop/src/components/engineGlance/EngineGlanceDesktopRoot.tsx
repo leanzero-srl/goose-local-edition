@@ -12,6 +12,10 @@ import { useGlanceDrag } from './useGlanceDrag';
 export function EngineGlanceDesktopRoot() {
   const push = useEngineGlance();
   const [expanded, setExpanded] = useState(false);
+  // The one-time hint (Q-224), decided by the first glance this window reads: main marks it seen the
+  // moment it first shows the window, and that must not take it off the screen it is showing on.
+  const [hint, setHint] = useState<boolean | null>(null);
+  if (push != null && hint === null) setHint(!push.prefs.desktopHintSeen);
   const root = useRef<HTMLDivElement>(null);
   const { dragHandlers, consumeDrag } = useGlanceDrag({
     onStart: (screenX, screenY) => glancePipAction({ type: 'drag-start', screenX, screenY }),
@@ -54,7 +58,13 @@ export function EngineGlanceDesktopRoot() {
         onOpenSession={(sessionId) => glancePipAction({ type: 'open-session', sessionId })}
         onToggleExpanded={() => setExpanded((v) => !v)}
         onCollapsedChange={(collapsed) => glancePipAction({ type: 'collapse', collapsed })}
-        onClose={() => glancePipAction({ type: 'close' })}
+        hideChoices={{
+          onHideForNow: () => glancePipAction({ type: 'close' }),
+          onTurnOff: () => glancePipAction({ type: 'turn-off' }),
+        }}
+        corner={push.prefs.desktopPlace?.corner}
+        turnOffHint={hint === true}
+        onDismissHint={() => setHint(false)}
         dragHandlers={dragHandlers}
         consumeDrag={consumeDrag}
       />

@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link tidak dapat menamakan Mac ini ({error}) — nod dicipta untuk Mac ini; namakan di bawah."
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "Hanya Mac ini yang dipautkan — Mac anda yang lain muncul di sini sebaik sahaja ia menyertai LeanZero Link (Penyedia › Mac Saya)."
+    "defaultMessage": "Hanya Mac ini yang dipautkan — Mac anda yang lain muncul di sini sebaik sahaja ia menyertai LeanZero Link (LeanZero MLX › Mac Saya)."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Pilih Mac…"
@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Sembang · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Sembunyikan sehingga enjin tenang semula"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Kecilkan menjadi pil"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Sembunyikan kad ini — kembalikan dari bahagian bawah bar sisi atau Tetapan › Aplikasi"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Sembunyikan atau matikan tetingkap terapung"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Sembunyikan buat masa ini"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Kembali apabila enjin bekerja semula"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Anda boleh mematikan ini dari sini"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Faham"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# permintaan sedang berjalan}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Tidak dikemas kini"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Matikan tetingkap terapung"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Hidupkan semula dalam Tetapan › Aplikasi"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Tetingkap terapung dimatikan"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Hidupkan semula dalam Tetapan › Aplikasi."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Sesi tanpa tajuk"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Mati"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Tetingkap kecil di atas aplikasi lain, di sudut yang anda seret. Ia tidak pernah mengambil fokus, dan menutupnya menyembunyikannya sehingga enjin tenang semula."
+    "defaultMessage": "Tetingkap kecil di atas aplikasi lain, di sudut yang anda seret. Ia tidak pernah mengambil fokus. Butang tutupnya menyembunyikannya sehingga enjin bekerja semula, atau mematikannya."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Di bar sisi"
@@ -3993,7 +4017,7 @@
     "defaultMessage": "Mac yang lain"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "Hidupkan “Benarkan Mac saya yang lain menggunakan Mac ini › Menjalankan sebahagian model terbahagi” pada {name} (Penyedia › Mac Saya di sana)."
+    "defaultMessage": "Hidupkan “Benarkan Mac saya yang lain menggunakan Mac ini › Menjalankan sebahagian model terbahagi” pada {name} (LeanZero MLX › Mac Saya di sana)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "goose-nya tidak boleh berkhidmat"
@@ -5222,6 +5246,12 @@
   "myMacs.account": {
     "defaultMessage": "Akaun"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "Log masuk ke LeanZero Link dengan akaun yang sama pada Mac anda yang lain. Ia muncul di sini, dan anda boleh menjalankan model yang terlalu besar untuk satu Mac merentas kedua-duanya."
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "Tambah Mac lain"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "“Memuatkan dan memuat turun model” berkuat kuasa apabila Mac ini bersambung semula ke LeanZero Link."
   },
@@ -5294,14 +5324,26 @@
   "myMacs.models": {
     "defaultMessage": "Model"
   },
-  "myMacs.none": {
-    "defaultMessage": "Belum ada Mac lain dalam akaun LeanZero Link anda — log masuk padanya untuk melihatnya di sini."
+  "myMacs.nodeLoading": {
+    "defaultMessage": "Memuatkan"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "Melayan"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Nod pada Mac anda tidak dapat dibaca: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {Nod pada Mac ini} other {Nod pada {name}}}"
   },
   "myMacs.off": {
     "defaultMessage": "mati"
   },
   "myMacs.on": {
     "defaultMessage": "hidup"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "Buka {name} di halaman Nod"
   },
   "myMacs.reconnect": {
     "defaultMessage": "Sambung semula sekarang"
@@ -5501,11 +5543,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "sedang disajikan"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "Nod · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "Nod mana yang melayan tidak diketahui: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "Buka {name} di halaman Nod"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Urus penyedia awan"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Urus Mac dan model"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "Gagal"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "Enjin LeanZero MLX gagal — kad enjin menyatakan sebabnya"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "Memuatkan"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "Enjin LeanZero MLX sedang memuatkan model"
   },
   "nodes.sections": {
     "defaultMessage": "Bahagian nod"

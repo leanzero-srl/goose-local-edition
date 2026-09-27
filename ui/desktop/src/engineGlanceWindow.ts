@@ -140,8 +140,8 @@ export function createGlanceWindowPort(options: GlanceWindowOptions): GlanceWind
     displayMatching(rect: Rectangle) {
       return displayOf(screen.getDisplayMatching(rect));
     },
-    primaryDisplay() {
-      return displayOf(screen.getPrimaryDisplay());
+    cursorPoint() {
+      return screen.getCursorScreenPoint();
     },
   };
 }

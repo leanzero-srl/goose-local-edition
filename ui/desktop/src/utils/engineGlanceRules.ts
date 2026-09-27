@@ -7,8 +7,9 @@ import type { GlanceCorner, GlancePush } from './engineGlance';
  * What the research said about floating status (macOS Picture in Picture, Spotify's miniplayer,
  * Discord/OBS overlays), and what these rules do about it:
  *  - an always-on-top window people did not ask for is the #1 complaint → the desktop window appears
- *    only while something is LIVE, and by default only while goose is in the background (the sidebar
- *    card already shows it when goose is in front);
+ *    only while something is LIVE, and by default only while no goose window is on screen (the
+ *    sidebar card already shows it wherever goose can be seen — Q-226: "not the active app" put it
+ *    over goose's own window on a second display);
  *  - it covers what you are working on → it sits in a screen corner, collapses to a pill, and closing
  *    it snoozes it for the rest of this busy spell (the next spell brings it back; Settings turns it
  *    off for good);
@@ -30,8 +31,8 @@ export function glanceHasContent(push: GlancePush): boolean {
 }
 
 export interface DesktopFacts {
-  /** A goose window (not the glance) is focused: goose is the app in front. */
-  appInFront: boolean;
+  /** A goose window (not the glance) can be seen somewhere on a screen (`gooseOnScreen`). */
+  gooseOnScreen: boolean;
   /** The person closed the desktop window during this live spell. */
   snoozed: boolean;
 }
@@ -39,7 +40,7 @@ export interface DesktopFacts {
 export function desktopGlanceVisible(push: GlancePush, facts: DesktopFacts): boolean {
   const mode = push.prefs.desktop;
   if (mode === 'off' || facts.snoozed || !glanceLive(push)) return false;
-  return mode === 'busy' || !facts.appInFront;
+  return mode === 'busy' || !facts.gooseOnScreen;
 }
 
 /** A close snoozes the window until the live spell ends; the next spell shows it again. */
@@ -63,26 +64,30 @@ export function dockRestorable(push: GlancePush): boolean {
 }
 
 export interface GooseWindowFacts {
-  visible: boolean;
-  minimized: boolean;
+  /**
+   * Some of it can be seen: shown, not minimized, and — macOS — not wholly covered by other windows
+   * nor on a Space that is not showing. main reads the last from the window's occlusion, which
+   * Electron reports as the window's 'hide' / 'show' events while `isVisible()` stays true
+   * (measured on Electron 41, Q-226: fully covered, another app full screen over it, minimized →
+   * 'hide'; uncovered, restored → 'show'; half covered, or visible on one display while another app
+   * is focused on another → no event, still on screen).
+   */
+  onScreen: boolean;
+  focused: boolean;
+  bounds: Rect;
 }
 
 /**
- * goose is the app in front — the fact the "while goose is in the background" desktop window hangs
- * on. macOS: goose is the ACTIVE app and one of its windows is on screen (neither hidden nor
- * minimized). Not "a goose window holds focus": while goose's own open-folder panel or an app menu
- * is up, no BrowserWindow is focused although goose is plainly in front, and the old rule floated the
- * desktop card over goose itself. Elsewhere there is no app-active event; a focused goose window is
- * the fact.
+ * goose can be seen — what the "while goose is in the background" desktop window hangs on (Q-226).
+ * macOS: any goose window has some part on screen. Not "goose is the active app": with several
+ * displays goose is often in plain view while another app has focus, and the card then floated over
+ * goose's own window, duplicating the sidebar card beside it. Not "a goose window is focused"
+ * either: goose's own open-folder panel or a menu leaves none focused (Q-217). Elsewhere the
+ * occlusion is not reported; a focused goose window is the fact, as before.
  */
-export function gooseInFront(
-  platform: string,
-  appActive: boolean,
-  focusedWindow: boolean,
-  windows: readonly GooseWindowFacts[]
-): boolean {
-  if (platform !== 'darwin') return focusedWindow;
-  return appActive && windows.some((w) => w.visible && !w.minimized);
+export function gooseOnScreen(platform: string, windows: readonly GooseWindowFacts[]): boolean {
+  if (platform !== 'darwin') return windows.some((w) => w.focused);
+  return windows.some((w) => w.onScreen);
 }
 
 export interface Rect {
@@ -122,4 +127,95 @@ export function cornerBounds(
     width: Math.round(width),
     height: Math.round(height),
   };
+}
+
+export interface GlanceDisplay {
+  id: number;
+  workArea: Rect;
+}
+
+function intersects(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+function distanceTo(p: { x: number; y: number }, r: Rect): number {
+  const dx = Math.max(r.x - p.x, 0, p.x - (r.x + r.width));
+  const dy = Math.max(r.y - p.y, 0, p.y - (r.y + r.height));
+  return Math.hypot(dx, dy);
+}
+
+/** The display a point is on (or, past every work area — a menu bar, a Dock — the nearest one). */
+function displayAt(displays: readonly GlanceDisplay[], p: { x: number; y: number }): GlanceDisplay {
+  return displays.reduce((best, d) =>
+    distanceTo(p, d.workArea) < distanceTo(p, best.workArea) ? d : best
+  );
+}
+
+/**
+ * The display the person is working on: the focused goose window's, else the pointer's. With goose
+ * out of sight the focused window is another app's, which Electron cannot see — the pointer is
+ * where the person is.
+ */
+export function workingDisplay(
+  displays: readonly GlanceDisplay[],
+  windows: readonly GooseWindowFacts[],
+  cursor: { x: number; y: number }
+): GlanceDisplay {
+  const focused = windows.find((w) => w.focused && w.onScreen);
+  if (focused) {
+    const b = focused.bounds;
+    return displayAt(displays, { x: b.x + b.width / 2, y: b.y + b.height / 2 });
+  }
+  return displayAt(displays, cursor);
+}
+
+const CORNERS: readonly GlanceCorner[] = ['bottom-right', 'top-right', 'bottom-left', 'top-left'];
+
+export interface GlancePlacement {
+  displayId: number;
+  corner: GlanceCorner;
+  bounds: Rect;
+}
+
+/**
+ * Where the desktop window shows (Q-226): on the display the person is working on, in the corner
+ * they last dropped it in (the one remembered place, applied to whichever display it shows on) —
+ * and NEVER over a goose window that can be seen. A corner that would cover one gives way to the
+ * next corner, then to the other displays (the remembered one first); with every spot over goose,
+ * null: it does not show. With goose out of sight (the default mode's only case) the first choice
+ * always stands.
+ */
+export function placeGlance(input: {
+  displays: readonly GlanceDisplay[];
+  working: GlanceDisplay;
+  remembered: { displayId: number; corner: GlanceCorner } | null;
+  defaultCorner: GlanceCorner;
+  windows: readonly GooseWindowFacts[];
+  size: { width: number; height: number };
+  margin: number;
+}): GlancePlacement | null {
+  const first = input.remembered?.corner ?? input.defaultCorner;
+  const corners = [first, ...CORNERS.filter((c) => c !== first)];
+  const remembered = input.displays.find((d) => d.id === input.remembered?.displayId);
+  const others = input.displays.filter((d) => d.id !== input.working.id && d !== remembered);
+  const order = [
+    input.working,
+    ...(remembered && remembered.id !== input.working.id ? [remembered] : []),
+    ...others,
+  ];
+  const seen = input.windows.filter((w) => w.onScreen).map((w) => w.bounds);
+  for (const display of order) {
+    for (const corner of corners) {
+      const bounds = cornerBounds(corner, input.size, display.workArea, input.margin);
+      if (!seen.some((w) => intersects(w, bounds))) {
+        return { displayId: display.id, corner, bounds };
+      }
+    }
+  }
+  return null;
+}
+
+/** Still clear of every goose window that can be seen — else it must move (or go). */
+export function clearOfGoose(bounds: Rect, windows: readonly GooseWindowFacts[]): boolean {
+  return !windows.some((w) => w.onScreen && intersects(w.bounds, bounds));
 }

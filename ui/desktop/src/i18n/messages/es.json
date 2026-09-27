@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link no pudo nombrar este Mac ({error}) — el nodo se crea para este Mac; ponle nombre abajo."
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "Solo este Mac está vinculado — tus otros Macs aparecen aquí cuando se unen a LeanZero Link (Proveedores › Mis Macs)."
+    "defaultMessage": "Solo este Mac está vinculado — tus otros Macs aparecen aquí cuando se unen a LeanZero Link (LeanZero MLX › Mis Macs)."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Elige un Mac…"
@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Ocultar hasta que el motor esté en calma"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Reducir a una píldora"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Ocultar esta tarjeta — recupérala al pie de la barra lateral o en Ajustes › App"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Ocultar o desactivar la ventana flotante"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Ocultar por ahora"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Vuelve la próxima vez que el motor trabaje"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Puedes desactivar esto desde aquí"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Entendido"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# solicitud en curso} other {# solicitudes en curso}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Sin actualizar"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Desactivar la ventana flotante"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Vuelve a activarla en Ajustes › App"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Ventana flotante desactivada"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Vuelve a activarla en Ajustes › App."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Sesión sin título"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Apagado"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Una ventana pequeña sobre tus otras apps, en la esquina a la que la arrastres. Nunca toma el foco, y al cerrarla se oculta hasta que el motor esté en calma."
+    "defaultMessage": "Una ventana pequeña sobre tus otras apps, en la esquina a la que la arrastres. Nunca toma el foco. Su botón de cerrar la oculta hasta que el motor vuelva a trabajar, o la desactiva."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "En la barra lateral"
@@ -3993,7 +4017,7 @@
     "defaultMessage": "El otro Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "Activa «Permitir que mis otros Macs usen este Mac › Ejecutar parte de un modelo dividido» en {name} (Proveedores › Mis Macs allí)."
+    "defaultMessage": "Activa «Permitir que mis otros Macs usen este Mac › Ejecutar parte de un modelo dividido» en {name} (LeanZero MLX › Mis Macs allí)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "Su goose no puede servir"
@@ -5222,6 +5246,12 @@
   "myMacs.account": {
     "defaultMessage": "Cuenta"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "Inicia sesión en LeanZero Link con la misma cuenta en tu otro Mac. Aparecerá aquí y podrás ejecutar entre ambos modelos demasiado grandes para un solo Mac."
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "Añadir otro Mac"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "«Cargar y descargar modelos» se aplica cuando este Mac se vuelve a conectar a LeanZero Link."
   },
@@ -5294,14 +5324,26 @@
   "myMacs.models": {
     "defaultMessage": "Modelos"
   },
-  "myMacs.none": {
-    "defaultMessage": "Aún no hay otro Mac en tu cuenta de LeanZero Link — inicia sesión en él para verlo aquí."
+  "myMacs.nodeLoading": {
+    "defaultMessage": "Cargando"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "Sirviendo"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "No se pudieron leer los nodos de tus Macs: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {Nodos en este Mac} other {Nodos en {name}}}"
   },
   "myMacs.off": {
     "defaultMessage": "desactivado"
   },
   "myMacs.on": {
     "defaultMessage": "activado"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "Abrir {name} en la página Nodos"
   },
   "myMacs.reconnect": {
     "defaultMessage": "Reconectar ahora"
@@ -5501,11 +5543,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "sirviendo ahora"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "Nodo · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "No se sabe qué nodo atiende: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "Abrir {name} en la página Nodos"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Gestionar proveedores en la nube"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Gestionar Macs y modelos"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "Falló"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "El motor LeanZero MLX falló — la tarjeta del motor dice por qué"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "Cargando"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "El motor LeanZero MLX está cargando un modelo"
   },
   "nodes.sections": {
     "defaultMessage": "Secciones de nodos"

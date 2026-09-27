@@ -25,7 +25,7 @@ const i18n = defineMessages({
   servingOff: {
     id: 'mlxDistributedSetup.link.servingOffMyMacs',
     defaultMessage:
-      'Turn on “Let my other Macs use this Mac › Run part of a split model” on {name} (Providers › My Macs there).',
+      'Turn on “Let my other Macs use this Mac › Run part of a split model” on {name} (LeanZero MLX › My Macs there).',
   },
   stateReady: { id: 'mlxDistributedSetup.link.state.ready', defaultMessage: 'Ready' },
   stateServingDisabled: {

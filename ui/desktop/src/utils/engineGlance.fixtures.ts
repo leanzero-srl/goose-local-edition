@@ -106,7 +106,7 @@ export function glancePush(
   prefs: Partial<GlancePrefs> = {}
 ): GlancePush {
   return {
-    engine: buildEngineGlance(snapshot, { distributed: null, remote: null, ...options }),
+    engine: buildEngineGlance(snapshot, { distributed: null, remote: null, served: [], ...options }),
     sessions,
     prefs: { ...DEFAULT_GLANCE_PREFS, ...prefs },
   };

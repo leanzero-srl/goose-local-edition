@@ -1151,7 +1151,7 @@ describe('DistributedEngineSection — LeanZero Link finds the other Mac and run
     expect(ready).not.toHaveTextContent('GiB available');
     expect(off).toHaveAttribute('data-state', 'servingDisabled');
     expect(off).toHaveTextContent(
-      'Turn on “Let my other Macs use this Mac › Run part of a split model” on mini (Providers › My Macs there).'
+      'Turn on “Let my other Macs use this Mac › Run part of a split model” on mini (LeanZero MLX › My Macs there).'
     );
     expect(within(off).queryByRole('button', { name: 'Detect with this Mac' })).toBeNull();
     await expectDesigned(container);

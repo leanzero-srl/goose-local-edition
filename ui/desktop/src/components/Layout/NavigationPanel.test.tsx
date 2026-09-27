@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup as cleanupNav, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { IntlProvider } from 'react-intl';
 import { Navigation } from './NavigationPanel';
 import { SURFACE, TYPE } from '../lz';
 import { allClasses, assertStudioClean } from '../lz/assertStudioClean';
 import { missingUtilities } from '../lz/compileStudioCss';
+import { resetEngineGlanceForTests } from '../engineGlance/glanceStore';
+import { glancePush, runningSnapshot } from '../../utils/engineGlance.fixtures';
+import { INITIAL_SNAPSHOT } from '../../utils/mlxEngineMonitor';
+import { GENERATING_STATUS } from '../leanzero-swarm/mlxLiveStatus.fixtures';
 
 /**
  * The sidebar shell in the Studio register (ui/desktop/DESIGN.md): a brand block, 36px nav rows
@@ -21,6 +25,7 @@ vi.mock('./NavigationContext', () => ({
 }));
 
 afterEach(() => {
+  resetEngineGlanceForTests(null);
   navMock.expanded = true;
   gateMock.isLocal = true;
   gateMock.mlxEngine = true;
@@ -224,4 +229,49 @@ describe('NavigationPanel (Studio shell)', () => {
     expect(classes.length).toBeGreaterThan(20);
     expect(await missingUtilities(classes)).toEqual([]);
   }, 30_000);
+});
+
+describe('the Nodes row’s chip (design §5.1, §8.1): Loading or Failed from the engine glance', () => {
+  const nodesRow = () =>
+    within(screen.getByRole('navigation', { name: 'Primary' })).getByRole('button', {
+      name: /^Nodes/,
+    });
+
+  it('Loading, in the load phase’s solid amber, while the glance shows a load', async () => {
+    resetEngineGlanceForTests(glancePush({ ...INITIAL_SNAPSHOT, mode: 'mounting' }));
+    renderNav();
+    const chip = within(nodesRow()).getByTestId('nav-nodes-chip');
+    expect(chip.dataset.state).toBe('loading');
+    expect(chip.textContent).toContain('Loading');
+    expect(chip.className).toContain('bg-lz-phase-loading');
+    expect(chip.getAttribute('title')).toBe('The LeanZero MLX engine is loading a model');
+    assertStudioClean(chip);
+    expect(await missingUtilities([...chip.classList])).toEqual([]);
+  }, 30_000);
+
+  it('Failed, in the failed red, while the glance shows the engine failed', () => {
+    resetEngineGlanceForTests(
+      glancePush({ ...INITIAL_SNAPSHOT, mode: 'failed', failedError: 'out of memory' })
+    );
+    renderNav();
+    const chip = within(nodesRow()).getByTestId('nav-nodes-chip');
+    expect(chip.dataset.state).toBe('failed');
+    expect(chip.textContent).toContain('Failed');
+    expect(chip.className).toContain('bg-lz-phase-failed');
+  });
+
+  it('nothing while the engine simply works, or before any glance — no permanent count', () => {
+    renderNav();
+    expect(screen.queryByTestId('nav-nodes-chip')).toBeNull();
+    cleanupNav();
+    resetEngineGlanceForTests(glancePush(runningSnapshot(GENERATING_STATUS)));
+    renderNav();
+    expect(screen.queryByTestId('nav-nodes-chip')).toBeNull();
+  });
+
+  it('only the Nodes row carries it', () => {
+    resetEngineGlanceForTests(glancePush({ ...INITIAL_SNAPSHOT, mode: 'mounting' }));
+    renderNav();
+    expect(screen.getAllByTestId('nav-nodes-chip')).toHaveLength(1);
+  });
 });

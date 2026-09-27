@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link 无法获取这台 Mac 的名称({error}) — 节点将为这台 Mac 创建;请在下方命名。"
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "只有这台 Mac 已关联 — 你的其他 Mac 加入 LeanZero Link 后会显示在这里(提供商 › 我的 Mac)。"
+    "defaultMessage": "只有这台 Mac 已关联 — 你的其他 Mac 加入 LeanZero Link 后会显示在这里(LeanZero MLX › 我的 Mac)。"
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "选择一台 Mac…"
@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "聊天 · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "隐藏，直到引擎再次空闲"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "缩成胶囊"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "隐藏此卡片 — 可在侧边栏底部或 设置 › 应用 中恢复"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "隐藏或关闭悬浮窗口"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "暂时隐藏"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "下次引擎工作时再出现"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "你可以在这里关闭它"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "知道了"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# 个请求处理中}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "未刷新"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "关闭悬浮窗口"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "可在 设置 › 应用 中重新开启"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "悬浮窗口已关闭"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "可在 设置 › 应用 中重新开启。"
+  },
   "engineGlance.untitled": {
     "defaultMessage": "未命名会话"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "关闭"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "一个浮在其他应用上方的小窗口，停在你拖到的角落。它从不抢占焦点，关闭后会隐藏到引擎再次空闲。"
+    "defaultMessage": "一个浮在其他应用上方的小窗口，停在你拖到的角落。它从不抢占焦点。它的关闭按钮可以将其隐藏到引擎再次工作，或将其关闭。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "在侧边栏中"
@@ -3993,7 +4017,7 @@
     "defaultMessage": "另一台 Mac"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "请在 {name} 上打开“允许我的其他 Mac 使用这台 Mac › 运行拆分模型的一部分”（在那台 Mac 的提供商 › 我的 Mac）。"
+    "defaultMessage": "请在 {name} 上打开“允许我的其他 Mac 使用这台 Mac › 运行拆分模型的一部分”（在那台 Mac 的LeanZero MLX › 我的 Mac）。"
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "它的 goose 无法提供服务"
@@ -5222,6 +5246,12 @@
   "myMacs.account": {
     "defaultMessage": "账户"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "在你的另一台 Mac 上用同一账户登录 LeanZero Link。它会出现在这里，你就能跨两台 Mac 运行一台装不下的模型。"
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "添加另一台 Mac"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "“加载和下载模型”会在这台 Mac 重新连接 LeanZero Link 后生效。"
   },
@@ -5294,14 +5324,26 @@
   "myMacs.models": {
     "defaultMessage": "模型"
   },
-  "myMacs.none": {
-    "defaultMessage": "你的 LeanZero Link 账户中还没有其他 Mac — 在那台 Mac 上登录后即可在这里看到。"
+  "myMacs.nodeLoading": {
+    "defaultMessage": "加载中"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "服务中"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "无法读取你 Mac 上的节点：{reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {这台 Mac 上的节点} other {{name} 上的节点}}"
   },
   "myMacs.off": {
     "defaultMessage": "关"
   },
   "myMacs.on": {
     "defaultMessage": "开"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "在节点页面打开 {name}"
   },
   "myMacs.reconnect": {
     "defaultMessage": "立即重新连接"
@@ -5501,11 +5543,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "正在提供"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "节点 · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "不知道是哪个节点在服务：{error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "在节点页面打开 {name}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "管理云端提供方"
   },
   "nodes.manageMacs": {
     "defaultMessage": "管理 Mac 和模型"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "失败"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "LeanZero MLX 引擎失败 — 引擎卡片上写着原因"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "加载中"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "LeanZero MLX 引擎正在加载模型"
   },
   "nodes.sections": {
     "defaultMessage": "节点分区"
