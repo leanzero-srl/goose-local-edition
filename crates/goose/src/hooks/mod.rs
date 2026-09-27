@@ -786,8 +786,8 @@ mod tests {
     }
 
     #[cfg(not(windows))]
-    #[tokio::test]
-    async fn command_hooks_repair_path_when_enabled() {
+    #[test]
+    fn command_hooks_repair_path_when_enabled() {
         let tmp = tempfile::tempdir().unwrap();
         let login_bin = tmp.path().join("login-bin");
         std::fs::create_dir(&login_bin).unwrap();
@@ -821,22 +821,43 @@ mod tests {
             assert!(warmed.status.success(), "warm exec of {}", path.display());
         }
 
+        // GOOSE_SHELL and PATH go to a child process, never this one: set here they would reach
+        // every shell spawn running beside this test, and once `tmp` is deleted a sibling's spawn
+        // execs a fake shell that no longer exists (Q-163).
         let fake_shell = fake_shell.to_string_lossy().into_owned();
         let fake_login_path = format!("{}:/usr/bin:/bin", login_bin.display());
-        let _guard = env_lock::lock_env([
-            ("GOOSE_SHELL", Some(fake_shell.as_str())),
-            ("FAKE_LOGIN_PATH", Some(fake_login_path.as_str())),
-            (
-                "PATH",
-                Some(
+        let hook_root = tmp.path().to_string_lossy().into_owned();
+        crate::test_env_child::run_ignored_test_in_child(
+            &crate::test_env_child::test_name(
+                module_path!(),
+                "command_hook_with_login_path_in_a_child_env",
+            ),
+            &[
+                ("GOOSE_SHELL", fake_shell.as_str()),
+                ("FAKE_LOGIN_PATH", fake_login_path.as_str()),
+                (
+                    "PATH",
                     "/Applications/Goose.app/Contents/Resources/bin:/usr/bin:/bin:/usr/sbin:/sbin",
                 ),
-            ),
-        ]);
+                (CHILD_HOOK_ROOT_ENV, hook_root.as_str()),
+            ],
+            &[],
+        );
+    }
 
+    #[cfg(not(windows))]
+    const CHILD_HOOK_ROOT_ENV: &str = "GOOSE_TEST_CHILD_HOOK_ROOT";
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    #[ignore = "runs only as the child of command_hooks_repair_path_when_enabled, which sets its environment"]
+    async fn command_hook_with_login_path_in_a_child_env() {
+        let hook_root = std::env::var(CHILD_HOOK_ROOT_ENV).expect(
+            "started by command_hooks_repair_path_when_enabled, which names the plugin root",
+        );
         let output = run_command_hook(
             "hook-visible-tool",
-            tmp.path(),
+            Path::new(&hook_root),
             "{}",
             Duration::from_secs(DEFAULT_HOOK_TIMEOUT_SECS),
             true,

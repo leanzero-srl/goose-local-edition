@@ -325,7 +325,11 @@ mod tests {
             None,
         );
 
-        assert!(!result.is_error.unwrap_or(false));
+        assert!(
+            !result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         assert_eq!(extract_text(&result), "line1\nline2\nline3");
     }
 
@@ -345,7 +349,11 @@ mod tests {
             None,
         );
 
-        assert!(!result.is_error.unwrap_or(false));
+        assert!(
+            !result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         assert_eq!(extract_text(&result), "line2\n");
     }
 
@@ -360,7 +368,11 @@ mod tests {
             content: "Hello, world!\nLine 2".to_string(),
         });
 
-        assert!(!result.is_error.unwrap_or(false));
+        assert!(
+            !result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         assert!(path.exists());
         assert_eq!(fs::read_to_string(&path).unwrap(), "Hello, world!\nLine 2");
     }
@@ -377,7 +389,11 @@ mod tests {
             content: "new content".to_string(),
         });
 
-        assert!(!result.is_error.unwrap_or(false));
+        assert!(
+            !result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "new content");
     }
 
@@ -392,7 +408,11 @@ mod tests {
             content: "nested".to_string(),
         });
 
-        assert!(!result.is_error.unwrap_or(false));
+        assert!(
+            !result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         assert!(path.exists());
     }
 
@@ -409,7 +429,11 @@ mod tests {
             after: "println!(\"world\");".to_string(),
         });
 
-        assert!(!result.is_error.unwrap_or(false));
+        assert!(
+            !result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("println!(\"world\");"));
         assert!(!content.contains("println!(\"hello\");"));
@@ -428,7 +452,11 @@ mod tests {
             after: "replacement".to_string(),
         });
 
-        assert!(result.is_error.unwrap_or(false));
+        assert!(
+            result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         let text = extract_text(&result);
         assert!(text.contains("No match found"));
         assert!(text.contains("File preview:"));
@@ -448,7 +476,11 @@ mod tests {
             after: "qux".to_string(),
         });
 
-        assert!(result.is_error.unwrap_or(false));
+        assert!(
+            result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "foo\nbar\nfoo\nbaz");
     }
 
@@ -465,7 +497,11 @@ mod tests {
             after: "".to_string(),
         });
 
-        assert!(!result.is_error.unwrap_or(false));
+        assert!(
+            !result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "keep\nkeep");
     }
 
@@ -482,7 +518,11 @@ mod tests {
             Some(dir.path()),
         );
 
-        assert!(!result.is_error.unwrap_or(false));
+        assert!(
+            !result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         assert_eq!(
             fs::read_to_string(dir.path().join("relative.txt")).unwrap(),
             "relative write"
@@ -504,7 +544,11 @@ mod tests {
             Some(dir.path()),
         );
 
-        assert!(!result.is_error.unwrap_or(false));
+        assert!(
+            !result.is_error.unwrap_or(false),
+            "{}",
+            extract_text(&result)
+        );
         assert_eq!(
             fs::read_to_string(dir.path().join("relative-edit.txt")).unwrap(),
             "after"
