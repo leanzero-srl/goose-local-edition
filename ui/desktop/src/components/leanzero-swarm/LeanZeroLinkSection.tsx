@@ -57,6 +57,26 @@ const CODE_LENGTH = 6;
 /** Consecutive failed status() polls (≈3s each) before the connected view flags staleness. */
 const STALE_POLL_THRESHOLD = 3;
 
+/**
+ * Every supervisor-restart failure reason starts with this (manager.rs `DaemonFault::cause`,
+ * documented on `ReconnectState::Failed`); no launch-reconnect reason does.
+ */
+const SUPERVISOR_REASON_HEAD = "LeanZero Link's mesh daemon";
+
+/**
+ * A failed reconnect in words. The launch reconnect's reason names only why it failed, so it gets
+ * the context; the supervisor's reason already says what happened to the daemon, and the launch
+ * context ("was on when this app last ran") would be false for it.
+ */
+function reconnectFailedCopy(reason: string): { label: string; text: string } {
+  return reason.startsWith(SUPERVISOR_REASON_HEAD)
+    ? { label: 'Restart failed', text: reason }
+    : {
+        label: 'Reconnect failed',
+        text: `The mesh was on when this app last ran and did not come back: ${reason}`,
+      };
+}
+
 function emailOf(auth: AuthState): string {
   return 'email' in auth ? auth.email : '';
 }
@@ -355,7 +375,10 @@ function ConnectCard({
 }) {
   const reconnectFailed = reconnect?.state === 'failed' ? reconnect : null;
   const meshLine = reconnectFailed
-    ? { tone: 'err' as Tone, text: 'reconnect failed' }
+    ? {
+        tone: 'err' as Tone,
+        text: reconnectFailedCopy(reconnectFailed.reason).label.toLowerCase(),
+      }
     : stayingOff
       ? { tone: 'stopped' as Tone, text: 'disconnected · stays off until you connect' }
       : { tone: 'stopped' as Tone, text: 'not connected' };
@@ -392,8 +415,7 @@ function ConnectCard({
           {reconnectFailed && (
             <ToneBanner
               tone="err"
-              label="Reconnect failed"
-              text={`The mesh was on when this app last ran and did not come back: ${reconnectFailed.reason}`}
+              {...reconnectFailedCopy(reconnectFailed.reason)}
               testId="link-reconnect-failed"
             />
           )}

@@ -667,6 +667,23 @@ describe('LeanZeroLinkSection — the persisted intent and the launch reconnect'
     expect(screen.queryByTestId('link-reconnect-cause')).not.toBeInTheDocument();
   });
 
+  it('Q-37: a supervisor restart that failed shows its own reason, not the launch-reconnect prefix', async () => {
+    const reason =
+      "LeanZero Link's mesh daemon stopped (exit status: 1), and the automatic restart failed: mesh join failed";
+    currentState = {
+      ...LOGGED_IN,
+      intent: CONNECTED_INTENT,
+      lastError: reason,
+      reconnect: { state: 'failed', reason, at: '2026-09-25T10:00:05Z' },
+    };
+    render();
+    const banner = await screen.findByTestId('link-reconnect-failed');
+    expect(banner).toHaveTextContent(reason);
+    expect(banner).not.toHaveTextContent(/did not come back/);
+    expect(banner).toHaveTextContent('Restart failed');
+    expect(screen.getByTestId('link-mesh-state')).toHaveTextContent('restart failed');
+  });
+
   it('Disconnect keeps the account signed in and the card says the Mac stays off', async () => {
     currentState = CONNECTED;
     mockNodes.mockResolvedValue(NODES_WITH_PEERS);
