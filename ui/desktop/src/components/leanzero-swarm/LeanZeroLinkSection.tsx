@@ -432,7 +432,16 @@ function ConnectCard({
   );
 }
 
-function ConnectingCard({ email, reconnecting }: { email: string; reconnecting: boolean }) {
+function ConnectingCard({
+  email,
+  reconnecting,
+  cause,
+}: {
+  email: string;
+  reconnecting: boolean;
+  /** What the reconnect is recovering from: the supervisor's fault line, when it set one. */
+  cause: string | null;
+}) {
   return (
     <div className="mx-auto w-full max-w-md" data-testid="link-connecting">
       <Panel title={reconnecting ? 'Reconnecting' : 'Connecting'}>
@@ -445,6 +454,9 @@ function ConnectingCard({ email, reconnecting }: { email: string; reconnecting: 
           </span>
           <span className={TYPE.meta}>{email}</span>
         </div>
+        {reconnecting && cause && (
+          <ToneBanner tone="warn" label="Why" text={cause} testId="link-reconnect-cause" />
+        )}
       </Panel>
     </div>
   );
@@ -759,7 +771,13 @@ const LeanZeroLinkSectionBody: React.FC = () => {
       )}
 
       {auth?.state === 'connecting' && (
-        <ConnectingCard email={auth.email} reconnecting={reconnect?.state === 'reconnecting'} />
+        <ConnectingCard
+          email={auth.email}
+          reconnecting={reconnect?.state === 'reconnecting'}
+          // The launch reconnect clears lastError before it connects; a supervisor restart sets it
+          // to the fault it is recovering from (manager.rs FaultResponse::Restart).
+          cause={linkState?.lastError ?? null}
+        />
       )}
 
       {auth?.state === 'connected' && linkState && (
