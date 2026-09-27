@@ -36,5 +36,21 @@ print(int(statistics.median(rows)) if rows else 0)" 2>/dev/null)
   # trip this — only the median rule, from the second agent call on, sees that size.
   if [ -n "$run" ] && [ "${med:-0}" -eq 0 ] && [ "${prompt:-0}" -gt 0 ] && [ "$run" -gt "$prompt" ]; then
     echo "RUNAWAY: the first call has written $run tokens on a $prompt-token prompt"; exit 0; fi
+  # The words: a live answer whose tail is one short span repeated is a loop, whatever its size (E2E #3f:
+  # `!\n</parameter>\n</function>\n` over and over at 1,480 tokens — far under the size rules above).
+  loop=$(curl -s -m 5 127.0.0.1:8091/v1/status 2>/dev/null | python3 -c "
+import json,sys
+REPEATS=8  # a span seen 8 times back to back at the end of the tail is a loop, not prose
+try: d=json.load(sys.stdin)
+except Exception: sys.exit()
+for r in d.get('requests',[]):
+    t=((r.get('stream') or {}).get('tail') or '')
+    n=len(t)
+    for p in range(1, n//REPEATS + 1):
+        span=t[n-p:]
+        if span.strip() and t.endswith(span*REPEATS):
+            print(repr(span)[:120]); sys.exit()
+" 2>/dev/null)
+  if [ -n "$loop" ]; then echo "RUNAWAY (words): the live tail ends in 8+ copies of $loop — read /v1/status stream.tail"; exit 0; fi
   sleep 30
 done
