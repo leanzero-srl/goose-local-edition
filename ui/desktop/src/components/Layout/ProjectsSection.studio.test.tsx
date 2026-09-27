@@ -258,14 +258,30 @@ describe('ProjectsSection (Studio look)', () => {
   it('running, waiting and failed sessions carry their state on the row, lead their folder past the preview, and compile', async () => {
     resetNowForTests(Date.parse('2026-09-26T10:27:00Z'));
     electronMocks([]);
+    // Fixed instants, the OPEN chat (idle-0) the oldest: listItem's new Date() gave the six rows different
+    // milliseconds on a slow CI runner, idle-0 sorted last and fell under "Show more" — which is also what a user
+    // saw, so the open chat is now kept in view and this pins it.
     const idle = Array.from({ length: 6 }, (_, i) =>
-      listItem({ id: `idle-${i}`, name: `Idle ${i}` })
+      listItem({
+        id: `idle-${i}`,
+        name: `Idle ${i}`,
+        updatedAt: `2026-09-26T08:0${i}:00Z`,
+        createdAt: `2026-09-26T08:0${i}:00Z`,
+      })
     );
     navMocks.activeSessionId.current = 'idle-0';
     navMocks.recentSessions.current = [
       ...idle,
-      listItem({ id: 'run-1', name: 'Jira Migration Kickoff Notes', createdAt: '2026-09-26T09:00:00Z' }),
-      listItem({ id: 'old-1', name: 'Jira Migration Kickoff Notes', createdAt: '2026-09-20T09:00:00Z' }),
+      listItem({
+        id: 'run-1',
+        name: 'Jira Migration Kickoff Notes',
+        createdAt: '2026-09-26T09:00:00Z',
+      }),
+      listItem({
+        id: 'old-1',
+        name: 'Jira Migration Kickoff Notes',
+        createdAt: '2026-09-20T09:00:00Z',
+      }),
       listItem({ id: 'wait-1', name: 'Service setup' }),
       listItem({ id: 'fail-1', name: 'Cut short' }),
     ];

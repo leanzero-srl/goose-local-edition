@@ -592,11 +592,17 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
     const a = activityOf(activity, s.id);
     return a.needsYou > 0 || a.runningSince !== undefined;
   }).length;
+  const preview = ordered.slice(0, Math.max(PREVIEW_COUNT, activeCount));
+  // The chat the user is in stays in view too: an older open chat folded under "Show more" left the
+  // sidebar with no sign of where the user is (seen as a CI flake of the Studio test, 2026-09-27).
+  const openRow = activeSessionId ? ordered.find((s) => s.id === activeSessionId) : undefined;
   const shown = filtering
     ? matches
     : showAll
       ? ordered
-      : ordered.slice(0, Math.max(PREVIEW_COUNT, activeCount));
+      : openRow && !preview.includes(openRow)
+        ? [...preview, openRow]
+        : preview;
   const labels = useMemo(
     () => disambiguatedNames(known, (s) => displaySessionListName(s.name)),
     [known]
