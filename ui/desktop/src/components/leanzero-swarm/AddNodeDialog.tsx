@@ -84,7 +84,7 @@ const i18n = defineMessages({
   machineOnlyThisMac: {
     id: 'addNode.machineOnlyThisMac',
     defaultMessage:
-      'Only this Mac is linked — your other Macs appear here once they join LeanZero Link (Providers › My Macs).',
+      'Only this Mac is linked — your other Macs appear here once they join LeanZero Link (LeanZero MLX › My Macs).',
   },
   remoteAwaiting: {
     id: 'addNode.remoteAwaiting',

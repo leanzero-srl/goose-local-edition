@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { IntlTestWrapper } from '../../i18n/test-utils';
 import LeanZeroLinkSection from './LeanZeroLinkSection';
 import type { LinkHealth, LinkState, NodesResponse } from '../../acp/leanzero-link';
@@ -52,6 +54,17 @@ vi.mock('../../acp/mlx-replica', () => ({
   mlxEngineReplicaProgress: vi.fn(async () => null),
   mlxEngineReplicaCancel: vi.fn(),
 }));
+// My Macs names the nodes on each Mac (the glance store's nodes read): none defined here.
+vi.mock('../../acp/nodes', () => ({
+  nodesRead: vi.fn(async () => ({
+    config: { version: 1 },
+    nodes: [],
+    stored: false,
+    lmStudioHidden: 0,
+  })),
+  nodesResidency: vi.fn(async () => ({ nodes: [], loaderInstalled: false })),
+  nodesServedLast: vi.fn(async () => ({})),
+}));
 const mockUpsert = vi.fn();
 vi.mock('../../acp/config', () => ({
   acpUpsertConfig: (...a: unknown[]) => mockUpsert(...a),
@@ -69,7 +82,13 @@ class ResizeObserverMock {
 }
 vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
-const render = () => rtlRender(<LeanZeroLinkSection />, { wrapper: IntlTestWrapper });
+// My Macs' node chips open the Nodes page, so the section renders inside a router as in the app.
+const Wrapper = ({ children }: { children: ReactNode }) => (
+  <MemoryRouter>
+    <IntlTestWrapper>{children}</IntlTestWrapper>
+  </MemoryRouter>
+);
+const render = () => rtlRender(<LeanZeroLinkSection />, { wrapper: Wrapper });
 
 /** A Mac's card on My Macs, keyed by its key (`self`, or the peer's node id). */
 const macCard = (key: string) => screen.findByTestId(`my-mac-${key}`);
@@ -537,12 +556,14 @@ describe('LeanZeroLinkSection — My Macs', () => {
     expect(mockDisconnect).toHaveBeenCalledTimes(1);
   });
 
-  it('with no other Mac, it says how to add one', async () => {
+  it('with no other Mac, an "Add another Mac" card says how to add one and what it buys', async () => {
     currentState = CONNECTED;
     mockNodes.mockResolvedValue({ self: NODES_WITH_PEERS.self, peers: [] });
     render();
-    expect(await screen.findByTestId('link-peers-empty')).toHaveTextContent(
-      /No other Mac is on your LeanZero Link account yet/i
+    const card = await screen.findByTestId('my-macs-add-another');
+    expect(card).toHaveTextContent('Add another Mac');
+    expect(card).toHaveTextContent(
+      'Sign in to LeanZero Link with the same account on your other Mac. It appears here, and you can run models too big for one Mac across both.'
     );
   });
 

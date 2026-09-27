@@ -43,6 +43,11 @@ import { MLX_DISTRIBUTED_STALE_MS, snapshotPhase } from './mlxTray';
  */
 
 export const ENGINE_GLANCE_CHANNEL = 'engine-glance';
+/**
+ * main → the focused goose window: the person turned the desktop window off from the window itself
+ * (Q-224), so the app says it happened and where it comes back from.
+ */
+export const ENGINE_GLANCE_TURNED_OFF_CHANNEL = 'engine-glance-turned-off';
 
 /**
  * What the engine is doing, as the glance headlines it. The tile's activity words while it is up
@@ -78,6 +83,29 @@ export interface GlanceNode {
   budgetGb: number | null;
   load: LoadProgress | null;
 }
+
+/** A node definition as the glance names it (the Nodes page opens it by `id`). */
+export interface GlanceNodeRef {
+  id: string;
+  name: string;
+}
+
+/**
+ * The way that serves this Mac's goose as goosed's `nodes/residency` read it, and the nodes that
+ * name it — the chat's own served node first, then pinned nodes, then nodes that follow this Mac's
+ * engine. A window reads it when its glance changes and reports it with its sessions; main applies
+ * it only to the glance of the SAME way and model (`glanceServedBy`), so a read that raced a switch
+ * never names the wrong node. `error`: the read failed or goosed could not tell which way serves.
+ */
+export type GlanceServingReport =
+  | {
+      way: { kind: 'single' | 'remoteSingle' | 'split'; modelId: string; servedModelId: string };
+      nodes: GlanceNodeRef[];
+    }
+  | { error: string };
+
+/** What the glance says about the node that serves: its node(s), or why that is not known. */
+export type GlanceServedBy = { nodes: GlanceNodeRef[] } | { error: string };
 
 export interface EngineGlance {
   /** There is an engine to speak of (not off, not unknown). */
@@ -116,6 +144,11 @@ export interface EngineGlance {
   nodes: GlanceNode[];
   /** The engine's own words for a failure, a stale read or a lost Mac; null = nothing to say. */
   detail: string | null;
+  /**
+   * The node definition(s) naming the way that serves (design §7.3, `nodes.glanceNode`); null = no
+   * window has reported a node for this way and model — nothing is guessed.
+   */
+  servedBy: GlanceServedBy | null;
 }
 
 export interface GlanceNeedsYou {
@@ -128,6 +161,11 @@ export interface GlanceNeedsYou {
 export interface GlanceSessions {
   running: number;
   needsYou: GlanceNeedsYou[];
+  /**
+   * A window's report only (never the merged push): the node its goosed says serves, read when the
+   * glance changed (glanceStore.ts). Absent = this window has not read it.
+   */
+  serving?: GlanceServingReport | null;
 }
 
 export type GlanceDesktopMode = 'off' | 'away' | 'busy';
@@ -149,13 +187,22 @@ export interface GlancePrefs {
   desktopCollapsed: boolean;
   /** Where the desktop window sits: a corner of a display, by the display's id. */
   desktopPlace: { displayId: number; corner: GlanceCorner } | null;
+  /**
+   * The desktop window has appeared at least once, so its one-time "you can turn this off from
+   * here" hint has had its showing (Q-224). Set by main the first time it shows the window.
+   */
+  desktopHintSeen: boolean;
 }
+
+/** The corner the desktop window takes before the person drags it anywhere. */
+export const DEFAULT_GLANCE_CORNER: GlanceCorner = 'bottom-right';
 
 export const DEFAULT_GLANCE_PREFS: GlancePrefs = {
   inApp: true,
   desktop: 'away',
   desktopCollapsed: false,
   desktopPlace: null,
+  desktopHintSeen: false,
 };
 
 export interface GlancePush {
@@ -167,7 +214,11 @@ export interface GlancePush {
 export interface EngineGlanceOptions {
   distributed: { report: MlxDistributedReport; ageMs: number } | null;
   remote: MlxRemoteReport | null;
+  /** Every window's serving report (`servingReportsOf`); the glance names a node only from these. */
+  served: readonly GlanceServingReport[];
 }
+
+type EngineParts = Omit<EngineGlance, 'servedBy'>;
 
 const NO_RANGES: EngineGlance['ranges'] = { writing: null, reading: null };
 
@@ -274,7 +325,7 @@ function liveParts(
   };
 }
 
-function glance(parts: Omit<EngineGlance, 'busy'>): EngineGlance {
+function glance(parts: Omit<EngineParts, 'busy'>): EngineParts {
   return { ...parts, busy: parts.present && BUSY_STAGES.has(parts.stage) };
 }
 
@@ -291,6 +342,69 @@ export function buildEngineGlance(
   snapshot: MlxEngineSnapshot,
   options: EngineGlanceOptions
 ): EngineGlance {
+  const parts = engineParts(snapshot, options);
+  return { ...parts, servedBy: glanceServedBy(parts, options.served) };
+}
+
+/** The glance's way in `nodes/residency`'s words; null = no way of this Mac's goose (a hosted rank). */
+function wayKindOf(engine: GlanceEngine): 'single' | 'remoteSingle' | 'split' | null {
+  switch (engine.mode) {
+    case 'single':
+      return 'single';
+    case 'remote':
+      return 'remoteSingle';
+    case 'distributed':
+      return 'split';
+    case 'hosting':
+      return null;
+  }
+}
+
+/**
+ * The node(s) serving the glance's way, from the windows' reports: the first report of the SAME
+ * way and model (either id the engine goes by) names them. A report of another way is a read that
+ * raced a switch and says nothing about this one. With no matching report, a report that could not
+ * read the way is said as that; otherwise null — never a node guessed from a model name.
+ */
+export function glanceServedBy(
+  engine: Pick<EngineGlance, 'present' | 'engine' | 'modelId'>,
+  reports: readonly GlanceServingReport[]
+): GlanceServedBy | null {
+  const kind = wayKindOf(engine.engine);
+  if (!engine.present || kind == null || engine.modelId == null) return null;
+  let failed: string | null = null;
+  for (const report of reports) {
+    if ('error' in report) {
+      failed ??= report.error;
+      continue;
+    }
+    const { way } = report;
+    if (way.kind !== kind) continue;
+    if (way.modelId !== engine.modelId && way.servedModelId !== engine.modelId) continue;
+    return report.nodes.length > 0 ? { nodes: report.nodes } : null;
+  }
+  return failed != null ? { error: failed } : null;
+}
+
+/** Every window's serving report, in the order main holds the windows. */
+export function servingReportsOf(reports: Iterable<GlanceSessions>): GlanceServingReport[] {
+  const out: GlanceServingReport[] = [];
+  for (const r of reports) if (r.serving) out.push(r.serving);
+  return out;
+}
+
+/**
+ * The Nodes nav row's chip (design §5.1): "Loading" while the glance shows a load, "Failed" while it
+ * shows the engine failed, nothing otherwise — a permanent "ready" count would be noise (Q-8).
+ */
+export function nodesNavChip(engine: EngineGlance | null | undefined): 'loading' | 'failed' | null {
+  if (!engine?.present) return null;
+  if (engine.stage === 'loading') return 'loading';
+  if (engine.stage === 'failed') return 'failed';
+  return null;
+}
+
+function engineParts(snapshot: MlxEngineSnapshot, options: EngineGlanceOptions): EngineParts {
   const pair = measuredPairOf(snapshot.measured);
   const distributed = options.distributed;
   const stale = distributed != null && distributed.ageMs > MLX_DISTRIBUTED_STALE_MS;
@@ -490,6 +604,7 @@ export function isGlancePrefs(value: unknown): value is GlancePrefs {
     typeof v.desktop === 'string' &&
     DESKTOP_MODES.has(v.desktop) &&
     typeof v.desktopCollapsed === 'boolean' &&
+    typeof v.desktopHintSeen === 'boolean' &&
     (place === null ||
       (place != null &&
         typeof place === 'object' &&
@@ -507,10 +622,36 @@ export function glancePrefsOf(stored: unknown): GlancePrefs {
   return isGlancePrefs(merged) ? merged : DEFAULT_GLANCE_PREFS;
 }
 
+function isNodeRef(value: unknown): value is GlanceNodeRef {
+  if (value == null || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.id === 'string' && typeof v.name === 'string';
+}
+
+const WAY_KINDS: ReadonlySet<string> = new Set(['single', 'remoteSingle', 'split']);
+
+export function isGlanceServingReport(value: unknown): value is GlanceServingReport {
+  if (value == null || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  if ('error' in v) return typeof v.error === 'string';
+  const way = v.way as Record<string, unknown> | null | undefined;
+  return (
+    way != null &&
+    typeof way === 'object' &&
+    typeof way.kind === 'string' &&
+    WAY_KINDS.has(way.kind) &&
+    typeof way.modelId === 'string' &&
+    typeof way.servedModelId === 'string' &&
+    Array.isArray(v.nodes) &&
+    v.nodes.every(isNodeRef)
+  );
+}
+
 export function isGlanceSessions(value: unknown): value is GlanceSessions {
   if (value == null || typeof value !== 'object') return false;
   const v = value as Record<string, unknown>;
   return (
+    (v.serving === undefined || v.serving === null || isGlanceServingReport(v.serving)) &&
     typeof v.running === 'number' &&
     Number.isFinite(v.running) &&
     Array.isArray(v.needsYou) &&

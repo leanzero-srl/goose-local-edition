@@ -16,6 +16,7 @@ import { RADIUS, SURFACE, cx } from '../lz/tokens';
 import { UserInput } from '../../types/message';
 import SessionActivityIndicator from '../sessionActivity/SessionActivityIndicator';
 import { useReportGlanceSessions } from '../engineGlance/glanceStore';
+import { useGlanceTurnedOffNotice } from '../engineGlance/useGlanceTurnedOffNotice';
 
 const i18n = defineMessages({
   openNavigation: {
@@ -62,6 +63,8 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
   const [dragging, setDragging] = useState(false);
   // The desktop glance says what this window's sessions are doing (running / needs you).
   useReportGlanceSessions();
+  // Turned off from the desktop window itself: this window says so, with the way back (Q-224).
+  useGlanceTurnedOffNotice();
 
   // The sidebar's right edge is a drag handle (ChatGPT's sidebar resizes the same way): pointer
   // capture keeps the drag alive off the handle; the width is clamped and remembered by the context.

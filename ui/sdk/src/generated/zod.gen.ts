@@ -5851,6 +5851,676 @@ export const zLeanzeroLinkRemoteExecuteResponse_unstable = z.object({
 });
 
 /**
+ * Read the `nodes` config, with the pool adopted and every def resolved. Never writes config.
+ */
+export const zNodesReadRequest_unstable = z.record(z.unknown());
+
+export const zNodeDefKind = z.union([
+    z.literal('mlx'),
+    z.literal('cloud'),
+    z.literal('endpoint')
+]);
+
+/**
+ * The way an MLX node runs: one of the placement planner's candidates (`PlacementKey`; the Mac
+ * `local` is always this Mac), or `follows` — a node adopted from the swarm pool that serves
+ * whatever this Mac's engine serves (the Q-128 behaviour).
+ */
+export const zNodePlacement = z.union([
+    z.object({
+        macs: z.array(z.string()),
+        link: z.union([
+            z.string(),
+            z.null()
+        ]).optional(),
+        kind: z.literal('single')
+    }),
+    z.object({
+        macs: z.array(z.string()),
+        link: z.union([
+            z.string(),
+            z.null()
+        ]).optional(),
+        kind: z.literal('tensor')
+    }),
+    z.object({
+        macs: z.array(z.string()),
+        link: z.union([
+            z.string(),
+            z.null()
+        ]).optional(),
+        kind: z.literal('pipeline')
+    }),
+    z.object({
+        kind: z.literal('follows')
+    })
+]);
+
+export const zNodeOrigin = z.union([
+    z.literal('pool'),
+    z.literal('user'),
+    z.literal('runIt')
+]);
+
+/**
+ * A named definition: a model plus one way (MLX), or a provider plus a model (cloud, endpoint).
+ */
+export const zNodeDef = z.object({
+    id: z.string(),
+    name: z.string(),
+    kind: zNodeDefKind,
+    model: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    placement: z.union([
+        zNodePlacement,
+        z.null()
+    ]).optional(),
+    goal: z.union([
+        zMlxPlacementGoalDto,
+        z.null()
+    ]).optional(),
+    provider: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    keepLoaded: z.boolean().optional(),
+    poolDevice: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    origin: zNodeOrigin
+});
+
+export const zNodeChainEntry = z.object({
+    node: z.string(),
+    weight: z.number().int().gte(0)
+});
+
+/**
+ * When the next node in a chain takes work.
+ */
+export const zNodeWhen = z.union([
+    z.literal('failover'),
+    z.literal('overflow'),
+    z.literal('share')
+]);
+
+/**
+ * What a not-loaded MLX entry does (cloud is always loaded).
+ */
+export const zNodeIfNotLoaded = z.union([
+    z.literal('load'),
+    z.literal('useNext')
+]);
+
+export const zNodeRoleEntry = z.object({
+    chain: z.array(zNodeChainEntry),
+    when: zNodeWhen.optional().default('failover'),
+    ifNotLoaded: zNodeIfNotLoaded.optional().default('load')
+});
+
+/**
+ * The roles a strategy sets; an unset role inherits (Chat ← Build, Planning ← Chat, Build ←
+ * Chat, Testing/Frontend/Backend ← Build).
+ */
+export const zNodeStrategyRoles = z.object({
+    chat: z.union([
+        zNodeRoleEntry,
+        z.null()
+    ]).optional(),
+    planning: z.union([
+        zNodeRoleEntry,
+        z.null()
+    ]).optional(),
+    build: z.union([
+        zNodeRoleEntry,
+        z.null()
+    ]).optional(),
+    testing: z.union([
+        zNodeRoleEntry,
+        z.null()
+    ]).optional(),
+    frontend: z.union([
+        zNodeRoleEntry,
+        z.null()
+    ]).optional(),
+    backend: z.union([
+        zNodeRoleEntry,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Roles mapped to ordered chains of nodes.
+ */
+export const zNodeStrategy = z.object({
+    id: z.string(),
+    name: z.string(),
+    note: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    roles: zNodeStrategyRoles.optional().default({})
+});
+
+/**
+ * What a new chat starts on. `auto` = "Any node (Auto)", today's pool routing.
+ */
+export const zNodesForNewChats = z.union([
+    z.object({
+        kind: z.literal('auto')
+    }),
+    z.object({
+        id: z.string(),
+        kind: z.literal('node')
+    }),
+    z.object({
+        id: z.string(),
+        kind: z.literal('strategy')
+    })
+]);
+
+/**
+ * What a swarm build started from a chat uses. `pool` = today's `swarm` block, untouched.
+ */
+export const zNodesForBuilds = z.union([
+    z.object({
+        kind: z.literal('pool')
+    }),
+    z.object({
+        id: z.string(),
+        kind: z.literal('strategy')
+    })
+]);
+
+/**
+ * The config key `nodes`. Read and written only through the `nodes*` methods.
+ */
+export const zNodesConfig = z.object({
+    version: z.number().int().gte(0),
+    defs: z.array(zNodeDef).optional().default([]),
+    strategies: z.array(zNodeStrategy).optional().default([]),
+    declined: z.array(z.string()).optional().default([]),
+    forNewChats: zNodesForNewChats.optional().default({ kind: 'auto' }),
+    forBuilds: zNodesForBuilds.optional().default({ kind: 'pool' })
+});
+
+/**
+ * Where a resolved node's model and provider came from.
+ */
+export const zNodeModelFrom = z.union([
+    z.object({
+        kind: z.literal('own')
+    }),
+    z.object({
+        kind: z.literal('pool')
+    }),
+    z.object({
+        kind: z.literal('leftPool')
+    }),
+    z.object({
+        error: z.string(),
+        kind: z.literal('poolUnreadable')
+    })
+]);
+
+/**
+ * A definition as `nodes/read` answers it: the def, plus its model and provider resolved.
+ */
+export const zResolvedNodeDef = z.object({
+    def: zNodeDef,
+    model: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    provider: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    modelFrom: zNodeModelFrom,
+    pendingAdoption: z.boolean().optional()
+});
+
+export const zNodesReadResponse_unstable = z.object({
+    config: zNodesConfig,
+    nodes: z.array(zResolvedNodeDef),
+    stored: z.boolean(),
+    lmStudioHidden: z.number().int().gte(0),
+    swarmError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    notes: z.array(z.string()).optional()
+});
+
+/**
+ * Validate and store the whole `nodes` config. A write that changes `forNewChats` also writes
+ * the global defaults (provider `swarm`, model `swarm` | `node:<id>` | `strategy:<id>`).
+ */
+export const zNodesWriteRequest_unstable = z.object({
+    config: zNodesConfig
+});
+
+export const zNodesRefusalCode = z.union([
+    z.literal('unsupportedVersion'),
+    z.literal('duplicateId'),
+    z.literal('duplicateName'),
+    z.literal('emptyName'),
+    z.literal('missingModel'),
+    z.literal('missingProvider'),
+    z.literal('poolNodeOwnsModel'),
+    z.literal('placementMismatch'),
+    z.literal('badMacs'),
+    z.literal('unknownNode'),
+    z.literal('unknownStrategy'),
+    z.literal('emptyChain'),
+    z.literal('zeroWeight'),
+    z.literal('noRoleSet'),
+    z.literal('inheritanceCycle'),
+    z.literal('sharesTwoWays'),
+    z.literal('nodeInUse'),
+    z.literal('nodeIsForNewChats'),
+    z.literal('strategyIsForNewChats'),
+    z.literal('strategyIsForBuilds'),
+    z.literal('liveSessionsNotAcknowledged'),
+    z.literal('removedOutsideRemoveNode'),
+    z.literal('buildIneligible'),
+    z.literal('badId'),
+    z.literal('duplicateEntry')
+]);
+
+/**
+ * Why a write, removal or build choice was refused. `code` is stable for the UI's i18n; the
+ * message is the verbatim English the UI may show as is.
+ */
+export const zNodesRefusal = z.object({
+    code: zNodesRefusalCode,
+    message: z.string(),
+    subject: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * The answer of every write-shaped method: stored with no refusals, or refused (nothing
+ * written) with every refusal, each the UI shows verbatim.
+ */
+export const zNodesWriteResponse_unstable = z.object({
+    written: z.boolean(),
+    refusals: z.array(zNodesRefusal).optional().default([]),
+    read: zNodesReadResponse_unstable
+});
+
+/**
+ * Remove a node. Refused while a strategy uses it (unless `alsoFromStrategies`) or while new
+ * chats start on it (unless `andNewChatsAuto`); when live sessions are set to it the caller must
+ * pass their count in `acknowledgedSessions`. A pool node's device id joins `declined`.
+ */
+export const zNodesRemoveNodeRequest_unstable = z.object({
+    id: z.string(),
+    alsoFromStrategies: z.boolean().optional().default(false),
+    andNewChatsAuto: z.boolean().optional().default(false),
+    acknowledgedSessions: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Remove a strategy. Refused while new chats start on it (unless `andNewChatsAuto`) or while
+ * swarm builds use it (unless `andBuildsPool`).
+ */
+export const zNodesRemoveStrategyRequest_unstable = z.object({
+    id: z.string(),
+    andNewChatsAuto: z.boolean().optional().default(false),
+    andBuildsPool: z.boolean().optional().default(false)
+});
+
+/**
+ * Whether a strategy can drive a swarm build (Tier A), and every reason when it cannot.
+ */
+export const zNodesBuildEligibilityRequest_unstable = z.object({
+    strategy: z.string()
+});
+
+/**
+ * What work a node is handed. Chat is a chat's own turns; the other five act on swarm builds
+ * (Tier B) — a chat's delegates use Build.
+ */
+export const zNodeRole = z.enum([
+    'chat',
+    'planning',
+    'build',
+    'testing',
+    'frontend',
+    'backend'
+]);
+
+/**
+ * The named reasons a strategy cannot drive a swarm build (Tier A, design §7.2).
+ */
+export const zBuildRefusal = z.union([
+    z.object({
+        strategy: z.string(),
+        kind: z.literal('unknownStrategy')
+    }),
+    z.object({
+        role: zNodeRole,
+        kind: z.literal('noRole')
+    }),
+    z.object({
+        node: z.string(),
+        kind: z.literal('unknownNode')
+    }),
+    z.object({
+        node: z.string(),
+        kind: z.literal('split')
+    }),
+    z.object({
+        node: z.string(),
+        mac: z.string(),
+        kind: z.literal('remote')
+    }),
+    z.object({
+        node: z.string(),
+        model: z.union([
+            z.string(),
+            z.null()
+        ]).optional(),
+        kind: z.literal('otherModel')
+    }),
+    z.object({
+        node: z.string(),
+        kind: z.literal('cloudPlanner')
+    }),
+    z.object({
+        node: z.string(),
+        kind: z.literal('endpoint')
+    }),
+    z.object({
+        node: z.string(),
+        kind: z.literal('leftPool')
+    }),
+    z.object({
+        node: z.string(),
+        kind: z.literal('deviceIdTaken')
+    }),
+    z.object({
+        what: z.string(),
+        error: z.string(),
+        kind: z.literal('unreadable')
+    })
+]);
+
+/**
+ * One `BuildRefusal` with its English words.
+ */
+export const zBuildRefusalDto = z.object({
+    reason: zBuildRefusal,
+    message: z.string()
+});
+
+export const zNodesBuildEligibilityResponse_unstable = z.object({
+    eligible: z.boolean(),
+    reasons: z.array(zBuildRefusalDto).optional().default([]),
+    notes: z.array(z.string()).optional().default([])
+});
+
+/**
+ * Per node: serving / loading / waiting / not running / refused last time — from engine truth
+ * (the route record, the split's owner record, this Mac's engine) plus the installed loader.
+ */
+export const zNodesResidencyRequest_unstable = z.record(z.unknown());
+
+/**
+ * One node's residency.
+ */
+export const zNodeResidency = z.union([
+    z.object({
+        kind: z.literal('serving')
+    }),
+    z.object({
+        phase: z.union([
+            z.string(),
+            z.null()
+        ]).optional(),
+        kind: z.literal('loading')
+    }),
+    z.object({
+        reason: z.string(),
+        kind: z.literal('waiting')
+    }),
+    z.object({
+        otherWay: z.union([
+            z.string(),
+            z.null()
+        ]).optional(),
+        kind: z.literal('notRunning')
+    }),
+    z.object({
+        reason: z.string(),
+        kind: z.literal('refusedLastTime')
+    }),
+    z.object({
+        kind: z.literal('alwaysReady')
+    }),
+    z.object({
+        reason: z.string(),
+        kind: z.literal('unknown')
+    })
+]);
+
+export const zNodeResidencyDto = z.object({
+    node: z.string(),
+    residency: zNodeResidency
+});
+
+/**
+ * How the way serving this Mac's goose runs, as the engine records know it.
+ */
+export const zNodesServingKind = z.union([
+    z.literal('single'),
+    z.literal('remoteSingle'),
+    z.literal('split')
+]);
+
+/**
+ * The way serving this Mac's goose now (one MLX way at a time, across all Macs).
+ */
+export const zNodesServingWayDto = z.object({
+    kind: zNodesServingKind,
+    macs: z.array(z.string()).optional().default([]),
+    link: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    modelId: z.string(),
+    servedModelId: z.string(),
+    macNames: z.array(z.string()),
+    loadPhase: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zNodesResidencyResponse_unstable = z.object({
+    nodes: z.array(zNodeResidencyDto),
+    serving: z.union([
+        zNodesServingWayDto,
+        z.null()
+    ]).optional(),
+    servingError: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    loaderInstalled: z.boolean()
+});
+
+/**
+ * The measured loads of a node's model, way and Macs (a node that follows this Mac's engine has
+ * no one way: its model's loads are listed per way).
+ */
+export const zNodesLoadHistoryRequest_unstable = z.object({
+    node: z.string()
+});
+
+export const zNodeLoadPhasesMsDto = z.object({
+    starting: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    loading: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    warming: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
+export const zNodeLoadOutcomeDto = z.union([
+    z.object({
+        kind: z.literal('ready')
+    }),
+    z.object({
+        words: z.string(),
+        kind: z.literal('failed')
+    }),
+    z.object({
+        kind: z.literal('cancelledAfterStop')
+    })
+]);
+
+/**
+ * One measured load, as stored.
+ */
+export const zNodeLoadRecordDto = z.object({
+    model: z.string(),
+    placement: zMlxPlacementKeyDto,
+    macs: z.array(z.string()),
+    weightsBytes: z.number().int().gte(0),
+    phasesMs: zNodeLoadPhasesMsDto,
+    totalMs: z.number().int().gte(0),
+    fileCacheWarm: z.boolean(),
+    outcome: zNodeLoadOutcomeDto,
+    recordedAtMs: z.number().int().gte(0)
+});
+
+/**
+ * The measured loads of one way of the node's model. `medianTotalMs` is over Ready loads only;
+ * absent = not measured yet (never an estimate).
+ */
+export const zNodeLoadGroupDto = z.object({
+    placement: zMlxPlacementKeyDto,
+    medianTotalMs: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    count: z.number().int().gte(0),
+    records: z.array(zNodeLoadRecordDto)
+});
+
+export const zNodesLoadHistoryResponse_unstable = z.object({
+    groups: z.array(zNodeLoadGroupDto),
+    storeErrors: z.array(z.string()).optional().default([]),
+    path: z.string()
+});
+
+/**
+ * The last served-turn record of a session (this process's, else the one persisted in the
+ * session).
+ */
+export const zNodesServedLastRequest_unstable = z.object({
+    sessionId: z.string()
+});
+
+/**
+ * A chain entry that did not take the turn, and why.
+ */
+export const zNodeTriedDto = z.object({
+    node: z.string(),
+    reason: z.string()
+});
+
+/**
+ * The node that served one turn, as the router leased it.
+ */
+export const zNodeServedTurnDto = z.object({
+    node: z.string(),
+    role: z.union([
+        zNodeRole,
+        z.null()
+    ]).optional(),
+    rank: z.number().int().gte(0),
+    reason: z.union([
+        z.string(),
+        z.null()
+    ]).optional(),
+    tried: z.array(zNodeTriedDto).optional().default([]),
+    loadedMs: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional(),
+    atMs: z.number().int().gte(0)
+});
+
+export const zNodesServedLastResponse_unstable = z.object({
+    record: z.union([
+        zNodeServedTurnDto,
+        z.null()
+    ]).optional()
+});
+
+/**
+ * Make a node servable: `ready`, `wait(reason)` or `refused(code, reason)`. With no loader
+ * installed, a not-serving MLX node answers the named refusal `loaderAbsent`.
+ */
+export const zNodesEnsureServingRequest_unstable = z.object({
+    node: z.string(),
+    sessionId: z.union([
+        z.string(),
+        z.null()
+    ]).optional()
+});
+
+export const zNodeLoadRefusalCode = z.union([
+    z.literal('unknownNode'),
+    z.literal('heldByBuild'),
+    z.literal('keptLoaded'),
+    z.literal('needsStep'),
+    z.literal('fit'),
+    z.literal('loadFailed'),
+    z.literal('loaderAbsent'),
+    z.literal('unknown')
+]);
+
+/**
+ * The answer to "make this node servable".
+ */
+export const zNodeEnsureServing = z.union([
+    z.object({
+        kind: z.literal('ready')
+    }),
+    z.object({
+        reason: z.string(),
+        kind: z.literal('wait')
+    }),
+    z.object({
+        code: zNodeLoadRefusalCode,
+        reason: z.string(),
+        kind: z.literal('refused')
+    })
+]);
+
+export const zNodesEnsureServingResponse_unstable = z.object({
+    answer: zNodeEnsureServing
+});
+
+/**
  * Streaming context-window usage update for a session.
  */
 export const zSessionUsageUpdate = z.object({
@@ -6133,7 +6803,16 @@ export const zExtRequest = z.object({
             zAnswerMemoryProposalRequest_unstable,
             zSessionActivityRequest_unstable,
             zResolveNeedsYouRequest_unstable,
-            zLeanzeroLinkRemoteExecuteRequest_unstable
+            zLeanzeroLinkRemoteExecuteRequest_unstable,
+            zNodesReadRequest_unstable,
+            zNodesWriteRequest_unstable,
+            zNodesRemoveNodeRequest_unstable,
+            zNodesRemoveStrategyRequest_unstable,
+            zNodesBuildEligibilityRequest_unstable,
+            zNodesResidencyRequest_unstable,
+            zNodesLoadHistoryRequest_unstable,
+            zNodesServedLastRequest_unstable,
+            zNodesEnsureServingRequest_unstable
         ]),
         z.union([
             z.record(z.unknown()),
@@ -6262,7 +6941,14 @@ export const zExtResponse = z.union([
                 zAnswerMemoryProposalResponse_unstable,
                 zSessionActivityResponse_unstable,
                 zResolveNeedsYouResponse_unstable,
-                zLeanzeroLinkRemoteExecuteResponse_unstable
+                zLeanzeroLinkRemoteExecuteResponse_unstable,
+                zNodesReadResponse_unstable,
+                zNodesWriteResponse_unstable,
+                zNodesBuildEligibilityResponse_unstable,
+                zNodesResidencyResponse_unstable,
+                zNodesLoadHistoryResponse_unstable,
+                zNodesServedLastResponse_unstable,
+                zNodesEnsureServingResponse_unstable
             ]),
             z.unknown()
         ]).optional()

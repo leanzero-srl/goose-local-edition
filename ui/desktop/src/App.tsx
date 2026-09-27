@@ -34,7 +34,6 @@ interface PairRouteState {
 import SettingsView, { SettingsViewOptions } from './components/settings/SettingsView';
 import SessionsView from './components/sessions/SessionsView';
 import SchedulesView from './components/schedule/SchedulesView';
-import LoopView from './components/loop/LoopView';
 import { PROVIDER_ROUTES } from './components/nodes/providerRoutes';
 import BenchmarkView from './components/benchmark/BenchmarkView';
 import AgentWorkView from './components/agent-work/AgentWorkView';
@@ -301,10 +300,6 @@ const RecipesRoute = () => {
 
 const BenchmarkRoute = () => {
   return <BenchmarkView />;
-};
-
-const LoopRoute = () => {
-  return <LoopView />;
 };
 
 const AgentWorkRoute = () => {
@@ -820,7 +815,6 @@ export function AppInner() {
               <Route path="sessions" element={<SessionsRoute />} />
               <Route path="schedules" element={<SchedulesRoute />} />
               <Route path="recipes" element={<RecipesRoute />} />
-              <Route path="loop" element={<LoopRoute />} />
               <Route path="agent-work" element={<AgentWorkRoute />} />
               {PROVIDER_ROUTES.map((route) => (
                 <Route key={route.path} path={route.path} element={route.element} />

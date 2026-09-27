@@ -1263,6 +1263,7 @@ impl SummonClient {
         );
 
         let subagent_session_id = subagent_session.id.clone();
+        crate::nodes::seam::note_child(&subagent_session_id, session_id);
 
         let result = run_subagent_task(SubagentRunParams {
             config: agent_config,
@@ -1594,7 +1595,8 @@ impl SummonClient {
                 Config::global()
                     .get_param::<String>("GOOSE_SUBAGENT_MODEL")
                     .ok()
-            });
+            })
+            .or_else(|| strategy_delegate_model(provider_name, &model_config.model_name));
 
         if let Some(model) = override_model {
             if model != model_config.model_name {
@@ -1634,19 +1636,13 @@ impl SummonClient {
         Ok(model_config)
     }
 
-    async fn resolve_provider(
-        &self,
+    /// The delegate's provider: params, recipe, `GOOSE_SUBAGENT_PROVIDER`, then the parent's.
+    fn resolve_provider_name(
         params: &DelegateParams,
         recipe: &Recipe,
         session: &crate::session::Session,
-    ) -> Result<
-        (
-            Arc<dyn crate::providers::base::Provider>,
-            goose_providers::model::ModelConfig,
-        ),
-        anyhow::Error,
-    > {
-        let provider_name = params
+    ) -> Option<String> {
+        params
             .provider
             .clone()
             .or_else(|| {
@@ -1661,6 +1657,21 @@ impl SummonClient {
                     .ok()
             })
             .or_else(|| session.provider_name.clone())
+    }
+
+    async fn resolve_provider(
+        &self,
+        params: &DelegateParams,
+        recipe: &Recipe,
+        session: &crate::session::Session,
+    ) -> Result<
+        (
+            Arc<dyn crate::providers::base::Provider>,
+            goose_providers::model::ModelConfig,
+        ),
+        anyhow::Error,
+    > {
+        let provider_name = Self::resolve_provider_name(params, recipe, session)
             .ok_or_else(|| anyhow::anyhow!("No provider configured"))?;
 
         let model_config = self.resolve_model_config(params, recipe, session, &provider_name)?;
@@ -1806,6 +1817,9 @@ impl SummonClient {
             .map_err(|e| format!("Failed to create subagent session: {}", e))?;
 
         let task_id = subagent_session.id.clone();
+        // The parent may `load` this task and wait on it, so the child's demand is the parent's
+        // own here too.
+        crate::nodes::seam::note_child(&task_id, session_id);
 
         let turns = Arc::new(AtomicU32::new(0));
         let last_activity = Arc::new(AtomicU64::new(current_epoch_millis()));
@@ -1866,6 +1880,23 @@ impl SummonClient {
             task_id, description, task_id
         ))];
         Ok((content, task_id))
+    }
+}
+
+/// A delegate of a strategy session runs on the strategy's Build role (design §7.1) — but only
+/// when the delegate's provider is `swarm` (a `strategy:` id means nothing to another provider) and
+/// nothing overrides its model (the caller tries this last). `None` leaves the parent's model.
+fn strategy_delegate_model(provider_name: &str, parent_model: &str) -> Option<String> {
+    use crate::nodes::{format_route_model, parse_route_model, NodeRole, RouteModel};
+    if provider_name != crate::nodes::SWARM_PROVIDER {
+        return None;
+    }
+    match parse_route_model(parent_model)? {
+        RouteModel::Strategy { id, .. } => Some(format_route_model(&RouteModel::Strategy {
+            id,
+            role: Some(NodeRole::Build),
+        })),
+        _ => None,
     }
 }
 
@@ -3075,6 +3106,122 @@ You review code."#;
         assert!(
             found("q197-goose-recipe", SourceType::Recipe),
             "{sources:?}"
+        );
+    }
+
+    fn session_on(provider: &str, model: &str) -> crate::session::Session {
+        crate::session::Session {
+            provider_name: Some(provider.to_string()),
+            model_config: Some(goose_providers::model::ModelConfig::new(model)),
+            ..Default::default()
+        }
+    }
+
+    /// What a delegate of `session` runs on: the provider the delegate resolves, then the model.
+    fn delegate_of(params: &DelegateParams, session: &crate::session::Session) -> (String, String) {
+        let client = SummonClient::new(create_test_context()).unwrap();
+        let provider =
+            SummonClient::resolve_provider_name(params, &empty_recipe(), session).unwrap();
+        let model = client
+            .resolve_model_config(params, &empty_recipe(), session, &provider)
+            .expect("resolve_model_config")
+            .model_name;
+        (provider, model)
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn a_strategy_sessions_delegate_on_swarm_runs_on_the_build_role() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_CONTEXT_LIMIT", None::<&str>),
+            ("GOOSE_MAX_TOKENS", None::<&str>),
+            ("GOOSE_SUBAGENT_MODEL", None::<&str>),
+            ("GOOSE_SUBAGENT_PROVIDER", None::<&str>),
+        ]);
+        let none = DelegateParams::default();
+        assert_eq!(
+            delegate_of(&none, &session_on("swarm", "strategy:daily")),
+            ("swarm".to_string(), "strategy:daily@build".to_string())
+        );
+        // A delegate of a strategy session that already names a role still runs on Build.
+        assert_eq!(
+            delegate_of(&none, &session_on("swarm", "strategy:daily@planning")).1,
+            "strategy:daily@build"
+        );
+        // An explicit model wins, as it always has.
+        let explicit = DelegateParams {
+            model: Some("node:flash".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            delegate_of(&explicit, &session_on("swarm", "strategy:daily")).1,
+            "node:flash"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn goose_subagent_model_still_wins_over_a_strategys_build_role() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_CONTEXT_LIMIT", None::<&str>),
+            ("GOOSE_MAX_TOKENS", None::<&str>),
+            ("GOOSE_SUBAGENT_MODEL", Some("node:sonnet")),
+            ("GOOSE_SUBAGENT_PROVIDER", None::<&str>),
+        ]);
+        assert_eq!(
+            delegate_of(
+                &DelegateParams::default(),
+                &session_on("swarm", "strategy:daily")
+            ),
+            ("swarm".to_string(), "node:sonnet".to_string())
+        );
+    }
+
+    /// Review item 12: a `strategy:` id means nothing to another provider, so a delegate whose
+    /// provider resolves elsewhere keeps the model exactly as it did before strategies existed.
+    #[tokio::test]
+    #[serial]
+    async fn a_delegate_on_another_provider_keeps_the_model_as_today() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_CONTEXT_LIMIT", None::<&str>),
+            ("GOOSE_MAX_TOKENS", None::<&str>),
+            ("GOOSE_SUBAGENT_MODEL", None::<&str>),
+            ("GOOSE_SUBAGENT_PROVIDER", Some("anthropic")),
+        ]);
+        assert_eq!(
+            delegate_of(
+                &DelegateParams::default(),
+                &session_on("swarm", "strategy:daily")
+            ),
+            ("anthropic".to_string(), "strategy:daily".to_string())
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn a_delegate_of_a_session_that_is_not_on_a_strategy_is_unchanged() {
+        let _env = env_lock::lock_env([
+            ("GOOSE_CONTEXT_LIMIT", None::<&str>),
+            ("GOOSE_MAX_TOKENS", None::<&str>),
+            ("GOOSE_SUBAGENT_MODEL", None::<&str>),
+            ("GOOSE_SUBAGENT_PROVIDER", None::<&str>),
+        ]);
+        let none = DelegateParams::default();
+        for (provider, model) in [
+            ("swarm", "swarm"),
+            ("swarm", "node:flash"),
+            ("swarm", "swarm-build"),
+            (PROVIDER, PARENT_MODEL),
+        ] {
+            assert_eq!(
+                delegate_of(&none, &session_on(provider, model)),
+                (provider.to_string(), model.to_string())
+            );
+        }
+        assert_eq!(strategy_delegate_model("anthropic", "strategy:daily"), None);
+        assert_eq!(
+            strategy_delegate_model("swarm", "strategy:daily"),
+            Some("strategy:daily@build".to_string())
         );
     }
 }

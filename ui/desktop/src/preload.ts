@@ -9,7 +9,7 @@ import type { MemoryOrigin } from './utils/memoryProvenance';
 import type { Settings, SettingKey } from './utils/settings';
 import { defaultSettings } from './utils/settings';
 import { CONFIRM_CLOSE_RUN_REPLY_CHANNEL } from './utils/closeGuard';
-import type { FleetChatResult, FleetProbeResult } from './utils/fleetProbe';
+import type { FleetProbeResult } from './utils/fleetProbe';
 import type { MlxLiveStatusResult } from './utils/mlxLiveStatus';
 import type { MlxEngineReport, MlxEngineSnapshot } from './utils/mlxEngineMonitor';
 import type { MlxDistributedReport } from './utils/mlxDistributedReport';
@@ -493,8 +493,6 @@ type ElectronAPI = {
   /** GET `<endpoint>/api/v0/models` from MAIN (no renderer CSP in the path): LM Studio's `data` array or
    *  a NAMED error. `endpoint` is the configured `swarm.endpoint` host base. */
   fleetProbe: (endpoint: string) => Promise<FleetProbeResult>;
-  /** POST `<endpoint>/v1/chat/completions` (non-streaming) from MAIN; the JSON reply or a named error. */
-  fleetChat: (endpoint: string, body: unknown) => Promise<FleetChatResult>;
   /** GET `<baseUrl>/v1/status` of the LOCAL Rapid-MLX engine from MAIN (loopback only): the raw body
    *  or a NAMED error. Feeds the Providers › LeanZero MLX state tile's live instrument. */
   mlxLiveStatus: (baseUrl: string) => Promise<MlxLiveStatusResult>;
@@ -591,7 +589,6 @@ const electronAPI: ElectronAPI = {
   benchmarkPublish: (args?: { title?: string }) => ipcRenderer.invoke('benchmark-publish', args),
   fleetStatus: () => ipcRenderer.invoke('fleet-status'),
   fleetProbe: (endpoint: string) => ipcRenderer.invoke('fleet-probe', endpoint),
-  fleetChat: (endpoint: string, body: unknown) => ipcRenderer.invoke('fleet-chat', endpoint, body),
   mlxLiveStatus: (baseUrl: string) => ipcRenderer.invoke('mlx-live-status', baseUrl),
   mlxEngineReport: (report: MlxEngineReport) => ipcRenderer.send('mlx-engine-report', report),
   mlxEngineActivity: () => ipcRenderer.invoke('mlx-engine-activity'),

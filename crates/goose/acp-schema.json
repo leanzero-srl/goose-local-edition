@@ -13736,6 +13736,1743 @@
       "x-side": "agent",
       "x-method": "_goose/unstable/leanzeroLink/remoteExecute"
     },
+    "NodesReadRequest_unstable": {
+      "type": "object",
+      "description": "Read the `nodes` config, with the pool adopted and every def resolved. Never writes config.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/read"
+    },
+    "NodesReadResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/NodesConfig",
+          "description": "The config as a write would store it: the stored key plus this read's pending adoptions\n(a fresh config when the key was never written)."
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResolvedNodeDef"
+          },
+          "description": "Every def, resolved, in `config.defs` order."
+        },
+        "stored": {
+          "type": "boolean",
+          "description": "Whether the `nodes` key exists in config.yaml."
+        },
+        "lmStudioHidden": {
+          "type": "integer",
+          "description": "LM Studio devices in the `swarm` block (not offered in this edition, left untouched).",
+          "minimum": 0
+        },
+        "swarmError": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why the `swarm` block could not be read: nothing was adopted, pool nodes read\n`poolUnreadable`."
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Facts about this read the UI may show (this Mac's name could not be read, …)."
+        }
+      },
+      "required": [
+        "config",
+        "nodes",
+        "stored",
+        "lmStudioHidden"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/read"
+    },
+    "NodesConfig": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "defs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeDef"
+          },
+          "default": []
+        },
+        "strategies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeStrategy"
+          },
+          "default": []
+        },
+        "declined": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Pool device ids the user removed as nodes: never re-adopted.",
+          "default": []
+        },
+        "forNewChats": {
+          "$ref": "#/$defs/NodesForNewChats",
+          "default": {
+            "kind": "auto"
+          }
+        },
+        "forBuilds": {
+          "$ref": "#/$defs/NodesForBuilds",
+          "default": {
+            "kind": "pool"
+          }
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "description": "The config key `nodes`. Read and written only through the `nodes/*` methods."
+    },
+    "NodeDef": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable and unique; equals the swarm device id when it came from the pool."
+        },
+        "name": {
+          "type": "string",
+          "description": "Unique display name (Q-154)."
+        },
+        "kind": {
+          "$ref": "#/$defs/NodeDefKind"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "MLX: the model id as the models folder names it; cloud/endpoint: the provider's model id.\nAbsent when `poolDevice` is set (read through from the device)."
+        },
+        "placement": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodePlacement"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "MLX only."
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MlxPlacementGoalDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The goal the way was chosen for (MLX)."
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Cloud/endpoint: the goose provider. Absent when `poolDevice` is set."
+        },
+        "keepLoaded": {
+          "type": "boolean",
+          "description": "MLX: the loader never stops this node's way for another demand."
+        },
+        "poolDevice": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The swarm device this node reads through (nodes adopted from the pool)."
+        },
+        "origin": {
+          "$ref": "#/$defs/NodeOrigin"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "origin"
+      ],
+      "description": "A named definition: a model plus one way (MLX), or a provider plus a model (cloud, endpoint)."
+    },
+    "NodeDefKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "mlx",
+          "description": "The LeanZero MLX engine, on one Mac or split across Macs."
+        },
+        {
+          "type": "string",
+          "const": "cloud",
+          "description": "A cloud provider's model."
+        },
+        {
+          "type": "string",
+          "const": "endpoint",
+          "description": "An OpenAI-compatible server the user added."
+        }
+      ]
+    },
+    "NodePlacement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "macs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "link": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "single"
+            }
+          },
+          "required": [
+            "kind",
+            "macs"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "macs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "link": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "tensor"
+            }
+          },
+          "required": [
+            "kind",
+            "macs"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "macs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "link": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "pipeline"
+            }
+          },
+          "required": [
+            "kind",
+            "macs"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "follows"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ],
+      "description": "The way an MLX node runs: one of the placement planner's candidates (`PlacementKey`; the Mac\n`local` is always this Mac), or `follows` — a node adopted from the swarm pool that serves\nwhatever this Mac's engine serves (the Q-128 behaviour)."
+    },
+    "NodeOrigin": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "pool",
+          "description": "Adopted from the `swarm` pool; reads its model and provider through from the device."
+        },
+        {
+          "type": "string",
+          "const": "user",
+          "description": "Made in the New node dialog."
+        },
+        {
+          "type": "string",
+          "const": "runIt",
+          "description": "Saved from Run it (\"Save as node\")."
+        }
+      ]
+    },
+    "NodeStrategy": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The owner's own words for this strategy."
+        },
+        "roles": {
+          "$ref": "#/$defs/NodeStrategyRoles",
+          "default": {}
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "description": "Roles mapped to ordered chains of nodes."
+    },
+    "NodeStrategyRoles": {
+      "type": "object",
+      "properties": {
+        "chat": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeRoleEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "planning": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeRoleEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "build": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeRoleEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "testing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeRoleEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frontend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeRoleEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "backend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeRoleEntry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "The roles a strategy sets; an unset role inherits (Chat ← Build, Planning ← Chat, Build ←\nChat, Testing/Frontend/Backend ← Build)."
+    },
+    "NodeRoleEntry": {
+      "type": "object",
+      "properties": {
+        "chain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeChainEntry"
+          },
+          "description": "1st = primary; the 2nd and later are fallbacks."
+        },
+        "when": {
+          "$ref": "#/$defs/NodeWhen",
+          "default": "failover"
+        },
+        "ifNotLoaded": {
+          "$ref": "#/$defs/NodeIfNotLoaded",
+          "default": "load"
+        }
+      },
+      "required": [
+        "chain"
+      ]
+    },
+    "NodeChainEntry": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "weight": {
+          "type": "integer",
+          "description": "A share; read only when the role's `when` is `share`. An integer of 1 or more.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "node",
+        "weight"
+      ]
+    },
+    "NodeWhen": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "failover",
+          "description": "The next one only when the one before can't run."
+        },
+        {
+          "type": "string",
+          "const": "overflow",
+          "description": "The next one when the one before is busy."
+        },
+        {
+          "type": "string",
+          "const": "share",
+          "description": "Share the work by weight (smooth weighted round-robin; per conversation for chat)."
+        }
+      ],
+      "description": "When the next node in a chain takes work."
+    },
+    "NodeIfNotLoaded": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "load",
+          "description": "Load it and wait."
+        },
+        {
+          "type": "string",
+          "const": "useNext",
+          "description": "The next entry servable now takes the work; no load is started."
+        }
+      ],
+      "description": "What a not-loaded MLX entry does (cloud is always loaded)."
+    },
+    "NodesForNewChats": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "auto"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "node"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "strategy"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
+      ],
+      "description": "What a new chat starts on. `auto` = \"Any node (Auto)\", today's pool routing."
+    },
+    "NodesForBuilds": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pool"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "strategy"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
+      ],
+      "description": "What a swarm build started from a chat uses. `pool` = today's `swarm` block, untouched."
+    },
+    "ResolvedNodeDef": {
+      "type": "object",
+      "properties": {
+        "def": {
+          "$ref": "#/$defs/NodeDef"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modelFrom": {
+          "$ref": "#/$defs/NodeModelFrom"
+        },
+        "pendingAdoption": {
+          "type": "boolean",
+          "description": "Adopted from the pool on this read and not written yet: it is written by the next\nsuccessful `nodes/write` (a read never writes config)."
+        }
+      },
+      "required": [
+        "def",
+        "modelFrom"
+      ],
+      "description": "A definition as `nodes/read` answers it: the def, plus its model and provider resolved."
+    },
+    "NodeModelFrom": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "own"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "The node's own fields."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pool"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Read through from its swarm device."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "leftPool"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Its swarm device is no longer in the pool (\"No longer in your swarm pool\"); the node is\nkept, never dropped."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "poolUnreadable"
+            }
+          },
+          "required": [
+            "kind",
+            "error"
+          ],
+          "description": "The `swarm` block could not be read, so the device's model is unknown."
+        }
+      ],
+      "description": "Where a resolved node's model and provider came from."
+    },
+    "NodesWriteRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/NodesConfig"
+        }
+      },
+      "required": [
+        "config"
+      ],
+      "description": "Validate and store the whole `nodes` config. A write that changes `forNewChats` also writes\nthe global defaults (provider `swarm`, model `swarm` | `node:<id>` | `strategy:<id>`).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/write"
+    },
+    "NodesWriteResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "written": {
+          "type": "boolean"
+        },
+        "refusals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodesRefusal"
+          },
+          "default": []
+        },
+        "read": {
+          "$ref": "#/$defs/NodesReadResponse_unstable",
+          "description": "The state after the call (the stored config when written; the unchanged one when\nrefused)."
+        }
+      },
+      "required": [
+        "written",
+        "read"
+      ],
+      "description": "The answer of every write-shaped method: stored with no refusals, or refused (nothing\nwritten) with every refusal, each the UI shows verbatim.",
+      "x-side": "agent"
+    },
+    "NodesRefusal": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/NodesRefusalCode"
+        },
+        "message": {
+          "type": "string"
+        },
+        "subject": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The node, strategy or device the refusal is about, when it names one."
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "description": "Why a write, removal or build choice was refused. `code` is stable for the UI's i18n; the\nmessage is the verbatim English the UI may show as is."
+    },
+    "NodesRefusalCode": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "unsupportedVersion",
+            "duplicateId",
+            "duplicateName",
+            "emptyName",
+            "missingModel",
+            "missingProvider",
+            "poolNodeOwnsModel",
+            "placementMismatch",
+            "badMacs",
+            "unknownNode",
+            "unknownStrategy",
+            "emptyChain",
+            "zeroWeight",
+            "noRoleSet",
+            "inheritanceCycle",
+            "sharesTwoWays",
+            "nodeInUse",
+            "nodeIsForNewChats",
+            "strategyIsForNewChats",
+            "strategyIsForBuilds",
+            "liveSessionsNotAcknowledged",
+            "removedOutsideRemoveNode",
+            "buildIneligible"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "badId",
+          "description": "An id is empty or carries `:` or `@`, the model-id grammar's delimiters."
+        },
+        {
+          "type": "string",
+          "const": "duplicateEntry",
+          "description": "A chain names the same node twice."
+        }
+      ]
+    },
+    "NodesRemoveNodeRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "alsoFromStrategies": {
+          "type": "boolean",
+          "default": false
+        },
+        "andNewChatsAuto": {
+          "type": "boolean",
+          "default": false
+        },
+        "acknowledgedSessions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "description": "Remove a node. Refused while a strategy uses it (unless `alsoFromStrategies`) or while new\nchats start on it (unless `andNewChatsAuto`); when live sessions are set to it the caller must\npass their count in `acknowledgedSessions`. A pool node's device id joins `declined`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/removeNode"
+    },
+    "NodesRemoveStrategyRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "andNewChatsAuto": {
+          "type": "boolean",
+          "default": false
+        },
+        "andBuildsPool": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "description": "Remove a strategy. Refused while new chats start on it (unless `andNewChatsAuto`) or while\nswarm builds use it (unless `andBuildsPool`).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/removeStrategy"
+    },
+    "NodesBuildEligibilityRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "strategy": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "strategy"
+      ],
+      "description": "Whether a strategy can drive a swarm build (Tier A), and every reason when it cannot.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/buildEligibility"
+    },
+    "NodesBuildEligibilityResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "eligible": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BuildRefusalDto"
+          },
+          "default": []
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What a Tier A build cannot express, stated rather than hidden (LM Studio residents join,\nTesting/Frontend/Backend use Build, Planning's 2nd is not used).",
+          "default": []
+        }
+      },
+      "required": [
+        "eligible"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/buildEligibility"
+    },
+    "BuildRefusalDto": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "$ref": "#/$defs/BuildRefusal"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "message"
+      ],
+      "description": "One `BuildRefusal` with its English words."
+    },
+    "BuildRefusal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "strategy": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unknownStrategy"
+            }
+          },
+          "required": [
+            "kind",
+            "strategy"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "role": {
+              "$ref": "#/$defs/NodeRole"
+            },
+            "kind": {
+              "type": "string",
+              "const": "noRole"
+            }
+          },
+          "required": [
+            "kind",
+            "role"
+          ],
+          "description": "Neither Planning nor Build resolves (every role unset)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unknownNode"
+            }
+          },
+          "required": [
+            "kind",
+            "node"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "split"
+            }
+          },
+          "required": [
+            "kind",
+            "node"
+          ],
+          "description": "A split: builds reach LeanZero MLX only through this Mac's single engine."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string"
+            },
+            "mac": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "remote"
+            }
+          },
+          "required": [
+            "kind",
+            "node",
+            "mac"
+          ],
+          "description": "A single on another Mac."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string"
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "otherModel"
+            }
+          },
+          "required": [
+            "kind",
+            "node"
+          ],
+          "description": "A single on this Mac of a model other than the engine's configured one (`model`; absent\nwhen the engine has none configured)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "cloudPlanner"
+            }
+          },
+          "required": [
+            "kind",
+            "node"
+          ],
+          "description": "Planning's 1st is a cloud node: the engine replaces a cloud planner with an LM Studio\nmodel whenever LM Studio has anything loaded."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "endpoint"
+            }
+          },
+          "required": [
+            "kind",
+            "node"
+          ],
+          "description": "An endpoint node: builds reach cloud models through their swarm family only."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "leftPool"
+            }
+          },
+          "required": [
+            "kind",
+            "node"
+          ],
+          "description": "A pool node whose device has left the pool."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "deviceIdTaken"
+            }
+          },
+          "required": [
+            "kind",
+            "node"
+          ],
+          "description": "The projected device id is already another device's in the pool."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "what": {
+              "type": "string"
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unreadable"
+            }
+          },
+          "required": [
+            "kind",
+            "what",
+            "error"
+          ],
+          "description": "The `swarm` or `mlx_engine` block could not be read."
+        }
+      ],
+      "description": "The named reasons a strategy cannot drive a swarm build (Tier A, design §7.2)."
+    },
+    "NodeRole": {
+      "type": "string",
+      "enum": [
+        "chat",
+        "planning",
+        "build",
+        "testing",
+        "frontend",
+        "backend"
+      ],
+      "description": "What work a node is handed. Chat is a chat's own turns; the other five act on swarm builds\n(Tier B) — a chat's delegates use Build."
+    },
+    "NodesResidencyRequest_unstable": {
+      "type": "object",
+      "description": "Per node: serving / loading / waiting / not running / refused last time — from engine truth\n(the route record, the split's owner record, this Mac's engine) plus the installed loader.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/residency"
+    },
+    "NodesResidencyResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeResidencyDto"
+          }
+        },
+        "serving": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodesServingWayDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent = nothing serves this Mac's goose (or which way serves is unknown: `servingError`)."
+        },
+        "servingError": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "loaderInstalled": {
+          "type": "boolean",
+          "description": "Whether this goose process has a node loader installed. Without one, a not-loaded node\nis started from Run it."
+        }
+      },
+      "required": [
+        "nodes",
+        "loaderInstalled"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/residency"
+    },
+    "NodeResidencyDto": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "residency": {
+          "$ref": "#/$defs/NodeResidency"
+        }
+      },
+      "required": [
+        "node",
+        "residency"
+      ]
+    },
+    "NodeResidency": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "serving"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Its way and model serve this Mac's goose now."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "phase": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "loading"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Its way is loading (the engine's phase when this Mac's engine reports one)."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "waiting"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "description": "The installed loader queued a demand for it; `reason` is the loader's words."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "otherWay": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "notRunning"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Not running. `otherWay` names the way that serves instead, when one does."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "refusedLastTime"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "description": "The installed loader refused its last demand; `reason` is its words."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "alwaysReady"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "description": "Cloud and endpoint nodes are always loaded."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "description": "Which way serves is unknown (an unreadable record); never guessed."
+        }
+      ],
+      "description": "One node's residency."
+    },
+    "NodesServingWayDto": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NodesServingKind"
+        },
+        "macs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Placement keys of the Macs when the record knows them: `[\"local\"]` for this Mac's single,\n`[\"link:<peer>\"]` for a remote single; empty for a split.",
+          "default": []
+        },
+        "link": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The split's link backend."
+        },
+        "modelId": {
+          "type": "string",
+          "description": "The model as the models folder names it."
+        },
+        "servedModelId": {
+          "type": "string",
+          "description": "The id the engine serves it under."
+        },
+        "macNames": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Display names of the Macs, in the way's order."
+        },
+        "loadPhase": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "While this way is loading: the engine's phase (\"waitingForLoad\" | \"makingRoom\" |\n\"starting\" | \"loading\" | \"warming\")."
+        }
+      },
+      "required": [
+        "kind",
+        "modelId",
+        "servedModelId",
+        "macNames"
+      ],
+      "description": "The way serving this Mac's goose now (one MLX way at a time, across all Macs)."
+    },
+    "NodesServingKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "single",
+          "description": "This Mac's single engine."
+        },
+        {
+          "type": "string",
+          "const": "remoteSingle",
+          "description": "The single engine on a peer, reached through this Mac's relay."
+        },
+        {
+          "type": "string",
+          "const": "split",
+          "description": "The distributed engine across Macs. Its owner record carries neither tensor/pipeline nor\nthe Macs' ids (only their names), so a split node is matched on its model and link."
+        }
+      ],
+      "description": "How the way serving this Mac's goose runs, as the engine records know it."
+    },
+    "NodesLoadHistoryRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "description": "The measured loads of a node's model, way and Macs (a node that follows this Mac's engine has\nno one way: its model's loads are listed per way).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/loadHistory"
+    },
+    "NodesLoadHistoryResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeLoadGroupDto"
+          }
+        },
+        "storeErrors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Lines of the load store that did not parse, by number.",
+          "default": []
+        },
+        "path": {
+          "type": "string",
+          "description": "The store file."
+        }
+      },
+      "required": [
+        "groups",
+        "path"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/loadHistory"
+    },
+    "NodeLoadGroupDto": {
+      "type": "object",
+      "properties": {
+        "placement": {
+          "$ref": "#/$defs/MlxPlacementKeyDto"
+        },
+        "medianTotalMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "count": {
+          "type": "integer",
+          "description": "How many Ready loads the median is over.",
+          "minimum": 0
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeLoadRecordDto"
+          }
+        }
+      },
+      "required": [
+        "placement",
+        "count",
+        "records"
+      ],
+      "description": "The measured loads of one way of the node's model. `medianTotalMs` is over Ready loads only;\nabsent = not measured yet (never an estimate)."
+    },
+    "NodeLoadRecordDto": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "placement": {
+          "$ref": "#/$defs/MlxPlacementKeyDto"
+        },
+        "macs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "weightsBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "phasesMs": {
+          "$ref": "#/$defs/NodeLoadPhasesMsDto"
+        },
+        "totalMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fileCacheWarm": {
+          "type": "boolean"
+        },
+        "outcome": {
+          "$ref": "#/$defs/NodeLoadOutcomeDto"
+        },
+        "recordedAtMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "model",
+        "placement",
+        "macs",
+        "weightsBytes",
+        "phasesMs",
+        "totalMs",
+        "fileCacheWarm",
+        "outcome",
+        "recordedAtMs"
+      ],
+      "description": "One measured load, as stored."
+    },
+    "NodeLoadPhasesMsDto": {
+      "type": "object",
+      "properties": {
+        "starting": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "loading": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "warming": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "NodeLoadOutcomeDto": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ready"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "words": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "required": [
+            "kind",
+            "words"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cancelledAfterStop"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "NodesServedLastRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "description": "The last served-turn record of a session (this process's, else the one persisted in the\nsession).",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/servedLast"
+    },
+    "NodesServedLastResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeServedTurnDto"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent = no turn of this session was served through a node yet."
+        }
+      },
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/servedLast"
+    },
+    "NodeServedTurnDto": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NodeRole"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Absent for `node:` and `swarm` sessions."
+        },
+        "rank": {
+          "type": "integer",
+          "description": "1 = the chain's 1st.",
+          "minimum": 0
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Why the 1st did not serve, when it did not."
+        },
+        "tried": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NodeTriedDto"
+          },
+          "default": []
+        },
+        "loadedMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Set when this turn loaded the node: the measured load time.",
+          "minimum": 0
+        },
+        "atMs": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "node",
+        "rank",
+        "atMs"
+      ],
+      "description": "The node that served one turn, as the router leased it."
+    },
+    "NodeTriedDto": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "reason"
+      ],
+      "description": "A chain entry that did not take the turn, and why."
+    },
+    "NodesEnsureServingRequest_unstable": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The session demanding it, when a turn does."
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "description": "Make a node servable: `ready`, `wait(reason)` or `refused(code, reason)`. With no loader\ninstalled, a not-serving MLX node answers the named refusal `loaderAbsent`.",
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/ensureServing"
+    },
+    "NodesEnsureServingResponse_unstable": {
+      "type": "object",
+      "properties": {
+        "answer": {
+          "$ref": "#/$defs/NodeEnsureServing"
+        }
+      },
+      "required": [
+        "answer"
+      ],
+      "x-side": "agent",
+      "x-method": "_goose/unstable/nodes/ensureServing"
+    },
+    "NodeEnsureServing": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ready"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "wait"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/NodeLoadRefusalCode"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "refused"
+            }
+          },
+          "required": [
+            "kind",
+            "code",
+            "reason"
+          ]
+        }
+      ],
+      "description": "The answer to \"make this node servable\"."
+    },
+    "NodeLoadRefusalCode": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "unknownNode",
+            "heldByBuild",
+            "keptLoaded",
+            "needsStep",
+            "fit",
+            "loadFailed"
+          ]
+        },
+        {
+          "type": "string",
+          "const": "loaderAbsent",
+          "description": "No node loader in this goose process: start the node in Run it."
+        },
+        {
+          "type": "string",
+          "const": "unknown",
+          "description": "Which way serves is unknown (an unreadable record)."
+        }
+      ]
+    },
     "GooseSessionNotification_unstable": {
       "type": "object",
       "properties": {
@@ -15532,6 +17269,87 @@
                   ],
                   "description": "Params for _goose/unstable/leanzeroLink/remoteExecute",
                   "title": "LeanzeroLinkRemoteExecuteRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NodesReadRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/read",
+                  "title": "NodesReadRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NodesWriteRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/write",
+                  "title": "NodesWriteRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NodesRemoveNodeRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/removeNode",
+                  "title": "NodesRemoveNodeRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NodesRemoveStrategyRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/removeStrategy",
+                  "title": "NodesRemoveStrategyRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NodesBuildEligibilityRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/buildEligibility",
+                  "title": "NodesBuildEligibilityRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NodesResidencyRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/residency",
+                  "title": "NodesResidencyRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NodesLoadHistoryRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/loadHistory",
+                  "title": "NodesLoadHistoryRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NodesServedLastRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/servedLast",
+                  "title": "NodesServedLastRequest_unstable"
+                },
+                {
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/NodesEnsureServingRequest_unstable"
+                    }
+                  ],
+                  "description": "Params for _goose/unstable/nodes/ensureServing",
+                  "title": "NodesEnsureServingRequest_unstable"
                 }
               ]
             },
@@ -16490,6 +18308,62 @@
                         }
                       ],
                       "title": "LeanzeroLinkRemoteExecuteResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NodesReadResponse_unstable"
+                        }
+                      ],
+                      "title": "NodesReadResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NodesWriteResponse_unstable"
+                        }
+                      ],
+                      "title": "NodesWriteResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NodesBuildEligibilityResponse_unstable"
+                        }
+                      ],
+                      "title": "NodesBuildEligibilityResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NodesResidencyResponse_unstable"
+                        }
+                      ],
+                      "title": "NodesResidencyResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NodesLoadHistoryResponse_unstable"
+                        }
+                      ],
+                      "title": "NodesLoadHistoryResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NodesServedLastResponse_unstable"
+                        }
+                      ],
+                      "title": "NodesServedLastResponse_unstable"
+                    },
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/NodesEnsureServingResponse_unstable"
+                        }
+                      ],
+                      "title": "NodesEnsureServingResponse_unstable"
                     }
                   ]
                 },

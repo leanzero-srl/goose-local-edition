@@ -18,6 +18,11 @@ ps -axo pid=,ppid=,etime=,command= | while read pid ppid et cmd; do
   kind=""
   case "$cmd" in
     *bundled-mcps/leanzero-*) [ "$ppid" = 1 ] && kind="orphan-mcp" ;;
+    # Q-223 (2026-09-27): a quit app goosed survived as ppid 1 for 1h22m at ~30% CPU and kept the Link tailscaled,
+    # blocking Link in the new app; three more from an agent packaged build (a worktree out/) were alive too.
+    # ppid 1 is the proof: a live app goose serve / tailscaled is its child. The Homebrew tailscaled never matches.
+    *"Resources/bin/goose serve"*) [ "$ppid" = 1 ] && kind="orphan-goosed" ;;
+    *"Goose Swarm"*"Resources/bin/tailscaled --tun"*) [ "$ppid" = 1 ] && kind="orphan-tailscaled" ;;
     *"bin/rapid-mlx serve"*|*rapid_mlx*|*mlx_lm.server*|*mlx.launch*|*rank_wrapper*|*.goose/distributed/*|*"import base64,sys"*) [ "$ppid" = 1 ] && kind="orphan-engine" ;;
     *"quality/harness/"*|*"ux-audit/"*|*r1.mjs*|*recovery.mjs*|*load.py*|*ladder.py*|*canary.py*|*sampler.sh*) kind="harness" ;;
   esac

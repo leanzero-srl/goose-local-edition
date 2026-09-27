@@ -13,6 +13,12 @@
 //! [`goose_sidecar::engine::MlxEngineManager`] reports it running and serving the device's id) and
 //! cloud devices (the registry provider for the device's family). A node that cannot serve is not
 //! a candidate and its reason is carried into the error when nothing can serve.
+//!
+//! The model name picks the route (design DESIGN-NODES-AND-STRATEGIES.md §7.1): `swarm` is "Any
+//! node (Auto)" over the pool above; `node:<id>` and `strategy:<id>[@<role>]` route along a chain
+//! built from the `nodes` definitions, decided by the role's when-rule (`nodes::resolve`), with a
+//! not-loaded MLX entry handed to the node loader through `nodes::seam`. Every lease — MLX, LM
+//! Studio or cloud — leaves a served-turn record for its session (`nodes::served`).
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -32,8 +38,19 @@ use super::mlx_remote::{self, PublishedRoute, RouteRecord};
 use super::mlx_serving_intent::{self, IntentRecord, ServingIntent};
 use crate::config::{Config, ConfigError};
 use crate::conversation::message::Message;
+use crate::nodes::residency::ServingFacts;
+use crate::nodes::resolve::{resolve, Decision, EntryFact, PassedOver, ShareState, Tried};
+use crate::nodes::seam::Demand;
+use crate::nodes::{
+    NodeChainEntry, NodeDefKind, NodeIfNotLoaded, NodePlacement, NodeRole, NodeRoleEntry, NodeWhen,
+    NodesReadResponse, ResolvedNodeDef, RouteModel,
+};
 use goose_providers::errors::ProviderError;
 use goose_providers::model::ModelConfig;
+use goose_sdk_types::custom_requests::{
+    MlxPlacementKeyDto, MlxPlacementKindDto, NodeEnsureServing, NodeLoadRefusalCode,
+    NodeServedTurnDto, NodeTriedDto, NodesServingKind,
+};
 use goose_sidecar::engine::{served_model_id, EngineSettings, EngineStatus};
 
 const SWARM_CONFIG_KEY: &str = "swarm";
@@ -74,6 +91,9 @@ pub(crate) struct PoolDevice {
     pub provider: Option<String>,
     /// Local engine: `None`/`lmstudio` = LM Studio, `mlx-sidecar` = the supervised MLX engine.
     pub engine: Option<String>,
+    /// The pool's Share — what the Share stepper writes and the build scheduler routes by. Chat's
+    /// Auto reads it as its tie-break after free slots (D1). `None` = not set.
+    pub speed_weight: Option<u32>,
 }
 
 impl Default for PoolDevice {
@@ -86,13 +106,16 @@ impl Default for PoolDevice {
             instances: 1,
             provider: None,
             engine: None,
+            speed_weight: None,
         }
     }
 }
 
-/// Swarm cloud family → goose provider-registry key. Copied from `CLOUD_DEFS` in
-/// crates/goose-cli/src/commands/swarm.rs (the `name` → `registry` pairs); the two differ for
-/// bedrock and deepseek, which is why the mapping exists at all.
+/// Swarm cloud family → goose provider-registry key: the `CLOUD_DEFS` rows
+/// (crates/goose-cli/src/commands/swarm/cloud.rs) whose `name` and `registry` differ; every other
+/// row is an identity. The engine's table is the source, and a parity test in its test module
+/// (D7) runs every row through [`cloud_registry_name`], so a new row that differs fails the build
+/// instead of misrouting.
 const CLOUD_REGISTRY: &[(&str, &str)] = &[
     ("bedrock", "aws_bedrock"),
     ("zai", "zai"),
@@ -100,7 +123,7 @@ const CLOUD_REGISTRY: &[(&str, &str)] = &[
     ("deepseek", "custom_deepseek"),
 ];
 
-fn cloud_registry_name(family: &str) -> &str {
+pub fn cloud_registry_name(family: &str) -> &str {
     let lower = family.to_lowercase();
     CLOUD_REGISTRY
         .iter()
@@ -125,6 +148,8 @@ pub(crate) enum NodeKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RemoteTarget {
+    /// The peer's Link node id (the route's `peer`) — its placement key is `link:<peer>`.
+    pub peer: String,
     /// The peer by its one name (its owner's name for it, else its hostname) — what every reason
     /// says. The node id keeps the hostname.
     pub peer_name: String,
@@ -139,11 +164,20 @@ pub(crate) struct Node {
     pub id: String,
     pub model_id: String,
     pub weight: u32,
+    /// The pool's Share (D1); `None` = not set.
+    pub share: Option<u32>,
     pub capacity: u32,
     pub kind: NodeKind,
 }
 
 impl Node {
+    /// Auto's tie-break after free slots. An unset Share reads as 1 — the build scheduler's own
+    /// reading of an unset `speed_weight` — so a pool with equal or unset Shares keeps today's
+    /// order (the heavier `weight`, as before).
+    fn tie_share(&self) -> u32 {
+        self.share.map_or(1, |s| s.max(1))
+    }
+
     /// The goose provider that dispatches to this node, and the cache key that distinguishes two
     /// instances of the same provider aimed at different hosts (the declarative providers read
     /// their host env at creation, so one instance per host is the correct unit).
@@ -168,55 +202,62 @@ impl Node {
     }
 }
 
-/// Turn the config into nodes. Only enabled devices are nodes; a device's kind is decided the way
-/// the engine decides it (a cloud `provider` wins, then `engine`, then LM Studio).
+/// Turn the config into nodes. Only enabled devices are nodes.
 pub(crate) fn nodes_from_config(cfg: &PoolConfig) -> Vec<Node> {
     cfg.devices
         .iter()
         .filter(|d| d.enabled)
-        .map(|d| {
-            let kind = match (
-                d.provider
-                    .as_deref()
-                    .filter(|p| !p.eq_ignore_ascii_case("lmstudio")),
-                d.engine.as_deref(),
-            ) {
-                (Some(family), _) => NodeKind::Cloud {
-                    registry: cloud_registry_name(family).to_string(),
-                },
-                (None, Some("mlx-sidecar")) => NodeKind::MlxSidecar,
-                (None, _) => NodeKind::LmStudio {
-                    endpoint: cfg.endpoint.clone(),
-                },
-            };
-            let capacity = match kind {
-                // The sidecar's admission cap is the engine's, not the device's instance count.
-                NodeKind::MlxSidecar => goose_sidecar::engine::MAX_CONCURRENT_REQUESTS,
-                _ => d.instances.max(1),
-            };
-            Node {
-                id: d.id.clone(),
-                model_id: d.model_id.clone(),
-                weight: d.weight,
-                capacity,
-                kind,
-            }
-        })
+        .map(|d| node_from_device(&cfg.endpoint, d))
         .collect()
 }
 
+/// One device as a node. Its kind is decided the way the engine decides it (a cloud `provider`
+/// wins, then `engine`, then LM Studio).
+fn node_from_device(endpoint: &str, d: &PoolDevice) -> Node {
+    let kind = match (
+        d.provider
+            .as_deref()
+            .filter(|p| !p.eq_ignore_ascii_case("lmstudio")),
+        d.engine.as_deref(),
+    ) {
+        (Some(family), _) => NodeKind::Cloud {
+            registry: cloud_registry_name(family).to_string(),
+        },
+        (None, Some("mlx-sidecar")) => NodeKind::MlxSidecar,
+        (None, _) => NodeKind::LmStudio {
+            endpoint: endpoint.to_string(),
+        },
+    };
+    let capacity = match kind {
+        // The sidecar's admission cap is the engine's, not the device's instance count.
+        NodeKind::MlxSidecar => goose_sidecar::engine::MAX_CONCURRENT_REQUESTS,
+        _ => d.instances.max(1),
+    };
+    Node {
+        id: d.id.clone(),
+        model_id: d.model_id.clone(),
+        weight: d.weight,
+        share: d.speed_weight,
+        capacity,
+        kind,
+    }
+}
+
 /// The pool plus the live remote route's node. The route's node takes the heaviest configured
-/// weight, so a tie on free slots goes to the placement the user chose; its capacity is the
-/// peer's own admission cap.
+/// Share and weight, so a tie on free slots goes to the placement the user chose; its capacity is
+/// the peer's own admission cap.
 pub(crate) fn with_remote_route(mut nodes: Vec<Node>, route: Option<&PublishedRoute>) -> Vec<Node> {
     if let Some(route) = route {
         let weight = nodes.iter().map(|n| n.weight).max().unwrap_or(1);
+        let share = nodes.iter().filter_map(|n| n.share).max();
         nodes.push(Node {
             id: route.node_id(),
             model_id: route.served_model_id.clone(),
             weight,
+            share,
             capacity: route.capacity,
             kind: NodeKind::MlxRemote(RemoteTarget {
+                peer: route.peer.clone(),
                 peer_name: route.peer_name().to_string(),
                 base_url: route.base_url.clone(),
                 template_kwargs: route.template_kwargs.clone(),
@@ -766,6 +807,9 @@ impl NodeProbe for LiveProbe {
     }
 }
 
+/// A probed, servable node: the node, its slots, its free slots and its context window.
+type Slot = (Node, Arc<Semaphore>, u32, Option<u64>);
+
 /// A slot on a node, held for the life of the stream it serves.
 pub(crate) struct Lease {
     pub node: Node,
@@ -783,6 +827,9 @@ pub(crate) struct Router {
     slots: StdMutex<HashMap<String, Arc<Semaphore>>>,
     /// Conversation key → the node that last served it.
     sticky: StdMutex<HashMap<u64, String>>,
+    /// A strategy role's smooth weighted round-robin state (`strategy:<id>@<role>` → weights),
+    /// committed only when its pick is leased.
+    shares: StdMutex<HashMap<String, ShareState>>,
     queued: AtomicUsize,
     /// The smallest context window among the servable nodes at the last pick; 0 = no node said.
     /// What `get_context_limit` hands goose so its own compaction fires before the node's wall.
@@ -797,6 +844,7 @@ impl Router {
         Self {
             slots: StdMutex::new(HashMap::new()),
             sticky: StdMutex::new(HashMap::new()),
+            shares: StdMutex::new(HashMap::new()),
             queued: AtomicUsize::new(0),
             last_pool_context_limit: AtomicU32::new(0),
             pool_measured: std::sync::atomic::AtomicBool::new(false),
@@ -891,7 +939,8 @@ impl Router {
     }
 
     /// Choose a node and take one of its slots. Sticky first; else the servable node with the most
-    /// free slots (ties → higher weight); else queue on every servable node until a permit frees.
+    /// free slots (ties → the larger Share, then the higher weight); else queue on every servable
+    /// node until a permit frees.
     /// `saturated` names nodes this turn already saw refuse admission.
     pub(crate) async fn pick(
         &self,
@@ -913,30 +962,14 @@ impl Router {
             }
         }
         one_node_per_engine(&mut candidates, &mut reasons);
-        let mut servable: Vec<(Node, Arc<Semaphore>, u32, Option<u64>)> = Vec::new();
+        let mut servable: Vec<Slot> = Vec::new();
         let mut smallest_window: Option<u64> = None;
         for (node, facts) in candidates {
-            let sem = self.semaphore(node);
-            let leased = node.capacity.saturating_sub(sem.available_permits() as u32);
-            let used = facts.live_in_flight.map_or(leased, |l| l.max(leased));
-            let free = node.capacity.saturating_sub(used);
-            let mut node = node.clone();
-            if let Some(served) = facts.serves {
-                if let Some(set) = &facts.follows {
-                    tracing::info!(
-                        target: "swarm_router",
-                        node = %node.id,
-                        set_to = %set,
-                        serves = %served,
-                        "chat follows the model this Mac's owner started; the node's model_id is left as written"
-                    );
-                }
-                node.model_id = served;
-            }
-            servable.push((node, sem, free, facts.context_window));
-            if let Some(window) = facts.context_window {
+            let slot = self.slot(node, facts);
+            if let Some(window) = slot.3 {
                 smallest_window = Some(smallest_window.map_or(window, |w| w.min(window)));
             }
+            servable.push(slot);
         }
         if !servable.is_empty() {
             self.record_pool_window(smallest_window);
@@ -969,14 +1002,42 @@ impl Router {
                 servable
                     .iter()
                     .filter(|(_, _, free, _)| *free > 0)
-                    .max_by_key(|(n, _, free, _)| (*free, n.weight))
+                    .max_by_key(|(n, _, free, _)| (*free, n.tie_share(), n.weight))
             });
         if let Some((node, sem, free, window)) = preferred {
             if let Ok(permit) = sem.clone().try_acquire_owned() {
                 return Ok(self.leased(node, *window, permit, *free, 0, key));
             }
         }
+        self.queue_on(&servable, key).await
+    }
 
+    /// A probed node with its slots: the node (naming what its engine serves), its semaphore, its
+    /// free slots (the larger of this process's leases and the engine's own in-flight count) and
+    /// its context window.
+    fn slot(&self, node: &Node, facts: Servable) -> Slot {
+        let sem = self.semaphore(node);
+        let leased = node.capacity.saturating_sub(sem.available_permits() as u32);
+        let used = facts.live_in_flight.map_or(leased, |l| l.max(leased));
+        let free = node.capacity.saturating_sub(used);
+        let mut node = node.clone();
+        if let Some(served) = facts.serves {
+            if let Some(set) = &facts.follows {
+                tracing::info!(
+                    target: "swarm_router",
+                    node = %node.id,
+                    set_to = %set,
+                    serves = %served,
+                    "chat follows the model this Mac's owner started; the node's model_id is left as written"
+                );
+            }
+            node.model_id = served;
+        }
+        (node, sem, free, facts.context_window)
+    }
+
+    /// Queue on every slot given and take the first permit that frees — no clock, no cap (gate 5).
+    async fn queue_on(&self, servable: &[Slot], key: u64) -> Result<Lease, ProviderError> {
         let start = Instant::now();
         let depth = self.queued.fetch_add(1, Ordering::SeqCst) + 1;
         tracing::info!(
@@ -1282,6 +1343,9 @@ pub(crate) fn install_route_load(load: Arc<dyn RouteLoad>) {
     let _ = ROUTE_LOAD.set(load);
 }
 
+/// Route one Auto turn over the pool: pick, delegate, and record the lease (see `route_chain` for
+/// the node and strategy routes).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn route_stream(
     router: &Router,
     nodes: &[Node],
@@ -1289,16 +1353,10 @@ pub(crate) async fn route_stream(
     providers: &dyn ProviderSource,
     kwargs_source: &dyn TemplateKwargsSource,
     route_load: &dyn RouteLoad,
+    seam: &dyn NodesSeam,
     turn: Turn<'_>,
 ) -> Result<MessageStream, ProviderError> {
-    let Turn {
-        model_config,
-        system,
-        messages,
-        tools,
-        session,
-    } = turn;
-    let key = Router::conversation_key(system, messages);
+    let key = Router::conversation_key(turn.system, turn.messages);
     let mut saturated = HashSet::new();
     let mut last_refusal: Option<ProviderError> = None;
     loop {
@@ -1318,52 +1376,94 @@ pub(crate) async fn route_stream(
                 return Err(last_refusal.unwrap_or(no_node));
             }
         };
-        let provider = providers
-            .provider_for(&lease.node)
-            .await
-            .map_err(ProviderError::ExecutionError)?;
-        let mut node_cfg = model_config.clone();
-        node_cfg.model_name = lease.node.model_id.clone();
-        // The session's config is the `swarm` model's (an unknown name → the 128,000 default); the
-        // routed call is the node's model, so it carries the node's own window or states none.
-        node_cfg.context_limit = lease
-            .context_window
-            .map(|w| usize::try_from(w).unwrap_or(usize::MAX));
-        let kwargs = match &lease.node.kind {
-            NodeKind::MlxSidecar => session.for_model(&lease.node.model_id, kwargs_source)?,
-            NodeKind::MlxRemote(target) => session.for_model(
-                &lease.node.model_id,
-                &PeerProfileKwargs(target.template_kwargs.clone()),
-            )?,
-            _ => None,
-        };
-        if let Some(kwargs) = kwargs {
-            add_template_kwargs(&mut node_cfg, kwargs)?;
-        }
-        match provider.stream(&node_cfg, system, messages, tools).await {
-            Ok(inner) => {
-                let inner = if matches!(
-                    lease.node.kind,
-                    NodeKind::MlxSidecar | NodeKind::MlxRemote(_)
-                ) {
-                    super::mlx_speed::observe(inner)
-                } else {
-                    inner
-                };
-                return Ok(leased_stream(inner, lease));
+        match stream_on(lease, providers, kwargs_source, &turn).await? {
+            Streamed::Served(stream, node) => {
+                note_served(seam, pool_lease_way(seam, &node), || NodeServedTurnDto {
+                    node: node.id.clone(),
+                    role: None,
+                    rank: 1,
+                    reason: None,
+                    tried: Vec::new(),
+                    loaded_ms: None,
+                    at_ms: now_ms(),
+                });
+                return Ok(stream);
             }
-            Err(e) if is_admission_refusal(&e) => {
-                tracing::warn!(
-                    target: "swarm_router",
-                    node = %lease.node.id,
-                    error = %e,
-                    "node refused admission; trying the next free node"
-                );
-                saturated.insert(lease.node.id.clone());
+            Streamed::Refused(node, e) => {
+                saturated.insert(node);
                 last_refusal = Some(e);
             }
-            Err(e) => return Err(e),
         }
+    }
+}
+
+/// What one lease's call came to.
+enum Streamed {
+    /// The node's stream, holding the lease for its life, and the node that serves it.
+    Served(MessageStream, Node),
+    /// The node refused admission (its id): set it aside for this turn and try the next.
+    Refused(String, ProviderError),
+}
+
+/// Delegate the turn to the leased node's provider, naming the node's model and window and adding
+/// its thinking choices. Content is never retried; only an admission refusal comes back to try the
+/// next node.
+async fn stream_on(
+    lease: Lease,
+    providers: &dyn ProviderSource,
+    kwargs_source: &dyn TemplateKwargsSource,
+    turn: &Turn<'_>,
+) -> Result<Streamed, ProviderError> {
+    let provider = providers
+        .provider_for(&lease.node)
+        .await
+        .map_err(ProviderError::ExecutionError)?;
+    let mut node_cfg = turn.model_config.clone();
+    node_cfg.model_name = lease.node.model_id.clone();
+    // The session's config is the `swarm` model's (an unknown name → the 128,000 default); the
+    // routed call is the node's model, so it carries the node's own window or states none.
+    node_cfg.context_limit = lease
+        .context_window
+        .map(|w| usize::try_from(w).unwrap_or(usize::MAX));
+    let kwargs = match &lease.node.kind {
+        NodeKind::MlxSidecar => turn
+            .session
+            .for_model(&lease.node.model_id, kwargs_source)?,
+        NodeKind::MlxRemote(target) => turn.session.for_model(
+            &lease.node.model_id,
+            &PeerProfileKwargs(target.template_kwargs.clone()),
+        )?,
+        _ => None,
+    };
+    if let Some(kwargs) = kwargs {
+        add_template_kwargs(&mut node_cfg, kwargs)?;
+    }
+    match provider
+        .stream(&node_cfg, turn.system, turn.messages, turn.tools)
+        .await
+    {
+        Ok(inner) => {
+            let inner = if matches!(
+                lease.node.kind,
+                NodeKind::MlxSidecar | NodeKind::MlxRemote(_)
+            ) {
+                super::mlx_speed::observe(inner)
+            } else {
+                inner
+            };
+            let node = lease.node.clone();
+            Ok(Streamed::Served(leased_stream(inner, lease), node))
+        }
+        Err(e) if is_admission_refusal(&e) => {
+            tracing::warn!(
+                target: "swarm_router",
+                node = %lease.node.id,
+                error = %e,
+                "node refused admission; trying the next free node"
+            );
+            Ok(Streamed::Refused(lease.node.id.clone(), e))
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -1402,52 +1502,883 @@ fn leased_stream(inner: MessageStream, lease: Lease) -> MessageStream {
     Box::pin(LeasedStream { inner, lease })
 }
 
-/// The provider's entry point: the live pool, the live probe, the shared router.
+/// The provider's entry point: the pool (Auto) or the node or strategy the model names, the live
+/// probe, the shared router. `records_served` is false for the session-title call, which is not a
+/// turn the chip reads.
 pub(crate) async fn route_chat(
     model_config: &ModelConfig,
     system: &str,
     messages: &[Message],
     tools: &[Tool],
     session: &SessionTemplateKwargs,
+    records_served: bool,
 ) -> Result<MessageStream, ProviderError> {
-    let cfg = load_pool()?;
-    let nodes = with_remote_route(nodes_from_config(&cfg), mlx_remote::read().live().as_ref());
-    if nodes.is_empty() {
-        let disabled: Vec<String> = cfg
-            .devices
-            .iter()
-            .map(|d| format!("{} (disabled)", d.id))
-            .collect();
-        return Err(ProviderError::ExecutionError(format!(
-            "swarm chat: no enabled device under `swarm.devices` — {}",
-            if disabled.is_empty() {
-                "the list is empty".to_string()
-            } else {
-                disabled.join(", ")
-            }
-        )));
-    }
-    let providers: &LiveProviders = &PROVIDERS;
-    let route_load: &dyn RouteLoad = match ROUTE_LOAD.get() {
-        Some(load) => load.as_ref(),
-        None => &NoRouteLoad,
+    let route = nodes_route(&model_config.model_name).map_err(ProviderError::ExecutionError)?;
+    let seam = LiveNodesSeam { records_served };
+    let turn = Turn {
+        model_config,
+        system,
+        messages,
+        tools,
+        session,
     };
-    route_stream(
+    let providers: &LiveProviders = &PROVIDERS;
+    let Some(route) = route else {
+        let cfg = load_pool()?;
+        let nodes = with_remote_route(nodes_from_config(&cfg), mlx_remote::read().live().as_ref());
+        if nodes.is_empty() {
+            let disabled: Vec<String> = cfg
+                .devices
+                .iter()
+                .map(|d| format!("{} (disabled)", d.id))
+                .collect();
+            return Err(ProviderError::ExecutionError(format!(
+                "swarm chat: no enabled device under `swarm.devices` — {}",
+                if disabled.is_empty() {
+                    "the list is empty".to_string()
+                } else {
+                    disabled.join(", ")
+                }
+            )));
+        }
+        return route_stream(
+            &ROUTER,
+            &nodes,
+            &*PROBE,
+            providers,
+            &ConfiguredTemplateKwargs,
+            live_route_load(),
+            &seam,
+            turn,
+        )
+        .await;
+    };
+    let plan = live_plan(&route)
+        .await
+        .map_err(|e| ProviderError::ExecutionError(format!("swarm chat: {e}")))?;
+    let members = LiveMembers::read(seam.loader_installed()).await;
+    route_chain(
         &ROUTER,
-        &nodes,
+        &plan,
+        &members,
         &*PROBE,
         providers,
         &ConfiguredTemplateKwargs,
-        route_load,
-        Turn {
-            model_config,
-            system,
-            messages,
-            tools,
-            session,
-        },
+        live_route_load(),
+        &seam,
+        turn,
     )
     .await
+}
+
+fn live_route_load() -> &'static dyn RouteLoad {
+    static NONE: NoRouteLoad = NoRouteLoad;
+    match ROUTE_LOAD.get() {
+        Some(load) => load.as_ref(),
+        None => &NONE,
+    }
+}
+
+/// The context window goose compacts against for `model`: the pool's for Auto (unchanged), the
+/// node's own for `node:<id>`, the smallest in the chain for `strategy:<id>[@role]` — so goose
+/// compacts before the smallest node's wall. `Err` names why no window is known; never a number
+/// standing in for one.
+pub(crate) async fn route_context_window(model: &str) -> Result<usize, String> {
+    let Some(route) = nodes_route(model)? else {
+        return pool_context_window().await;
+    };
+    let plan = live_plan(&route).await?;
+    let members = LiveMembers::read(crate::nodes::seam::loader_installed()).await;
+    chain_window(&plan, &members, &*PROBE).await
+}
+
+// ---------------------------------------------------------------------------------------------
+// Routes to a node or a strategy (design §6.3, §7.1): `node:<id>`, `strategy:<id>` (its Chat
+// chain) and `strategy:<id>@<role>` (a delegate's Build). The chain is built from the node
+// definitions, never from `swarm.devices`; the same probes, one-node-per-engine rule, slots,
+// stickiness and queueing apply; the role's when-rule decides through `nodes::resolve` (the rule
+// the desktop's mirror runs on the same fixture); a not-loaded MLX entry under `load` goes to the
+// node loader through the seam. A chain with nothing servable ends the turn naming every entry and
+// its reason — it never falls to "any node" (gate 1).
+// ---------------------------------------------------------------------------------------------
+
+/// The route a model name selects on the `swarm` provider: `Ok(None)` = the pool (Auto — `swarm`,
+/// the build ids and any other name, today's routing); `Ok(Some)` = a node or a strategy; `Err` =
+/// a name that uses the nodes grammar and does not parse, refused by name rather than read as Auto
+/// (a silent substitution).
+fn nodes_route(name: &str) -> Result<Option<RouteModel>, String> {
+    match crate::nodes::parse_route_model(name) {
+        Some(route @ (RouteModel::Node { .. } | RouteModel::Strategy { .. })) => Ok(Some(route)),
+        Some(_) => Ok(None),
+        // The grammar's own prefixes (`nodes::parse_route_model`).
+        None if ["node:", "strategy:", "swarm-build:"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix)) =>
+        {
+            Err(format!(
+                "swarm chat: '{name}' names no node or strategy (an id is non-empty and carries no ':' or '@'; a role is chat, planning, build, testing, frontend or backend); nothing was routed"
+            ))
+        }
+        None => Ok(None),
+    }
+}
+
+/// What routing reaches besides the probes: the node loader (through S0's seam), the loader's note
+/// of the way a lease holds, and the served-turn record. Live = `crate::nodes`; tests use fakes.
+#[async_trait]
+pub(crate) trait NodesSeam: Send + Sync {
+    async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing;
+    fn loader_installed(&self) -> bool;
+    fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto);
+    fn served(&self, session: &str, turn: NodeServedTurnDto);
+}
+
+pub(crate) struct LiveNodesSeam {
+    records_served: bool,
+}
+
+#[async_trait]
+impl NodesSeam for LiveNodesSeam {
+    async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing {
+        crate::nodes::seam::ensure_serving(demand).await
+    }
+
+    fn loader_installed(&self) -> bool {
+        crate::nodes::seam::loader_installed()
+    }
+
+    fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto) {
+        crate::nodes::seam::note_lease(session, way);
+    }
+
+    /// This process's record at once (the chip reads it at the turn's end), then the session's,
+    /// off the turn's path so a slow write never delays the reply; a failed save is logged by name.
+    fn served(&self, session: &str, turn: NodeServedTurnDto) {
+        if !self.records_served {
+            return;
+        }
+        crate::nodes::served::remember(session, turn.clone());
+        let session = session.to_string();
+        tokio::spawn(async move {
+            let sessions = crate::session::SessionManager::instance();
+            if let Err(e) = crate::nodes::served::record(&sessions, &session, turn).await {
+                tracing::warn!(
+                    target: "swarm_router",
+                    session = %session,
+                    error = %e,
+                    "the served-turn record could not be saved in the session; the chip reads this process's record until a reload"
+                );
+            }
+        });
+    }
+}
+
+fn now_ms() -> u64 {
+    u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(u64::MAX)
+}
+
+/// A lease's notes, for the session the turn belongs to: the loader's note of the way it holds
+/// (when there is a way to name), and the served-turn record. A call outside any session (the CLI,
+/// a probe) has no record to keep.
+fn note_served(
+    seam: &dyn NodesSeam,
+    way: Option<MlxPlacementKeyDto>,
+    record: impl FnOnce() -> NodeServedTurnDto,
+) {
+    let Some(session) = crate::session_context::current_session_id() else {
+        return;
+    };
+    if let Some(way) = way {
+        seam.note_lease(&session, &way);
+    }
+    seam.served(&session, record());
+}
+
+fn single_way(mac: String) -> MlxPlacementKeyDto {
+    MlxPlacementKeyDto {
+        kind: MlxPlacementKindDto::Single,
+        nodes: vec![mac],
+        link: None,
+    }
+}
+
+/// The way an Auto or follower lease on an MLX node holds, for the loader's note — read only while
+/// a loader is installed (with none, a note does nothing). This Mac's single is `local`, a remote
+/// single `link:<peer>`. A split's owner record names neither its kind nor its Macs, so a lease on
+/// it cannot name its way: that is said, not guessed.
+fn pool_lease_way(seam: &dyn NodesSeam, node: &Node) -> Option<MlxPlacementKeyDto> {
+    if !seam.loader_installed() {
+        return None;
+    }
+    match &node.kind {
+        NodeKind::MlxRemote(target) => {
+            Some(single_way(crate::nodes::residency::peer_key(&target.peer)))
+        }
+        NodeKind::MlxSidecar => {
+            use mlx_distributed_owner::OwnerRecord;
+            let split = mlx_distributed_owner::own_active_base_url().is_some()
+                || matches!(
+                    mlx_distributed_owner::read(),
+                    OwnerRecord::Mine(_) | OwnerRecord::Other(_)
+                );
+            if split {
+                tracing::warn!(
+                    target: "swarm_router",
+                    node = %node.id,
+                    "this lease is on the split, whose owner record names neither its kind nor its Macs; the loader is not told which way it holds"
+                );
+                return None;
+            }
+            Some(single_way(crate::nodes::THIS_MAC.to_string()))
+        }
+        NodeKind::LmStudio { .. } | NodeKind::Cloud { .. } => None,
+    }
+}
+
+/// A route's chain, read against the `nodes` config for this turn.
+pub(crate) struct ChainPlan {
+    /// How errors name the route: `"Flash · this Mac"` or `the strategy "Everyday" (chat)`.
+    label: String,
+    /// The role the chain serves; `None` for a `node:` route.
+    role: Option<NodeRole>,
+    /// Where the role's round-robin state lives (`strategy:<id>@<role>`).
+    share_key: String,
+    entry: NodeRoleEntry,
+    defs: HashMap<String, ResolvedNodeDef>,
+}
+
+/// The chain `route` names. A `node:` route is a chain of that one node, and a node that cannot
+/// serve ends the turn (the user chose exactly it). A removed node or strategy is named, never
+/// replaced.
+fn chain_plan(route: &RouteModel, read: &NodesReadResponse) -> Result<ChainPlan, String> {
+    let defs: HashMap<String, ResolvedNodeDef> = read
+        .nodes
+        .iter()
+        .map(|n| (n.def.id.clone(), n.clone()))
+        .collect();
+    match route {
+        RouteModel::Node { id } => {
+            let def = defs.get(id).ok_or_else(|| {
+                format!("the node '{id}' was removed. Pick another node from the chip.")
+            })?;
+            Ok(ChainPlan {
+                label: format!("\"{}\"", def.def.name),
+                role: None,
+                share_key: crate::nodes::format_route_model(route),
+                entry: NodeRoleEntry {
+                    // The weight is read only by `share`; a one-node chain fails over.
+                    chain: vec![NodeChainEntry {
+                        node: id.clone(),
+                        weight: 1,
+                    }],
+                    when: NodeWhen::Failover,
+                    if_not_loaded: NodeIfNotLoaded::Load,
+                },
+                defs,
+            })
+        }
+        RouteModel::Strategy { id, role } => {
+            let strategy = read
+                .config
+                .strategies
+                .iter()
+                .find(|s| &s.id == id)
+                .ok_or_else(|| {
+                    format!("the strategy '{id}' was removed. Pick another from the chip.")
+                })?;
+            let role = role.unwrap_or(NodeRole::Chat);
+            let entry = crate::nodes::effective_entry(strategy, role).ok_or_else(|| {
+                format!(
+                    "the strategy \"{}\" sets neither Chat nor Build, so {} has no node",
+                    strategy.name,
+                    crate::nodes::role_str(role)
+                )
+            })?;
+            Ok(ChainPlan {
+                label: format!(
+                    "the strategy \"{}\" ({})",
+                    strategy.name,
+                    crate::nodes::role_str(role)
+                ),
+                role: Some(role),
+                share_key: crate::nodes::format_route_model(&RouteModel::Strategy {
+                    id: id.clone(),
+                    role: Some(role),
+                }),
+                entry: entry.clone(),
+                defs,
+            })
+        }
+        other => Err(format!(
+            "'{}' is not a node or strategy route",
+            crate::nodes::format_route_model(other)
+        )),
+    }
+}
+
+async fn live_plan(route: &RouteModel) -> Result<ChainPlan, String> {
+    let read = crate::nodes::read(Config::global(), this_mac_name().await)
+        .map_err(|e| format!("{e:#}; nothing was routed"))?;
+    chain_plan(route, &read)
+}
+
+/// This Mac's name, read once per process (adoption names this Mac's engine node with it).
+async fn this_mac_name() -> Result<String, String> {
+    static NAME: tokio::sync::OnceCell<Result<String, String>> = tokio::sync::OnceCell::const_new();
+    NAME.get_or_init(crate::nodes::acp::this_mac_name)
+        .await
+        .clone()
+}
+
+/// A chain node as routing reaches it now.
+#[derive(Clone)]
+pub(crate) struct Member {
+    node: Node,
+    /// The node names one way (not `follows`): an engine serving another model means it is not
+    /// loaded — never followed.
+    pinned: bool,
+    /// The way a lease on it holds (the loader's note); `None` for cloud and for a follower.
+    way: Option<MlxPlacementKeyDto>,
+}
+
+/// How a chain node is reached now: the routable node to probe, or the fact that says why there
+/// is none. Live = the node definitions against the records of what serves; tests use fakes.
+#[async_trait]
+pub(crate) trait ChainMembers: Send + Sync {
+    async fn member(&self, def: &ResolvedNodeDef) -> Result<Member, EntryFact>;
+}
+
+struct LiveMembers {
+    pool: Result<Option<PoolConfig>, String>,
+    mac_name: String,
+    loader_installed: bool,
+}
+
+impl LiveMembers {
+    async fn read(loader_installed: bool) -> Self {
+        let pool = match Config::global().get_param::<PoolConfig>(SWARM_CONFIG_KEY) {
+            Ok(cfg) => Ok(Some(cfg)),
+            Err(ConfigError::NotFound(_)) => Ok(None),
+            Err(e) => Err(format!("the `swarm` config block could not be read ({e})")),
+        };
+        // Only the words describing a serving way use the name (the residency read does the same).
+        let mac_name = this_mac_name()
+            .await
+            .unwrap_or_else(|_| "This Mac".to_string());
+        Self {
+            pool,
+            mac_name,
+            loader_installed,
+        }
+    }
+}
+
+#[async_trait]
+impl ChainMembers for LiveMembers {
+    async fn member(&self, def: &ResolvedNodeDef) -> Result<Member, EntryFact> {
+        if is_pinned(def) {
+            let serving = crate::nodes::residency::serving_now(&self.mac_name).await;
+            return pinned_member(
+                def,
+                &serving,
+                mlx_remote::read().live().as_ref(),
+                self.loader_installed,
+            );
+        }
+        match &def.def.pool_device {
+            Some(device) => pool_member(def, &self.pool, device),
+            None => cloud_member(def),
+        }
+    }
+}
+
+fn cant_run(reason: impl Into<String>) -> EntryFact {
+    EntryFact::CantRun {
+        reason: reason.into(),
+    }
+}
+
+fn is_pinned(def: &ResolvedNodeDef) -> bool {
+    def.def.kind == NodeDefKind::Mlx
+        && def
+            .def
+            .placement
+            .as_ref()
+            .is_some_and(|p| *p != NodePlacement::Follows)
+}
+
+/// An MLX node that names one way: routable only while THAT way serves this Mac's goose with its
+/// model (one MLX way serves at a time, so any other way means it is not loaded).
+fn pinned_member(
+    def: &ResolvedNodeDef,
+    serving: &ServingFacts,
+    route: Option<&PublishedRoute>,
+    loader_installed: bool,
+) -> Result<Member, EntryFact> {
+    let way = match serving {
+        ServingFacts::Unknown(reason) => return Err(cant_run(reason.clone())),
+        ServingFacts::Nothing => return Err(EntryFact::NotLoaded),
+        ServingFacts::Way(way) if crate::nodes::residency::names_way(def, way) => way,
+        ServingFacts::Way(_) => return Err(EntryFact::NotLoaded),
+    };
+    if let Some(phase) = &way.load_phase {
+        // Its own way is mid-load (Run it, or the loader). The loader owns waiting on a load;
+        // with none installed there is nothing to wait on, and its absence's words ("start it in
+        // Run it") would be wrong for a way that is already starting.
+        if loader_installed {
+            return Err(EntryFact::NotLoaded);
+        }
+        return Err(cant_run(format!(
+            "{} is still loading on this Mac ({phase}); it serves once the load ends",
+            def.def.name
+        )));
+    }
+    let model = def
+        .model
+        .clone()
+        .ok_or_else(|| cant_run("it names no model"))?;
+    let node = match way.kind {
+        NodesServingKind::Single | NodesServingKind::Split => Node {
+            id: def.def.id.clone(),
+            model_id: model,
+            weight: goose_sidecar::engine::MAX_CONCURRENT_REQUESTS,
+            share: None,
+            capacity: goose_sidecar::engine::MAX_CONCURRENT_REQUESTS,
+            kind: NodeKind::MlxSidecar,
+        },
+        NodesServingKind::RemoteSingle => {
+            let route = route.ok_or_else(|| {
+                cant_run("the remote-single route ended while this turn was routed")
+            })?;
+            Node {
+                id: def.def.id.clone(),
+                model_id: route.served_model_id.clone(),
+                weight: route.capacity,
+                share: None,
+                capacity: route.capacity,
+                kind: NodeKind::MlxRemote(RemoteTarget {
+                    peer: route.peer.clone(),
+                    peer_name: route.peer_name().to_string(),
+                    base_url: route.base_url.clone(),
+                    template_kwargs: route.template_kwargs.clone(),
+                }),
+            }
+        }
+    };
+    Ok(Member {
+        node,
+        pinned: true,
+        way: crate::nodes::acp::node_key(def),
+    })
+}
+
+/// A node adopted from the pool: its device, routed exactly as Auto routes it (an MLX device
+/// follows this Mac's engine, Q-128). A device switched off in the pool is said, not used.
+fn pool_member(
+    def: &ResolvedNodeDef,
+    pool: &Result<Option<PoolConfig>, String>,
+    device_id: &str,
+) -> Result<Member, EntryFact> {
+    let cfg = match pool {
+        Ok(Some(cfg)) => cfg,
+        Ok(None) => {
+            return Err(cant_run(
+                "it reads from your swarm pool, and config.yaml has no `swarm` block",
+            ))
+        }
+        Err(e) => return Err(cant_run(e.clone())),
+    };
+    let device = cfg
+        .devices
+        .iter()
+        .find(|d| d.id == device_id)
+        .ok_or_else(|| cant_run("it is no longer in your swarm pool"))?;
+    if !device.enabled {
+        return Err(cant_run("it is turned off in your swarm pool"));
+    }
+    let mut node = node_from_device(&cfg.endpoint, device);
+    node.id = def.def.id.clone();
+    Ok(Member {
+        node,
+        pinned: false,
+        way: None,
+    })
+}
+
+/// A cloud or endpoint node the user made: its provider and model. Its capacity is what a pool
+/// device written without `instances` gets.
+fn cloud_member(def: &ResolvedNodeDef) -> Result<Member, EntryFact> {
+    if def.def.kind == NodeDefKind::Mlx {
+        return Err(cant_run("it is an MLX node with no way to run"));
+    }
+    let model = def
+        .model
+        .clone()
+        .ok_or_else(|| cant_run("it names no model"))?;
+    let provider = def
+        .provider
+        .clone()
+        .ok_or_else(|| cant_run("it names no provider"))?;
+    let capacity = PoolDevice::default().instances;
+    Ok(Member {
+        node: Node {
+            id: def.def.id.clone(),
+            model_id: model,
+            weight: capacity,
+            share: None,
+            capacity,
+            kind: NodeKind::Cloud {
+                registry: cloud_registry_name(&provider).to_string(),
+            },
+        },
+        pinned: false,
+        way: None,
+    })
+}
+
+/// Every chain node's fact right now, and the slots of the ones that can take work.
+struct ChainFacts {
+    facts: HashMap<String, EntryFact>,
+    slots: HashMap<String, (Slot, Option<MlxPlacementKeyDto>)>,
+    /// A chain node is on a remote-single route (a turn may wait for its load, as Auto's does).
+    routed_remote: bool,
+}
+
+type Looked<'a> = (&'a str, bool, Result<(Member, Servable), EntryFact>);
+
+async fn chain_facts(
+    router: &Router,
+    plan: &ChainPlan,
+    members: &dyn ChainMembers,
+    probe: &dyn NodeProbe,
+    overrides: &HashMap<String, EntryFact>,
+    saturated: &HashSet<String>,
+) -> ChainFacts {
+    let mut ids: Vec<&str> = Vec::new();
+    for link in &plan.entry.chain {
+        if !ids.contains(&link.node.as_str()) {
+            ids.push(&link.node);
+        }
+    }
+    let looked: Vec<Looked> = futures::future::join_all(ids.iter().map(|id| async move {
+        let member = match (overrides.get(*id), plan.defs.get(*id)) {
+            (Some(fact), _) => Err(fact.clone()),
+            (None, None) => Err(cant_run(format!("there is no node '{id}'"))),
+            (None, Some(_)) if saturated.contains(*id) => {
+                Err(cant_run("refused admission this turn"))
+            }
+            (None, Some(def)) => members.member(def).await,
+        };
+        let remote = matches!(&member, Ok(m) if matches!(m.node.kind, NodeKind::MlxRemote(_)));
+        let probed = match member {
+            Err(fact) => Err(fact),
+            Ok(member) => match probe.probe(&member.node).await {
+                Err(reason) => Err(EntryFact::CantRun { reason }),
+                Ok(facts) if member.pinned && facts.follows.is_some() => Err(EntryFact::NotLoaded),
+                Ok(facts) => Ok((member, facts)),
+            },
+        };
+        (*id, remote, probed)
+    }))
+    .await;
+
+    let mut out = ChainFacts {
+        facts: HashMap::new(),
+        slots: HashMap::new(),
+        routed_remote: looked.iter().any(|(_, remote, _)| *remote),
+    };
+    let mut candidates: Vec<(&Node, Servable)> = Vec::new();
+    let mut ways: HashMap<&str, Option<MlxPlacementKeyDto>> = HashMap::new();
+    for (id, _, probed) in &looked {
+        match probed {
+            Err(fact) => {
+                out.facts.insert(id.to_string(), fact.clone());
+            }
+            Ok((member, facts)) => {
+                candidates.push((&member.node, facts.clone()));
+                ways.insert(id, member.way.clone());
+            }
+        }
+    }
+    let before: Vec<String> = candidates.iter().map(|(n, _)| n.id.clone()).collect();
+    let mut reasons = Vec::new();
+    one_node_per_engine(&mut candidates, &mut reasons);
+    for id in before {
+        if candidates.iter().any(|(n, _)| n.id == id) {
+            continue;
+        }
+        // `one_node_per_engine` names each follower it sets aside as "<id>: <reason>".
+        let prefix = format!("{id}: ");
+        let reason = reasons
+            .iter()
+            .find_map(|r| r.strip_prefix(&prefix))
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{id} was set aside for another node of its engine"));
+        out.facts.insert(id, cant_run(reason));
+    }
+    for (node, facts) in candidates {
+        let slot = router.slot(node, facts);
+        let fact = if slot.2 > 0 {
+            EntryFact::Servable
+        } else {
+            EntryFact::Busy
+        };
+        out.facts.insert(node.id.clone(), fact);
+        let way = ways.remove(node.id.as_str()).flatten();
+        out.slots.insert(node.id.clone(), (slot, way));
+    }
+    out
+}
+
+fn passed_words(why: &PassedOver) -> String {
+    match why {
+        PassedOver::Busy => "busy".to_string(),
+        PassedOver::NotLoaded => "not loaded".to_string(),
+        PassedOver::CantRun { reason } => reason.clone(),
+        PassedOver::LoadFailed { words } => words.clone(),
+        PassedOver::Unknown => "nothing is known about it".to_string(),
+    }
+}
+
+/// The words a load refusal leaves on its entry: the loader's own, with a failed load said so.
+fn refusal_words(code: NodeLoadRefusalCode, reason: &str) -> String {
+    match code {
+        NodeLoadRefusalCode::LoadFailed => format!("failed to load: {reason}"),
+        _ => reason.to_string(),
+    }
+}
+
+fn rank_of(plan: &ChainPlan, node: &str) -> u32 {
+    plan.entry
+        .chain
+        .iter()
+        .position(|l| l.node == node)
+        .map_or(0, |i| i as u32 + 1)
+}
+
+/// The served-turn record of a chain lease: its rank, why the 1st did not take the turn when it
+/// was passed over, every entry passed over, and the load time when this turn loaded it.
+fn chain_record(
+    plan: &ChainPlan,
+    node: &str,
+    tried: &[Tried],
+    loaded_ms: Option<u64>,
+) -> NodeServedTurnDto {
+    let first = plan.entry.chain.first().map(|l| l.node.as_str());
+    let reason = first
+        .filter(|first| *first != node)
+        .and_then(|first| tried.iter().find(|t| t.node == first))
+        .map(|t| passed_words(&t.why));
+    NodeServedTurnDto {
+        node: node.to_string(),
+        role: plan.role,
+        rank: rank_of(plan, node),
+        reason,
+        tried: tried
+            .iter()
+            .map(|t| NodeTriedDto {
+                node: t.node.clone(),
+                reason: passed_words(&t.why),
+            })
+            .collect(),
+        loaded_ms,
+        at_ms: now_ms(),
+    }
+}
+
+/// Route one turn along a chain. Each pass reads every entry's fact, lets the role's when-rule
+/// decide (`nodes::resolve`), and acts: serve, queue on the busy ones, or ask the loader for a
+/// not-loaded one and read again. Every pass either ends the turn or settles one entry for good
+/// (a load answered or refused, an admission refused), so the walk ends without a count or a
+/// clock.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn route_chain(
+    router: &Router,
+    plan: &ChainPlan,
+    members: &dyn ChainMembers,
+    probe: &dyn NodeProbe,
+    providers: &dyn ProviderSource,
+    kwargs_source: &dyn TemplateKwargsSource,
+    route_load: &dyn RouteLoad,
+    seam: &dyn NodesSeam,
+    turn: Turn<'_>,
+) -> Result<MessageStream, ProviderError> {
+    let key = Router::conversation_key(turn.system, turn.messages);
+    let mut overrides: HashMap<String, EntryFact> = HashMap::new();
+    let mut saturated = HashSet::new();
+    let mut last_refusal: Option<ProviderError> = None;
+    // Node → how long the loader took to answer Ready for this turn.
+    let mut loaded: HashMap<String, u64> = HashMap::new();
+    loop {
+        let current = chain_facts(router, plan, members, probe, &overrides, &saturated).await;
+        let sticky = router
+            .sticky
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&key)
+            .cloned();
+        // A role no pick has shared yet has no state: every weight starts at 0.
+        let mut share = router
+            .shares
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&plan.share_key)
+            .cloned()
+            .unwrap_or_default();
+        let decision = resolve(&plan.entry, &current.facts, sticky.as_deref(), &mut share);
+        let (lease, tried) = match decision {
+            Decision::Serve { node, tried, .. } => {
+                let (slot, _) = &current.slots[&node];
+                let lease = match slot.1.clone().try_acquire_owned() {
+                    Ok(permit) => router.leased(&slot.0, slot.3, permit, slot.2, 0, key),
+                    Err(_) => router.queue_on(std::slice::from_ref(slot), key).await?,
+                };
+                (lease, tried)
+            }
+            Decision::Queue { nodes, tried } => {
+                let slots: Vec<Slot> = nodes
+                    .iter()
+                    .filter_map(|n| current.slots.get(n).map(|(slot, _)| slot.clone()))
+                    .collect();
+                (router.queue_on(&slots, key).await?, tried)
+            }
+            Decision::Load { node, .. } => {
+                let fact = if loaded.contains_key(&node) {
+                    Some(EntryFact::LoadFailed {
+                        words: "the node loader said it serves, but its way is still not the one serving this Mac's chat".to_string(),
+                    })
+                } else {
+                    let demanded = Instant::now();
+                    let answer = seam
+                        .ensure_serving(Demand {
+                            node: plan.defs[&node].def.clone(),
+                            session_id: crate::session_context::current_session_id(),
+                            role: plan.role,
+                        })
+                        .await;
+                    match answer {
+                        NodeEnsureServing::Ready => {
+                            loaded.insert(
+                                node.clone(),
+                                u64::try_from(demanded.elapsed().as_millis()).unwrap_or(u64::MAX),
+                            );
+                            None
+                        }
+                        NodeEnsureServing::Refused { code, reason } => {
+                            Some(EntryFact::LoadFailed {
+                                words: refusal_words(code, &reason),
+                            })
+                        }
+                        // A turn's demand is answered once it is settled (Ready or Refused); a
+                        // Wait leaves the turn nothing to wait on, which is said, not spun on.
+                        NodeEnsureServing::Wait { reason } => Some(EntryFact::LoadFailed {
+                            words: format!(
+                                "the node loader answered that this turn waits ({reason}), with nothing to wake it"
+                            ),
+                        }),
+                    }
+                };
+                if let Some(fact) = fact {
+                    overrides.insert(node, fact);
+                }
+                continue;
+            }
+            Decision::Exhausted { tried } => {
+                if last_refusal.is_none() && current.routed_remote {
+                    match route_load.settle().await {
+                        Some(Ok(())) => continue,
+                        Some(Err(words)) => return Err(ProviderError::ExecutionError(words)),
+                        None => {}
+                    }
+                }
+                return Err(last_refusal.unwrap_or_else(|| {
+                    ProviderError::ExecutionError(format!(
+                        "swarm chat: {}: no node can serve this turn — {}",
+                        plan.label,
+                        tried
+                            .iter()
+                            .map(|t| format!("{}: {}", t.node, passed_words(&t.why)))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    ))
+                }));
+            }
+        };
+        router
+            .shares
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(plan.share_key.clone(), share);
+        let way = current
+            .slots
+            .get(&lease.node.id)
+            .and_then(|(_, way)| way.clone());
+        match stream_on(lease, providers, kwargs_source, &turn).await? {
+            Streamed::Served(stream, node) => {
+                let way = way.or_else(|| pool_lease_way(seam, &node));
+                note_served(seam, way, || {
+                    chain_record(plan, &node.id, &tried, loaded.get(&node.id).copied())
+                });
+                return Ok(stream);
+            }
+            Streamed::Refused(node, e) => {
+                saturated.insert(node);
+                last_refusal = Some(e);
+            }
+        }
+    }
+}
+
+/// The window goose compacts a chain route against: the smallest any chain node reports. A node
+/// that cannot say (not loaded, not reachable) is named in the log; when none can, the answer is
+/// the named reasons.
+async fn chain_window(
+    plan: &ChainPlan,
+    members: &dyn ChainMembers,
+    probe: &dyn NodeProbe,
+) -> Result<usize, String> {
+    let mut known: Vec<u64> = Vec::new();
+    let mut unknown: Vec<String> = Vec::new();
+    for link in &plan.entry.chain {
+        let window = match plan.defs.get(&link.node) {
+            None => Err(format!("there is no node '{}'", link.node)),
+            Some(def) => match members.member(def).await {
+                Err(EntryFact::CantRun { reason }) => Err(reason),
+                Err(EntryFact::LoadFailed { words }) => Err(words),
+                Err(_) => Err("not loaded".to_string()),
+                Ok(member) => match probe.probe(&member.node).await {
+                    Err(reason) => Err(reason),
+                    Ok(facts) if member.pinned && facts.follows.is_some() => {
+                        Err("not loaded".to_string())
+                    }
+                    Ok(facts) => facts
+                        .context_window
+                        .ok_or_else(|| "it does not report its context window".to_string()),
+                },
+            },
+        };
+        match window {
+            Ok(window) => known.push(window),
+            Err(reason) => unknown.push(format!("{}: {reason}", link.node)),
+        }
+    }
+    let Some(smallest) = known.iter().min().copied() else {
+        return Err(format!(
+            "no node of {} reports its context window — {}",
+            plan.label,
+            unknown.join("; ")
+        ));
+    };
+    if !unknown.is_empty() {
+        tracing::warn!(
+            target: "swarm_router",
+            route = %plan.label,
+            window = smallest,
+            unknown = %unknown.join("; "),
+            "the context window is the smallest the chain's reporting nodes say; these nodes could not say theirs"
+        );
+    }
+    Ok(usize::try_from(smallest).unwrap_or(usize::MAX))
 }
 
 #[cfg(test)]
@@ -1462,6 +2393,7 @@ mod tests {
             id: id.to_string(),
             model_id: format!("{id}-model"),
             weight,
+            share: None,
             capacity,
             kind: NodeKind::LmStudio {
                 endpoint: "http://test".to_string(),
@@ -1582,6 +2514,7 @@ mod tests {
         // this app's turn against the engine that runs it instead of as someone else's request.
         let remote = Node {
             kind: NodeKind::MlxRemote(RemoteTarget {
+                peer: "studio".to_string(),
                 peer_name: "Work's Mac Studio".to_string(),
                 base_url: "http://127.0.0.1:61001/relay/cafe".to_string(),
                 template_kwargs: None,
@@ -1829,6 +2762,7 @@ mod tests {
             id: id.to_string(),
             model_id: model_id.to_string(),
             weight,
+            share: None,
             capacity: 2,
             kind: NodeKind::MlxSidecar,
         }
@@ -2124,6 +3058,7 @@ devices:
             id: "mlx".to_string(),
             model_id: SERVED.to_string(),
             weight: 1,
+            share: None,
             capacity: 1,
             kind: NodeKind::MlxSidecar,
         }
@@ -2168,6 +3103,7 @@ devices:
             &RecordingSource(recorded.clone()),
             source,
             &NoRouteLoad,
+            &RecordingSeam::default(),
             Turn {
                 model_config,
                 system: "sys",
@@ -2257,6 +3193,7 @@ devices:
             &RecordingSource(recorded.clone()),
             &SettingsKwargs(StdMutex::new(EngineSettings::default())),
             &NoRouteLoad,
+            &RecordingSeam::default(),
             Turn {
                 model_config: &session_config,
                 system: "sys",
@@ -2493,6 +3430,7 @@ devices:
             &FakeProviders,
             &NoKwargs,
             &NoRouteLoad,
+            &RecordingSeam::default(),
             Turn {
                 model_config: &ModelConfig::new("swarm"),
                 system: "sys",
@@ -2551,6 +3489,7 @@ devices:
             &AllRefuse,
             &NoKwargs,
             &NoRouteLoad,
+            &RecordingSeam::default(),
             Turn {
                 model_config: &ModelConfig::new("swarm"),
                 system: "sys",
@@ -2608,6 +3547,7 @@ devices:
     fn studio_route() -> Node {
         Node {
             kind: NodeKind::MlxRemote(RemoteTarget {
+                peer: "studio".to_string(),
                 peer_name: "Work's Mac Studio".to_string(),
                 base_url: "http://127.0.0.1:61001/relay/cafe".to_string(),
                 template_kwargs: None,
@@ -2629,6 +3569,7 @@ devices:
             &FakeProviders,
             &NoKwargs,
             load,
+            &RecordingSeam::default(),
             Turn {
                 model_config: &ModelConfig::new("swarm"),
                 system: "sys",
@@ -2888,6 +3829,7 @@ devices:
             providers: Arc::new(LiveProviders::new()),
         };
         let target = RemoteTarget {
+            peer: "studio".to_string(),
             peer_name: "WorksMacStudio.lan".to_string(),
             base_url: format!("{}/relay/cafe", relay.uri()),
             template_kwargs: None,
@@ -2945,6 +3887,7 @@ devices:
             .mount(&relay)
             .await;
         let target = RemoteTarget {
+            peer: "studio".to_string(),
             peer_name: "WorksMacStudio.lan".to_string(),
             base_url: format!("{}/relay/cafe", relay.uri()),
             template_kwargs: None,
@@ -3241,5 +4184,1255 @@ devices:
             Router::conversation_key("sys", &first),
             Router::conversation_key("sys", &[Message::user().with_text("other")])
         );
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // D1: Auto's tie-break reads the pool's Share; with equal or unset Shares it is today's.
+    // -----------------------------------------------------------------------------------------
+
+    fn shared(id: &str, capacity: u32, weight: u32, share: Option<u32>) -> Node {
+        Node {
+            share,
+            ..node(id, capacity, weight)
+        }
+    }
+
+    #[tokio::test]
+    async fn ties_go_to_the_larger_share_before_the_heavier_weight() {
+        let router = Router::new();
+        let nodes = vec![
+            shared("heavy", 2, 3, None),
+            shared("light-fast", 2, 1, Some(3)),
+        ];
+        let probe = FakeProbe::all_idle(&nodes);
+        let lease = router
+            .pick(&nodes, &probe, 1, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(
+            lease.node.id, "light-fast",
+            "the Share outranks concurrency"
+        );
+        drop(lease);
+
+        // Equal Shares: the heavier weight, as before.
+        let nodes = vec![
+            shared("light", 2, 1, Some(2)),
+            shared("heavy", 2, 3, Some(2)),
+        ];
+        let lease = router
+            .pick(&nodes, &FakeProbe::all_idle(&nodes), 2, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(lease.node.id, "heavy");
+        drop(lease);
+
+        // More free slots still wins over any Share.
+        let nodes = vec![shared("roomy", 4, 1, None), shared("fast", 2, 1, Some(9))];
+        let lease = router
+            .pick(&nodes, &FakeProbe::all_idle(&nodes), 3, &HashSet::new())
+            .await
+            .unwrap();
+        assert_eq!(lease.node.id, "roomy");
+    }
+
+    /// The byte-identity proof for Auto: over every pool of up to four nodes, every weight and
+    /// every free-slot count, with the Shares unset or all equal, the new key picks exactly the
+    /// node today's key `(free, weight)` picks (`max_by_key` keeps the LAST of equals, both times).
+    #[test]
+    fn with_unset_or_equal_shares_auto_picks_exactly_what_it_picked_before() {
+        let values = [0u32, 1, 2, 3];
+        let mut pools = 0;
+        for len in 1..=4usize {
+            let combos = values.len().pow(2 * len as u32);
+            for mut code in 0..combos {
+                let mut slots: Vec<(Node, u32)> = Vec::new();
+                for i in 0..len {
+                    let weight = values[code % values.len()];
+                    code /= values.len();
+                    let free = values[code % values.len()];
+                    code /= values.len();
+                    slots.push((node(&format!("n{i}"), 4, weight), free));
+                }
+                for share in [None, Some(1), Some(5)] {
+                    let with_share: Vec<(Node, u32)> = slots
+                        .iter()
+                        .map(|(n, free)| (Node { share, ..n.clone() }, *free))
+                        .collect();
+                    let today = with_share
+                        .iter()
+                        .filter(|(_, free)| *free > 0)
+                        .max_by_key(|(n, free)| (*free, n.weight))
+                        .map(|(n, _)| n.id.clone());
+                    let now = with_share
+                        .iter()
+                        .filter(|(_, free)| *free > 0)
+                        .max_by_key(|(n, free)| (*free, n.tie_share(), n.weight))
+                        .map(|(n, _)| n.id.clone());
+                    assert_eq!(now, today, "{slots:?} share {share:?}");
+                    pools += 1;
+                }
+            }
+        }
+        assert!(pools > 100_000, "{pools}");
+    }
+
+    #[test]
+    fn the_pools_share_is_the_devices_speed_weight_and_the_route_takes_the_largest() {
+        let cfg = PoolConfig {
+            endpoint: "http://lm".to_string(),
+            devices: vec![
+                PoolDevice {
+                    id: "fast".to_string(),
+                    model_id: "m".to_string(),
+                    weight: 1,
+                    enabled: true,
+                    speed_weight: Some(4),
+                    ..PoolDevice::default()
+                },
+                PoolDevice {
+                    id: "unset".to_string(),
+                    model_id: "m".to_string(),
+                    weight: 1,
+                    enabled: true,
+                    ..PoolDevice::default()
+                },
+            ],
+        };
+        let nodes = nodes_from_config(&cfg);
+        assert_eq!(nodes[0].share, Some(4));
+        assert_eq!(nodes[1].share, None);
+        let with_route = with_remote_route(nodes, Some(&remote_route(2)));
+        assert_eq!(with_route.last().unwrap().share, Some(4));
+        // The block as the desktop writes it parses the Share.
+        let parsed: PoolConfig = serde_json::from_value(serde_json::json!({
+            "devices": [{"id": "a", "model_id": "m", "weight": 1, "enabled": true, "speed_weight": 3}]
+        }))
+        .unwrap();
+        assert_eq!(parsed.devices[0].speed_weight, Some(3));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Routes to a node or a strategy (S3).
+    // -----------------------------------------------------------------------------------------
+
+    use crate::nodes::{NodeDef, NodeOrigin};
+    use std::collections::VecDeque;
+
+    type MemberMap = Arc<StdMutex<HashMap<String, Result<Member, EntryFact>>>>;
+
+    struct FakeMembers(MemberMap);
+
+    #[async_trait]
+    impl ChainMembers for FakeMembers {
+        async fn member(&self, def: &ResolvedNodeDef) -> Result<Member, EntryFact> {
+            self.0
+                .lock()
+                .unwrap()
+                .get(&def.def.id)
+                .cloned()
+                .unwrap_or_else(|| Err(cant_run("not in the fake")))
+        }
+    }
+
+    fn member(id: &str) -> Member {
+        Member {
+            node: node(id, 1, 1),
+            pinned: false,
+            way: None,
+        }
+    }
+
+    fn members(entries: Vec<(&str, Result<Member, EntryFact>)>) -> MemberMap {
+        Arc::new(StdMutex::new(
+            entries
+                .into_iter()
+                .map(|(id, m)| (id.to_string(), m))
+                .collect(),
+        ))
+    }
+
+    #[derive(Default)]
+    struct RecordingSeam {
+        /// What each demand is answered, in order; none left = the loader's named absence.
+        answers: StdMutex<VecDeque<NodeEnsureServing>>,
+        /// On `Ready`: the member the node becomes.
+        becomes: StdMutex<Option<(MemberMap, String, Member)>>,
+        loader: bool,
+        demands: StdMutex<Vec<String>>,
+        served: StdMutex<Vec<(String, NodeServedTurnDto)>>,
+        notes: StdMutex<Vec<(String, MlxPlacementKeyDto)>>,
+    }
+
+    impl RecordingSeam {
+        fn answering(answers: Vec<NodeEnsureServing>) -> Self {
+            Self {
+                answers: StdMutex::new(answers.into()),
+                ..Self::default()
+            }
+        }
+
+        fn last(&self) -> NodeServedTurnDto {
+            self.served.lock().unwrap().last().unwrap().1.clone()
+        }
+    }
+
+    #[async_trait]
+    impl NodesSeam for RecordingSeam {
+        async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing {
+            self.demands.lock().unwrap().push(demand.node.id.clone());
+            let answer = self.answers.lock().unwrap().pop_front().unwrap_or_else(|| {
+                NodeEnsureServing::Refused {
+                    code: NodeLoadRefusalCode::LoaderAbsent,
+                    reason: crate::nodes::seam::loader_absent_reason(&demand.node.name),
+                }
+            });
+            if answer == NodeEnsureServing::Ready {
+                if let Some((map, id, member)) = self.becomes.lock().unwrap().take() {
+                    map.lock().unwrap().insert(id, Ok(member));
+                }
+            }
+            answer
+        }
+
+        fn loader_installed(&self) -> bool {
+            self.loader
+        }
+
+        fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto) {
+            self.notes
+                .lock()
+                .unwrap()
+                .push((session.to_string(), way.clone()));
+        }
+
+        fn served(&self, session: &str, turn: NodeServedTurnDto) {
+            self.served
+                .lock()
+                .unwrap()
+                .push((session.to_string(), turn));
+        }
+    }
+
+    struct AllAnswer;
+
+    #[async_trait]
+    impl ProviderSource for AllAnswer {
+        async fn provider_for(&self, _: &Node) -> Result<Arc<dyn Provider>, String> {
+            Ok(Arc::new(AnsweringProvider))
+        }
+    }
+
+    fn cloud_def(id: &str) -> NodeDef {
+        NodeDef {
+            id: id.to_string(),
+            name: format!("Node {id}"),
+            kind: NodeDefKind::Cloud,
+            model: Some(format!("{id}-model")),
+            placement: None,
+            goal: None,
+            provider: Some("openrouter".to_string()),
+            keep_loaded: false,
+            pool_device: None,
+            origin: NodeOrigin::User,
+        }
+    }
+
+    fn chain(entry: NodeRoleEntry) -> ChainPlan {
+        let defs = entry
+            .chain
+            .iter()
+            .map(|l| {
+                (
+                    l.node.clone(),
+                    crate::nodes::resolve_def(&cloud_def(&l.node), &Ok(None), false),
+                )
+            })
+            .collect();
+        ChainPlan {
+            label: "the strategy \"Test\" (chat)".to_string(),
+            role: Some(NodeRole::Chat),
+            share_key: "strategy:test@chat".to_string(),
+            entry,
+            defs,
+        }
+    }
+
+    fn role(
+        nodes: &[(&str, u32)],
+        when: NodeWhen,
+        if_not_loaded: NodeIfNotLoaded,
+    ) -> NodeRoleEntry {
+        NodeRoleEntry {
+            chain: nodes
+                .iter()
+                .map(|(n, w)| NodeChainEntry {
+                    node: n.to_string(),
+                    weight: *w,
+                })
+                .collect(),
+            when,
+            if_not_loaded,
+        }
+    }
+
+    const SESSION: &str = "20260927_7";
+
+    #[allow(clippy::too_many_arguments)]
+    async fn chain_turn(
+        router: &Router,
+        plan: &ChainPlan,
+        members: &dyn ChainMembers,
+        probe: &dyn NodeProbe,
+        providers: &dyn ProviderSource,
+        seam: &dyn NodesSeam,
+        first_message: &str,
+    ) -> Result<MessageStream, ProviderError> {
+        let messages = vec![Message::user().with_text(first_message)];
+        let session = SessionTemplateKwargs::default();
+        crate::session_context::with_session_id(
+            Some(SESSION.to_string()),
+            route_chain(
+                router,
+                plan,
+                members,
+                probe,
+                providers,
+                &NoKwargs,
+                &NoRouteLoad,
+                seam,
+                Turn {
+                    model_config: &ModelConfig::new("strategy:test"),
+                    system: "sys",
+                    messages: &messages,
+                    tools: &[],
+                    session: &session,
+                },
+            ),
+        )
+        .await
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ResolveCase {
+        name: String,
+        entry: NodeRoleEntry,
+        facts: HashMap<String, EntryFact>,
+        #[serde(default)]
+        sticky: Option<String>,
+        share: ShareState,
+        expect: Decision,
+        share_after: ShareState,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Fixture {
+        resolve: Vec<ResolveCase>,
+    }
+
+    fn tried_dtos(tried: &[Tried]) -> Vec<NodeTriedDto> {
+        tried
+            .iter()
+            .map(|t| NodeTriedDto {
+                node: t.node.clone(),
+                reason: passed_words(&t.why),
+            })
+            .collect()
+    }
+
+    /// The shared fixture (the one `nodes::resolve` and the desktop's mirror run), driven through
+    /// the ROUTER: each case's facts become live members and probes, and what the router does —
+    /// the node it leases, the rank and entries it records, the load it demands, the refusal it
+    /// ends the turn with, the round-robin state it keeps — is the case's decision.
+    #[tokio::test]
+    async fn the_router_routes_every_fixture_case_as_the_rule_decides() {
+        let fixture: Fixture =
+            serde_json::from_str(include_str!("../nodes/nodes.fixture.json")).unwrap();
+        let mut driven = 0;
+        let mut unknown = Vec::new();
+        for case in fixture.resolve {
+            if case
+                .entry
+                .chain
+                .iter()
+                .any(|l| !case.facts.contains_key(&l.node))
+            {
+                // The router always knows a fact for every entry; "no fact" is resolve's own guard.
+                unknown.push(case.name);
+                continue;
+            }
+            let mut entries = Vec::new();
+            let mut probes = HashMap::new();
+            for (id, fact) in &case.facts {
+                match fact {
+                    EntryFact::Servable => {
+                        entries.push((id.as_str(), Ok(member(id))));
+                        probes.insert(id.clone(), Ok(Servable::default()));
+                    }
+                    EntryFact::Busy => {
+                        entries.push((id.as_str(), Ok(member(id))));
+                        probes.insert(id.clone(), busy(1));
+                    }
+                    EntryFact::CantRun { reason } => {
+                        entries.push((id.as_str(), Ok(member(id))));
+                        probes.insert(id.clone(), Err(reason.clone()));
+                    }
+                    other => entries.push((id.as_str(), Err(other.clone()))),
+                }
+            }
+            let plan = chain(case.entry.clone());
+            let router = Router::new();
+            router
+                .shares
+                .lock()
+                .unwrap()
+                .insert(plan.share_key.clone(), case.share.clone());
+            let messages = vec![Message::user().with_text(&case.name)];
+            let key = Router::conversation_key("sys", &messages);
+            if let Some(sticky) = &case.sticky {
+                router.sticky.lock().unwrap().insert(key, sticky.clone());
+            }
+            let seam = RecordingSeam::default();
+            let outcome = chain_turn(
+                &router,
+                &plan,
+                &FakeMembers(members(entries)),
+                &FakeProbe(probes),
+                &AllAnswer,
+                &seam,
+                &case.name,
+            )
+            .await;
+            let name = &case.name;
+            match &case.expect {
+                Decision::Serve { node, rank, tried } => {
+                    assert!(outcome.is_ok(), "{name}: {:?}", outcome.err());
+                    let record = seam.last();
+                    assert_eq!(&record.node, node, "{name}");
+                    assert_eq!(record.rank, *rank, "{name}");
+                    assert_eq!(record.tried, tried_dtos(tried), "{name}");
+                    assert_eq!(record.role, Some(NodeRole::Chat), "{name}");
+                    assert_eq!(
+                        router.shares.lock().unwrap().get(&plan.share_key).cloned(),
+                        Some(case.share_after.clone()),
+                        "{name} (share state)"
+                    );
+                }
+                Decision::Queue { nodes, tried } => {
+                    assert!(outcome.is_ok(), "{name}: {:?}", outcome.err());
+                    let record = seam.last();
+                    assert!(nodes.contains(&record.node), "{name}: {}", record.node);
+                    assert_eq!(record.tried, tried_dtos(tried), "{name}");
+                }
+                Decision::Load { node, .. } => {
+                    assert_eq!(
+                        seam.demands.lock().unwrap().first(),
+                        Some(node),
+                        "{name}: the loader is asked for the entry the rule loads"
+                    );
+                }
+                Decision::Exhausted { tried } => {
+                    let err = outcome.err().unwrap().to_string();
+                    assert!(
+                        err.contains("no node can serve this turn — "),
+                        "{name}: {err}"
+                    );
+                    for t in tried {
+                        let named = format!("{}: {}", t.node, passed_words(&t.why));
+                        assert!(err.contains(&named), "{name}: {named} missing from {err}");
+                    }
+                    assert!(seam.served.lock().unwrap().is_empty(), "{name}");
+                }
+            }
+            driven += 1;
+        }
+        assert_eq!(unknown.len(), 1, "{unknown:?}");
+        assert!(driven >= 69, "{driven}");
+    }
+
+    #[tokio::test]
+    async fn a_chain_with_nothing_servable_ends_the_turn_naming_every_entry_never_any_node() {
+        let plan = chain(role(
+            &[("a", 1), ("b", 1), ("c", 1)],
+            NodeWhen::Failover,
+            NodeIfNotLoaded::UseNext,
+        ));
+        let map = members(vec![
+            ("a", Err(EntryFact::NotLoaded)),
+            ("b", Ok(member("b"))),
+            (
+                "c",
+                Err(cant_run(
+                    "Work's Mac Studio is not connected to LeanZero Link",
+                )),
+            ),
+        ]);
+        let probe = FakeProbe(HashMap::from([(
+            "b".to_string(),
+            Err("OpenRouter answered 401".to_string()),
+        )]));
+        let seam = RecordingSeam::default();
+        let err = chain_turn(
+            &Router::new(),
+            &plan,
+            &FakeMembers(map),
+            &probe,
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            err.contains(
+                "swarm chat: the strategy \"Test\" (chat): no node can serve this turn — a: not loaded; b: OpenRouter answered 401; c: Work's Mac Studio is not connected to LeanZero Link"
+            ),
+            "{err}"
+        );
+        assert!(
+            seam.demands.lock().unwrap().is_empty(),
+            "useNext never loads"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_load_under_failover_goes_to_the_next_entry_with_the_failure_named() {
+        let plan = chain(role(
+            &[("a", 1), ("b", 1)],
+            NodeWhen::Failover,
+            NodeIfNotLoaded::Load,
+        ));
+        let map = members(vec![
+            ("a", Err(EntryFact::NotLoaded)),
+            ("b", Ok(member("b"))),
+        ]);
+        let seam = RecordingSeam::answering(vec![NodeEnsureServing::Refused {
+            code: NodeLoadRefusalCode::LoadFailed,
+            reason: "memory gate BLOCK".to_string(),
+        }]);
+        let stream = chain_turn(
+            &Router::new(),
+            &plan,
+            &FakeMembers(map),
+            &FakeProbe::all_idle(&[node("b", 1, 1)]),
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        assert_eq!(*seam.demands.lock().unwrap(), vec!["a".to_string()]);
+        let record = seam.last();
+        assert_eq!(record.node, "b");
+        assert_eq!(record.rank, 2);
+        assert_eq!(
+            record.reason.as_deref(),
+            Some("failed to load: memory gate BLOCK")
+        );
+        assert_eq!(
+            record.tried,
+            vec![NodeTriedDto {
+                node: "a".to_string(),
+                reason: "failed to load: memory gate BLOCK".to_string()
+            }]
+        );
+        assert_eq!(record.loaded_ms, None);
+        assert_eq!(seam.served.lock().unwrap()[0].0, SESSION);
+    }
+
+    #[tokio::test]
+    async fn a_not_loaded_node_with_no_loader_installed_is_the_seams_named_refusal() {
+        assert!(
+            !crate::nodes::seam::loader_installed(),
+            "no unit test installs a loader"
+        );
+        let plan = ChainPlan {
+            label: "\"Node a\"".to_string(),
+            role: None,
+            ..chain(role(&[("a", 1)], NodeWhen::Failover, NodeIfNotLoaded::Load))
+        };
+        let map = members(vec![("a", Err(EntryFact::NotLoaded))]);
+        let err = chain_turn(
+            &Router::new(),
+            &plan,
+            &FakeMembers(map),
+            &FakeProbe(HashMap::new()),
+            &AllAnswer,
+            &LiveNodesSeam {
+                records_served: false,
+            },
+            "x",
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            err.contains(&format!(
+                "swarm chat: \"Node a\": no node can serve this turn — a: {}",
+                crate::nodes::seam::loader_absent_reason("Node a")
+            )),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_node_the_loader_readies_serves_the_turn_with_its_load_time_recorded() {
+        let map = members(vec![("a", Err(EntryFact::NotLoaded))]);
+        let seam = RecordingSeam::answering(vec![NodeEnsureServing::Ready]);
+        *seam.becomes.lock().unwrap() = Some((map.clone(), "a".to_string(), member("a")));
+        let plan = chain(role(&[("a", 1)], NodeWhen::Failover, NodeIfNotLoaded::Load));
+        let stream = chain_turn(
+            &Router::new(),
+            &plan,
+            &FakeMembers(map),
+            &FakeProbe::all_idle(&[node("a", 1, 1)]),
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        let record = seam.last();
+        assert_eq!((record.node.as_str(), record.rank), ("a", 1));
+        assert!(record.loaded_ms.is_some(), "{record:?}");
+        assert!(record.tried.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_ready_that_never_serves_and_a_wait_are_named_never_spun_on() {
+        let plan = chain(role(&[("a", 1)], NodeWhen::Failover, NodeIfNotLoaded::Load));
+        for (answer, words) in [
+            (
+                NodeEnsureServing::Ready,
+                "a: the node loader said it serves, but its way is still not the one serving this Mac's chat",
+            ),
+            (
+                NodeEnsureServing::Wait {
+                    reason: "27B is answering 1".to_string(),
+                },
+                "a: the node loader answered that this turn waits (27B is answering 1), with nothing to wake it",
+            ),
+        ] {
+            let seam = RecordingSeam::answering(vec![answer]);
+            let map = members(vec![("a", Err(EntryFact::NotLoaded))]);
+            let err = chain_turn(
+                &Router::new(),
+                &plan,
+                &FakeMembers(map),
+                &FakeProbe(HashMap::new()),
+                &AllAnswer,
+                &seam,
+                "x",
+            )
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+            assert!(err.contains(words), "{err}");
+            assert_eq!(seam.demands.lock().unwrap().len(), 1, "one demand per turn");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_admission_refusal_in_a_chain_goes_to_the_next_entry_and_is_recorded() {
+        let plan = chain(role(
+            &[("a", 1), ("b", 1)],
+            NodeWhen::Failover,
+            NodeIfNotLoaded::Load,
+        ));
+        let map = members(vec![("a", Ok(member("a"))), ("b", Ok(member("b")))]);
+        let seam = RecordingSeam::default();
+        let mut stream = chain_turn(
+            &Router::new(),
+            &plan,
+            &FakeMembers(map),
+            &FakeProbe::all_idle(&[node("a", 1, 1), node("b", 1, 1)]),
+            &FakeProviders,
+            &seam,
+            "x",
+        )
+        .await
+        .unwrap();
+        let (message, _) = stream.next().await.unwrap().unwrap();
+        assert_eq!(message.unwrap().as_concat_text(), "hello from b");
+        let record = seam.last();
+        assert_eq!((record.node.as_str(), record.rank), ("b", 2));
+        assert_eq!(
+            record.reason.as_deref(),
+            Some("refused admission this turn")
+        );
+    }
+
+    #[tokio::test]
+    async fn share_keeps_a_conversation_on_its_node_and_round_robins_new_ones() {
+        let router = Router::new();
+        let plan = chain(role(
+            &[("a", 1), ("b", 1)],
+            NodeWhen::Share,
+            NodeIfNotLoaded::Load,
+        ));
+        let map = members(vec![("a", Ok(member("a"))), ("b", Ok(member("b")))]);
+        let probe = FakeProbe::all_idle(&[node("a", 1, 1), node("b", 1, 1)]);
+        let seam = RecordingSeam::default();
+        let mut served = Vec::new();
+        for conversation in ["first", "first", "second"] {
+            let stream = chain_turn(
+                &router,
+                &plan,
+                &FakeMembers(map.clone()),
+                &probe,
+                &AllAnswer,
+                &seam,
+                conversation,
+            )
+            .await
+            .unwrap();
+            drop(stream);
+            served.push(seam.last().node);
+        }
+        assert_eq!(served, vec!["a", "a", "b"], "sticky per conversation");
+        assert_eq!(
+            router.shares.lock().unwrap().get("strategy:test@chat"),
+            Some(&ShareState::from([
+                ("a".to_string(), 0),
+                ("b".to_string(), 0)
+            ])),
+            "the sticky turn never advanced the round-robin"
+        );
+    }
+
+    #[tokio::test]
+    async fn overflow_with_every_entry_busy_queues_on_all_and_takes_the_first_that_frees() {
+        let router = Arc::new(Router::new());
+        let held_a = router
+            .semaphore(&node("a", 1, 1))
+            .try_acquire_owned()
+            .unwrap();
+        let held_b = router
+            .semaphore(&node("b", 1, 1))
+            .try_acquire_owned()
+            .unwrap();
+        let seam = Arc::new(RecordingSeam::default());
+        let (r, s) = (router.clone(), seam.clone());
+        let turn = tokio::spawn(async move {
+            let plan = chain(role(
+                &[("a", 1), ("b", 1)],
+                NodeWhen::Overflow,
+                NodeIfNotLoaded::Load,
+            ));
+            let map = members(vec![("a", Ok(member("a"))), ("b", Ok(member("b")))]);
+            chain_turn(
+                &r,
+                &plan,
+                &FakeMembers(map),
+                &FakeProbe::all_idle(&[node("a", 1, 1), node("b", 1, 1)]),
+                &AllAnswer,
+                &*s,
+                "x",
+            )
+            .await
+            .map(drop)
+        });
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!turn.is_finished(), "every entry is busy: the turn queues");
+        assert_eq!(router.queued.load(Ordering::SeqCst), 1);
+        drop(held_b);
+        turn.await.unwrap().unwrap();
+        assert_eq!(seam.last().node, "b");
+        drop(held_a);
+    }
+
+    #[tokio::test]
+    async fn a_served_record_is_written_for_an_mlx_an_lm_studio_and_a_cloud_lease() {
+        let lm = node("lm", 1, 1);
+        let mlx = Node {
+            kind: NodeKind::MlxSidecar,
+            ..node("mlx", 1, 1)
+        };
+        let cloud = Node {
+            kind: NodeKind::Cloud {
+                registry: "openrouter".to_string(),
+            },
+            ..node("cloud", 1, 1)
+        };
+        let seam = RecordingSeam::default();
+        for n in [lm, mlx, cloud] {
+            let nodes = vec![n];
+            let messages = vec![Message::user().with_text("hi")];
+            let session = SessionTemplateKwargs::default();
+            let stream = crate::session_context::with_session_id(
+                Some(SESSION.to_string()),
+                route_stream(
+                    &Router::new(),
+                    &nodes,
+                    &FakeProbe::all_idle(&nodes),
+                    &AllAnswer,
+                    &NoKwargs,
+                    &NoRouteLoad,
+                    &seam,
+                    Turn {
+                        model_config: &ModelConfig::new("swarm"),
+                        system: "sys",
+                        messages: &messages,
+                        tools: &[],
+                        session: &session,
+                    },
+                ),
+            )
+            .await
+            .unwrap();
+            drop(stream);
+        }
+        let served = seam.served.lock().unwrap();
+        let nodes: Vec<&str> = served.iter().map(|(_, r)| r.node.as_str()).collect();
+        assert_eq!(nodes, vec!["lm", "mlx", "cloud"]);
+        for (session, record) in served.iter() {
+            assert_eq!(session, SESSION);
+            assert_eq!((record.role, record.rank), (None, 1));
+            assert!(record.tried.is_empty() && record.reason.is_none());
+        }
+        assert!(
+            seam.notes.lock().unwrap().is_empty(),
+            "no loader installed: no way is read for Auto's note"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lease_outside_any_session_keeps_no_record() {
+        let nodes = vec![node("lm", 1, 1)];
+        let messages = vec![Message::user().with_text("hi")];
+        let seam = RecordingSeam::default();
+        let stream = route_stream(
+            &Router::new(),
+            &nodes,
+            &FakeProbe::all_idle(&nodes),
+            &AllAnswer,
+            &NoKwargs,
+            &NoRouteLoad,
+            &seam,
+            Turn {
+                model_config: &ModelConfig::new("swarm"),
+                system: "sys",
+                messages: &messages,
+                tools: &[],
+                session: &SessionTemplateKwargs::default(),
+            },
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        assert!(seam.served.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_pinned_leases_way_is_noted_for_the_loader() {
+        let way = single_way(crate::nodes::THIS_MAC.to_string());
+        let pinned = Member {
+            node: Node {
+                kind: NodeKind::MlxSidecar,
+                ..node("flash", 1, 1)
+            },
+            pinned: true,
+            way: Some(way.clone()),
+        };
+        let plan = chain(role(
+            &[("flash", 1)],
+            NodeWhen::Failover,
+            NodeIfNotLoaded::Load,
+        ));
+        let seam = RecordingSeam::default();
+        let stream = chain_turn(
+            &Router::new(),
+            &plan,
+            &FakeMembers(members(vec![("flash", Ok(pinned))])),
+            &FakeProbe::all_idle(&[node("flash", 1, 1)]),
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        assert_eq!(
+            *seam.notes.lock().unwrap(),
+            vec![(SESSION.to_string(), way)]
+        );
+        // A pinned node whose engine serves another model is not loaded — never followed.
+        let other = Member {
+            node: Node {
+                kind: NodeKind::MlxSidecar,
+                ..node("flash", 1, 1)
+            },
+            pinned: true,
+            way: None,
+        };
+        let seam = RecordingSeam::default();
+        let follows = FakeProbe(HashMap::from([(
+            "flash".to_string(),
+            engine_serves(PINNED_27B, Some(FLASH)),
+        )]));
+        let err = chain_turn(
+            &Router::new(),
+            &plan,
+            &FakeMembers(members(vec![("flash", Ok(other))])),
+            &follows,
+            &AllAnswer,
+            &seam,
+            "y",
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert_eq!(*seam.demands.lock().unwrap(), vec!["flash".to_string()]);
+        assert!(
+            err.contains("flash: loading nodes is not available"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_chains_window_is_the_nodes_own_or_the_smallest_its_nodes_report() {
+        let one = chain(role(&[("a", 1)], NodeWhen::Failover, NodeIfNotLoaded::Load));
+        let three = chain(role(
+            &[("a", 1), ("b", 1), ("c", 1)],
+            NodeWhen::Failover,
+            NodeIfNotLoaded::Load,
+        ));
+        let map = members(vec![
+            ("a", Ok(member("a"))),
+            ("b", Ok(member("b"))),
+            ("c", Err(EntryFact::NotLoaded)),
+        ]);
+        let probe = FakeProbe(HashMap::from([
+            ("a".to_string(), window(262_144)),
+            ("b".to_string(), window(32_768)),
+        ]));
+        let members = FakeMembers(map);
+        assert_eq!(chain_window(&one, &members, &probe).await, Ok(262_144));
+        assert_eq!(chain_window(&three, &members, &probe).await, Ok(32_768));
+        let only_c = chain(role(&[("c", 1)], NodeWhen::Failover, NodeIfNotLoaded::Load));
+        let err = chain_window(&only_c, &members, &probe).await.unwrap_err();
+        assert!(err.contains("c: not loaded"), "{err}");
+        assert!(err.starts_with("no node of the strategy"), "{err}");
+    }
+
+    #[test]
+    fn the_nodes_grammar_routes_to_chains_and_a_malformed_id_is_refused_by_name() {
+        assert_eq!(nodes_route("swarm"), Ok(None));
+        assert_eq!(nodes_route("swarm-build"), Ok(None));
+        assert_eq!(nodes_route("swarm-build:strategy:daily"), Ok(None));
+        assert_eq!(nodes_route("swarm-anything-else"), Ok(None));
+        assert_eq!(
+            nodes_route("node:flash"),
+            Ok(Some(RouteModel::Node {
+                id: "flash".to_string()
+            }))
+        );
+        assert_eq!(
+            nodes_route("strategy:daily@build"),
+            Ok(Some(RouteModel::Strategy {
+                id: "daily".to_string(),
+                role: Some(NodeRole::Build)
+            }))
+        );
+        for bad in [
+            "node:",
+            "strategy:daily@nope",
+            "swarm-build:oops",
+            "node:a:b",
+        ] {
+            let err = nodes_route(bad).unwrap_err();
+            assert!(
+                err.contains(&format!("'{bad}' names no node or strategy")),
+                "{err}"
+            );
+        }
+    }
+
+    fn read_of(config: crate::nodes::NodesConfig) -> NodesReadResponse {
+        NodesReadResponse {
+            nodes: config
+                .defs
+                .iter()
+                .map(|d| crate::nodes::resolve_def(d, &Ok(None), false))
+                .collect(),
+            config,
+            stored: true,
+            lm_studio_hidden: 0,
+            swarm_error: None,
+            notes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_strategy_route_reads_its_roles_chain_and_a_removed_one_is_named() {
+        let mut config = crate::nodes::empty_config();
+        config.defs = vec![cloud_def("a"), cloud_def("b")];
+        config.strategies = vec![crate::nodes::NodeStrategy {
+            id: "daily".to_string(),
+            name: "Daily".to_string(),
+            note: None,
+            roles: crate::nodes::NodeStrategyRoles {
+                chat: Some(role(&[("a", 1)], NodeWhen::Failover, NodeIfNotLoaded::Load)),
+                build: Some(role(
+                    &[("b", 2), ("a", 1)],
+                    NodeWhen::Share,
+                    NodeIfNotLoaded::Load,
+                )),
+                ..Default::default()
+            },
+        }];
+        let read = read_of(config);
+        let chat = chain_plan(&nodes_route("strategy:daily").unwrap().unwrap(), &read).unwrap();
+        assert_eq!(chat.role, Some(NodeRole::Chat));
+        assert_eq!(chat.entry.chain[0].node, "a");
+        assert_eq!(chat.label, "the strategy \"Daily\" (chat)");
+        let build = chain_plan(
+            &nodes_route("strategy:daily@build").unwrap().unwrap(),
+            &read,
+        )
+        .unwrap();
+        assert_eq!(build.entry.when, NodeWhen::Share);
+        assert_eq!(build.share_key, "strategy:daily@build");
+        // Testing inherits Build.
+        let testing = chain_plan(
+            &nodes_route("strategy:daily@testing").unwrap().unwrap(),
+            &read,
+        )
+        .unwrap();
+        assert_eq!(testing.entry, build.entry);
+        let node = chain_plan(&nodes_route("node:b").unwrap().unwrap(), &read).unwrap();
+        assert_eq!(node.role, None);
+        assert_eq!(node.entry.chain.len(), 1);
+        assert_eq!(node.label, "\"Node b\"");
+        let gone = chain_plan(&nodes_route("node:ghost").unwrap().unwrap(), &read)
+            .err()
+            .unwrap();
+        assert_eq!(
+            gone,
+            "the node 'ghost' was removed. Pick another node from the chip."
+        );
+        let gone = chain_plan(&nodes_route("strategy:ghost").unwrap().unwrap(), &read)
+            .err()
+            .unwrap();
+        assert!(gone.contains("the strategy 'ghost' was removed"), "{gone}");
+    }
+
+    fn pinned_def(id: &str, model: &str, placement: NodePlacement) -> ResolvedNodeDef {
+        crate::nodes::resolve_def(
+            &NodeDef {
+                id: id.to_string(),
+                name: format!("Node {id}"),
+                kind: NodeDefKind::Mlx,
+                model: Some(model.to_string()),
+                placement: Some(placement),
+                goal: None,
+                provider: None,
+                keep_loaded: false,
+                pool_device: None,
+                origin: NodeOrigin::User,
+            },
+            &Ok(None),
+            false,
+        )
+    }
+
+    fn serving(
+        kind: NodesServingKind,
+        macs: &[&str],
+        model: &str,
+        served: &str,
+        load_phase: Option<&str>,
+    ) -> ServingFacts {
+        ServingFacts::Way(goose_sdk_types::custom_requests::NodesServingWayDto {
+            kind,
+            macs: macs.iter().map(|m| m.to_string()).collect(),
+            link: None,
+            model_id: model.to_string(),
+            served_model_id: served.to_string(),
+            mac_names: vec!["Mihai Macbook".to_string()],
+            load_phase: load_phase.map(str::to_string),
+        })
+    }
+
+    #[test]
+    fn a_pinned_node_is_routable_only_while_its_own_way_serves() {
+        let here = pinned_def(
+            "flash",
+            FLASH,
+            NodePlacement::Single {
+                macs: vec![crate::nodes::THIS_MAC.to_string()],
+                link: None,
+            },
+        );
+        let serves_it = serving(
+            NodesServingKind::Single,
+            &[crate::nodes::THIS_MAC],
+            FLASH,
+            FLASH_ALIAS,
+            None,
+        );
+        let m = pinned_member(&here, &serves_it, None, false).unwrap();
+        assert!(m.pinned);
+        assert_eq!(m.node.kind, NodeKind::MlxSidecar);
+        assert_eq!(m.node.model_id, FLASH);
+        assert_eq!(m.way, Some(single_way(crate::nodes::THIS_MAC.to_string())));
+
+        // Another way serves (a split of the 27B): not loaded, never "servable elsewhere".
+        let split = serving(NodesServingKind::Split, &[], HF_ID, PINNED_27B, None);
+        assert_eq!(
+            pinned_member(&here, &split, None, false).err(),
+            Some(EntryFact::NotLoaded)
+        );
+        assert_eq!(
+            pinned_member(&here, &ServingFacts::Nothing, None, false).err(),
+            Some(EntryFact::NotLoaded)
+        );
+        // Unknown which way serves: named, never guessed.
+        assert_eq!(
+            pinned_member(
+                &here,
+                &ServingFacts::Unknown("the route record is unreadable".to_string()),
+                None,
+                false
+            )
+            .err(),
+            Some(cant_run("the route record is unreadable"))
+        );
+        // Its own way mid-load: the loader waits on it; with none, said with the phase.
+        let loading = serving(
+            NodesServingKind::Single,
+            &[crate::nodes::THIS_MAC],
+            FLASH,
+            FLASH_ALIAS,
+            Some("loading"),
+        );
+        assert_eq!(
+            pinned_member(&here, &loading, None, true).err(),
+            Some(EntryFact::NotLoaded)
+        );
+        assert_eq!(
+            pinned_member(&here, &loading, None, false).err(),
+            Some(cant_run(
+                "Node flash is still loading on this Mac (loading); it serves once the load ends"
+            ))
+        );
+
+        // A remote single is reached through the live route, named by its peer.
+        let route = remote_route(6);
+        let there = pinned_def(
+            "studio-27b",
+            HF_ID,
+            NodePlacement::Single {
+                macs: vec![crate::nodes::residency::peer_key(&route.peer)],
+                link: None,
+            },
+        );
+        let remote_serves = serving(
+            NodesServingKind::RemoteSingle,
+            &[&crate::nodes::residency::peer_key(&route.peer)],
+            HF_ID,
+            SERVED,
+            None,
+        );
+        let m = pinned_member(&there, &remote_serves, Some(&route), false).unwrap();
+        assert_eq!(m.node.capacity, 6);
+        assert_eq!(m.node.model_id, SERVED);
+        match &m.node.kind {
+            NodeKind::MlxRemote(target) => assert_eq!(target.peer, route.peer),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            pinned_member(&there, &remote_serves, None, false).err(),
+            Some(cant_run(
+                "the remote-single route ended while this turn was routed"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_pool_node_routes_as_auto_routes_its_device_and_a_switched_off_one_is_said() {
+        let cfg = PoolConfig {
+            endpoint: "http://lm".to_string(),
+            devices: vec![
+                PoolDevice {
+                    id: "mihai-mlx".to_string(),
+                    model_id: PINNED_27B.to_string(),
+                    weight: 2,
+                    enabled: true,
+                    engine: Some("mlx-sidecar".to_string()),
+                    ..PoolDevice::default()
+                },
+                PoolDevice {
+                    id: "off".to_string(),
+                    model_id: "m".to_string(),
+                    enabled: false,
+                    provider: Some("bedrock".to_string()),
+                    ..PoolDevice::default()
+                },
+            ],
+        };
+        let def = |id: &str, device: &str| {
+            crate::nodes::resolve_def(
+                &NodeDef {
+                    pool_device: Some(device.to_string()),
+                    kind: NodeDefKind::Mlx,
+                    model: None,
+                    provider: None,
+                    placement: Some(NodePlacement::Follows),
+                    origin: NodeOrigin::Pool,
+                    ..cloud_def(id)
+                },
+                &Ok(None),
+                false,
+            )
+        };
+        let pool = Ok(Some(cfg));
+        let m = pool_member(&def("mihai-mlx-pool", "mihai-mlx"), &pool, "mihai-mlx").unwrap();
+        assert!(
+            !m.pinned,
+            "a pool MLX node follows this Mac's engine (Q-128)"
+        );
+        assert_eq!(m.node.kind, NodeKind::MlxSidecar);
+        assert_eq!(m.node.id, "mihai-mlx-pool", "the node's own id");
+        assert_eq!(m.node.model_id, PINNED_27B);
+        assert_eq!(
+            pool_member(&def("off", "off"), &pool, "off").err(),
+            Some(cant_run("it is turned off in your swarm pool"))
+        );
+        assert_eq!(
+            pool_member(&def("gone", "gone"), &pool, "gone").err(),
+            Some(cant_run("it is no longer in your swarm pool"))
+        );
+        assert_eq!(
+            pool_member(&def("x", "x"), &Err("unreadable".to_string()), "x").err(),
+            Some(cant_run("unreadable"))
+        );
+        // A cloud node the user made: its family maps through the registry.
+        let bedrock = crate::nodes::resolve_def(
+            &NodeDef {
+                provider: Some("bedrock".to_string()),
+                ..cloud_def("claude")
+            },
+            &Ok(None),
+            false,
+        );
+        let m = cloud_member(&bedrock).unwrap();
+        assert_eq!(
+            m.node.kind,
+            NodeKind::Cloud {
+                registry: "aws_bedrock".to_string()
+            }
+        );
+        assert_eq!(m.node.capacity, PoolDevice::default().instances);
     }
 }

@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link không lấy được tên Mac này ({error}) — nút được tạo cho Mac này; hãy đặt tên bên dưới."
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "Chỉ Mac này được liên kết — các Mac khác của bạn sẽ hiện ở đây khi tham gia LeanZero Link (Nhà cung cấp › Các Mac của tôi)."
+    "defaultMessage": "Chỉ Mac này được liên kết — các Mac khác của bạn sẽ hiện ở đây khi tham gia LeanZero Link (LeanZero MLX › Các Mac của tôi)."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Chọn một Mac…"
@@ -523,12 +523,6 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Đang xử lý các tệp đã thả..."
-  },
-  "chatInput.recipesAndLoops": {
-    "defaultMessage": "Công thức & vòng lặp"
-  },
-  "chatInput.recipesAndLoopsTitle": {
-    "defaultMessage": "Tạo công thức, rồi chạy nó trong vòng lặp theo lịch"
   },
   "chatInput.recording": {
     "defaultMessage": "Đang ghi âm..."
@@ -1703,9 +1697,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Trò chuyện · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Ẩn cho đến khi động cơ yên lại"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Thu nhỏ thành viên thuốc"
   },
@@ -1723,6 +1714,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Ẩn thẻ này — đưa lại từ cuối thanh bên hoặc Cài đặt › Ứng dụng"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Ẩn hoặc tắt cửa sổ nổi"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Ẩn tạm thời"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Hiện lại vào lần tới động cơ làm việc"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Bạn có thể tắt cửa sổ này từ đây"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Đã hiểu"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# yêu cầu đang chạy}}"
@@ -1847,6 +1853,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Chưa làm mới"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Tắt cửa sổ nổi"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Bật lại trong Cài đặt › Ứng dụng"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Đã tắt cửa sổ nổi"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Bật lại trong Cài đặt › Ứng dụng."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Phiên chưa đặt tên"
   },
@@ -1878,7 +1896,7 @@
     "defaultMessage": "Tắt"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Một cửa sổ nhỏ trên các ứng dụng khác, ở góc bạn kéo tới. Nó không bao giờ giành tiêu điểm, và đóng nó sẽ ẩn cho đến khi động cơ yên lại."
+    "defaultMessage": "Một cửa sổ nhỏ trên các ứng dụng khác, ở góc bạn kéo tới. Nó không bao giờ giành tiêu điểm. Nút đóng của nó ẩn nó cho đến khi động cơ làm việc lại, hoặc tắt nó."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Trong thanh bên"
@@ -2779,150 +2797,6 @@
   },
   "localNetwork.open": {
     "defaultMessage": "Mở Quyền riêng tư & Bảo mật"
-  },
-  "loopModal.browseYaml": {
-    "defaultMessage": "Browse for YAML file..."
-  },
-  "loopModal.cancel": {
-    "defaultMessage": "Cancel"
-  },
-  "loopModal.createLoop": {
-    "defaultMessage": "Create Loop"
-  },
-  "loopModal.createNewLoop": {
-    "defaultMessage": "Create New Loop"
-  },
-  "loopModal.creating": {
-    "defaultMessage": "Creating..."
-  },
-  "loopModal.deepLink": {
-    "defaultMessage": "Deep link"
-  },
-  "loopModal.deepLinkPlaceholder": {
-    "defaultMessage": "Paste goose://recipe link here..."
-  },
-  "loopModal.failedParseRecipe": {
-    "defaultMessage": "Failed to parse recipe from file."
-  },
-  "loopModal.failedReadFile": {
-    "defaultMessage": "Failed to read the selected file."
-  },
-  "loopModal.invalidDeepLink": {
-    "defaultMessage": "Invalid deep link. Please use a goose://recipe link."
-  },
-  "loopModal.invalidFileType": {
-    "defaultMessage": "Invalid file type: Please select a YAML file (.yaml or .yml)"
-  },
-  "loopModal.loopIdRequired": {
-    "defaultMessage": "Loop name is required."
-  },
-  "loopModal.maxIterationsHelp": {
-    "defaultMessage": "Hard cap on iterations regardless of the stop check."
-  },
-  "loopModal.maxIterationsLabel": {
-    "defaultMessage": "Max iterations:"
-  },
-  "loopModal.maxIterationsRequired": {
-    "defaultMessage": "Max iterations must be at least 1."
-  },
-  "loopModal.nameLabel": {
-    "defaultMessage": "Name:"
-  },
-  "loopModal.namePlaceholder": {
-    "defaultMessage": "e.g., nightly-refine-loop"
-  },
-  "loopModal.provideValidRecipe": {
-    "defaultMessage": "Please provide a valid recipe source."
-  },
-  "loopModal.recipeDescription": {
-    "defaultMessage": "Description: {description}"
-  },
-  "loopModal.recipeParsed": {
-    "defaultMessage": "Recipe parsed successfully"
-  },
-  "loopModal.recipeTitle": {
-    "defaultMessage": "Title: {title}"
-  },
-  "loopModal.scheduleLabel": {
-    "defaultMessage": "Schedule:"
-  },
-  "loopModal.selected": {
-    "defaultMessage": "Selected: {path}"
-  },
-  "loopModal.sourceLabel": {
-    "defaultMessage": "Recipe:"
-  },
-  "loopModal.stateArtifactHelp": {
-    "defaultMessage": "Optional file the recipe writes each iteration; its contents carry into the next."
-  },
-  "loopModal.stateArtifactLabel": {
-    "defaultMessage": "State artifact:"
-  },
-  "loopModal.stateArtifactPlaceholder": {
-    "defaultMessage": "e.g., state.md"
-  },
-  "loopModal.stopCheckHelp": {
-    "defaultMessage": "Optional shell command run after each iteration; exit 0 stops the loop."
-  },
-  "loopModal.stopCheckLabel": {
-    "defaultMessage": "Stop check command:"
-  },
-  "loopModal.stopCheckPlaceholder": {
-    "defaultMessage": "e.g., test -f done.flag"
-  },
-  "loopModal.subtitle": {
-    "defaultMessage": "A loop runs a recipe repeatedly until a stop check passes or the iteration cap is reached."
-  },
-  "loopModal.yaml": {
-    "defaultMessage": "YAML"
-  },
-  "loopView.confirmDelete": {
-    "defaultMessage": "Remove loop \"{id}\"? The recipe will be kept."
-  },
-  "loopView.createLoop": {
-    "defaultMessage": "Create Loop"
-  },
-  "loopView.deleteConfirm": {
-    "defaultMessage": "Remove"
-  },
-  "loopView.deleteTitle": {
-    "defaultMessage": "Remove loop"
-  },
-  "loopView.description": {
-    "defaultMessage": "Loops run a recipe repeatedly on a schedule until a stop check passes or the iteration cap is reached."
-  },
-  "loopView.errorPrefix": {
-    "defaultMessage": "Error: {error}"
-  },
-  "loopView.lastRun": {
-    "defaultMessage": "Last run: {date}"
-  },
-  "loopView.loop": {
-    "defaultMessage": "Loop"
-  },
-  "loopView.loopCreated": {
-    "defaultMessage": "Loop Created"
-  },
-  "loopView.loopCreatedMsg": {
-    "defaultMessage": "Successfully created loop \"{id}\""
-  },
-  "loopView.maxIterations": {
-    "defaultMessage": "{count} max iterations"
-  },
-  "loopView.noLoops": {
-    "defaultMessage": "No loops yet"
-  },
-  "loopView.refresh": {
-    "defaultMessage": "Refresh"
-  },
-  "loopView.refreshing": {
-    "defaultMessage": "Refreshing..."
-  },
-  "loopView.stateArtifact": {
-    "defaultMessage": "State: {file}"
-  },
-  "loopView.stopCheck": {
-    "defaultMessage": "Stop check: {command}"
   },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Không hủy được."
@@ -3993,7 +3867,7 @@
     "defaultMessage": "Mac còn lại"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "Bật “Cho các Mac khác của tôi dùng Mac này › Chạy một phần của mô hình được chia” trên {name} (Nhà cung cấp › Các Mac của tôi ở đó)."
+    "defaultMessage": "Bật “Cho các Mac khác của tôi dùng Mac này › Chạy một phần của mô hình được chia” trên {name} (LeanZero MLX › Các Mac của tôi ở đó)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "goose ở đó không thể phục vụ"
@@ -5222,6 +5096,12 @@
   "myMacs.account": {
     "defaultMessage": "Tài khoản"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "Đăng nhập LeanZero Link bằng cùng tài khoản trên Mac kia của bạn. Nó sẽ xuất hiện ở đây, và bạn có thể chạy trên cả hai những mô hình quá lớn cho một Mac."
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "Thêm một Mac khác"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "“Tải lên và tải xuống mô hình” có hiệu lực khi Mac này kết nối lại với LeanZero Link."
   },
@@ -5294,14 +5174,26 @@
   "myMacs.models": {
     "defaultMessage": "Mô hình"
   },
-  "myMacs.none": {
-    "defaultMessage": "Chưa có Mac nào khác trong tài khoản LeanZero Link của bạn — hãy đăng nhập trên Mac đó để thấy nó ở đây."
+  "myMacs.nodeLoading": {
+    "defaultMessage": "Đang nạp"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "Đang phục vụ"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Không đọc được các nút trên Mac của bạn: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {Các nút trên Mac này} other {Các nút trên {name}}}"
   },
   "myMacs.off": {
     "defaultMessage": "tắt"
   },
   "myMacs.on": {
     "defaultMessage": "bật"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "Mở {name} trên trang Nút"
   },
   "myMacs.reconnect": {
     "defaultMessage": "Kết nối lại ngay"
@@ -5501,11 +5393,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "đang phục vụ"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "Nút · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "Không rõ nút nào đang phục vụ: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "Mở {name} trên trang Nút"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Quản lý nhà cung cấp đám mây"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Quản lý Mac và mô hình"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "Thất bại"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "Engine LeanZero MLX đã thất bại — thẻ engine cho biết lý do"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "Đang nạp"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "Engine LeanZero MLX đang nạp một mô hình"
   },
   "nodes.sections": {
     "defaultMessage": "Các mục nút"

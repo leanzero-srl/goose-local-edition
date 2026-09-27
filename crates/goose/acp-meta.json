@@ -829,6 +829,51 @@
       "method": "_goose/unstable/leanzeroLink/remoteExecute",
       "requestType": "LeanzeroLinkRemoteExecuteRequest_unstable",
       "responseType": "LeanzeroLinkRemoteExecuteResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/nodes/read",
+      "requestType": "NodesReadRequest_unstable",
+      "responseType": "NodesReadResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/nodes/write",
+      "requestType": "NodesWriteRequest_unstable",
+      "responseType": "NodesWriteResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/nodes/removeNode",
+      "requestType": "NodesRemoveNodeRequest_unstable",
+      "responseType": "NodesWriteResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/nodes/removeStrategy",
+      "requestType": "NodesRemoveStrategyRequest_unstable",
+      "responseType": "NodesWriteResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/nodes/buildEligibility",
+      "requestType": "NodesBuildEligibilityRequest_unstable",
+      "responseType": "NodesBuildEligibilityResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/nodes/residency",
+      "requestType": "NodesResidencyRequest_unstable",
+      "responseType": "NodesResidencyResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/nodes/loadHistory",
+      "requestType": "NodesLoadHistoryRequest_unstable",
+      "responseType": "NodesLoadHistoryResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/nodes/servedLast",
+      "requestType": "NodesServedLastRequest_unstable",
+      "responseType": "NodesServedLastResponse_unstable"
+    },
+    {
+      "method": "_goose/unstable/nodes/ensureServing",
+      "requestType": "NodesEnsureServingRequest_unstable",
+      "responseType": "NodesEnsureServingResponse_unstable"
     }
   ],
   "notifications": [

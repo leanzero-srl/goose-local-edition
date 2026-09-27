@@ -131,7 +131,7 @@ import type { GooseApp } from './types/apps';
 import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
-import { fleetChatHandler, fleetProbeHandler } from './utils/fleetIpc';
+import { fleetProbeHandler } from './utils/fleetIpc';
 import { sendProblemReport } from './utils/problemReport';
 import { MLX_LIVE_STATUS_TIMEOUT_MS, fetchMlxLiveStatus } from './utils/mlxLiveStatus';
 import { withRendererOrigin } from './utils/rendererOrigin';
@@ -162,12 +162,14 @@ import { isMlxRemoteReport, remoteLiveBase, type MlxRemoteReport } from './utils
 import { MLX_ENGINE_SNAPSHOT_CHANNEL } from './utils/mlxEngineMonitor';
 import {
   ENGINE_GLANCE_CHANNEL,
+  ENGINE_GLANCE_TURNED_OFF_CHANNEL,
   NO_SESSIONS,
   buildEngineGlance,
   glancePrefsOf,
   isGlancePrefs,
   isGlanceSessions,
   mergeGlanceSessions,
+  servingReportsOf,
   type GlancePrefs,
   type GlancePush,
   type GlanceSessions,
@@ -178,7 +180,7 @@ import {
   isGlancePipAction,
 } from './engineGlanceDesktop';
 import { createGlanceWindowPort } from './engineGlanceWindow';
-import { gooseInFront } from './utils/engineGlanceRules';
+import { gooseWindowFacts, trackOutOfSight } from './engineGlanceGooseWindows';
 import { TRAY_ACTION_ENGINES, workCutBy } from './utils/mlxInFlight';
 import { isMlxRestoreReport, type MlxRestoreReport } from './utils/mlxRestoreReport';
 import {
@@ -2128,7 +2130,6 @@ ipcMain.handle('fleet-status', async (): Promise<Record<string, string>> => {
 // reach — goose's secret store masks every renderer read — and the value is never logged.
 const mainFetch = net.fetch as unknown as typeof globalThis.fetch;
 ipcMain.handle('fleet-probe', fleetProbeHandler(mainFetch));
-ipcMain.handle('fleet-chat', fleetChatHandler(mainFetch));
 // Report a problem (Q-192): the form's SEND path. leanzero.net's contact endpoint delivers to
 // office@leanzero.net (the recipient is the site's, not ours); the body is rebuilt key by key in
 // utils/problemReport.ts and every failure is named so the form can offer the mail app instead.
@@ -2264,8 +2265,6 @@ const currentGlancePrefs = (): GlancePrefs => {
 const glanceSessionsByWindow = new Map<number, GlanceSessions>();
 let glanceWebContentsId: number | null = null;
 let lastGlancePush = '';
-// macOS says when goose becomes and stops being the active app (below); it starts in front.
-let gooseAppActive = true;
 const glanceWindowArguments = () => [
   JSON.stringify({ ...appConfig, GOOSE_LOCALE: getConfiguredGooseLocale() }),
 ];
@@ -2282,18 +2281,11 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
       glanceWebContentsId = id;
     },
   }),
-  // goose is in front while it is the active app with a window on screen — not "a window holds
-  // focus": goose's own open-folder panel or a menu leaves no window focused, and the card then
-  // floated over goose itself (Q-217). The glance is not a BrowserWindow, so it never counts.
-  appInFront: () =>
-    gooseInFront(
-      process.platform,
-      gooseAppActive,
-      BrowserWindow.getFocusedWindow() != null,
-      BrowserWindow.getAllWindows()
-        .filter((w) => !w.isDestroyed())
-        .map((w) => ({ visible: w.isVisible(), minimized: w.isMinimized() }))
-    ),
+  // Which goose windows can be seen, and where (Q-226: shown only when none can be, never over
+  // one). The glance is not a BrowserWindow, so it never counts.
+  platform: process.platform,
+  gooseWindows: () =>
+    gooseWindowFacts(BrowserWindow.getAllWindows(), BrowserWindow.getFocusedWindow()),
   savePrefs: (next) => saveGlancePrefs(next),
   // The glance is a non-activating panel: its click reaches goose with another app still in front,
   // and a window's focus() alone does not activate the app on macOS (measured on the packaged build:
@@ -2309,6 +2301,15 @@ const engineGlanceDesktop = new EngineGlanceDesktop({
     if (mlxActionWindow()) openTraySession(sessionId);
     else void createNewWindow(app);
   },
+  // Turned off from the floating window (Q-224): the goose window in front says so, with the way
+  // back. The window is a non-activating panel, so goose is usually in the background at that
+  // click; the controller asks again on the refresh a goose window's focus brings (below).
+  tellTurnedOff: () => {
+    const win = BrowserWindow.getFocusedWindow();
+    if (!win || win.isDestroyed()) return false;
+    win.webContents.send(ENGINE_GLANCE_TURNED_OFF_CHANNEL);
+    return true;
+  },
 });
 const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
   const push: GlancePush = {
@@ -2317,6 +2318,8 @@ const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
         ? { report: mlxDistributed.report, ageMs: Date.now() - mlxDistributed.atMs }
         : null,
       remote: mlxRemote,
+      // The node that serves, as each window's goosed read it (glanceStore.ts) — never guessed here.
+      served: servingReportsOf(glanceSessionsByWindow.values()),
     }),
     sessions:
       glanceSessionsByWindow.size > 0
@@ -2343,21 +2346,13 @@ const saveGlancePrefs = (next: GlancePrefs) => {
   });
   publishEngineGlance(mlxMonitor.current());
 };
-// Focus moving between goose and another app decides the "while goose is in the background" window;
+// A goose window covered, uncovered, minimized, restored or focused re-decides the desktop window;
 // deferred one turn so focus passing between two goose windows never flashes it.
 const refreshGlanceSoon = () => setTimeout(() => engineGlanceDesktop.refresh(), 0);
 app.on('browser-window-focus', refreshGlanceSoon);
 app.on('browser-window-blur', refreshGlanceSoon);
-app.on('did-resign-active', () => {
-  gooseAppActive = false;
-  refreshGlanceSoon();
-});
-app.on('did-become-active', () => {
-  gooseAppActive = true;
-  refreshGlanceSoon();
-});
-// Minimizing or restoring the last window on screen leaves goose active: the rule re-decides then too.
 app.on('browser-window-created', (_event, win) => {
+  trackOutOfSight(win);
   win.on('minimize', refreshGlanceSoon);
   win.on('restore', refreshGlanceSoon);
   win.on('hide', refreshGlanceSoon);

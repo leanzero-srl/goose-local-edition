@@ -6,9 +6,14 @@ import {
   dockShown,
   glanceHasContent,
   glanceLive,
-  gooseInFront,
+  gooseOnScreen,
+  clearOfGoose,
   nearestCorner,
+  placeGlance,
   snoozeAfter,
+  workingDisplay,
+  type GlanceDisplay,
+  type GooseWindowFacts,
 } from './engineGlanceRules';
 import { INITIAL_SNAPSHOT } from './mlxEngineMonitor';
 import { glancePush, runningSnapshot } from './engineGlance.fixtures';
@@ -50,17 +55,19 @@ describe('desktopGlanceVisible — the floating window on the desktop', () => {
     prefs: { ...push.prefs, desktop },
   });
 
-  it('default (away): shown while live and goose is in the background, never over goose itself', () => {
-    expect(desktopGlanceVisible(writing, { appInFront: false, snoozed: false })).toBe(true);
-    expect(desktopGlanceVisible(writing, { appInFront: true, snoozed: false })).toBe(false);
+  it('default (away): shown while live and no goose window can be seen, never over goose itself', () => {
+    expect(desktopGlanceVisible(writing, { gooseOnScreen: false, snoozed: false })).toBe(true);
+    expect(desktopGlanceVisible(writing, { gooseOnScreen: true, snoozed: false })).toBe(false);
   });
 
-  it('busy: shown whenever live, goose in front or not', () => {
-    expect(desktopGlanceVisible(withMode('busy'), { appInFront: true, snoozed: false })).toBe(true);
+  it('busy: shown whenever live, goose in sight or not (where is placeGlance’s to decide)', () => {
+    expect(desktopGlanceVisible(withMode('busy'), { gooseOnScreen: true, snoozed: false })).toBe(
+      true
+    );
   });
 
   it('off: never', () => {
-    expect(desktopGlanceVisible(withMode('off'), { appInFront: false, snoozed: false })).toBe(
+    expect(desktopGlanceVisible(withMode('off'), { gooseOnScreen: false, snoozed: false })).toBe(
       false
     );
   });
@@ -68,13 +75,13 @@ describe('desktopGlanceVisible — the floating window on the desktop', () => {
   it('nothing live: never, whatever the mode — an idle engine does not float over your work', () => {
     for (const mode of ['away', 'busy'] as const) {
       expect(
-        desktopGlanceVisible(withMode(mode, idle), { appInFront: false, snoozed: false })
+        desktopGlanceVisible(withMode(mode, idle), { gooseOnScreen: false, snoozed: false })
       ).toBe(false);
     }
   });
 
   it('closed: snoozed for this live spell, back on the next one', () => {
-    expect(desktopGlanceVisible(writing, { appInFront: false, snoozed: true })).toBe(false);
+    expect(desktopGlanceVisible(writing, { gooseOnScreen: false, snoozed: true })).toBe(false);
     // Still live: the snooze holds.
     expect(snoozeAfter(true, writing)).toBe(true);
     // The spell ended: the snooze is spent, so the next spell shows it again.
@@ -108,25 +115,138 @@ describe('the docked card — at the foot of the sidebar, or hidden by the perso
   });
 });
 
-describe('gooseInFront — the fact the "in the background" desktop window hangs on', () => {
-  const onScreen = { visible: true, minimized: false };
-  it('macOS: goose active with a window on screen is in front, even with NO window focused (its own folder panel open)', () => {
-    expect(gooseInFront('darwin', true, false, [onScreen])).toBe(true);
+// The owner's four displays, as Electron reported them on 2026-09-27 (Q-226 probe).
+const BUILT_IN: GlanceDisplay = { id: 1, workArea: { x: 0, y: 40, width: 2056, height: 1289 } };
+const LG: GlanceDisplay = { id: 2, workArea: { x: -2560, y: -641, width: 2560, height: 1409 } };
+const ARZOPA_L: GlanceDisplay = { id: 4, workArea: { x: 0, y: -1249, width: 2048, height: 1249 } };
+const ARZOPA_R: GlanceDisplay = {
+  id: 5,
+  workArea: { x: 2048, y: -1249, width: 2048, height: 1249 },
+};
+const DISPLAYS = [BUILT_IN, LG, ARZOPA_L, ARZOPA_R];
+const gooseWin = (over: Partial<GooseWindowFacts> = {}): GooseWindowFacts => ({
+  onScreen: true,
+  focused: false,
+  bounds: { x: 100, y: 100, width: 940, height: 800 },
+  ...over,
+});
+
+describe('gooseOnScreen — the fact the "in the background" desktop window hangs on (Q-226)', () => {
+  it('the owner’s screenshot: goose in plain view on one display, another app focused on another — goose is SEEN', () => {
+    expect(gooseOnScreen('darwin', [gooseWin({ focused: false })])).toBe(true);
   });
 
-  it('macOS: another app in front — goose is in the background', () => {
-    expect(gooseInFront('darwin', false, false, [onScreen])).toBe(false);
+  it('goose focused, or its own folder panel up with no window focused (Q-217) — seen', () => {
+    expect(gooseOnScreen('darwin', [gooseWin({ focused: true })])).toBe(true);
   });
 
-  it('macOS: goose still the active app but every window minimized or hidden — the owner’s original ask', () => {
-    expect(gooseInFront('darwin', true, false, [{ visible: true, minimized: true }])).toBe(false);
-    expect(gooseInFront('darwin', true, false, [{ visible: false, minimized: false }])).toBe(false);
-    expect(gooseInFront('darwin', true, false, [])).toBe(false);
+  it('covered, on a Space not showing, minimized or hidden — every window out of sight: NOT seen', () => {
+    expect(gooseOnScreen('darwin', [gooseWin({ onScreen: false })])).toBe(false);
+    expect(gooseOnScreen('darwin', [])).toBe(false);
   });
 
-  it('elsewhere: a focused goose window is the fact', () => {
-    expect(gooseInFront('linux', false, true, [])).toBe(true);
-    expect(gooseInFront('win32', true, false, [onScreen])).toBe(false);
+  it('one window out of sight, another in view: seen', () => {
+    expect(gooseOnScreen('darwin', [gooseWin({ onScreen: false }), gooseWin()])).toBe(true);
+  });
+
+  it('elsewhere (no occlusion reported): a focused goose window is the fact, as before', () => {
+    expect(gooseOnScreen('linux', [gooseWin({ focused: true })])).toBe(true);
+    expect(gooseOnScreen('win32', [gooseWin({ focused: false })])).toBe(false);
+  });
+});
+
+describe('workingDisplay — where the person is working', () => {
+  it('a focused goose window’s display', () => {
+    const onLg = gooseWin({
+      focused: true,
+      bounds: { x: -2000, y: -300, width: 900, height: 700 },
+    });
+    expect(workingDisplay(DISPLAYS, [onLg], { x: 500, y: 500 }).id).toBe(2);
+  });
+
+  it('goose out of sight (another app focused): the pointer’s display', () => {
+    const covered = gooseWin({ onScreen: false, focused: false });
+    expect(workingDisplay(DISPLAYS, [covered], { x: 3000, y: -600 }).id).toBe(5);
+    expect(workingDisplay(DISPLAYS, [], { x: 500, y: -600 }).id).toBe(4);
+  });
+
+  it('the pointer in a menu bar (outside every work area): the nearest display', () => {
+    expect(workingDisplay(DISPLAYS, [], { x: 800, y: 20 }).id).toBe(1);
+  });
+});
+
+describe('placeGlance — on the working display, never over goose (Q-226)', () => {
+  const size = { width: 300, height: 180 };
+  const base = { displays: DISPLAYS, defaultCorner: 'bottom-right' as const, size, margin: 16 };
+
+  it('goose out of sight: the working display, in the remembered corner even though it was dropped on another display', () => {
+    const p = placeGlance({
+      ...base,
+      working: ARZOPA_R,
+      remembered: { displayId: 2, corner: 'top-left' },
+      windows: [gooseWin({ onScreen: false })],
+    });
+    expect(p).toEqual({
+      displayId: 5,
+      corner: 'top-left',
+      bounds: { x: 2048 + 16, y: -1249 + 16, width: 300, height: 180 },
+    });
+  });
+
+  it('nothing remembered: the default corner', () => {
+    const p = placeGlance({ ...base, working: BUILT_IN, remembered: null, windows: [] });
+    expect(p?.corner).toBe('bottom-right');
+    expect(p?.displayId).toBe(1);
+  });
+
+  it('a goose window in view under that corner: the next free corner of the same display', () => {
+    const bottomRightHalf = gooseWin({ bounds: { x: 1028, y: 684, width: 1028, height: 645 } });
+    const p = placeGlance({
+      ...base,
+      working: BUILT_IN,
+      remembered: null,
+      windows: [bottomRightHalf],
+    });
+    expect(p?.displayId).toBe(1);
+    expect(p?.corner).toBe('top-right');
+  });
+
+  it('goose fills the working display: another display — the remembered one first', () => {
+    const full = gooseWin({ bounds: BUILT_IN.workArea });
+    const p = placeGlance({
+      ...base,
+      working: BUILT_IN,
+      remembered: { displayId: 5, corner: 'bottom-left' },
+      windows: [full],
+    });
+    expect(p).toMatchObject({ displayId: 5, corner: 'bottom-left' });
+  });
+
+  it('goose in view over every display: it does not show at all', () => {
+    const windows = DISPLAYS.map((d) => gooseWin({ bounds: d.workArea }));
+    expect(placeGlance({ ...base, working: BUILT_IN, remembered: null, windows })).toBeNull();
+  });
+
+  it('a goose window out of sight never pushes it anywhere', () => {
+    const coveredFull = gooseWin({ onScreen: false, bounds: BUILT_IN.workArea });
+    const p = placeGlance({ ...base, working: BUILT_IN, remembered: null, windows: [coveredFull] });
+    expect(p).toMatchObject({ displayId: 1, corner: 'bottom-right' });
+  });
+
+  it('clearOfGoose: only windows that can be seen count', () => {
+    const r = { x: 0, y: 0, width: 100, height: 100 };
+    expect(clearOfGoose(r, [gooseWin({ bounds: { x: 50, y: 50, width: 100, height: 100 } })])).toBe(
+      false
+    );
+    expect(
+      clearOfGoose(r, [
+        gooseWin({ onScreen: false, bounds: { x: 50, y: 50, width: 100, height: 100 } }),
+      ])
+    ).toBe(true);
+    // Touching edges is not covering.
+    expect(clearOfGoose(r, [gooseWin({ bounds: { x: 100, y: 0, width: 100, height: 100 } })])).toBe(
+      true
+    );
   });
 });
 

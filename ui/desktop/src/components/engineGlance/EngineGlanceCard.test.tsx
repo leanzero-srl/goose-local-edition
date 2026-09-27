@@ -6,8 +6,11 @@ import { EngineGlanceCard, type EngineGlanceCardProps } from './EngineGlanceCard
 import { INITIAL_SNAPSHOT } from '../../utils/mlxEngineMonitor';
 import { attributeServing } from '../../utils/mlxServing';
 import { toMlxDistributedReport } from '../../utils/mlxDistributedReport';
+import { assertStudioClean } from '../lz/assertStudioClean';
+import { missingUtilities } from '../lz/compileStudioCss';
 import {
   CHAT_ROW,
+  GLANCE_MODEL,
   SPLIT_READING_BODY,
   TOOL_LABEL_ROW,
   TURN_BESIDE_SIDE_CALL_BODY,
@@ -60,6 +63,10 @@ const question = {
   sessionName: 'Deploy the site',
   question: 'Push to production or staging?',
 };
+
+function choices() {
+  return { onHideForNow: vi.fn(), onTurnOff: vi.fn() };
+}
 
 function renderCard(push: GlancePush, over: Partial<EngineGlanceCardProps> = {}) {
   const props: EngineGlanceCardProps = {
@@ -210,7 +217,7 @@ describe('EngineGlanceCard — the Engine tile, small', () => {
   });
 
   it('negative control: the desktop window has no hide (it closes for the spell instead)', () => {
-    renderCard(writing, { variant: 'desktop', onClose: vi.fn() });
+    renderCard(writing, { variant: 'desktop', hideChoices: choices() });
     expect(screen.queryByTestId('engine-glance-hide')).toBeNull();
   });
 
@@ -230,13 +237,128 @@ describe('EngineGlanceCard — the Engine tile, small', () => {
   });
 
   it('desktop: shrink to a pill, and close', () => {
-    const onClose = vi.fn();
-    const props = renderCard(writing, { variant: 'desktop', onClose });
+    const hideChoices = choices();
+    const props = renderCard(writing, { variant: 'desktop', hideChoices });
     fireEvent.click(screen.getByTestId('engine-glance-collapse'));
     expect(props.onCollapsedChange).toHaveBeenCalledWith(true);
     fireEvent.click(screen.getByTestId('engine-glance-close'));
-    expect(onClose).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByTestId('engine-glance-hide-for-now'));
+    expect(hideChoices.onHideForNow).toHaveBeenCalledOnce();
     expect(props.onOpenEngine).not.toHaveBeenCalled();
+  });
+});
+
+describe('EngineGlanceCard — Q-224: the desktop X offers "Hide for now" and "Turn off"', () => {
+  for (const collapsed of [false, true]) {
+    const size = collapsed ? 'pill' : 'card';
+
+    it(`${size}: the X opens the two choices, in words; it closes nothing by itself`, () => {
+      const hideChoices = choices();
+      const props = renderCard(writing, { variant: 'desktop', collapsed, hideChoices });
+      const x = screen.getByTestId('engine-glance-close');
+      expect(x.getAttribute('aria-label')).toBe('Hide or turn off the floating window');
+      expect(x.getAttribute('aria-expanded')).toBe('false');
+      expect(screen.queryByTestId('engine-glance-hide-choices')).toBeNull();
+      fireEvent.click(x);
+      expect(x.getAttribute('aria-expanded')).toBe('true');
+      const menu = screen.getByTestId('engine-glance-hide-choices');
+      expect(screen.getByTestId('engine-glance-hide-for-now').textContent).toBe(
+        'Hide for nowBack the next time the engine works'
+      );
+      expect(screen.getByTestId('engine-glance-turn-off').textContent).toBe(
+        'Turn off the floating windowTurn it back on in Settings › App'
+      );
+      expect(within(menu).getAllByRole('button')).toHaveLength(2);
+      expect(hideChoices.onHideForNow).not.toHaveBeenCalled();
+      expect(hideChoices.onTurnOff).not.toHaveBeenCalled();
+      // The X again folds them away.
+      fireEvent.click(x);
+      expect(screen.queryByTestId('engine-glance-hide-choices')).toBeNull();
+      expect(props.onOpenEngine).not.toHaveBeenCalled();
+    });
+
+    it(`${size}: "Hide for now" snoozes — and only that`, () => {
+      const hideChoices = choices();
+      const props = renderCard(writing, { variant: 'desktop', collapsed, hideChoices });
+      fireEvent.click(screen.getByTestId('engine-glance-close'));
+      fireEvent.click(screen.getByTestId('engine-glance-hide-for-now'));
+      expect(hideChoices.onHideForNow).toHaveBeenCalledOnce();
+      expect(hideChoices.onTurnOff).not.toHaveBeenCalled();
+      expect(props.onOpenEngine).not.toHaveBeenCalled();
+      // Taken: the choices are gone, so the window never comes back with them still open.
+      expect(screen.queryByTestId('engine-glance-hide-choices')).toBeNull();
+    });
+
+    it(`${size}: "Turn off the floating window" turns it off — and only that`, () => {
+      const hideChoices = choices();
+      const props = renderCard(writing, { variant: 'desktop', collapsed, hideChoices });
+      fireEvent.click(screen.getByTestId('engine-glance-close'));
+      fireEvent.click(screen.getByTestId('engine-glance-turn-off'));
+      expect(hideChoices.onTurnOff).toHaveBeenCalledOnce();
+      expect(hideChoices.onHideForNow).not.toHaveBeenCalled();
+      expect(props.onOpenEngine).not.toHaveBeenCalled();
+      expect(screen.queryByTestId('engine-glance-hide-choices')).toBeNull();
+    });
+  }
+
+  it('the choices open on the side away from the corner, so the card never moves under the pointer', () => {
+    const first = renderCard(writing, { variant: 'desktop', hideChoices: choices() });
+    fireEvent.click(screen.getByTestId('engine-glance-close'));
+    const bottomRight = screen.getByTestId('engine-glance-stack');
+    // Default corner (bottom-right): stacked ABOVE the card, flush right.
+    expect(bottomRight.className).toContain('flex-col-reverse');
+    expect(bottomRight.className).toContain('items-end');
+    expect(bottomRight.firstElementChild?.getAttribute('data-testid')).toBe('engine-glance');
+    expect(first.onOpenEngine).not.toHaveBeenCalled();
+  });
+
+  it('top-left: below the card, flush left', () => {
+    renderCard(writing, { variant: 'desktop', hideChoices: choices(), corner: 'top-left' });
+    fireEvent.click(screen.getByTestId('engine-glance-close'));
+    const stack = screen.getByTestId('engine-glance-stack');
+    expect(stack.className).toMatch(/\bflex-col\b(?!-)/);
+    expect(stack.className).toContain('items-start');
+  });
+
+  it('the one-time hint says it turns off from here, and "Got it" dismisses it', () => {
+    const onDismissHint = vi.fn();
+    renderCard(writing, {
+      variant: 'desktop',
+      hideChoices: choices(),
+      turnOffHint: true,
+      onDismissHint,
+    });
+    const hint = screen.getByTestId('engine-glance-hint');
+    expect(hint.textContent).toBe('You can turn this off from hereGot it');
+    fireEvent.click(screen.getByTestId('engine-glance-hint-dismiss'));
+    expect(onDismissHint).toHaveBeenCalledOnce();
+  });
+
+  it('opening the X is the hint found: it is dismissed, and the choices take its place', () => {
+    const onDismissHint = vi.fn();
+    renderCard(writing, {
+      variant: 'desktop',
+      collapsed: true,
+      hideChoices: choices(),
+      turnOffHint: true,
+      onDismissHint,
+    });
+    fireEvent.click(screen.getByTestId('engine-glance-close'));
+    expect(onDismissHint).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId('engine-glance-hint')).toBeNull();
+    expect(screen.getByTestId('engine-glance-hide-choices')).toBeTruthy();
+  });
+
+  it('negative controls: no hint unless asked; the docked card has neither', () => {
+    renderCard(writing, { variant: 'desktop', hideChoices: choices() });
+    expect(screen.queryByTestId('engine-glance-hint')).toBeNull();
+    expect(screen.getByTestId('engine-glance-stack').children).toHaveLength(1);
+  });
+
+  it('negative control: the docked card never offers the choices or the hint', () => {
+    renderCard(writing, { turnOffHint: true, onDismissHint: vi.fn() });
+    expect(screen.queryByTestId('engine-glance-close')).toBeNull();
+    expect(screen.queryByTestId('engine-glance-hint')).toBeNull();
   });
 });
 
@@ -318,4 +440,67 @@ describe('EngineGlanceCard — what the chat’s turn is forming (Q-215: the dis
     renderCard(writing, { forming });
     expect(screen.queryByTestId('engine-glance-forming-toggle')).toBeNull();
   });
+});
+
+describe('EngineGlanceCard — the node the serving way belongs to (design §7.3, S7)', () => {
+  const NODE = { id: '27b-split', name: '27B · both Macs' };
+  const served = (nodes: { id: string; name: string }[]) =>
+    glancePush(runningSnapshot(GENERATING_STATUS), {
+      served: [{ way: { kind: 'single', modelId: GLANCE_MODEL, servedModelId: 'q' }, nodes }],
+    });
+
+  it('the sidebar card names it under the mode line and links to its card on the Nodes page', () => {
+    const onOpenNode = vi.fn();
+    const props = renderCard(served([NODE]), { onOpenNode });
+    const line = screen.getByTestId('engine-glance-served-node');
+    expect(line.textContent).toBe('Node · 27B · both Macs');
+    expect(line.getAttribute('aria-label')).toBe('Open 27B · both Macs on the Nodes page');
+    fireEvent.click(line);
+    expect(onOpenNode).toHaveBeenCalledWith('27b-split');
+    // The node link is its own control: it never also opens the Engine.
+    expect(props.onOpenEngine).not.toHaveBeenCalled();
+  });
+
+  it('two nodes naming one way are both said; the link opens the first', () => {
+    const onOpenNode = vi.fn();
+    renderCard(served([NODE, { id: 'mac-engine', name: 'Mihai Macbook engine' }]), {
+      onOpenNode,
+    });
+    const line = screen.getByTestId('engine-glance-served-node');
+    expect(line.textContent).toBe('Node · 27B · both Macs and Mihai Macbook engine');
+    fireEvent.click(line);
+    expect(onOpenNode).toHaveBeenCalledWith('27b-split');
+  });
+
+  it('the desktop window, which cannot navigate, says the name as plain words', () => {
+    renderCard(served([NODE]), { variant: 'desktop' });
+    const line = screen.getByTestId('engine-glance-served-node');
+    expect(line.tagName).toBe('SPAN');
+    expect(line.textContent).toBe('Node · 27B · both Macs');
+  });
+
+  it('no report of this way: no node line at all — nothing guessed', () => {
+    renderCard(writing, { onOpenNode: vi.fn() });
+    expect(screen.queryByTestId('engine-glance-served-node')).toBeNull();
+    expect(screen.queryByTestId('engine-glance-node-unknown')).toBeNull();
+  });
+
+  it('a failed read is said in its words', () => {
+    renderCard(
+      glancePush(runningSnapshot(GENERATING_STATUS), {
+        served: [{ error: 'nodes/residency: goosed unreachable' }],
+      })
+    );
+    expect(screen.getByTestId('engine-glance-node-unknown').textContent).toBe(
+      'Which node serves is not known: nodes/residency: goosed unreachable'
+    );
+  });
+
+  it('carries no banned pattern, and every class it adds compiles', async () => {
+    renderCard(served([NODE]), { onOpenNode: vi.fn() });
+    const card = screen.getByTestId('engine-glance');
+    assertStudioClean(card);
+    const line = screen.getByTestId('engine-glance-served-node');
+    expect(await missingUtilities([...line.classList])).toEqual([]);
+  }, 30_000);
 });

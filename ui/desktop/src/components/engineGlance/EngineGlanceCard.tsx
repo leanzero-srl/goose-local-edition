@@ -9,6 +9,8 @@ import {
 import { createPortal } from 'react-dom';
 import type { FormingStatus } from '@aaif/goose-sdk';
 import {
+  ArrowDownRight,
+  ArrowUpRight,
   BookOpen,
   ChevronDown,
   ChevronRight,
@@ -24,16 +26,35 @@ import {
   Network,
   PenLine,
   Play,
+  Power,
   Square,
   X,
 } from 'lucide-react';
 import type { IntlShape } from 'react-intl';
 import { defineMessages, useIntl } from '../../i18n';
-import { FOCUS, LAYER, MOTION, PHASE_FILL, RADIUS, TNUM, TONE_FILL, WEIGHT, cx } from '../lz';
+import {
+  FOCUS,
+  LAYER,
+  MOTION,
+  PHASE_FILL,
+  RADIUS,
+  SURFACE,
+  TNUM,
+  TONE_FILL,
+  TONE_TEXT,
+  WEIGHT,
+  cx,
+} from '../lz';
 import type { EngineFigure } from '../leanzero-swarm/engineFigures';
 import { formatMlxMode, formatRemoteMode } from '../leanzero-swarm/mlxModeLabel';
 import { formatElapsed, formatRate } from '../leanzero-swarm/mlxLiveStats';
-import type { EngineGlance, GlancePush, GlanceStage } from '../../utils/engineGlance';
+import {
+  DEFAULT_GLANCE_CORNER,
+  type EngineGlance,
+  type GlanceCorner,
+  type GlancePush,
+  type GlanceStage,
+} from '../../utils/engineGlance';
 import { backgroundWorkFor, backgroundWorkLabel } from '../sessionActivity/backgroundWorkText';
 import { FormingPanel } from '../forming/FormingPanel';
 
@@ -108,10 +129,22 @@ const i18n = defineMessages({
   less: { id: 'engineGlance.less', defaultMessage: 'Hide rates and memory' },
   collapse: { id: 'engineGlance.collapse', defaultMessage: 'Shrink to a pill' },
   expand: { id: 'engineGlance.expand', defaultMessage: 'Show the whole card' },
-  close: {
-    id: 'engineGlance.close',
-    defaultMessage: 'Hide until the engine is quiet again',
+  hideChoices: {
+    id: 'engineGlance.hideChoices',
+    defaultMessage: 'Hide or turn off the floating window',
   },
+  hideForNow: { id: 'engineGlance.hideForNow', defaultMessage: 'Hide for now' },
+  hideForNowDetail: {
+    id: 'engineGlance.hideForNowDetail',
+    defaultMessage: 'Back the next time the engine works',
+  },
+  turnOff: { id: 'engineGlance.turnOff', defaultMessage: 'Turn off the floating window' },
+  turnOffDetail: {
+    id: 'engineGlance.turnOffDetail',
+    defaultMessage: 'Turn it back on in Settings › App',
+  },
+  hint: { id: 'engineGlance.hint', defaultMessage: 'You can turn this off from here' },
+  hintDismiss: { id: 'engineGlance.hintDismiss', defaultMessage: 'Got it' },
   hide: {
     id: 'engineGlance.hide',
     defaultMessage: 'Hide this card — bring it back from the foot of the sidebar or Settings › App',
@@ -145,6 +178,12 @@ const i18n = defineMessages({
     defaultMessage: 'Open {name} — it asked: {question}',
   },
   untitled: { id: 'engineGlance.untitled', defaultMessage: 'Untitled session' },
+  node: { id: 'nodes.glanceNode', defaultMessage: 'Node · {name}' },
+  openNode: { id: 'nodes.glanceOpenNode', defaultMessage: 'Open {name} on the Nodes page' },
+  nodeUnknown: {
+    id: 'nodes.glanceNodeUnknown',
+    defaultMessage: 'Which node serves is not known: {error}',
+  },
 });
 
 const STAGE_WORD: Record<GlanceStage, (typeof i18n)['idle']> = {
@@ -320,17 +359,21 @@ function Control({
   onClick,
   children,
   testId,
+  expanded,
 }: {
   label: string;
   onClick: () => void;
   children: ReactNode;
   testId: string;
+  /** The control opens something beside it: its state, read out. */
+  expanded?: boolean;
 }) {
   return (
     <button
       type="button"
       data-testid={testId}
       aria-label={label}
+      aria-expanded={expanded}
       title={label}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => {
@@ -436,6 +479,72 @@ function NeedsYouStrip({
   );
 }
 
+/**
+ * The node the serving way belongs to (design §7.3), under the mode line: a link to its card on the
+ * Nodes page where the surface can navigate, plain words where it cannot (the desktop window).
+ * Two nodes naming one way are both said; the link opens the first (the chat's own, else pinned).
+ */
+function NodeLine({
+  servedBy,
+  onOpenNode,
+}: {
+  servedBy: NonNullable<EngineGlance['servedBy']>;
+  onOpenNode?: (nodeId: string) => void;
+}) {
+  const intl = useIntl();
+  if ('error' in servedBy) {
+    return (
+      <span
+        data-testid="engine-glance-node-unknown"
+        title={servedBy.error}
+        className="line-clamp-2 break-words text-lz-meta"
+      >
+        {intl.formatMessage(i18n.nodeUnknown, { error: servedBy.error })}
+      </span>
+    );
+  }
+  const name = intl.formatList(
+    servedBy.nodes.map((n) => n.name),
+    { type: 'conjunction' }
+  );
+  const text = intl.formatMessage(i18n.node, { name });
+  const first = servedBy.nodes[0];
+  if (!onOpenNode) {
+    return (
+      <span
+        data-testid="engine-glance-served-node"
+        className={cx('line-clamp-2 break-words text-lz-meta', WEIGHT.semibold)}
+      >
+        {text}
+      </span>
+    );
+  }
+  const label = intl.formatMessage(i18n.openNode, { name: first.name });
+  return (
+    <button
+      type="button"
+      data-testid="engine-glance-served-node"
+      data-node={first.id}
+      title={label}
+      aria-label={label}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenNode(first.id);
+      }}
+      className={cx(
+        'pointer-events-auto flex min-w-0 max-w-full items-start gap-1.5 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:mt-px [&_svg]:size-3.5',
+        WEIGHT.semibold,
+        RADIUS.control,
+        FOCUS
+      )}
+    >
+      <Network aria-hidden />
+      <span className="line-clamp-2 min-w-0 break-words">{text}</span>
+    </button>
+  );
+}
+
 export type GlanceVariant = 'dock' | 'desktop';
 
 export interface EngineGlanceCardProps {
@@ -445,10 +554,20 @@ export interface EngineGlanceCardProps {
   expanded: boolean;
   onOpenEngine: () => void;
   onOpenSession: (sessionId: string) => void;
+  /** Opens a node's card on the Nodes page. Absent = the node is named, not linked. */
+  onOpenNode?: (nodeId: string) => void;
   onToggleExpanded: () => void;
   onCollapsedChange: (collapsed: boolean) => void;
-  /** The desktop window's close: snoozes it for this live spell. Absent = no close control. */
-  onClose?: () => void;
+  /**
+   * The desktop window's close (Q-224): its X offers two plain choices — hide it for this live
+   * spell, or turn the floating window off (Settings › App's Off). Absent = no close control.
+   */
+  hideChoices?: { onHideForNow: () => void; onTurnOff: () => void };
+  /** The corner the desktop window sits in: what opens beside the card opens on the far side. */
+  corner?: GlanceCorner;
+  /** The first time the desktop window ever appears: a one-line hint that it turns off from here. */
+  turnOffHint?: boolean;
+  onDismissHint?: () => void;
   /** The docked card's hide: gone until the person brings it back (Q-218). Absent = no control. */
   onHide?: () => void;
   /**
@@ -476,6 +595,122 @@ const WIDTH: Record<GlanceVariant, string> = {
   dock: 'w-full',
   desktop: 'w-[300px]',
 };
+/** What opens beside the desktop window is never wider than its card. */
+const BESIDE_MAX = 'max-w-[300px]';
+const BESIDE = cx('self-stretch text-lz-ink', BESIDE_MAX, SURFACE.card);
+
+function HideChoice({
+  testId,
+  icon,
+  label,
+  detail,
+  onClick,
+}: {
+  testId: string;
+  icon: ReactNode;
+  label: string;
+  detail: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={cx(
+        'flex w-full min-w-0 items-start gap-2 px-2 py-1.5 text-left [&_svg]:mt-0.5 [&_svg]:size-4 [&_svg]:shrink-0',
+        RADIUS.control,
+        SURFACE.hover,
+        FOCUS,
+        MOTION
+      )}
+    >
+      {icon}
+      <span className="flex min-w-0 flex-col">
+        <span className={cx('text-lz-body', WEIGHT.semibold)}>{label}</span>
+        <span className="text-lz-meta text-lz-ink-2">{detail}</span>
+      </span>
+    </button>
+  );
+}
+
+/** The X's two choices, beside the card on the side away from its corner. */
+function HideChoices({
+  onHideForNow,
+  onTurnOff,
+}: {
+  onHideForNow: () => void;
+  onTurnOff: () => void;
+}) {
+  const intl = useIntl();
+  return (
+    <div
+      role="group"
+      aria-label={intl.formatMessage(i18n.hideChoices)}
+      data-testid="engine-glance-hide-choices"
+      className={cx('flex flex-col gap-0.5 p-1', BESIDE)}
+    >
+      <HideChoice
+        testId="engine-glance-hide-for-now"
+        icon={<EyeOff aria-hidden />}
+        label={intl.formatMessage(i18n.hideForNow)}
+        detail={intl.formatMessage(i18n.hideForNowDetail)}
+        onClick={onHideForNow}
+      />
+      <HideChoice
+        testId="engine-glance-turn-off"
+        icon={<Power aria-hidden className={TONE_TEXT.err} />}
+        label={intl.formatMessage(i18n.turnOff)}
+        detail={intl.formatMessage(i18n.turnOffDetail)}
+        onClick={onTurnOff}
+      />
+    </div>
+  );
+}
+
+/** The one-time hint, pointing at the X from the side it opens on. */
+function TurnOffHint({ below, onDismiss }: { below: boolean; onDismiss: () => void }) {
+  const intl = useIntl();
+  return (
+    <div
+      role="note"
+      data-testid="engine-glance-hint"
+      className={cx(
+        'flex items-center gap-2 self-stretch py-1 pl-2.5 pr-1 text-lz-meta [&_svg]:size-4 [&_svg]:shrink-0',
+        BESIDE_MAX,
+        RADIUS.card,
+        TONE_FILL.accent
+      )}
+    >
+      <span className={cx('min-w-0', WEIGHT.semibold)}>{intl.formatMessage(i18n.hint)}</span>
+      <span aria-hidden className="mr-auto flex">
+        {below ? <ArrowUpRight /> : <ArrowDownRight />}
+      </span>
+      <button
+        type="button"
+        data-testid="engine-glance-hint-dismiss"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          onDismiss();
+        }}
+        className={cx(
+          'shrink-0 border border-current px-2 py-0.5 hover:bg-lz-accent-hover',
+          WEIGHT.semibold,
+          RADIUS.control,
+          FOCUS,
+          MOTION
+        )}
+      >
+        {intl.formatMessage(i18n.hintDismiss)}
+      </button>
+    </div>
+  );
+}
 
 /** px between the docked card and the forming panel that opens beside it, over the content. */
 const PANEL_GAP_PX = 8;
@@ -528,7 +763,62 @@ function FormingPopover({
   );
 }
 
+/**
+ * The desktop card and what opens beside it — its X's choices, or the one-time hint — stacked on
+ * the side away from the window's corner: main keeps that corner where it is while the window grows
+ * (engineGlanceDesktop.ts), so the card, and the X under the pointer, stay exactly where they were.
+ */
 export function EngineGlanceCard(props: EngineGlanceCardProps) {
+  const [choicesOpen, setChoicesOpen] = useState(false);
+  const { hideChoices, onDismissHint } = props;
+  const face = (
+    <GlanceFace
+      {...props}
+      choicesOpen={choicesOpen}
+      onToggleChoices={() => {
+        setChoicesOpen((open) => !open);
+        // Found it: the hint has done its job.
+        onDismissHint?.();
+      }}
+    />
+  );
+  if (!hideChoices) return face;
+  const corner = props.corner ?? DEFAULT_GLANCE_CORNER;
+  const below = corner.startsWith('top');
+  const beside = choicesOpen ? (
+    <HideChoices
+      onHideForNow={() => {
+        setChoicesOpen(false);
+        hideChoices.onHideForNow();
+      }}
+      onTurnOff={() => {
+        setChoicesOpen(false);
+        hideChoices.onTurnOff();
+      }}
+    />
+  ) : props.turnOffHint && onDismissHint ? (
+    <TurnOffHint below={below} onDismiss={onDismissHint} />
+  ) : null;
+  // Always the same wrapper around the face: a card that remounted as the choices open would lose
+  // the X under the pointer (and its state) mid-click.
+  return (
+    <div
+      data-testid="engine-glance-stack"
+      className={cx(
+        'flex w-max gap-1.5',
+        below ? 'flex-col' : 'flex-col-reverse',
+        corner.endsWith('right') ? 'items-end' : 'items-start'
+      )}
+    >
+      {face}
+      {beside}
+    </div>
+  );
+}
+
+function GlanceFace(
+  props: EngineGlanceCardProps & { choicesOpen: boolean; onToggleChoices: () => void }
+) {
   const intl = useIntl();
   const { push, variant, collapsed, expanded } = props;
   const engine = push.engine;
@@ -624,11 +914,12 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
           >
             <Maximize2 />
           </Control>
-          {props.onClose && (
+          {props.hideChoices && (
             <Control
               testId="engine-glance-close"
-              label={intl.formatMessage(i18n.close)}
-              onClick={props.onClose}
+              label={intl.formatMessage(i18n.hideChoices)}
+              expanded={props.choicesOpen}
+              onClick={props.onToggleChoices}
             >
               <X />
             </Control>
@@ -716,11 +1007,12 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
                 <Minus />
               </Control>
             )}
-            {props.onClose && (
+            {props.hideChoices && (
               <Control
                 testId="engine-glance-close"
-                label={intl.formatMessage(i18n.close)}
-                onClick={props.onClose}
+                label={intl.formatMessage(i18n.hideChoices)}
+                expanded={props.choicesOpen}
+                onClick={props.onToggleChoices}
               >
                 <X />
               </Control>
@@ -736,6 +1028,11 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
             )}
           </span>
         </div>
+        {/* The node the way belongs to: under the mode line, on its own full-width row so a node
+            name is never squeezed by the controls beside the header. */}
+        {engine.present && engine.servedBy && (
+          <NodeLine servedBy={engine.servedBy} onOpenNode={props.onOpenNode} />
+        )}
         {question && (
           <div data-testid="engine-glance-question" className="flex min-w-0 flex-col gap-0.5">
             <span className={cx('truncate text-lz-body', WEIGHT.semibold)}>{questionName}</span>
@@ -805,7 +1102,7 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
               props.onOpenSession(engine.chat!.sessionId);
             }}
             className={cx(
-              'pointer-events-auto flex min-w-0 items-center gap-1.5 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
+              'pointer-events-auto flex min-w-0 max-w-full items-center gap-1.5 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
               WEIGHT.semibold,
               RADIUS.control,
               FOCUS
@@ -826,7 +1123,7 @@ export function EngineGlanceCard(props: EngineGlanceCardProps) {
               setFormingOpen((open) => !open);
             }}
             className={cx(
-              'pointer-events-auto flex min-w-0 items-center gap-1 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
+              'pointer-events-auto flex min-w-0 max-w-full items-center gap-1 self-start text-left text-lz-meta underline decoration-1 underline-offset-2 hover:decoration-2 [&_svg]:size-3.5',
               WEIGHT.semibold,
               TNUM,
               RADIUS.control,

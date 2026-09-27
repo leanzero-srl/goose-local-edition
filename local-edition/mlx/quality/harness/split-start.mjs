@@ -3,9 +3,10 @@
 // noticed until an E2E round tried to use it. Exit 0 = split up and answered; 1 = it failed (the goosed log's
 // distributed WARN is printed); 2 = no split Run button on screen.
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { mainPage } from './mainpage.mjs';
 import { readdirSync, readFileSync } from 'node:fs';
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
-const p = b.contexts()[0].pages().find((x) => x.url().includes('index.html'));
+const p = await mainPage(b);
 p.setDefaultTimeout(15000);
 await p.goto(p.url().split('#')[0] + '#/leanzero-swarm?tab=mlx&mlx=engine'); await p.waitForTimeout(5000);
 await p.getByText('LeanZero MLX', { exact: true }).first().click().catch(() => {}); await p.waitForTimeout(4000);

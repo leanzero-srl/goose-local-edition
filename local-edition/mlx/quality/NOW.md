@@ -1,14 +1,14 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 21:57 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-27 22:17 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
-- Installed: 3.0.61 (both Macs, verified). BUILDING 3.0.62 from a654dfa85 (Q-185 background labels, Q-187/188,
-  Q-189/190 diffs + Changes rail, Q-191/192 LeanZero pill + report form, r1 Q-219) · watcher bgooafd7y. Install
-  via `touch <run>/STOP` → driver exits at the boundary → install.sh → split-start → #3l.
-- E2E #3k RUNNING on 3.0.61 (fresh r1: visible-only messages, STOP file) · runwatch bey93kmww. #3j's turn-3
-  'notice' was #3i's hidden chat (Q-219) — not a split crash (rank1 alive since 20:49:37).
-- leanzero.net: Q-209/210 pushed (ce043ba, red-teamed FIX-THEN-PUSH → fixed) · live probe bi5f4xi9l (413 wording).
+- Installed: 3.0.62 (both Macs, verified post-swap pids; diffs + Changes rail, LeanZero pill, report form, Q-185).
+  After install Link was blocked by the 3.0.61 goosed that survived the quit (Q-223): orphans killed per pid,
+  Retry connect → tailscaled 55892, split up "OK". install.sh + clean.sh now reap/scan orphan goosed/tailscaled.
+- E2E #3l RUNNING on 3.0.62 (27B tensor, jira brief) · runwatch. #3k stopped mid-turn 7 for the owner's install.
+- BUILDING 3.0.63 from 2b4e26900 (S1 nav, glance Q-215–218, Q-220/221, Q-211/212, path fixes) · release-3.0.63.log.
+- leanzero.net Q-209/210 live.
 
 ## CI
 - Green through dc701189c; merges since gated locally (tsc, vitest 3,243, eslint, i18n, cargo check, wincheck).

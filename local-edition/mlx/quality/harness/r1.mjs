@@ -7,6 +7,7 @@
 // turn's own length) is logged STALL with a screenshot and the soak goes on waiting; HANG_FACTOR x ends the soak —
 // a hang is the finding, and the driver never cancels, retries or edits the turn itself.
 import { chromium } from '/Users/mihaiperdum/Projects/goose/ui/node_modules/playwright-core/index.mjs';
+import { mainPage } from './mainpage.mjs';
 import { mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { liveCheck } from './livecheck.mjs';
 const dir = process.argv[2];
@@ -54,7 +55,7 @@ const pollCalls = () => { const got = []; for (const f of readdirSync(LOGS)) { i
 pollCalls();
 writeFileSync(`${dir}/calls.tsv`, 'turn\tinput\toutput\tcache_read\n');
 const b = await chromium.connectOverCDP('http://127.0.0.1:9333');
-const p = b.contexts()[0].pages().find((x) => x.url().includes('index.html'));
+const p = await mainPage(b);
 await p.goto(p.url().split('#')[0] + '#/'); await p.waitForTimeout(2500);
 await p.getByRole('button', { name: /^New session in / }).click(); await p.waitForTimeout(4000);
 const screen = () => p.evaluate(() => {

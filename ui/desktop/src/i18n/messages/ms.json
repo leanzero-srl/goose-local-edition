@@ -51,7 +51,7 @@
     "defaultMessage": "LeanZero Link tidak dapat menamakan Mac ini ({error}) — nod dicipta untuk Mac ini; namakan di bawah."
   },
   "addNode.machineOnlyThisMac": {
-    "defaultMessage": "Hanya Mac ini yang dipautkan — Mac anda yang lain muncul di sini sebaik sahaja ia menyertai LeanZero Link (Penyedia › Mac Saya)."
+    "defaultMessage": "Hanya Mac ini yang dipautkan — Mac anda yang lain muncul di sini sebaik sahaja ia menyertai LeanZero Link (LeanZero MLX › Mac Saya)."
   },
   "addNode.machinePlaceholder": {
     "defaultMessage": "Pilih Mac…"
@@ -523,12 +523,6 @@
   },
   "chatInput.processingDroppedFiles": {
     "defaultMessage": "Memproses fail yang dilepaskan..."
-  },
-  "chatInput.recipesAndLoops": {
-    "defaultMessage": "Resipi & gelung"
-  },
-  "chatInput.recipesAndLoopsTitle": {
-    "defaultMessage": "Bina resipi, kemudian jalankannya dalam gelung berjadual"
   },
   "chatInput.recording": {
     "defaultMessage": "Merakam..."
@@ -1703,9 +1697,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Sembang · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Sembunyikan sehingga enjin tenang semula"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Kecilkan menjadi pil"
   },
@@ -1723,6 +1714,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Sembunyikan kad ini — kembalikan dari bahagian bawah bar sisi atau Tetapan › Aplikasi"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Sembunyikan atau matikan tetingkap terapung"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Sembunyikan buat masa ini"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Kembali apabila enjin bekerja semula"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Anda boleh mematikan ini dari sini"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Faham"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# permintaan sedang berjalan}}"
@@ -1847,6 +1853,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Tidak dikemas kini"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Matikan tetingkap terapung"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Hidupkan semula dalam Tetapan › Aplikasi"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Tetingkap terapung dimatikan"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Hidupkan semula dalam Tetapan › Aplikasi."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Sesi tanpa tajuk"
   },
@@ -1878,7 +1896,7 @@
     "defaultMessage": "Mati"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Tetingkap kecil di atas aplikasi lain, di sudut yang anda seret. Ia tidak pernah mengambil fokus, dan menutupnya menyembunyikannya sehingga enjin tenang semula."
+    "defaultMessage": "Tetingkap kecil di atas aplikasi lain, di sudut yang anda seret. Ia tidak pernah mengambil fokus. Butang tutupnya menyembunyikannya sehingga enjin bekerja semula, atau mematikannya."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Di bar sisi"
@@ -2779,150 +2797,6 @@
   },
   "localNetwork.open": {
     "defaultMessage": "Buka Privasi & Keselamatan"
-  },
-  "loopModal.browseYaml": {
-    "defaultMessage": "Browse for YAML file..."
-  },
-  "loopModal.cancel": {
-    "defaultMessage": "Cancel"
-  },
-  "loopModal.createLoop": {
-    "defaultMessage": "Create Loop"
-  },
-  "loopModal.createNewLoop": {
-    "defaultMessage": "Create New Loop"
-  },
-  "loopModal.creating": {
-    "defaultMessage": "Creating..."
-  },
-  "loopModal.deepLink": {
-    "defaultMessage": "Deep link"
-  },
-  "loopModal.deepLinkPlaceholder": {
-    "defaultMessage": "Paste goose://recipe link here..."
-  },
-  "loopModal.failedParseRecipe": {
-    "defaultMessage": "Failed to parse recipe from file."
-  },
-  "loopModal.failedReadFile": {
-    "defaultMessage": "Failed to read the selected file."
-  },
-  "loopModal.invalidDeepLink": {
-    "defaultMessage": "Invalid deep link. Please use a goose://recipe link."
-  },
-  "loopModal.invalidFileType": {
-    "defaultMessage": "Invalid file type: Please select a YAML file (.yaml or .yml)"
-  },
-  "loopModal.loopIdRequired": {
-    "defaultMessage": "Loop name is required."
-  },
-  "loopModal.maxIterationsHelp": {
-    "defaultMessage": "Hard cap on iterations regardless of the stop check."
-  },
-  "loopModal.maxIterationsLabel": {
-    "defaultMessage": "Max iterations:"
-  },
-  "loopModal.maxIterationsRequired": {
-    "defaultMessage": "Max iterations must be at least 1."
-  },
-  "loopModal.nameLabel": {
-    "defaultMessage": "Name:"
-  },
-  "loopModal.namePlaceholder": {
-    "defaultMessage": "e.g., nightly-refine-loop"
-  },
-  "loopModal.provideValidRecipe": {
-    "defaultMessage": "Please provide a valid recipe source."
-  },
-  "loopModal.recipeDescription": {
-    "defaultMessage": "Description: {description}"
-  },
-  "loopModal.recipeParsed": {
-    "defaultMessage": "Recipe parsed successfully"
-  },
-  "loopModal.recipeTitle": {
-    "defaultMessage": "Title: {title}"
-  },
-  "loopModal.scheduleLabel": {
-    "defaultMessage": "Schedule:"
-  },
-  "loopModal.selected": {
-    "defaultMessage": "Selected: {path}"
-  },
-  "loopModal.sourceLabel": {
-    "defaultMessage": "Recipe:"
-  },
-  "loopModal.stateArtifactHelp": {
-    "defaultMessage": "Optional file the recipe writes each iteration; its contents carry into the next."
-  },
-  "loopModal.stateArtifactLabel": {
-    "defaultMessage": "State artifact:"
-  },
-  "loopModal.stateArtifactPlaceholder": {
-    "defaultMessage": "e.g., state.md"
-  },
-  "loopModal.stopCheckHelp": {
-    "defaultMessage": "Optional shell command run after each iteration; exit 0 stops the loop."
-  },
-  "loopModal.stopCheckLabel": {
-    "defaultMessage": "Stop check command:"
-  },
-  "loopModal.stopCheckPlaceholder": {
-    "defaultMessage": "e.g., test -f done.flag"
-  },
-  "loopModal.subtitle": {
-    "defaultMessage": "A loop runs a recipe repeatedly until a stop check passes or the iteration cap is reached."
-  },
-  "loopModal.yaml": {
-    "defaultMessage": "YAML"
-  },
-  "loopView.confirmDelete": {
-    "defaultMessage": "Remove loop \"{id}\"? The recipe will be kept."
-  },
-  "loopView.createLoop": {
-    "defaultMessage": "Create Loop"
-  },
-  "loopView.deleteConfirm": {
-    "defaultMessage": "Remove"
-  },
-  "loopView.deleteTitle": {
-    "defaultMessage": "Remove loop"
-  },
-  "loopView.description": {
-    "defaultMessage": "Loops run a recipe repeatedly on a schedule until a stop check passes or the iteration cap is reached."
-  },
-  "loopView.errorPrefix": {
-    "defaultMessage": "Error: {error}"
-  },
-  "loopView.lastRun": {
-    "defaultMessage": "Last run: {date}"
-  },
-  "loopView.loop": {
-    "defaultMessage": "Loop"
-  },
-  "loopView.loopCreated": {
-    "defaultMessage": "Loop Created"
-  },
-  "loopView.loopCreatedMsg": {
-    "defaultMessage": "Successfully created loop \"{id}\""
-  },
-  "loopView.maxIterations": {
-    "defaultMessage": "{count} max iterations"
-  },
-  "loopView.noLoops": {
-    "defaultMessage": "No loops yet"
-  },
-  "loopView.refresh": {
-    "defaultMessage": "Refresh"
-  },
-  "loopView.refreshing": {
-    "defaultMessage": "Refreshing..."
-  },
-  "loopView.stateArtifact": {
-    "defaultMessage": "State: {file}"
-  },
-  "loopView.stopCheck": {
-    "defaultMessage": "Stop check: {command}"
   },
   "macs.cancelDownloadFailed": {
     "defaultMessage": "Gagal membatalkan."
@@ -3993,7 +3867,7 @@
     "defaultMessage": "Mac yang lain"
   },
   "mlxDistributedSetup.link.servingOffMyMacs": {
-    "defaultMessage": "Hidupkan “Benarkan Mac saya yang lain menggunakan Mac ini › Menjalankan sebahagian model terbahagi” pada {name} (Penyedia › Mac Saya di sana)."
+    "defaultMessage": "Hidupkan “Benarkan Mac saya yang lain menggunakan Mac ini › Menjalankan sebahagian model terbahagi” pada {name} (LeanZero MLX › Mac Saya di sana)."
   },
   "mlxDistributedSetup.link.state.notServed": {
     "defaultMessage": "goose-nya tidak boleh berkhidmat"
@@ -5222,6 +5096,12 @@
   "myMacs.account": {
     "defaultMessage": "Akaun"
   },
+  "myMacs.addAnotherBody": {
+    "defaultMessage": "Log masuk ke LeanZero Link dengan akaun yang sama pada Mac anda yang lain. Ia muncul di sini, dan anda boleh menjalankan model yang terlalu besar untuk satu Mac merentas kedua-duanya."
+  },
+  "myMacs.addAnotherTitle": {
+    "defaultMessage": "Tambah Mac lain"
+  },
   "myMacs.applyOnReconnect": {
     "defaultMessage": "“Memuatkan dan memuat turun model” berkuat kuasa apabila Mac ini bersambung semula ke LeanZero Link."
   },
@@ -5294,14 +5174,26 @@
   "myMacs.models": {
     "defaultMessage": "Model"
   },
-  "myMacs.none": {
-    "defaultMessage": "Belum ada Mac lain dalam akaun LeanZero Link anda — log masuk padanya untuk melihatnya di sini."
+  "myMacs.nodeLoading": {
+    "defaultMessage": "Memuatkan"
+  },
+  "myMacs.nodeServing": {
+    "defaultMessage": "Melayan"
+  },
+  "myMacs.nodesFailed": {
+    "defaultMessage": "Nod pada Mac anda tidak dapat dibaca: {reason}"
+  },
+  "myMacs.nodesHere": {
+    "defaultMessage": "{self, select, true {Nod pada Mac ini} other {Nod pada {name}}}"
   },
   "myMacs.off": {
     "defaultMessage": "mati"
   },
   "myMacs.on": {
     "defaultMessage": "hidup"
+  },
+  "myMacs.openNode": {
+    "defaultMessage": "Buka {name} di halaman Nod"
   },
   "myMacs.reconnect": {
     "defaultMessage": "Sambung semula sekarang"
@@ -5501,11 +5393,32 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "sedang disajikan"
   },
+  "nodes.glanceNode": {
+    "defaultMessage": "Nod · {name}"
+  },
+  "nodes.glanceNodeUnknown": {
+    "defaultMessage": "Nod mana yang melayan tidak diketahui: {error}"
+  },
+  "nodes.glanceOpenNode": {
+    "defaultMessage": "Buka {name} di halaman Nod"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Urus penyedia awan"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Urus Mac dan model"
+  },
+  "nodes.navFailed": {
+    "defaultMessage": "Gagal"
+  },
+  "nodes.navFailedTitle": {
+    "defaultMessage": "Enjin LeanZero MLX gagal — kad enjin menyatakan sebabnya"
+  },
+  "nodes.navLoading": {
+    "defaultMessage": "Memuatkan"
+  },
+  "nodes.navLoadingTitle": {
+    "defaultMessage": "Enjin LeanZero MLX sedang memuatkan model"
   },
   "nodes.sections": {
     "defaultMessage": "Bahagian nod"
