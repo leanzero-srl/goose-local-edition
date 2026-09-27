@@ -76,6 +76,7 @@ import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url'
 import { expandTilde } from './utils/pathUtils';
 import {
   agentWorkRegistryPath,
+  gooseDirs,
   gooseGlobalMemoryDir,
   gooseGlobalSkillsDir,
   gooseMemoryProposalsDir,
@@ -1109,6 +1110,9 @@ let appConfig = {
   // The renderer cannot resolve goose's dirs (no node:os); the skills import and the skill prompts
   // read this one (Q-188). `~/.agents/skills` unset, as the renderer always wrote it.
   GOOSE_GLOBAL_SKILLS_DIR: homeRelative(gooseGlobalSkillsDir(), os.homedir()),
+  // goose's config dir for the prompts and copy that name it (Q-198): `~/.config/goose` unset, the
+  // text the renderer always wrote; recipe_management's global recipe folder reads it too.
+  GOOSE_CONFIG_DIR: homeRelative(gooseDirs().config, os.homedir()),
   GOOSE_WORKING_DIR: '',
   // Start with the env-var override; the OS region locale is filled in after app.ready
   // (see updateLocaleFromSystem below) since getSystemLocale() cannot be called earlier.

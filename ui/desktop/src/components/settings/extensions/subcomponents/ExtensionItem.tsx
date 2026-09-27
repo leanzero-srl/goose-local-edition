@@ -12,6 +12,7 @@ import { McpCapabilities } from '../../../extensions/McpCapabilities';
 import { Button, Chip, Disclosure } from '../../../lz';
 import { TreeContextMenu } from '../../../Layout/tree';
 import { useStartChatAbout } from '../../../Layout/useStartChatAbout';
+import { getGooseConfigDir } from '../../../../utils/gooseConfigDir';
 import { Pencil, Power, Sparkles, Trash2 } from 'lucide-react';
 import type { McpToolInfo } from '../../../../types/mcpSetup';
 
@@ -47,8 +48,10 @@ const i18n = defineMessages({
 });
 
 /** What is asked of the model when an MCP is opened as a chat about it: how it is launched, where
- *  its configuration lives, and the tools that enable, disable and rewrite it. */
-export function askAboutExtensionPrompt(extension: FixedExtensionEntry): string {
+ *  its configuration lives, and the tools that enable, disable and rewrite it. `configDir` is goose's
+ *  config dir as main resolved it (utils/gooseConfigDir; Q-198: a literal `~/.config/goose` sent the
+ *  model to the owner's config from an isolated GOOSE_PATH_ROOT profile). */
+export function askAboutExtensionPrompt(extension: FixedExtensionEntry, configDir: string): string {
   const kind = extension.type;
   // The YAML key is not the display name: "LeanZero Documents" is stored under `leanzerodocuments`
   // (the key the config context read it from, else the same derivation the config writer uses).
@@ -61,7 +64,7 @@ export function askAboutExtensionPrompt(extension: FixedExtensionEntry): string 
         : '';
   return [
     `I want to work on my goose MCP extension "${getFriendlyTitle(extension)}" — config name "${extension.name}", type ${kind}${where}.`,
-    `Its configuration is the "${configKey}" key under extensions: in ~/.config/goose/config.yaml (name, type, cmd/args or uri, envs, timeout, enabled). Read that entry first with the developer tools.`,
+    `Its configuration is the "${configKey}" key under extensions: in ${configDir}/config.yaml (name, type, cmd/args or uri, envs, timeout, enabled). Read that entry first with the developer tools.`,
     'You can change it in place by editing that entry, fork it by adding a new entry with a new name beside it, or add a brand-new MCP the same way; manage_extensions enables or disables an extension by name and search_available_extensions lists the ones goose knows about. Changes to config.yaml apply to the next session.',
     'Ask me what I want changed before you write anything, then make the change and show me the resulting entry.',
   ].join('\n');
@@ -266,7 +269,7 @@ export default function ExtensionItem({
               onClick: () => {
                 setMenu(null);
                 // The MCP itself rides along even when the profile has it off, so it can be tried.
-                void startChat(askAboutExtensionPrompt(extension), {
+                void startChat(askAboutExtensionPrompt(extension, getGooseConfigDir()), {
                   alsoEnable: [extension.name],
                 });
               },

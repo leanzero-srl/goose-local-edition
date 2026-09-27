@@ -6,6 +6,7 @@ import { ConfirmationModal } from '../ui/ConfirmationModal';
 import MarkdownContent from '../MarkdownContent';
 import { errorMessage } from '../../utils/conversionUtils';
 import { getInitialWorkingDir } from '../../utils/workingDir';
+import { getGooseConfigDir } from '../../utils/gooseConfigDir';
 import { acpGetSessionListItem } from '../../acp/sessions';
 import { displaySessionListName } from '../../sessions';
 import {
@@ -554,8 +555,8 @@ export default function MemoriesView() {
     if (memories.length === 0) {
       return (
         <p className={cx(TYPE.bodyMuted, 'px-2 py-2')}>
-          No memories yet. Goose stores them in ~/.config/goose/memory/ — imported from your cloud
-          profile and learned as it works.
+          No memories yet. Goose stores them in {getGooseConfigDir()}/memory/ — imported from your
+          cloud profile and learned as it works.
         </p>
       );
     }

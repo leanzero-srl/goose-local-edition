@@ -428,7 +428,7 @@ fn builtin_skill_entry(mut source: SourceEntry) -> SourceEntry {
 
 fn agent_base_dir(global: bool, project_dir: Option<&str>) -> Result<PathBuf, Error> {
     if global {
-        Ok(Paths::agents_dir())
+        Ok(Paths::in_agents_home_dir("agents"))
     } else {
         let project_dir = project_dir.ok_or_else(|| {
             Error::invalid_params().data("projectDir is required when global is false")
@@ -541,24 +541,49 @@ fn reject_read_only_agent_file(path: &Path, additional_roots: &[SourceRoot]) -> 
     Ok(())
 }
 
+/// Every global agent folder, in discovery precedence — the ONE list the ACP listing
+/// (`list_agent_dirs`), the path check (`is_global_agent_file`) and summon's discovery
+/// (`discover_filesystem_sources`) share. Q-197: they carried three copies, each reading
+/// `~/.agents/agents` from the owner's home, so an isolated GOOSE_PATH_ROOT profile listed, summoned
+/// and could edit the owner's agents. goose's own three hang from goose's dirs: `.agents/agents`
+/// (`Paths::in_agents_home_dir`, where a global agent is created), the legacy `.goose/agents`
+/// (`Paths::in_legacy_home_dir`) and `<config>/agents`. `~/.claude/agents` belongs to another tool
+/// and stays in the owner's home, as `~/.claude/skills` does (`skills::global_skill_roots`).
+pub(crate) fn global_agent_roots() -> Vec<PathBuf> {
+    let mut roots = vec![
+        Paths::in_agents_home_dir("agents"),
+        Paths::in_legacy_home_dir("agents"),
+    ];
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join(".claude").join("agents"));
+    }
+    roots.push(Paths::config_dir().join("agents"));
+    roots
+}
+
 fn is_global_agent_file(path: &Path) -> bool {
     let canonical_path = canonicalize_or_original(path);
-    let mut global_roots = Vec::new();
-    global_roots.push(Paths::agents_dir());
-    if let Some(home) = dirs::home_dir() {
-        global_roots.push(home.join(".agents").join("agents"));
-        global_roots.push(home.join(".goose").join("agents"));
-        global_roots.push(home.join(".claude").join("agents"));
-    }
-    global_roots.push(Paths::config_dir().join("agents"));
-
-    global_roots
+    global_agent_roots()
         .into_iter()
         .any(|root| canonical_path.starts_with(canonicalize_or_original(&root)))
 }
 
+/// The project folder a sources request names — the listing and the agent mutations read it alike.
+fn requested_working_dir(project_dir: Option<&str>) -> Option<PathBuf> {
+    project_dir
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+}
+
+/// An agent file an update, delete or export may touch: one the listing offers for the SAME request —
+/// a `.md` directly inside one of `list_agent_dirs(projectDir, additional_roots)`. Q-213: the old rule
+/// accepted any `<x>/.agents|.goose|.claude/agents/*.md` by folder name, so a client naming the owner's
+/// `~/.agents/agents/x.md` explicitly could edit or delete it from an isolated GOOSE_PATH_ROOT profile
+/// that never lists it. A file outside every listed folder is refused by name, never "not found".
 fn resolve_agent_file_with_roots(
     path: &str,
+    project_dir: Option<&str>,
     additional_roots: &[SourceRoot],
 ) -> Result<PathBuf, Error> {
     if path.is_empty() {
@@ -569,29 +594,30 @@ fn resolve_agent_file_with_roots(
         .canonicalize()
         .map_err(|_| Error::invalid_params().data(format!("Source \"{}\" not found", path)))?;
 
-    let parent_name = canonical_file
-        .parent()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str());
-    let grandparent_name = canonical_file
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str());
-    let in_agent_dir = parent_name == Some("agents")
-        && matches!(
-            grandparent_name,
-            Some(".goose") | Some(".claude") | Some(".agents")
-        );
-    let in_additional_root = additional_roots
-        .iter()
-        .any(|root| is_under_root(&canonical_file, &root.path));
-
     if !canonical_file.is_file()
         || canonical_file.extension().and_then(|ext| ext.to_str()) != Some("md")
-        || (!in_agent_dir && !is_global_agent_file(&canonical_file) && !in_additional_root)
     {
         return Err(Error::invalid_params().data(format!("Source \"{}\" not found", path)));
+    }
+
+    let listed = list_agent_dirs(
+        requested_working_dir(project_dir).as_deref(),
+        additional_roots,
+    );
+    let parent = canonical_file.parent();
+    if !listed
+        .iter()
+        .any(|root| parent == Some(canonicalize_or_original(&root.path).as_path()))
+    {
+        let folders: Vec<String> = listed
+            .iter()
+            .map(|root| root.path.display().to_string())
+            .collect();
+        return Err(Error::invalid_params().data(format!(
+            "Agent \"{}\" is outside the agent folders goose lists for this request ({}); a project agent needs the request's projectDir",
+            path,
+            folders.join(", ")
+        )));
     }
 
     Ok(canonical_file)
@@ -614,28 +640,10 @@ fn list_agent_dirs(working_dir: Option<&Path>, additional_roots: &[SourceRoot]) 
         });
     }
 
-    dirs.push(SourceRoot {
-        path: Paths::agents_dir(),
+    dirs.extend(global_agent_roots().into_iter().map(|path| SourceRoot {
+        path,
         writable: true,
-    });
-    if let Some(home) = dirs::home_dir() {
-        dirs.push(SourceRoot {
-            path: home.join(".agents").join("agents"),
-            writable: true,
-        });
-        dirs.push(SourceRoot {
-            path: home.join(".goose").join("agents"),
-            writable: true,
-        });
-        dirs.push(SourceRoot {
-            path: home.join(".claude").join("agents"),
-            writable: true,
-        });
-    }
-    dirs.push(SourceRoot {
-        path: Paths::config_dir().join("agents"),
-        writable: true,
-    });
+    }));
     dirs.extend(additional_roots.iter().cloned());
     dirs
 }
@@ -651,10 +659,7 @@ fn list_agent_sources(
     project_dir: Option<&str>,
     additional_roots: &[SourceRoot],
 ) -> Vec<SourceEntry> {
-    let working_dir = project_dir
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from);
+    let working_dir = requested_working_dir(project_dir);
     let mut seen = std::collections::HashSet::new();
     let mut sources = Vec::new();
 
@@ -725,10 +730,11 @@ fn update_agent_source(
     description: &str,
     content: &str,
     properties: Option<HashMap<String, serde_json::Value>>,
+    project_dir: Option<&str>,
     additional_roots: &[SourceRoot],
 ) -> Result<SourceEntry, Error> {
     validate_agent_name(name)?;
-    let file_path = resolve_agent_file_with_roots(path, additional_roots)?;
+    let file_path = resolve_agent_file_with_roots(path, project_dir, additional_roots)?;
     reject_read_only_agent_file(&file_path, additional_roots)?;
     let global = is_global_agent_file(&file_path);
     let resolved_properties = match properties {
@@ -816,6 +822,9 @@ pub fn create_source(
 
 pub struct UpdateSourceOptions<'a> {
     pub properties: Option<HashMap<String, serde_json::Value>>,
+    /// The project folder the client listed the source under; agents outside the folders that
+    /// listing offers are refused (Q-213).
+    pub project_dir: Option<&'a str>,
     pub additional_roots: &'a [SourceRoot],
 }
 
@@ -835,6 +844,7 @@ pub fn update_source_with_roots(
             description,
             content,
             options.properties,
+            options.project_dir,
             options.additional_roots,
         );
     }
@@ -928,12 +938,13 @@ pub fn update_source_with_roots(
 }
 
 pub fn delete_source(source_type: SourceType, path: &str) -> Result<(), Error> {
-    delete_source_with_roots(source_type, path, &[])
+    delete_source_with_roots(source_type, path, None, &[])
 }
 
 pub fn delete_source_with_roots(
     source_type: SourceType,
     path: &str,
+    project_dir: Option<&str>,
     additional_roots: &[SourceRoot],
 ) -> Result<(), Error> {
     require_mutable_type(source_type)?;
@@ -952,7 +963,7 @@ pub fn delete_source_with_roots(
             })?;
         }
         SourceType::Agent => {
-            let file_path = resolve_agent_file_with_roots(path, additional_roots)?;
+            let file_path = resolve_agent_file_with_roots(path, project_dir, additional_roots)?;
             reject_read_only_agent_file(&file_path, additional_roots)?;
             fs::remove_file(&file_path).map_err(|e| {
                 Error::internal_error().data(format!("Failed to delete source: {e}"))
@@ -1101,12 +1112,13 @@ pub fn list_sources_with_roots(
 }
 
 pub fn export_source(source_type: SourceType, path: &str) -> Result<(String, String), Error> {
-    export_source_with_roots(source_type, path, &[])
+    export_source_with_roots(source_type, path, None, &[])
 }
 
 pub fn export_source_with_roots(
     source_type: SourceType,
     path: &str,
+    project_dir: Option<&str>,
     additional_roots: &[SourceRoot],
 ) -> Result<(String, String), Error> {
     match source_type {
@@ -1135,7 +1147,7 @@ pub fn export_source_with_roots(
             Ok((json, filename))
         }
         SourceType::Agent => {
-            let file_path = resolve_agent_file_with_roots(path, additional_roots)?;
+            let file_path = resolve_agent_file_with_roots(path, project_dir, additional_roots)?;
             let writable = !is_read_only_agent_file(&file_path, additional_roots);
             let source = agent_source_entry(
                 &file_path,
@@ -1389,6 +1401,7 @@ mod tests {
             "Updated",
             UpdateSourceOptions {
                 properties: None,
+                project_dir: None,
                 additional_roots: &[SourceRoot::read_only(root.canonicalize().unwrap())],
             },
         )
@@ -1398,6 +1411,7 @@ mod tests {
         let err = delete_source_with_roots(
             SourceType::Agent,
             &solo.path,
+            None,
             &[SourceRoot::read_only(root.canonicalize().unwrap())],
         )
         .unwrap_err();
@@ -1435,6 +1449,7 @@ mod tests {
             "step three",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
+                project_dir: None,
                 additional_roots: &[],
             },
         )
@@ -1579,6 +1594,7 @@ mod tests {
             "updated body",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
+                project_dir: None,
                 additional_roots: &[],
             },
         )
@@ -1637,6 +1653,7 @@ mod tests {
             "c",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
+                project_dir: None,
                 additional_roots: &[],
             },
         )
@@ -1748,6 +1765,7 @@ mod tests {
             "c",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
+                project_dir: None,
                 additional_roots: &[],
             },
         )
@@ -1762,6 +1780,7 @@ mod tests {
             "c",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
+                project_dir: None,
                 additional_roots: &[],
             },
         )
@@ -1825,6 +1844,7 @@ mod tests {
             "new body",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
+                project_dir: None,
                 additional_roots: &[],
             },
         )
@@ -2071,10 +2091,125 @@ mod tests {
             "new content",
             UpdateSourceOptions {
                 properties: Some(HashMap::new()),
+                project_dir: None,
                 additional_roots: &[],
             },
         )
         .unwrap_err();
         assert!(format!("{:?}", err).contains("not found"));
+    }
+
+    /// Q-197: global agents are listed, created and path-checked under `<GOOSE_PATH_ROOT>` — goose's
+    /// `.agents/agents`, its legacy `.goose/agents` and `<config>/agents` — never the owner's
+    /// `~/.agents/agents` or `~/.goose/agents`; `~/.claude/agents` (another tool's) stays home.
+    #[test]
+    fn global_agents_hang_from_the_path_root() {
+        let root = TempDir::new().unwrap();
+        let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
+        let agents = root.path().join(".agents").join("agents");
+        let legacy = root.path().join(".goose").join("agents");
+        let owner = dirs::home_dir().unwrap();
+
+        assert_eq!(
+            global_agent_roots(),
+            vec![
+                agents.clone(),
+                legacy.clone(),
+                owner.join(".claude").join("agents"),
+                root.path().join("config").join("agents"),
+            ]
+        );
+        assert_eq!(agent_base_dir(true, None).unwrap(), agents);
+
+        for (dir, name) in [(&agents, "q197-rooted"), (&legacy, "q197-legacy")] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(
+                dir.join(format!("{name}.md")),
+                format!("---\nname: {name}\ndescription: d\n---\n\nbody"),
+            )
+            .unwrap();
+        }
+        let listed = list_agent_sources(None, &[]);
+        for name in ["q197-rooted", "q197-legacy"] {
+            let entry = listed.iter().find(|s| s.name == name);
+            assert!(
+                entry.is_some_and(|s| s.global && s.writable),
+                "{name}: {listed:?}"
+            );
+        }
+        assert!(is_global_agent_file(&agents.join("q197-rooted.md")));
+        assert!(!is_global_agent_file(
+            &owner.join(".agents").join("agents").join("x.md")
+        ));
+        assert!(!is_global_agent_file(
+            &owner.join(".goose").join("agents").join("x.md")
+        ));
+    }
+
+    /// Q-213: an agent update, delete or export touches only a file the listing offers for the same
+    /// request. An explicit path into an `.agents/agents` folder the request does not list — the
+    /// owner's home under an isolated root is the case — is refused BY NAME and left on disk.
+    #[test]
+    fn agent_mutations_touch_only_what_the_listing_offers() {
+        let root = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let elsewhere = TempDir::new().unwrap();
+        let _env = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
+        let write_agent = |dir: &Path, name: &str| {
+            std::fs::create_dir_all(dir).unwrap();
+            let file = dir.join(format!("{name}.md"));
+            std::fs::write(
+                &file,
+                format!("---\nname: {name}\ndescription: d\n---\n\nbody"),
+            )
+            .unwrap();
+            file.to_string_lossy().to_string()
+        };
+        let stray = write_agent(&elsewhere.path().join(".agents").join("agents"), "stray");
+        let global = write_agent(&root.path().join(".agents").join("agents"), "q213-global");
+        let local = write_agent(&project.path().join(".agents").join("agents"), "q213-local");
+        let project_dir = project.path().to_str();
+
+        let refused = |err: Error| {
+            let text = format!("{err:?}");
+            assert!(
+                text.contains("outside the agent folders goose lists"),
+                "{text}"
+            );
+        };
+        let update = |path: &str, project_dir: Option<&str>| {
+            update_source_with_roots(
+                SourceType::Agent,
+                path,
+                "renamed",
+                "d",
+                "new body",
+                UpdateSourceOptions {
+                    properties: None,
+                    project_dir,
+                    additional_roots: &[],
+                },
+            )
+        };
+
+        for project_dir in [None, project_dir] {
+            refused(update(&stray, project_dir).unwrap_err());
+            refused(
+                delete_source_with_roots(SourceType::Agent, &stray, project_dir, &[]).unwrap_err(),
+            );
+            refused(
+                export_source_with_roots(SourceType::Agent, &stray, project_dir, &[]).unwrap_err(),
+            );
+        }
+        assert!(Path::new(&stray).is_file(), "a refusal leaves the file");
+        assert!(std::fs::read_to_string(&stray)
+            .unwrap()
+            .contains("name: stray"));
+
+        refused(delete_source_with_roots(SourceType::Agent, &local, None, &[]).unwrap_err());
+        assert_eq!(update(&global, None).unwrap().name, "renamed");
+        export_source_with_roots(SourceType::Agent, &local, project_dir, &[]).unwrap();
+        delete_source_with_roots(SourceType::Agent, &local, project_dir, &[]).unwrap();
+        assert!(!Path::new(&local).exists());
     }
 }

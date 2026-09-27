@@ -15,6 +15,7 @@ vi.mock('../settings/extensions/subcomponents/ExtensionList', () => ({
   getFriendlyTitle: (e: { name: string }) => e.name,
 }));
 vi.mock('../../acp/extensions', () => ({ inspectConfigExtension: vi.fn() }));
+vi.mock('../../utils/gooseConfigDir', () => ({ getGooseConfigDir: () => '~/.config/goose' }));
 
 const wrap = (ui: React.ReactElement) =>
   render(
@@ -60,10 +61,10 @@ describe('the MCP card context menu', () => {
     fireEvent.contextMenu(screen.getByText('jira'));
     menu = await screen.findByTestId('extension-context-menu');
     fireEvent.click(within(menu).getByText('Start an AI session about this MCP'));
-    expect(chat.startChat).toHaveBeenCalledWith(askAboutExtensionPrompt(ext), {
+    expect(chat.startChat).toHaveBeenCalledWith(askAboutExtensionPrompt(ext, '~/.config/goose'), {
       alsoEnable: ['jira'],
     });
-    expect(askAboutExtensionPrompt(ext)).toContain('npx jira-mcp');
+    expect(askAboutExtensionPrompt(ext, '~/.config/goose')).toContain('npx jira-mcp');
 
     fireEvent.contextMenu(screen.getByText('jira'));
     menu = await screen.findByTestId('extension-context-menu');

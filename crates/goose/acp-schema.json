@@ -5368,6 +5368,13 @@
           ],
           "additionalProperties": {},
           "description": "When `Some`, replaces all stored properties on the source. When\n`None` (or omitted), the source's existing properties are\npreserved. Callers that don't model the full property bag (e.g.\nthe skills editor, which only edits name/description/content)\nshould omit this so per-skill metadata isn't silently erased."
+        },
+        "projectDir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The project folder the client listed the source under (`sources/list`'s `projectDir`). An\nagent is touched only when it lies in a folder that listing offers — global agent folders,\nthis project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the\nglobal and extra folders (Q-213)."
         }
       },
       "required": [
@@ -5402,6 +5409,13 @@
         },
         "path": {
           "type": "string"
+        },
+        "projectDir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The project folder the client listed the source under (`sources/list`'s `projectDir`). An\nagent is touched only when it lies in a folder that listing offers — global agent folders,\nthis project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the\nglobal and extra folders (Q-213)."
         }
       },
       "required": [
@@ -5420,6 +5434,13 @@
         },
         "path": {
           "type": "string"
+        },
+        "projectDir": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The project folder the client listed the source under (`sources/list`'s `projectDir`). An\nagent is touched only when it lies in a folder that listing offers — global agent folders,\nthis project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the\nglobal and extra folders (Q-213)."
         }
       },
       "required": [

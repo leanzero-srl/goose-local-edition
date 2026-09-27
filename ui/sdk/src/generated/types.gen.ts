@@ -2162,6 +2162,13 @@ export type UpdateSourceRequest_unstable = {
     properties?: {
         [key: string]: unknown;
     } | null;
+    /**
+     * The project folder the client listed the source under (`sources/list`'s `projectDir`). An
+     * agent is touched only when it lies in a folder that listing offers — global agent folders,
+     * this project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the
+     * global and extra folders (Q-213).
+     */
+    projectDir?: string | null;
 };
 
 export type UpdateSourceResponse_unstable = {
@@ -2174,6 +2181,13 @@ export type UpdateSourceResponse_unstable = {
 export type DeleteSourceRequest_unstable = {
     type: SourceType;
     path: string;
+    /**
+     * The project folder the client listed the source under (`sources/list`'s `projectDir`). An
+     * agent is touched only when it lies in a folder that listing offers — global agent folders,
+     * this project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the
+     * global and extra folders (Q-213).
+     */
+    projectDir?: string | null;
 };
 
 /**
@@ -2182,6 +2196,13 @@ export type DeleteSourceRequest_unstable = {
 export type ExportSourceRequest_unstable = {
     type: SourceType;
     path: string;
+    /**
+     * The project folder the client listed the source under (`sources/list`'s `projectDir`). An
+     * agent is touched only when it lies in a folder that listing offers — global agent folders,
+     * this project's `.agents|.goose|.claude/agents`, the server's extra roots; omitted, only the
+     * global and extra folders (Q-213).
+     */
+    projectDir?: string | null;
 };
 
 export type ExportSourceResponse_unstable = {

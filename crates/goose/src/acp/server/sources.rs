@@ -43,6 +43,7 @@ impl GooseAcpAgent {
             &req.content,
             crate::sources::UpdateSourceOptions {
                 properties: req.properties,
+                project_dir: req.project_dir.as_deref(),
                 additional_roots: &self.additional_source_roots,
             },
         )?;
@@ -56,6 +57,7 @@ impl GooseAcpAgent {
         crate::sources::delete_source_with_roots(
             req.source_type,
             &req.path,
+            req.project_dir.as_deref(),
             &self.additional_source_roots,
         )?;
         Ok(EmptyResponse {})
@@ -68,6 +70,7 @@ impl GooseAcpAgent {
         let (json, filename) = crate::sources::export_source_with_roots(
             req.source_type,
             &req.path,
+            req.project_dir.as_deref(),
             &self.additional_source_roots,
         )?;
         Ok(ExportSourceResponse { json, filename })
