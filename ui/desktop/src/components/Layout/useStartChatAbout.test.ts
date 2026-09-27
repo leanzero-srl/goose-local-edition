@@ -92,16 +92,19 @@ describe('chatAboutTitle', () => {
     ).toBe('Skill · goose-feature-dev');
     expect(
       chatAboutTitle(
-        askAboutExtensionPrompt({
-          type: 'stdio',
-          name: 'jira',
-          display_name: 'Jira',
-          cmd: 'npx',
-          args: ['jira-mcp'],
-          enabled: true,
-          timeout: 300,
-          envs: {},
-        } as never)
+        askAboutExtensionPrompt(
+          {
+            type: 'stdio',
+            name: 'jira',
+            display_name: 'Jira',
+            cmd: 'npx',
+            args: ['jira-mcp'],
+            enabled: true,
+            timeout: 300,
+            envs: {},
+          } as never,
+          '~/.config/goose'
+        )
       )
     ).toMatch(/^MCP · /);
     expect(

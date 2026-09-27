@@ -137,15 +137,18 @@ describe('the memory prompt names the file it was read from', () => {
 
 describe('the MCP prompt names the real config key', () => {
   it('a display name with spaces is stored under its derived key, not the name', () => {
-    const p = askAboutExtensionPrompt({
-      type: 'stdio',
-      name: 'LeanZero Documents',
-      cmd: '/Applications/Goose Swarm.app/Contents/Resources/bin/node',
-      args: ['index.js'],
-      enabled: true,
-      timeout: 300,
-      envs: {},
-    } as never);
+    const p = askAboutExtensionPrompt(
+      {
+        type: 'stdio',
+        name: 'LeanZero Documents',
+        cmd: '/Applications/Goose Swarm.app/Contents/Resources/bin/node',
+        args: ['index.js'],
+        enabled: true,
+        timeout: 300,
+        envs: {},
+      } as never,
+      '~/.config/goose'
+    );
     expect(p).toContain('"leanzerodocuments" key under extensions: in ~/.config/goose/config.yaml');
     expect(p).toContain('bin/node index.js');
     expect(p).toContain('manage_extensions');
@@ -153,17 +156,39 @@ describe('the MCP prompt names the real config key', () => {
   });
 
   it('the key the config was read from wins over the derivation', () => {
-    const p = askAboutExtensionPrompt({
-      type: 'stdio',
-      name: 'jira',
-      configKey: 'jira-cloud',
-      cmd: 'npx',
-      args: ['jira-mcp'],
-      enabled: true,
-      timeout: 300,
-      envs: {},
-    } as never);
+    const p = askAboutExtensionPrompt(
+      {
+        type: 'stdio',
+        name: 'jira',
+        configKey: 'jira-cloud',
+        cmd: 'npx',
+        args: ['jira-mcp'],
+        enabled: true,
+        timeout: 300,
+        envs: {},
+      } as never,
+      '~/.config/goose'
+    );
     expect(p).toContain('"jira-cloud" key under extensions:');
+  });
+
+  // Q-198: an isolated GOOSE_PATH_ROOT profile's model is sent to the profile's config, never the
+  // owner's ~/.config/goose/config.yaml.
+  it("names the config main resolved, not the owner's home config", () => {
+    const p = askAboutExtensionPrompt(
+      {
+        type: 'stdio',
+        name: 'jira',
+        cmd: 'npx',
+        args: [],
+        enabled: true,
+        timeout: 300,
+        envs: {},
+      } as never,
+      '/tmp/profile/config'
+    );
+    expect(p).toContain('"jira" key under extensions: in /tmp/profile/config/config.yaml');
+    expect(p).not.toContain('~/.config/goose');
   });
 });
 

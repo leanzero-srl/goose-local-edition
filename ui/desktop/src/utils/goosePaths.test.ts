@@ -72,6 +72,8 @@ describe('goose paths under GOOSE_PATH_ROOT (Q-183, mirrors crates/goose/src/con
       );
       expect(gooseGlobalSkillsDir()).toBe(path.join(home, '.agents', 'skills'));
       expect(homeRelative(gooseGlobalSkillsDir(), home)).toBe('~/.agents/skills');
+      // Q-198: main's GOOSE_CONFIG_DIR, the text the MCP prompt and the memories view always wrote.
+      expect(homeRelative(gooseDirs().config, home)).toBe('~/.config/goose');
     }
   });
 });
