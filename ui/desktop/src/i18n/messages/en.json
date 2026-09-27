@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Text written beside the calls ({chars} chars) — not part of the answer"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "Choose source folder"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,one{Import # recipe} other{Import # recipes}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,one{Imported # recipe} other{Imported # recipes}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,one{Imported # recipe, {failed} failed} other{Imported # recipes, {failed} failed}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "Loops are no longer imported — {id} ({cron}). Recipes still import."
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "Loops ({count})"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "No recipes found under {dir}."
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "Pick another Goose config/data folder to import its recipes."
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "Recipes ({count})"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "Scanning {dir}…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "schedule.json could not be read: it is not a list of schedules"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "schedule.json could not be read: {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "From another Goose"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "Close"
   },

@@ -1774,13 +1774,6 @@ export type ScheduledJobDto = {
     paused: boolean;
     currentSessionId?: string | null;
     jobStartTime?: string | null;
-    loopConfig?: LoopConfigDto | null;
-};
-
-export type LoopConfigDto = {
-    maxIterations: number;
-    stopCheckCommand?: string | null;
-    stateArtifact?: string | null;
 };
 
 export type ListScheduleSessionsRequest_unstable = {
@@ -1846,7 +1839,6 @@ export type CreateScheduleRequest_unstable = {
     id: string;
     recipe: RecipeDto;
     cron: string;
-    loop_config?: LoopConfigDto | null;
 };
 
 export type CreateScheduleResponse_unstable = {

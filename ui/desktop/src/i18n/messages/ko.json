@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "호출 옆에 작성된 텍스트 ({chars}자) — 답변에 포함되지 않음"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "원본 폴더 선택"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,other{레시피 #개 가져오기}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,other{레시피 #개를 가져왔습니다}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,other{레시피 #개를 가져왔습니다. {failed}개 실패}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "루프는 더 이상 가져오지 않습니다 — {id} ({cron}). 레시피는 계속 가져옵니다."
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "루프 ({count})"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "{dir}에서 레시피를 찾지 못했습니다."
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "다른 Goose 설정 또는 데이터 폴더를 선택하면 그 레시피를 가져옵니다."
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "레시피 ({count})"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "{dir} 검색 중…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "schedule.json을 읽을 수 없습니다: 일정 목록이 아닙니다"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "schedule.json을 읽을 수 없습니다: {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "다른 Goose에서"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "닫기"
   },

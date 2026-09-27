@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "與呼叫一同寫出的文字（{chars} 個字元）— 不屬於回答"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "選擇來源資料夾"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,other{匯入 # 個配方}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,other{已匯入 # 個配方}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,other{已匯入 # 個配方，{failed} 個失敗}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "迴圈不再匯入 — {id}（{cron}）。配方仍會匯入。"
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "迴圈（{count}）"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "在 {dir} 下找不到配方。"
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "選擇另一個 Goose 的設定/資料資料夾以匯入其配方。"
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "配方（{count}）"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "正在掃描 {dir}…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "無法讀取 schedule.json：它不是排程清單"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "無法讀取 schedule.json：{error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "來自另一個 Goose"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "關閉"
   },

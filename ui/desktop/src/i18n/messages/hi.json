@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "कॉल के साथ लिखा गया टेक्स्ट ({chars} अक्षर) — उत्तर का हिस्सा नहीं"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "स्रोत फ़ोल्डर चुनें"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,one{# रेसिपी आयात करें} other{# रेसिपी आयात करें}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,one{# रेसिपी आयात की गई} other{# रेसिपी आयात की गईं}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,one{# रेसिपी आयात की गई, {failed} विफल} other{# रेसिपी आयात की गईं, {failed} विफल}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "लूप अब आयात नहीं किए जाते — {id} ({cron})। रेसिपी अब भी आयात होती हैं।"
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "लूप ({count})"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "{dir} में कोई रेसिपी नहीं मिली।"
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "किसी दूसरे Goose का कॉन्फ़िग/डेटा फ़ोल्डर चुनें ताकि उसकी रेसिपी आयात की जा सकें।"
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "रेसिपी ({count})"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "{dir} स्कैन हो रहा है…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "schedule.json पढ़ी नहीं जा सकी: यह शेड्यूल की सूची नहीं है"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "schedule.json पढ़ी नहीं जा सकी: {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "किसी दूसरे Goose से"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "बंद करें"
   },

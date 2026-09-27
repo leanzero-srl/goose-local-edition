@@ -5062,7 +5062,7 @@
         "properties": {
           "context_limit": {
             "type": "integer",
-            "description": "The maximum context length this model supports",
+            "description": "The maximum context length this model supports; 0 when nothing declares it — never a\ndefault standing in for the unknown (`ProviderEntry::normalize_model_config` backfills only\na value above 0).",
             "minimum": 0
           },
           "currency": {
@@ -6245,14 +6245,6 @@
           "last_run": {
             "type": "string",
             "format": "date-time",
-            "nullable": true
-          },
-          "loop_config": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/LoopConfig"
-              }
-            ],
             "nullable": true
           },
           "parameters": {

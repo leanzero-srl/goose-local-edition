@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Texte écrit à côté des appels ({chars} caractères) — ne fait pas partie de la réponse"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "Choisir le dossier source"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,one{Importer # recette} other{Importer # recettes}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,one{# recette importée} other{# recettes importées}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,one{# recette importée, {failed} en échec} other{# recettes importées, {failed} en échec}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "Les boucles ne sont plus importées — {id} ({cron}). Les recettes s’importent toujours."
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "Boucles ({count})"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "Aucune recette trouvée dans {dir}."
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "Choisissez un autre dossier de configuration ou de données Goose pour importer ses recettes."
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "Recettes ({count})"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "Analyse de {dir}…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "Impossible de lire schedule.json : ce n’est pas une liste de planifications"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "Impossible de lire schedule.json : {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "Depuis un autre Goose"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "Fermer"
   },

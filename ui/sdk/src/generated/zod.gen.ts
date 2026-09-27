@@ -1851,18 +1851,6 @@ export const zRecipeToYamlResponse_unstable = z.object({
 
 export const zListSchedulesRequest_unstable = z.record(z.unknown());
 
-export const zLoopConfigDto = z.object({
-    maxIterations: z.number().int().gte(0),
-    stopCheckCommand: z.union([
-        z.string(),
-        z.null()
-    ]).optional().default(null),
-    stateArtifact: z.union([
-        z.string(),
-        z.null()
-    ]).optional().default(null)
-});
-
 export const zScheduledJobDto = z.object({
     id: z.string(),
     source: z.string(),
@@ -1879,10 +1867,6 @@ export const zScheduledJobDto = z.object({
     ]).optional(),
     jobStartTime: z.union([
         z.string(),
-        z.null()
-    ]).optional(),
-    loopConfig: z.union([
-        zLoopConfigDto,
         z.null()
     ]).optional()
 });
@@ -1934,11 +1918,7 @@ export const zListScheduleSessionsResponse_unstable = z.object({
 export const zCreateScheduleRequest_unstable = z.object({
     id: z.string(),
     recipe: zRecipeDto,
-    cron: z.string(),
-    loop_config: z.union([
-        zLoopConfigDto,
-        z.null()
-    ]).optional().default(null)
+    cron: z.string()
 });
 
 export const zCreateScheduleResponse_unstable = z.object({

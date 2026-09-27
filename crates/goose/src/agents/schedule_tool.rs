@@ -161,7 +161,6 @@ impl Agent {
             process_start_time: None,
             parameters: vec![],
             recipe_base_dir: None,
-            loop_config: None,
         };
 
         match scheduler.add_scheduled_job(job, true).await {

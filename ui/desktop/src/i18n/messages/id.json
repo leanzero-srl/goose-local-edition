@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Teks yang ditulis di samping panggilan ({chars} karakter) — bukan bagian dari jawaban"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "Pilih folder sumber"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,other{Impor # resep}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,other{# resep diimpor}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,other{# resep diimpor, {failed} gagal}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "Loop tidak lagi diimpor — {id} ({cron}). Resep tetap diimpor."
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "Loop ({count})"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "Tidak ada resep yang ditemukan di {dir}."
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "Pilih folder konfigurasi atau data Goose lain untuk mengimpor resepnya."
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "Resep ({count})"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "Memindai {dir}…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "schedule.json tidak dapat dibaca: isinya bukan daftar jadwal"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "schedule.json tidak dapat dibaca: {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "Dari Goose lain"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "Tutup"
   },

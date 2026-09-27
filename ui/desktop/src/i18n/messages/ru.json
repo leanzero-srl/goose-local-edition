@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Текст рядом с вызовами ({chars} симв.) — не входит в ответ"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "Выбрать исходную папку"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,one{Импортировать # рецепт} few{Импортировать # рецепта} many{Импортировать # рецептов} other{Импортировать # рецепта}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,one{Импортирован # рецепт} few{Импортировано # рецепта} many{Импортировано # рецептов} other{Импортировано # рецепта}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,one{Импортирован # рецепт, ошибок: {failed}} few{Импортировано # рецепта, ошибок: {failed}} many{Импортировано # рецептов, ошибок: {failed}} other{Импортировано # рецепта, ошибок: {failed}}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "Циклы больше не импортируются — {id} ({cron}). Рецепты по-прежнему импортируются."
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "Циклы ({count})"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "В {dir} не найдено рецептов."
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "Выберите папку конфигурации или данных другого Goose, чтобы импортировать его рецепты."
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "Рецепты ({count})"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "Сканирование {dir}…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "Не удалось прочитать schedule.json: это не список расписаний"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "Не удалось прочитать schedule.json: {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "Из другого Goose"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "Закрыть"
   },

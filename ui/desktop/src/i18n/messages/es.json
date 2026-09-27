@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Texto escrito junto a las llamadas ({chars} caracteres) — no forma parte de la respuesta"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "Elegir carpeta de origen"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,one{Importar # receta} other{Importar # recetas}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,one{# receta importada} other{# recetas importadas}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,one{# receta importada, {failed} con error} other{# recetas importadas, {failed} con error}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "Los bucles ya no se importan — {id} ({cron}). Las recetas se siguen importando."
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "Bucles ({count})"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "No se encontraron recetas en {dir}."
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "Elige otra carpeta de configuración o datos de Goose para importar sus recetas."
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "Recetas ({count})"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "Analizando {dir}…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "No se pudo leer schedule.json: no es una lista de programaciones"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "No se pudo leer schedule.json: {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "Desde otro Goose"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "Cerrar"
   },

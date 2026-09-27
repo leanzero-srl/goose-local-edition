@@ -2228,6 +2228,45 @@
   "formingPanel.textHeading": {
     "defaultMessage": "Văn bản viết bên cạnh các lệnh gọi ({chars} ký tự) — không thuộc câu trả lời"
   },
+  "gooseImportSection.chooseSource": {
+    "defaultMessage": "Chọn thư mục nguồn"
+  },
+  "gooseImportSection.importRecipes": {
+    "defaultMessage": "{count,plural,other{Nhập # công thức}}"
+  },
+  "gooseImportSection.importedRecipes": {
+    "defaultMessage": "{ok,plural,other{Đã nhập # công thức}}"
+  },
+  "gooseImportSection.importedRecipesWithFailures": {
+    "defaultMessage": "{ok,plural,other{Đã nhập # công thức, {failed} thất bại}}"
+  },
+  "gooseImportSection.loopNotImported": {
+    "defaultMessage": "Vòng lặp không còn được nhập nữa — {id} ({cron}). Công thức vẫn được nhập."
+  },
+  "gooseImportSection.loopsHeader": {
+    "defaultMessage": "Vòng lặp ({count})"
+  },
+  "gooseImportSection.nothingFound": {
+    "defaultMessage": "Không tìm thấy công thức nào trong {dir}."
+  },
+  "gooseImportSection.pickPrompt": {
+    "defaultMessage": "Chọn một thư mục cấu hình hoặc dữ liệu Goose khác để nhập các công thức của nó."
+  },
+  "gooseImportSection.recipesHeader": {
+    "defaultMessage": "Công thức ({count})"
+  },
+  "gooseImportSection.scanning": {
+    "defaultMessage": "Đang quét {dir}…"
+  },
+  "gooseImportSection.scheduleNotAList": {
+    "defaultMessage": "Không thể đọc schedule.json: đây không phải là danh sách lịch"
+  },
+  "gooseImportSection.scheduleUnreadable": {
+    "defaultMessage": "Không thể đọc schedule.json: {error}"
+  },
+  "gooseImportSection.title": {
+    "defaultMessage": "Từ một Goose khác"
+  },
   "goosehintsModal.close": {
     "defaultMessage": "Đóng"
   },
