@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 12:10 (real clock) · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
+Updated: 2026-09-27 12:18 (real clock) · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
 
 ## Live
 - Installed on both Macs: 3.0.57 (Q-161 XML guard + repeat stop, Q-164 last-token reuse, Q-162, Q-103 single-engine
@@ -9,7 +9,9 @@ Updated: 2026-09-27 12:10 (real clock) · heartbeat cron 90b0083a (silent 00:35�
   loops the ported guard does not constrain. Seen IN WORDS by the new forming disclosure (Q-151 live) and livecheck
   green all turn (Q-147 live). runwatch now also fires on a repeating live tail.
 - Q-161 agent owns the 27B split for probes (no other GPU user). Pipeline E2E #5b waits behind it.
-- BUILDING 3.0.58 (Q-165) from 6b1f9f22e · watcher barnucg1n.
+- 3.0.58 DONE (Q-165). Install QUEUED behind: critic round 2 (walks the installed app) + the Q-161 agent (probes
+  the split) — installing restarts both; it goes on the tick both report.
+- Critic round 2 (at rest, whole app) running → ROUND-2026-09-27-2.md.
 - LOAD 26e DONE: 19 canaries, median 1.98 s, max 5.6 s (26d: 297–353 s) → Q-145 + Q-160 PROVEN LIVE; the one 503
   was Q-165.
 
