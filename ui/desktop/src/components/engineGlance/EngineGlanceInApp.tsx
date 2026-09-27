@@ -107,18 +107,20 @@ function EngineGlanceRestore() {
           {intl.formatMessage(i18n.restore)}
         </span>
         {engine.present && (
+          // The stage as a solid badge in the engine's phase colour; its word is read out and shown
+          // on hover — beside the label it would truncate one or the other in a 240 px sidebar.
           <span
             data-testid="engine-glance-restore-stage"
             data-phase={engine.phase}
+            title={stageWord(intl, engine.stage)}
             className={cx(
-              'inline-flex min-w-0 shrink items-center gap-1 px-1.5 text-lz-meta [&_svg]:size-3.5',
-              WEIGHT.semibold,
+              'inline-flex size-6 shrink-0 items-center justify-center [&_svg]:size-3.5',
               RADIUS.pill,
               PHASE_FILL[engine.phase]
             )}
           >
             <StageIcon stage={engine.stage} />
-            <span className="truncate">{stageWord(intl, engine.stage)}</span>
+            <span className="sr-only">{stageWord(intl, engine.stage)}</span>
           </span>
         )}
       </button>
