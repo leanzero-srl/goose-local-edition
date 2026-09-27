@@ -681,7 +681,7 @@
     "defaultMessage": "Только чат"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "Сессии чата могут использовать эту конечную точку; узлы swarm пока нет."
+    "defaultMessage": "Сессии чата и узлы могут использовать эту конечную точку — создайте узел в разделе «Узлы»; сборки swarm пока нет."
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Проверка не удалась"
@@ -693,7 +693,7 @@
     "defaultMessage": "Совместимый с OpenAI"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Любой сервер с API OpenAI — vLLM, llama.cpp, Together, Groq, корпоративный шлюз. Добавляйте сколько нужно. Сессии чата могут их использовать; узлы swarm пока нет."
+    "defaultMessage": "Любой сервер с API OpenAI — vLLM, llama.cpp, Together, Groq, корпоративный шлюз. Добавляйте сколько нужно. Из любого настроенного провайдера можно сделать узел в разделе «Узлы»."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Настроенные"
@@ -2997,7 +2997,7 @@
     "defaultMessage": "Не удалось прочитать папку моделей."
   },
   "macs.offThere": {
-    "defaultMessage": "{what} выключено на {name} — включите там «Разрешить другим моим Mac использовать этот Mac» (Провайдеры › Мои Mac)"
+    "defaultMessage": "{what} выключено на {name} — включите там «Разрешить другим моим Mac использовать этот Mac» (LeanZero MLX › Мои Mac)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "Не удалось приостановить."
@@ -4457,6 +4457,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "Добавьте узел"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "Сохранить как узел"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Пишет"
   },
@@ -5543,6 +5546,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "обслуживается сейчас"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "Подробности"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "Изменить"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "Действие не удалось"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "Открыть «Запуск»"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "Настроить"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "Запустить"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "Остановить"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "Отмена"
+  },
+  "nodes.checking": {
+    "defaultMessage": "Проверка {provider}…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "Всегда доступен · оплата через {provider}"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "Сначала скопируйте модель на {mac}"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "Сначала загрузите модель на этот Mac"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "Запуск остановит {names}"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "Дублировать"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "Изменить в пуле роя"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "Подключите свои Mac и запустите модель или добавьте облачную модель."
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "Узлов пока нет"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "Всегда доступен · обслуживает {provider}"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "Первый запуск ещё не измерен"
+  },
+  "nodes.follows": {
+    "defaultMessage": "Обслуживает то, что запущено в движке этого Mac: {model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "Обслуживает то, что запущено в движке этого Mac; сейчас там ничего не запущено"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "Обслуживает то, что запущено в движке этого Mac: {model} · разделено на {count} Mac"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "из вашего пула роя"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "Узел · {name}"
   },
@@ -5552,11 +5627,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "Открыть {name} на странице «Узлы»"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "В облаке"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "На ваших Mac · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "Сборка swarm использует {node}; он освободится, когда сборка закончится"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "Держать загруженным"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "Оставить {names}"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "Настройте {provider} в Providers › Облачные провайдеры"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "Облако"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "Конечная точка"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "Больше не в вашем пуле роя"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{{count, number} устройство LM Studio из вашей конфигурации роя здесь не показано} few{{count, number} устройства LM Studio из вашей конфигурации роя здесь не показаны} many{{count, number} устройств LM Studio из вашей конфигурации роя здесь не показаны} other{{count, number} устройства LM Studio из вашей конфигурации роя здесь не показаны}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} из {total} ГБ"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "Не удалось прочитать время загрузки: {error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Управлять облачными провайдерами"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Управлять Mac и моделями"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "Память на {mac} относительно бюджета"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "нужно {need} из {budget} ГБ"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "пика ещё нет"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} из {budget} ГБ"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "пик {peak} ГБ"
+  },
+  "nodes.more": {
+    "defaultMessage": "Ещё для {name}"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{оба Mac} other{# Mac}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "этот Mac"
   },
   "nodes.navFailed": {
     "defaultMessage": "Сбой"
@@ -5570,8 +5711,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "Движок LeanZero MLX загружает модель"
   },
+  "nodes.new": {
+    "defaultMessage": "Новый узел"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "Назад"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "Закрыть"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "Облачная модель"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{Ничего не настроено} one{Настроено: #} few{Настроено: #} many{Настроено: #} other{Настроено: #}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "Создать узел"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "Создать и запустить"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "Изменить {name}"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "Конечная точка"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{Любой добавленный вами сервер, совместимый с OpenAI · пока нет} one{Любой добавленный вами сервер, совместимый с OpenAI · добавлено: #} few{Любой добавленный вами сервер, совместимый с OpenAI · добавлено: #} many{Любой добавленный вами сервер, совместимый с OpenAI · добавлено: #} other{Любой добавленный вами сервер, совместимый с OpenAI · добавлено: #}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "Фильтр моделей"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} из {budget} ГБ"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "Получите её в разделе «Модели»"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "Цель"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "Как его запускать?"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "Держать загруженным: никогда не останавливать ради другого узла"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider} не выдал список моделей ({error}); вот модели, которые goose знает для него."
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "на {macs}"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "Запрашиваем у {provider} список моделей…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "У {provider} нет списка моделей; вот модели, которые goose знает для него."
+  },
+  "nodes.newName": {
+    "defaultMessage": "Имя"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "Назовите его"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "Далее"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "На ваших Mac пока нет моделей."
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "goose не нашёл способа запустить эту модель на ваших Mac."
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "Ничего не настроено"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "На ваших Mac"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "Движок LeanZero MLX, один Mac или с разделением"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "Выберите модель"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "Модель"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "Не удалось прочитать ваших провайдеров: {error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "Читаем ваших провайдеров…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "Не сохранено"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "Спланировать снова"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "Сохранить узел"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "Настроить другого провайдера"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "Тип"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "Модель"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "Имя"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "Шаг {n} из {total} · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "Провайдер"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "Способ"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "Новый узел"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "Способы запустить {model}"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "Где его запускать?"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "Какая модель?"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "Какой провайдер?"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "Не удалось сохранить узел"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "У goose пока нет плана для этой модели"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "В плане goose для этой модели нет такого способа"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac} не подключён к LeanZero Link"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "Добавьте ещё один Mac, чтобы запускать модели, слишком большие для этого"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "Сначала включите «{permission}» на {mac} (LeanZero MLX › Мои Mac)"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "Загрузка"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "Ожидание окончания другой загрузки"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "Закрепить способ"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "Нет плана для этого способа: {error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "Измеряем ваши Mac для этого способа…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "Не удалось прочитать ваши узлы"
+  },
+  "nodes.reading": {
+    "defaultMessage": "Читаем ваши узлы…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "Читаем, что сейчас обслуживает…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "Не удалено"
+  },
+  "nodes.remove": {
+    "defaultMessage": "Удалить"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "Удалить и начинать новые чаты на «Любом узле (Авто)»"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "Узел удаляется из ваших узлов. Ваши Mac, модели и провайдеры остаются как есть."
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "Удалить"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "Удалить его и из этих стратегий"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "Пул роя сохраняет своё устройство; этот узел здесь больше не показывается. Сам пул можно изменить ниже."
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "Удалить {node}?"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{# чат использует этот узел. Его следующее сообщение сообщит, что узел удалён.} few{# чата используют этот узел. Их следующее сообщение сообщит, что узел удалён.} many{# чатов используют этот узел. Их следующее сообщение сообщит, что узел удалён.} other{# чата используют этот узел. Их следующее сообщение сообщит, что узел удалён.}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "Прочитать снова"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,other{{role} #-й · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "Сохранено."
+  },
   "nodes.sections": {
     "defaultMessage": "Разделы узлов"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "Настройте свои Mac"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "Показать в «Запуске»"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "Запустить {node}"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "Запуск остановит {names}."
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "Запустить {node}?"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node} обслуживает."
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{Запускается примерно за {duration} · медиана по # загрузке} few{Запускается примерно за {duration} · медиана по # загрузкам} many{Запускается примерно за {duration} · медиана по # загрузкам} other{Запускается примерно за {duration} · медиана по # загрузкам}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "Не может работать"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "Следует за этим Mac"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "Занят сборкой"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "Нет ключа"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "Последний вызов не удался"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "Загрузка"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "Нужен шаг"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "Не загружен"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "Работает другой способ"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "Готов"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "Обслуживает"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "Состояние неизвестно"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "Ждёт загрузки"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "Остановить {node}"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "Стратегия будет определять, какой узел что делает: его роли, порядок, в котором пробуются узлы, и когда переходить к следующему. До тех пор чаты и сборки swarm используют узлы со вкладки «Узлы»."
@@ -5582,6 +6005,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Узел — это модель, которой можно передать работу, на ваших Mac или в облаке. Чаты начинаются на узле или стратегии; сборки swarm используют стратегию."
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "Не удалось прочитать ваш пул роя"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "Узлы"
   },
@@ -5590,6 +6016,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Узлы"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "Используется в"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{Разделение · # Mac} few{Разделение · # Mac} many{Разделение · # Mac} other{Разделение · # Mac}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "Этот Mac"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Сервер может запускаться или быть временно недоступен."
@@ -5789,6 +6224,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "Действие не удалось"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "Уже узел: «{name}»."
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "Нужны оба Mac"
   },
@@ -5906,6 +6344,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "Подробности"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "Открыть в «Узлах»"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{Ещё # разделение} few{Ещё # разделения} many{Ещё # разделений} other{Ещё # разделения}}"
   },
@@ -5956,6 +6397,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "Обновление раннера разделения на {nodes}…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "Сохранить как узел"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "У goose нет плана для этого способа, поэтому он не может сказать, на каких Mac он работает."
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model} не работает ни одним из показанных здесь способов — выберите работающую модель выше."
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "Сохраните этот способ как узел, чтобы чаты и сборки могли его выбрать"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "Не сохранено: {reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "Сохранено как узел «{name}»."
   },
   "placementCard.short": {
     "defaultMessage": "Не помещается: не хватает {gb} на {node}"
@@ -8060,6 +8519,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Вы остановили этот ответ через {elapsed} · {tokens} токенов"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "Бэкенд"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "Сборка"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "Чат"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "Фронтенд"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "Планирование"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "Тестирование"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Провайдер {name} настроен"
   },
@@ -8179,6 +8656,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "MLX-узел удалённой машины — сохранён в пуле, заработает с поузловой маршрутизацией"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "Добавьте его кнопкой «Добавить узел» — он войдёт в пул, как только добавление будет сохранено."
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "Узлов пока нет"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Каждый узел, который запускает рой — настроенные строки плюс всё, что сейчас резидентно в LM Studio. Вес: чем выше, тем большая доля задач."

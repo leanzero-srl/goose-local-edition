@@ -681,7 +681,7 @@
     "defaultMessage": "仅聊天"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "聊天会话可以使用此端点;swarm 节点暂时不能。"
+    "defaultMessage": "聊天会话和节点可以使用此端点 — 在“节点”中创建一个;swarm 构建暂时不能。"
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "检查失败"
@@ -693,7 +693,7 @@
     "defaultMessage": "OpenAI 兼容"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "任何支持 OpenAI API 的服务器 — vLLM、llama.cpp、Together、Groq、公司网关。需要多少就加多少。聊天会话可以使用;swarm 节点暂时不能。"
+    "defaultMessage": "任何支持 OpenAI API 的服务器 — vLLM、llama.cpp、Together、Groq、公司网关。需要多少就加多少。可在“节点”中用任意已配置的提供方创建节点。"
   },
   "cloudProviders.configured": {
     "defaultMessage": "已配置"
@@ -2997,7 +2997,7 @@
     "defaultMessage": "无法读取模型文件夹。"
   },
   "macs.offThere": {
-    "defaultMessage": "{name} 上的{what}已关闭 — 请在那台 Mac 上打开“允许我的其他 Mac 使用这台 Mac”（提供商 › 我的 Mac）"
+    "defaultMessage": "{name} 上的{what}已关闭 — 请在那台 Mac 上打开“允许我的其他 Mac 使用这台 Mac”（LeanZero MLX › 我的 Mac）"
   },
   "macs.pauseFailed": {
     "defaultMessage": "暂停失败。"
@@ -4457,6 +4457,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "添加节点"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "保存为节点"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "正在生成"
   },
@@ -5543,6 +5546,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "正在提供"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "详情"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "编辑"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "操作失败"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "打开“运行”"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "设置"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "启动"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "停止"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "取消"
+  },
+  "nodes.checking": {
+    "defaultMessage": "正在检查 {provider}…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "始终可用 · 由 {provider} 计费"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "请先把模型复制到 {mac}"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "请先把模型放到这台 Mac 上"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "启动它会停止 {names}"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "复制"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "在蜂群节点池中编辑"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "连接你的 Mac 并运行一个模型，或添加一个云端模型。"
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "还没有节点"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "始终可用 · 由 {provider} 提供"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "首次启动尚未测量"
+  },
+  "nodes.follows": {
+    "defaultMessage": "提供这台 Mac 的引擎正在运行的模型：{model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "提供这台 Mac 的引擎正在运行的模型；那里目前没有运行任何模型"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "提供这台 Mac 的引擎正在运行的模型：{model} · 拆分到 {count} 台 Mac"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "来自你的蜂群节点池"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "节点 · {name}"
   },
@@ -5552,11 +5627,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "在节点页面打开 {name}"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "云端"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "你的 Mac · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "一个 swarm 构建正在使用 {node}；构建结束后释放"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "保持加载"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "保留 {names}"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "请在 Providers › 云端提供方 中设置 {provider}"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "云端"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "端点"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "已不在你的蜂群节点池中"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{你的 swarm 配置中有 {count, number} 台 LM Studio 设备未在此显示} other{你的 swarm 配置中有 {count, number} 台 LM Studio 设备未在此显示}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} / {total} GB"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "无法读取加载时间：{error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "管理云端提供方"
   },
   "nodes.manageMacs": {
     "defaultMessage": "管理 Mac 和模型"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "{mac} 的内存（相对预算）"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "需要 {need} / {budget} GB"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "尚无峰值"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} / {budget} GB"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "峰值 {peak} GB"
+  },
+  "nodes.more": {
+    "defaultMessage": "{name} 的更多操作"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{两台 Mac} other{# 台 Mac}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "这台 Mac"
   },
   "nodes.navFailed": {
     "defaultMessage": "失败"
@@ -5570,8 +5711,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "LeanZero MLX 引擎正在加载模型"
   },
+  "nodes.new": {
+    "defaultMessage": "新建节点"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "返回"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "关闭"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "云端模型"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{尚未设置} one{已设置 # 个} other{已设置 # 个}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "创建节点"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "创建并启动"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "编辑 {name}"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "端点"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{你添加的任意 OpenAI 兼容服务器 · 还没有} one{你添加的任意 OpenAI 兼容服务器 · 已添加 # 个} other{你添加的任意 OpenAI 兼容服务器 · 已添加 # 个}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "筛选模型"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} / {budget} GB"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "在“模型”中获取"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "目标"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "怎么运行？"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "保持加载：绝不为其他节点停止它"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider} 没有列出它的模型（{error}）；以下是 goose 已知的该提供方模型。"
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "在 {macs} 上"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "正在向 {provider} 获取模型列表…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "{provider} 没有模型列表；以下是 goose 已知的该提供方模型。"
+  },
+  "nodes.newName": {
+    "defaultMessage": "名称"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "命名"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "下一步"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "你的 Mac 上还没有模型。"
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "goose 没有找到在你的 Mac 上运行此模型的方式。"
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "尚未设置"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "在你的 Mac 上"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "LeanZero MLX 引擎，单台 Mac 或拆分"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "选择模型"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "模型"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "无法读取你的提供方：{error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "正在读取你的提供方…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "未保存"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "重新规划"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "保存节点"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "设置另一个提供方"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "类型"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "模型"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "名称"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "第 {n} 步，共 {total} 步 · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "提供方"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "方式"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "新建节点"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "运行 {model} 的方式"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "在哪里运行？"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "哪个模型？"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "哪个提供方？"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "无法保存节点"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "goose 还没有此模型的计划"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "goose 对此模型的计划中没有这种方式"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac} 未连接到 LeanZero Link"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "再添加一台 Mac，就能运行这台 Mac 放不下的模型"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "请先在 {mac} 上打开“{permission}”（LeanZero MLX › 我的 Mac）"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "加载中"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "正在等待另一次加载完成"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "固定一种方式"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "此方式没有计划：{error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "正在为此方式测量你的 Mac…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "无法读取你的节点"
+  },
+  "nodes.reading": {
+    "defaultMessage": "正在读取你的节点…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "正在读取当前在服务的内容…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "未移除"
+  },
+  "nodes.remove": {
+    "defaultMessage": "移除"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "移除，并在“任意节点（自动）”上开始新聊天"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "该节点会从你的节点中移除。你的 Mac、模型和提供方保持不变。"
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "移除"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "同时从这些策略中移除"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "蜂群节点池保留它的设备；此节点不会再在这里显示。请在下方编辑节点池本身。"
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "移除 {node}？"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{有 # 个聊天设为此节点。它们的下一条消息会提示该节点已被移除。} other{有 # 个聊天设为此节点。它们的下一条消息会提示该节点已被移除。}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "重新读取"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,other{{role} 第 # 位 · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "已保存。"
+  },
   "nodes.sections": {
     "defaultMessage": "节点分区"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "设置你的 Mac"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "在“运行”中显示"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "启动 {node}"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "启动它会停止 {names}。"
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "启动 {node}？"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node} 正在服务。"
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{约 {duration} 后启动 · # 次加载的中位数} other{约 {duration} 后启动 · # 次加载的中位数}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "无法运行"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "跟随这台 Mac"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "被构建占用"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "缺少密钥"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "上次调用失败"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "加载中"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "还差一步"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "未加载"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "另一种方式正在运行"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "就绪"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "服务中"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "状态未知"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "等待加载"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "停止 {node}"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "策略将决定哪个节点做什么：它的角色、尝试节点的顺序，以及何时改用下一个。在此之前，聊天和swarm 构建使用“节点”标签页中的节点。"
@@ -5582,6 +6005,9 @@
   "nodes.subtitle": {
     "defaultMessage": "节点是你可以交付工作的模型，运行在你的 Mac 上或云端。聊天从某个节点或策略开始；swarm 构建使用策略。"
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "无法读取你的蜂群节点池"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "节点"
   },
@@ -5590,6 +6016,15 @@
   },
   "nodes.title": {
     "defaultMessage": "节点"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "使用方"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{拆分 · # 台 Mac} other{拆分 · # 台 Mac}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "这台 Mac"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "服务器可能正在启动或暂时不可用。"
@@ -5789,6 +6224,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "操作失败"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "已是节点：“{name}”。"
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "需要两台 Mac"
   },
@@ -5906,6 +6344,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "详细信息"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "在“节点”中打开"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{另外 # 种拆分} other{另外 # 种拆分}}"
   },
@@ -5956,6 +6397,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "正在 {nodes} 上更新拆分的运行器…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "保存为节点"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "goose 没有此方式的计划，因此无法说明它在哪些 Mac 上运行。"
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model} 没有以这里显示的任何方式运行 — 请在上方选择正在运行的模型。"
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "将此方式保存为节点，聊天和构建就能选择它"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "未保存：{reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "已保存为节点“{name}”。"
   },
   "placementCard.short": {
     "defaultMessage": "放不下：{node} 上还差 {gb}"
@@ -8060,6 +8519,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "你在 {elapsed} 后停止了这个回答 · {tokens} 个令牌"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "后端"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "构建"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "聊天"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "前端"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "规划"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "测试"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} 提供商已配置"
   },
@@ -8179,6 +8656,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "远程机器的 MLX 节点 — 已保存在节点池,待逐节点路由上线后提供服务"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "用“添加节点”添加一个 — 添加一旦提交，它就会加入节点池。"
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "还没有节点"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "蜂群运行的每个节点 — 已配置的行,加上 LM Studio 当前常驻的模型。权重:越高分到的任务越多。"

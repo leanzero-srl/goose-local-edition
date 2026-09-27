@@ -681,7 +681,7 @@
     "defaultMessage": "Chat only"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "Chat sessions can use this endpoint; swarm nodes cannot yet."
+    "defaultMessage": "Chat sessions and nodes can use this endpoint — make one under Nodes; swarm builds cannot yet."
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Check failed"
@@ -693,7 +693,7 @@
     "defaultMessage": "OpenAI-compatible"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "Any server that speaks the OpenAI API — vLLM, llama.cpp, Together, Groq, a company gateway. Add as many as you need. Chat sessions can use them; swarm nodes cannot yet."
+    "defaultMessage": "Any server that speaks the OpenAI API — vLLM, llama.cpp, Together, Groq, a company gateway. Add as many as you need. Make a node from any configured provider under Nodes."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Configured"
@@ -2997,7 +2997,7 @@
     "defaultMessage": "The models folder could not be read."
   },
   "macs.offThere": {
-    "defaultMessage": "{what} is off on {name} — turn on “Let my other Macs use this Mac” there (Providers › My Macs)"
+    "defaultMessage": "{what} is off on {name} — turn on “Let my other Macs use this Mac” there (LeanZero MLX › My Macs)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "Pause failed."
@@ -4457,6 +4457,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "Add a node"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "Save as a node"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Writing"
   },
@@ -5543,6 +5546,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "serving now"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "Details"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "Edit"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "The action failed"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "Open Run it"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "Set up"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "Start"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "Stop"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "Cancel"
+  },
+  "nodes.checking": {
+    "defaultMessage": "Checking {provider}…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "Always available · billed by {provider}"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "Copy the model to {mac} first"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "Get the model on this Mac first"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "Starting it stops {names}"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "Duplicate"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "Edit in your swarm pool"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "Connect your Macs and run a model, or add a cloud model."
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "No nodes yet"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "Always available · served by {provider}"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "First start not measured yet"
+  },
+  "nodes.follows": {
+    "defaultMessage": "Serves whatever this Mac’s engine runs: {model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "Serves whatever this Mac’s engine runs; nothing runs there now"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "Serves whatever this Mac’s engine runs: {model} · split across {count} Macs"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "from your swarm pool"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "Node · {name}"
   },
@@ -5552,11 +5627,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "Open {name} on the Nodes page"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "In the cloud"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "On your Macs · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "A swarm build is using {node}; it frees when the build ends"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "Keep loaded"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "Keep {names}"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "Set up {provider} under Providers › Cloud Providers"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "Cloud"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "Endpoint"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "No longer in your swarm pool"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{{count,plural,one{{count, number} LM Studio device in your swarm config is not shown here} other{{count, number} LM Studio device in your swarm config are not shown here}}} other{{count,plural,one{{count, number} LM Studio devices in your swarm config is not shown here} other{{count, number} LM Studio devices in your swarm config are not shown here}}}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} of {total} GB"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "Load times could not be read: {error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Manage cloud providers"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Manage Macs and models"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "Memory on {mac} against its budget"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "needs {need} of {budget} GB"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "no peak yet"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} of {budget} GB"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "peak {peak} GB"
+  },
+  "nodes.more": {
+    "defaultMessage": "More for {name}"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{both Macs} other{# Macs}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "this Mac"
   },
   "nodes.navFailed": {
     "defaultMessage": "Failed"
@@ -5570,8 +5711,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "The LeanZero MLX engine is loading a model"
   },
+  "nodes.new": {
+    "defaultMessage": "New node"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "Back"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "Close"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "A cloud model"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{None set up} one{# set up} other{# set up}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "Create node"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "Create and start"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "Edit {name}"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "An endpoint"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{Any OpenAI-compatible server you added · none yet} one{Any OpenAI-compatible server you added · # added} other{Any OpenAI-compatible server you added · # added}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "Filter models"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} of {budget} GB"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "Get one in Models"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "Goal"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "How should it run?"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "Keep loaded: never stop it for another node"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider} did not list its models ({error}); these are the models goose knows for it."
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "on {macs}"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "Asking {provider} for its models…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "{provider} has no model listing; these are the models goose knows for it."
+  },
+  "nodes.newName": {
+    "defaultMessage": "Name"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "Name it"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "Next"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "No models on your Macs yet."
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "goose found no way to run this model on your Macs."
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "None set up"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "On your Macs"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "LeanZero MLX engine, one Mac or split"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "Pick a model"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "Model"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "Your providers could not be read: {error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "Reading your providers…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "Not saved"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "Plan again"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "Save node"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "Set up another provider"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "Kind"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "Model"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "Name"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "Step {n} of {total} · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "Provider"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "Way"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "New node"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "Ways to run {model}"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "Where should it run?"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "Which model?"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "Which provider?"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "The node could not be saved"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "goose has no plan for this model yet"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "goose’s plan for this model has no such way"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac} is not connected to LeanZero Link"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "Add another Mac to run models too big for this one"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "Turn on “{permission}” on {mac} first (LeanZero MLX › My Macs)"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "Loading"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "Waiting for another load to finish"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "Pin a way"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "No plan for this way: {error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "Measuring your Macs for this way…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "Your nodes could not be read"
+  },
+  "nodes.reading": {
+    "defaultMessage": "Reading your nodes…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "Reading what serves now…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "Not removed"
+  },
+  "nodes.remove": {
+    "defaultMessage": "Remove"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "Remove, and start new chats on Any node (Auto)"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "The node is removed from your nodes. Your Macs, models and providers stay as they are."
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "Remove"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "Remove it from those strategies too"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "Your swarm pool keeps its device; this node is not shown here again. Edit the pool itself below."
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "Remove {node}?"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{# chat is set to this node. Their next message will say it was removed.} other{# chats are set to this node. Their next message will say it was removed.}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "Read again"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,one{{role} #st · {strategy}} two{{role} #nd · {strategy}} few{{role} #rd · {strategy}} other{{role} #th · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "Saved."
+  },
   "nodes.sections": {
     "defaultMessage": "Nodes sections"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "Set up your Macs"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "Show in Run it"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "Start {node}"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "Starting it stops {names}."
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "Start {node}?"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node} is serving."
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{Starts in about {duration} · median of # load} other{Starts in about {duration} · median of # loads}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "Can’t run"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "Follows this Mac"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "Held by a build"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "Key missing"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "Last call failed"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "Loading"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "Needs a step"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "Not loaded"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "Another way is running"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "Ready"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "Serving"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "State unknown"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "Waiting to load"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "Stop {node}"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "A strategy will say which node does what: its roles, the order to try nodes in, and when to use the next one. Until then, chats and swarm builds use the nodes on the Nodes tab."
@@ -5582,6 +6005,9 @@
   "nodes.subtitle": {
     "defaultMessage": "A node is a model you can hand work to, on your Macs or in the cloud. Chats start on a node or a strategy; swarm builds use a strategy."
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "Your swarm pool could not be read"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "Nodes"
   },
@@ -5590,6 +6016,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Nodes"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "Used by"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{Split · # Mac} other{Split · # Macs}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "This Mac"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "The server may be starting up or temporarily unavailable."
@@ -5789,6 +6224,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "The action failed"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "Already a node: “{name}”."
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "Needs both Macs"
   },
@@ -5906,6 +6344,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "Details"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "Open in Nodes"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# other split} other{# other splits}}"
   },
@@ -5956,6 +6397,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "Updating the split’s runner on {nodes}…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "Save as node"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "goose has no plan for this way, so it cannot say which Macs it runs on."
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model} is not running on any way shown here — pick the running model above."
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "Save this way as a node so chats and builds can pick it"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "Not saved: {reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "Saved as the node “{name}”."
   },
   "placementCard.short": {
     "defaultMessage": "Does not fit: short {gb} on {node}"
@@ -8060,6 +8519,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "You stopped this answer after {elapsed} · {tokens} tokens"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "Backend"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "Build"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "Chat"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "Frontend"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "Planning"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "Testing"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} provider is configured"
   },
@@ -8179,6 +8656,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "A remote machine’s MLX node — saved in the pool, served once per-node engine routing ships"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "Add one with “Add node” — it joins the pool the moment the add commits."
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "No nodes yet"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Share: relative share of work across nodes — higher gets more tasks."

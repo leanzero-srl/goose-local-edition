@@ -681,7 +681,7 @@
     "defaultMessage": "Yalnızca sohbet"
   },
   "cloudProviders.chatOnlyHint": {
-    "defaultMessage": "Sohbet oturumları bu uç noktayı kullanabilir; swarm düğümleri henüz kullanamaz."
+    "defaultMessage": "Sohbet oturumları ve düğümler bu uç noktayı kullanabilir — Düğümler altında bir tane oluşturun; swarm derlemeleri henüz kullanamaz."
   },
   "cloudProviders.checkFailed": {
     "defaultMessage": "Kontrol başarısız oldu"
@@ -693,7 +693,7 @@
     "defaultMessage": "OpenAI uyumlu"
   },
   "cloudProviders.compatibleHint": {
-    "defaultMessage": "OpenAI API'sini konuşan her sunucu — vLLM, llama.cpp, Together, Groq, bir şirket ağ geçidi. İstediğiniz kadar ekleyin. Sohbet oturumları bunları kullanabilir; swarm düğümleri henüz kullanamaz."
+    "defaultMessage": "OpenAI API’sini konuşan her sunucu — vLLM, llama.cpp, Together, Groq, bir şirket ağ geçidi. İstediğiniz kadar ekleyin. Yapılandırılmış herhangi bir sağlayıcıdan Düğümler altında bir düğüm oluşturun."
   },
   "cloudProviders.configured": {
     "defaultMessage": "Yapılandırılmış"
@@ -2997,7 +2997,7 @@
     "defaultMessage": "Model klasörü okunamadı."
   },
   "macs.offThere": {
-    "defaultMessage": "{name} üzerinde {what} kapalı — orada “Diğer Mac’lerim bu Mac’i kullanabilsin” seçeneğini açın (Sağlayıcılar › Mac’lerim)"
+    "defaultMessage": "{name} üzerinde {what} kapalı — orada “Diğer Mac’lerim bu Mac’i kullanabilsin” seçeneğini açın (LeanZero MLX › Mac’lerim)"
   },
   "macs.pauseFailed": {
     "defaultMessage": "Duraklatılamadı."
@@ -4457,6 +4457,9 @@
   "mlxSetup.step4Next": {
     "defaultMessage": "Düğüm ekleyin"
   },
+  "mlxSetup.step4Save": {
+    "defaultMessage": "Düğüm olarak kaydet"
+  },
   "mlxStateTile.activity.generating": {
     "defaultMessage": "Yazıyor"
   },
@@ -5543,6 +5546,78 @@
   "nodeModelCell.servingNow": {
     "defaultMessage": "şu an sunuluyor"
   },
+  "nodes.actionDetails": {
+    "defaultMessage": "Ayrıntılar"
+  },
+  "nodes.actionEdit": {
+    "defaultMessage": "Düzenle"
+  },
+  "nodes.actionFailed": {
+    "defaultMessage": "İşlem başarısız oldu"
+  },
+  "nodes.actionOpenRunIt": {
+    "defaultMessage": "Çalıştır’ı aç"
+  },
+  "nodes.actionSetUp": {
+    "defaultMessage": "Kur"
+  },
+  "nodes.actionStart": {
+    "defaultMessage": "Başlat"
+  },
+  "nodes.actionStop": {
+    "defaultMessage": "Durdur"
+  },
+  "nodes.cancel": {
+    "defaultMessage": "İptal"
+  },
+  "nodes.checking": {
+    "defaultMessage": "{provider} denetleniyor…"
+  },
+  "nodes.cloudAlways": {
+    "defaultMessage": "Her zaman kullanılabilir · {provider} faturalandırır"
+  },
+  "nodes.copyFirst": {
+    "defaultMessage": "Önce modeli {mac} üzerine kopyalayın"
+  },
+  "nodes.copyFirstThisMac": {
+    "defaultMessage": "Önce modeli bu Mac’e alın"
+  },
+  "nodes.defaultName": {
+    "defaultMessage": "{model} · {where}"
+  },
+  "nodes.displaces": {
+    "defaultMessage": "Başlatınca {names} durur"
+  },
+  "nodes.duplicate": {
+    "defaultMessage": "Çoğalt"
+  },
+  "nodes.editInPool": {
+    "defaultMessage": "Sürü havuzunuzda düzenleyin"
+  },
+  "nodes.emptyBody": {
+    "defaultMessage": "Mac’lerinizi bağlayıp bir model çalıştırın ya da bir bulut modeli ekleyin."
+  },
+  "nodes.emptyTitle": {
+    "defaultMessage": "Henüz düğüm yok"
+  },
+  "nodes.endpointAlways": {
+    "defaultMessage": "Her zaman kullanılabilir · {provider} sunar"
+  },
+  "nodes.firstStart": {
+    "defaultMessage": "İlk başlatma henüz ölçülmedi"
+  },
+  "nodes.follows": {
+    "defaultMessage": "Bu Mac’in motoru ne çalıştırıyorsa onu sunar: {model}"
+  },
+  "nodes.followsNothing": {
+    "defaultMessage": "Bu Mac’in motoru ne çalıştırıyorsa onu sunar; şu an orada hiçbir şey çalışmıyor"
+  },
+  "nodes.followsSplit": {
+    "defaultMessage": "Bu Mac’in motoru ne çalıştırıyorsa onu sunar: {model} · {count} Mac’e bölünmüş"
+  },
+  "nodes.fromPool": {
+    "defaultMessage": "sürü havuzunuzdan"
+  },
   "nodes.glanceNode": {
     "defaultMessage": "Düğüm · {name}"
   },
@@ -5552,11 +5627,77 @@
   "nodes.glanceOpenNode": {
     "defaultMessage": "{name} düğümünü Düğümler sayfasında aç"
   },
+  "nodes.groupCloud": {
+    "defaultMessage": "Bulutta"
+  },
+  "nodes.groupMacs": {
+    "defaultMessage": "Mac’lerinizde · LeanZero MLX"
+  },
+  "nodes.heldByBuildLine": {
+    "defaultMessage": "Bir swarm derlemesi {node} düğümünü kullanıyor; derleme bitince serbest kalır"
+  },
+  "nodes.keepLoaded": {
+    "defaultMessage": "Yüklü tut"
+  },
+  "nodes.keepRunning": {
+    "defaultMessage": "{names} kalsın"
+  },
+  "nodes.keyMissingLine": {
+    "defaultMessage": "{provider} sağlayıcısını Providers › Bulut Sağlayıcıları altında kurun"
+  },
+  "nodes.kindCloud": {
+    "defaultMessage": "Bulut"
+  },
+  "nodes.kindEndpoint": {
+    "defaultMessage": "Uç nokta"
+  },
+  "nodes.kindMlx": {
+    "defaultMessage": "MLX"
+  },
+  "nodes.leftPool": {
+    "defaultMessage": "Artık sürü havuzunuzda değil"
+  },
+  "nodes.liveLine": {
+    "defaultMessage": "{stage} · {chat}"
+  },
+  "nodes.lmStudioHidden": {
+    "defaultMessage": "{count,plural,one{Swarm yapılandırmanızdaki {count, number} LM Studio cihazı burada gösterilmiyor} other{Swarm yapılandırmanızdaki {count, number} LM Studio cihazı burada gösterilmiyor}}"
+  },
+  "nodes.loadProgress": {
+    "defaultMessage": "{phase} · {done} / {total} GB"
+  },
+  "nodes.loadsUnread": {
+    "defaultMessage": "Yükleme süreleri okunamadı: {error}"
+  },
   "nodes.manageCloud": {
     "defaultMessage": "Bulut sağlayıcılarını yönet"
   },
   "nodes.manageMacs": {
     "defaultMessage": "Mac’leri ve modelleri yönet"
+  },
+  "nodes.memBar": {
+    "defaultMessage": "{mac} üzerindeki bellek, bütçesine göre"
+  },
+  "nodes.memNeed": {
+    "defaultMessage": "{need} / {budget} GB gerekiyor"
+  },
+  "nodes.memNoPeak": {
+    "defaultMessage": "henüz tepe yok"
+  },
+  "nodes.memPeak": {
+    "defaultMessage": "{peak} / {budget} GB"
+  },
+  "nodes.memPeakOnly": {
+    "defaultMessage": "tepe {peak} GB"
+  },
+  "nodes.more": {
+    "defaultMessage": "{name} için daha fazlası"
+  },
+  "nodes.nameAcrossMacs": {
+    "defaultMessage": "{count,plural,=2{iki Mac} other{# Mac}}"
+  },
+  "nodes.nameThisMac": {
+    "defaultMessage": "bu Mac"
   },
   "nodes.navFailed": {
     "defaultMessage": "Başarısız"
@@ -5570,8 +5711,290 @@
   "nodes.navLoadingTitle": {
     "defaultMessage": "LeanZero MLX motoru bir model yüklüyor"
   },
+  "nodes.new": {
+    "defaultMessage": "Yeni düğüm"
+  },
+  "nodes.newBack": {
+    "defaultMessage": "Geri"
+  },
+  "nodes.newClose": {
+    "defaultMessage": "Kapat"
+  },
+  "nodes.newCloud": {
+    "defaultMessage": "Bir bulut modeli"
+  },
+  "nodes.newCloudBody": {
+    "defaultMessage": "{count,plural,=0{Kurulu yok} one{# kurulu} other{# kurulu}}"
+  },
+  "nodes.newCreate": {
+    "defaultMessage": "Düğüm oluştur"
+  },
+  "nodes.newCreateStart": {
+    "defaultMessage": "Oluştur ve başlat"
+  },
+  "nodes.newEditTitle": {
+    "defaultMessage": "{name} düğümünü düzenle"
+  },
+  "nodes.newEndpoint": {
+    "defaultMessage": "Bir uç nokta"
+  },
+  "nodes.newEndpointBody": {
+    "defaultMessage": "{count,plural,=0{Eklediğiniz OpenAI uyumlu herhangi bir sunucu · henüz yok} one{Eklediğiniz OpenAI uyumlu herhangi bir sunucu · # eklendi} other{Eklediğiniz OpenAI uyumlu herhangi bir sunucu · # eklendi}}"
+  },
+  "nodes.newFilterModels": {
+    "defaultMessage": "Modelleri filtrele"
+  },
+  "nodes.newFitOn": {
+    "defaultMessage": "{mac} {need} / {budget} GB"
+  },
+  "nodes.newGetModels": {
+    "defaultMessage": "Modeller’den bir tane edinin"
+  },
+  "nodes.newGoal": {
+    "defaultMessage": "Hedef"
+  },
+  "nodes.newHowRun": {
+    "defaultMessage": "Nasıl çalışsın?"
+  },
+  "nodes.newKeepLoaded": {
+    "defaultMessage": "Yüklü tut: başka bir düğüm için asla durdurma"
+  },
+  "nodes.newModelsFailed": {
+    "defaultMessage": "{provider} modellerini listelemedi ({error}); bunlar goose’un onun için bildiği modeller."
+  },
+  "nodes.newModelsOn": {
+    "defaultMessage": "{macs} üzerinde"
+  },
+  "nodes.newModelsReading": {
+    "defaultMessage": "{provider} sağlayıcısından modelleri isteniyor…"
+  },
+  "nodes.newModelsUnlisted": {
+    "defaultMessage": "{provider} bir model listesi sunmuyor; bunlar goose’un onun için bildiği modeller."
+  },
+  "nodes.newName": {
+    "defaultMessage": "Ad"
+  },
+  "nodes.newNameIt": {
+    "defaultMessage": "Adlandırın"
+  },
+  "nodes.newNext": {
+    "defaultMessage": "İleri"
+  },
+  "nodes.newNoModels": {
+    "defaultMessage": "Mac’lerinizde henüz model yok."
+  },
+  "nodes.newNoWays": {
+    "defaultMessage": "goose bu modeli Mac’lerinizde çalıştırmanın bir yolunu bulamadı."
+  },
+  "nodes.newNoneSetUp": {
+    "defaultMessage": "Kurulu yok"
+  },
+  "nodes.newOnYourMacs": {
+    "defaultMessage": "Mac’lerinizde"
+  },
+  "nodes.newOnYourMacsBody": {
+    "defaultMessage": "LeanZero MLX motoru, tek Mac ya da bölünmüş"
+  },
+  "nodes.newPickModel": {
+    "defaultMessage": "Bir model seçin"
+  },
+  "nodes.newProviderModels": {
+    "defaultMessage": "Model"
+  },
+  "nodes.newProvidersFailed": {
+    "defaultMessage": "Sağlayıcılarınız okunamadı: {error}"
+  },
+  "nodes.newProvidersReading": {
+    "defaultMessage": "Sağlayıcılarınız okunuyor…"
+  },
+  "nodes.newRefused": {
+    "defaultMessage": "Kaydedilmedi"
+  },
+  "nodes.newRetry": {
+    "defaultMessage": "Yeniden planla"
+  },
+  "nodes.newSave": {
+    "defaultMessage": "Düğümü kaydet"
+  },
+  "nodes.newSetUpAnother": {
+    "defaultMessage": "Başka bir sağlayıcı kur"
+  },
+  "nodes.newStepKind": {
+    "defaultMessage": "Tür"
+  },
+  "nodes.newStepModel": {
+    "defaultMessage": "Model"
+  },
+  "nodes.newStepName": {
+    "defaultMessage": "Ad"
+  },
+  "nodes.newStepOf": {
+    "defaultMessage": "Adım {n} / {total} · {label}"
+  },
+  "nodes.newStepProvider": {
+    "defaultMessage": "Sağlayıcı"
+  },
+  "nodes.newStepWay": {
+    "defaultMessage": "Yol"
+  },
+  "nodes.newTitle": {
+    "defaultMessage": "Yeni düğüm"
+  },
+  "nodes.newWays": {
+    "defaultMessage": "{model} çalıştırma yolları"
+  },
+  "nodes.newWhere": {
+    "defaultMessage": "Nerede çalışsın?"
+  },
+  "nodes.newWhichModel": {
+    "defaultMessage": "Hangi model?"
+  },
+  "nodes.newWhichProvider": {
+    "defaultMessage": "Hangi sağlayıcı?"
+  },
+  "nodes.newWriteFailed": {
+    "defaultMessage": "Düğüm kaydedilemedi"
+  },
+  "nodes.noPlan": {
+    "defaultMessage": "goose’un bu model için henüz bir planı yok"
+  },
+  "nodes.noSuchWay": {
+    "defaultMessage": "goose’un bu model için planında böyle bir yol yok"
+  },
+  "nodes.notConnected": {
+    "defaultMessage": "{mac}, LeanZero Link’e bağlı değil"
+  },
+  "nodes.oneMacHint": {
+    "defaultMessage": "Bu Mac için fazla büyük modelleri çalıştırmak için başka bir Mac ekleyin"
+  },
+  "nodes.permissionOff": {
+    "defaultMessage": "Önce {mac} üzerinde “{permission}” seçeneğini açın (LeanZero MLX › Mac’lerim)"
+  },
+  "nodes.phaseUnnamed": {
+    "defaultMessage": "Yükleniyor"
+  },
+  "nodes.phaseWaitingForLoad": {
+    "defaultMessage": "Başka bir yüklemenin bitmesi bekleniyor"
+  },
+  "nodes.pinWay": {
+    "defaultMessage": "Bir yolu sabitle"
+  },
+  "nodes.planFailed": {
+    "defaultMessage": "Bu yol için plan yok: {error}"
+  },
+  "nodes.planning": {
+    "defaultMessage": "Mac’leriniz bu yol için ölçülüyor…"
+  },
+  "nodes.readFailed": {
+    "defaultMessage": "Düğümleriniz okunamadı"
+  },
+  "nodes.reading": {
+    "defaultMessage": "Düğümleriniz okunuyor…"
+  },
+  "nodes.readingState": {
+    "defaultMessage": "Şu an neyin hizmet verdiği okunuyor…"
+  },
+  "nodes.refused": {
+    "defaultMessage": "Kaldırılmadı"
+  },
+  "nodes.remove": {
+    "defaultMessage": "Kaldır"
+  },
+  "nodes.removeAndAuto": {
+    "defaultMessage": "Kaldır ve yeni sohbetleri Herhangi bir düğüm (Otomatik) üzerinde başlat"
+  },
+  "nodes.removeBody": {
+    "defaultMessage": "Düğüm, düğümlerinizden kaldırılır. Mac’leriniz, modelleriniz ve sağlayıcılarınız olduğu gibi kalır."
+  },
+  "nodes.removeConfirm": {
+    "defaultMessage": "Kaldır"
+  },
+  "nodes.removeFromStrategies": {
+    "defaultMessage": "Onu bu stratejilerden de kaldır"
+  },
+  "nodes.removePoolBody": {
+    "defaultMessage": "Sürü havuzunuz cihazını korur; bu düğüm burada bir daha gösterilmez. Havuzun kendisini aşağıda düzenleyin."
+  },
+  "nodes.removeTitle": {
+    "defaultMessage": "{node} kaldırılsın mı?"
+  },
+  "nodes.removeUsedByChats": {
+    "defaultMessage": "{count,plural,one{# sohbet bu düğüme ayarlı. Sonraki mesajı düğümün kaldırıldığını söyleyecek.} other{# sohbet bu düğüme ayarlı. Sonraki mesajları düğümün kaldırıldığını söyleyecek.}}"
+  },
+  "nodes.retry": {
+    "defaultMessage": "Yeniden oku"
+  },
+  "nodes.roleIn": {
+    "defaultMessage": "{rank,selectordinal,other{{role} #. · {strategy}}}"
+  },
+  "nodes.saved": {
+    "defaultMessage": "Kaydedildi."
+  },
   "nodes.sections": {
     "defaultMessage": "Düğüm bölümleri"
+  },
+  "nodes.setUpMacs": {
+    "defaultMessage": "Mac’lerinizi kurun"
+  },
+  "nodes.showInRunIt": {
+    "defaultMessage": "Çalıştır’da göster"
+  },
+  "nodes.startAction": {
+    "defaultMessage": "{node} düğümünü başlat"
+  },
+  "nodes.startStops": {
+    "defaultMessage": "Başlatınca {names} durur."
+  },
+  "nodes.startTitle": {
+    "defaultMessage": "{node} düğümü başlatılsın mı?"
+  },
+  "nodes.started": {
+    "defaultMessage": "{node} hizmet veriyor."
+  },
+  "nodes.startsIn": {
+    "defaultMessage": "{count,plural,one{Yaklaşık {duration} içinde başlar · # yüklemenin medyanı} other{Yaklaşık {duration} içinde başlar · # yüklemenin medyanı}}"
+  },
+  "nodes.stateCantRun": {
+    "defaultMessage": "Çalışamaz"
+  },
+  "nodes.stateFollows": {
+    "defaultMessage": "Bu Mac’i izler"
+  },
+  "nodes.stateHeldByBuild": {
+    "defaultMessage": "Bir derleme tutuyor"
+  },
+  "nodes.stateKeyMissing": {
+    "defaultMessage": "Anahtar eksik"
+  },
+  "nodes.stateLastCallFailed": {
+    "defaultMessage": "Son çağrı başarısız"
+  },
+  "nodes.stateLoading": {
+    "defaultMessage": "Yükleniyor"
+  },
+  "nodes.stateNeedsStep": {
+    "defaultMessage": "Bir adım gerekiyor"
+  },
+  "nodes.stateNotLoaded": {
+    "defaultMessage": "Yüklü değil"
+  },
+  "nodes.stateOtherWay": {
+    "defaultMessage": "Başka bir yol çalışıyor"
+  },
+  "nodes.stateReady": {
+    "defaultMessage": "Hazır"
+  },
+  "nodes.stateServing": {
+    "defaultMessage": "Hizmet veriyor"
+  },
+  "nodes.stateUnknown": {
+    "defaultMessage": "Durum bilinmiyor"
+  },
+  "nodes.stateWaiting": {
+    "defaultMessage": "Yüklenmeyi bekliyor"
+  },
+  "nodes.stopAction": {
+    "defaultMessage": "{node} düğümünü durdur"
   },
   "nodes.strategiesSoonBody": {
     "defaultMessage": "Bir strateji hangi düğümün ne yapacağını belirleyecek: rolleri, düğümlerin denenme sırası ve bir sonrakine ne zaman geçileceği. O zamana kadar sohbetler ve swarm derlemeleri Düğümler sekmesindeki düğümleri kullanır."
@@ -5582,6 +6005,9 @@
   "nodes.subtitle": {
     "defaultMessage": "Düğüm, Mac’lerinizde ya da bulutta iş devredebileceğiniz bir modeldir. Sohbetler bir düğümde ya da stratejide başlar; swarm derlemeleri bir strateji kullanır."
   },
+  "nodes.swarmUnreadable": {
+    "defaultMessage": "Sürü havuzunuz okunamadı"
+  },
   "nodes.tabNodes": {
     "defaultMessage": "Düğümler"
   },
@@ -5590,6 +6016,15 @@
   },
   "nodes.title": {
     "defaultMessage": "Düğümler"
+  },
+  "nodes.usedBy": {
+    "defaultMessage": "Kullananlar"
+  },
+  "nodes.whereSplit": {
+    "defaultMessage": "{count,plural,one{Bölünmüş · # Mac} other{Bölünmüş · # Mac}}"
+  },
+  "nodes.whereThisMac": {
+    "defaultMessage": "Bu Mac"
   },
   "onboardingGuard.checkProviderErrorDescription": {
     "defaultMessage": "Sunucu başlatılıyor veya geçici olarak kullanılamıyor olabilir."
@@ -5789,6 +6224,9 @@
   "placementCard.actionFailed": {
     "defaultMessage": "İşlem başarısız oldu"
   },
+  "placementCard.alreadyNode": {
+    "defaultMessage": "Zaten bir düğüm: “{name}”."
+  },
   "placementCard.badgeBoth": {
     "defaultMessage": "İki Mac de gerekli"
   },
@@ -5906,6 +6344,9 @@
   "placementCard.noticeDetails": {
     "defaultMessage": "Ayrıntılar"
   },
+  "placementCard.openInNodes": {
+    "defaultMessage": "Düğümler’de aç"
+  },
   "placementCard.others": {
     "defaultMessage": "{count,plural,one{# diğer bölme} other{# diğer bölme}}"
   },
@@ -5956,6 +6397,24 @@
   },
   "placementCard.runnerUpdating": {
     "defaultMessage": "Bölmenin çalıştırıcısı {nodes} üzerinde güncelleniyor…"
+  },
+  "placementCard.saveAsNode": {
+    "defaultMessage": "Düğüm olarak kaydet"
+  },
+  "placementCard.saveNoPlan": {
+    "defaultMessage": "goose’un bu yol için planı yok, bu yüzden hangi Mac’lerde çalıştığını söyleyemez."
+  },
+  "placementCard.saveNothingRunning": {
+    "defaultMessage": "{model} burada gösterilen hiçbir yolda çalışmıyor — yukarıdan çalışan modeli seçin."
+  },
+  "placementCard.saveOffer": {
+    "defaultMessage": "Sohbetler ve derlemeler seçebilsin diye bu yolu düğüm olarak kaydedin"
+  },
+  "placementCard.saveRefused": {
+    "defaultMessage": "Kaydedilmedi: {reason}"
+  },
+  "placementCard.savedAs": {
+    "defaultMessage": "“{name}” düğümü olarak kaydedildi."
   },
   "placementCard.short": {
     "defaultMessage": "Sığmıyor: {node} üzerinde {gb} eksik"
@@ -8060,6 +8519,24 @@
   "stoppedTurn.withTokens": {
     "defaultMessage": "Bu yanıtı {elapsed} sonra durdurdunuz · {tokens} token"
   },
+  "strategies.roleBackend": {
+    "defaultMessage": "Arka uç"
+  },
+  "strategies.roleBuild": {
+    "defaultMessage": "Derleme"
+  },
+  "strategies.roleChat": {
+    "defaultMessage": "Sohbet"
+  },
+  "strategies.roleFrontend": {
+    "defaultMessage": "Ön uç"
+  },
+  "strategies.rolePlanning": {
+    "defaultMessage": "Planlama"
+  },
+  "strategies.roleTesting": {
+    "defaultMessage": "Test"
+  },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} sağlayıcısı yapılandırıldı"
   },
@@ -8179,6 +8656,12 @@
   },
   "swarmSettings.awaitingChipTitle": {
     "defaultMessage": "Uzak makinenin MLX düğümü — havuzda kayıtlı, düğüm başına yönlendirme gelince hizmet verir"
+  },
+  "swarmSettings.emptyBody": {
+    "defaultMessage": "“Düğüm ekle” ile bir tane ekleyin — ekleme kaydedildiği anda havuza katılır."
+  },
+  "swarmSettings.emptyTitle": {
+    "defaultMessage": "Henüz düğüm yok"
   },
   "swarmSettings.nodesDesc": {
     "defaultMessage": "Sürünün çalıştırdığı her düğüm — yapılandırılmış satırlar artı LM Studio'da şu an yerleşik olanlar. Ağırlık: yükseldikçe görevlerden daha büyük pay alır."
