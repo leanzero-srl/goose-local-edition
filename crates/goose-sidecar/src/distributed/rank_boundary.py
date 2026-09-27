@@ -20,6 +20,9 @@
 # boundary becomes a segment end, and mlx_lm's own segment snapshots (server.py `_generate`, "Save
 # the caches at end of segments") store the entry the next request extends. Every rank computes it
 # from the same shared request with the same tokenizer, so every rank cuts — and chunks — alike.
+#
+# Keeping the entry is half of it; the cache must also not evict it (Q-182, `pop_keeping_newest_
+# prefix` below, installed by the wrapper on a spec that asks for `keep_newest_prefix`).
 
 TRANSIENT_TAIL = "rapid_mlx_transient_tail"
 # The tail may end the last TOOL message (Rapid-MLX lz.6): goose then keeps its block joined to the
@@ -96,3 +99,42 @@ def cut_at_boundary(segments, segment_types, boundary):
     ends.append(total)
     types.append(segment_types[-1])
     return [prompt[a:b] for a, b in zip([0, *ends[:-1]], ends)], types
+
+
+# Q-182 (E2E #3h, 3.0.59): every full miss (cache 0 of 71–96k tokens, 4–7 min of prefill each)
+# followed the prompt cache DROPPING the boundary entry the next agent request extends — goose's two
+# consecutive requests were byte-identical up to the tail (15:52:12 → 15:59:24: 81 tools, messages
+# 0..130 equal, message 131 differing only by its `<turn-context>` block). A tool-label helper
+# joined the agent's batch; mlx_lm pads every row to the longest, so two rows at 95,514 tokens
+# charge 14.1 of the 17.3 GB KV plan and the live bound trimmed the cache to ~3.2 GB. mlx_lm
+# 0.31.3's eviction (`CacheOrder.pop`) picks a TYPE by entry counts — assistant while there are at
+# least as many assistant entries as user ones, else user while there are at least as many user as
+# system — and the oldest of it; at 15:52:11 it had kept 3.29 GB of assistant entries (the end of
+# the previous agent call — prompt + answer, whose key holds the tail the next request drops, so a
+# hybrid cache can never extend it) and 0 user entries. Every miss of the run shows the same shape
+# (15:02, 15:12, 15:18, 15:25, 15:35: user 0 or one 0.08 GB helper segment, assistant 2.7–5.5 GB).
+
+
+def pop_keeping_newest_prefix(order, upstream_pop):
+    """mlx_lm's eviction (`upstream_pop(order)`, order = LRUPromptCache.CacheOrder) with the newest
+    "user" entry — the stable prefix the latest conversation request left (`cut_at_boundary` types
+    it "user"), the one its next request extends — held back while any other entry remains. It is
+    still evicted when it is the last entry and the bound still needs room."""
+    prefixes = order._lrus["user"]
+    if not prefixes or len(order) == 1:
+        return upstream_pop(order)
+    newest = prefixes.pop()
+    try:
+        return upstream_pop(order)
+    finally:
+        prefixes.append(newest)
+
+
+def keep_newest_prefix(cache_order):
+    """Install `pop_keeping_newest_prefix` on mlx_lm's `LRUPromptCache.CacheOrder`."""
+    upstream_pop = cache_order.pop
+
+    def pop(self):
+        return pop_keeping_newest_prefix(self, upstream_pop)
+
+    cache_order.pop = pop

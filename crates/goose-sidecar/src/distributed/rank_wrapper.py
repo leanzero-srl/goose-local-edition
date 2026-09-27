@@ -86,6 +86,12 @@
 #   block, and mlx_lm's own segment snapshot stores the entry the next request extends. Upstream
 #   kept only the system prompt reusable across an agent's tool steps on this hybrid model (E2E
 #   #3c: 31,385 of ~59k tokens read from cache per call).
+# - that prefix stays cached across a concurrent request (Q-182): rank 0 admits a request into a
+#   live batch only while the batch leaves the cache one prefix as wide as it (rank_prefill.py
+#   `kept_prefix_bytes`), and on a spec that asks for it (`keep_newest_prefix`) the cache evicts the
+#   newest stable prefix last (rank_boundary.py `pop_keeping_newest_prefix`). E2E #3h: a tool-label
+#   helper joined each ~70–95k-token agent call, mlx_lm's type-count eviction kept the previous
+#   call's unreusable end entry and dropped the prefix, and six calls re-read the whole prompt.
 # - a request that names no sampling field samples as on the single engine (Q-159,
 #   rank_sampling.py): mlx_lm filled the absence with its `--temp` 0.0 — greedy; E2E #3d wrote one
 #   answer of 54 identical tool calls over 40 minutes. Rank 0 resolves each field request > goose's
@@ -238,6 +244,7 @@ for owner, name in (
     (server.LRUPromptCache, "fetch_nearest_cache"),
     (PromptTrie, "search"),
     (server.LRUPromptCache, "trim_to"),
+    (server.LRUPromptCache, "CacheOrder"),
     (server, "BatchGenerator"),
     (server.BatchGenerator, "close"),
     (server.BatchGenerator, "remove"),
@@ -561,6 +568,18 @@ class LookupPromptCache(server.LRUPromptCache):
 
 server.LRUPromptCache = LookupPromptCache
 
+# Q-182 (rank_boundary.py `pop_keeping_newest_prefix`): the prompt cache evicts the stable prefix
+# the latest conversation request left only when nothing else is left to evict. It changes what is
+# evicted — every rank runs its own cache over the same requests and must reuse the same prefix —
+# so only a launch whose every rank runs it asks for it (`keep_newest_prefix`).
+if spec.get("keep_newest_prefix"):
+    if not hasattr(server.LRUPromptCache.CacheOrder, "pop"):
+        raise SystemExit(
+            f"goose rank wrapper: mlx_lm {mlx_lm.__version__}'s LRUPromptCache.CacheOrder has no "
+            "pop; the kept prefix was written against mlx_lm 0.31.3"
+        )
+    keep_newest_prefix(server.LRUPromptCache.CacheOrder)
+
 if "prompt_cache_limit_bytes" in spec:
     prompt_cache_limit = int(spec["prompt_cache_limit_bytes"])
     # A spec that asks for it (`prompt_cache_live_bound`, tag mlxLmServerBounded) bounds cached
@@ -673,6 +692,7 @@ def rank0_request(self, timeout):
             "rows": rows,
             "width": width,
             "charge": batch_kv_charge(prefill, rows + 1, max(width, tokens)),
+            "kept_prefix": kept_prefix_bytes(prefill, max(width, tokens)),
             "limit": prompt_cache_limit,
         },
     )

@@ -129,8 +129,16 @@ pub enum RankProgram {
     /// lists would sample differently and the ranks would diverge. `mlxLmServerSkeletonGuard` (a
     /// 3.0.57 requester) still reads, with `row_processors` off: that requester's ranks keep
     /// upstream's lists alike.
+    ///
+    /// Tagged `mlxLmServerNewestPrefix` since Q-182: `keep_newest_prefix` makes every rank's prompt
+    /// cache evict the newest stable prefix last (`rank_boundary.py` `pop_keeping_newest_prefix`).
+    /// It changes what is evicted, and each rank runs its own cache over the same requests, so a
+    /// peer whose wrapper evicts by mlx_lm's type counts alone would reuse a different prefix and
+    /// run a different number of prefill steps. `mlxLmServerRowProcessors` (a 3.0.59 requester)
+    /// still reads, with `keep_newest_prefix` off: that requester's ranks evict upstream's way.
     #[serde(
-        rename = "mlxLmServerRowProcessors",
+        rename = "mlxLmServerNewestPrefix",
+        alias = "mlxLmServerRowProcessors",
         alias = "mlxLmServerSkeletonGuard",
         alias = "mlxLmServerTransientTail",
         alias = "mlxLmServerFormation",
@@ -188,6 +196,11 @@ pub enum RankProgram {
         /// that left whenever the rows kept carry none, and the next row to join reads one of them.
         #[serde(default)]
         row_processors: bool,
+        /// Every rank's prompt cache evicts the newest "user" entry — the stable prefix the latest
+        /// conversation request left, which its next request extends — only when nothing else is
+        /// left (`rank_boundary.py` `pop_keeping_newest_prefix`, Q-182).
+        #[serde(default)]
+        keep_newest_prefix: bool,
         /// goose's sampling profile for the model (Q-159, `rank_sampling.py`): the layer rank 0
         /// resolves between a request's own fields and the checkpoint's generation_config.json.
         /// Rank 0 only — the workers sample from the arguments rank 0 shares — so it needs no new
@@ -394,6 +407,7 @@ pub fn rank_specs(
             transient_tail_boundary: true,
             xml_skeleton_guard: true,
             row_processors: true,
+            keep_newest_prefix: true,
             sampling_defaults: Box::default(),
         }
     })
@@ -1036,6 +1050,7 @@ pub(crate) mod tests {
                 transient_tail_boundary: true,
                 xml_skeleton_guard: true,
                 row_processors: true,
+                keep_newest_prefix: true,
                 sampling_defaults: _,
             }
         ));
@@ -2012,6 +2027,20 @@ assert admits(p, limit, 3, 72, 51200)
 assert batch_kv_charge(p, 5, 51200) > limit >= batch_kv_charge(p, 4, 51200)
 # E2E #2's 22:40:48 burst (the 36,027-token turn and four summaries): fits, 13.8 GB of 17.33.
 assert admits(p, limit, 4, 36027, 300)
+# Q-182, E2E #3h: a joining row must leave the cache one prefix as wide as the batch. 15:51:45's
+# 95,514-token agent call joining a live 154-token tool label: 14.11 GB of batch + 3.21 GB of
+# prefix = 17.317 GB, inside by 17 MB. 15:52:14's 95,789-token call beside a label: 17.365 GB, so
+# it waits for the label (seconds) instead of pushing the cache below its own prefix.
+assert kept_prefix_bytes(p, 95514) == batch_kv_charge(p, 1, 95514) == 95514 * 32768 + 76972032
+assert admits(p, limit, 1, 154, 95514)
+assert not admits(p, limit, 1, 154, 95789)
+assert not admits(p, limit, 1, 95789, 123), "a label arriving during the call waits for it"
+assert batch_kv_charge(p, 2, 95789) <= limit, "the old rule would have taken it"
+# 14:56:45: a 70,824-token call and two labels arrived together; three rows padded to 70,824 charge
+# 15.83 GB and left 1.5 GB for its 2.4 GB prefix. The second label now waits.
+assert admits(p, limit, 1, 70824, 157)
+assert not admits(p, limit, 2, 70824, 192)
+assert batch_kv_charge(p, 3, 70824) <= limit, "the old rule would have taken it"
 print("ok")
 "#;
         let out = std::process::Command::new("/usr/bin/python3")
@@ -2871,6 +2900,105 @@ print("ok")
             .arg(format!("{}{checks}", include_str!("rank_boundary.py")))
             .output()
             .expect("/usr/bin/python3 runs the rank programs' pure half");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
+    }
+
+    /// Q-182 through the REAL mlx_lm 0.31.3 `LRUPromptCache`: E2E #3h's agent calls from 15:49:18
+    /// to 15:59:24 replayed with their measured sizes (the 27B over 2 ranks: 32,768 B of KV per
+    /// token + 76,972,032 B of state, the 17,333,813,248 B KV plan), each beside the tool label
+    /// that joined it (154 tokens). Entries are non-trimmable, as the hybrid's are. At every step
+    /// the order is the rank's: the label's system snapshot, the agent's fetch and admission, its
+    /// stable prefix (typed "user"), the label's end, the agent's end — each insert trimmed to the
+    /// plan less the live batch. The NEGATIVE CONTROL is mlx_lm's own eviction with the old
+    /// admission: it reproduces the run exactly — 92,443 … 93,875 read, then 0 at 95,789 — and
+    /// past ~95.6k tokens it misses every call. Each half of the fix alone still misses; both
+    /// read every prefix.
+    #[test]
+    fn a_tool_label_beside_an_agent_call_leaves_its_prefix_cached_through_real_mlx_lm() {
+        let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
+            return;
+        };
+        let checks = r#"
+from mlx_lm.models.cache import LRUPromptCache
+
+p = {"kv_bytes_per_token": 32768, "sequence_state_bytes": 76972032, "batch_transient_ratio": 2.2}
+limit = 17333813248
+
+
+class Layer:
+    def __init__(self, tokens):
+        self.nbytes = batch_kv_charge(p, 1, tokens)
+
+    def is_trimmable(self):
+        return False
+
+
+# (prompt, the next call's cache_read = this call's stable prefix, output) from calls.csv; the
+# 95,514-token call's prefix is its prompt less the 582 tokens the call before it left out.
+run = [(93025, 92443, 108), (93168, 92586, 178), (93410, 92828, 213), (93967, 93385, 198),
+       (94229, 93647, 117), (94457, 93875, 235), (95514, 94932, 167), (95789, 95207, 98)]
+grown = run + [(95789 + 700 * k, 95789 + 700 * k - 582, 150) for k in range(1, 30)]
+LABEL_SYSTEM, LABEL, LABEL_OUT = 46, 154, 9
+upstream_pop = LRUPromptCache.CacheOrder.pop
+
+
+def replay(steps, keep, gated):
+    LRUPromptCache.CacheOrder.pop = upstream_pop
+    if keep:
+        keep_newest_prefix(LRUPromptCache.CacheOrder)
+    cache = LRUPromptCache(max_size=limit // batch_kv_charge(p, 1, 256), max_bytes=limit)
+    conversation = list(range(steps[-1][0]))
+    label_system = [-1] * LABEL_SYSTEM
+    reads = []
+    for i, (prompt_tokens, stable_tokens, out) in enumerate(steps):
+        stable = conversation[:stable_tokens]
+        prompt = stable + [-(1000 + i)] * (prompt_tokens - stable_tokens)
+        label = label_system + [-(2000 + i)] * (LABEL - LABEL_SYSTEM + LABEL_OUT)
+        cache.insert_cache("m", label_system[:], [Layer(LABEL_SYSTEM)], cache_type="system")
+        cache.trim_to(n_bytes=limit - batch_kv_charge(p, 1, LABEL))
+        found, rest = cache.fetch_nearest_cache("m", prompt)
+        reads.append(prompt_tokens - len(rest) if found is not None else 0)
+        joins = admits(p, limit, 1, LABEL, prompt_tokens) if gated else True
+        if not joins:
+            cache.insert_cache("m", label, [Layer(LABEL + LABEL_OUT)])
+        room = limit - batch_kv_charge(p, 2 if joins else 1, prompt_tokens)
+        cache.trim_to(n_bytes=room)
+        cache.insert_cache("m", stable[:], [Layer(stable_tokens)], cache_type="user")
+        cache.trim_to(n_bytes=room)
+        if joins:
+            cache.insert_cache("m", label, [Layer(LABEL + LABEL_OUT)])
+            cache.trim_to(n_bytes=room)
+        cache.insert_cache("m", prompt + [-(3000 + i)] * out, [Layer(prompt_tokens + out)])
+        cache.trim_to(n_bytes=limit - batch_kv_charge(p, 1, prompt_tokens + out))
+    return reads
+
+
+prefixes = [0] + [stable for _, stable, _ in grown[:-1]]
+live = [0, 92443, 92586, 92828, 93385, 93647, 93875, 0]
+assert replay(run, keep=False, gated=False) == live, replay(run, keep=False, gated=False)
+upstream = replay(grown, keep=False, gated=False)
+assert upstream[8:] == [0] * (len(grown) - 8), upstream
+assert replay(grown, keep=True, gated=True) == prefixes
+assert replay(grown, keep=True, gated=False)[7] == prefixes[7], "95,789 reads 94,932"
+assert replay(grown, keep=True, gated=False)[8:] == [0] * (len(grown) - 8), "wider, the room is gone"
+assert replay(grown, keep=False, gated=True)[7] == 0, "admission alone: the old eviction order"
+LRUPromptCache.CacheOrder.pop = upstream_pop
+print("ok")
+"#;
+        let out = std::process::Command::new(&python)
+            .arg("-c")
+            .arg(format!(
+                "{}{}{checks}",
+                include_str!("rank_prefill.py"),
+                include_str!("rank_boundary.py")
+            ))
+            .output()
+            .expect("the tensor venv's python runs");
         assert!(
             out.status.success(),
             "{}",
@@ -5659,11 +5787,54 @@ print("ok")
         )
         .remove(1);
         let json = serde_json::to_value(&spec).unwrap();
-        assert_eq!(json["program"], "mlxLmServerRowProcessors");
+        assert_eq!(json["program"], "mlxLmServerNewestPrefix");
+        assert_eq!(json["keep_newest_prefix"], true);
         assert_eq!(json["row_processors"], true);
         assert_eq!(json["xml_skeleton_guard"], true);
         assert_eq!(json["transient_tail_boundary"], true);
         assert_eq!(json["formation"]["rounds"], FORMATION_ROUNDS);
+
+        // A 3.0.59 requester's spec (the row-processors tag, no keep_newest_prefix) evicts by
+        // mlx_lm's type counts here: its own ranks evict that way too.
+        let mut rows = json.clone();
+        rows["program"] = "mlxLmServerRowProcessors".into();
+        rows.as_object_mut().unwrap().remove("keep_newest_prefix");
+        let read: RankSpec = serde_json::from_value(rows).unwrap();
+        assert!(matches!(
+            read.program,
+            RankProgram::MlxLmServer {
+                keep_newest_prefix: false,
+                row_processors: true,
+                ..
+            }
+        ));
+
+        // A 3.0.59 peer's goosed (its enum knows the row-processors tag, not this one) refuses this
+        // spec: its cache would evict the prefix this Mac's cache keeps.
+        #[derive(Debug, Deserialize)]
+        #[serde(tag = "program", rename_all = "camelCase")]
+        #[allow(dead_code)]
+        enum RowProcessorsProgram {
+            #[serde(
+                rename = "mlxLmServerRowProcessors",
+                alias = "mlxLmServerSkeletonGuard",
+                alias = "mlxLmServerTransientTail",
+                alias = "mlxLmServerFormation",
+                alias = "mlxLmServerPrefill",
+                alias = "mlxLmServerBounded",
+                alias = "mlxLmServerDoorbell",
+                alias = "mlxLmServer"
+            )]
+            MlxLmServer {
+                planned_bytes: u64,
+            },
+            PipelineServe {
+                serve_args: Vec<String>,
+            },
+        }
+        let refused = serde_json::from_value::<RowProcessorsProgram>(json.clone()).unwrap_err();
+        let why = link_control_refusal(&refused.to_string());
+        assert!(why.is_some_and(|w| w.contains("update goose")), "{refused}");
 
         // A 3.0.57 requester's spec (the skeleton-guard tag, no row_processors) keeps upstream's
         // processor lists here: its own ranks keep them too.
@@ -6033,6 +6204,8 @@ print("ok")
             site.join("mlx_lm/server.py"),
             "import argparse, json, os, sys\n\
              class LRUPromptCache:\n\
+             \x20   class CacheOrder:\n\
+             \x20       def pop(self): pass\n\
              \x20   def __init__(self, max_size=10, max_bytes=1 << 63):\n\
              \x20       self.max_size, self.max_bytes, self.trims = max_size, max_bytes, []\n\
              \x20       from mlx_lm.models.cache import PromptTrie\n\

@@ -13,7 +13,8 @@
 #   charged one row's chunk at the full context, so wider batches take smaller chunks;
 # - rank 0 admits a request only while the batch it would join keeps its padded KV — times what
 #   mlx_lm's batch operations transiently hold of it — inside the plan's KV charge
-#   (`batch_kv_charge`, `admits`); the prompt cache yields to it.
+#   (`batch_kv_charge`, `admits`); the prompt cache yields to it — but never below one cached
+#   prefix as wide as the batch (`kept_prefix_bytes`, Q-182).
 
 
 def prefill_chunk(prefill, rows, width, kv_step):
@@ -43,8 +44,22 @@ def batch_kv_charge(prefill, rows, width):
 def admits(prefill, limit_bytes, rows, width, prompt_tokens):
     """Whether a request of `prompt_tokens` may join a live batch of `rows` rows at `width`: an idle
     engine always takes it (the plan holds one row up to the window), a busy one only while the
-    batch it would join stays inside `limit_bytes` (the plan's whole KV charge, live + cached)."""
+    batch it would join stays inside `limit_bytes` (the plan's whole KV charge, live + cached)
+    with room left for one cached prefix as wide as that batch (`kept_prefix_bytes`)."""
     if rows == 0:
         return True
-    charge = batch_kv_charge(prefill, rows + 1, max(width, prompt_tokens))
-    return charge <= limit_bytes
+    widest = max(width, prompt_tokens)
+    charge = batch_kv_charge(prefill, rows + 1, widest)
+    return charge + kept_prefix_bytes(prefill, widest) <= limit_bytes
+
+
+def kept_prefix_bytes(prefill, width):
+    """The cache room a batch at `width` must leave (Q-182): one row's KV and state at that width —
+    the entry the widest row's conversation leaves and its next request extends. The plan charges
+    one live row plus one cached context (`RankPlan::prompt_cache_limit_bytes`), so a lone row
+    always leaves it; a joining row did not: E2E #3h's tool-label helper (154 tokens) joined a
+    95,514-token agent call, the two rows padded to its width charged 14.1 of 17.3 GB, the cache
+    was trimmed below that call's 3.16 GB prefix, and the next call re-read 95,789 tokens cold
+    (4–7 min). Such a request now waits for the batch to drain; the label arrives seconds later
+    instead of the agent's next call minutes later."""
+    return batch_kv_charge(prefill, 1, width)
