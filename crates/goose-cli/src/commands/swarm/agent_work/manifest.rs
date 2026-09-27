@@ -8,6 +8,7 @@
 //! tick STARTS, the window is when the desk is open.
 
 use anyhow::{anyhow, Result};
+use goose::loop_clock::WorkWindow;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -68,31 +69,6 @@ pub struct AgentManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkWindow {
-    /// Empty = every day.
-    #[serde(default = "default_days")]
-    pub days: Vec<String>,
-    #[serde(default = "default_from")]
-    pub from: String,
-    #[serde(default = "default_to")]
-    pub to: String,
-    /// True = the desk never closes (the window above is ignored).
-    #[serde(default)]
-    pub always: bool,
-}
-
-impl Default for WorkWindow {
-    fn default() -> Self {
-        Self {
-            days: default_days(),
-            from: default_from(),
-            to: default_to(),
-            always: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Surgeon {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -148,18 +124,6 @@ fn default_timezone() -> String {
 }
 fn default_cadence() -> String {
     "30m".to_string()
-}
-fn default_days() -> Vec<String> {
-    ["mon", "tue", "wed", "thu", "fri"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
-}
-fn default_from() -> String {
-    "09:00".to_string()
-}
-fn default_to() -> String {
-    "18:00".to_string()
 }
 fn default_ledger() -> String {
     "DAILY-LOG.md".to_string()
