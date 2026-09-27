@@ -1,20 +1,22 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 23:07 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-28 00:37 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
-- Installed: 3.0.63 (both Macs; the MacBook's 3.0.62 needed SIGKILL — Q-229, the floating window held the quit open).
-  Split up "OK." · E2E #3m RUNNING on 3.0.63 · runwatch. Disk 63 GB free (target/debug/incremental cleared).
-- Merged + pushed since 3.0.63's cut: S0, S7, Q-224/226 (floating window), Q-211/212 · merged, gate b7bc4csxo: S3
-  (chat routing to node/strategy), L1 (Recipes & loops removed). Next build 3.0.64 once S2/S5 land or the owner asks.
+- Installed: 3.0.64 (both Macs; install.sh reaped the 3.0.63 goosed orphan — that app predates Q-223). Split "OK".
+  E2E #3n RUNNING on 3.0.64 · runwatch. FIRST QUIT ON 3.0.64 = the live prove of Q-223/Q-229 (no orphan).
+- CI RED on origin: Windows (S8 used cfg(unix) goose_sidecar::holders in goose-cli) + Linux (engine.rs:3162 a
+  fast-failing load lost its stderr words). Fix agent running. wincheck.sh now compiles goose-cli + goose-server.
+- Merged on main, not yet in a build: S5 loader (low-medium, needs J3/J4 live), S3b router gaps, S8, S6
+  (Strategies UI + Nodes page wired), Q-231 (fact checks no longer hold a turn 38 s; needs both Macs), L8.
+  S6 gate b92pnvdnt running. Next build 3.0.65 once CI is green → then J3/J4 + a live critic walk of Nodes.
 
 ## CI
-- Green through c4639cebf.
+- RED (see above) — fix in flight.
 
 ## Agents
-- Nodes: S2 cards + New node (+ S7 leftovers) · S5 loader + holders (+ kind user|tick, S3's two contract items).
-- Loops: design REVISION (17 review findings; L1+L6 cleared) · L6 shared clock.
-- Q-223 + Q-229 app quit orphans / hang · Q-230 keep-awake does nothing.
+- CI fix (Windows gating + stderr race).
+- Loops: L0 DONE on its branch (held until CI is green) → then L2a, L3, L4r, L7, L5 in parallel.
 
 ## Next actions (in order)
 1. 3.0.61 DONE (glance + Q-183) → install at #3i turn-3 boundary (watcher b3ugzqvvu) → split-start 27B → #3i continues (new session = #3j if needed).
