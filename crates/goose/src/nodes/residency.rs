@@ -58,9 +58,15 @@ pub fn names_way(node: &ResolvedNodeDef, way: &NodesServingWayDto) -> bool {
             };
             kind_matches && way.macs.as_slice() == macs && identity()
         }
+        // The split: its Macs as its owner published them (rank order, as the planner keys a
+        // split), its link and its model. Tensor or pipeline is not compared — the runner, and so
+        // the kind, follows the model's type (`Runner::for_model_type`), so model + Macs + link
+        // name one way. A split whose record predates the published way names no Macs: it is
+        // matched on model and link, as before the way was published.
         Some(placement) => {
-            let link = placement_macs(placement).and_then(|(_, l)| l);
+            let (macs, link) = placement_macs(placement).unwrap_or((&[], None));
             way.kind == NodesServingKind::Split
+                && (way.macs.is_empty() || way.macs.as_slice() == macs)
                 && match (link, way.link.as_deref()) {
                     (Some(a), Some(b)) => a == b,
                     _ => true,
@@ -166,15 +172,7 @@ pub async fn serving_now(this_mac_name: &str) -> ServingFacts {
     }
     match owner::read() {
         owner::OwnerRecord::Mine(engine) | owner::OwnerRecord::Other(engine) => {
-            return ServingFacts::Way(NodesServingWayDto {
-                kind: NodesServingKind::Split,
-                macs: Vec::new(),
-                link: Some(engine.backend.clone()),
-                model_id: engine.model_id.clone(),
-                served_model_id: engine.served_model_id.clone(),
-                mac_names: engine.node_names.clone(),
-                load_phase: None,
-            })
+            return split_serving(&engine, owner::read_way())
         }
         owner::OwnerRecord::Unreadable { path, error } => {
             return ServingFacts::Unknown(format!(
@@ -185,6 +183,35 @@ pub async fn serving_now(this_mac_name: &str) -> ServingFacts {
         owner::OwnerRecord::Absent | owner::OwnerRecord::Stale(_) => {}
     }
     local_single(this_mac_name).await
+}
+
+/// The split as its owner record names it: its Macs are the way its owner published
+/// (`read_way` — each Mac's placement key in rank order, `local` for the owner's Mac), so a split
+/// node is matched on its Macs, link and model. A record from a goose that predates the way names
+/// no Macs (empty — unknown, never guessed); an unreadable way makes what serves unknown.
+pub fn split_serving(
+    engine: &crate::providers::mlx_distributed_owner::PublishedEngine,
+    way: Result<Option<goose_sdk_types::custom_requests::MlxPlacementKeyDto>, String>,
+) -> ServingFacts {
+    let macs = match way {
+        Ok(Some(way)) => way.nodes,
+        // A record from a goose that predates the way: its Macs are unknown, said by the empty list.
+        Ok(None) => Vec::new(),
+        Err(e) => {
+            return ServingFacts::Unknown(format!(
+                "the split's way in its owner record could not be read ({e}); which way serves this Mac's chat is unknown"
+            ))
+        }
+    };
+    ServingFacts::Way(NodesServingWayDto {
+        kind: NodesServingKind::Split,
+        macs,
+        link: Some(engine.backend.clone()),
+        model_id: engine.model_id.clone(),
+        served_model_id: engine.served_model_id.clone(),
+        mac_names: engine.node_names.clone(),
+        load_phase: None,
+    })
 }
 
 async fn local_single(this_mac_name: &str) -> ServingFacts {

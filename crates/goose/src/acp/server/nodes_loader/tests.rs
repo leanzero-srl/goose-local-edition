@@ -205,7 +205,7 @@ impl Ways for Fake {
 fn demand(fake: &Fake, node: &str, session: Option<&str>) -> Demand {
     Demand {
         node: def(node, fake),
-        session_id: session.map(str::to_string),
+        from: session.map_or(DemandFrom::Ui, |s| DemandFrom::Turn(s.to_string())),
         role: None,
     }
 }
@@ -898,4 +898,181 @@ async fn a_node_that_follows_this_mac_is_never_loaded() {
         matches!(&got, NodeEnsureServing::Refused { code: NodeLoadRefusalCode::NeedsStep, reason } if reason.contains("Run it")),
         "{got:?}"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// S3b (Q-196): the router-side gaps S5's review found.
+// ---------------------------------------------------------------------------------------------
+
+/// Gap 1: a BACKGROUND delegate runs beside its parent's turn, so it holds a reply of its own
+/// (summon opens it through the seam): its switch waits for the parent's reply instead of stopping
+/// the way the parent streams on; the parent waiting on it in `load` holds nothing, so the switch
+/// runs; and the delegate keeps its way after the parent's reply ends.
+#[tokio::test]
+async fn a_background_delegate_holds_its_own_reply_and_never_stops_its_parents_way() {
+    use goose_sidecar::placement::store::PlacementKind;
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let seam = Seam(Arc::clone(&core));
+    let parent = core.holds().open_reply("parent");
+    lease(&core, "parent", &fake, "flash");
+    let task_reply = seam.open_reply("task");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("task"));
+    let task = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the task's switch waits for the parent's reply", || {
+        waiting(&core, "split").is_some_and(|w| w.contains("is answering 1 reply"))
+    })
+    .await;
+    assert!(
+        fake.log().is_empty(),
+        "the way the parent streams on is not stopped: {:?}",
+        fake.log()
+    );
+
+    // The parent waits on the task in `load`: it holds nothing, and the task's switch runs.
+    let in_load = seam.pause_reply("parent");
+    assert_eq!(answer(task).await, NodeEnsureServing::Ready);
+    lease(&core, "task", &fake, "split");
+    assert_eq!(
+        core.holds().reply("task").unwrap().way.unwrap().kind,
+        PlacementKind::Pipeline,
+        "the task's lease is held by its own reply"
+    );
+    assert_eq!(
+        core.holds().reply("parent").unwrap().way.unwrap().kind,
+        PlacementKind::Single,
+        "and never lands on the parent's"
+    );
+    drop(in_load);
+
+    // The parent's reply ends; the task's does not: a chat that wants Flash waits for the task.
+    drop(parent);
+    let _chat = core.holds().open_reply("chat");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "flash", Some("chat"));
+    let chat = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the chat waits for the task's reply", || {
+        waiting(&core, "flash").is_some_and(|w| w.contains("is answering 1 reply"))
+    })
+    .await;
+    drop(task_reply);
+    assert_eq!(answer(chat).await, NodeEnsureServing::Ready);
+    assert_eq!(fake.serving().as_deref(), Some("flash"));
+}
+
+/// Gap 2: a reply opened after a queued switch and leasing the way that SERVES never reached the
+/// loader; the router now asks before every MLX lease. The answer names the switch for a reply
+/// opened after it, and nothing for a reply opened before it or a lease on the switch's own node;
+/// the wait holds nothing and ends when the switch leaves the queue.
+#[tokio::test]
+async fn a_queued_switch_is_honoured_by_the_next_lease_on_the_running_way() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let reply_1 = core.holds().open_reply("chat-1");
+    lease(&core, "chat-1", &fake, "flash");
+    let _reply_2 = core.holds().open_reply("chat-2");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("chat-2"));
+    let chat_2 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the switch is queued", || waiting(&core, "split").is_some()).await;
+
+    let _reply_3 = core.holds().open_reply("chat-3");
+    assert_eq!(
+        core.queued_switch_ahead("chat-3", "flash").as_deref(),
+        Some("split node"),
+        "a reply opened after the switch waits behind it"
+    );
+    assert_eq!(
+        core.queued_switch_ahead("chat-1", "flash"),
+        None,
+        "a reply opened before it keeps its way for every call"
+    );
+    assert_eq!(
+        core.queued_switch_ahead("chat-3", "split"),
+        None,
+        "a lease on the switch's own node does not wait for it"
+    );
+    assert_eq!(
+        core.queued_switch_ahead("no-reply", "flash"),
+        None,
+        "a call outside any reply holds nothing across calls"
+    );
+
+    let c = Arc::clone(&core);
+    let chat_3 =
+        tokio::spawn(async move { c.wait_behind_queued_switches("chat-3", "flash").await });
+    until("chat 3 waits, holding nothing", || {
+        core.holds().reply("chat-3").is_some_and(|r| r.waiting == 1)
+    })
+    .await;
+    assert!(
+        !chat_3.is_finished(),
+        "steady replies no longer pass the switch"
+    );
+    drop(reply_1);
+    assert_eq!(answer(chat_2).await, NodeEnsureServing::Ready);
+    tokio::time::timeout(SETTLE, chat_3)
+        .await
+        .expect("the lease goes on once the switch has left the queue")
+        .unwrap();
+    assert_eq!(core.holds().reply("chat-3").unwrap().waiting, 0);
+    assert_eq!(fake.serving().as_deref(), Some("split"));
+}
+
+/// Gap 3: a lease on the split, named by the way its owner published (`read_way`, noted through
+/// the seam), holds the split: a switch away from it waits for that reply.
+#[tokio::test]
+async fn a_split_lease_counts_as_holding_the_split() {
+    let fake = flash_and_split();
+    *fake.serving.lock().unwrap() = Some("split".to_string());
+    let core = Core::new(fake.clone(), None);
+    let seam = Seam(Arc::clone(&core));
+    let published = MlxPlacementKeyDto {
+        kind: MlxPlacementKindDto::Tensor,
+        nodes: vec!["local".to_string(), "link:wh".to_string()],
+        link: Some("jaccl".to_string()),
+    };
+    let reply_1 = core.holds().open_reply("chat-1");
+    seam.note_lease("chat-1", &published);
+    let _reply_2 = core.holds().open_reply("chat-2");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "flash", Some("chat-2"));
+    let chat_2 = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the switch waits for the reply on the split", || {
+        waiting(&core, "flash")
+            .is_some_and(|w| w.contains("the split across your Macs is answering 1 reply"))
+    })
+    .await;
+    assert!(fake.log().is_empty(), "{:?}", fake.log());
+    drop(reply_1);
+    assert_eq!(answer(chat_2).await, NodeEnsureServing::Ready);
+    assert_eq!(
+        fake.log(),
+        vec![
+            "stop Split Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string(),
+            "start flash".to_string()
+        ]
+    );
+}
+
+/// The S5 open risk: only a card's Start is answered `Wait`. A turn's demand is answered once it
+/// is settled, however long it waits.
+#[tokio::test]
+async fn a_turns_demand_is_never_answered_wait() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let reply_1 = core.holds().open_reply("chat-1");
+    lease(&core, "chat-1", &fake, "flash");
+    let _reply_2 = core.holds().open_reply("chat-2");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("chat-2"));
+    let turn = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the turn's demand waits", || {
+        waiting(&core, "split").is_some()
+    })
+    .await;
+    assert!(!turn.is_finished(), "a turn is not answered while it waits");
+    drop(reply_1);
+    assert_eq!(answer(turn).await, NodeEnsureServing::Ready);
 }

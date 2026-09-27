@@ -40,7 +40,7 @@ use crate::config::{Config, ConfigError};
 use crate::conversation::message::Message;
 use crate::nodes::residency::ServingFacts;
 use crate::nodes::resolve::{resolve, Decision, EntryFact, PassedOver, ShareState, Tried};
-use crate::nodes::seam::Demand;
+use crate::nodes::seam::{Demand, DemandFrom};
 use crate::nodes::{
     NodeChainEntry, NodeDefKind, NodeIfNotLoaded, NodePlacement, NodeRole, NodeRoleEntry, NodeWhen,
     NodesReadResponse, ResolvedNodeDef, RouteModel,
@@ -1376,6 +1376,9 @@ pub(crate) async fn route_stream(
                 return Err(last_refusal.unwrap_or(no_node));
             }
         };
+        let Some(lease) = clear_of_queued_switches(seam, lease).await else {
+            continue;
+        };
         match stream_on(lease, providers, kwargs_source, &turn).await? {
             Streamed::Served(stream, node) => {
                 note_served(seam, pool_lease_way(seam, &node), || NodeServedTurnDto {
@@ -1395,6 +1398,34 @@ pub(crate) async fn route_stream(
             }
         }
     }
+}
+
+/// The loader's step 1 for a lease (design §6.4): a switch queued before this turn's reply opened
+/// is honoured by EVERY MLX lease, not only by a demand for a way that is not serving — otherwise
+/// steady replies on the running way starve it. When one is queued, the lease is given back (its
+/// slot and in-flight mark are not held while waiting), the reply waits behind the switch holding
+/// nothing, and `None` sends the turn to route again on what serves after it. The set of switches
+/// queued before a reply opened only shrinks, so the re-route ends. With nothing queued — and
+/// always for LM Studio, cloud, no installed loader or a call outside any session — this is a
+/// scan of the loader's queue and the lease goes on unchanged.
+async fn clear_of_queued_switches(seam: &dyn NodesSeam, lease: Lease) -> Option<Lease> {
+    if !matches!(
+        lease.node.kind,
+        NodeKind::MlxSidecar | NodeKind::MlxRemote(_)
+    ) || !seam.loader_installed()
+    {
+        return Some(lease);
+    }
+    let Some(session) = crate::session_context::current_session_id() else {
+        return Some(lease);
+    };
+    let node = lease.node.id.clone();
+    if seam.queued_switch_ahead(&session, &node).is_none() {
+        return Some(lease);
+    }
+    drop(lease);
+    seam.wait_behind_queued_switches(&session, &node).await;
+    None
 }
 
 /// What one lease's call came to.
@@ -1631,6 +1662,9 @@ pub(crate) trait NodesSeam: Send + Sync {
     fn loader_installed(&self) -> bool;
     fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto);
     fn served(&self, session: &str, turn: NodeServedTurnDto);
+    /// See `nodes::seam::queued_switch_ahead` (asked before every MLX lease).
+    fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String>;
+    async fn wait_behind_queued_switches(&self, session: &str, node: &str);
 }
 
 pub(crate) struct LiveNodesSeam {
@@ -1649,6 +1683,14 @@ impl NodesSeam for LiveNodesSeam {
 
     fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto) {
         crate::nodes::seam::note_lease(session, way);
+    }
+
+    fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String> {
+        crate::nodes::seam::queued_switch_ahead(session, node)
+    }
+
+    async fn wait_behind_queued_switches(&self, session: &str, node: &str) {
+        crate::nodes::seam::wait_behind_queued_switches(session, node).await;
     }
 
     /// This process's record at once (the chip reads it at the turn's end), then the session's,
@@ -1702,35 +1744,69 @@ fn single_way(mac: String) -> MlxPlacementKeyDto {
     }
 }
 
+/// Whether the split serves in this Mac's engine's place, and the way its owner published.
+enum SplitNow {
+    None,
+    Serves(Result<Option<MlxPlacementKeyDto>, String>),
+}
+
+fn split_now() -> SplitNow {
+    use mlx_distributed_owner::OwnerRecord;
+    let split = mlx_distributed_owner::own_active_base_url().is_some()
+        || matches!(
+            mlx_distributed_owner::read(),
+            OwnerRecord::Mine(_) | OwnerRecord::Other(_)
+        );
+    if split {
+        SplitNow::Serves(mlx_distributed_owner::read_way())
+    } else {
+        SplitNow::None
+    }
+}
+
 /// The way an Auto or follower lease on an MLX node holds, for the loader's note — read only while
 /// a loader is installed (with none, a note does nothing). This Mac's single is `local`, a remote
-/// single `link:<peer>`. A split's owner record names neither its kind nor its Macs, so a lease on
-/// it cannot name its way: that is said, not guessed.
+/// single `link:<peer>`, the split the way its owner published (`read_way`), so a reply on the
+/// split holds it and a switch waits for that reply like any other.
 fn pool_lease_way(seam: &dyn NodesSeam, node: &Node) -> Option<MlxPlacementKeyDto> {
     if !seam.loader_installed() {
         return None;
     }
+    let split = match node.kind {
+        NodeKind::MlxSidecar => split_now(),
+        _ => SplitNow::None,
+    };
+    lease_way(node, split)
+}
+
+/// A split whose record names no way (an older goose published it) or cannot be read leaves the
+/// lease unnamed — said in the log, never guessed.
+fn lease_way(node: &Node, split: SplitNow) -> Option<MlxPlacementKeyDto> {
     match &node.kind {
         NodeKind::MlxRemote(target) => {
             Some(single_way(crate::nodes::residency::peer_key(&target.peer)))
         }
-        NodeKind::MlxSidecar => {
-            use mlx_distributed_owner::OwnerRecord;
-            let split = mlx_distributed_owner::own_active_base_url().is_some()
-                || matches!(
-                    mlx_distributed_owner::read(),
-                    OwnerRecord::Mine(_) | OwnerRecord::Other(_)
-                );
-            if split {
+        NodeKind::MlxSidecar => match split {
+            SplitNow::None => Some(single_way(crate::nodes::THIS_MAC.to_string())),
+            SplitNow::Serves(Ok(Some(way))) => Some(way),
+            SplitNow::Serves(Ok(None)) => {
                 tracing::warn!(
                     target: "swarm_router",
                     node = %node.id,
-                    "this lease is on the split, whose owner record names neither its kind nor its Macs; the loader is not told which way it holds"
+                    "this lease is on the split, whose owner record (written by a goose before the split's way was published) names no way; the loader is not told which way it holds"
                 );
-                return None;
+                None
             }
-            Some(single_way(crate::nodes::THIS_MAC.to_string()))
-        }
+            SplitNow::Serves(Err(e)) => {
+                tracing::warn!(
+                    target: "swarm_router",
+                    node = %node.id,
+                    error = %e,
+                    "this lease is on the split, whose owner record could not be read for its way; the loader is not told which way it holds"
+                );
+                None
+            }
+        },
         NodeKind::LmStudio { .. } | NodeKind::Cloud { .. } => None,
     }
 }
@@ -2188,9 +2264,10 @@ fn chain_record(
 
 /// Route one turn along a chain. Each pass reads every entry's fact, lets the role's when-rule
 /// decide (`nodes::resolve`), and acts: serve, queue on the busy ones, or ask the loader for a
-/// not-loaded one and read again. Every pass either ends the turn or settles one entry for good
-/// (a load answered or refused, an admission refused), so the walk ends without a count or a
-/// clock.
+/// not-loaded one and read again. Every pass either ends the turn, settles one entry for good
+/// (a load answered or refused, an admission refused) or waits out one of the switches queued
+/// before the turn's reply opened (a set that only shrinks), so the walk ends without a count or
+/// a clock.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn route_chain(
     router: &Router,
@@ -2243,16 +2320,17 @@ pub(crate) async fn route_chain(
                 (router.queue_on(&slots, key).await?, tried)
             }
             Decision::Load { node, .. } => {
+                let session = crate::session_context::current_session_id();
                 let fact = if loaded.contains_key(&node) {
                     Some(EntryFact::LoadFailed {
                         words: "the node loader said it serves, but its way is still not the one serving this Mac's chat".to_string(),
                     })
-                } else {
+                } else if let Some(session) = session {
                     let demanded = Instant::now();
                     let answer = seam
                         .ensure_serving(Demand {
                             node: plan.defs[&node].def.clone(),
-                            session_id: crate::session_context::current_session_id(),
+                            from: DemandFrom::Turn(session),
                             role: plan.role,
                         })
                         .await;
@@ -2277,6 +2355,16 @@ pub(crate) async fn route_chain(
                             ),
                         }),
                     }
+                } else {
+                    // A load waits for the replies it would stop and holds its way for a reply; a
+                    // call outside any session has neither, so it never demands one — a demand
+                    // with no session is a card's Start, answered at once with a wait.
+                    Some(EntryFact::LoadFailed {
+                        words: format!(
+                            "this model call belongs to no session, so it cannot wait for a load; start {} in Run it",
+                            plan.defs[&node].def.name
+                        ),
+                    })
                 };
                 if let Some(fact) = fact {
                     overrides.insert(node, fact);
@@ -2303,6 +2391,11 @@ pub(crate) async fn route_chain(
                     ))
                 }));
             }
+        };
+        // Before the round-robin commits: a lease that waited behind a queued switch was not a
+        // pick, and the turn routes again on what serves after the switch.
+        let Some(lease) = clear_of_queued_switches(seam, lease).await else {
+            continue;
         };
         router
             .shares
@@ -4362,6 +4455,15 @@ devices:
         demands: StdMutex<Vec<String>>,
         served: StdMutex<Vec<(String, NodeServedTurnDto)>>,
         notes: StdMutex<Vec<(String, MlxPlacementKeyDto)>>,
+        /// What each "is a switch queued ahead?" is answered, in order; none left = nothing is.
+        ahead: StdMutex<VecDeque<Option<String>>>,
+        /// Every (session, node) the router asked about before a lease.
+        asked: StdMutex<Vec<(String, String)>>,
+        /// Every (session, node) that waited behind a queued switch.
+        waited: StdMutex<Vec<(String, String)>>,
+        /// A node's slots, read while a lease waits behind a queued switch.
+        watch: StdMutex<Option<Arc<Semaphore>>>,
+        free_while_waiting: StdMutex<Vec<usize>>,
     }
 
     impl RecordingSeam {
@@ -4411,6 +4513,27 @@ devices:
                 .lock()
                 .unwrap()
                 .push((session.to_string(), turn));
+        }
+
+        fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String> {
+            self.asked
+                .lock()
+                .unwrap()
+                .push((session.to_string(), node.to_string()));
+            self.ahead.lock().unwrap().pop_front().flatten()
+        }
+
+        async fn wait_behind_queued_switches(&self, session: &str, node: &str) {
+            self.waited
+                .lock()
+                .unwrap()
+                .push((session.to_string(), node.to_string()));
+            if let Some(slots) = self.watch.lock().unwrap().as_ref() {
+                self.free_while_waiting
+                    .lock()
+                    .unwrap()
+                    .push(slots.available_permits());
+            }
         }
     }
 
@@ -5434,5 +5557,241 @@ devices:
             }
         );
         assert_eq!(m.node.capacity, PoolDevice::default().instances);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // S3b (Q-196): every MLX lease asks the loader for a switch queued ahead of its reply; a
+    // lease on the split names the way its owner published; a call with no session never demands.
+    // -----------------------------------------------------------------------------------------
+
+    fn mlx(id: &str, capacity: u32, weight: u32) -> Node {
+        Node {
+            kind: NodeKind::MlxSidecar,
+            ..node(id, capacity, weight)
+        }
+    }
+
+    fn with_loader() -> RecordingSeam {
+        RecordingSeam {
+            loader: true,
+            ..RecordingSeam::default()
+        }
+    }
+
+    async fn auto_turn(
+        router: &Router,
+        nodes: &[Node],
+        seam: &dyn NodesSeam,
+        first_message: &str,
+    ) -> MessageStream {
+        let messages = vec![Message::user().with_text(first_message)];
+        let session = SessionTemplateKwargs::default();
+        crate::session_context::with_session_id(
+            Some(SESSION.to_string()),
+            route_stream(
+                router,
+                nodes,
+                &FakeProbe::all_idle(nodes),
+                &AllAnswer,
+                &NoKwargs,
+                &NoRouteLoad,
+                seam,
+                Turn {
+                    model_config: &ModelConfig::new("swarm"),
+                    system: "sys",
+                    messages: &messages,
+                    tools: &[],
+                    session: &session,
+                },
+            ),
+        )
+        .await
+        .unwrap()
+    }
+
+    /// Gap 2: a reply on the RUNNING way never reached the loader, so steady replies starved a
+    /// queued switch. Now its lease asks; with a switch queued ahead it gives its slot back, waits
+    /// behind the switch and routes again on what serves after it.
+    #[tokio::test]
+    async fn a_lease_behind_a_queued_switch_gives_its_slot_back_waits_and_routes_again() {
+        let router = Router::new();
+        let nodes = vec![mlx("mlx", 1, 1)];
+        let seam = with_loader();
+        *seam.ahead.lock().unwrap() = VecDeque::from([Some("27B · both Macs".to_string())]);
+        *seam.watch.lock().unwrap() = Some(router.semaphore(&nodes[0]));
+        let stream = auto_turn(&router, &nodes, &seam, "hi").await;
+        let asked = (SESSION.to_string(), "mlx".to_string());
+        assert_eq!(
+            *seam.asked.lock().unwrap(),
+            vec![asked.clone(), asked.clone()],
+            "asked before the first lease, and again before the lease taken after the wait"
+        );
+        assert_eq!(*seam.waited.lock().unwrap(), vec![asked]);
+        assert_eq!(
+            *seam.free_while_waiting.lock().unwrap(),
+            vec![1],
+            "the node's one slot was free while the turn waited"
+        );
+        assert_eq!(router.semaphore(&nodes[0]).available_permits(), 0);
+        drop(stream);
+        assert_eq!(router.semaphore(&nodes[0]).available_permits(), 1);
+        assert_eq!(seam.served.lock().unwrap().len(), 1, "one served turn");
+
+        // The same on a chain's pinned node: the round-robin commits only the lease that serves.
+        let way = single_way(crate::nodes::THIS_MAC.to_string());
+        let pinned = Member {
+            node: mlx("flash", 1, 1),
+            pinned: true,
+            way: Some(way.clone()),
+        };
+        let plan = chain(role(
+            &[("flash", 1)],
+            NodeWhen::Share,
+            NodeIfNotLoaded::Load,
+        ));
+        let seam = with_loader();
+        *seam.ahead.lock().unwrap() = VecDeque::from([Some("27B · both Macs".to_string())]);
+        let stream = chain_turn(
+            &router,
+            &plan,
+            &FakeMembers(members(vec![("flash", Ok(pinned))])),
+            &FakeProbe::all_idle(&[mlx("flash", 1, 1)]),
+            &AllAnswer,
+            &seam,
+            "x",
+        )
+        .await
+        .unwrap();
+        drop(stream);
+        assert_eq!(seam.asked.lock().unwrap().len(), 2);
+        assert_eq!(seam.waited.lock().unwrap().len(), 1);
+        assert_eq!(
+            *seam.notes.lock().unwrap(),
+            vec![(SESSION.to_string(), way)]
+        );
+    }
+
+    /// With nothing queued, Auto routes exactly as it did before the ask existed: the same node
+    /// for every turn, the same served records, no wait — and only MLX leases ask at all.
+    #[tokio::test]
+    async fn with_nothing_queued_auto_routes_exactly_as_before_and_only_mlx_leases_ask() {
+        let nodes = vec![
+            node("lm", 2, 1),
+            mlx("mlx", 1, 3),
+            Node {
+                kind: NodeKind::Cloud {
+                    registry: "openrouter".to_string(),
+                },
+                ..node("cloud", 1, 2)
+            },
+        ];
+        let mut runs: Vec<Vec<String>> = Vec::new();
+        for seam in [RecordingSeam::default(), with_loader()] {
+            let router = Router::new();
+            let mut held = Vec::new();
+            for turn in 0..4 {
+                held.push(auto_turn(&router, &nodes, &seam, &format!("turn {turn}")).await);
+            }
+            let served: Vec<String> = seam
+                .served
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(_, r)| r.node.clone())
+                .collect();
+            let mlx_leases = served.iter().filter(|n| *n == "mlx").count();
+            let asked = seam.asked.lock().unwrap().len();
+            if seam.loader {
+                assert_eq!(
+                    asked, mlx_leases,
+                    "one ask per MLX lease, none for LM Studio or cloud"
+                );
+            } else {
+                assert_eq!(asked, 0, "no loader installed: nothing is asked");
+            }
+            assert!(seam.waited.lock().unwrap().is_empty());
+            runs.push(served);
+        }
+        assert_eq!(runs[0], runs[1], "the ask changes no pick");
+        assert_eq!(runs[0].len(), 4);
+        assert!(runs[0].contains(&"mlx".to_string()), "{:?}", runs[0]);
+    }
+
+    /// Gap 3: a lease on the split names the way its owner published, so the reply holds it.
+    #[test]
+    fn a_lease_on_the_split_names_the_way_its_owner_published() {
+        let way = MlxPlacementKeyDto {
+            kind: MlxPlacementKindDto::Pipeline,
+            nodes: vec!["local".to_string(), "link:wh".to_string()],
+            link: Some("jaccl".to_string()),
+        };
+        let sidecar = mlx("mlx", 1, 1);
+        assert_eq!(
+            lease_way(&sidecar, SplitNow::Serves(Ok(Some(way.clone())))),
+            Some(way.clone())
+        );
+        assert_eq!(
+            lease_way(&sidecar, SplitNow::None),
+            Some(single_way(crate::nodes::THIS_MAC.to_string()))
+        );
+        assert_eq!(
+            lease_way(&sidecar, SplitNow::Serves(Ok(None))),
+            None,
+            "a record from a goose before the way names none: not guessed"
+        );
+        assert_eq!(
+            lease_way(&sidecar, SplitNow::Serves(Err("EOF".to_string()))),
+            None
+        );
+        assert_eq!(
+            lease_way(&node("lm", 1, 1), SplitNow::Serves(Ok(Some(way)))),
+            None
+        );
+    }
+
+    /// The S5 open risk: a demand with no session is a card's Start, answered `Wait` at once. A
+    /// model call outside any session never builds one; the entry is refused by name instead.
+    #[tokio::test]
+    async fn a_call_with_no_session_never_demands_a_load_and_is_refused_by_name() {
+        let plan = chain(role(&[("a", 1)], NodeWhen::Failover, NodeIfNotLoaded::Load));
+        let seam = RecordingSeam {
+            loader: true,
+            ..RecordingSeam::answering(vec![NodeEnsureServing::Wait {
+                reason: "a card's wait".to_string(),
+            }])
+        };
+        let messages = vec![Message::user().with_text("x")];
+        let session = SessionTemplateKwargs::default();
+        let err = route_chain(
+            &Router::new(),
+            &plan,
+            &FakeMembers(members(vec![("a", Err(EntryFact::NotLoaded))])),
+            &FakeProbe(HashMap::new()),
+            &AllAnswer,
+            &NoKwargs,
+            &NoRouteLoad,
+            &seam,
+            Turn {
+                model_config: &ModelConfig::new("strategy:test"),
+                system: "sys",
+                messages: &messages,
+                tools: &[],
+                session: &session,
+            },
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(
+            seam.demands.lock().unwrap().is_empty(),
+            "no demand is made without a session"
+        );
+        assert!(
+            err.contains(
+                "a: this model call belongs to no session, so it cannot wait for a load; start Node a in Run it"
+            ),
+            "{err}"
+        );
     }
 }

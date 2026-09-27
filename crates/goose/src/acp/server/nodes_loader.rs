@@ -6,7 +6,9 @@
 //!
 //! `ensure_serving(node, demand)`, in the design's order:
 //!  1. served already → Ready (unless the demanding reply opened after a queued switch to another
-//!     way: it waits behind that switch, so new replies never starve a queued one);
+//!     way: it waits behind that switch, so new replies never starve a queued one). A lease on the
+//!     way that serves never reaches `ensure_serving`, so the router asks the same question before
+//!     EVERY MLX lease (`queued_switch_ahead`, then `wait_behind_queued_switches`);
 //!  2. cloud / endpoint → Ready;
 //!  3. a swarm build holds the engine → Refused (the loader never stops an engine under a build);
 //!  4. the stop set is EVERY serving way (Run it's `servingWays`, pinned by `switch.fixture.json`);
@@ -20,7 +22,10 @@
 //!     reply explains → Wait, in ONE FIFO; woken by a reply ending (in-process: the reply guard's
 //!     drop; another process: the kernel releasing that reply's flock), never by a clock;
 //!  8. batching is per REPLY (the guard `on_prompt` takes): a reply keeps its way for every model
-//!     call; a delegate's demand is its parent reply's own;
+//!     call; a SYNCHRONOUS delegate's demand is its parent reply's own (the parent is blocked in
+//!     the tool call); a BACKGROUND delegate runs beside its parent's turn, so it opens a reply of
+//!     its own (seam `open_reply`) and its parent, while it waits on it in `load`, holds nothing
+//!     (seam `pause_reply`);
 //!  9. the swap claim (one loader per Mac at a time), then the stops in Run it's order, each
 //!     followed to its end, then the start — through the same ACP handlers Run it calls;
 //! 10. the ready paths append the load row (`rows`);
@@ -52,7 +57,7 @@ use goose_sdk_types::custom_requests::{
 use goose_sidecar::placement::store::{PlacementKey, PlacementKind};
 use tokio::sync::{oneshot, Notify};
 
-use crate::nodes::seam::{self, Demand, LoaderActivity, NodeLoader};
+use crate::nodes::seam::{self, Demand, DemandFrom, LoaderActivity, NodeLoader};
 use crate::nodes::{NodeDefKind, ResolvedNodeDef};
 
 pub use holds::ReplyGuard;
@@ -320,7 +325,7 @@ impl Core {
         if demand.node.kind != NodeDefKind::Mlx {
             return NodeEnsureServing::Ready;
         }
-        if demand.session_id.is_some() {
+        if let DemandFrom::Turn(_) = demand.from {
             return Arc::clone(self).run(demand, None).await;
         }
         // A demand from the UI (Start on a card): the first answer comes back now; a wait or a
@@ -375,7 +380,7 @@ impl Core {
             Ok(target) => target,
             Err(r) => return refused(r),
         };
-        let root = demand.session_id.as_deref().map(|s| self.holds.root_of(s));
+        let root = demand.session_id().map(|s| self.holds.root_of(s));
         let reply_opened = root.as_deref().and_then(|r| self.holds.reply_opened(r));
         let seq = self.holds.next_seq();
         self.queue.lock().unwrap().push_back(Queued {
@@ -416,11 +421,7 @@ impl Core {
                 Look::Refused(r) => return refused(r),
                 Look::Wait { reason, wake } => {
                     if let (None, Some(root)) = (&paused, &root) {
-                        self.holds.set_waiting(root, true);
-                        paused = Some(Paused {
-                            core: Arc::clone(self),
-                            root: root.clone(),
-                        });
+                        paused = Some(self.pause(root));
                     }
                     self.set_activity(LoaderActivity::Waiting {
                         node: node.def.id.clone(),
@@ -434,11 +435,7 @@ impl Core {
             };
             // From here the demanding reply has no model call in flight: it holds nothing.
             if let (None, Some(root)) = (&paused, &root) {
-                self.holds.set_waiting(root, true);
-                paused = Some(Paused {
-                    core: Arc::clone(self),
-                    root: root.clone(),
-                });
+                paused = Some(self.pause(root));
             }
             // The swap: this process's one swap, then the Mac's swap claim — both waited for, and
             // both cancellable (a cancel here leaves nothing: no stop has begun).
@@ -704,6 +701,46 @@ impl Core {
             .map(|q| q.node_name.clone())
     }
 
+    /// Step 1 for a LEASE (the router asks before every MLX lease, served or not): a switch queued
+    /// before `session`'s reply opened, to another node, is honoured — the lease waits behind it.
+    /// A reply opened before the switch keeps its way for every call (batching per reply), and a
+    /// call outside any reply holds nothing across calls, so neither waits.
+    pub(crate) fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String> {
+        let root = self.holds.root_of(session);
+        let opened = self.holds.reply_opened(&root)?;
+        self.switch_ahead(u64::MAX, node, Some(opened))
+    }
+
+    /// Wait until no switch is queued ahead of `session`'s reply. The reply holds nothing
+    /// meanwhile (a switch it waits behind must never wait on it); woken by the queue changing —
+    /// a demand leaving it, served or refused or cancelled — never by a clock.
+    pub(crate) async fn wait_behind_queued_switches(self: &Arc<Self>, session: &str, node: &str) {
+        let root = self.holds.root_of(session);
+        let mut paused: Option<Paused> = None;
+        loop {
+            let notified = self.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let Some(ahead) = self.queued_switch_ahead(session, node) else {
+                return;
+            };
+            if paused.is_none() {
+                tracing::info!(%session, %node, switch_to = %ahead, "nodes loader: this reply opened after a queued switch; its lease waits behind it");
+                paused = Some(self.pause(&root));
+            }
+            notified.await;
+        }
+    }
+
+    /// The reply at `root` holds nothing until the pause is dropped (a count: pauses nest).
+    fn pause(self: &Arc<Self>, root: &str) -> Paused {
+        self.holds.set_waiting(root, true);
+        Paused {
+            core: Arc::clone(self),
+            root: root.to_string(),
+        }
+    }
+
     fn queue_ahead(&self, seq: u64) -> Option<String> {
         self.queue
             .lock()
@@ -789,6 +826,23 @@ impl NodeLoader for Seam {
 
     fn note_child(&self, child_session: &str, parent_session: &str) {
         self.0.holds.note_child(child_session, parent_session);
+    }
+
+    fn open_reply(&self, session: &str) -> seam::Hold {
+        Box::new(self.0.holds.open_reply(session))
+    }
+
+    fn pause_reply(&self, session: &str) -> seam::Hold {
+        let root = self.0.holds.root_of(session);
+        Box::new(self.0.pause(&root))
+    }
+
+    fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String> {
+        self.0.queued_switch_ahead(session, node)
+    }
+
+    async fn wait_behind_queued_switches(&self, session: &str, node: &str) {
+        self.0.wait_behind_queued_switches(session, node).await
     }
 
     fn in_progress(&self) -> Vec<LoaderActivity> {

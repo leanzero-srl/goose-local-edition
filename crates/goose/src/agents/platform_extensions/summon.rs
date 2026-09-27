@@ -824,7 +824,9 @@ impl SummonClient {
         let name = source_name.unwrap();
 
         if is_session_id(name) {
-            let task_result = self.handle_load_task_result(name, cancel, peek).await?;
+            let task_result = self
+                .handle_load_task_result(session_id, name, cancel, peek)
+                .await?;
             let mut meta = Meta::new();
             meta.0.insert(
                 "subagent_session_id".to_string(),
@@ -856,6 +858,7 @@ impl SummonClient {
 
     async fn handle_load_task_result(
         &self,
+        session_id: &str,
         task_id: &str,
         cancel: bool,
         peek: bool,
@@ -964,6 +967,8 @@ impl SummonClient {
                 let duration = task.started_at.elapsed();
                 let turns_taken = task.turns.load(Ordering::Relaxed);
 
+                // Waiting on the task, this reply has no model call in flight (see the wait below).
+                let _paused = crate::nodes::seam::pause_reply(session_id);
                 let mut handle = task.handle;
                 let output = tokio::select! {
                     result = &mut handle => {
@@ -1016,6 +1021,10 @@ impl SummonClient {
                 }
             }
 
+            // The task has its own reply; while this turn waits on it here, this reply has no
+            // model call in flight and holds nothing — so a switch the task asks for is not held
+            // up by the very reply that waits for it.
+            let _paused = crate::nodes::seam::pause_reply(session_id);
             tokio::select! {
                 result = &mut task.handle => {
                     let (output, status_key) = match result {
@@ -1263,6 +1272,8 @@ impl SummonClient {
         );
 
         let subagent_session_id = subagent_session.id.clone();
+        // The parent is blocked in this call for the delegate's whole run: its demand is the
+        // parent's own.
         crate::nodes::seam::note_child(&subagent_session_id, session_id);
 
         let result = run_subagent_task(SubagentRunParams {
@@ -1817,9 +1828,12 @@ impl SummonClient {
             .map_err(|e| format!("Failed to create subagent session: {}", e))?;
 
         let task_id = subagent_session.id.clone();
-        // The parent may `load` this task and wait on it, so the child's demand is the parent's
-        // own here too.
-        crate::nodes::seam::note_child(&task_id, session_id);
+        // A background task runs BESIDE its parent's turn (and can outlive it), so its demand is
+        // its own: it opens a reply of its own for its whole run, and a switch it asks for waits
+        // for the parent's reply like any other's — it never stops the way the parent streams on.
+        // The parent waiting on it in `load` holds nothing meanwhile (`pause_reply` there), so the
+        // two never wait on each other.
+        let reply = crate::nodes::seam::open_reply(&task_id);
 
         let turns = Arc::new(AtomicU32::new(0));
         let last_activity = Arc::new(AtomicU64::new(current_epoch_millis()));
@@ -1845,6 +1859,7 @@ impl SummonClient {
         );
 
         let handle = tokio::spawn(async move {
+            let _reply = reply;
             run_subagent_task(SubagentRunParams {
                 config: agent_config,
                 recipe,
@@ -2778,7 +2793,7 @@ You review code."#;
         let temp_dir = TempDir::new().unwrap();
 
         let result = client
-            .handle_load_task_result("20260204_999", false, false)
+            .handle_load_task_result("parent", "20260204_999", false, false)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
@@ -2821,7 +2836,7 @@ You review code."#;
         let mut subscriber = client.subscribe().await;
 
         let result = client
-            .handle_load_task_result("20260204_1", false, false)
+            .handle_load_task_result("parent", "20260204_1", false, false)
             .await
             .expect("load should wait and return result");
         let text = extract_text(&result.content[0]);
@@ -2883,7 +2898,7 @@ You review code."#;
         assert!(discovery_text.contains("20260204_3"));
 
         let result = client
-            .handle_load_task_result("20260204_2", false, false)
+            .handle_load_task_result("parent", "20260204_2", false, false)
             .await
             .unwrap();
         let text = extract_text(&result.content[0]);
@@ -2903,7 +2918,7 @@ You review code."#;
             .contains_key("20260204_2"));
 
         let result = client
-            .handle_load_task_result("20260204_3", false, false)
+            .handle_load_task_result("parent", "20260204_3", false, false)
             .await
             .unwrap();
         let text = extract_text(&result.content[0]);
@@ -2912,7 +2927,7 @@ You review code."#;
         assert_eq!(result.status, "failed");
 
         let result = client
-            .handle_load_task_result("20260204_3", false, false)
+            .handle_load_task_result("parent", "20260204_3", false, false)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
@@ -2947,7 +2962,7 @@ You review code."#;
         }
 
         let result = client
-            .handle_load_task_result("20260204_1", true, false)
+            .handle_load_task_result("parent", "20260204_1", true, false)
             .await
             .unwrap();
         let text = extract_text(&result.content[0]);
@@ -2990,7 +3005,7 @@ You review code."#;
 
         // Peek should return status without removing the task
         let result = client
-            .handle_load_task_result("20260204_1", false, true)
+            .handle_load_task_result("parent", "20260204_1", false, true)
             .await
             .unwrap();
         let text = extract_text(&result.content[0]);
@@ -3011,7 +3026,7 @@ You review code."#;
         let client = SummonClient::new(create_test_context()).unwrap();
 
         let result = client
-            .handle_load_task_result("20260204_999", false, true)
+            .handle_load_task_result("parent", "20260204_999", false, true)
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found"));
@@ -3038,7 +3053,7 @@ You review code."#;
 
         // Peek on a completed task should return the full result (same as non-peek)
         let result = client
-            .handle_load_task_result("20260204_1", false, true)
+            .handle_load_task_result("parent", "20260204_1", false, true)
             .await
             .unwrap();
         let text = extract_text(&result.content[0]);
@@ -3052,7 +3067,7 @@ You review code."#;
             .await
             .contains_key("20260204_1"));
         let result = client
-            .handle_load_task_result("20260204_1", false, false)
+            .handle_load_task_result("parent", "20260204_1", false, false)
             .await
             .unwrap();
         assert!(extract_text(&result.content[0]).contains("final output"));

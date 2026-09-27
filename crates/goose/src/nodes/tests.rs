@@ -1178,7 +1178,7 @@ async fn with_no_loader_installed_a_load_is_refused_by_name() {
     assert!(!seam::loader_installed());
     let answer = seam::ensure_serving(seam::Demand {
         node: split_27b("split"),
-        session_id: None,
+        from: seam::DemandFrom::Ui,
         role: None,
     })
     .await;
@@ -1316,6 +1316,57 @@ fn a_loading_way_and_an_unknown_record_are_named() {
             reason: "27B is answering 1".into()
         }
     );
+}
+
+/// Gap 3 (S3b): residency names the split by the way its owner published (`read_way`) — its Macs,
+/// not only its model and link — so a split node over other Macs is not "serving".
+#[test]
+fn the_split_is_named_by_the_way_its_owner_published() {
+    use goose_sdk_types::custom_requests::{MlxPlacementKeyDto, MlxPlacementKindDto};
+    let engine = crate::providers::mlx_distributed_owner::PublishedEngine {
+        pid: 4242,
+        base_url: "http://127.0.0.1:8191".into(),
+        served_model_id: "mihai-qwen3.8-27b-atlassian-q8-mlx".into(),
+        model_id: "Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".into(),
+        backend: "jaccl".into(),
+        node_names: vec!["Mihai Macbook".into(), "Work's Mac Studio".into()],
+    };
+    let published = MlxPlacementKeyDto {
+        kind: MlxPlacementKindDto::Pipeline,
+        nodes: vec![THIS_MAC.into(), "link:studio".into()],
+        link: Some("jaccl".into()),
+    };
+    let serving = residency::split_serving(&engine, Ok(Some(published)));
+    let ServingFacts::Way(way) = &serving else {
+        panic!("{serving:?}")
+    };
+    assert_eq!(way.macs, vec![THIS_MAC.to_string(), "link:studio".into()]);
+    assert_eq!(
+        residency_of(&resolved(split_27b("split")), &serving, &[]),
+        NodeResidency::Serving
+    );
+    // The same model and link over another Mac is another way.
+    let mut elsewhere = split_27b("elsewhere");
+    elsewhere.placement = Some(NodePlacement::Pipeline {
+        macs: vec![THIS_MAC.into(), "link:laptop".into()],
+        link: Some("jaccl".into()),
+    });
+    assert!(matches!(
+        residency_of(&resolved(elsewhere.clone()), &serving, &[]),
+        NodeResidency::NotRunning { .. }
+    ));
+    // A record from a goose before the way names no Macs: matched on model and link, as before.
+    let older = residency::split_serving(&engine, Ok(None));
+    assert_eq!(older, ServingFacts::Way(split_way()));
+    assert_eq!(
+        residency_of(&resolved(elsewhere), &older, &[]),
+        NodeResidency::Serving
+    );
+    // A way that cannot be read makes what serves unknown — never guessed.
+    assert!(matches!(
+        residency::split_serving(&engine, Err("EOF".into())),
+        ServingFacts::Unknown(reason) if reason.contains("EOF")
+    ));
 }
 
 #[tokio::test]

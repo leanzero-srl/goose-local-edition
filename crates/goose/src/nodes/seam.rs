@@ -14,14 +14,37 @@ use goose_sdk_types::custom_requests::{
 
 use super::{NodeDef, NodeRole};
 
+/// Who demands a load. A turn is answered once its demand is settled (Ready or Refused); only a
+/// card's Start is answered `Wait` at once and loads in the background. The two are named so a
+/// turn can never reach the UI's `Wait` branch by lacking a session: a model call with no session
+/// cannot build a demand at all (the router refuses it by name).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DemandFrom {
+    /// A turn of this session (the router, for a chat or a delegate).
+    Turn(String),
+    /// Start on a node's card, with no session.
+    Ui,
+}
+
 /// A demand to make a node servable.
 #[derive(Debug, Clone)]
 pub struct Demand {
     pub node: NodeDef,
-    /// The session whose turn demands it; `None` for a demand made from the UI.
-    pub session_id: Option<String>,
+    pub from: DemandFrom,
     pub role: Option<NodeRole>,
 }
+
+impl Demand {
+    pub fn session_id(&self) -> Option<&str> {
+        match &self.from {
+            DemandFrom::Turn(session) => Some(session),
+            DemandFrom::Ui => None,
+        }
+    }
+}
+
+/// A reply, or a pause of one, that the loader tracks until it is dropped.
+pub type Hold = Box<dyn Send + Sync>;
 
 /// What the loader is doing for one node right now (read by `nodes/residency`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,8 +71,22 @@ pub trait NodeLoader: Send + Sync {
     async fn ensure_serving(&self, demand: Demand) -> NodeEnsureServing;
     /// The way an MLX lease of `session` used (the reply holds it for its whole life).
     fn note_lease(&self, session: &str, way: &MlxPlacementKeyDto);
-    /// A delegate session runs inside its parent's reply: its demand is the parent's own.
+    /// A SYNCHRONOUS delegate session runs inside its parent's reply (the parent is blocked in the
+    /// tool call): its demand is the parent's own.
     fn note_child(&self, child_session: &str, parent_session: &str);
+    /// A reply of `session` for as long as the hold lives — a BACKGROUND delegate's, which runs
+    /// beside its parent's turn and can outlive it: its demand is its own (it waits for the
+    /// parent's reply like any other's), and it keeps its way after the parent's reply ends.
+    fn open_reply(&self, session: &str) -> Hold;
+    /// `session`'s reply has no model call in flight while the hold lives (its turn waits on a
+    /// background delegate in `load`): it holds nothing, so the delegate it waits for may switch.
+    fn pause_reply(&self, session: &str) -> Hold;
+    /// A switch queued before `session`'s reply opened, to a node other than `node`: its name. A
+    /// scan of the loader's queue, cheap enough to ask before every MLX lease.
+    fn queued_switch_ahead(&self, session: &str, node: &str) -> Option<String>;
+    /// Wait, holding nothing, until no switch is queued ahead of `session`'s reply (see
+    /// `queued_switch_ahead`) — woken by the queue changing, never by a clock.
+    async fn wait_behind_queued_switches(&self, session: &str, node: &str);
     fn in_progress(&self) -> Vec<LoaderActivity>;
 }
 
@@ -88,6 +125,28 @@ pub fn note_lease(session: &str, way: &MlxPlacementKeyDto) {
 pub fn note_child(child_session: &str, parent_session: &str) {
     if let Some(loader) = LOADER.get() {
         loader.note_child(child_session, parent_session);
+    }
+}
+
+/// A background delegate's own reply; `None` with no loader (nothing batches).
+pub fn open_reply(session: &str) -> Option<Hold> {
+    LOADER.get().map(|loader| loader.open_reply(session))
+}
+
+/// `session`'s reply holds nothing while the hold lives; `None` with no loader.
+pub fn pause_reply(session: &str) -> Option<Hold> {
+    LOADER.get().map(|loader| loader.pause_reply(session))
+}
+
+pub fn queued_switch_ahead(session: &str, node: &str) -> Option<String> {
+    LOADER
+        .get()
+        .and_then(|loader| loader.queued_switch_ahead(session, node))
+}
+
+pub async fn wait_behind_queued_switches(session: &str, node: &str) {
+    if let Some(loader) = LOADER.get() {
+        loader.wait_behind_queued_switches(session, node).await;
     }
 }
 

@@ -6136,7 +6136,7 @@ export type NodesServingWayDto = {
     kind: NodesServingKind;
     /**
      * Placement keys of the Macs when the record knows them: `["local"]` for this Mac's single,
-     * `["link:<peer>"]` for a remote single; empty for a split.
+     * `["link:<peer>"]` for a remote single, the split's in rank order (none from an older owner).
      */
     macs?: Array<string>;
     /**

@@ -529,8 +529,8 @@ pub enum NodesServingKind {
     Single,
     /// The single engine on a peer, reached through this Mac's relay.
     RemoteSingle,
-    /// The distributed engine across Macs. Its owner record carries neither tensor/pipeline nor
-    /// the Macs' ids (only their names), so a split node is matched on its model and link.
+    /// The distributed engine across Macs. Its owner record names its Macs in rank order (its
+    /// way), so a split node is matched on its Macs, link and model.
     Split,
 }
 
@@ -540,7 +540,7 @@ pub enum NodesServingKind {
 pub struct NodesServingWayDto {
     pub kind: NodesServingKind,
     /// Placement keys of the Macs when the record knows them: `["local"]` for this Mac's single,
-    /// `["link:<peer>"]` for a remote single; empty for a split.
+    /// `["link:<peer>"]` for a remote single, the split's in rank order (none from an older owner).
     #[serde(default)]
     pub macs: Vec<String>,
     /// The split's link backend.

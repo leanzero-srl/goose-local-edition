@@ -15001,7 +15001,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Placement keys of the Macs when the record knows them: `[\"local\"]` for this Mac's single,\n`[\"link:<peer>\"]` for a remote single; empty for a split.",
+          "description": "Placement keys of the Macs when the record knows them: `[\"local\"]` for this Mac's single,\n`[\"link:<peer>\"]` for a remote single, the split's in rank order (none from an older owner).",
           "default": []
         },
         "link": {
@@ -15057,7 +15057,7 @@
         {
           "type": "string",
           "const": "split",
-          "description": "The distributed engine across Macs. Its owner record carries neither tensor/pipeline nor\nthe Macs' ids (only their names), so a split node is matched on its model and link."
+          "description": "The distributed engine across Macs. Its owner record names its Macs in rank order (its\nway), so a split node is matched on its Macs, link and model."
         }
       ],
       "description": "How the way serving this Mac's goose runs, as the engine records know it."

@@ -366,7 +366,9 @@ pub async fn ensure_serving(
         _ => {
             seam::ensure_serving(seam::Demand {
                 node: node.def.clone(),
-                session_id: req.session_id,
+                from: req
+                    .session_id
+                    .map_or(seam::DemandFrom::Ui, seam::DemandFrom::Turn),
                 role: None,
             })
             .await
