@@ -1,7 +1,7 @@
 import { cspSafe } from './csp';
 
 /**
- * The fleet probes, done by the MAIN process (IPC `fleet-probe` / `fleet-chat`), so the renderer's CSP
+ * The fleet probes, done by the MAIN process (IPC `fleet-probe`), so the renderer's CSP
  * is not in the path at all.
  *
  * WHY MAIN (gate 8 refutation of 949d3fa6e, 2026-09-02): the renderer's effective CSP is the INTERSECTION
@@ -11,9 +11,9 @@ import { cspSafe } from './csp';
  * a LAN LM Studio (`swarm.endpoint: http://192.168.8.220:1234`) was blocked from the renderer no matter
  * what, and every fleet probe read "offline" with the right host name. Main has no document and no CSP;
  * `net.fetch` there reaches whatever host the engine is configured for, and the renderer keeps the
- * exact hook/prop shapes it had (useFleet, fetchSwarmContextLimit, the wizard's `complete`).
+ * exact hook/prop shapes it had (useFleet, fetchSwarmContextLimit).
  *
- * Both functions take the fetch implementation so the branches are testable without a network.
+ * The probe takes the fetch implementation so the branches are testable without a network.
  */
 
 /** The endpoint's http(s) origin. Throws on anything else so a probe against a bad value fails loudly
@@ -33,18 +33,6 @@ export function modelsUrl(endpoint: string): string {
   return cspSafe(`${swarmOriginOf(endpoint)}/api/v0/models`);
 }
 
-/**
- * `<base>/v1/chat/completions` — the OpenAI-compatible chat route. A HOST base (LM Studio's
- * `http://localhost:1234`) and an OpenAI base ending in `/v1` (an MLX engine's `baseUrl`) give the
- * same `<origin>/v1/chat/completions` they always did; a base with its own path keeps it — the Link
- * route's loopback relay is `http://127.0.0.1:<port>/relay/<cap>`, and its origin alone reaches
- * nothing (Q-7: the recipe interview follows chat onto the route).
- */
-export function chatCompletionsUrl(endpoint: string): string {
-  const prefix = new URL(endpoint).pathname.replace(/\/+$/, '').replace(/\/v1$/, '');
-  return cspSafe(`${swarmOriginOf(endpoint)}${prefix}/v1/chat/completions`);
-}
-
 /** Why a probe produced no JSON — every arm is NAMED so the renderer's offline state is honest. */
 export type FleetProbeError =
   | 'bad-endpoint' // the configured text is not an http(s) host base; nothing was fetched
@@ -57,10 +45,6 @@ export type FleetProbeResult =
   | { ok: true; url: string; data: Array<Record<string, unknown>> }
   | { ok: false; url: string; error: FleetProbeError; detail: string; status?: number };
 
-export type FleetChatResult =
-  | { ok: true; url: string; body: unknown }
-  | { ok: false; url: string; error: FleetProbeError; detail: string; status?: number };
-
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 /** The key LM Studio's API token lives under — the SAME one the engine's probes and its chat path read
@@ -71,15 +55,15 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export const LM_API_TOKEN_KEY = 'LMSTUDIO_API_KEY';
 
 /** The token as main can see it, or null when none is set (blank counts as none). Never logged. */
-export function lmStudioApiToken(env: Record<string, string | undefined> = process.env): string | null {
+export function lmStudioApiToken(
+  env: Record<string, string | undefined> = process.env
+): string | null {
   const t = env[LM_API_TOKEN_KEY]?.trim();
   return t ? t : null;
 }
 
 /** The discovery probe's window — what the renderer used before the probe moved to main. */
 export const FLEET_PROBE_TIMEOUT_MS = 3000;
-/** The wizard's chat window — a weak local model drafting a recipe; what the renderer used before. */
-export const FLEET_CHAT_TIMEOUT_MS = 120_000;
 
 function classify(err: unknown): { error: FleetProbeError; detail: string } {
   if (err instanceof Error && err.name === 'AbortError') {
@@ -106,7 +90,10 @@ async function fetchJson(
   timeoutMs: number,
   fetchImpl: FetchLike,
   token: string | null
-): Promise<{ ok: true; body: unknown } | { ok: false; error: FleetProbeError; detail: string; status?: number }> {
+): Promise<
+  | { ok: true; body: unknown }
+  | { ok: false; error: FleetProbeError; detail: string; status?: number }
+> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const headers: Record<string, string> = {
@@ -116,12 +103,21 @@ async function fetchJson(
   try {
     const res = await fetchImpl(url, { ...init, headers, signal: controller.signal });
     if (!res.ok) {
-      return { ok: false, error: 'http', status: res.status, detail: httpDetail(res.status, token) };
+      return {
+        ok: false,
+        error: 'http',
+        status: res.status,
+        detail: httpDetail(res.status, token),
+      };
     }
     try {
       return { ok: true, body: await res.json() };
     } catch (err) {
-      return { ok: false, error: 'bad-json', detail: err instanceof Error ? err.message : String(err) };
+      return {
+        ok: false,
+        error: 'bad-json',
+        detail: err instanceof Error ? err.message : String(err),
+      };
     }
   } catch (err) {
     return { ok: false, ...classify(err) };
@@ -153,35 +149,9 @@ export async function probeFleetModels(
   const r = await fetchJson(url, { method: 'GET' }, timeoutMs, fetchImpl, token);
   if (!r.ok) return { url, ...r };
   const data = (r.body as { data?: unknown } | null)?.data;
-  return { ok: true, url, data: Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [] };
-}
-
-/** POST `<endpoint>/v1/chat/completions` with `body` (non-streaming); the JSON reply or a named error. */
-export async function postFleetChat(
-  endpoint: string,
-  body: unknown,
-  fetchImpl: FetchLike,
-  timeoutMs = FLEET_CHAT_TIMEOUT_MS,
-  token: string | null = null
-): Promise<FleetChatResult> {
-  let url: string;
-  try {
-    url = chatCompletionsUrl(endpoint);
-  } catch (err) {
-    return {
-      ok: false,
-      url: endpoint,
-      error: 'bad-endpoint',
-      detail: err instanceof Error ? err.message : String(err),
-    };
-  }
-  const r = await fetchJson(
+  return {
+    ok: true,
     url,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-    timeoutMs,
-    fetchImpl,
-    token
-  );
-  if (!r.ok) return { url, ...r };
-  return { ok: true, url, body: r.body };
+    data: Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [],
+  };
 }
