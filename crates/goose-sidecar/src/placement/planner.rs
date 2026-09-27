@@ -1079,10 +1079,17 @@ pub fn plan(input: &PlanInput) -> Plan {
                     })
                 } else if kind == PlacementKind::Tensor && cluster.link.as_deref() != Some("jaccl") {
                     Some(match &cluster.link {
+                        // Plain words on the card (Q-174); why: tensor parallel runs two
+                        // all-sums per layer per token, which only JACCL's RDMA link carries fast
+                        // enough.
                         Some(link) => format!(
-                            "not offered: tensor parallel needs JACCL (two all-sums per layer per token); these Macs are linked over {link}"
+                            "not offered: sharing every layer between the Macs needs their fast \
+                             Thunderbolt link, and these Macs are joined by the slower {link} link"
                         ),
-                        None => "not offered: tensor parallel needs JACCL, and no distributed setup on this Mac names the link yet".to_string(),
+                        None => "not offered: sharing every layer between the Macs needs their \
+                                 fast Thunderbolt link, and no split set up on this Mac names its \
+                                 link yet"
+                            .to_string(),
                     })
                 } else if kind == PlacementKind::Tensor {
                     match input.tensor {
