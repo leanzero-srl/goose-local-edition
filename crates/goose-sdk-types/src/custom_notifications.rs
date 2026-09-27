@@ -1,4 +1,4 @@
-use crate::custom_requests::CustomMethodSchema;
+use crate::custom_requests::{CustomMethodSchema, LoopRecord};
 use agent_client_protocol::{JsonRpcMessage, JsonRpcNotification};
 use schemars::{JsonSchema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
@@ -119,6 +119,32 @@ pub struct FormingCallStatus {
     pub argument_chars: u64,
 }
 
+/// A loop tick is due in this chat (session loops, design DESIGN-SESSION-LOOPS.md §5.1): the
+/// renderer submits `prompt` as a user message with id `messageId` through the same door a typed
+/// message uses, carrying `_meta.goose.loopTick = {loopId, n, messageId}`, or answers
+/// `loops/tickRefused`. The offer stands until goosed accepts it; a repeat of the same
+/// `(loopId, n, messageId)` is the same offer, never a second tick.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcNotification)]
+#[notification(method = "_goose/unstable/loops/tickDue")]
+#[serde(rename_all = "camelCase")]
+pub struct LoopsTickDueNotification {
+    pub session_id: String,
+    pub loop_id: String,
+    pub n: u32,
+    pub message_id: String,
+    pub prompt: String,
+}
+
+/// A chat's loop record changed (the rail and the pills update on this event, never on a poll).
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcNotification)]
+#[notification(method = "_goose/unstable/loops/changed")]
+#[serde(rename_all = "camelCase")]
+pub struct LoopsChangedNotification {
+    pub session_id: String,
+    #[serde(rename = "loop")]
+    pub record: LoopRecord,
+}
+
 fn notification_schema<T>(generator: &mut SchemaGenerator) -> CustomMethodSchema
 where
     T: Default + JsonRpcMessage + JsonSchema,
@@ -142,7 +168,11 @@ where
 /// notification, define the struct above (with `JsonRpcNotification` +
 /// `Default`) and add one line below.
 pub fn custom_notification_schemas(generator: &mut SchemaGenerator) -> Vec<CustomMethodSchema> {
-    vec![notification_schema::<GooseSessionNotification>(generator)]
+    vec![
+        notification_schema::<GooseSessionNotification>(generator),
+        notification_schema::<LoopsTickDueNotification>(generator),
+        notification_schema::<LoopsChangedNotification>(generator),
+    ]
 }
 
 #[cfg(test)]
