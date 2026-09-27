@@ -18,6 +18,40 @@
 # loop of the words being written. It bounds a report only; nothing about the generation reads it.
 READER_TAIL_CHARS = 2000
 
+# policy: "mostly" — the share of an answer's text outside its calls that one span, written back to
+# back, must cover before the engine ends the answer (Q-161). E2E #3f turn 0: after one `write`
+# call the text outside it was 3,251 chars of `!\n</parameter>\n</function>\n` and then
+# `!\n</function>\n` over and over, never another call. A share of the answer's own text: an answer
+# that says a line twice in passing is nowhere near it; one that has become the repeat is.
+CYCLE_SHARE = 0.5
+
+
+def verbatim_cycle(text):
+    """(unit, copies) when `text` ends in one span written back to back at least twice — a span
+    holding a line break and something besides whitespace — whose copies cover more than
+    CYCLE_SHARE of `text`; else None. The shortest such span."""
+    backwards = text[::-1]
+    n = len(backwards)
+    # z[p]: how far `text` read backwards from its end agrees with itself read from p further back
+    # (the Z-function of the reversed text) — the tail written with period p runs z[p] + p chars.
+    z = [0] * n
+    left = right = 0
+    for i in range(1, n):
+        if i < right:
+            z[i] = min(right - i, z[i - left])
+        while i + z[i] < n and backwards[z[i]] == backwards[i + z[i]]:
+            z[i] += 1
+        if i + z[i] > right:
+            left, right = i, i + z[i]
+    for period in range(1, n // 2 + 1):
+        copies = (z[period] + period) // period
+        if copies < 2 or copies * period <= CYCLE_SHARE * n:
+            continue
+        unit = text[n - period :]
+        if "\n" in unit and unit.strip():
+            return unit, copies
+    return None
+
 
 def frame_chars(frame):
     """The content characters one chat.completion frame carries to the client: its text, its
@@ -56,6 +90,9 @@ class StreamWatch:
         # call of this answer), else None.
         self.holding = None
         self.episode = None
+        # Why the engine ended this answer itself (Q-161: a call written again word for word, or
+        # the text outside the calls become one span written over and over), else None.
+        self.stop = None
 
     def take(self, gen):
         # A matched control sequence (`<tool_call>`, `</tool_call>`, an end of turn) reaches the
@@ -187,6 +224,7 @@ class StreamWatch:
             "content_frames": self.content_frames,
             "withholding": None if episode is None else dict(episode),
             "tool_call": call,
+            "stop": self.stop,
             "tail": self.tail,
             "tail_window_chars": READER_TAIL_CHARS,
         }
