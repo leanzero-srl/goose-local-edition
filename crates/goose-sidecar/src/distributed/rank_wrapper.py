@@ -474,6 +474,41 @@ if prefill is not None:
     mlx_generate.PromptProcessingBatch.prompt = prompt
     mlx_generate.PromptProcessingBatch.split = split
 
+from mlx_lm.models.cache import can_trim_prompt_cache, trim_prompt_cache  # noqa: E402
+
+
+class LastTokenPrefilled(server.LRUPromptCache):
+    """Q-164: the prompt's last token is always read, so a generation always has a segment.
+
+    mlx_lm 0.31.3's `_generate` trims the prompt's segments by what the nearest cache entry holds;
+    when an entry's key IS the whole prompt (an identical request after one answered in a single
+    token, or a prompt ending exactly at a segment snapshot), every segment is consumed and
+    `BatchGenerator.insert_segments` reads `seq[-1]` of an empty list — IndexError in the
+    generation thread of every rank (each holds the same cache), RANK_FATAL, the split gone
+    (2026-09-27 08:23:23 and 09:01:06 on 8091). Such a lookup now leaves the last token to read:
+    a trimmable entry (plain KV) is copied and trimmed by one token; a hybrid entry (the qwen3_5
+    linear-attention state cannot be rolled back) is passed over for the nearest entry of the
+    prompt minus its last token. Any other lookup is upstream's, unchanged. Every rank runs this
+    on its own cache over the same shared requests — the same decision, the same segments —
+    exactly as it runs mlx_lm's own lookup."""
+
+    def fetch_nearest_cache(self, model, tokens):
+        try:
+            entry = self._trie.get(model, tokens) if tokens else None
+        except KeyError:
+            entry = None
+        if entry is None:
+            return super().fetch_nearest_cache(model, tokens)
+        if can_trim_prompt_cache(entry.prompt_cache):
+            cache = copy.deepcopy(entry.prompt_cache)
+            trim_prompt_cache(cache, 1)
+            return cache, tokens[-1:]
+        cache, rest = super().fetch_nearest_cache(model, tokens[:-1])
+        return cache, [*rest, tokens[-1]]
+
+
+server.LRUPromptCache = LastTokenPrefilled
+
 if "prompt_cache_limit_bytes" in spec:
     prompt_cache_limit = int(spec["prompt_cache_limit_bytes"])
     # A spec that asks for it (`prompt_cache_live_bound`, tag mlxLmServerBounded) bounds cached
@@ -604,10 +639,6 @@ def _next_request(self, timeout=None):
     if prefill is not None and group.rank() == 0:
         loop.publish("poll")
         request = rank0_request(self, timeout)
-        # Checked here, not at arrival: a held request waits while the batch may store the very
-        # entry that makes its whole prompt cached (Q-164).
-        if request is not None and refused_as_fully_cached(self, request):
-            request = None
         if doorbell is None or timeout is None:
             loop.publish("share")
             request = original_share_request(self, request)
@@ -686,9 +717,9 @@ def generate(self, request, generation_args, progress_callback=None, watch=None)
     except ContextFull as full:
         leave()
         raise Refused(400, str(full), "context_length_exceeded") from None
-    except PromptFullyCached as cached:
+    except EmptyPrompt as empty:
         leave()
-        raise Refused(409, str(cached), "prompt_fully_cached") from None
+        raise Refused(400, str(empty), "empty_prompt") from None
     except BaseException:
         leave()
         raise
@@ -752,55 +783,26 @@ def settle(self, request):
         prompt = original_tokenize(
             self, self.model_provider.tokenizer, copy.deepcopy(completion), args
         )[0]
+        if not prompt:
+            raise EmptyPrompt()
         args.max_tokens = generation_budget(spec["context_window"], len(prompt), args.max_tokens)
     except Exception as refusal:
         rqueue.put(refusal)
         return None, 0
-    # Rank 0's own queue object (never shared): the prompt the share gate checks (Q-164).
-    rqueue.goose_prompt = prompt
     return request, len(prompt)
 
 
-class PromptFullyCached(Exception):
-    """Q-164: the whole prompt is a key of the prompt cache."""
+class EmptyPrompt(ValueError):
+    """Q-164: a prompt with no token (a text completion of ""): nothing to generate from, and
+    mlx_lm 0.31.3 would hand its batch an empty segment."""
 
-    def __init__(self, tokens):
-        super().__init__(
-            f"this prompt ({tokens} tokens) is, token for token, an entry of the engine's prompt "
-            "cache — an earlier request's prompt and its answer up to the answer's last token — "
-            "and mlx_lm 0.31.3 cannot start a generation with no prompt token left to read (it "
-            "ended every rank of the split, Q-164); send it again with anything after it, or "
-            "after that entry leaves the cache"
-        )
-
-
-def refused_as_fully_cached(self, request):
-    """Q-164: rank 0, right before a request is shared. mlx_lm 0.31.3's `_generate` fetches the
-    nearest cache entry and trims the prompt's segments by what it holds; when an entry's key IS
-    the whole prompt, every segment is consumed and `BatchGenerator.insert_segments` reads
-    `seq[-1]` of an empty list — IndexError in the generation thread of EVERY rank (each holds the
-    same cache), RANK_FATAL, the split gone. Measured 2026-09-27 08:23:23 on 8091: a text
-    completion with max_tokens 1 answered one token (its entry's key is prompt + answer minus the
-    last token: the prompt itself), and the same prompt sent again ended both ranks. The same
-    lookup, read once before any rank can act on it, answers such a request 409 on its own queue;
-    the entry is left as it is (every rank's cache must stay the same)."""
-    prompt = getattr(request[0], "goose_prompt", None)
-    if prompt is None:
-        return False
-    try:
-        self.prompt_cache._trie.get(self.model_provider.model_key, prompt)
-    except KeyError:
-        return False
-    emit("RANK_PROMPT_FULLY_CACHED", {"prompt_tokens": len(prompt)})
-    request[0].put(PromptFullyCached(len(prompt)))
-    return True
+    def __init__(self):
+        super().__init__("the prompt is empty: it tokenizes to no token, so there is nothing to answer")
 
 
 def _share_request(self, request):
     if request is not None and group.rank() == 0:
         request = settle(self, request)[0]
-        if request is not None and refused_as_fully_cached(self, request):
-            request = None
     return original_share_request(self, request)
 
 

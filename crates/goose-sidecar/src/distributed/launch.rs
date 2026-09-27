@@ -3839,27 +3839,63 @@ print("GOOSE_TEST " + json.dumps({
         );
     }
 
-    /// Q-164 through the REAL mlx_lm 0.31.3 handler and prompt cache: a request whose whole prompt
-    /// is a key of the prompt cache (2026-09-27 08:23:23 on 8091: a text completion with
-    /// max_tokens 1 answered one token, so its entry's key was its prompt; the same prompt sent
-    /// again ended both ranks with IndexError in `insert_segments`). Rank 0 answers it 409
-    /// `prompt_fully_cached` on its own queue before sharing it, the rank's log names it, and the
-    /// next request — the same prompt with one more token — is served. NEGATIVE CONTROL: mlx_lm's
-    /// own lookup hands that prompt back with nothing left to read, and mlx_lm's own
-    /// `insert_segments` fails on exactly that.
+    /// Q-164 through the REAL mlx_lm 0.31.3 handler, prompt cache and `insert_segments`: an
+    /// identical request sent twice gets two normal answers. The stand-in generation thread does
+    /// what mlx_lm's `_generate` does with a shared request — the nearest cache entry, the prompt's
+    /// segments trimmed by what it holds, `BatchGenerator.insert_segments` — and after answering
+    /// stores the entry a one-token answer leaves (key = the prompt: the 08:23:23 crash's shape).
+    /// The second, identical request reads only its last token: a plain-KV entry is trimmed by one
+    /// (the rest reused whole), a hybrid entry (an ArraysCache layer: not trimmable) gives way to
+    /// the nearest shorter one. An empty prompt is refused 400 `empty_prompt`, named. NEGATIVE
+    /// CONTROL: mlx_lm's own LRUPromptCache hands the second request back with nothing to read, and
+    /// its `insert_segments` raises the IndexError that ended both ranks.
     #[test]
-    fn a_prompt_the_cache_holds_whole_is_refused_before_any_rank_reads_it() {
+    fn an_identical_request_sent_twice_gets_two_answers() {
         let Some(python) = proven_env(&EnvSpec::tensor(), "GOOSE_TEST_TENSOR_PYTHON") else {
             return;
         };
         let checks = r#"
 from collections import deque
-from mlx_lm.generate import GenerationBatch, PromptProcessingBatch, SequenceStateMachine
+from mlx_lm.models.cache import LRUPromptCache as UpstreamPromptCache
+from mlx_lm.generate import SequenceStateMachine
 
-responses.prompt_cache = server.LRUPromptCache(10)
-PROMPT = "the kickoff notes"
-responses.prompt_cache.insert_cache(responses.model_provider.model_key, [ord(c) for c in PROMPT], [KVCache()])
-served_prompts = []
+KEY = responses.model_provider.model_key
+
+def kv(tokens):
+    layer = KVCache()
+    layer.update_and_fetch(mx.zeros((1, 1, tokens, 4)), mx.zeros((1, 1, tokens, 4)))
+    return layer
+
+def hybrid(tokens):
+    state = ArraysCache(1)
+    state[0] = mx.zeros((1, 4))
+    return [kv(tokens), state]
+
+def insert(generator, prompt, cache, rest):
+    segments = [list(prompt)]
+    n = len(prompt) - len(rest)
+    while n > 0:
+        if n >= len(segments[0]):
+            n -= len(segments.pop(0))
+        else:
+            segments[0] = segments[0][n:]
+            break
+    try:
+        generator.insert_segments(segments=[segments], caches=[cache], all_tokens=[prompt[: len(prompt) - len(rest)]], max_tokens=[8])
+        return "inserted"
+    except IndexError as fatal:
+        return f"IndexError: {fatal}"
+
+def batch():
+    generator = server.BatchGenerator.__new__(server.BatchGenerator)
+    generator.max_tokens, generator.logits_processors, generator._uid_count = 128, [], 0
+    generator._default_state_machine = SequenceStateMachine({}, initial="normal")
+    generator._unprocessed_sequences = deque()
+    generator._make_new_cache = lambda: [KVCache()]
+    return generator
+
+answers = []
+layers = {"kv": lambda n: [kv(n)], "hybrid": hybrid}
 
 def generation_thread():
     while True:
@@ -3867,56 +3903,65 @@ def generation_thread():
         if request is None:
             continue
         rqueue, completion, args = request
-        served_prompts.append(completion.prompt)
+        prompt = [ord(c) for c in completion.prompt]
+        cache, rest = responses.prompt_cache.fetch_nearest_cache(KEY, prompt)
+        answers.append({"prompt": len(prompt), "read": len(rest), "insert": insert(batch(), prompt, cache, rest)})
         rqueue.put(server.GenerationContext(
             has_tool_calling=False, has_thinking=False, tool_parser=None,
-            sequences={(3,): "<|im_end|>"}, prompt=[0] * 8, prompt_cache_count=0,
+            sequences={(3,): "<|im_end|>"}, prompt=prompt, prompt_cache_count=len(prompt) - len(rest),
         ))
         rqueue.put(token("ok", "normal"))
         rqueue.put(token("", None, (3,), "stop"))
         rqueue.put(None)
+        responses.prompt_cache.insert_cache(KEY, prompt, layers[completion.prompt.split(":")[0]](len(prompt)))
 
 threading.Thread(target=generation_thread, daemon=True).start()
-refused = post("/v1/completions", {"model": served, "prompt": PROMPT, "max_tokens": 8})
-extended = post("/v1/completions", {"model": served, "prompt": PROMPT + ".", "max_tokens": 8})
+responses.prompt_cache = server.LRUPromptCache(10)
+# The test launch plans a 2-byte cache; these entries must stay.
+responses.prompt_cache.max_bytes = 1 << 40
+seen = {}
+for kind in ("kv", "hybrid"):
+    prompt = f"{kind}: the kickoff notes"
+    if kind == "hybrid":
+        responses.prompt_cache.insert_cache(KEY, [ord(c) for c in prompt[:8]], hybrid(8))
+    seen[kind] = [post("/v1/completions", {"model": served, "prompt": prompt, "max_tokens": 1}) for _ in range(2)]
+seen["empty"] = post("/v1/completions", {"model": served, "prompt": "", "max_tokens": 1})
 
-cache, rest = responses.prompt_cache.fetch_nearest_cache(responses.model_provider.model_key, [ord(c) for c in PROMPT])
-generator = server.BatchGenerator.__new__(server.BatchGenerator)
-generator.max_tokens, generator.logits_processors, generator._uid_count = 128, [], 0
-generator._default_state_machine = SequenceStateMachine({}, initial="normal")
-generator._unprocessed_sequences = deque()
-try:
-    generator.insert_segments(segments=[[]], caches=[cache], all_tokens=[[ord(c) for c in PROMPT]], max_tokens=[8])
-    upstream = "inserted"
-except IndexError as fatal:
-    upstream = f"IndexError: {fatal}"
-print("GOOSE_TEST " + json.dumps({"refused": refused, "extended": extended, "served": served_prompts,
-    "rest": rest, "upstream": upstream}))
+upstream = UpstreamPromptCache(10)
+prompt = [ord(c) for c in "kv: the kickoff notes"]
+upstream.insert_cache(KEY, prompt, [kv(len(prompt))])
+cache, rest = upstream.fetch_nearest_cache(KEY, prompt)
+print("GOOSE_TEST " + json.dumps({**seen, "answers": answers, "upstream_read": len(rest),
+    "upstream_insert": insert(batch(), prompt, cache, rest)}))
 "#;
-        let (seen, printed) = run_wrapper_checks(&python, checks);
-        assert_eq!(seen["refused"][0], 409, "{seen}");
-        let body: serde_json::Value =
-            serde_json::from_str(seen["refused"][1].as_str().unwrap()).unwrap();
-        assert_eq!(body["error"]["code"], "prompt_fully_cached");
+        let (seen, _) = run_wrapper_checks(&python, checks);
+        for kind in ["kv", "hybrid"] {
+            for reply in seen[kind].as_array().unwrap() {
+                assert_eq!(reply[0], 200, "{kind}: {seen}");
+            }
+        }
+        let kv = "kv: the kickoff notes".len() as u64;
+        let hybrid = "hybrid: the kickoff notes".len() as u64;
+        let answers = seen["answers"].as_array().unwrap();
+        let expect = |i: usize, prompt: u64, read: u64| {
+            assert_eq!(answers[i]["prompt"], prompt, "{seen}");
+            assert_eq!(answers[i]["read"], read, "answer {i}: {seen}");
+            assert_eq!(answers[i]["insert"], "inserted", "{seen}");
+        };
+        expect(0, kv, kv);
+        expect(1, kv, 1);
+        expect(2, hybrid, hybrid - 8);
+        expect(3, hybrid, hybrid - 8);
+        assert_eq!(seen["empty"][0], 400, "{seen}");
         assert!(
-            body["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains("17 tokens"),
-            "{body}"
+            seen["empty"][1].as_str().unwrap().contains("empty_prompt"),
+            "{seen}"
         );
-        assert_eq!(seen["extended"][0], 200, "{seen}");
+        assert_eq!(seen["upstream_read"], 0);
         assert_eq!(
-            seen["served"],
-            serde_json::json!(["the kickoff notes."]),
-            "only the extended prompt reached the generation"
+            seen["upstream_insert"],
+            "IndexError: list index out of range"
         );
-        assert!(
-            printed.contains("GOOSE_RANK_PROMPT_FULLY_CACHED {\"prompt_tokens\": 17}"),
-            "{printed}"
-        );
-        assert_eq!(seen["rest"], serde_json::json!([]));
-        assert_eq!(seen["upstream"], "IndexError: list index out of range");
     }
 
     /// Q-146 through the REAL mlx_lm 0.31.3 handler: while a streamed chat answer writes a tool
@@ -5096,7 +5141,9 @@ print("ok")
              class ArraysCache:\n\
              \x20   def advance(self, N): pass\n\
              class BatchKVCache:\n\
-             \x20   step = 256\n",
+             \x20   step = 256\n\
+             def can_trim_prompt_cache(cache): return False\n\
+             def trim_prompt_cache(cache, num_tokens): return []\n",
         )
         .unwrap();
         std::fs::create_dir_all(site.join("mlx_lm/tool_parsers")).unwrap();
