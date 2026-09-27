@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "PIP(Picture-in-Picture)에서 재생 중"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "등록할 때 {max}자에서 잘려 그대로 저장할 수 없습니다. 전체 내용을 다시 요청하세요."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "닫기"
   },

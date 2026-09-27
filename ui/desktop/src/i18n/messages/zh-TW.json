@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "正在子母畫面中播放"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "提交時在 {max} 個字元處被截斷，因此無法原樣儲存。請重新取得完整內容。"
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "關閉"
   },

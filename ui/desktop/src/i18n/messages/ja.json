@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "ピクチャ・イン・ピクチャで再生中"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "登録時に {max} 文字で切れているため、このままでは保存できません。全文をもう一度依頼してください。"
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "閉じる"
   },

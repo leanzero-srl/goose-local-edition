@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Bermain dalam Gambar-dalam-Gambar"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Terpotong pada {max} aksara semasa difailkan, jadi tidak boleh disimpan begitu sahaja. Minta semula bahagian penuhnya."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Tutup"
   },

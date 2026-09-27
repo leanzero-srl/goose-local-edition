@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "正在以画中画播放"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "提交时在 {max} 个字符处被截断，因此无法原样保存。请重新获取完整内容。"
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "关闭"
   },

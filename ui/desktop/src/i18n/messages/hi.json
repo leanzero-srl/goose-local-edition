@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "पिक्चर-इन-पिक्चर में बजाना"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "दर्ज करते समय {max} अक्षरों पर कट गया, इसलिए इसे ऐसे सहेजा नहीं जा सकता। पूरा अंश फिर से माँगें।"
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "हटाएँ"
   },

@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Воспроизведение в режиме «картинка в картинке»"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Обрезано на {max} символах при сохранении предложения, поэтому сохранить его так нельзя. Запросите полный текст снова."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Скрыть"
   },

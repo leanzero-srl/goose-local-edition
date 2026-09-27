@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Đang phát ở chế độ Hình-trong-hình"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Bị cắt ở {max} ký tự khi được ghi lại, nên không thể lưu nguyên như vậy. Hãy yêu cầu lại toàn bộ nội dung."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Bỏ qua"
   },

@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Lecture en Picture-in-Picture"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Coupé à {max} caractères lors de son dépôt, il ne peut donc pas être enregistré tel quel. Redemande le texte complet."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Ignorer"
   },

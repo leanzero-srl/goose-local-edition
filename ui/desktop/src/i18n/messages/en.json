@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Playing in Picture-in-Picture"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Cut off at {max} characters when it was filed, so it cannot be saved as it is. Ask again for the whole piece."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Dismiss"
   },

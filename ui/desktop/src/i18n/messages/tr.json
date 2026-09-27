@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Resim İçinde Resim'de Oynatma"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Kaydedilirken {max} karakterde kesildi, bu yüzden bu haliyle kaydedilemez. Tam metni yeniden isteyin."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Kapat"
   },

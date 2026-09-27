@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Memutar dalam Picture-in-Picture"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Terpotong di {max} karakter saat diajukan, jadi tidak bisa disimpan apa adanya. Minta lagi bagian lengkapnya."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Tutup"
   },

@@ -143,3 +143,81 @@ describe('MemoryProposalCards — where a card came from (Q-82)', () => {
     expect(screen.queryByTestId('memory-proposal-origin')).toBeNull();
   });
 });
+
+/**
+ * Q-172, critic round 2 (3.0.57): the Sep 25 knowledge card — stored before Q-93, cut at 350
+ * characters ("…by exception only". Bi") — sat under every chat of the project for two days, and
+ * under the 11:52 Sep 27 question it read as the reply.
+ */
+describe('MemoryProposalCards — a stored stump and a days-old project card (Q-172)', () => {
+  const SEP25 = Date.UTC(2026, 8, 25, 19, 4) / 1000;
+  const SEP27_QUESTION = Date.UTC(2026, 8, 27, 8, 52) / 1000;
+  const stumpText =
+    (
+      'Atlassian Data Center End of Life timeline (official): EOL = 28 Mar 2029. ' + 'x'.repeat(400)
+    ).slice(0, 270) +
+    'es continue through 28 Mar 2029. Extensions past EOL are "by exception only". Bi';
+  const stored = proposal({
+    id: 'p-1790363044-1',
+    key: 'wd-fa718b6d3b269f16',
+    kind: 'knowledge',
+    polarity: undefined,
+    text: stumpText,
+    why: 'grounded by a lookup this turn',
+    category: 'atlassian-migration',
+    sources: ['https://www.atlassian.com/licensing/data-center-end-of-life'],
+    createdAt: SEP25,
+  });
+  const mountAt = (lastQuestionAt: number | null, sessionId = 'sess-1') =>
+    render(
+      <IntlTestWrapper>
+        <MemoryProposalCards
+          sessionId={sessionId}
+          chatState={ChatState.Idle}
+          lastQuestionAt={lastQuestionAt}
+        />
+      </IntlTestWrapper>
+    );
+
+  it('the fixture is the stored card’s shape: 350 characters, ending mid-word', () => {
+    expect(stumpText).toHaveLength(350);
+    expect(stumpText.endsWith('"by exception only". Bi')).toBe(true);
+  });
+
+  it('a project card older than the chat’s latest question is not pinned under it', async () => {
+    list.mockResolvedValue([{ ...stored, text: 'EOL = 28 Mar 2029.' }]);
+    const { container } = mountAt(SEP27_QUESTION);
+    await waitFor(() => expect(list).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(container.querySelector('[data-testid="memory-proposal-card"]')).toBeNull();
+  });
+
+  it('a project card filed after the question (this turn’s lookup) still shows, with its origin', async () => {
+    list.mockResolvedValue([
+      { ...stored, text: 'EOL = 28 Mar 2029.', createdAt: SEP27_QUESTION + 60 },
+    ]);
+    mountAt(SEP27_QUESTION);
+    await screen.findByTestId('memory-proposal-card');
+    expect(screen.getByTestId('memory-proposal-origin')).toBeTruthy();
+  });
+
+  it('a clamped stump is expired, never offered for Save, and its Dismiss declines it in the store', async () => {
+    list.mockResolvedValue([{ ...stored, key: 'sess-1' }]);
+    mountAt(SEP27_QUESTION);
+    const card = await screen.findByTestId('memory-proposal-card');
+    expect(card.textContent).toContain('Expired — not saved');
+    expect(screen.getByTestId('memory-proposal-cut').textContent).toContain('Cut off at 350');
+    expect(screen.queryByTestId('memory-proposal-save')).toBeNull();
+    expect(screen.queryByTestId('memory-proposal-edit')).toBeNull();
+    fireEvent.click(screen.getByTestId('memory-proposal-dismiss'));
+    await waitFor(() =>
+      expect(answer).toHaveBeenCalledWith(
+        'sess-1',
+        expect.objectContaining({ id: 'p-1790363044-1' }),
+        'decline',
+        undefined
+      )
+    );
+    await waitFor(() => expect(screen.queryByTestId('memory-proposal-card')).toBeNull());
+  });
+});

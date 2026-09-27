@@ -4,7 +4,7 @@ import { defineMessages, useIntl } from '../../i18n';
 import type { MemoryProposalDto } from '../../acp/proposals';
 import { ChatState } from '../../types/chatState';
 import { Button, FOCUS, MOTION, RADIUS, SURFACE, TYPE, cx } from '../lz';
-import { useMemoryProposals } from './useMemoryProposals';
+import { PROPOSAL_CARD_MAX_CHARS, isClampedStump, useMemoryProposals } from './useMemoryProposals';
 
 const i18n = defineMessages({
   saveMemory: { id: 'memoryProposal.saveMemory', defaultMessage: 'Save this as a memory?' },
@@ -20,6 +20,11 @@ const i18n = defineMessages({
   no: { id: 'memoryProposal.no', defaultMessage: 'No' },
   edit: { id: 'memoryProposal.edit', defaultMessage: 'Edit' },
   expired: { id: 'memoryProposal.expired', defaultMessage: 'Expired — not saved' },
+  cut: {
+    id: 'memoryProposal.cut',
+    defaultMessage:
+      'Cut off at {max} characters when it was filed, so it cannot be saved as it is. Ask again for the whole piece.',
+  },
   dismiss: { id: 'memoryProposal.dismiss', defaultMessage: 'Dismiss' },
   scope: { id: 'memoryProposal.scope', defaultMessage: '{category} · {scope}' },
   scopeGlobal: { id: 'memoryProposal.scopeGlobal', defaultMessage: 'global' },
@@ -59,7 +64,8 @@ export function ProposalCard({
   const intl = useIntl();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(proposal.text);
-  const expired = proposal.state === 'expired';
+  const stump = isClampedStump(proposal);
+  const expired = proposal.state === 'expired' || stump;
   const knowledge = proposal.kind === 'knowledge';
   const polarity = proposal.polarity ?? null;
 
@@ -120,7 +126,7 @@ export function ProposalCard({
             MOTION
           )}
           rows={3}
-          maxLength={350}
+          maxLength={PROPOSAL_CARD_MAX_CHARS}
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
@@ -133,6 +139,11 @@ export function ProposalCard({
         </p>
       )}
 
+      {stump && (
+        <p data-testid="memory-proposal-cut" className={cx(TYPE.meta, 'mt-1 font-lz-semibold')}>
+          {intl.formatMessage(i18n.cut, { max: PROPOSAL_CARD_MAX_CHARS })}
+        </p>
+      )}
       {proposal.why && (
         <p className={cx(TYPE.meta, 'mt-1')}>
           {intl.formatMessage(i18n.why, { why: proposal.why })}
@@ -150,7 +161,14 @@ export function ProposalCard({
             <span className={cx(TYPE.meta, 'font-lz-semibold')}>
               {intl.formatMessage(i18n.expired)}
             </span>
-            <Button variant="ghost" size="sm" className="ml-auto" onClick={onDismiss}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="ml-auto"
+              disabled={busy}
+              onClick={onDismiss}
+              data-testid="memory-proposal-dismiss"
+            >
               {intl.formatMessage(i18n.dismiss)}
             </Button>
           </>
@@ -195,14 +213,22 @@ export function ProposalCard({
 interface CardsProps {
   sessionId: string | undefined;
   chatState: ChatState;
+  /** When the chat's latest question was asked (seconds); null = none yet. */
+  lastQuestionAt?: number | null;
   className?: string;
 }
 
 /** Under the last message: every open proposal for the session, newest last. */
-export default function MemoryProposalCards({ sessionId, chatState, className }: CardsProps) {
+export default function MemoryProposalCards({
+  sessionId,
+  chatState,
+  lastQuestionAt = null,
+  className,
+}: CardsProps) {
   const { proposals, busyId, error, answer, dismissExpired } = useMemoryProposals(
     sessionId,
-    chatState
+    chatState,
+    lastQuestionAt
   );
   if (proposals.length === 0) return null;
   return (
@@ -214,7 +240,8 @@ export default function MemoryProposalCards({ sessionId, chatState, className }:
           fromProject={p.key !== sessionId}
           busy={busyId === p.id}
           onAnswer={(decision, text) => void answer(p, decision, text)}
-          onDismiss={() => dismissExpired(p.id)}
+          // A stump is still open in the store: its Dismiss declines it there, so it never returns.
+          onDismiss={() => (isClampedStump(p) ? void answer(p, 'decline') : dismissExpired(p.id))}
         />
       ))}
       {error && <p className={cx(TYPE.meta, 'text-lz-err')}>{error}</p>}

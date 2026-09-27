@@ -2861,6 +2861,9 @@
   "mcpAppRenderer.playingInPip": {
     "defaultMessage": "Reproduciendo en imagen en imagen"
   },
+  "memoryProposal.cut": {
+    "defaultMessage": "Se cortó a los {max} caracteres al archivarse, así que no se puede guardar tal cual. Pide de nuevo el texto completo."
+  },
   "memoryProposal.dismiss": {
     "defaultMessage": "Descartar"
   },
