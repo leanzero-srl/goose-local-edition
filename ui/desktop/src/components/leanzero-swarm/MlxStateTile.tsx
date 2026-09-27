@@ -43,11 +43,10 @@ import { hostingPhase, nodePhase, remotePhase, runPhase, singlePhase } from './m
 import { distributedStateWord } from './mlxModeLabel';
 import { engineWayOf, measuredRunsOf, type MeasuredRuns } from './measuredRuns';
 import type { MlxClient, MlxServing } from '../../utils/mlxServing';
+import { engineFigures, type EngineFigure } from './engineFigures';
 import {
   formatElapsed,
   formatRate,
-  liveDecodeTps,
-  measuredPrefillTps,
   mlxActivity,
   sparklinePoints,
   type MlxLiveRead,
@@ -699,68 +698,52 @@ function figures(
   stats: MlxLiveStats,
   measured: MeasuredRuns
 ): { hero: Figure | null; second: Figure | null } {
-  const activity = mlxActivity(stats);
-  const rate = (tps: number) => formatRate(tps, intl.locale);
-  const prefillNow = measuredPrefillTps(stats);
-  const { writing, reading } = measuredOf(measured);
-  const readFigure: Figure | null =
-    prefillNow > 0
-      ? {
-          testId: 'mlx-live-pps',
-          value: rate(prefillNow),
-          label: intl.formatMessage(i18n.readRate),
-        }
-      : reading
-        ? {
-            testId: 'mlx-live-pps',
-            value: rate(reading.median),
-            label: intl.formatMessage(i18n.readRateMedian, { count: reading.runs }),
-          }
-        : null;
-  const lastWrite: Figure | null = writing
-    ? {
-        testId: 'mlx-live-tps',
-        value: rate(writing.median),
-        label: intl.formatMessage(i18n.writeRateMedian, { count: writing.runs }),
-      }
-    : null;
+  const facts = engineFigures(stats, measuredOf(measured));
+  return { hero: figureOf(intl, facts.hero), second: figureOf(intl, facts.second) };
+}
 
-  if (activity === 'generating') {
-    return {
-      hero: {
+/** A figure fact (engineFigures.ts) in the tile's words — the engine glance says the same facts. */
+function figureOf(intl: IntlShape, fact: EngineFigure | null): Figure | null {
+  if (fact == null) return null;
+  const rate = (tps: number) => formatRate(tps, intl.locale);
+  switch (fact.kind) {
+    case 'writing':
+      return {
         testId: 'mlx-live-tps',
-        value: rate(liveDecodeTps(stats)),
+        value: rate(fact.tps),
         label: intl.formatMessage(i18n.writeRate),
-      },
-      second: readFigure,
-    };
-  }
-  if (activity === 'prefill') {
-    const reading = stats.requests
-      .filter((r) => r.status !== 'waiting' && r.phase === 'prefill')
-      .sort((a, b) => (b.elapsedS ?? 0) - (a.elapsedS ?? 0))[0];
-    return {
-      hero: {
+      };
+    case 'writingMedian':
+      return {
+        testId: 'mlx-live-tps',
+        value: rate(fact.median),
+        label: intl.formatMessage(i18n.writeRateMedian, { count: fact.runs }),
+      };
+    case 'prompt':
+      return {
         testId: 'mlx-live-prompt',
-        value: reading?.promptTokens != null ? compact(intl, reading.promptTokens) : '—',
-        label: intl.formatMessage(i18n.promptSize, {
-          elapsed: formatElapsed(reading?.elapsedS ?? 0),
-        }),
-      },
-      second: readFigure,
-    };
-  }
-  if (activity === 'queued') {
-    return {
-      hero: {
+        value: fact.tokens != null ? compact(intl, fact.tokens) : '—',
+        label: intl.formatMessage(i18n.promptSize, { elapsed: formatElapsed(fact.elapsedS) }),
+      };
+    case 'queued':
+      return {
         testId: 'mlx-live-queued',
-        value: intl.formatNumber(stats.requests.length),
-        label: intl.formatMessage(i18n.waiting, { count: stats.requests.length }),
-      },
-      second: readFigure,
-    };
+        value: intl.formatNumber(fact.count),
+        label: intl.formatMessage(i18n.waiting, { count: fact.count }),
+      };
+    case 'reading':
+      return {
+        testId: 'mlx-live-pps',
+        value: rate(fact.tps),
+        label: intl.formatMessage(i18n.readRate),
+      };
+    case 'readingMedian':
+      return {
+        testId: 'mlx-live-pps',
+        value: rate(fact.median),
+        label: intl.formatMessage(i18n.readRateMedian, { count: fact.runs }),
+      };
   }
-  return { hero: lastWrite, second: readFigure };
 }
 
 function LiveReadout({

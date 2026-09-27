@@ -1625,6 +1625,177 @@
   "elicitationRequest.waitingForResponse": {
     "defaultMessage": "Yanıtınızı bekliyorum ({timeRemaining} kaldı)"
   },
+  "engineGlance.chat": {
+    "defaultMessage": "Sohbet · {name}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Motor yeniden sakinleşene kadar gizle"
+  },
+  "engineGlance.collapse": {
+    "defaultMessage": "Hapa küçült"
+  },
+  "engineGlance.expand": {
+    "defaultMessage": "Kartın tamamını göster"
+  },
+  "engineGlance.groupLabel": {
+    "defaultMessage": "Motor: {stage}"
+  },
+  "engineGlance.inflight": {
+    "defaultMessage": "{count, plural, other {# istek işleniyor}}"
+  },
+  "engineGlance.less": {
+    "defaultMessage": "Hızları ve belleği gizle"
+  },
+  "engineGlance.more": {
+    "defaultMessage": "Hızları ve belleği göster"
+  },
+  "engineGlance.needsYou": {
+    "defaultMessage": "{count, plural, other {# sizi bekliyor}}"
+  },
+  "engineGlance.nodeBar": {
+    "defaultMessage": "{node} üzerindeki bellek, bütçesine göre"
+  },
+  "engineGlance.nodeNoPeak": {
+    "defaultMessage": "henüz tepe yok"
+  },
+  "engineGlance.nodePeak": {
+    "defaultMessage": "tepe {peak} / {budget} GB"
+  },
+  "engineGlance.nodePeakOnly": {
+    "defaultMessage": "tepe {peak} GB"
+  },
+  "engineGlance.openChat": {
+    "defaultMessage": "Hizmet verdiği sohbeti aç — {name}"
+  },
+  "engineGlance.openEngine": {
+    "defaultMessage": "Motoru aç"
+  },
+  "engineGlance.openQuestion": {
+    "defaultMessage": "{name} aç — sordu: {question}"
+  },
+  "engineGlance.others": {
+    "defaultMessage": "{count, plural, other {+# diğer istemci}}"
+  },
+  "engineGlance.pillPrompt": {
+    "defaultMessage": "{tokens} · {elapsed}"
+  },
+  "engineGlance.pillQueued": {
+    "defaultMessage": "{count} bekliyor"
+  },
+  "engineGlance.pillRate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "engineGlance.progressLoad": {
+    "defaultMessage": "Şimdiye kadar yüklenen ağırlıklar"
+  },
+  "engineGlance.progressRead": {
+    "defaultMessage": "Şimdiye kadar okunan istem"
+  },
+  "engineGlance.promptSize": {
+    "defaultMessage": "istem token’ı, {elapsed} süredir okunuyor"
+  },
+  "engineGlance.queuedCount": {
+    "defaultMessage": "{count, plural, other {istek bekliyor}}"
+  },
+  "engineGlance.readMedian": {
+    "defaultMessage": "{count, plural, one {tok/s okuma, # istem} other {tok/s okuma, # istemin medyanı}}"
+  },
+  "engineGlance.readRange": {
+    "defaultMessage": "Okuma {low}–{high} tok/s, çalıştırmaların orta yarısı"
+  },
+  "engineGlance.readRate": {
+    "defaultMessage": "bu istemi okurken tok/s"
+  },
+  "engineGlance.sessionsRunning": {
+    "defaultMessage": "{count, plural, other {# oturum çalışıyor}}"
+  },
+  "engineGlance.stage.away": {
+    "defaultMessage": "Mac yok"
+  },
+  "engineGlance.stage.failed": {
+    "defaultMessage": "Başarısız"
+  },
+  "engineGlance.stage.generating": {
+    "defaultMessage": "Yazıyor"
+  },
+  "engineGlance.stage.held": {
+    "defaultMessage": "Bekletiliyor · bellek düşük"
+  },
+  "engineGlance.stage.hosting": {
+    "defaultMessage": "Bir rank sunuyor"
+  },
+  "engineGlance.stage.idle": {
+    "defaultMessage": "Boşta"
+  },
+  "engineGlance.stage.loading": {
+    "defaultMessage": "Yükleniyor"
+  },
+  "engineGlance.stage.notLoaded": {
+    "defaultMessage": "Model yüklenmedi"
+  },
+  "engineGlance.stage.off": {
+    "defaultMessage": "Kapalı"
+  },
+  "engineGlance.stage.prefill": {
+    "defaultMessage": "İstemi okuyor"
+  },
+  "engineGlance.stage.queued": {
+    "defaultMessage": "Kuyrukta"
+  },
+  "engineGlance.stage.reconnecting": {
+    "defaultMessage": "Yeniden bağlanıyor"
+  },
+  "engineGlance.stage.running": {
+    "defaultMessage": "Çalışıyor"
+  },
+  "engineGlance.stage.serving": {
+    "defaultMessage": "Hizmet veriyor"
+  },
+  "engineGlance.stage.stale": {
+    "defaultMessage": "Yenilenmedi"
+  },
+  "engineGlance.untitled": {
+    "defaultMessage": "Adsız oturum"
+  },
+  "engineGlance.waiting": {
+    "defaultMessage": "{count} bekliyor"
+  },
+  "engineGlance.writeMedian": {
+    "defaultMessage": "{count, plural, one {tok/s yazma, # çalıştırma} other {tok/s yazma, # çalıştırmanın medyanı}}"
+  },
+  "engineGlance.writeRange": {
+    "defaultMessage": "Yazma {low}–{high} tok/s, çalıştırmaların orta yarısı"
+  },
+  "engineGlance.writeRate": {
+    "defaultMessage": "tok/s yazma"
+  },
+  "engineGlanceSettings.description": {
+    "defaultMessage": "Motorun canlı kartının küçük hali: neyi okuyor ya da yazıyor, ne hızda ve hangi sohbete hizmet ediyor. Motoru açmak için tıklayın."
+  },
+  "engineGlanceSettings.desktop": {
+    "defaultMessage": "Masaüstünde yüzen"
+  },
+  "engineGlanceSettings.desktop.away": {
+    "defaultMessage": "goose arka plandayken"
+  },
+  "engineGlanceSettings.desktop.busy": {
+    "defaultMessage": "Motor her çalıştığında"
+  },
+  "engineGlanceSettings.desktop.off": {
+    "defaultMessage": "Kapalı"
+  },
+  "engineGlanceSettings.desktopDesc": {
+    "defaultMessage": "Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede duran küçük bir pencere. Odağı asla almaz; kapatınca motor sakinleşene kadar gizlenir."
+  },
+  "engineGlanceSettings.inApp": {
+    "defaultMessage": "Kenar çubuğunda"
+  },
+  "engineGlanceSettings.inAppDesc": {
+    "defaultMessage": "Oturumlarınızın altındaki boş alanda; motor çalışırken ve kenar çubuğunda yer yokken pencerenin üzerinde yüzer."
+  },
+  "engineGlanceSettings.title": {
+    "defaultMessage": "Bir bakışta motor"
+  },
   "envVarsSection.add": {
     "defaultMessage": "Ekle"
   },

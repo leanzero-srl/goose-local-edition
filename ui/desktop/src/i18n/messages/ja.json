@@ -1625,6 +1625,177 @@
   "elicitationRequest.waitingForResponse": {
     "defaultMessage": "あなたの応答を待っています（残り{timeRemaining}）"
   },
+  "engineGlance.chat": {
+    "defaultMessage": "チャット · {name}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "エンジンが落ち着くまで隠す"
+  },
+  "engineGlance.collapse": {
+    "defaultMessage": "ピルに縮小"
+  },
+  "engineGlance.expand": {
+    "defaultMessage": "カード全体を表示"
+  },
+  "engineGlance.groupLabel": {
+    "defaultMessage": "エンジン: {stage}"
+  },
+  "engineGlance.inflight": {
+    "defaultMessage": "{count, plural, other {# 件のリクエストを処理中}}"
+  },
+  "engineGlance.less": {
+    "defaultMessage": "レートとメモリを隠す"
+  },
+  "engineGlance.more": {
+    "defaultMessage": "レートとメモリを表示"
+  },
+  "engineGlance.needsYou": {
+    "defaultMessage": "{count, plural, other {# 件があなたを待っています}}"
+  },
+  "engineGlance.nodeBar": {
+    "defaultMessage": "{node} のメモリ（予算比）"
+  },
+  "engineGlance.nodeNoPeak": {
+    "defaultMessage": "まだピークなし"
+  },
+  "engineGlance.nodePeak": {
+    "defaultMessage": "ピーク {peak} / {budget} GB"
+  },
+  "engineGlance.nodePeakOnly": {
+    "defaultMessage": "ピーク {peak} GB"
+  },
+  "engineGlance.openChat": {
+    "defaultMessage": "応答中のチャットを開く — {name}"
+  },
+  "engineGlance.openEngine": {
+    "defaultMessage": "エンジンを開く"
+  },
+  "engineGlance.openQuestion": {
+    "defaultMessage": "{name} を開く — 質問: {question}"
+  },
+  "engineGlance.others": {
+    "defaultMessage": "{count, plural, other {ほか # クライアント}}"
+  },
+  "engineGlance.pillPrompt": {
+    "defaultMessage": "{tokens} · {elapsed}"
+  },
+  "engineGlance.pillQueued": {
+    "defaultMessage": "{count} 件待機中"
+  },
+  "engineGlance.pillRate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "engineGlance.progressLoad": {
+    "defaultMessage": "これまでに読み込んだ重み"
+  },
+  "engineGlance.progressRead": {
+    "defaultMessage": "これまでに読んだプロンプト"
+  },
+  "engineGlance.promptSize": {
+    "defaultMessage": "プロンプトトークン、{elapsed} 読み込み中"
+  },
+  "engineGlance.queuedCount": {
+    "defaultMessage": "{count, plural, other {件のリクエストが待機中}}"
+  },
+  "engineGlance.readMedian": {
+    "defaultMessage": "{count, plural, other {tok/s 読み込み、# プロンプトの中央値}}"
+  },
+  "engineGlance.readRange": {
+    "defaultMessage": "読み込み {low}–{high} tok/s、実行の中央半分"
+  },
+  "engineGlance.readRate": {
+    "defaultMessage": "このプロンプトの読み込み tok/s"
+  },
+  "engineGlance.sessionsRunning": {
+    "defaultMessage": "{count, plural, other {# セッション実行中}}"
+  },
+  "engineGlance.stage.away": {
+    "defaultMessage": "Mac 不在"
+  },
+  "engineGlance.stage.failed": {
+    "defaultMessage": "失敗"
+  },
+  "engineGlance.stage.generating": {
+    "defaultMessage": "書き込み中"
+  },
+  "engineGlance.stage.held": {
+    "defaultMessage": "保留 · メモリ不足"
+  },
+  "engineGlance.stage.hosting": {
+    "defaultMessage": "ランクを提供中"
+  },
+  "engineGlance.stage.idle": {
+    "defaultMessage": "アイドル"
+  },
+  "engineGlance.stage.loading": {
+    "defaultMessage": "読み込み中"
+  },
+  "engineGlance.stage.notLoaded": {
+    "defaultMessage": "モデル未読み込み"
+  },
+  "engineGlance.stage.off": {
+    "defaultMessage": "オフ"
+  },
+  "engineGlance.stage.prefill": {
+    "defaultMessage": "プロンプトを読み込み中"
+  },
+  "engineGlance.stage.queued": {
+    "defaultMessage": "待機中"
+  },
+  "engineGlance.stage.reconnecting": {
+    "defaultMessage": "再接続中"
+  },
+  "engineGlance.stage.running": {
+    "defaultMessage": "実行中"
+  },
+  "engineGlance.stage.serving": {
+    "defaultMessage": "提供中"
+  },
+  "engineGlance.stage.stale": {
+    "defaultMessage": "未更新"
+  },
+  "engineGlance.untitled": {
+    "defaultMessage": "無題のセッション"
+  },
+  "engineGlance.waiting": {
+    "defaultMessage": "{count} 件待機中"
+  },
+  "engineGlance.writeMedian": {
+    "defaultMessage": "{count, plural, other {tok/s 書き込み、# 回の中央値}}"
+  },
+  "engineGlance.writeRange": {
+    "defaultMessage": "書き込み {low}–{high} tok/s、実行の中央半分"
+  },
+  "engineGlance.writeRate": {
+    "defaultMessage": "tok/s 書き込み"
+  },
+  "engineGlanceSettings.description": {
+    "defaultMessage": "エンジンのライブカードの小型版：何を読み書きしているか、速度、どのチャットに応答しているか。クリックでエンジンを開きます。"
+  },
+  "engineGlanceSettings.desktop": {
+    "defaultMessage": "デスクトップに浮かべる"
+  },
+  "engineGlanceSettings.desktop.away": {
+    "defaultMessage": "goose がバックグラウンドのとき"
+  },
+  "engineGlanceSettings.desktop.busy": {
+    "defaultMessage": "エンジンが動いているときは常に"
+  },
+  "engineGlanceSettings.desktop.off": {
+    "defaultMessage": "オフ"
+  },
+  "engineGlanceSettings.desktopDesc": {
+    "defaultMessage": "他のアプリの上に浮かぶ小さなウィンドウで、ドラッグした隅に留まります。フォーカスを奪わず、閉じるとエンジンが落ち着くまで隠れます。"
+  },
+  "engineGlanceSettings.inApp": {
+    "defaultMessage": "サイドバー内"
+  },
+  "engineGlanceSettings.inAppDesc": {
+    "defaultMessage": "セッション一覧の下の空きスペースに表示。エンジンが動いていてサイドバーに余裕がないときはウィンドウ上に浮かびます。"
+  },
+  "engineGlanceSettings.title": {
+    "defaultMessage": "エンジンをひと目で"
+  },
   "envVarsSection.add": {
     "defaultMessage": "追加"
   },

@@ -15,6 +15,8 @@ import { cn } from '../../utils';
 import { RADIUS, SURFACE, cx } from '../lz/tokens';
 import { UserInput } from '../../types/message';
 import SessionActivityIndicator from '../sessionActivity/SessionActivityIndicator';
+import { EngineGlanceFloat } from '../engineGlance/EngineGlanceInApp';
+import { useReportGlanceSessions } from '../engineGlance/glanceStore';
 
 const i18n = defineMessages({
   openNavigation: {
@@ -59,6 +61,8 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
 
   const { isNavExpanded, setIsNavExpanded, navWidth, setNavWidth } = useNavigationContext();
   const [dragging, setDragging] = useState(false);
+  // The desktop glance says what this window's sessions are doing (running / needs you).
+  useReportGlanceSessions();
 
   // The sidebar's right edge is a drag handle (ChatGPT's sidebar resizes the same way): pointer
   // capture keeps the drag alive off the handle; the width is clamped and remembered by the context.
@@ -154,6 +158,9 @@ const AppLayoutContent: React.FC<AppLayoutContentProps> = ({ activeSessions }) =
         <div className="relative flex-1 overflow-hidden min-h-0">
           <RouteFlight />
           <Outlet />
+          {/* The engine glance over the content while something is live and the sidebar has no
+              room for it (docked there otherwise). */}
+          <EngineGlanceFloat navExpanded={isNavExpanded} />
           {/* Always render ChatSessionsContainer to keep SSE connections alive.
               When navigating away from /pair, hide it with CSS */}
           <div className={isOnPairRoute ? 'contents' : 'hidden'}>

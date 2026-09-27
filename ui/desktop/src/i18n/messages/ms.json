@@ -1625,6 +1625,177 @@
   "elicitationRequest.waitingForResponse": {
     "defaultMessage": "Menunggu respons anda ({timeRemaining} lagi)"
   },
+  "engineGlance.chat": {
+    "defaultMessage": "Sembang · {name}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Sembunyikan sehingga enjin tenang semula"
+  },
+  "engineGlance.collapse": {
+    "defaultMessage": "Kecilkan menjadi pil"
+  },
+  "engineGlance.expand": {
+    "defaultMessage": "Tunjukkan kad penuh"
+  },
+  "engineGlance.groupLabel": {
+    "defaultMessage": "Enjin: {stage}"
+  },
+  "engineGlance.inflight": {
+    "defaultMessage": "{count, plural, other {# permintaan sedang berjalan}}"
+  },
+  "engineGlance.less": {
+    "defaultMessage": "Sembunyikan kadar dan memori"
+  },
+  "engineGlance.more": {
+    "defaultMessage": "Tunjukkan kadar dan memori"
+  },
+  "engineGlance.needsYou": {
+    "defaultMessage": "{count, plural, other {# memerlukan anda}}"
+  },
+  "engineGlance.nodeBar": {
+    "defaultMessage": "Memori pada {node} berbanding bajetnya"
+  },
+  "engineGlance.nodeNoPeak": {
+    "defaultMessage": "belum ada puncak"
+  },
+  "engineGlance.nodePeak": {
+    "defaultMessage": "puncak {peak} daripada {budget} GB"
+  },
+  "engineGlance.nodePeakOnly": {
+    "defaultMessage": "puncak {peak} GB"
+  },
+  "engineGlance.openChat": {
+    "defaultMessage": "Buka sembang yang dilayan — {name}"
+  },
+  "engineGlance.openEngine": {
+    "defaultMessage": "Buka Enjin"
+  },
+  "engineGlance.openQuestion": {
+    "defaultMessage": "Buka {name} — ia bertanya: {question}"
+  },
+  "engineGlance.others": {
+    "defaultMessage": "{count, plural, other {+# klien lain}}"
+  },
+  "engineGlance.pillPrompt": {
+    "defaultMessage": "{tokens} · {elapsed}"
+  },
+  "engineGlance.pillQueued": {
+    "defaultMessage": "{count} menunggu"
+  },
+  "engineGlance.pillRate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "engineGlance.progressLoad": {
+    "defaultMessage": "Pemberat dimuatkan setakat ini"
+  },
+  "engineGlance.progressRead": {
+    "defaultMessage": "Prompt dibaca setakat ini"
+  },
+  "engineGlance.promptSize": {
+    "defaultMessage": "token prompt, membaca selama {elapsed}"
+  },
+  "engineGlance.queuedCount": {
+    "defaultMessage": "{count, plural, other {permintaan menunggu}}"
+  },
+  "engineGlance.readMedian": {
+    "defaultMessage": "{count, plural, one {tok/s membaca, # prompt} other {tok/s membaca, median # prompt}}"
+  },
+  "engineGlance.readRange": {
+    "defaultMessage": "Membaca {low}–{high} tok/s, separuh tengah larian"
+  },
+  "engineGlance.readRate": {
+    "defaultMessage": "tok/s membaca prompt ini"
+  },
+  "engineGlance.sessionsRunning": {
+    "defaultMessage": "{count, plural, other {# sesi berjalan}}"
+  },
+  "engineGlance.stage.away": {
+    "defaultMessage": "Mac tiada"
+  },
+  "engineGlance.stage.failed": {
+    "defaultMessage": "Gagal"
+  },
+  "engineGlance.stage.generating": {
+    "defaultMessage": "Menulis"
+  },
+  "engineGlance.stage.held": {
+    "defaultMessage": "Ditahan · memori rendah"
+  },
+  "engineGlance.stage.hosting": {
+    "defaultMessage": "Melayan satu rank"
+  },
+  "engineGlance.stage.idle": {
+    "defaultMessage": "Terbiar"
+  },
+  "engineGlance.stage.loading": {
+    "defaultMessage": "Memuatkan"
+  },
+  "engineGlance.stage.notLoaded": {
+    "defaultMessage": "Tiada model dimuatkan"
+  },
+  "engineGlance.stage.off": {
+    "defaultMessage": "Mati"
+  },
+  "engineGlance.stage.prefill": {
+    "defaultMessage": "Membaca prompt"
+  },
+  "engineGlance.stage.queued": {
+    "defaultMessage": "Beratur"
+  },
+  "engineGlance.stage.reconnecting": {
+    "defaultMessage": "Menyambung semula"
+  },
+  "engineGlance.stage.running": {
+    "defaultMessage": "Berjalan"
+  },
+  "engineGlance.stage.serving": {
+    "defaultMessage": "Melayan"
+  },
+  "engineGlance.stage.stale": {
+    "defaultMessage": "Tidak dikemas kini"
+  },
+  "engineGlance.untitled": {
+    "defaultMessage": "Sesi tanpa tajuk"
+  },
+  "engineGlance.waiting": {
+    "defaultMessage": "{count} menunggu"
+  },
+  "engineGlance.writeMedian": {
+    "defaultMessage": "{count, plural, one {tok/s menulis, # larian} other {tok/s menulis, median # larian}}"
+  },
+  "engineGlance.writeRange": {
+    "defaultMessage": "Menulis {low}–{high} tok/s, separuh tengah larian"
+  },
+  "engineGlance.writeRate": {
+    "defaultMessage": "tok/s menulis"
+  },
+  "engineGlanceSettings.description": {
+    "defaultMessage": "Kad langsung Enjin, versi kecil: apa yang dibaca atau ditulis, berapa pantas, dan sembang mana yang dilayan. Klik untuk membuka Enjin."
+  },
+  "engineGlanceSettings.desktop": {
+    "defaultMessage": "Terapung di desktop"
+  },
+  "engineGlanceSettings.desktop.away": {
+    "defaultMessage": "Semasa goose di latar belakang"
+  },
+  "engineGlanceSettings.desktop.busy": {
+    "defaultMessage": "Setiap kali enjin bekerja"
+  },
+  "engineGlanceSettings.desktop.off": {
+    "defaultMessage": "Mati"
+  },
+  "engineGlanceSettings.desktopDesc": {
+    "defaultMessage": "Tetingkap kecil di atas aplikasi lain, di sudut yang anda seret. Ia tidak pernah mengambil fokus, dan menutupnya menyembunyikannya sehingga enjin tenang semula."
+  },
+  "engineGlanceSettings.inApp": {
+    "defaultMessage": "Di bar sisi"
+  },
+  "engineGlanceSettings.inAppDesc": {
+    "defaultMessage": "Di ruang kosong di bawah sesi anda; terapung di atas tetingkap semasa enjin bekerja dan bar sisi tiada ruang."
+  },
+  "engineGlanceSettings.title": {
+    "defaultMessage": "Enjin sepintas lalu"
+  },
   "envVarsSection.add": {
     "defaultMessage": "Tambah"
   },

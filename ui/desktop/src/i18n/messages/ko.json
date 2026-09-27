@@ -1625,6 +1625,177 @@
   "elicitationRequest.waitingForResponse": {
     "defaultMessage": "답변을 기다리는 중입니다. ({timeRemaining} 남음)"
   },
+  "engineGlance.chat": {
+    "defaultMessage": "채팅 · {name}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "엔진이 다시 조용해질 때까지 숨기기"
+  },
+  "engineGlance.collapse": {
+    "defaultMessage": "알약 크기로 줄이기"
+  },
+  "engineGlance.expand": {
+    "defaultMessage": "카드 전체 보기"
+  },
+  "engineGlance.groupLabel": {
+    "defaultMessage": "엔진: {stage}"
+  },
+  "engineGlance.inflight": {
+    "defaultMessage": "{count, plural, other {요청 #개 처리 중}}"
+  },
+  "engineGlance.less": {
+    "defaultMessage": "속도와 메모리 숨기기"
+  },
+  "engineGlance.more": {
+    "defaultMessage": "속도와 메모리 보기"
+  },
+  "engineGlance.needsYou": {
+    "defaultMessage": "{count, plural, other {#개가 당신을 기다림}}"
+  },
+  "engineGlance.nodeBar": {
+    "defaultMessage": "{node}의 메모리(예산 대비)"
+  },
+  "engineGlance.nodeNoPeak": {
+    "defaultMessage": "아직 최고치 없음"
+  },
+  "engineGlance.nodePeak": {
+    "defaultMessage": "최고 {peak} / {budget} GB"
+  },
+  "engineGlance.nodePeakOnly": {
+    "defaultMessage": "최고 {peak} GB"
+  },
+  "engineGlance.openChat": {
+    "defaultMessage": "응답 중인 채팅 열기 — {name}"
+  },
+  "engineGlance.openEngine": {
+    "defaultMessage": "엔진 열기"
+  },
+  "engineGlance.openQuestion": {
+    "defaultMessage": "{name} 열기 — 질문: {question}"
+  },
+  "engineGlance.others": {
+    "defaultMessage": "{count, plural, other {외 클라이언트 #개}}"
+  },
+  "engineGlance.pillPrompt": {
+    "defaultMessage": "{tokens} · {elapsed}"
+  },
+  "engineGlance.pillQueued": {
+    "defaultMessage": "{count}개 대기 중"
+  },
+  "engineGlance.pillRate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "engineGlance.progressLoad": {
+    "defaultMessage": "지금까지 불러온 가중치"
+  },
+  "engineGlance.progressRead": {
+    "defaultMessage": "지금까지 읽은 프롬프트"
+  },
+  "engineGlance.promptSize": {
+    "defaultMessage": "프롬프트 토큰, {elapsed} 동안 읽는 중"
+  },
+  "engineGlance.queuedCount": {
+    "defaultMessage": "{count, plural, other {요청 대기 중}}"
+  },
+  "engineGlance.readMedian": {
+    "defaultMessage": "{count, plural, other {tok/s 읽기, 프롬프트 #개의 중앙값}}"
+  },
+  "engineGlance.readRange": {
+    "defaultMessage": "읽기 {low}–{high} tok/s, 실행의 가운데 절반"
+  },
+  "engineGlance.readRate": {
+    "defaultMessage": "이 프롬프트를 읽는 tok/s"
+  },
+  "engineGlance.sessionsRunning": {
+    "defaultMessage": "{count, plural, other {세션 #개 실행 중}}"
+  },
+  "engineGlance.stage.away": {
+    "defaultMessage": "Mac 부재"
+  },
+  "engineGlance.stage.failed": {
+    "defaultMessage": "실패"
+  },
+  "engineGlance.stage.generating": {
+    "defaultMessage": "쓰는 중"
+  },
+  "engineGlance.stage.held": {
+    "defaultMessage": "보류 · 메모리 부족"
+  },
+  "engineGlance.stage.hosting": {
+    "defaultMessage": "랭크 제공 중"
+  },
+  "engineGlance.stage.idle": {
+    "defaultMessage": "유휴"
+  },
+  "engineGlance.stage.loading": {
+    "defaultMessage": "불러오는 중"
+  },
+  "engineGlance.stage.notLoaded": {
+    "defaultMessage": "불러온 모델 없음"
+  },
+  "engineGlance.stage.off": {
+    "defaultMessage": "꺼짐"
+  },
+  "engineGlance.stage.prefill": {
+    "defaultMessage": "프롬프트 읽는 중"
+  },
+  "engineGlance.stage.queued": {
+    "defaultMessage": "대기열"
+  },
+  "engineGlance.stage.reconnecting": {
+    "defaultMessage": "다시 연결 중"
+  },
+  "engineGlance.stage.running": {
+    "defaultMessage": "실행 중"
+  },
+  "engineGlance.stage.serving": {
+    "defaultMessage": "제공 중"
+  },
+  "engineGlance.stage.stale": {
+    "defaultMessage": "새로 고침 안 됨"
+  },
+  "engineGlance.untitled": {
+    "defaultMessage": "제목 없는 세션"
+  },
+  "engineGlance.waiting": {
+    "defaultMessage": "{count}개 대기 중"
+  },
+  "engineGlance.writeMedian": {
+    "defaultMessage": "{count, plural, other {tok/s 쓰기, 실행 #회의 중앙값}}"
+  },
+  "engineGlance.writeRange": {
+    "defaultMessage": "쓰기 {low}–{high} tok/s, 실행의 가운데 절반"
+  },
+  "engineGlance.writeRate": {
+    "defaultMessage": "tok/s 쓰기"
+  },
+  "engineGlanceSettings.description": {
+    "defaultMessage": "엔진 라이브 카드의 작은 버전: 무엇을 읽거나 쓰는지, 얼마나 빠른지, 어떤 채팅에 응답하는지. 클릭하면 엔진이 열립니다."
+  },
+  "engineGlanceSettings.desktop": {
+    "defaultMessage": "데스크톱에 띄우기"
+  },
+  "engineGlanceSettings.desktop.away": {
+    "defaultMessage": "goose가 백그라운드일 때"
+  },
+  "engineGlanceSettings.desktop.busy": {
+    "defaultMessage": "엔진이 일할 때마다"
+  },
+  "engineGlanceSettings.desktop.off": {
+    "defaultMessage": "끔"
+  },
+  "engineGlanceSettings.desktopDesc": {
+    "defaultMessage": "다른 앱 위에 떠 있는 작은 창으로, 끌어다 놓은 모서리에 머뭅니다. 포커스를 가져가지 않으며, 닫으면 엔진이 조용해질 때까지 숨겨집니다."
+  },
+  "engineGlanceSettings.inApp": {
+    "defaultMessage": "사이드바에"
+  },
+  "engineGlanceSettings.inAppDesc": {
+    "defaultMessage": "세션 목록 아래 빈 공간에 표시하고, 엔진이 일하는데 사이드바에 자리가 없으면 창 위에 띄웁니다."
+  },
+  "engineGlanceSettings.title": {
+    "defaultMessage": "엔진 한눈에 보기"
+  },
   "envVarsSection.add": {
     "defaultMessage": "추가"
   },

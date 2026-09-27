@@ -42,8 +42,10 @@ import {
   Notification,
   powerSaveBlocker,
   session,
+  screen,
   shell,
   Tray,
+  webContents,
 } from 'electron';
 import { pathToFileURL, format as formatUrl, URLSearchParams } from 'node:url';
 import { Buffer } from 'node:buffer';
@@ -147,6 +149,24 @@ import { PHASE_HEX, type EnginePhase } from './components/lz/tokens';
 import { phaseDotBitmap } from './utils/phaseDot';
 import { isMlxRemoteReport, remoteLiveBase, type MlxRemoteReport } from './utils/mlxRemoteReport';
 import { MLX_ENGINE_SNAPSHOT_CHANNEL } from './utils/mlxEngineMonitor';
+import {
+  ENGINE_GLANCE_CHANNEL,
+  NO_SESSIONS,
+  buildEngineGlance,
+  glancePrefsOf,
+  isGlancePrefs,
+  isGlanceSessions,
+  mergeGlanceSessions,
+  type GlancePrefs,
+  type GlancePush,
+  type GlanceSessions,
+} from './utils/engineGlance';
+import {
+  EngineGlanceDesktop,
+  GLANCE_PIP_ACTION_CHANNEL,
+  isGlancePipAction,
+} from './engineGlanceDesktop';
+import { createGlanceWindowPort } from './engineGlanceWindow';
 import { TRAY_ACTION_ENGINES, workCutBy } from './utils/mlxInFlight';
 import { isMlxRestoreReport, type MlxRestoreReport } from './utils/mlxRestoreReport';
 import {
@@ -2192,6 +2212,86 @@ const openTraySession = (sessionId: string) => {
   win.webContents.send('set-view', 'pair', sessionId);
 };
 
+// THE ENGINE GLANCE (utils/engineGlance.ts): the Engine tile made small — the sidebar card in every
+// window and the desktop mini window — built once here from the reads the tray already takes, plus
+// each window's session-state store (running / needs you), and pushed to all of them.
+let glancePrefs: GlancePrefs | null = null;
+const currentGlancePrefs = (): GlancePrefs => {
+  glancePrefs ??= glancePrefsOf(getSettings().engineGlance);
+  return glancePrefs;
+};
+const glanceSessionsByWindow = new Map<number, GlanceSessions>();
+let glanceWebContentsId: number | null = null;
+let lastGlancePush = '';
+const glanceWindowArguments = () => [
+  JSON.stringify({ ...appConfig, GOOSE_LOCALE: getConfiguredGooseLocale() }),
+];
+const engineGlanceDesktop = new EngineGlanceDesktop({
+  port: createGlanceWindowPort({
+    url: () => {
+      const url = getAppUrl();
+      url.hash = '/engine-glance';
+      return formatUrl(url);
+    },
+    preload: path.join(__dirname, 'preload.js'),
+    additionalArguments: glanceWindowArguments,
+    onWebContents: (id) => {
+      glanceWebContentsId = id;
+    },
+  }),
+  // goose is the app in front only while one of its windows holds focus; the glance never can.
+  appInFront: () => BrowserWindow.getFocusedWindow() != null,
+  savePrefs: (next) => saveGlancePrefs(next),
+  openEngine: () => {
+    if (mlxActionWindow()) runMlxTrayAction('open-providers');
+    else void createNewWindow(app);
+  },
+  openSession: (sessionId) => {
+    if (mlxActionWindow()) openTraySession(sessionId);
+    else void createNewWindow(app);
+  },
+});
+const publishEngineGlance = (snapshot: MlxEngineSnapshot) => {
+  const push: GlancePush = {
+    engine: buildEngineGlance(snapshot, {
+      distributed: mlxDistributed
+        ? { report: mlxDistributed.report, ageMs: Date.now() - mlxDistributed.atMs }
+        : null,
+      remote: mlxRemote,
+    }),
+    sessions:
+      glanceSessionsByWindow.size > 0
+        ? mergeGlanceSessions(glanceSessionsByWindow.values())
+        : NO_SESSIONS,
+    prefs: currentGlancePrefs(),
+  };
+  // Every snapshot is re-read, but only a changed glance is sent: an idle engine stays quiet.
+  const key = JSON.stringify(push);
+  if (key === lastGlancePush) {
+    engineGlanceDesktop.refresh();
+    return;
+  }
+  lastGlancePush = key;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(ENGINE_GLANCE_CHANNEL, push);
+  }
+  engineGlanceDesktop.update(push);
+};
+const saveGlancePrefs = (next: GlancePrefs) => {
+  glancePrefs = next;
+  updateSettings((s) => {
+    s.engineGlance = next;
+  });
+  publishEngineGlance(mlxMonitor.current());
+};
+// Focus moving between goose and another app decides the "while goose is in the background" window;
+// deferred one turn so focus passing between two goose windows never flashes it.
+const refreshGlanceSoon = () => setTimeout(() => engineGlanceDesktop.refresh(), 0);
+app.on('browser-window-focus', refreshGlanceSoon);
+app.on('browser-window-blur', refreshGlanceSoon);
+app.on('did-resign-active', refreshGlanceSoon);
+app.on('did-become-active', refreshGlanceSoon);
+
 // The engine-phase dot beside a tray state line, in the palette's exact hex (12pt @2x).
 const phaseDots = new Map<EnginePhase, NativeImage>();
 const phaseDot = (phase: EnginePhase): NativeImage => {
@@ -2304,6 +2404,9 @@ const linkTrayMenuItems = (): MenuItemConstructorOptions[] => {
 
 let lastMlxTrayMenu = '';
 const renderMlxTray = (snapshot: MlxEngineSnapshot) => {
+  // The glance reads what the tray reads, redrawn on every fact that redraws the tray — with or
+  // without a menu-bar icon.
+  publishEngineGlance(snapshot);
   if (!tray) return;
   const distributed = mlxDistributed
     ? { report: mlxDistributed.report, ageMs: Date.now() - mlxDistributed.atMs }
@@ -2422,6 +2525,36 @@ ipcMain.on('mlx-distributed-report', (_event, report: unknown) => {
 });
 // The state tile reads "who is using it" from here, on its own poll — main's latest read, no fetch.
 ipcMain.handle('mlx-engine-activity', () => mlxMonitor.current());
+
+// Each window's session-state store (running / needs you) for the glance; a closed window's goes.
+ipcMain.on('engine-glance-sessions', (event, report: unknown) => {
+  if (!isGlanceSessions(report)) return;
+  const sender = event.sender;
+  if (!glanceSessionsByWindow.has(sender.id)) {
+    sender.once('destroyed', () => {
+      glanceSessionsByWindow.delete(sender.id);
+      publishEngineGlance(mlxMonitor.current());
+    });
+  }
+  glanceSessionsByWindow.set(sender.id, report);
+  publishEngineGlance(mlxMonitor.current());
+});
+// A surface mounting after the last push asks for it; the loop is woken so a stale engine read is
+// never what it paints.
+ipcMain.handle('engine-glance-read', () => {
+  mlxMonitor.wake();
+  if (!engineGlanceDesktop.current()) publishEngineGlance(mlxMonitor.current());
+  return engineGlanceDesktop.current();
+});
+ipcMain.on(GLANCE_PIP_ACTION_CHANNEL, (event, action: unknown) => {
+  // Only the desktop glance moves itself; a goose window cannot drive another window's bounds.
+  if (event.sender.id !== glanceWebContentsId || !isGlancePipAction(action)) return;
+  engineGlanceDesktop.handle(action);
+});
+ipcMain.handle('engine-glance-prefs-set', (_event, next: unknown) => {
+  if (!isGlancePrefs(next)) throw new Error('engine-glance-prefs-set: not the glance prefs');
+  saveGlancePrefs(next);
+});
 
 ipcMain.handle('get-setting', (_event, key: SettingKey) => {
   const settings = getSettings();
@@ -5743,6 +5876,12 @@ async function appMain() {
     createTray();
   }
 
+  // A display unplugged or rearranged: the desktop glance goes back to a corner that exists.
+  const glanceDisplaysChanged = () => engineGlanceDesktop.displaysChanged();
+  screen.on('display-added', glanceDisplaysChanged);
+  screen.on('display-removed', glanceDisplaysChanged);
+  screen.on('display-metrics-changed', glanceDisplaysChanged);
+
   if (process.platform === 'darwin' && !settings.showDockIcon && settings.showMenuBarIcon) {
     app.dock?.hide();
   }
@@ -6182,6 +6321,10 @@ async function appMain() {
         window.webContents.send('theme-changed', themeData);
       }
     });
+    // The desktop glance is not a BrowserWindow (engineGlanceWindow.ts): told on its own.
+    if (glanceWebContentsId != null) {
+      webContents.fromId(glanceWebContentsId)?.send('theme-changed', themeData);
+    }
   });
 
   ipcMain.on('reload-app', (event) => {

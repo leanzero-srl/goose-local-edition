@@ -1625,6 +1625,177 @@
   "elicitationRequest.waitingForResponse": {
     "defaultMessage": "Ожидание вашего ответа (осталось {timeRemaining})"
   },
+  "engineGlance.chat": {
+    "defaultMessage": "Чат · {name}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Скрыть, пока движок снова не затихнет"
+  },
+  "engineGlance.collapse": {
+    "defaultMessage": "Свернуть в пилюлю"
+  },
+  "engineGlance.expand": {
+    "defaultMessage": "Показать всю карточку"
+  },
+  "engineGlance.groupLabel": {
+    "defaultMessage": "Движок: {stage}"
+  },
+  "engineGlance.inflight": {
+    "defaultMessage": "{count, plural, one {# запрос в работе} few {# запроса в работе} many {# запросов в работе} other {# запроса в работе}}"
+  },
+  "engineGlance.less": {
+    "defaultMessage": "Скрыть скорости и память"
+  },
+  "engineGlance.more": {
+    "defaultMessage": "Показать скорости и память"
+  },
+  "engineGlance.needsYou": {
+    "defaultMessage": "{count, plural, one {# ждёт вас} few {# ждут вас} many {# ждут вас} other {# ждут вас}}"
+  },
+  "engineGlance.nodeBar": {
+    "defaultMessage": "Память на {node} относительно бюджета"
+  },
+  "engineGlance.nodeNoPeak": {
+    "defaultMessage": "пика ещё нет"
+  },
+  "engineGlance.nodePeak": {
+    "defaultMessage": "пик {peak} из {budget} ГБ"
+  },
+  "engineGlance.nodePeakOnly": {
+    "defaultMessage": "пик {peak} ГБ"
+  },
+  "engineGlance.openChat": {
+    "defaultMessage": "Открыть обслуживаемый чат — {name}"
+  },
+  "engineGlance.openEngine": {
+    "defaultMessage": "Открыть движок"
+  },
+  "engineGlance.openQuestion": {
+    "defaultMessage": "Открыть {name} — вопрос: {question}"
+  },
+  "engineGlance.others": {
+    "defaultMessage": "{count, plural, one {+# другой клиент} few {+# других клиента} many {+# других клиентов} other {+# других клиента}}"
+  },
+  "engineGlance.pillPrompt": {
+    "defaultMessage": "{tokens} · {elapsed}"
+  },
+  "engineGlance.pillQueued": {
+    "defaultMessage": "{count} в ожидании"
+  },
+  "engineGlance.pillRate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "engineGlance.progressLoad": {
+    "defaultMessage": "Загружено весов"
+  },
+  "engineGlance.progressRead": {
+    "defaultMessage": "Прочитано промпта"
+  },
+  "engineGlance.promptSize": {
+    "defaultMessage": "токенов промпта, чтение {elapsed}"
+  },
+  "engineGlance.queuedCount": {
+    "defaultMessage": "{count, plural, one {запрос ждёт} few {запроса ждут} many {запросов ждут} other {запроса ждут}}"
+  },
+  "engineGlance.readMedian": {
+    "defaultMessage": "{count, plural, one {tok/s чтения, # промпт} few {tok/s чтения, медиана # промптов} many {tok/s чтения, медиана # промптов} other {tok/s чтения, медиана # промпта}}"
+  },
+  "engineGlance.readRange": {
+    "defaultMessage": "Чтение {low}–{high} tok/s, средняя половина запусков"
+  },
+  "engineGlance.readRate": {
+    "defaultMessage": "tok/s при чтении этого промпта"
+  },
+  "engineGlance.sessionsRunning": {
+    "defaultMessage": "{count, plural, one {# сеанс идёт} few {# сеанса идут} many {# сеансов идут} other {# сеанса идут}}"
+  },
+  "engineGlance.stage.away": {
+    "defaultMessage": "Mac недоступен"
+  },
+  "engineGlance.stage.failed": {
+    "defaultMessage": "Сбой"
+  },
+  "engineGlance.stage.generating": {
+    "defaultMessage": "Пишет"
+  },
+  "engineGlance.stage.held": {
+    "defaultMessage": "Удержано · мало памяти"
+  },
+  "engineGlance.stage.hosting": {
+    "defaultMessage": "Обслуживает ранг"
+  },
+  "engineGlance.stage.idle": {
+    "defaultMessage": "Простаивает"
+  },
+  "engineGlance.stage.loading": {
+    "defaultMessage": "Загрузка"
+  },
+  "engineGlance.stage.notLoaded": {
+    "defaultMessage": "Модель не загружена"
+  },
+  "engineGlance.stage.off": {
+    "defaultMessage": "Выключен"
+  },
+  "engineGlance.stage.prefill": {
+    "defaultMessage": "Читает промпт"
+  },
+  "engineGlance.stage.queued": {
+    "defaultMessage": "В очереди"
+  },
+  "engineGlance.stage.reconnecting": {
+    "defaultMessage": "Переподключение"
+  },
+  "engineGlance.stage.running": {
+    "defaultMessage": "Работает"
+  },
+  "engineGlance.stage.serving": {
+    "defaultMessage": "Обслуживает"
+  },
+  "engineGlance.stage.stale": {
+    "defaultMessage": "Не обновлено"
+  },
+  "engineGlance.untitled": {
+    "defaultMessage": "Сеанс без названия"
+  },
+  "engineGlance.waiting": {
+    "defaultMessage": "{count} в ожидании"
+  },
+  "engineGlance.writeMedian": {
+    "defaultMessage": "{count, plural, one {tok/s записи, # запуск} few {tok/s записи, медиана # запусков} many {tok/s записи, медиана # запусков} other {tok/s записи, медиана # запуска}}"
+  },
+  "engineGlance.writeRange": {
+    "defaultMessage": "Запись {low}–{high} tok/s, средняя половина запусков"
+  },
+  "engineGlance.writeRate": {
+    "defaultMessage": "tok/s записи"
+  },
+  "engineGlanceSettings.description": {
+    "defaultMessage": "Живая карточка движка в малом размере: что он читает или пишет, как быстро и какой чат обслуживает. Нажмите, чтобы открыть движок."
+  },
+  "engineGlanceSettings.desktop": {
+    "defaultMessage": "Поверх рабочего стола"
+  },
+  "engineGlanceSettings.desktop.away": {
+    "defaultMessage": "Когда goose в фоне"
+  },
+  "engineGlanceSettings.desktop.busy": {
+    "defaultMessage": "Всегда, когда движок работает"
+  },
+  "engineGlanceSettings.desktop.off": {
+    "defaultMessage": "Выкл."
+  },
+  "engineGlanceSettings.desktopDesc": {
+    "defaultMessage": "Небольшое окно поверх других приложений, в углу, куда вы его перетащите. Оно никогда не забирает фокус, а закрытие скрывает его, пока движок не затихнет."
+  },
+  "engineGlanceSettings.inApp": {
+    "defaultMessage": "В боковой панели"
+  },
+  "engineGlanceSettings.inAppDesc": {
+    "defaultMessage": "В свободном месте под вашими сеансами; поверх окна, когда движок работает, а в боковой панели нет места."
+  },
+  "engineGlanceSettings.title": {
+    "defaultMessage": "Движок с первого взгляда"
+  },
   "envVarsSection.add": {
     "defaultMessage": "Добавить"
   },

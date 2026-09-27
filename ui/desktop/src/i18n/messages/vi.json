@@ -1625,6 +1625,177 @@
   "elicitationRequest.waitingForResponse": {
     "defaultMessage": "Đang chờ phản hồi của bạn (còn {timeRemaining})"
   },
+  "engineGlance.chat": {
+    "defaultMessage": "Trò chuyện · {name}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Ẩn cho đến khi động cơ yên lại"
+  },
+  "engineGlance.collapse": {
+    "defaultMessage": "Thu nhỏ thành viên thuốc"
+  },
+  "engineGlance.expand": {
+    "defaultMessage": "Hiện cả thẻ"
+  },
+  "engineGlance.groupLabel": {
+    "defaultMessage": "Động cơ: {stage}"
+  },
+  "engineGlance.inflight": {
+    "defaultMessage": "{count, plural, other {# yêu cầu đang chạy}}"
+  },
+  "engineGlance.less": {
+    "defaultMessage": "Ẩn tốc độ và bộ nhớ"
+  },
+  "engineGlance.more": {
+    "defaultMessage": "Hiện tốc độ và bộ nhớ"
+  },
+  "engineGlance.needsYou": {
+    "defaultMessage": "{count, plural, other {# cần bạn}}"
+  },
+  "engineGlance.nodeBar": {
+    "defaultMessage": "Bộ nhớ trên {node} so với ngân sách"
+  },
+  "engineGlance.nodeNoPeak": {
+    "defaultMessage": "chưa có đỉnh"
+  },
+  "engineGlance.nodePeak": {
+    "defaultMessage": "đỉnh {peak} trên {budget} GB"
+  },
+  "engineGlance.nodePeakOnly": {
+    "defaultMessage": "đỉnh {peak} GB"
+  },
+  "engineGlance.openChat": {
+    "defaultMessage": "Mở cuộc trò chuyện đang phục vụ — {name}"
+  },
+  "engineGlance.openEngine": {
+    "defaultMessage": "Mở Động cơ"
+  },
+  "engineGlance.openQuestion": {
+    "defaultMessage": "Mở {name} — đã hỏi: {question}"
+  },
+  "engineGlance.others": {
+    "defaultMessage": "{count, plural, other {+# máy khách khác}}"
+  },
+  "engineGlance.pillPrompt": {
+    "defaultMessage": "{tokens} · {elapsed}"
+  },
+  "engineGlance.pillQueued": {
+    "defaultMessage": "{count} đang chờ"
+  },
+  "engineGlance.pillRate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "engineGlance.progressLoad": {
+    "defaultMessage": "Trọng số đã nạp"
+  },
+  "engineGlance.progressRead": {
+    "defaultMessage": "Prompt đã đọc"
+  },
+  "engineGlance.promptSize": {
+    "defaultMessage": "token prompt, đang đọc {elapsed}"
+  },
+  "engineGlance.queuedCount": {
+    "defaultMessage": "{count, plural, other {yêu cầu đang chờ}}"
+  },
+  "engineGlance.readMedian": {
+    "defaultMessage": "{count, plural, one {tok/s đọc, # prompt} other {tok/s đọc, trung vị của # prompt}}"
+  },
+  "engineGlance.readRange": {
+    "defaultMessage": "Đọc {low}–{high} tok/s, nửa giữa các lần chạy"
+  },
+  "engineGlance.readRate": {
+    "defaultMessage": "tok/s khi đọc prompt này"
+  },
+  "engineGlance.sessionsRunning": {
+    "defaultMessage": "{count, plural, other {# phiên đang chạy}}"
+  },
+  "engineGlance.stage.away": {
+    "defaultMessage": "Mac vắng mặt"
+  },
+  "engineGlance.stage.failed": {
+    "defaultMessage": "Thất bại"
+  },
+  "engineGlance.stage.generating": {
+    "defaultMessage": "Đang viết"
+  },
+  "engineGlance.stage.held": {
+    "defaultMessage": "Tạm giữ · thiếu bộ nhớ"
+  },
+  "engineGlance.stage.hosting": {
+    "defaultMessage": "Đang phục vụ một rank"
+  },
+  "engineGlance.stage.idle": {
+    "defaultMessage": "Rảnh"
+  },
+  "engineGlance.stage.loading": {
+    "defaultMessage": "Đang nạp"
+  },
+  "engineGlance.stage.notLoaded": {
+    "defaultMessage": "Chưa nạp mô hình"
+  },
+  "engineGlance.stage.off": {
+    "defaultMessage": "Tắt"
+  },
+  "engineGlance.stage.prefill": {
+    "defaultMessage": "Đang đọc prompt"
+  },
+  "engineGlance.stage.queued": {
+    "defaultMessage": "Đang xếp hàng"
+  },
+  "engineGlance.stage.reconnecting": {
+    "defaultMessage": "Đang kết nối lại"
+  },
+  "engineGlance.stage.running": {
+    "defaultMessage": "Đang chạy"
+  },
+  "engineGlance.stage.serving": {
+    "defaultMessage": "Đang phục vụ"
+  },
+  "engineGlance.stage.stale": {
+    "defaultMessage": "Chưa làm mới"
+  },
+  "engineGlance.untitled": {
+    "defaultMessage": "Phiên chưa đặt tên"
+  },
+  "engineGlance.waiting": {
+    "defaultMessage": "{count} đang chờ"
+  },
+  "engineGlance.writeMedian": {
+    "defaultMessage": "{count, plural, one {tok/s viết, # lần chạy} other {tok/s viết, trung vị của # lần chạy}}"
+  },
+  "engineGlance.writeRange": {
+    "defaultMessage": "Viết {low}–{high} tok/s, nửa giữa các lần chạy"
+  },
+  "engineGlance.writeRate": {
+    "defaultMessage": "tok/s khi viết"
+  },
+  "engineGlanceSettings.description": {
+    "defaultMessage": "Thẻ trực tiếp của Động cơ, bản nhỏ: đang đọc hay viết gì, nhanh thế nào và phục vụ cuộc trò chuyện nào. Nhấp để mở Động cơ."
+  },
+  "engineGlanceSettings.desktop": {
+    "defaultMessage": "Nổi trên màn hình"
+  },
+  "engineGlanceSettings.desktop.away": {
+    "defaultMessage": "Khi goose ở nền"
+  },
+  "engineGlanceSettings.desktop.busy": {
+    "defaultMessage": "Bất cứ khi nào động cơ làm việc"
+  },
+  "engineGlanceSettings.desktop.off": {
+    "defaultMessage": "Tắt"
+  },
+  "engineGlanceSettings.desktopDesc": {
+    "defaultMessage": "Một cửa sổ nhỏ trên các ứng dụng khác, ở góc bạn kéo tới. Nó không bao giờ giành tiêu điểm, và đóng nó sẽ ẩn cho đến khi động cơ yên lại."
+  },
+  "engineGlanceSettings.inApp": {
+    "defaultMessage": "Trong thanh bên"
+  },
+  "engineGlanceSettings.inAppDesc": {
+    "defaultMessage": "Trong khoảng trống dưới các phiên của bạn; nổi trên cửa sổ khi động cơ làm việc và thanh bên hết chỗ."
+  },
+  "engineGlanceSettings.title": {
+    "defaultMessage": "Động cơ trong nháy mắt"
+  },
   "envVarsSection.add": {
     "defaultMessage": "Thêm"
   },

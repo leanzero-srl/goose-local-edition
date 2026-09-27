@@ -1625,6 +1625,177 @@
   "elicitationRequest.waitingForResponse": {
     "defaultMessage": "Warten auf Ihre Antwort ({timeRemaining} verbleibend)"
   },
+  "engineGlance.chat": {
+    "defaultMessage": "Chat · {name}"
+  },
+  "engineGlance.close": {
+    "defaultMessage": "Ausblenden, bis die Engine wieder ruhig ist"
+  },
+  "engineGlance.collapse": {
+    "defaultMessage": "Zur Pille verkleinern"
+  },
+  "engineGlance.expand": {
+    "defaultMessage": "Ganze Karte zeigen"
+  },
+  "engineGlance.groupLabel": {
+    "defaultMessage": "Engine: {stage}"
+  },
+  "engineGlance.inflight": {
+    "defaultMessage": "{count, plural, one {# Anfrage in Arbeit} other {# Anfragen in Arbeit}}"
+  },
+  "engineGlance.less": {
+    "defaultMessage": "Raten und Speicher ausblenden"
+  },
+  "engineGlance.more": {
+    "defaultMessage": "Raten und Speicher zeigen"
+  },
+  "engineGlance.needsYou": {
+    "defaultMessage": "{count, plural, one {# braucht dich} other {# brauchen dich}}"
+  },
+  "engineGlance.nodeBar": {
+    "defaultMessage": "Speicher auf {node} gegen sein Budget"
+  },
+  "engineGlance.nodeNoPeak": {
+    "defaultMessage": "noch kein Spitzenwert"
+  },
+  "engineGlance.nodePeak": {
+    "defaultMessage": "Spitze {peak} von {budget} GB"
+  },
+  "engineGlance.nodePeakOnly": {
+    "defaultMessage": "Spitze {peak} GB"
+  },
+  "engineGlance.openChat": {
+    "defaultMessage": "Den bedienten Chat öffnen — {name}"
+  },
+  "engineGlance.openEngine": {
+    "defaultMessage": "Engine öffnen"
+  },
+  "engineGlance.openQuestion": {
+    "defaultMessage": "{name} öffnen — Frage: {question}"
+  },
+  "engineGlance.others": {
+    "defaultMessage": "{count, plural, one {+# weiterer Client} other {+# weitere Clients}}"
+  },
+  "engineGlance.pillPrompt": {
+    "defaultMessage": "{tokens} · {elapsed}"
+  },
+  "engineGlance.pillQueued": {
+    "defaultMessage": "{count} wartend"
+  },
+  "engineGlance.pillRate": {
+    "defaultMessage": "{rate} tok/s"
+  },
+  "engineGlance.progressLoad": {
+    "defaultMessage": "Bisher geladene Gewichte"
+  },
+  "engineGlance.progressRead": {
+    "defaultMessage": "Bisher gelesener Prompt"
+  },
+  "engineGlance.promptSize": {
+    "defaultMessage": "Prompt-Tokens, liest seit {elapsed}"
+  },
+  "engineGlance.queuedCount": {
+    "defaultMessage": "{count, plural, one {Anfrage wartet} other {Anfragen warten}}"
+  },
+  "engineGlance.readMedian": {
+    "defaultMessage": "{count, plural, one {tok/s lesend, # Prompt} other {tok/s lesend, Median aus # Prompts}}"
+  },
+  "engineGlance.readRange": {
+    "defaultMessage": "Lesen {low}–{high} tok/s, mittlere Hälfte der Läufe"
+  },
+  "engineGlance.readRate": {
+    "defaultMessage": "tok/s beim Lesen dieses Prompts"
+  },
+  "engineGlance.sessionsRunning": {
+    "defaultMessage": "{count, plural, one {# Sitzung läuft} other {# Sitzungen laufen}}"
+  },
+  "engineGlance.stage.away": {
+    "defaultMessage": "Mac abwesend"
+  },
+  "engineGlance.stage.failed": {
+    "defaultMessage": "Fehlgeschlagen"
+  },
+  "engineGlance.stage.generating": {
+    "defaultMessage": "Schreibt"
+  },
+  "engineGlance.stage.held": {
+    "defaultMessage": "Angehalten · wenig Speicher"
+  },
+  "engineGlance.stage.hosting": {
+    "defaultMessage": "Bedient einen Rang"
+  },
+  "engineGlance.stage.idle": {
+    "defaultMessage": "Leerlauf"
+  },
+  "engineGlance.stage.loading": {
+    "defaultMessage": "Lädt"
+  },
+  "engineGlance.stage.notLoaded": {
+    "defaultMessage": "Kein Modell geladen"
+  },
+  "engineGlance.stage.off": {
+    "defaultMessage": "Aus"
+  },
+  "engineGlance.stage.prefill": {
+    "defaultMessage": "Liest Prompt"
+  },
+  "engineGlance.stage.queued": {
+    "defaultMessage": "In Warteschlange"
+  },
+  "engineGlance.stage.reconnecting": {
+    "defaultMessage": "Verbindet neu"
+  },
+  "engineGlance.stage.running": {
+    "defaultMessage": "Läuft"
+  },
+  "engineGlance.stage.serving": {
+    "defaultMessage": "Bedient"
+  },
+  "engineGlance.stage.stale": {
+    "defaultMessage": "Nicht aktualisiert"
+  },
+  "engineGlance.untitled": {
+    "defaultMessage": "Unbenannte Sitzung"
+  },
+  "engineGlance.waiting": {
+    "defaultMessage": "{count} wartend"
+  },
+  "engineGlance.writeMedian": {
+    "defaultMessage": "{count, plural, one {tok/s schreibend, # Lauf} other {tok/s schreibend, Median aus # Läufen}}"
+  },
+  "engineGlance.writeRange": {
+    "defaultMessage": "Schreiben {low}–{high} tok/s, mittlere Hälfte der Läufe"
+  },
+  "engineGlance.writeRate": {
+    "defaultMessage": "tok/s schreibend"
+  },
+  "engineGlanceSettings.description": {
+    "defaultMessage": "Die Live-Karte der Engine im Kleinen: was sie liest oder schreibt, wie schnell und welchen Chat sie bedient. Ein Klick öffnet die Engine."
+  },
+  "engineGlanceSettings.desktop": {
+    "defaultMessage": "Schwebend auf dem Schreibtisch"
+  },
+  "engineGlanceSettings.desktop.away": {
+    "defaultMessage": "Während goose im Hintergrund ist"
+  },
+  "engineGlanceSettings.desktop.busy": {
+    "defaultMessage": "Immer wenn die Engine arbeitet"
+  },
+  "engineGlanceSettings.desktop.off": {
+    "defaultMessage": "Aus"
+  },
+  "engineGlanceSettings.desktopDesc": {
+    "defaultMessage": "Ein kleines Fenster über deinen anderen Apps, in einer Ecke deiner Wahl. Es nimmt nie den Fokus, und Schließen blendet es aus, bis die Engine wieder ruhig ist."
+  },
+  "engineGlanceSettings.inApp": {
+    "defaultMessage": "In der Seitenleiste"
+  },
+  "engineGlanceSettings.inAppDesc": {
+    "defaultMessage": "Im freien Platz unter deinen Sitzungen; schwebend über dem Fenster, während die Engine arbeitet und die Seitenleiste keinen Platz hat."
+  },
+  "engineGlanceSettings.title": {
+    "defaultMessage": "Engine auf einen Blick"
+  },
   "envVarsSection.add": {
     "defaultMessage": "Hinzufügen"
   },
