@@ -108,7 +108,9 @@ for (let turn = 0; turn < maxTurns; turn++) {
   if (ended === 'done') lengths.push(secs);
   appendFileSync(out, [turn, new Date(start).toISOString(), new Date(end).toISOString(), secs.toFixed(1), ended, a.tools, a.recalled, s.chip, s.counter, failed ? a.text.slice(Math.max(0, failed.index - 60), failed.index + 140) : ''].join('\t') + '\n');
   if (turn % 5 === 0) await p.screenshot({ path: `${dir}/turn-${turn}.png` });
-  if (ended === 'hang') break;
+  // STOP RULE (skill): a turn that ends in a notice ends the round — E2E #3e sent 29 more turns into a stopped
+  // split, 5 s each, and recorded them as turns.
+  if (ended === 'hang' || ended === 'notice') break;
   await p.waitForTimeout(3000);
 }
 await b.close(); process.exit(0);
