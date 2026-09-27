@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 20:53 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-27 21:15 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed on both Macs: 3.0.61 (engine glance + Q-183) — VERIFIED post-swap pids (studio 97418, macbook 10693);
@@ -15,19 +15,14 @@ Updated: 2026-09-27 20:53 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
 - Green again from dc701189c on (the title-test flake fixed at the cause, fa15f595d).
 
 ## Agents
-- Q-185 MERGED 96bcc680e (every background call carries its kind; card/Run it/sidebar/chat say 'Checking the
-  reply'); gate: tsc, vitest 3,184, eslint ts/tsx, i18n, wincheck green. Ships in 3.0.62 → prove live on #3j's
-  successor (livecheck counts the background state as marked).
-- OWNER BATCH 2026-09-27 (Q-189..196): lane D ARCHITECT (read-only + CDP walk + research) → DESIGN-NODES-AND-STRATEGIES.md:
-  Swarm Settings → left nav, My Macs → LeanZero MLX tab, node cards at a glance, virtual node definitions,
-  STRATEGIES (roles planning/execution/testing/frontend/backend, primary/secondary, weights, MLX load/unload).
-  On its return: adversarial review of the design, then dispatch its file-disjoint slices at once (owner: design
-  AND implement, lots of testing). Lane A+B: edit diffs in the card (user-only content) + right Changes rail.
-  Lane C: LeanZero pill + hitbox, Report a problem → form to office@leanzero.net + Discord.
-- Q-185 (worktree): background requests (fact check, title, label…) carry their kind; engine card, Run it and
-  sidebar agree on 'checking the reply'; serving label keeps the session suffix.
-- Q-184 (memory-skills-surgeon, worktree): MemoryServer::new() writes global memories to ~/.config/goose under
-  GOOSE_PATH_ROOT → through Paths.
+- LANE D design MERGED e78b6ae06: DESIGN-NODES-AND-STRATEGIES.md (Nodes nav first · Providers keeps 2 tabs ·
+  LeanZero MLX = Engine/My Macs/Models/Sampling + setup strip · node = model + way · strategy = 6 roles × ordered
+  nodes + when-rule failover/overflow/share · loader S5 · chat via swarm provider node:/strategy: ids · swarm Tier A
+  env-projected, Tier B gated). Slices S0..S10; open questions proceed on the recommendations. Q-200..208 = its D1–D9.
+  RUNNING: design REVIEW (refuter) · S1 nav/IA surgeon. On the review: fix the doc, then S0 contract → S2/S3/S5/S6/S7/S8.
+- Lane A+B (edit diffs + Changes rail) · Lane C (LeanZero pill + report form) · Q-197/198 path leaks — running.
+- Q-187/188 merged 9174cf5d9 locally, gate b1rmuck9y running (cargo check green) → push.
+- Q-185 merged + pushed 96bcc680e → ships in 3.0.62.
 
 ## Next actions (in order)
 1. 3.0.61 DONE (glance + Q-183) → install at #3i turn-3 boundary (watcher b3ugzqvvu) → split-start 27B → #3i continues (new session = #3j if needed).
