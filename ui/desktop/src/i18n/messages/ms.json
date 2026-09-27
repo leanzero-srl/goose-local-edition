@@ -1475,56 +1475,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "Tunjukkan {count} pilihan"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "Jika anda melaporkan pepijat, pertimbangkan untuk melampirkan laporan diagnostik kepadanya."
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "Batal"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "Tetapan konfigurasi"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "Anda boleh memuat turun laporan JSON diagnostik untuk dikongsi dengan pasukan, atau melaporkan pepijat terus di GitHub dengan butiran sistem anda diisi terlebih dahulu. Laporan diagnostik mengandungi yang berikut:"
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "Gagal memuat turun laporan diagnostik"
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "Ralat Diagnostik"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "Muat Turun"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "Memuat turun..."
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "Laporkan Pepijat di GitHub"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "Fail log terkini"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "Membuka..."
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Laporkan Masalah"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "Jika sesi anda mengandungi maklumat sensitif, jangan kongsi fail diagnostik secara awam."
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "Mesej sesi semasa anda"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "Maklumat asas sistem"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "Gagal mendapatkan maklumat sistem"
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "Ralat"
   },
   "dialog.close": {
     "defaultMessage": "Tutup"
@@ -6712,6 +6664,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "Fail YAML"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "Lampirkan butiran sistem"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "Versi aplikasi dan enjin, OS, nama pembekal, model dan sambungan. Tidak sekali-kali sembang, log, tetapan atau kunci anda."
+  },
+  "reportProblem.close": {
+    "defaultMessage": "Tutup"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "Melebihi {max} aksara. Sila pendekkan."
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "Terangkan masalah dalam sekurang-kurangnya {min} aksara."
+  },
+  "reportProblem.done": {
+    "defaultMessage": "Selesai"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "E-mel anda"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero membalas ke alamat ini. Diperlukan untuk menghantar dari sini; pilihan untuk aplikasi e-mel anda."
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "Alamat e-mel itu nampaknya tidak betul."
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "Tambah e-mel anda supaya LeanZero boleh membalas, atau hantar dari aplikasi e-mel anda."
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "Laporan anda dihantar ke {email}."
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "Sertai Discord LeanZero"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "Tidak dapat membuka aplikasi e-mel anda: {reason}."
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "Laporan anda sedia dalam e-mel baharu kepada {email}. Ia tidak dihantar sehingga anda menghantarnya dari sana."
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "Dibuka dalam aplikasi e-mel anda"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "Tidak dapat membaca butiran sistem ({error}). Tiada apa akan dilampirkan."
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "Membaca butiran sistem…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "Tepat inilah yang akan dilampirkan:"
+  },
+  "reportProblem.send": {
+    "defaultMessage": "Hantar"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "Gagal dihantar: {reason}. Laporan anda masih di sini. Cuba lagi, atau hantar dari aplikasi e-mel anda."
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero telah menerima laporan anda dan akan membalas ke {email}. leanzero.net juga menghantar resit kepada anda."
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "Laporan dihantar"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "Guna aplikasi e-mel saya"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "Apa yang tidak kena?"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "Apa yang anda lakukan, apa yang anda jangkakan, dan apa yang berlaku sebaliknya."
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "Tetapkan Semula Penyedia dan Model"

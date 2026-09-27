@@ -62,9 +62,9 @@ describe('Settings > App (pass E follow-up)', () => {
     await waitFor(() =>
       expect(screen.getByTestId('show-lmstudio-fleet-toggle')).toBeInTheDocument()
     );
-    expect(
-      screen.getByTestId('show-lmstudio-fleet-toggle').getAttribute('data-state')
-    ).toBe('unchecked');
+    expect(screen.getByTestId('show-lmstudio-fleet-toggle').getAttribute('data-state')).toBe(
+      'unchecked'
+    );
     // The edition card and its fan-in preview are gone wholesale.
     expect(screen.queryByText('Goose Swarm')).toBeNull();
     expect(screen.queryByText('Goose Swarm — the fan-in view')).toBeNull();
@@ -85,5 +85,17 @@ describe('Settings > App (pass E follow-up)', () => {
     expect(screen.queryByText(/workhorse-model · live/)).toBeNull();
     expect(screen.queryByText('Goose Swarm — the fan-in view')).toBeNull();
     expect(fleetCalls.every((v) => v === false)).toBe(true);
+  });
+});
+
+describe('Settings > App — Help (Q-192)', () => {
+  it('"Report a Bug" opens the Report a problem form, not a GitHub page', async () => {
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Report a Bug' }));
+    expect(await screen.findByRole('dialog')).toHaveAccessibleName('Report a problem');
+    expect(screen.getByText('Your report goes to office@leanzero.net.')).toBeInTheDocument();
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
   });
 });

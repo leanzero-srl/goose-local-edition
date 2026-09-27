@@ -1475,56 +1475,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "{count} Optionen anzeigen"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "Wenn Sie einen Fehler melden, sollten Sie den Diagnosebericht anhängen."
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "Abbrechen"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "Konfigurationseinstellungen"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "Sie können einen Diagnosebericht im JSON-Format herunterladen, um ihn mit dem Team zu teilen, oder direkt auf GitHub einen Fehler melden, bei dem Ihre Systemdetails bereits ausgefüllt sind. Ein Diagnosebericht enthält Folgendes:"
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "Herunterladen des Diagnoseberichts fehlgeschlagen"
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "Diagnosefehler"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "Herunterladen"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "Wird heruntergeladen..."
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "Fehler auf GitHub melden"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "Aktuelle Protokolldateien"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "Wird geöffnet..."
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Problem melden"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "Wenn Ihre Sitzung vertrauliche Informationen enthält, teilen Sie die Diagnosedatei nicht öffentlich."
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "Ihre aktuellen Sitzungsnachrichten"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "Grundlegende Systeminformationen"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "Abrufen der Systeminformationen fehlgeschlagen"
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "Fehler"
   },
   "dialog.close": {
     "defaultMessage": "Schließen"
@@ -6712,6 +6664,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "YAML-Dateien"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "Systemdetails anhängen"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "App- und Engine-Versionen, Betriebssystem, Anbieter-, Modell- und Erweiterungsnamen. Niemals deine Chats, Logs, Einstellungen oder Schlüssel."
+  },
+  "reportProblem.close": {
+    "defaultMessage": "Schließen"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "Das sind mehr als {max} Zeichen. Bitte kürze den Text."
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "Beschreibe das Problem in mindestens {min} Zeichen."
+  },
+  "reportProblem.done": {
+    "defaultMessage": "Fertig"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "Deine E-Mail"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero antwortet an diese Adresse. Nötig, um von hier zu senden; optional für deine Mail-App."
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "Diese E-Mail-Adresse sieht nicht richtig aus."
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "Gib deine E-Mail an, damit LeanZero antworten kann, oder sende es über deine Mail-App."
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "Deine Meldung geht an {email}."
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "Dem LeanZero-Discord beitreten"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "Deine Mail-App ließ sich nicht öffnen: {reason}."
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "Deine Meldung liegt als neue E-Mail an {email} bereit. Sie wird erst gesendet, wenn du sie dort abschickst."
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "In deiner Mail-App geöffnet"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "Systemdetails konnten nicht gelesen werden ({error}). Es wird nichts angehängt."
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "Systemdetails werden gelesen…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "Genau das wird angehängt:"
+  },
+  "reportProblem.send": {
+    "defaultMessage": "Senden"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "Das hat nicht geklappt: {reason}. Deine Meldung ist noch da. Versuche es erneut oder sende sie über deine Mail-App."
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero hat deine Meldung und antwortet an {email}. leanzero.net schickt dir außerdem eine Eingangsbestätigung."
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "Meldung gesendet"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "Meine Mail-App verwenden"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "Was ist schiefgelaufen?"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "Was du gemacht hast, was du erwartet hast und was stattdessen passiert ist."
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "Anbieter und Modell zurücksetzen"
