@@ -458,6 +458,48 @@
   "cardButtons.launch": {
     "defaultMessage": "लॉन्च करें"
   },
+  "changes.diff.addedLabel": {
+    "defaultMessage": "{count,plural,one{# पंक्ति जोड़ी गई} other{# पंक्तियाँ जोड़ी गईं}}"
+  },
+  "changes.diff.hunkLine": {
+    "defaultMessage": "पंक्ति {line}"
+  },
+  "changes.diff.newFile": {
+    "defaultMessage": "नई फ़ाइल"
+  },
+  "changes.diff.noLinesChanged": {
+    "defaultMessage": "कोई पंक्ति नहीं बदली — फ़ाइल में यह टेक्स्ट पहले से था।"
+  },
+  "changes.diff.removedLabel": {
+    "defaultMessage": "{count,plural,one{# पंक्ति हटाई गई} other{# पंक्तियाँ हटाई गईं}}"
+  },
+  "changes.diff.showAll": {
+    "defaultMessage": "{count,plural,one{सभी # पंक्ति दिखाएँ} other{सभी # पंक्तियाँ दिखाएँ}}"
+  },
+  "changes.diff.showInChat": {
+    "defaultMessage": "चैट में दिखाएँ"
+  },
+  "changes.diff.unreadableBefore": {
+    "defaultMessage": "पहले फ़ाइल में टेक्स्ट नहीं था — केवल नया टेक्स्ट दिखाया गया है।"
+  },
+  "changes.rail.close": {
+    "defaultMessage": "बदलाव बंद करें"
+  },
+  "changes.rail.editOf": {
+    "defaultMessage": "बदलाव {count} में से {index}"
+  },
+  "changes.rail.fileCount": {
+    "defaultMessage": "{count,plural,one{# फ़ाइल} other{# फ़ाइलें}}"
+  },
+  "changes.rail.open": {
+    "defaultMessage": "इस चैट द्वारा बदली गई फ़ाइलें दिखाएँ"
+  },
+  "changes.rail.showInChat": {
+    "defaultMessage": "चैट में दिखाएँ"
+  },
+  "changes.rail.title": {
+    "defaultMessage": "बदलाव"
+  },
   "chat.notification.taskComplete.body": {
     "defaultMessage": "Goose को फोकस में वापस लाने के लिए यहां क्लिक करें।"
   },
@@ -8344,6 +8386,9 @@
   },
   "toolCallWithResponse.viewSubagentSession": {
     "defaultMessage": "सबएजेंट सत्र देखें"
+  },
+  "toolCallWithResponse.whatChanged": {
+    "defaultMessage": "क्या बदला"
   },
   "toolConfirmation.allowToolCallWithName": {
     "defaultMessage": "{toolName} को अनुमति दें?"

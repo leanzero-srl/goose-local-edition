@@ -458,6 +458,48 @@
   "cardButtons.launch": {
     "defaultMessage": "Avvia"
   },
+  "changes.diff.addedLabel": {
+    "defaultMessage": "{count,plural,one{# riga aggiunta} other{# righe aggiunte}}"
+  },
+  "changes.diff.hunkLine": {
+    "defaultMessage": "Riga {line}"
+  },
+  "changes.diff.newFile": {
+    "defaultMessage": "Nuovo file"
+  },
+  "changes.diff.noLinesChanged": {
+    "defaultMessage": "Nessuna riga modificata — il file conteneva già questo testo."
+  },
+  "changes.diff.removedLabel": {
+    "defaultMessage": "{count,plural,one{# riga rimossa} other{# righe rimosse}}"
+  },
+  "changes.diff.showAll": {
+    "defaultMessage": "{count,plural,one{Mostra # riga} other{Mostra tutte le # righe}}"
+  },
+  "changes.diff.showInChat": {
+    "defaultMessage": "Mostra nella chat"
+  },
+  "changes.diff.unreadableBefore": {
+    "defaultMessage": "Prima il file non conteneva testo — viene mostrato solo il testo nuovo."
+  },
+  "changes.rail.close": {
+    "defaultMessage": "Chiudi modifiche"
+  },
+  "changes.rail.editOf": {
+    "defaultMessage": "Modifica {index} di {count}"
+  },
+  "changes.rail.fileCount": {
+    "defaultMessage": "{count,plural,one{# file} other{# file}}"
+  },
+  "changes.rail.open": {
+    "defaultMessage": "Mostra i file modificati da questa chat"
+  },
+  "changes.rail.showInChat": {
+    "defaultMessage": "Mostra nella chat"
+  },
+  "changes.rail.title": {
+    "defaultMessage": "Modifiche"
+  },
   "chat.notification.taskComplete.body": {
     "defaultMessage": "Fai clic qui per riportare Goose in primo piano."
   },
@@ -8344,6 +8386,9 @@
   },
   "toolCallWithResponse.viewSubagentSession": {
     "defaultMessage": "Visualizza la sessione del subagent"
+  },
+  "toolCallWithResponse.whatChanged": {
+    "defaultMessage": "Cosa è cambiato"
   },
   "toolConfirmation.allowToolCallWithName": {
     "defaultMessage": "Consentire {toolName}?"

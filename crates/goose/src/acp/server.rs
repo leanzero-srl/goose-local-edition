@@ -11,6 +11,7 @@ use crate::acp::{PermissionDecision, ACP_CURRENT_MODEL};
 use crate::agents::extension::{Envs, PLATFORM_EXTENSIONS};
 use crate::agents::extension_manager::TRUSTED_TOOL_UPDATE_META_KEY;
 use crate::agents::mcp_client::{GooseMcpHostInfo, McpClientTrait};
+use crate::agents::platform_extensions::developer::file_diff::FILE_DIFF_META_KEY;
 use crate::agents::platform_extensions::developer::DeveloperClient;
 use crate::agents::{
     Agent, AgentConfig, ExtensionConfig, ExtensionLoadResult, GoosePlatform, SessionConfig,
@@ -1662,8 +1663,13 @@ impl GooseAcpAgent {
             }
         }
 
-        let update = ToolCallUpdate::new(ToolCallId::new(tool_response.id.clone()), fields)
-            .meta(extract_tool_call_update_meta(tool_response));
+        let update = ToolCallUpdate::new(ToolCallId::new(tool_response.id.clone()), fields).meta(
+            with_file_diff_meta(
+                extract_tool_call_update_meta(tool_response),
+                session.tool_requests.get(&tool_response.id),
+                tool_response,
+            ),
+        );
         cx.send_notification(SessionNotification::new(
             session_id.clone(),
             SessionUpdate::ToolCallUpdate(update),
@@ -2194,6 +2200,37 @@ fn extract_tool_call_update_meta(
     let mut meta_map = serde_json::Map::new();
     meta_map.insert("goose".to_string(), goose_meta);
     Some(meta_map)
+}
+
+/// The diff a developer `write`/`edit` attached to its result `_meta` (Q-189), forwarded to the
+/// client as `_meta.goose.fileDiff`. Only for the developer's own file tools: any MCP server can put
+/// the same key in its result `_meta`, and the Changes rail lists only what goose itself wrote.
+fn with_file_diff_meta(
+    meta: Option<Meta>,
+    tool_request: Option<&crate::conversation::message::ToolRequest>,
+    tool_response: &crate::conversation::message::ToolResponse,
+) -> Option<Meta> {
+    let is_goose_write = tool_request
+        .and_then(|request| request.tool_call.as_ref().ok())
+        .is_some_and(|call| matches!(call.name.as_ref(), "write" | "edit"));
+    let diff = tool_response
+        .tool_result
+        .as_ref()
+        .ok()
+        .filter(|_| is_goose_write)
+        .and_then(|result| result.meta.as_ref())
+        .and_then(|result_meta| result_meta.0.get(FILE_DIFF_META_KEY));
+    let Some(diff) = diff else {
+        return meta;
+    };
+    let mut meta = meta.unwrap_or_default();
+    let goose = meta
+        .entry("goose".to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let serde_json::Value::Object(goose) = goose {
+        goose.insert("fileDiff".to_string(), diff.clone());
+    }
+    Some(meta)
 }
 
 fn replay_message_meta(message: &Message) -> Meta {
@@ -4083,6 +4120,61 @@ print(\"hello, world\")
         })));
 
         assert_eq!(extract_tool_call_update_meta(&response), None);
+    }
+
+    fn named_request(name: &str) -> ToolRequest {
+        ToolRequest {
+            id: "req_1".to_string(),
+            tool_call: Ok(CallToolRequestParams::new(name.to_string())),
+            metadata: None,
+            tool_meta: None,
+        }
+    }
+
+    fn diff_response() -> ToolResponse {
+        response_with_meta(Some(serde_json::json!({
+            FILE_DIFF_META_KEY: {"path": "/w/a.md", "before": "file", "added": 1, "removed": 0,
+                                 "unified": "--- /w/a.md\n+++ /w/a.md\n@@ -1 +1,2 @@\n a\n+b\n"},
+        })))
+    }
+
+    #[test]
+    fn a_goose_write_forwards_its_diff_as_goose_file_diff() {
+        for name in ["edit", "write"] {
+            let meta = with_file_diff_meta(None, Some(&named_request(name)), &diff_response())
+                .expect("the diff is forwarded");
+            assert_eq!(meta["goose"]["fileDiff"]["added"], 1, "{name}");
+            assert_eq!(meta["goose"]["fileDiff"]["path"], "/w/a.md");
+        }
+    }
+
+    #[test]
+    fn the_diff_joins_trusted_meta_without_replacing_it() {
+        let trusted = extract_tool_call_update_meta(&response_with_meta(Some(serde_json::json!({
+            TRUSTED_TOOL_UPDATE_META_KEY: {"repeat": "same_output"},
+        }))));
+        let meta =
+            with_file_diff_meta(trusted, Some(&named_request("edit")), &diff_response()).unwrap();
+        assert_eq!(meta["goose"]["repeat"], "same_output");
+        assert_eq!(meta["goose"]["fileDiff"]["removed"], 0);
+    }
+
+    #[test]
+    fn another_tools_file_diff_meta_is_not_forwarded() {
+        for request in [Some(named_request("weather__edit")), None] {
+            assert_eq!(
+                with_file_diff_meta(None, request.as_ref(), &diff_response()),
+                None
+            );
+        }
+        assert_eq!(
+            with_file_diff_meta(
+                None,
+                Some(&named_request("edit")),
+                &response_with_meta(None)
+            ),
+            None
+        );
     }
 
     #[test]

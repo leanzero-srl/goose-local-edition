@@ -232,6 +232,7 @@ goose-memory-store = { path = "../goose-memory-store" }
 hmac = "0.13"
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 goose-mcp = { path = "../goose-mcp", default-features = false }
+similar = "2.7"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { workspace = true }

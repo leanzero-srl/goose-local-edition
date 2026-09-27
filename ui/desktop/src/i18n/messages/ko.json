@@ -458,6 +458,48 @@
   "cardButtons.launch": {
     "defaultMessage": "실행"
   },
+  "changes.diff.addedLabel": {
+    "defaultMessage": "{count,plural,one{# 줄 추가됨} other{# 줄 추가됨}}"
+  },
+  "changes.diff.hunkLine": {
+    "defaultMessage": "{line}번째 줄"
+  },
+  "changes.diff.newFile": {
+    "defaultMessage": "새 파일"
+  },
+  "changes.diff.noLinesChanged": {
+    "defaultMessage": "변경된 줄이 없습니다 — 파일에 이미 이 텍스트가 있었습니다."
+  },
+  "changes.diff.removedLabel": {
+    "defaultMessage": "{count,plural,one{# 줄 삭제됨} other{# 줄 삭제됨}}"
+  },
+  "changes.diff.showAll": {
+    "defaultMessage": "{count,plural,one{# 줄 모두 보기} other{# 줄 모두 보기}}"
+  },
+  "changes.diff.showInChat": {
+    "defaultMessage": "채팅에서 보기"
+  },
+  "changes.diff.unreadableBefore": {
+    "defaultMessage": "이전 파일은 텍스트가 아니었습니다 — 새 텍스트만 표시합니다."
+  },
+  "changes.rail.close": {
+    "defaultMessage": "변경 사항 닫기"
+  },
+  "changes.rail.editOf": {
+    "defaultMessage": "변경 {index}/{count}"
+  },
+  "changes.rail.fileCount": {
+    "defaultMessage": "{count,plural,one{파일 #개} other{파일 #개}}"
+  },
+  "changes.rail.open": {
+    "defaultMessage": "이 채팅이 변경한 파일 보기"
+  },
+  "changes.rail.showInChat": {
+    "defaultMessage": "채팅에서 보기"
+  },
+  "changes.rail.title": {
+    "defaultMessage": "변경 사항"
+  },
   "chat.notification.taskComplete.body": {
     "defaultMessage": "Goose에 다시 초점을 맞추려면 여기를 클릭하세요."
   },
@@ -8344,6 +8386,9 @@
   },
   "toolCallWithResponse.viewSubagentSession": {
     "defaultMessage": "하위 에이전트 세션 보기"
+  },
+  "toolCallWithResponse.whatChanged": {
+    "defaultMessage": "변경된 내용"
   },
   "toolConfirmation.allowToolCallWithName": {
     "defaultMessage": "{toolName}을 허용하시겠습니까?"

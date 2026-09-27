@@ -6,12 +6,15 @@ export function ActivityDisclosure({
   children,
   isStartExpanded = false,
   isForceExpand,
+  expandToken = 0,
   className = '',
 }: {
   label: ReactNode;
   children: ReactNode;
   isStartExpanded?: boolean;
   isForceExpand?: boolean;
+  /** Each new value opens the disclosure again, even after the person closed it (a "show me" jump). */
+  expandToken?: number;
   className?: string;
 }) {
   const [choice, setChoice] = useState<boolean | null>(null);
@@ -20,6 +23,9 @@ export function ActivityDisclosure({
   useEffect(() => {
     if (isForceExpand) setChoice(true);
   }, [isForceExpand]);
+  useEffect(() => {
+    if (expandToken > 0) setChoice(true);
+  }, [expandToken]);
   return (
     <div className={`min-w-0 ${className}`}>
       <button

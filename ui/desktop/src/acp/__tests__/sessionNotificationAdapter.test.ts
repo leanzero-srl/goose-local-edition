@@ -437,6 +437,50 @@ describe('createAcpSessionNotificationAdapter', () => {
         });
       });
 
+      it('carries a write/edit diff onto the tool response, leaving the content the text it was', () => {
+        const adapter = createAcpSessionNotificationAdapter();
+        const fileDiff = {
+          path: '/w/notes/kickoff.md',
+          before: 'file',
+          added: 4,
+          removed: 1,
+          unified:
+            '--- /w/notes/kickoff.md\n+++ /w/notes/kickoff.md\n@@ -1 +1,4 @@\n-a\n+b\n+c\n+d\n+e\n',
+        };
+
+        const messages = expectOnlyMessagesChange(
+          adapter.apply(
+            acpUpdate({
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'tool-4',
+              status: 'completed',
+              content: [
+                {
+                  type: 'content',
+                  content: {
+                    type: 'text',
+                    text: 'Edited /w/notes/kickoff.md (1 lines -> 4 lines)',
+                  },
+                },
+              ],
+              _meta: { goose: { fileDiff } },
+            })
+          )
+        );
+
+        expect(firstContent(messages[0])).toMatchObject({
+          type: 'toolResponse',
+          id: 'tool-4',
+          toolResult: {
+            status: 'success',
+            value: {
+              content: [{ type: 'text', text: 'Edited /w/notes/kickoff.md (1 lines -> 4 lines)' }],
+            },
+          },
+          metadata: { status: 'completed', fileDiff },
+        });
+      });
+
       it('uses failed tool response text content when raw output is absent', () => {
         const adapter = createAcpSessionNotificationAdapter();
 

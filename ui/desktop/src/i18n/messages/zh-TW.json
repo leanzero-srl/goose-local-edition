@@ -458,6 +458,48 @@
   "cardButtons.launch": {
     "defaultMessage": "啟動"
   },
+  "changes.diff.addedLabel": {
+    "defaultMessage": "{count,plural,one{新增 # 行} other{新增 # 行}}"
+  },
+  "changes.diff.hunkLine": {
+    "defaultMessage": "第 {line} 行"
+  },
+  "changes.diff.newFile": {
+    "defaultMessage": "新檔案"
+  },
+  "changes.diff.noLinesChanged": {
+    "defaultMessage": "沒有任何行變更 — 檔案中已有這段文字。"
+  },
+  "changes.diff.removedLabel": {
+    "defaultMessage": "{count,plural,one{刪除 # 行} other{刪除 # 行}}"
+  },
+  "changes.diff.showAll": {
+    "defaultMessage": "{count,plural,one{顯示全部 # 行} other{顯示全部 # 行}}"
+  },
+  "changes.diff.showInChat": {
+    "defaultMessage": "在聊天中查看"
+  },
+  "changes.diff.unreadableBefore": {
+    "defaultMessage": "檔案先前的內容不是文字 — 僅顯示新文字。"
+  },
+  "changes.rail.close": {
+    "defaultMessage": "關閉變更"
+  },
+  "changes.rail.editOf": {
+    "defaultMessage": "第 {index} 處變更，共 {count} 處"
+  },
+  "changes.rail.fileCount": {
+    "defaultMessage": "{count,plural,one{# 個檔案} other{# 個檔案}}"
+  },
+  "changes.rail.open": {
+    "defaultMessage": "顯示此聊天變更的檔案"
+  },
+  "changes.rail.showInChat": {
+    "defaultMessage": "在聊天中查看"
+  },
+  "changes.rail.title": {
+    "defaultMessage": "變更"
+  },
   "chat.notification.taskComplete.body": {
     "defaultMessage": "按一下這裡讓 Goose 重新回到焦點。"
   },
@@ -8344,6 +8386,9 @@
   },
   "toolCallWithResponse.viewSubagentSession": {
     "defaultMessage": "檢視子代理工作階段"
+  },
+  "toolCallWithResponse.whatChanged": {
+    "defaultMessage": "變更內容"
   },
   "toolConfirmation.allowToolCallWithName": {
     "defaultMessage": "允許 {toolName}？"

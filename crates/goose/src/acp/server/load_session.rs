@@ -136,7 +136,11 @@ fn replay_conversation_to_client(
                     let update =
                         ToolCallUpdate::new(ToolCallId::new(tool_response.id.clone()), fields)
                             .meta(merge_replay_message_meta(
-                                extract_tool_call_update_meta(tool_response),
+                                with_file_diff_meta(
+                                    extract_tool_call_update_meta(tool_response),
+                                    replay_tool_requests.get(&tool_response.id),
+                                    tool_response,
+                                ),
                                 message,
                             ));
                     cx.send_notification(SessionNotification::new(

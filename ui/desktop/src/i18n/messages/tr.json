@@ -458,6 +458,48 @@
   "cardButtons.launch": {
     "defaultMessage": "Başlat"
   },
+  "changes.diff.addedLabel": {
+    "defaultMessage": "{count,plural,one{# satır eklendi} other{# satır eklendi}}"
+  },
+  "changes.diff.hunkLine": {
+    "defaultMessage": "Satır {line}"
+  },
+  "changes.diff.newFile": {
+    "defaultMessage": "Yeni dosya"
+  },
+  "changes.diff.noLinesChanged": {
+    "defaultMessage": "Hiçbir satır değişmedi — dosya bu metni zaten içeriyordu."
+  },
+  "changes.diff.removedLabel": {
+    "defaultMessage": "{count,plural,one{# satır kaldırıldı} other{# satır kaldırıldı}}"
+  },
+  "changes.diff.showAll": {
+    "defaultMessage": "{count,plural,one{# satırı göster} other{# satırın tümünü göster}}"
+  },
+  "changes.diff.showInChat": {
+    "defaultMessage": "Sohbette göster"
+  },
+  "changes.diff.unreadableBefore": {
+    "defaultMessage": "Dosya önceden metin değildi — yalnızca yeni metin gösteriliyor."
+  },
+  "changes.rail.close": {
+    "defaultMessage": "Değişiklikleri kapat"
+  },
+  "changes.rail.editOf": {
+    "defaultMessage": "Değişiklik {index}/{count}"
+  },
+  "changes.rail.fileCount": {
+    "defaultMessage": "{count,plural,one{# dosya} other{# dosya}}"
+  },
+  "changes.rail.open": {
+    "defaultMessage": "Bu sohbetin değiştirdiği dosyaları göster"
+  },
+  "changes.rail.showInChat": {
+    "defaultMessage": "Sohbette göster"
+  },
+  "changes.rail.title": {
+    "defaultMessage": "Değişiklikler"
+  },
   "chat.notification.taskComplete.body": {
     "defaultMessage": "Goose'yi tekrar odağa almak için buraya tıklayın."
   },
@@ -8344,6 +8386,9 @@
   },
   "toolCallWithResponse.viewSubagentSession": {
     "defaultMessage": "Alt temsilci oturumunu görüntüle"
+  },
+  "toolCallWithResponse.whatChanged": {
+    "defaultMessage": "Neler değişti"
   },
   "toolConfirmation.allowToolCallWithName": {
     "defaultMessage": "{toolName}'ye izin verilsin mi?"

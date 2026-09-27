@@ -5,6 +5,8 @@ use rmcp::model::{CallToolResult, Content};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use super::file_diff::{diff_texts, with_file_diff, Before};
+
 const NO_MATCH_PREVIEW_LINES: usize = 20;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -83,16 +85,31 @@ impl EditTools {
         }
 
         let is_new = !path.exists();
+        let (before, old_content) = if is_new {
+            (Before::None, None)
+        } else {
+            match fs::read_to_string(&path) {
+                Ok(text) => (Before::File, Some(text)),
+                Err(_) => (Before::Unreadable, None),
+            }
+        };
 
-        match fs::write(path, &params.content) {
+        match fs::write(&path, &params.content) {
             Ok(()) => {
                 let line_count = params.content.lines().count();
                 let action = if is_new { "Created" } else { "Wrote" };
-                CallToolResult::success(vec![Content::text(format!(
-                    "{} {} ({} lines)",
-                    action, params.path, line_count
-                ))
-                .with_priority(0.0)])
+                let shown = path.display().to_string();
+                let diff = diff_texts(&shown, old_content.as_deref(), &params.content);
+                with_file_diff(
+                    CallToolResult::success(vec![Content::text(format!(
+                        "{} {} ({} lines)",
+                        action, params.path, line_count
+                    ))
+                    .with_priority(0.0)]),
+                    &shown,
+                    before,
+                    &diff,
+                )
             }
             Err(error) => CallToolResult::error(vec![Content::text(format!(
                 "Failed to write {}: {}",
@@ -134,11 +151,18 @@ impl EditTools {
             Ok(()) => {
                 let old_lines = params.before.lines().count();
                 let new_lines = params.after.lines().count();
-                CallToolResult::success(vec![Content::text(format!(
-                    "Edited {} ({} lines -> {} lines)",
-                    params.path, old_lines, new_lines
-                ))
-                .with_priority(0.0)])
+                let shown = path.display().to_string();
+                let diff = diff_texts(&shown, Some(&content), &new_content);
+                with_file_diff(
+                    CallToolResult::success(vec![Content::text(format!(
+                        "Edited {} ({} lines -> {} lines)",
+                        params.path, old_lines, new_lines
+                    ))
+                    .with_priority(0.0)]),
+                    &shown,
+                    Before::File,
+                    &diff,
+                )
             }
             Err(error) => CallToolResult::error(vec![Content::text(format!(
                 "Failed to write {}: {}",
@@ -553,5 +577,190 @@ mod tests {
             fs::read_to_string(dir.path().join("relative-edit.txt")).unwrap(),
             "after"
         );
+    }
+
+    fn diff_marker(result: &CallToolResult) -> Option<&serde_json::Value> {
+        result
+            .meta
+            .as_ref()
+            .and_then(|m| m.get(super::super::file_diff::FILE_DIFF_META_KEY))
+    }
+
+    #[test]
+    fn an_edit_carries_the_diff_of_what_changed() {
+        let dir = setup();
+        let path = dir.path().join("kickoff.md");
+        fs::write(&path, "# Kickoff\n\nAgenda: TBD\n\nOwner: me\n").unwrap();
+        let result = EditTools::new().file_edit(FileEditParams {
+            path: path.to_string_lossy().to_string(),
+            before: "Agenda: TBD".to_string(),
+            after: "Agenda:\n- scope\n- dates\n- owners".to_string(),
+        });
+        assert_eq!(result.content.len(), 1);
+        assert_eq!(
+            extract_text(&result),
+            format!("Edited {} (1 lines -> 4 lines)", path.display())
+        );
+        let marker = diff_marker(&result).expect("an edit carries its diff");
+        assert_eq!(marker["added"], 4);
+        assert_eq!(marker["removed"], 1);
+        assert_eq!(marker["before"], "file");
+        assert_eq!(marker["path"], path.display().to_string());
+        let unified = marker["unified"].as_str().unwrap();
+        assert!(unified.contains("@@ -1,5 +1,8 @@"), "{unified}");
+        assert!(unified.contains("\n-Agenda: TBD\n+Agenda:\n+- scope\n+- dates\n+- owners\n"));
+    }
+
+    #[test]
+    fn a_write_diffs_against_what_was_on_disk() {
+        let dir = setup();
+        let path = dir.path().join("existing.txt");
+        fs::write(&path, "one\ntwo\n").unwrap();
+        let result = EditTools::new().file_write(FileWriteParams {
+            path: path.to_string_lossy().to_string(),
+            content: "one\n2\n".to_string(),
+        });
+        let marker = diff_marker(&result).expect("a write carries its diff");
+        assert_eq!(
+            (marker["added"].as_u64(), marker["removed"].as_u64()),
+            (Some(1), Some(1))
+        );
+        assert_eq!(marker["before"], "file");
+        assert!(marker["unified"].as_str().unwrap().contains("-two\n+2\n"));
+    }
+
+    #[test]
+    fn a_create_has_no_before_and_is_all_additions() {
+        let dir = setup();
+        let path = dir.path().join("fresh.txt");
+        let result = EditTools::new().file_write(FileWriteParams {
+            path: path.to_string_lossy().to_string(),
+            content: "a\nb\nc".to_string(),
+        });
+        assert!(extract_text(&result).starts_with("Created "));
+        let marker = diff_marker(&result).expect("a create carries its diff");
+        assert_eq!(marker["before"], "none");
+        assert_eq!(
+            (marker["added"].as_u64(), marker["removed"].as_u64()),
+            (Some(3), Some(0))
+        );
+        assert!(marker["unified"]
+            .as_str()
+            .unwrap()
+            .starts_with("--- /dev/null\n"));
+    }
+
+    #[test]
+    fn overwriting_a_non_text_file_says_the_before_was_unreadable() {
+        let dir = setup();
+        let path = dir.path().join("blob.bin");
+        fs::write(&path, [0xff, 0xfe, 0x00, 0x9f]).unwrap();
+        let result = EditTools::new().file_write(FileWriteParams {
+            path: path.to_string_lossy().to_string(),
+            content: "text now\n".to_string(),
+        });
+        assert!(extract_text(&result).starts_with("Wrote "));
+        let marker = diff_marker(&result).expect("the write still carries its diff");
+        assert_eq!(marker["before"], "unreadable");
+    }
+
+    #[test]
+    fn a_failed_edit_or_write_carries_no_diff() {
+        let dir = setup();
+        let path = dir.path().join("edit.txt");
+        fs::write(&path, "some content").unwrap();
+        let tools = EditTools::new();
+        let no_match = tools.file_edit(FileEditParams {
+            path: path.to_string_lossy().to_string(),
+            before: "absent".to_string(),
+            after: "x".to_string(),
+        });
+        assert!(no_match.is_error.unwrap_or(false));
+        assert!(diff_marker(&no_match).is_none());
+
+        let missing = tools.file_edit(FileEditParams {
+            path: dir.path().join("nope.txt").to_string_lossy().to_string(),
+            before: "a".to_string(),
+            after: "b".to_string(),
+        });
+        assert!(missing.is_error.unwrap_or(false));
+        assert!(diff_marker(&missing).is_none());
+
+        let into_a_file = tools.file_write(FileWriteParams {
+            path: path.join("child.txt").to_string_lossy().to_string(),
+            content: "x".to_string(),
+        });
+        assert!(into_a_file.is_error.unwrap_or(false));
+        assert!(diff_marker(&into_a_file).is_none());
+    }
+
+    /// Q-189's contract: the diff is for the person. What reaches a provider is byte-identical to
+    /// the result the tools returned before the diff existed (the one text line), and the content
+    /// every other model-bound path joins is the same one item.
+    #[test]
+    fn the_model_sees_exactly_the_text_it_saw_before_the_diff() {
+        use crate::conversation::message::Message;
+
+        let dir = setup();
+        let path = dir.path().join("kickoff.md");
+        fs::write(&path, "Agenda: TBD\n").unwrap();
+        let path_str = path.to_string_lossy().to_string();
+        let tools = EditTools::new();
+        let edited = tools.file_edit(FileEditParams {
+            path: path_str.clone(),
+            before: "Agenda: TBD".to_string(),
+            after: "Agenda:\n- a\n- b\n- c".to_string(),
+        });
+        let written = tools.file_write(FileWriteParams {
+            path: path_str.clone(),
+            content: "done\n".to_string(),
+        });
+
+        let before_the_diff = [
+            CallToolResult::success(vec![Content::text(format!(
+                "Edited {path_str} (1 lines -> 4 lines)"
+            ))
+            .with_priority(0.0)]),
+            CallToolResult::success(vec![
+                Content::text(format!("Wrote {path_str} (1 lines)")).with_priority(0.0)
+            ]),
+        ];
+
+        for (now, then) in [edited, written].into_iter().zip(before_the_diff) {
+            assert!(
+                diff_marker(&now).is_some(),
+                "the stored result keeps the diff"
+            );
+            assert_eq!(now.content, then.content);
+            assert_eq!(now.is_error, then.is_error);
+            assert_eq!(now.structured_content, then.structured_content);
+            let stored =
+                |result: CallToolResult| Message::user().with_tool_response("call-1", Ok(result));
+            let (now_msg, then_msg) = (stored(now), stored(then));
+            assert_eq!(
+                now_msg.content[0].as_tool_response_text(),
+                then_msg.content[0].as_tool_response_text(),
+                "the joined text compaction, the judges and the token count read"
+            );
+            let (now_msg, then_msg) = (
+                now_msg.agent_visible_content(),
+                then_msg.agent_visible_content(),
+            );
+            let openai = |m: &Message| {
+                serde_json::to_string(&goose_providers::formats::openai::format_messages(
+                    std::slice::from_ref(m),
+                    &goose_providers::images::ImageFormat::OpenAi,
+                ))
+                .unwrap()
+            };
+            let anthropic = |m: &Message| {
+                serde_json::to_string(&goose_providers::formats::anthropic::format_messages(
+                    std::slice::from_ref(m),
+                ))
+                .unwrap()
+            };
+            assert_eq!(openai(&now_msg), openai(&then_msg));
+            assert_eq!(anthropic(&now_msg), anthropic(&then_msg));
+        }
     }
 }

@@ -21,6 +21,13 @@ import type { ContentBlock } from '../types/message';
 import McpAppRenderer from './McpApps/McpAppRenderer';
 import ToolApprovalButtons from './ToolApprovalButtons';
 import { defineMessages, useIntl } from '../i18n';
+import { DiffCounts, DiffView } from './changes/DiffView';
+import {
+  type FileDiff,
+  REVEAL_TOOL_CALL_EVENT,
+  fileDiffOf,
+  toolCallDomId,
+} from './changes/fileDiff';
 
 const i18n = defineMessages({
   viewSubagentSession: {
@@ -71,7 +78,25 @@ const i18n = defineMessages({
     id: 'toolCallWithResponse.repeatInAnswer',
     defaultMessage: 'Skipped — identical to an earlier call in this same answer',
   },
+  whatChanged: {
+    id: 'toolCallWithResponse.whatChanged',
+    defaultMessage: 'What changed',
+  },
 });
+
+/** Each time the Changes rail asks for THIS call, a new token: the card opens and briefly rings. */
+function useRevealToken(toolCallId: string): number {
+  const [token, setToken] = useState(0);
+  useEffect(() => {
+    const onReveal = (event: Event) => {
+      const detail = (event as CustomEvent<{ toolCallId?: string }>).detail;
+      if (detail?.toolCallId === toolCallId) setToken((t) => t + 1);
+    };
+    window.addEventListener(REVEAL_TOOL_CALL_EVENT, onReveal);
+    return () => window.removeEventListener(REVEAL_TOOL_CALL_EVENT, onReveal);
+  }, [toolCallId]);
+  return token;
+}
 
 type RepeatMarker = 'skipped' | 'same_output' | 'in_answer';
 
@@ -268,6 +293,14 @@ export default function ToolCallWithResponse({
   isApprovalClicked,
 }: ToolCallWithResponseProps) {
   const intl = useIntl();
+  const revealToken = useRevealToken(toolRequest.id);
+  const [ringing, setRinging] = useState(false);
+  useEffect(() => {
+    if (revealToken === 0) return undefined;
+    setRinging(true);
+    const off = setTimeout(() => setRinging(false), REVEAL_RING_MS);
+    return () => clearTimeout(off);
+  }, [revealToken]);
   // Handle both the wrapped ToolResult format and the unwrapped format
   // The server serializes ToolResult<T> as { status: "success", value: T } or { status: "error", error: string }
   const toolCallData = toolRequest.toolCall as Record<string, unknown>;
@@ -300,15 +333,19 @@ export default function ToolCallWithResponse({
   // A Failed card says why on its face (Q-99: a Write that lost `path` showed only the repeat
   // line; "missing field `path`" sat inside the collapsed output). A declined repeat is not a failure.
   const failure = isNotRun(repeat) ? null : toolFailureText(toolResponse?.toolResult);
+  const fileDiff = fileDiffOf(toolResponse);
 
   return (
     <>
       <div
+        id={toolCallDomId(toolRequest.id)}
+        data-testid="tool-call-card"
         className={cn(
           'w-full text-sm font-sans rounded-lg overflow-hidden border',
           showInlineApproval
             ? 'border-lz-warn bg-lz-surface text-lz-ink'
-            : 'border-lz-border bg-lz-surface text-lz-ink'
+            : 'border-lz-border bg-lz-surface text-lz-ink',
+          ringing && 'ring-2 ring-lz-accent'
         )}
       >
         <ToolCallView
@@ -319,6 +356,8 @@ export default function ToolCallWithResponse({
             toolResponse,
             notifications,
             isStreamingMessage,
+            fileDiff,
+            revealToken,
           }}
         />
         {failure && (
@@ -381,6 +420,9 @@ interface ToolCallViewProps {
   toolResponse?: ToolResponseMessageContent;
   notifications?: NotificationEvent[];
   isStreamingMessage?: boolean;
+  /** What a write/edit changed (Q-189), from the engine's diff of the file it wrote. */
+  fileDiff?: FileDiff | null;
+  revealToken?: number;
 }
 
 interface Progress {
@@ -515,6 +557,8 @@ const TELLING_ARGUMENT_KEYS = [
   'source',
 ];
 const DETAIL_MAX = 80;
+// How long a card rings after the Changes rail jumps to it — long enough to find it on screen.
+const REVEAL_RING_MS = 1600;
 // The card's face carries the error's head; the whole of it stays in the Output section.
 const FAILURE_MAX = 400;
 
@@ -559,6 +603,8 @@ function ToolCallView({
   toolResponse,
   notifications,
   isStreamingMessage = false,
+  fileDiff,
+  revealToken = 0,
 }: ToolCallViewProps) {
   const intl = useIntl();
   const [responseStyle, setResponseStyle] = useState<string>('concise');
@@ -824,6 +870,7 @@ function ToolCallView({
     >
       <ToolIconWithStatus ToolIcon={getToolCallIcon(toolCall.name)} status={toolCallStatus} />
       <span className="truncate flex-1 min-w-0">{getToolLabelContent()}</span>
+      {fileDiff && <DiffCounts added={fileDiff.added} removed={fileDiff.removed} />}
       <span className="shrink-0 text-xs text-text-secondary">
         {loadingStatus === 'pending'
           ? isCancelledMessage
@@ -843,6 +890,7 @@ function ToolCallView({
     <ToolCallExpandable
       isStartExpanded={isRenderingProgress || isExpandToolDetails}
       isForceExpand={false}
+      expandToken={revealToken}
       label={
         extensionTooltip ? (
           <TooltipWrapper tooltipContent={extensionTooltip} side="top" align="start">
@@ -878,6 +926,21 @@ function ToolCallView({
 
         return null;
       })()}
+
+      {fileDiff && !isCancelledMessage && (
+        <div className="border-t border-border-primary" data-testid="tool-call-diff">
+          <div className="flex min-w-0 items-center gap-2 px-4 pt-2 text-xs">
+            <span className="shrink-0 font-lz-semibold text-lz-ink">
+              {intl.formatMessage(i18n.whatChanged)}
+            </span>
+            <span className="min-w-0 flex-1 truncate font-mono text-lz-ink-3" title={fileDiff.path}>
+              {fileDiff.path}
+            </span>
+            <DiffCounts added={fileDiff.added} removed={fileDiff.removed} />
+          </div>
+          <DiffView diff={fileDiff} className="pb-2" />
+        </div>
+      )}
 
       {logs && logs.length > 0 && (
         <div className="border-t border-border-primary">

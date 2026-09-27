@@ -1,4 +1,5 @@
 pub mod edit;
+pub mod file_diff;
 pub mod image;
 pub mod process_groups;
 pub mod shell;
