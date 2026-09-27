@@ -347,6 +347,9 @@
   "backgroundWork.toolLabel": {
     "defaultMessage": "Đang gắn nhãn lệnh gọi công cụ"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "Goose Swarm của LeanZero — mở leanzero.net"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -1550,56 +1553,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "Hiện {count} tùy chọn"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "Nếu bạn báo lỗi, hãy cân nhắc đính kèm báo cáo chẩn đoán vào đó."
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "Hủy"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "Thiết lập cấu hình"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "Bạn có thể tải xuống báo cáo chẩn đoán dạng JSON để chia sẻ với nhóm, hoặc báo lỗi trực tiếp trên GitHub với thông tin hệ thống được điền sẵn. Báo cáo chẩn đoán bao gồm những nội dung sau:"
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "Không thể tải xuống báo cáo chẩn đoán"
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "Lỗi chẩn đoán"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "Tải xuống"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "Đang tải xuống..."
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "Báo lỗi trên GitHub"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "Tệp nhật ký gần đây"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "Đang mở..."
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Báo cáo sự cố"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "Nếu phiên của bạn chứa thông tin nhạy cảm, đừng chia sẻ tệp chẩn đoán công khai."
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "Tin nhắn phiên hiện tại của bạn"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "Thông tin hệ thống cơ bản"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "Không thể lấy thông tin hệ thống"
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "Lỗi"
   },
   "dialog.close": {
     "defaultMessage": "Đóng"
@@ -6787,6 +6742,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "Tệp YAML"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "Đính kèm thông tin hệ thống"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "Phiên bản ứng dụng và engine, hệ điều hành, tên nhà cung cấp, mô hình và tiện ích mở rộng. Không bao giờ gồm cuộc trò chuyện, nhật ký, cài đặt hay khóa của bạn."
+  },
+  "reportProblem.close": {
+    "defaultMessage": "Đóng"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "Vượt quá {max} ký tự. Vui lòng rút ngắn."
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "Mô tả sự cố với ít nhất {min} ký tự."
+  },
+  "reportProblem.done": {
+    "defaultMessage": "Xong"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "Email của bạn"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero sẽ trả lời địa chỉ này. Bắt buộc khi gửi từ đây; tùy chọn với ứng dụng email của bạn."
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "Địa chỉ email này có vẻ không đúng."
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "Thêm email để LeanZero có thể trả lời, hoặc gửi từ ứng dụng email của bạn."
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "Báo cáo của bạn được gửi tới {email}."
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "Tham gia Discord của LeanZero"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "Không thể mở ứng dụng email của bạn: {reason}."
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "Báo cáo của bạn đã sẵn sàng trong email mới gửi tới {email}. Báo cáo chưa được gửi cho đến khi bạn gửi từ đó."
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "Đã mở trong ứng dụng email của bạn"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "Không thể đọc thông tin hệ thống ({error}). Sẽ không đính kèm gì."
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "Đang đọc thông tin hệ thống…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "Chính xác nội dung sẽ được đính kèm:"
+  },
+  "reportProblem.send": {
+    "defaultMessage": "Gửi"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "Gửi không thành công: {reason}. Báo cáo của bạn vẫn còn đây. Hãy thử lại, hoặc gửi từ ứng dụng email của bạn."
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero đã nhận báo cáo và sẽ trả lời tới {email}. leanzero.net cũng gửi cho bạn một email xác nhận."
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "Đã gửi báo cáo"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "Dùng ứng dụng email của tôi"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "Đã xảy ra sự cố gì?"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "Bạn đang làm gì, bạn mong đợi điều gì và điều gì đã xảy ra thay vào đó."
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "Đặt lại nhà cung cấp và mô hình"

@@ -347,6 +347,9 @@
   "backgroundWork.toolLabel": {
     "defaultMessage": "Подписываем вызовы инструментов"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "Goose Swarm от LeanZero — открыть leanzero.net"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -1550,56 +1553,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "Показать {count} параметров"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "Если вы создаете отчет об ошибке, приложите к нему диагностический отчет."
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "Отмена"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "Настройки конфигурации"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "Вы можете скачать ZIP-файл диагностики, чтобы поделиться им с командой, или сразу создать ошибку на GitHub с предзаполненными сведениями о системе. Диагностический отчет содержит:"
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "Не удалось скачать диагностику"
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "Ошибка диагностики"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "Скачать"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "Загрузка..."
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "Сообщить об ошибке на GitHub"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "Недавние файлы журналов"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "Открытие..."
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Сообщить о проблеме"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "Если ваш сеанс содержит конфиденциальную информацию, не публикуйте файл диагностики."
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "Сообщения текущего сеанса"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "Основная информация о системе"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "Не удалось получить информацию о системе"
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "Ошибка"
   },
   "dialog.close": {
     "defaultMessage": "Закрыть"
@@ -6787,6 +6742,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "Файлы YAML"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "Приложить сведения о системе"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "Версии приложения и движка, ОС, названия провайдера, модели и расширений. Никогда — ваши чаты, журналы, настройки или ключи."
+  },
+  "reportProblem.close": {
+    "defaultMessage": "Закрыть"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "Больше {max} символов. Сократите, пожалуйста."
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "Опишите проблему хотя бы в {min} символах."
+  },
+  "reportProblem.done": {
+    "defaultMessage": "Готово"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "Ваш e-mail"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero ответит на этот адрес. Нужен для отправки отсюда; для почтового приложения — по желанию."
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "Этот адрес e-mail выглядит неверным."
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "Укажите e-mail, чтобы LeanZero мог ответить, или отправьте из почтового приложения."
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "Ваш отчёт уйдёт на {email}."
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "Присоединиться к Discord LeanZero"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "Не удалось открыть почтовое приложение: {reason}."
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "Отчёт готов в новом письме на {email}. Он не будет отправлен, пока вы не отправите его оттуда."
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "Открыто в почтовом приложении"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "Не удалось прочитать сведения о системе ({error}). Ничего не будет приложено."
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "Читаем сведения о системе…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "Будет приложено ровно это:"
+  },
+  "reportProblem.send": {
+    "defaultMessage": "Отправить"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "Не удалось отправить: {reason}. Ваш отчёт сохранён. Попробуйте ещё раз или отправьте из почтового приложения."
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero получил ваш отчёт и ответит на {email}. leanzero.net также пришлёт вам подтверждение."
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "Отчёт отправлен"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "Через почтовое приложение"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "Что пошло не так?"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "Что вы делали, чего ожидали и что произошло вместо этого."
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "Сбросить провайдера и модель"

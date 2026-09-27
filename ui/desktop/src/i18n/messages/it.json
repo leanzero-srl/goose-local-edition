@@ -347,6 +347,9 @@
   "backgroundWork.toolLabel": {
     "defaultMessage": "Etichettatura delle chiamate agli strumenti"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "Goose Swarm di LeanZero — apri leanzero.net"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -1550,56 +1553,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "Mostra {count} opzioni"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "Se segnali un bug, valuta di allegarvi il report diagnostico."
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "Annulla"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "Impostazioni di configurazione"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "Puoi scaricare un report diagnostico in formato JSON da condividere con il team, oppure segnalare un bug direttamente su GitHub con i dettagli del tuo sistema già compilati. Un report diagnostico contiene quanto segue:"
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "Impossibile scaricare il report diagnostico"
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "Errore diagnostico"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "Scarica"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "Download in corso..."
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "Segnala un bug su GitHub"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "File di log recenti"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "Apertura in corso..."
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Segnala un problema"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "Se la tua sessione contiene informazioni sensibili, non condividere pubblicamente il file diagnostico."
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "I messaggi della tua sessione corrente"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "Informazioni di base sul sistema"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "Impossibile ottenere le informazioni di sistema"
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "Errore"
   },
   "dialog.close": {
     "defaultMessage": "Chiudi"
@@ -6787,6 +6742,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "File YAML"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "Allega i dettagli di sistema"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "Versioni dell’app e del motore, sistema operativo, nomi di provider, modello ed estensioni. Mai le tue chat, i log, le impostazioni o le chiavi."
+  },
+  "reportProblem.close": {
+    "defaultMessage": "Chiudi"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "Supera i {max} caratteri. Accorcialo, per favore."
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "Descrivi il problema in almeno {min} caratteri."
+  },
+  "reportProblem.done": {
+    "defaultMessage": "Fatto"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "La tua email"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero risponde a questo indirizzo. Necessario per inviare da qui; facoltativo per la tua app di posta."
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "Questo indirizzo email non sembra corretto."
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "Aggiungi la tua email perché LeanZero possa rispondere, oppure invialo dalla tua app di posta."
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "La tua segnalazione va a {email}."
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "Unisciti al Discord di LeanZero"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "Impossibile aprire la tua app di posta: {reason}."
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "La tua segnalazione è pronta in una nuova email a {email}. Non viene inviata finché non la invii da lì."
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "Aperto nella tua app di posta"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "Impossibile leggere i dettagli di sistema ({error}). Non verrà allegato nulla."
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "Lettura dei dettagli di sistema…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "Esattamente ciò che verrà allegato:"
+  },
+  "reportProblem.send": {
+    "defaultMessage": "Invia"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "Invio non riuscito: {reason}. La tua segnalazione è ancora qui. Riprova, oppure inviala dalla tua app di posta."
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero ha ricevuto la tua segnalazione e risponderà a {email}. leanzero.net ti invia anche una conferma di ricezione."
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "Segnalazione inviata"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "Usa la mia app di posta"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "Cosa è andato storto?"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "Cosa stavi facendo, cosa ti aspettavi e cosa è successo invece."
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "Reimposta provider e modello"

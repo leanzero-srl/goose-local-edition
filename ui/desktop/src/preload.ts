@@ -17,6 +17,7 @@ import type { MlxRemoteReport } from './utils/mlxRemoteReport';
 import type { MlxRestoreReport } from './utils/mlxRestoreReport';
 import type { MacsTrayReport } from './utils/macsTrayReport';
 import type { LinkTrayReport } from './utils/linkTrayReport';
+import type { ProblemReportInput, ProblemReportResult } from './utils/problemReport';
 import type { LocalNetworkTouch } from './localNetwork';
 import type { GlancePrefs, GlancePush, GlanceSessions } from './utils/engineGlance';
 import type { GlancePipAction } from './engineGlanceDesktop';
@@ -429,6 +430,9 @@ type ElectronAPI = {
   /** nativeTheme 'updated' → the new shouldUseDarkColors; returns the unsubscribe. */
   onNativeThemeUpdated: (callback: (dark: boolean) => void) => () => void;
   openExternal: (url: string) => Promise<void>;
+  /** Q-192: POST a problem report to leanzero.net's contact endpoint from MAIN (the renderer CSP
+   *  blocks the site). The recipient is fixed server side; every failure comes back NAMED. */
+  sendProblemReport: (report: ProblemReportInput) => Promise<ProblemReportResult>;
   // Update-related functions
   getVersion: () => string;
   checkForUpdates: () => Promise<{ updateInfo: unknown; error: string | null }>;
@@ -728,6 +732,8 @@ const electronAPI: ElectronAPI = {
   openExternal: (url: string): Promise<void> => {
     return ipcRenderer.invoke('open-external', url);
   },
+  sendProblemReport: (report: ProblemReportInput): Promise<ProblemReportResult> =>
+    ipcRenderer.invoke('send-problem-report', report),
   getVersion: (): string => {
     return config.GOOSE_VERSION || ipcRenderer.sendSync('get-app-version') || '';
   },

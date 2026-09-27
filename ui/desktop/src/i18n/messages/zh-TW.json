@@ -347,6 +347,9 @@
   "backgroundWork.toolLabel": {
     "defaultMessage": "正在標註工具呼叫"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "LeanZero 出品的 Goose Swarm — 開啟 leanzero.net"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -1550,56 +1553,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "顯示 {count} 個選項"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "如果您要回報錯誤，建議將診斷報告一併附上。"
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "取消"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "設定項目"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "您可以下載診斷 JSON 報告與團隊分享，或直接在 GitHub 上回報錯誤並預先填入您的系統詳細資料。診斷報告包含下列內容："
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "無法下載診斷報告"
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "診斷錯誤"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "下載"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "正在下載…"
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "在 GitHub 上回報錯誤"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "最近的記錄檔"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "正在開啟…"
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "回報問題"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "如果您的工作階段包含敏感資訊，請勿公開分享診斷檔案。"
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "您目前工作階段的訊息"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "基本系統資訊"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "無法取得系統資訊"
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "錯誤"
   },
   "dialog.close": {
     "defaultMessage": "關閉"
@@ -6787,6 +6742,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "YAML 檔案"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "附加系統資訊"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "應用程式與引擎版本、作業系統、供應商、模型與擴充功能名稱。絕不包含你的聊天、記錄、設定或金鑰。"
+  },
+  "reportProblem.close": {
+    "defaultMessage": "關閉"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "超過 {max} 個字元，請縮短。"
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "請用至少 {min} 個字元描述問題。"
+  },
+  "reportProblem.done": {
+    "defaultMessage": "完成"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "你的電子郵件"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero 會回覆到此地址。從這裡傳送時必填；使用郵件應用程式時可選。"
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "這個電子郵件地址看起來不正確。"
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "請填寫電子郵件以便 LeanZero 回覆，或透過你的郵件應用程式傳送。"
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "你的回報將傳送至 {email}。"
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "加入 LeanZero Discord"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "無法開啟你的郵件應用程式：{reason}。"
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "你的回報已在寄往 {email} 的新郵件中準備好。只有你在那裡送出後才會寄出。"
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "已在你的郵件應用程式中開啟"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "無法讀取系統資訊（{error}）。不會附加任何內容。"
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "正在讀取系統資訊…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "將附加的完整內容："
+  },
+  "reportProblem.send": {
+    "defaultMessage": "傳送"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "傳送失敗：{reason}。你的回報仍保留在這裡。請重試，或透過你的郵件應用程式傳送。"
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero 已收到你的回報，並會回覆到 {email}。leanzero.net 也會寄給你一封回條。"
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "回報已傳送"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "使用我的郵件應用程式"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "發生了什麼問題？"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "你當時在做什麼、期望發生什麼，以及實際發生了什麼。"
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "重設供應商與模型"

@@ -20,3 +20,15 @@ export const SWARM_DISPLAY_NAME = 'Goose Swarm';
 // same .github/ISSUE_TEMPLATE files, so the template query params keep working.
 export const LEANZERO_REPO_SLUG = 'leanzero-srl/goose-local-edition';
 export const LEANZERO_ISSUES_NEW_URL = `https://github.com/${LEANZERO_REPO_SLUG}/issues/new`;
+
+// Report a problem (Q-192): where a report goes, and the community door beside it.
+// The inbox the site's contact form delivers to (Amplify EMAIL_TO, read 2026-09-27) and the address
+// leanzero.net/contact prints.
+export const LEANZERO_SUPPORT_EMAIL = 'office@leanzero.net';
+// leanzero.net's own contact endpoint (src/app/api/contact/route.ts in the website repo): the
+// recipient is fixed server-side, so this app can only ever reach office@ through it.
+export const LEANZERO_CONTACT_API_URL = 'https://leanzero.net/api/contact';
+// The invite leanzero.net links from its footer and /contact (NEXT_PUBLIC_DISCORD_INVITE_URL on the
+// site's Amplify app); Discord's invite API answered guild "LeanZero Atlassian", no expiry, on
+// 2026-09-27. The blog .env's 2BpFpxnEKw is EXPIRED — never that one.
+export const LEANZERO_DISCORD_INVITE_URL = 'https://discord.gg/RvYbd9qEUT';

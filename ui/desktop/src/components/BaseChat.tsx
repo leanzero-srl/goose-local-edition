@@ -31,7 +31,7 @@ import { getTextAndImageContent, type Message, type UserInput } from '../types/m
 import { substituteParameters } from '../utils/parameterSubstitution';
 import { useAutoSubmit } from '../hooks/useAutoSubmit';
 import { Goose, LeanZero } from './icons';
-import { LEANZERO_WEBSITE_URL } from '../branding';
+import { LEANZERO_NAME, LEANZERO_WEBSITE_URL } from '../branding';
 import EnvironmentBadge from './GooseSidebar/EnvironmentBadge';
 import SessionActionsHeader from './SessionActionsHeader';
 import SwarmRunPanel from './swarm/SwarmRunPanel';
@@ -44,7 +44,6 @@ import { BackgroundWorkLine } from './sessionActivity/BackgroundWorkLine';
 import { shouldSplitSwarmWorkspace } from './swarm/swarmRunLiveness';
 import {
   Button,
-  Chip,
   FOCUS,
   LAYER,
   MOTION,
@@ -79,42 +78,53 @@ const i18n = defineMessages({
     id: 'baseChat.dismiss',
     defaultMessage: 'Dismiss',
   },
+  brandTitle: {
+    id: 'baseChat.brandTitle',
+    defaultMessage: 'Goose Swarm by LeanZero — open leanzero.net',
+  },
 });
 
 /**
- * The session's brand mark, top right. ONE quiet chip: the wordmark beside a solid accent mark
- * (the LeanZero monogram on the accent fill) in the Swarm edition; the goose wordmark otherwise.
- * The links are the ones the old cluster carried.
+ * The session's brand, top right: ONE pill that opens leanzero.net (Swarm edition) or the goose
+ * docs (standard edition). Q-191 (owner): it reads "LeanZero" — the sidebar already says Goose
+ * Swarm, so the corner names the maker — and the WHOLE pill is the link at the 32px dense-row
+ * height (`h-lz-row-dense`), not a 20px chip inside an anchor that hugged it. Solid surface on the
+ * strong outline, the monogram on the accent fill; hover is the solid surface-2 step.
  */
+const BRAND_PILL = cx(
+  'no-drag inline-flex h-lz-row-dense items-center gap-2 pl-1.5 pr-3 text-lz-body text-lz-ink',
+  WEIGHT.medium,
+  RADIUS.control,
+  SURFACE.outline,
+  'bg-lz-surface',
+  SURFACE.hover,
+  MOTION,
+  FOCUS
+);
+
 export function SessionBrand({ isLocal }: { isLocal: boolean }) {
-  const anchor = cx('no-drag inline-flex', RADIUS.control, FOCUS);
-  const chip = cx(MOTION, 'hover:text-lz-ink', SURFACE.hover);
+  const intl = useIntl();
   if (isLocal) {
     return (
       <a
         href={LEANZERO_WEBSITE_URL}
         target="_blank"
         rel="noopener noreferrer"
-        className={anchor}
-        title="Goose Swarm — powered by LeanZero"
+        className={BRAND_PILL}
+        title={intl.formatMessage(i18n.brandTitle)}
         data-testid="local-edition-badge"
       >
-        <Chip
-          className={chip}
-          icon={
-            <span
-              data-testid="brand-mark"
-              className={cx(
-                'inline-flex size-[18px] items-center justify-center rounded-[4px]',
-                TONE_FILL.accent
-              )}
-            >
-              <LeanZero />
-            </span>
-          }
+        <span
+          aria-hidden
+          data-testid="brand-mark"
+          className={cx(
+            'inline-flex size-5 shrink-0 items-center justify-center rounded-[4px] [&_svg]:size-3',
+            TONE_FILL.accent
+          )}
         >
-          Goose Swarm
-        </Chip>
+          <LeanZero />
+        </span>
+        {LEANZERO_NAME}
       </a>
     );
   }
@@ -123,12 +133,16 @@ export function SessionBrand({ isLocal }: { isLocal: boolean }) {
       href="https://goose-docs.ai"
       target="_blank"
       rel="noopener noreferrer"
-      className={anchor}
+      className={BRAND_PILL}
       data-testid="goose-brand"
     >
-      <Chip className={chip} icon={<Goose className="goose-icon-animation" />}>
-        goose
-      </Chip>
+      <span
+        aria-hidden
+        className="inline-flex size-5 shrink-0 items-center justify-center [&_svg]:size-4"
+      >
+        <Goose className="goose-icon-animation" />
+      </span>
+      goose
     </a>
   );
 }
@@ -762,13 +776,10 @@ export default function BaseChat({
               SURFACE.hairline
             )}
           />
-          {/* Brand — top right, one quiet chip; page chrome, so every overlay covers it */}
+          {/* Brand — top right, one pill (Q-191); page chrome, so every overlay covers it */}
           <div
             data-testid="session-brand-corner"
-            className={cx(
-              'absolute top-[14px] right-4 flex flex-row items-center gap-2',
-              LAYER.chrome
-            )}
+            className={cx('absolute top-2 right-4 flex flex-row items-center gap-2', LAYER.chrome)}
           >
             <SessionBrand isLocal={isLocal} />
             <EnvironmentBadge className="translate-y-px" />

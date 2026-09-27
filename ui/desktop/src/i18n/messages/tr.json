@@ -347,6 +347,9 @@
   "backgroundWork.toolLabel": {
     "defaultMessage": "Araç çağrıları etiketleniyor"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "LeanZero’dan Goose Swarm — leanzero.net’i aç"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -1550,56 +1553,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "{count} seçeneklerini göster"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "Bir hata bildirirseniz, teşhis raporunu buna eklemeyi düşünün."
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "İptal"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "Yapılandırma ayarları"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "Ekiple paylaşmak için bir tanılama zip dosyası indirebilir veya sistem ayrıntılarınızı önceden doldurarak doğrudan GitHub üzerinden bir hata dosyası oluşturabilirsiniz. Bir teşhis raporu aşağıdakileri içerir:"
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "Teşhis indirilemedi"
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "Teşhis Hatası"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "İndir"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "İndiriliyor..."
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "GitHub'de Dosya Hatası"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "Son günlük dosyaları"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "Açılıyor..."
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "Sorun Bildir"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "Oturumunuz hassas bilgiler içeriyorsa teşhis dosyasını herkese açık olarak paylaşmayın."
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "Mevcut oturum mesajlarınız"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "Temel sistem bilgisi"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "Sistem bilgisi alınamadı"
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "Hata"
   },
   "dialog.close": {
     "defaultMessage": "Kapat"
@@ -6787,6 +6742,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "YAML Dosyaları"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "Sistem ayrıntılarını ekle"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "Uygulama ve motor sürümleri, işletim sistemi, sağlayıcı, model ve uzantı adları. Sohbetleriniz, günlükleriniz, ayarlarınız veya anahtarlarınız asla eklenmez."
+  },
+  "reportProblem.close": {
+    "defaultMessage": "Kapat"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "{max} karakteri aşıyor. Lütfen kısaltın."
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "Sorunu en az {min} karakterle anlatın."
+  },
+  "reportProblem.done": {
+    "defaultMessage": "Tamam"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "E-posta adresiniz"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero bu adrese yanıt verir. Buradan göndermek için gerekli; e-posta uygulamanız için isteğe bağlı."
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "Bu e-posta adresi doğru görünmüyor."
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "LeanZero’nun yanıt verebilmesi için e-postanızı ekleyin ya da e-posta uygulamanızdan gönderin."
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "Raporunuz {email} adresine gider."
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "LeanZero Discord’una katıl"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "E-posta uygulamanız açılamadı: {reason}."
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "Raporunuz {email} adresine yeni bir e-postada hazır. Oradan gönderene kadar gönderilmez."
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "E-posta uygulamanızda açıldı"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "Sistem ayrıntıları okunamadı ({error}). Hiçbir şey eklenmeyecek."
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "Sistem ayrıntıları okunuyor…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "Tam olarak eklenecek olan:"
+  },
+  "reportProblem.send": {
+    "defaultMessage": "Gönder"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "Gönderilemedi: {reason}. Raporunuz hâlâ burada. Tekrar deneyin ya da e-posta uygulamanızdan gönderin."
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero raporunuzu aldı ve {email} adresine yanıt verecek. leanzero.net size ayrıca bir alındı e-postası gönderir."
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "Rapor gönderildi"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "E-posta uygulamamı kullan"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "Ne ters gitti?"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "Ne yapıyordunuz, ne bekliyordunuz ve bunun yerine ne oldu."
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "Sağlayıcıyı ve Modeli Sıfırla"

@@ -347,6 +347,9 @@
   "backgroundWork.toolLabel": {
     "defaultMessage": "टूल कॉल पर लेबल लगाए जा रहे हैं"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "LeanZero का Goose Swarm — leanzero.net खोलें"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -1550,56 +1553,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "{count} विकल्प दिखाएँ"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "यदि आप कोई बग दर्ज करते हैं, तो उसके साथ निदान रिपोर्ट संलग्न करने पर विचार करें।"
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "रद्द करें"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "कॉन्फ़िगरेशन सेटिंग्स"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "आप टीम के साथ साझा करने के लिए डायग्नोस्टिक्स ज़िप फ़ाइल डाउनलोड कर सकते हैं, या अपने सिस्टम विवरण पहले से भरे हुए सीधे GitHub पर बग दर्ज कर सकते हैं। डायग्नोस्टिक्स रिपोर्ट में निम्नलिखित शामिल हैं:"
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "निदान डाउनलोड करने में विफल"
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "निदान त्रुटि"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "डाउनलोड करें"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "डाउनलोड हो रहा है..."
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "GitHub पर बग फ़ाइल करें"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "हाल की लॉग फ़ाइलें"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "खुल रहा है..."
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "किसी समस्या की रिपोर्ट करें"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "यदि आपके सत्र में संवेदनशील जानकारी है, तो डायग्नोस्टिक्स फ़ाइल को सार्वजनिक रूप से साझा न करें।"
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "आपके वर्तमान सत्र संदेश"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "बुनियादी सिस्टम जानकारी"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "सिस्टम जानकारी प्राप्त करने में विफल"
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "त्रुटि"
   },
   "dialog.close": {
     "defaultMessage": "बंद करें"
@@ -6787,6 +6742,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "YAML फ़ाइलें"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "सिस्टम विवरण संलग्न करें"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "ऐप और इंजन संस्करण, OS, प्रदाता, मॉडल और एक्सटेंशन के नाम। आपकी चैट, लॉग, सेटिंग्स या कुंजियाँ कभी नहीं।"
+  },
+  "reportProblem.close": {
+    "defaultMessage": "बंद करें"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "यह {max} वर्णों से अधिक है। कृपया इसे छोटा करें।"
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "समस्या को कम से कम {min} वर्णों में बताएँ।"
+  },
+  "reportProblem.done": {
+    "defaultMessage": "हो गया"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "आपका ईमेल"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero इसी पते पर जवाब देता है। यहाँ से भेजने के लिए ज़रूरी; आपके मेल ऐप के लिए वैकल्पिक।"
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "यह ईमेल पता सही नहीं लगता।"
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "अपना ईमेल जोड़ें ताकि LeanZero जवाब दे सके, या इसे अपने मेल ऐप से भेजें।"
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "आपकी रिपोर्ट {email} पर जाती है।"
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "LeanZero Discord से जुड़ें"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "आपका मेल ऐप नहीं खुल सका: {reason}।"
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "आपकी रिपोर्ट {email} को एक नए ईमेल में तैयार है। जब तक आप वहाँ से नहीं भेजते, यह नहीं भेजी जाती।"
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "आपके मेल ऐप में खोला गया"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "सिस्टम विवरण नहीं पढ़े जा सके ({error})। कुछ भी संलग्न नहीं होगा।"
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "सिस्टम विवरण पढ़े जा रहे हैं…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "ठीक यही संलग्न होगा:"
+  },
+  "reportProblem.send": {
+    "defaultMessage": "भेजें"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "यह नहीं भेजा जा सका: {reason}। आपकी रिपोर्ट अभी भी यहीं है। फिर से कोशिश करें, या इसे अपने मेल ऐप से भेजें।"
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero को आपकी रिपोर्ट मिल गई है और वह {email} पर जवाब देगा। leanzero.net आपको एक पावती ईमेल भी भेजता है।"
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "रिपोर्ट भेजी गई"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "मेरा मेल ऐप इस्तेमाल करें"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "क्या गलत हुआ?"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "आप क्या कर रहे थे, क्या उम्मीद थी, और इसके बजाय क्या हुआ।"
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "प्रदाता और मॉडल रीसेट करें"

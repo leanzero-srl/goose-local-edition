@@ -25,7 +25,7 @@ import { DroppedFile, useFileDrop } from '../hooks/useFileDrop';
 import { Recipe } from '../recipe';
 import { MessageQueue, QueuedMessage } from './MessageQueue';
 import { detectInterruption } from '../utils/interruptionDetector';
-import { DiagnosticsModal, reportProblemMessage } from './ui/Diagnostics';
+import { ReportProblemDialog, reportProblemMessage } from './ui/ReportProblemDialog';
 import type { Message } from '../types/message';
 import { getInitialWorkingDir } from '../utils/workingDir';
 import { getPredefinedModelsFromEnv } from './settings/models/predefinedModelsUtils';
@@ -1981,7 +1981,7 @@ export default function ChatInput({
           </Tooltip>
         )}
         {sessionId && diagnosticsOpen && (
-          <DiagnosticsModal
+          <ReportProblemDialog
             isOpen={diagnosticsOpen}
             onClose={() => setDiagnosticsOpen(false)}
             sessionId={sessionId}

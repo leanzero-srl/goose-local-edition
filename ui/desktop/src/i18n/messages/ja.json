@@ -347,6 +347,9 @@
   "backgroundWork.toolLabel": {
     "defaultMessage": "ツール呼び出しにラベルを付けています"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "LeanZero の Goose Swarm — leanzero.net を開く"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -1550,56 +1553,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "{count}件のオプションを表示"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "バグ報告時は、診断レポートの添付もご検討ください。"
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "キャンセル"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "構成設定"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "診断用のzipファイルをダウンロードしてチームに共有するか、システム詳細を事前入力した状態でGitHubに直接バグを報告できます。診断レポートには以下が含まれます:"
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "診断情報のダウンロードに失敗しました"
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "診断エラー"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "ダウンロード"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "ダウンロード中..."
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "GitHubでバグを報告"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "最近のログファイル"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "開いています..."
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "問題を報告"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "セッションに機密情報が含まれる場合は、診断ファイルを公開しないでください。"
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "現在のセッションメッセージ"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "基本システム情報"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "システム情報の取得に失敗しました"
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "エラー"
   },
   "dialog.close": {
     "defaultMessage": "閉じる"
@@ -6787,6 +6742,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "YAMLファイル"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "システム情報を添付"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "アプリとエンジンのバージョン、OS、プロバイダー・モデル・拡張機能の名前。チャット、ログ、設定、キーは含まれません。"
+  },
+  "reportProblem.close": {
+    "defaultMessage": "閉じる"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "{max} 文字を超えています。短くしてください。"
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "問題を {min} 文字以上で説明してください。"
+  },
+  "reportProblem.done": {
+    "defaultMessage": "完了"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "あなたのメールアドレス"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero はこのアドレスに返信します。ここから送信する場合は必須、メールアプリでは任意です。"
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "メールアドレスの形式が正しくないようです。"
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "LeanZero が返信できるようメールアドレスを入力するか、メールアプリから送信してください。"
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "レポートは {email} に届きます。"
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "LeanZero の Discord に参加"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "メールアプリを開けませんでした: {reason}。"
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "{email} 宛ての新規メールにレポートを用意しました。そこから送信するまで送られません。"
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "メールアプリで開きました"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "システム情報を読み取れませんでした（{error}）。何も添付されません。"
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "システム情報を読み取り中…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "添付される内容（このとおり）:"
+  },
+  "reportProblem.send": {
+    "defaultMessage": "送信"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "送信できませんでした: {reason}。レポートはそのまま残っています。もう一度試すか、メールアプリから送信してください。"
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero がレポートを受け取り、{email} に返信します。leanzero.net からも受付確認のメールが届きます。"
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "レポートを送信しました"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "メールアプリを使う"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "何が起きましたか？"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "何をしていたか、何を期待したか、実際に何が起きたか。"
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "プロバイダーとモデルをリセット"

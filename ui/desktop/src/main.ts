@@ -130,6 +130,7 @@ import installExtension, { REACT_DEVELOPER_TOOLS } from 'electron-devtools-insta
 import { BLOCKED_PROTOCOLS, WEB_PROTOCOLS } from './utils/urlSecurity';
 import { buildCSP } from './utils/csp';
 import { fleetChatHandler, fleetProbeHandler } from './utils/fleetIpc';
+import { sendProblemReport } from './utils/problemReport';
 import { MLX_LIVE_STATUS_TIMEOUT_MS, fetchMlxLiveStatus } from './utils/mlxLiveStatus';
 import { withRendererOrigin } from './utils/rendererOrigin';
 import {
@@ -2097,6 +2098,12 @@ ipcMain.handle('fleet-status', async (): Promise<Record<string, string>> => {
 const mainFetch = net.fetch as unknown as typeof globalThis.fetch;
 ipcMain.handle('fleet-probe', fleetProbeHandler(mainFetch));
 ipcMain.handle('fleet-chat', fleetChatHandler(mainFetch));
+// Report a problem (Q-192): the form's SEND path. leanzero.net's contact endpoint delivers to
+// office@leanzero.net (the recipient is the site's, not ours); the body is rebuilt key by key in
+// utils/problemReport.ts and every failure is named so the form can offer the mail app instead.
+ipcMain.handle('send-problem-report', (_event, report: unknown) =>
+  sendProblemReport(report, mainFetch)
+);
 // The LeanZero MLX tile's live instrument: Rapid-MLX's own GET /v1/status on the LOCAL engine (loopback
 // only — utils/mlxLiveStatus.ts refuses any other host), every failure named so the tile says why it has
 // no live numbers instead of inventing any.

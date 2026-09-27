@@ -347,6 +347,9 @@
   "backgroundWork.toolLabel": {
     "defaultMessage": "도구 호출에 레이블 지정 중"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "LeanZero의 Goose Swarm — leanzero.net 열기"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -1550,56 +1553,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "{count} 옵션 표시"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "버그를 신고하는 경우 진단 보고서를 첨부해 보세요."
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "취소"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "구성 설정"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "진단 zip 파일을 다운로드하여 팀과 공유하거나 시스템 세부 정보가 미리 입력된 상태로 GitHub에 직접 버그를 신고할 수 있습니다. 진단 보고서에는 다음이 포함됩니다."
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "진단을 다운로드하지 못했습니다."
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "진단 오류"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "다운로드"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "다운로드 중..."
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "GitHub에 버그 신고"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "최근 로그 파일"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "열기..."
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "문제 신고"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "세션에 민감한 정보가 포함되어 있는 경우 진단 파일을 공개적으로 공유하지 마십시오."
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "현재 세션 메시지"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "기본 시스템 정보"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "시스템 정보를 가져오지 못했습니다."
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "오류"
   },
   "dialog.close": {
     "defaultMessage": "닫기"
@@ -6787,6 +6742,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "YAML 파일"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "시스템 정보 첨부"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "앱 및 엔진 버전, OS, 공급자·모델·확장 프로그램 이름. 채팅, 로그, 설정, 키는 절대 포함되지 않습니다."
+  },
+  "reportProblem.close": {
+    "defaultMessage": "닫기"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "{max}자를 넘었습니다. 줄여 주세요."
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "문제를 {min}자 이상으로 설명해 주세요."
+  },
+  "reportProblem.done": {
+    "defaultMessage": "완료"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "이메일 주소"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero가 이 주소로 답장합니다. 여기서 보내려면 필요하며, 메일 앱을 쓸 때는 선택 사항입니다."
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "이메일 주소가 올바르지 않은 것 같습니다."
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "LeanZero가 답장할 수 있도록 이메일을 입력하거나, 메일 앱에서 보내세요."
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "보고서는 {email}(으)로 전송됩니다."
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "LeanZero Discord 참여"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "메일 앱을 열 수 없습니다: {reason}."
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "{email}(으)로 가는 새 이메일에 보고서가 준비되었습니다. 거기서 보내기 전까지는 전송되지 않습니다."
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "메일 앱에서 열었습니다"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "시스템 정보를 읽을 수 없습니다({error}). 아무것도 첨부되지 않습니다."
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "시스템 정보를 읽는 중…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "정확히 다음 내용이 첨부됩니다:"
+  },
+  "reportProblem.send": {
+    "defaultMessage": "보내기"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "전송하지 못했습니다: {reason}. 보고서는 그대로 남아 있습니다. 다시 시도하거나 메일 앱에서 보내세요."
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero가 보고서를 받았으며 {email}(으)로 답장합니다. leanzero.net에서 접수 확인 메일도 보냅니다."
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "보고서를 보냈습니다"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "내 메일 앱 사용"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "무엇이 잘못되었나요?"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "무엇을 하고 있었는지, 무엇을 기대했는지, 실제로 무슨 일이 일어났는지 적어 주세요."
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "제공업체 및 모델 초기화"

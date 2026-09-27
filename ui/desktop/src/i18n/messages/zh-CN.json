@@ -347,6 +347,9 @@
   "backgroundWork.toolLabel": {
     "defaultMessage": "正在标注工具调用"
   },
+  "baseChat.brandTitle": {
+    "defaultMessage": "LeanZero 出品的 Goose Swarm — 打开 leanzero.net"
+  },
   "baseChat.dismiss": {
     "defaultMessage": "Dismiss"
   },
@@ -1550,56 +1553,8 @@
   "defaultProviderSetupForm.showOptions": {
     "defaultMessage": "显示 {count} 项选项"
   },
-  "diagnosticsModal.attachHint": {
-    "defaultMessage": "如果你要提交 bug，建议将诊断报告一并附上。"
-  },
-  "diagnosticsModal.cancel": {
-    "defaultMessage": "取消"
-  },
-  "diagnosticsModal.configSettings": {
-    "defaultMessage": "配置项"
-  },
-  "diagnosticsModal.description": {
-    "defaultMessage": "你可以下载诊断 zip 文件分享给团队，或直接在 GitHub 上提交一个预填了系统详情的 bug。诊断报告包含以下内容："
-  },
-  "diagnosticsModal.diagnosticsErrorMsg": {
-    "defaultMessage": "下载诊断信息失败"
-  },
-  "diagnosticsModal.diagnosticsErrorTitle": {
-    "defaultMessage": "诊断错误"
-  },
-  "diagnosticsModal.download": {
-    "defaultMessage": "下载"
-  },
-  "diagnosticsModal.downloading": {
-    "defaultMessage": "下载中…"
-  },
-  "diagnosticsModal.fileBug": {
-    "defaultMessage": "到 GitHub 提交 Bug"
-  },
-  "diagnosticsModal.logFiles": {
-    "defaultMessage": "最近的日志文件"
-  },
-  "diagnosticsModal.opening": {
-    "defaultMessage": "正在打开…"
-  },
   "diagnosticsModal.reportProblem": {
     "defaultMessage": "报告问题"
-  },
-  "diagnosticsModal.sensitiveWarning": {
-    "defaultMessage": "如果你的会话包含敏感信息，请不要公开分享诊断文件。"
-  },
-  "diagnosticsModal.sessionMessages": {
-    "defaultMessage": "你当前会话的消息"
-  },
-  "diagnosticsModal.systemInfo": {
-    "defaultMessage": "基础系统信息"
-  },
-  "diagnosticsModal.systemInfoErrorMsg": {
-    "defaultMessage": "获取系统信息失败"
-  },
-  "diagnosticsModal.systemInfoErrorTitle": {
-    "defaultMessage": "错误"
   },
   "dialog.close": {
     "defaultMessage": "关闭"
@@ -6787,6 +6742,81 @@
   },
   "recipesView.yamlFiles": {
     "defaultMessage": "YAML 文件"
+  },
+  "reportProblem.attach": {
+    "defaultMessage": "附加系统信息"
+  },
+  "reportProblem.attachHint": {
+    "defaultMessage": "应用和引擎版本、操作系统、提供商、模型和扩展名称。绝不包含你的聊天、日志、设置或密钥。"
+  },
+  "reportProblem.close": {
+    "defaultMessage": "关闭"
+  },
+  "reportProblem.descriptionLong": {
+    "defaultMessage": "超过 {max} 个字符，请缩短。"
+  },
+  "reportProblem.descriptionShort": {
+    "defaultMessage": "请用至少 {min} 个字符描述问题。"
+  },
+  "reportProblem.done": {
+    "defaultMessage": "完成"
+  },
+  "reportProblem.email": {
+    "defaultMessage": "你的邮箱"
+  },
+  "reportProblem.emailHint": {
+    "defaultMessage": "LeanZero 会回复到此地址。从这里发送时必填；使用邮件应用时可选。"
+  },
+  "reportProblem.emailInvalid": {
+    "defaultMessage": "这个邮箱地址看起来不正确。"
+  },
+  "reportProblem.emailMissing": {
+    "defaultMessage": "请填写邮箱以便 LeanZero 回复，或通过你的邮件应用发送。"
+  },
+  "reportProblem.goesTo": {
+    "defaultMessage": "你的报告将发送至 {email}。"
+  },
+  "reportProblem.joinDiscord": {
+    "defaultMessage": "加入 LeanZero Discord"
+  },
+  "reportProblem.mailFailed": {
+    "defaultMessage": "无法打开你的邮件应用：{reason}。"
+  },
+  "reportProblem.mailedBody": {
+    "defaultMessage": "你的报告已在发往 {email} 的新邮件中准备好。只有你在那里发送后才会寄出。"
+  },
+  "reportProblem.mailedTitle": {
+    "defaultMessage": "已在你的邮件应用中打开"
+  },
+  "reportProblem.previewFailed": {
+    "defaultMessage": "无法读取系统信息（{error}）。不会附加任何内容。"
+  },
+  "reportProblem.previewLoading": {
+    "defaultMessage": "正在读取系统信息…"
+  },
+  "reportProblem.previewTitle": {
+    "defaultMessage": "将附加的完整内容："
+  },
+  "reportProblem.send": {
+    "defaultMessage": "发送"
+  },
+  "reportProblem.sendFailed": {
+    "defaultMessage": "发送失败：{reason}。你的报告仍保留在这里。请重试，或通过你的邮件应用发送。"
+  },
+  "reportProblem.sentBody": {
+    "defaultMessage": "LeanZero 已收到你的报告，并会回复到 {email}。leanzero.net 也会给你发送一封回执。"
+  },
+  "reportProblem.sentTitle": {
+    "defaultMessage": "报告已发送"
+  },
+  "reportProblem.useMailApp": {
+    "defaultMessage": "使用我的邮件应用"
+  },
+  "reportProblem.whatWentWrong": {
+    "defaultMessage": "出了什么问题？"
+  },
+  "reportProblem.whatWentWrongHint": {
+    "defaultMessage": "你当时在做什么、期望发生什么，以及实际发生了什么。"
   },
   "resetProviderSection.resetButton": {
     "defaultMessage": "重置提供商和模型"

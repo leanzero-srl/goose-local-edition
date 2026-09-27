@@ -55,9 +55,9 @@ vi.mock('./alerts', () => ({
   useAlerts: () => ({ alerts: [], addAlert: vi.fn(), clearAlerts: vi.fn() }),
   AlertType: { Error: 'error', Warning: 'warning', Info: 'info' },
 }));
-vi.mock('./ui/Diagnostics', async (original) => ({
-  ...(await original<typeof import('./ui/Diagnostics')>()),
-  DiagnosticsModal: () => null,
+vi.mock('./ui/ReportProblemDialog', async (original) => ({
+  ...(await original<typeof import('./ui/ReportProblemDialog')>()),
+  ReportProblemDialog: () => null,
 }));
 vi.mock('./swarm/AgentSetupWizard', () => ({
   default: ({ isOpen }: { isOpen: boolean }) =>

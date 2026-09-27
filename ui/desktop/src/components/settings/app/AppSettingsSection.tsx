@@ -27,6 +27,7 @@ import { EngineGlanceSettings } from '../../engineGlance/EngineGlanceSettings';
 import { trackSettingToggled } from '../../../utils/analytics';
 import { LEANZERO_ISSUES_NEW_URL } from '../../../branding';
 import type { LanguageSetting } from '../../../utils/settings';
+import { ReportProblemDialog } from '../../ui/ReportProblemDialog';
 
 const i18n = defineMessages({
   appearanceTitle: { id: 'settings.appearance.title', defaultMessage: 'Appearance' },
@@ -215,6 +216,7 @@ const SHOW_EDITION_CARD = false;
 
 export default function AppSettingsSection({ scrollToSection }: AppSettingsSectionProps) {
   const [menuBarIconEnabled, setMenuBarIconEnabled] = useState(true);
+  const [reportProblemOpen, setReportProblemOpen] = useState(false);
   const [dockIconEnabled, setDockIconEnabled] = useState(true);
   const [wakelockEnabled, setWakelockEnabled] = useState(true);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -250,9 +252,7 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
 
   useEffect(() => {
     window.electron.getSetting('showPricing').then(setShowPricing);
-    window.electron
-      .getSetting('showLmStudioFleet')
-      .then((v) => setShowLmStudioFleet(v === true));
+    window.electron.getSetting('showLmStudioFleet').then((v) => setShowLmStudioFleet(v === true));
     window.electron.getSetting('language').then((value) => setLanguage(value ?? 'system'));
   }, []);
 
@@ -514,7 +514,9 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
           {/* LM Studio fleet (legacy) — pass E: every LM Studio-sourced row/panel gates on this. */}
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-text-primary text-xs">{intl.formatMessage(i18n.lmStudioFleet)}</h3>
+              <h3 className="text-text-primary text-xs">
+                {intl.formatMessage(i18n.lmStudioFleet)}
+              </h3>
               <p className="text-xs text-text-secondary max-w-md mt-[2px]">
                 {intl.formatMessage(i18n.lmStudioFleetDesc)}
               </p>
@@ -534,44 +536,45 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
       <EngineGlanceSettings />
 
       {SHOW_EDITION_CARD && (
-      <Card className="rounded-lg">
-        <CardHeader className="pb-0">
-          <CardTitle className="mb-1">{intl.formatMessage(i18n.editionTitle)}</CardTitle>
-          <CardDescription>{intl.formatMessage(i18n.editionDesc)}</CardDescription>
-        </CardHeader>
-        <CardContent className="pt-4 px-4 space-y-3">
-          <EditionSelector className="w-auto" hideTitle horizontal />
-          <div>
-            <div className="text-xs text-text-secondary mb-1 flex items-center justify-between">
-              <span>{intl.formatMessage(i18n.editionPreview)}</span>
-              <span style={{ color: fleet.online ? '#2ecc71' : '#878787' }}>
-                {!showLmStudioFleet
-                  ? intl.formatMessage(i18n.lmStudioFleetHidden)
-                  : fleet.online
-                    ? `LM Link · ${fleet.lanes.length} node${fleet.lanes.length === 1 ? '' : 's'} live`
-                    : 'fleet offline'}
-              </span>
-            </div>
-            {showLmStudioFleet && fleet.online && fleet.lanes.length > 0 ? (
-              <FanInCard dispatch="fleet · live" lanes={fleet.lanes} />
-            ) : (
-              <div>
-                <FanInCard
-                  dispatch="example"
-                  lanes={[
-                    { device: 'm4-max', action: 'edit auth.rs', status: 'done' },
-                    { device: 'm3-ultra', action: 'grep callsites → 14 hits', status: 'running' },
-                    { device: 'studio-2', action: 'cargo test → 47 passed', status: 'done' },
-                  ]}
-                />
-                <div className="text-xs text-text-secondary mt-1">
-                  Example — start LM Studio (LM Link) at localhost:1234 to see your real fleet here.
-                </div>
+        <Card className="rounded-lg">
+          <CardHeader className="pb-0">
+            <CardTitle className="mb-1">{intl.formatMessage(i18n.editionTitle)}</CardTitle>
+            <CardDescription>{intl.formatMessage(i18n.editionDesc)}</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-4 px-4 space-y-3">
+            <EditionSelector className="w-auto" hideTitle horizontal />
+            <div>
+              <div className="text-xs text-text-secondary mb-1 flex items-center justify-between">
+                <span>{intl.formatMessage(i18n.editionPreview)}</span>
+                <span style={{ color: fleet.online ? '#2ecc71' : '#878787' }}>
+                  {!showLmStudioFleet
+                    ? intl.formatMessage(i18n.lmStudioFleetHidden)
+                    : fleet.online
+                      ? `LM Link · ${fleet.lanes.length} node${fleet.lanes.length === 1 ? '' : 's'} live`
+                      : 'fleet offline'}
+                </span>
               </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+              {showLmStudioFleet && fleet.online && fleet.lanes.length > 0 ? (
+                <FanInCard dispatch="fleet · live" lanes={fleet.lanes} />
+              ) : (
+                <div>
+                  <FanInCard
+                    dispatch="example"
+                    lanes={[
+                      { device: 'm4-max', action: 'edit auth.rs', status: 'done' },
+                      { device: 'm3-ultra', action: 'grep callsites → 14 hits', status: 'running' },
+                      { device: 'studio-2', action: 'cargo test → 47 passed', status: 'done' },
+                    ]}
+                  />
+                  <div className="text-xs text-text-secondary mt-1">
+                    Example — start LM Studio (LM Link) at localhost:1234 to see your real fleet
+                    here.
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <Card className="rounded-lg">
@@ -616,13 +619,9 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
         </CardHeader>
         <CardContent className="pt-4 px-4">
           <div className="flex space-x-4">
-            <Button
-              onClick={() => {
-                window.open(`${LEANZERO_ISSUES_NEW_URL}?template=bug_report.md`, '_blank');
-              }}
-              variant="secondary"
-              size="sm"
-            >
+            {/* Q-192: a bug report is the same small form the composer opens — email to LeanZero
+                or the Discord — not a GitHub issue page. */}
+            <Button onClick={() => setReportProblemOpen(true)} variant="secondary" size="sm">
               {intl.formatMessage(i18n.reportBug)}
             </Button>
             <Button
@@ -635,6 +634,9 @@ export default function AppSettingsSection({ scrollToSection }: AppSettingsSecti
               {intl.formatMessage(i18n.requestFeature)}
             </Button>
           </div>
+          {reportProblemOpen && (
+            <ReportProblemDialog isOpen onClose={() => setReportProblemOpen(false)} />
+          )}
         </CardContent>
       </Card>
 
