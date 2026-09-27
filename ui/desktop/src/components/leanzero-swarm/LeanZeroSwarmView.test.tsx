@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { IntlProvider } from 'react-intl';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -11,9 +11,7 @@ import de from '../../i18n/messages/de.json';
 // The sections have their own suites — here only the SHELL is under test: the header, the two
 // Providers segments, which section each mounts, and what the LeanZero MLX panel is handed.
 vi.mock('./MlxEngineView', () => ({
-  default: ({ tab, nodeCount }: { tab: string; nodeCount: number | null }) => (
-    <div data-testid="mlx-panel" data-tab={tab} data-nodes={String(nodeCount)} />
-  ),
+  default: ({ tab }: { tab: string }) => <div data-testid="mlx-panel" data-tab={tab} />,
 }));
 vi.mock('./CloudProvidersSection', () => ({ default: () => <div data-testid="cloud-panel" /> }));
 // The shell provides the linked Macs to every tab; the provider has its own suite.
@@ -22,10 +20,6 @@ vi.mock('./useMacs', () => ({
 }));
 vi.mock('../Layout/MainPanelLayout', () => ({
   MainPanelLayout: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}));
-const configRead = vi.hoisted(() => ({ impl: async (): Promise<unknown> => null }));
-vi.mock('../ConfigContext', () => ({
-  useConfig: () => ({ read: () => configRead.impl() }),
 }));
 
 class ResizeObserverMock {
@@ -57,7 +51,6 @@ const segment = (name: string) => screen.getByRole('radio', { name });
 
 afterEach(() => {
   cleanup();
-  configRead.impl = async () => null;
 });
 
 describe('LeanZeroSwarmView shell', () => {
@@ -111,25 +104,6 @@ describe('LeanZeroSwarmView shell', () => {
   it('hands the LeanZero MLX panel the routed inner tab', () => {
     renderView('/leanzero-swarm?tab=mlx&mlx=models');
     expect(screen.getByTestId('mlx-panel')).toHaveAttribute('data-tab', 'models');
-  });
-
-  it("hands the setup strip the pool's node count: the configured devices, 0 for no pool, null when unread", async () => {
-    configRead.impl = async () => ({ devices: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] });
-    renderView();
-    await waitFor(() => expect(screen.getByTestId('mlx-panel')).toHaveAttribute('data-nodes', '3'));
-    cleanup();
-
-    configRead.impl = async () => null;
-    renderView();
-    await waitFor(() => expect(screen.getByTestId('mlx-panel')).toHaveAttribute('data-nodes', '0'));
-    cleanup();
-
-    configRead.impl = async () => {
-      throw new Error('config unreadable');
-    };
-    renderView();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(screen.getByTestId('mlx-panel')).toHaveAttribute('data-nodes', 'null');
   });
 
   it('the shell is Studio-clean (no rail, no tint, no native control) and every class compiles', async () => {

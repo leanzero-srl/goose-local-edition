@@ -40,7 +40,8 @@ import {
   type PlacementPlan,
 } from '../../acp/mlx-placement';
 import { nodesRead } from '../../acp/nodes';
-import { nodesHref } from '../../utils/navigationUtils';
+import { nodeHref } from '../../utils/navigationUtils';
+import { refreshGlanceNodes } from '../engineGlance/glanceStore';
 import { THIS_MAC } from '../nodes/model';
 import {
   defaultNodeName,
@@ -301,6 +302,14 @@ const i18n = defineMessages({
   },
   openInNodes: { id: 'placementCard.openInNodes', defaultMessage: 'Open in Nodes' },
   saveRefused: { id: 'placementCard.saveRefused', defaultMessage: 'Not saved: {reason}' },
+  saveNoPlan: {
+    id: 'placementCard.saveNoPlan',
+    defaultMessage: 'goose has no plan for this way, so it cannot say which Macs it runs on.',
+  },
+  saveNothingRunning: {
+    id: 'placementCard.saveNothingRunning',
+    defaultMessage: '{model} is not running on any way shown here — pick the running model above.',
+  },
 });
 
 type NoticeTone = Exclude<Tone, 'secondary'>;
@@ -693,6 +702,9 @@ interface PlacementCardProps {
   splitDetails?: ReactNode;
   /** The state tile's live read and the engine it came from: the running way's chip colour. */
   liveActivity?: WayActivity | null;
+  /** The setup strip's "Save as a node" asked to save the way that runs now; handled once. */
+  saveRunningPending?: boolean;
+  onSaveRunningHandled?: () => void;
 }
 
 function PlacementCardBody({
@@ -705,6 +717,8 @@ function PlacementCardBody({
   distributedCapability = false,
   splitDetails,
   liveActivity = null,
+  saveRunningPending = false,
+  onSaveRunningHandled,
 }: PlacementCardProps) {
   const intl = useIntl();
   const macs = useMacs();
@@ -1104,9 +1118,12 @@ function PlacementCardBody({
    * refusal is goose's words.
    */
   const saveAsNode = async (way: Way) => {
-    const placement = pinnedPlacementOf(way);
-    if (!placement) return;
     const say = (state: SaveState) => setSaves((before) => ({ ...before, [way.key]: state }));
+    const placement = pinnedPlacementOf(way);
+    if (!placement) {
+      say({ kind: 'refused', text: intl.formatMessage(i18n.saveNoPlan) });
+      return;
+    }
     say({ kind: 'saving' });
     try {
       const read = await nodesRead();
@@ -1134,6 +1151,8 @@ function PlacementCardBody({
         origin: 'runIt',
       });
       const response = await putNode(def, read.config);
+      // The engine card and the setup strip name the node at once, not at the next glance event.
+      if (response.written) refreshGlanceNodes();
       say(
         response.written
           ? { kind: 'saved', id, name, already: false }
@@ -1202,6 +1221,38 @@ function PlacementCardBody({
 
   const { ways, otherSplits } = waysOf(plan, macs.macs, distributedCapability);
   const serving = servingWays(ways, macs.macs, single, distributed);
+
+  // The setup strip's "Save as a node" saves the way that runs this card's model; a model the card
+  // does not show running is said, never a silent no-op.
+  const saveRunning = () => {
+    const runningWay = ways.find((w) => {
+      const live = wayLive(w, modelId, single, distributed, liveActivity);
+      return live != null && live.state !== 'failed';
+    });
+    if (runningWay) void saveAsNode(runningWay);
+    else {
+      setNotice({
+        tone: 'err',
+        text: intl.formatMessage(i18n.saveNothingRunning, { model: shortModel(modelId) }),
+      });
+    }
+  };
+  const saveRunningNow = useRef(saveRunning);
+  saveRunningNow.current = saveRunning;
+  // Handled once per ask, and only once the plan read has settled: a split's Macs come from its
+  // plan row.
+  const planSettled = !loading && (plan != null || error != null);
+  const saveAsked = useRef(false);
+  useEffect(() => {
+    if (!saveRunningPending) {
+      saveAsked.current = false;
+      return;
+    }
+    if (saveAsked.current || !planSettled) return;
+    saveAsked.current = true;
+    onSaveRunningHandled?.();
+    saveRunningNow.current();
+  }, [saveRunningPending, planSettled, onSaveRunningHandled]);
 
   /** Where a serving way runs, in the words the card's lines use. */
   const servedWhere = (way: Way): string => {
@@ -1404,7 +1455,7 @@ function PlacementCardBody({
             })}{' '}
             <a
               className="underline"
-              href={`#${nodesHref('nodes')}&node=${encodeURIComponent(saved.id)}`}
+              href={`#${nodeHref(saved.id)}`}
             >
               {intl.formatMessage(i18n.openInNodes)}
             </a>

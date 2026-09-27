@@ -342,6 +342,7 @@ export function engineGlance(over: Partial<EngineGlance> = {}): EngineGlance {
       { name: 'Work’s Mac Studio', phase: 'writing', peakGb: 38.6, budgetGb: 66.2, load: null },
     ],
     detail: null,
+    servedBy: null,
     ...over,
   };
 }
