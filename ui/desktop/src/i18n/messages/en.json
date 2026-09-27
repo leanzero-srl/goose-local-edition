@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Hide until the engine is quiet again"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Shrink to a pill"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Hide this card — bring it back from the foot of the sidebar or Settings › App"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Hide or turn off the floating window"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Hide for now"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Back the next time the engine works"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "You can turn this off from here"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Got it"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count,plural,one{# request in flight} other{# requests in flight}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Not refreshed"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Turn off the floating window"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Turn it back on in Settings › App"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Floating window turned off"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Turn it back on in Settings › App."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Untitled session"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Off"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "A small window over your other apps, in a corner you drag it to. It never takes focus, and closing it hides it until the engine is quiet again."
+    "defaultMessage": "A small window over your other apps, in a corner you drag it to. It never takes focus. Its close button hides it until the engine works again, or turns it off."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "In the sidebar"

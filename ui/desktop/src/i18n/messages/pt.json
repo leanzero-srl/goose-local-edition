@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Ocultar até o motor ficar quieto"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Reduzir a pílula"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Ocultar este cartão — traga-o de volta pelo rodapé da barra lateral ou em Configurações › Aplicativo"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Ocultar ou desativar a janela flutuante"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Ocultar por agora"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Volta na próxima vez que o motor trabalhar"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Você pode desativar isto por aqui"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Entendi"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# pedido em curso} other {# pedidos em curso}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Não atualizado"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Desativar a janela flutuante"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Reative em Configurações › Aplicativo"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Janela flutuante desativada"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Reative-a em Configurações › Aplicativo."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Sessão sem título"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Desligado"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Uma janela pequena sobre os seus outros apps, no canto para onde a arrastar. Nunca rouba o foco, e fechá-la oculta-a até o motor ficar quieto."
+    "defaultMessage": "Uma janela pequena sobre os seus outros apps, no canto para onde a arrastar. Nunca rouba o foco. O botão de fechar oculta-a até o motor voltar a trabalhar, ou desativa-a."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Na barra lateral"

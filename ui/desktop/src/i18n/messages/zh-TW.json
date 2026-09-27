@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "聊天 · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "隱藏，直到引擎再次閒置"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "縮成膠囊"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "隱藏此卡片 — 可在側邊欄底部或 設定 › 應用程式 中恢復"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "隱藏或關閉懸浮視窗"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "暫時隱藏"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "下次引擎工作時再出現"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "你可以在這裡關閉它"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "知道了"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# 個請求處理中}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "未重新整理"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "關閉懸浮視窗"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "可在 設定 › 應用程式 中重新開啟"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "懸浮視窗已關閉"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "可在 設定 › 應用程式 中重新開啟。"
+  },
   "engineGlance.untitled": {
     "defaultMessage": "未命名工作階段"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "關閉"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "一個浮在其他 App 上方的小視窗，停在你拖到的角落。它從不搶走焦點，關閉後會隱藏到引擎再次閒置。"
+    "defaultMessage": "一個浮在其他 App 上方的小視窗，停在你拖到的角落。它從不搶走焦點。它的關閉按鈕可以將其隱藏到引擎再次工作，或將其關閉。"
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "在側邊欄中"

@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "채팅 · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "엔진이 다시 조용해질 때까지 숨기기"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "알약 크기로 줄이기"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "이 카드 숨기기 — 사이드바 하단이나 설정 › 앱에서 다시 표시"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "떠 있는 창 숨기기 또는 끄기"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "지금은 숨기기"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "다음에 엔진이 작동할 때 다시 나타납니다"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "여기서 끌 수 있습니다"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "확인"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {요청 #개 처리 중}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "새로 고침 안 됨"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "떠 있는 창 끄기"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "설정 › 앱에서 다시 켤 수 있습니다"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "떠 있는 창을 껐습니다"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "설정 › 앱에서 다시 켤 수 있습니다."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "제목 없는 세션"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "끔"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "다른 앱 위에 떠 있는 작은 창으로, 끌어다 놓은 모서리에 머뭅니다. 포커스를 가져가지 않으며, 닫으면 엔진이 조용해질 때까지 숨겨집니다."
+    "defaultMessage": "다른 앱 위에 떠 있는 작은 창으로, 끌어다 놓은 모서리에 머뭅니다. 포커스를 가져가지 않습니다. 닫기 버튼으로 엔진이 다시 작동할 때까지 숨기거나 끌 수 있습니다."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "사이드바에"

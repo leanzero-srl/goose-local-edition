@@ -22,7 +22,7 @@ const i18n = defineMessages({
   desktopDesc: {
     id: 'engineGlanceSettings.desktopDesc',
     defaultMessage:
-      'A small window over your other apps, in a corner you drag it to. It never takes focus, and closing it hides it until the engine is quiet again.',
+      'A small window over your other apps, in a corner you drag it to. It never takes focus. Its close button hides it until the engine works again, or turns it off.',
   },
   off: { id: 'engineGlanceSettings.desktop.off', defaultMessage: 'Off' },
   away: {

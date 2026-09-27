@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Sohbet · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Motor yeniden sakinleşene kadar gizle"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Hapa küçült"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Bu kartı gizle — kenar çubuğunun altından veya Ayarlar › Uygulama bölümünden geri getir"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Yüzen pencereyi gizle veya kapat"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Şimdilik gizle"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Motor bir dahaki çalıştığında geri gelir"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Bunu buradan kapatabilirsiniz"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Anladım"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, other {# istek işleniyor}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Yenilenmedi"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Yüzen pencereyi kapat"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Ayarlar › Uygulama bölümünden yeniden açın"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Yüzen pencere kapatıldı"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Ayarlar › Uygulama bölümünden yeniden açabilirsiniz."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Adsız oturum"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Kapalı"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede duran küçük bir pencere. Odağı asla almaz; kapatınca motor sakinleşene kadar gizlenir."
+    "defaultMessage": "Diğer uygulamalarınızın üzerinde, sürüklediğiniz köşede duran küçük bir pencere. Odağı asla almaz. Kapatma düğmesi onu motor yeniden çalışana kadar gizler ya da kapatır."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Kenar çubuğunda"

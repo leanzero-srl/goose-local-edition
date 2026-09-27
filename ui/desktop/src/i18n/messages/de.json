@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Ausblenden, bis die Engine wieder ruhig ist"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Zur Pille verkleinern"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Diese Karte ausblenden — zurückholen am Fuß der Seitenleiste oder unter Einstellungen › App"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Das schwebende Fenster ausblenden oder ausschalten"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Vorerst ausblenden"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Zurück, sobald die Engine wieder arbeitet"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Du kannst das hier ausschalten"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Verstanden"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# Anfrage in Arbeit} other {# Anfragen in Arbeit}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Nicht aktualisiert"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Das schwebende Fenster ausschalten"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Wieder einschalten unter Einstellungen › App"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Schwebendes Fenster ausgeschaltet"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Wieder einschalten unter Einstellungen › App."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Unbenannte Sitzung"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Aus"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Ein kleines Fenster über deinen anderen Apps, in einer Ecke deiner Wahl. Es nimmt nie den Fokus, und Schließen blendet es aus, bis die Engine wieder ruhig ist."
+    "defaultMessage": "Ein kleines Fenster über deinen anderen Apps, in einer Ecke deiner Wahl. Es nimmt nie den Fokus. Sein Schließen-Knopf blendet es aus, bis die Engine wieder arbeitet, oder schaltet es aus."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "In der Seitenleiste"

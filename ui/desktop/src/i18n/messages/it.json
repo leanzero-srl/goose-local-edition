@@ -1703,9 +1703,6 @@
   "engineGlance.chat": {
     "defaultMessage": "Chat · {name}"
   },
-  "engineGlance.close": {
-    "defaultMessage": "Nascondi finché il motore non è quieto"
-  },
   "engineGlance.collapse": {
     "defaultMessage": "Riduci a pillola"
   },
@@ -1723,6 +1720,21 @@
   },
   "engineGlance.hide": {
     "defaultMessage": "Nascondi questa scheda — riportala dal fondo della barra laterale o da Impostazioni › App"
+  },
+  "engineGlance.hideChoices": {
+    "defaultMessage": "Nascondi o disattiva la finestra mobile"
+  },
+  "engineGlance.hideForNow": {
+    "defaultMessage": "Nascondi per ora"
+  },
+  "engineGlance.hideForNowDetail": {
+    "defaultMessage": "Torna la prossima volta che il motore lavora"
+  },
+  "engineGlance.hint": {
+    "defaultMessage": "Puoi disattivarla da qui"
+  },
+  "engineGlance.hintDismiss": {
+    "defaultMessage": "Capito"
   },
   "engineGlance.inflight": {
     "defaultMessage": "{count, plural, one {# richiesta in corso} other {# richieste in corso}}"
@@ -1847,6 +1859,18 @@
   "engineGlance.stage.stale": {
     "defaultMessage": "Non aggiornato"
   },
+  "engineGlance.turnOff": {
+    "defaultMessage": "Disattiva la finestra mobile"
+  },
+  "engineGlance.turnOffDetail": {
+    "defaultMessage": "Riattivala da Impostazioni › App"
+  },
+  "engineGlance.turnedOff.title": {
+    "defaultMessage": "Finestra mobile disattivata"
+  },
+  "engineGlance.turnedOff.way": {
+    "defaultMessage": "Riattivala da Impostazioni › App."
+  },
   "engineGlance.untitled": {
     "defaultMessage": "Sessione senza titolo"
   },
@@ -1878,7 +1902,7 @@
     "defaultMessage": "Spento"
   },
   "engineGlanceSettings.desktopDesc": {
-    "defaultMessage": "Una piccola finestra sopra le altre app, nell’angolo dove la trascini. Non prende mai il focus, e chiuderla la nasconde finché il motore non è quieto."
+    "defaultMessage": "Una piccola finestra sopra le altre app, nell’angolo dove la trascini. Non prende mai il focus. Il suo pulsante di chiusura la nasconde finché il motore non lavora di nuovo, o la disattiva."
   },
   "engineGlanceSettings.inApp": {
     "defaultMessage": "Nella barra laterale"

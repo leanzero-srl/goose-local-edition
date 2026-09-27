@@ -365,6 +365,7 @@ describe('the glance prefs and sessions', () => {
       desktop: 'away',
       desktopCollapsed: false,
       desktopPlace: null,
+      desktopHintSeen: false,
     });
     expect(glancePrefsOf(undefined)).toEqual(DEFAULT_GLANCE_PREFS);
   });
@@ -375,6 +376,13 @@ describe('the glance prefs and sessions', () => {
       desktop: 'busy',
     });
     expect(glancePrefsOf({ desktop: 'always' })).toEqual(DEFAULT_GLANCE_PREFS);
+    // A settings.json written before Q-224 has no hint field: the hint has not been seen.
+    expect(
+      glancePrefsOf({ inApp: false, desktop: 'busy', desktopCollapsed: true, desktopPlace: null })
+    ).toEqual({ ...DEFAULT_GLANCE_PREFS, inApp: false, desktop: 'busy', desktopCollapsed: true });
+    expect(glancePrefsOf({ ...DEFAULT_GLANCE_PREFS, desktopHintSeen: true }).desktopHintSeen).toBe(
+      true
+    );
     expect(
       isGlancePrefs({ ...DEFAULT_GLANCE_PREFS, desktopPlace: { displayId: 1, corner: 'middle' } })
     ).toBe(false);
