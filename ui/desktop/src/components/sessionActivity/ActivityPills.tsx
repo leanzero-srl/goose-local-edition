@@ -1,8 +1,9 @@
 import { useSyncExternalStore, type ReactNode } from 'react';
-import { Hand, TriangleAlert } from 'lucide-react';
+import { CircleStop, Hand, TriangleAlert } from 'lucide-react';
 import { defineMessages, useIntl } from '../../i18n';
 import { PHASE_FILL, RADIUS, TNUM, TONE_FILL, cx } from '../lz';
 import { elapsedLabel, sessionStates, useActivityOf } from './sessionActivityStore';
+import { stoppedTurnText } from './stoppedTurnText';
 
 const i18n = defineMessages({
   running: { id: 'sessionActivity.running', defaultMessage: 'Running · {elapsed}' },
@@ -20,6 +21,7 @@ const i18n = defineMessages({
     id: 'sessionActivity.failedLabelBare',
     defaultMessage: 'The last turn failed',
   },
+  stopped: { id: 'sessionActivity.stopped', defaultMessage: 'Stopped' },
   needsYouCount: { id: 'sessionActivity.needsYouCount', defaultMessage: 'Needs you · {count}' },
   needsYouLabel: {
     id: 'sessionActivity.needsYouLabel',
@@ -121,6 +123,31 @@ export function FailedPill({ reason, className }: { reason?: string; className?:
   );
 }
 
+/** Solid slate: the person stopped the session's last turn and nothing has run since (Q-169). */
+export function StoppedPill({
+  elapsedMs,
+  outputTokens,
+  className,
+}: {
+  elapsedMs: number;
+  outputTokens?: number;
+  className?: string;
+}) {
+  const intl = useIntl();
+  const label = stoppedTurnText(intl, elapsedMs, outputTokens);
+  return (
+    <span
+      data-testid="session-stopped-pill"
+      title={label}
+      aria-label={label}
+      className={cx(PILL, RADIUS.pill, TONE_FILL.stopped, '[&_svg]:size-3', className)}
+    >
+      <CircleStop aria-hidden />
+      {intl.formatMessage(i18n.stopped)}
+    </span>
+  );
+}
+
 /**
  * The row attributes every session list carries, from the one store: `data-state` (space-separated
  * when two hold, e.g. "needs-you running") and `aria-busy` while a turn runs.
@@ -138,7 +165,7 @@ export function useSessionStateAttrs(sessionId: string): {
 
 /**
  * What a session row shows about its session RIGHT NOW, from the one activity store: needs-you,
- * running or failed pills, or — when the session is idle — `idle` (the row's usual "27m ago").
+ * running, failed or stopped pills, or — when the session is idle — `idle` (the row's usual "27m ago").
  */
 export function SessionActivityMarker({
   sessionId,
@@ -160,6 +187,12 @@ export function SessionActivityMarker({
       {states.includes('needs-you') && <NeedsYouPill count={activity.needsYou} />}
       {activity.runningSince && <RunningPill since={activity.runningSince} />}
       {states.includes('failed') && <FailedPill reason={activity.failedReason} />}
+      {states.includes('stopped') && activity.stoppedElapsedMs !== undefined && (
+        <StoppedPill
+          elapsedMs={activity.stoppedElapsedMs}
+          outputTokens={activity.stoppedOutputTokens}
+        />
+      )}
     </span>
   );
 }

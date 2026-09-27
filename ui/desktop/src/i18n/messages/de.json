@@ -5408,6 +5408,9 @@
   "placementCard.context": {
     "defaultMessage": "{tokens} Kontext"
   },
+  "placementCard.contextBelowChats": {
+    "defaultMessage": "passt nur {context} Tokens Kontext — deine Chats hier erreichen etwa {need}"
+  },
   "placementCard.copyFirst": {
     "defaultMessage": "{kind,select,thunderbolt{Zuerst auf {name} kopieren · Thunderbolt} other{Zuerst auf {name} kopieren · Netzwerk}}"
   },
@@ -7043,6 +7046,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "Ein Durchgang läuft gerade, seit {elapsed}"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "Gestoppt"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, one {# braucht dich} other {# brauchen dich}}"
   },
@@ -7534,6 +7540,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "Erforderliche Parameter fehlen"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} Std. {minutes} Min."
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} Min."
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "Du hast diese Antwort nach {elapsed} gestoppt, bevor das Modell etwas geschrieben hat"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} s"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "Du hast diese Antwort nach {elapsed} gestoppt"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "Du hast diese Antwort nach {elapsed} gestoppt · {tokens} Tokens"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Anbieter {name} ist konfiguriert"

@@ -5408,6 +5408,9 @@
   "placementCard.context": {
     "defaultMessage": "konteks {tokens}"
   },
+  "placementCard.contextBelowChats": {
+    "defaultMessage": "hanya muat {context} token konteks — sembang anda di sini mencapai kira-kira {need}"
+  },
   "placementCard.copyFirst": {
     "defaultMessage": "{kind,select,thunderbolt{Salin ke {name} dahulu · Thunderbolt} other{Salin ke {name} dahulu · rangkaian}}"
   },
@@ -7043,6 +7046,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "Satu giliran sedang berjalan, selama {elapsed}"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "Dihentikan"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, other {# memerlukan anda}}"
   },
@@ -7534,6 +7540,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "Parameter yang diperlukan tiada"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} j {minutes} min"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} min"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "Anda menghentikan jawapan ini selepas {elapsed}, sebelum model menulis apa-apa"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} s"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "Anda menghentikan jawapan ini selepas {elapsed}"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "Anda menghentikan jawapan ini selepas {elapsed} · {tokens} token"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Penyedia {name} telah dikonfigurasikan"

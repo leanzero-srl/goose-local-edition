@@ -5408,6 +5408,9 @@
   "placementCard.context": {
     "defaultMessage": "контекст {tokens}"
   },
+  "placementCard.contextBelowChats": {
+    "defaultMessage": "вмещает только {context} токенов контекста — ваши чаты здесь доходят примерно до {need}"
+  },
   "placementCard.copyFirst": {
     "defaultMessage": "{kind,select,thunderbolt{Сначала скопировать на {name} · Thunderbolt} other{Сначала скопировать на {name} · сеть}}"
   },
@@ -7043,6 +7046,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "Ход идёт уже {elapsed}"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "Остановлено"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, one {# ждёт вас} few {# ждут вас} many {# ждут вас} other {# ждут вас}}"
   },
@@ -7534,6 +7540,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "Отсутствуют обязательные параметры"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} ч {minutes} мин"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} мин"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "Вы остановили этот ответ через {elapsed}, до того как модель что-либо написала"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} с"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "Вы остановили этот ответ через {elapsed}"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "Вы остановили этот ответ через {elapsed} · {tokens} токенов"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Провайдер {name} настроен"

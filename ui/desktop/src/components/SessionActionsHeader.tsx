@@ -13,6 +13,7 @@ import { AppEvents } from '../constants/events';
 import { defineMessages, useIntl } from '../i18n';
 import { acpExportSession, acpForkSession, acpRenameSession } from '../acp/sessions';
 import { getSessionDisplayName } from '../sessions';
+import { listedTitle, useListedName } from './sessionActivity/sessionActivityStore';
 import CreateEditRecipeModal from './recipes/CreateEditRecipeModal';
 import { createRecipeFromSession } from '../recipe/recipe_management';
 import type { Recipe } from '../recipe';
@@ -349,7 +350,11 @@ export default function SessionActionsHeader({
   const [isMakingRecipe, setIsMakingRecipe] = useState(false);
   const [createdRecipe, setCreatedRecipe] = useState<Recipe | null>(null);
 
-  const title = useMemo(() => (session ? getSessionDisplayName(session) : ''), [session]);
+  const listed = useListedName(session?.id);
+  const title = useMemo(
+    () => (session ? listedTitle(getSessionDisplayName(session), listed) : ''),
+    [session, listed]
+  );
 
   const handleMakeRecipe = useCallback(async () => {
     if (!session || isMakingRecipe) return;

@@ -196,6 +196,10 @@ const i18n = defineMessages({
   shortSplit: { id: 'placementCard.shortSplit', defaultMessage: 'Does not fit: short {gb}' },
   fitUnknown: { id: 'placementCard.fitUnknown', defaultMessage: 'Fit unknown' },
   noFigureReason: { id: 'placementCard.noFigureReason', defaultMessage: 'No speed figure' },
+  contextBelowChats: {
+    id: 'placementCard.contextBelowChats',
+    defaultMessage: 'fits only {context} tokens of context — your chats here reach about {need}',
+  },
   smallerContext: {
     id: 'placementCard.smallerContext',
     defaultMessage: 'fits only at {tokens} context',
@@ -521,6 +525,11 @@ export function outcomeText(intl: IntlShape, candidate: PlacementCandidate): str
       return o.reason;
     case 'noFigure':
       return `${intl.formatMessage(i18n.noFigureReason)}: ${o.reason}`;
+    case 'contextBelowChats':
+      return intl.formatMessage(i18n.contextBelowChats, {
+        context: o.context.toLocaleString(),
+        need: o.need.toLocaleString(),
+      });
   }
 }
 

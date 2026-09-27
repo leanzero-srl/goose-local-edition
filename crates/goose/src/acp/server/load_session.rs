@@ -156,7 +156,8 @@ fn replay_conversation_to_client(
                     ))?;
                 }
                 MessageContent::SystemNotification(notification)
-                    if crate::claim_check::is_reply_check(notification) =>
+                    if crate::claim_check::is_reply_check(notification)
+                        || crate::turn_outcome::stopped_of(notification).is_some() =>
                 {
                     send_status_message_update(
                         cx,

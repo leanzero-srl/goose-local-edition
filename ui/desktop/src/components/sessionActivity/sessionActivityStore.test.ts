@@ -62,7 +62,7 @@ function running(sessionId: string, startedAt: string) {
 }
 
 function snapshotWith(partial: Partial<SessionActivitySnapshot>): SessionActivitySnapshot {
-  return { running: [], needsYou: [], failed: [], elicitations: [], ...partial };
+  return { running: [], needsYou: [], failed: [], stopped: [], elicitations: [], ...partial };
 }
 
 describe('session activity: the one source of running / needs-you / failed / idle', () => {
@@ -101,6 +101,30 @@ describe('session activity: the one source of running / needs-you / failed / idl
     expect(sessionStates(activityOf(state, 'c'))).toEqual(['failed']);
     expect(activityOf(state, 'c').failedReason).toContain('stopped mid-answer');
     expect(sessionStates(activityOf(state, 'idle'))).toEqual(['idle']);
+  });
+
+  // Q-169: a stopped turn left the row reading "15m ago", as if nothing had happened.
+  it('reads a session whose last turn the person stopped as stopped, until a turn runs', () => {
+    const stoppedRow = {
+      sessionId: 's',
+      sessionName: 'Jira Migration Kickoff',
+      workingDir: '/proj/s',
+      stoppedAt: '2026-09-27T09:58:00Z',
+      elapsedMs: 372_000,
+      outputTokens: 1_900,
+    };
+    const state = snapshotWith({ stopped: [stoppedRow] });
+    expect(sessionStates(activityOf(state, 's'))).toEqual(['stopped']);
+    expect(activityOf(state, 's')).toMatchObject({
+      stoppedAt: '2026-09-27T09:58:00Z',
+      stoppedElapsedMs: 372_000,
+      stoppedOutputTokens: 1_900,
+    });
+    const rerun = snapshotWith({
+      stopped: [stoppedRow],
+      running: [running('s', '2026-09-27T10:00:00Z')],
+    });
+    expect(sessionStates(activityOf(rerun, 's'))).toEqual(['running']);
   });
 
   it('lists active sessions with waiting ones first, and counts live elicitations as needs-you', () => {
@@ -180,7 +204,11 @@ describe('session activity: the one source of running / needs-you / failed / idl
   });
 
   it('a failed resolve leaves the item in place', async () => {
-    acp.acpSessionActivity.mockResolvedValue({ running: [], needsYou: [item('i1', 'b')], failed: [] });
+    acp.acpSessionActivity.mockResolvedValue({
+      running: [],
+      needsYou: [item('i1', 'b')],
+      failed: [],
+    });
     await refreshSessionActivity();
     acp.acpResolveNeedsYou.mockRejectedValue(new Error('engine gone'));
     await expect(resolveNeedsYou({ id: 'i1', sessionId: 'b' }, 'dismiss')).rejects.toThrow(

@@ -5568,6 +5568,10 @@ export type SessionActivityResponse_unstable = {
      * User/scheduled sessions whose LAST turn failed (a later completed turn clears it).
      */
     failed: Array<FailedSessionDto>;
+    /**
+     * User/scheduled sessions whose LAST turn the person stopped (a later completed turn clears it).
+     */
+    stopped?: Array<StoppedSessionDto>;
 };
 
 export type RunningSessionDto = {
@@ -5611,6 +5615,27 @@ export type FailedSessionDto = {
      * The failure text the chat showed, when it had one.
      */
     reason?: string | null;
+};
+
+/**
+ * A session whose LAST turn the person stopped (Q-169).
+ */
+export type StoppedSessionDto = {
+    sessionId: string;
+    sessionName: string;
+    workingDir: string;
+    /**
+     * RFC 3339: when the person stopped the turn.
+     */
+    stoppedAt: string;
+    /**
+     * How long the turn had run.
+     */
+    elapsedMs: number;
+    /**
+     * The output tokens the model had written; absent when goose could not count them.
+     */
+    outputTokens?: number | null;
 };
 
 /**
@@ -5688,6 +5713,11 @@ export type SessionUsageUpdate = {
 
 export type StatusMessage = {
     message: string;
+    /**
+     * The turn the person stopped, when this notice says so (Q-169) — the chat renders the
+     * line from these numbers. Absent for every other notice.
+     */
+    stopped?: StoppedTurnStatus | null;
     type: 'notice';
 } | {
     message: string;
@@ -5697,6 +5727,17 @@ export type StatusMessage = {
      */
     forming?: FormingStatus | null;
     type: 'progress';
+};
+
+/**
+ * A turn the person stopped: how long it ran and the output tokens the model had written.
+ */
+export type StoppedTurnStatus = {
+    elapsedMs: number;
+    /**
+     * Absent when goose could not count them.
+     */
+    outputTokens?: number | null;
 };
 
 /**

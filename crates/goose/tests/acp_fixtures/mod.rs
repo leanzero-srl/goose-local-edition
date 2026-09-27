@@ -293,6 +293,18 @@ impl OpenAiFixture {
         }
     }
 
+    /// Points the provider at a server the test runs itself — for a response no canned body can
+    /// give, such as a stream that starts and never finishes.
+    #[allow(dead_code)]
+    pub async fn serving_from(base_url: String) -> Self {
+        Self {
+            _server: MockServer::start().await,
+            base_url,
+            exchanges: Vec::new(),
+            queue: Arc::default(),
+        }
+    }
+
     pub fn uri(&self) -> &str {
         &self.base_url
     }

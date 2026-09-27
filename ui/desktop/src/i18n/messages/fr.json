@@ -5408,6 +5408,9 @@
   "placementCard.context": {
     "defaultMessage": "contexte de {tokens}"
   },
+  "placementCard.contextBelowChats": {
+    "defaultMessage": "ne tient que {context} jetons de contexte — vos discussions ici atteignent environ {need}"
+  },
   "placementCard.copyFirst": {
     "defaultMessage": "{kind,select,thunderbolt{Copier d’abord sur {name} · Thunderbolt} other{Copier d’abord sur {name} · réseau}}"
   },
@@ -7043,6 +7046,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "Un tour est en cours depuis {elapsed}"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "Arrêtée"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, one {# a besoin de vous} other {# ont besoin de vous}}"
   },
@@ -7534,6 +7540,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "Paramètres requis manquants"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} h {minutes} min"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} min"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "Vous avez arrêté cette réponse après {elapsed}, avant que le modèle n’écrive quoi que ce soit"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} s"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "Vous avez arrêté cette réponse après {elapsed}"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "Vous avez arrêté cette réponse après {elapsed} · {tokens} jetons"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Le fournisseur {name} est configuré"

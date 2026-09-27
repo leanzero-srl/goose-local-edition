@@ -5408,6 +5408,9 @@
   "placementCard.context": {
     "defaultMessage": "{tokens} 上下文"
   },
+  "placementCard.contextBelowChats": {
+    "defaultMessage": "只能容纳 {context} 个 token 的上下文 — 你在这里的对话约达 {need}"
+  },
   "placementCard.copyFirst": {
     "defaultMessage": "{kind,select,thunderbolt{先复制到 {name} · Thunderbolt} other{先复制到 {name} · 网络}}"
   },
@@ -7043,6 +7046,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "本轮已运行 {elapsed}"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "已停止"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, other {# 个需要你}}"
   },
@@ -7534,6 +7540,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "缺少必需参数"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} 小时 {minutes} 分钟"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} 分钟"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "你在 {elapsed} 后停止了这个回答，模型尚未写出任何内容"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} 秒"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "你在 {elapsed} 后停止了这个回答"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "你在 {elapsed} 后停止了这个回答 · {tokens} 个令牌"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} 提供商已配置"

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { IntlProvider } from 'react-intl';
 import {
@@ -12,6 +12,7 @@ import {
 import { acpListSessions, type SessionListItem } from '../../acp/sessions';
 import { startNewSession } from '../../sessions';
 import { AppEvents } from '../../constants/events';
+import { useListedName } from '../sessionActivity/sessionActivityStore';
 
 /**
  * The Projects tree: folders DERIVED from where sessions ran, each showing its sessions newest
@@ -101,6 +102,21 @@ describe('ProjectsSection', () => {
     navMocks.activeSessionId.current = undefined;
     vi.mocked(acpListSessions).mockResolvedValue({ sessions: [], nextCursor: null });
     vi.mocked(startNewSession).mockResolvedValue(undefined as never);
+  });
+
+  it('publishes each row label so the chat header can show the same " · 2" (Q-171)', async () => {
+    electronMocks();
+    navMocks.recentSessions.current = [
+      listItem({ id: 'old', name: "Hi. I'm starting a", createdAt: at(90), updatedAt: at(90) }),
+      listItem({ id: 'new', name: "Hi. I'm starting a", createdAt: at(10), updatedAt: at(10) }),
+    ];
+    renderSection();
+    await screen.findByText("Hi. I'm starting a · 2");
+    const { result } = renderHook(() => useListedName('new'));
+    expect(result.current).toEqual({
+      base: "Hi. I'm starting a",
+      label: "Hi. I'm starting a · 2",
+    });
   });
 
   it('with no sessions and no folders it says where sessions will appear', async () => {

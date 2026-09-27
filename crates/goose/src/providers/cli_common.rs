@@ -43,6 +43,22 @@ pub(crate) fn is_session_description_request(system: &str) -> bool {
     system.contains("four words or less") || system.contains("4 words or less")
 }
 
+/// The title a provider without a title model gives: the first four words of the prompts the
+/// title request carried. `session_naming::is_untitled` reads a session still named this as never
+/// titled, so a later idle turn asks the model again (Q-171).
+pub(crate) fn first_words_title(prompts: &str) -> String {
+    let desc: String = prompts
+        .split_whitespace()
+        .take(4)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if desc.is_empty() {
+        "Simple task".to_string()
+    } else {
+        safe_truncate(&desc, 100)
+    }
+}
+
 pub(crate) fn generate_simple_session_description(
     model_name: &str,
     messages: &[Message],
@@ -74,18 +90,9 @@ pub(crate) fn generate_simple_session_description(
                 .unwrap_or(stripped)
                 .trim();
 
-            let desc: String = stripped
-                .split_whitespace()
-                .take(4)
-                .collect::<Vec<_>>()
-                .join(" ");
-            if desc.is_empty() {
-                "Simple task".to_string()
-            } else {
-                safe_truncate(&desc, 100)
-            }
+            first_words_title(stripped)
         })
-        .unwrap_or_else(|| "Simple task".to_string());
+        .unwrap_or_else(|| first_words_title(""));
 
     tracing::debug!(
         description = %description,

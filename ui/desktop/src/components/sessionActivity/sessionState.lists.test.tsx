@@ -23,7 +23,14 @@ vi.mock('../../acp/sessions', () => ({
 
 import SessionActivityIndicator from './SessionActivityIndicator';
 import ActiveNowSection from './ActiveNowSection';
-import { FailedPill, NeedsYouPill, RunningPill, resetNowForTests } from './ActivityPills';
+import {
+  FailedPill,
+  NeedsYouPill,
+  RunningPill,
+  StoppedPill,
+  resetNowForTests,
+} from './ActivityPills';
+import { SystemNotificationInline } from '../context_management/SystemNotificationInline';
 import SessionListView from '../sessions/SessionListView';
 import { resetSessionActivityForTests, seedSessionActivityForTests } from './sessionActivityStore';
 import { PHASE_FILL, TONE_FILL } from '../lz';
@@ -97,6 +104,34 @@ describe('session state: running / needs-you / failed, the same everywhere', () 
     expect(failed.getAttribute('title')).toContain('stopped mid-answer');
     for (const c of TONE_FILL.err.split(' ')) expect(failed.className).toContain(c);
   });
+
+  // Q-169: a stopped turn left only the user's message, and the row read "15m ago".
+  it('a stopped turn reads Stopped in a solid pill and leaves its line in the chat', async () => {
+    const { container } = render(
+      <IntlProvider locale="en" messages={{}}>
+        <StoppedPill elapsedMs={372_000} outputTokens={1_900} />
+        <SystemNotificationInline
+          notification={{
+            notificationType: 'inlineMessage',
+            msg: 'You stopped this answer after 6 min · 1.9k tokens',
+            data: { kind: 'turnStopped', elapsedMs: 372_000, outputTokens: 1_900 },
+          }}
+        />
+      </IntlProvider>
+    );
+    const pills = screen.getAllByTestId('session-stopped-pill');
+    expect(pills[0].textContent).toBe('Stopped');
+    expect(pills[0].getAttribute('title')).toBe(
+      'You stopped this answer after 6 min · 1.9k tokens'
+    );
+    for (const c of TONE_FILL.stopped.split(' ')) expect(pills[0].className).toContain(c);
+    const line = screen.getByTestId('stopped-turn-line');
+    expect(line.textContent).toContain('You stopped this answer after 6 min · 1.9k tokens');
+    expect(within(line).getByTestId('session-stopped-pill')).toBeTruthy();
+    assertStudioClean(container);
+    const classes = allClasses(container).filter((c) => !c.startsWith('lucide'));
+    expect(await missingUtilities(classes)).toEqual([]);
+  }, 30_000);
 
   it('the top bar shows nothing when nothing is active', () => {
     seedSessionActivityForTests({});
@@ -207,6 +242,7 @@ describe('session state: running / needs-you / failed, the same everywhere', () 
         { ...base, id: 'run-1', name: 'Notes', createdAt: '2026-09-26T10:00:00Z' },
         { ...base, id: 'old-notes', name: 'Notes', createdAt: '2026-09-01T10:00:00Z' },
         { ...base, id: 'fail-1', name: 'Cut', createdAt: '2026-09-21T10:00:00Z' },
+        { ...base, id: 'stop-1', name: 'Kickoff', createdAt: '2026-09-22T10:00:00Z' },
       ],
       nextCursor: null,
     });
@@ -219,6 +255,16 @@ describe('session state: running / needs-you / failed, the same everywhere', () 
           workingDir: '/Users/me/api',
           failedAt: '2026-09-25T10:00:00Z',
           reason: 'The split across your Macs stopped mid-answer',
+        },
+      ],
+      stopped: [
+        {
+          sessionId: 'stop-1',
+          sessionName: 'Kickoff',
+          workingDir: '/Users/me/api',
+          stoppedAt: '2026-09-25T10:00:00Z',
+          elapsedMs: 372_000,
+          outputTokens: 1_900,
         },
       ],
     });
@@ -242,6 +288,11 @@ describe('session state: running / needs-you / failed, the same everywhere', () 
     const failCard = screen.getByTestId('session-card-fail-1');
     expect(failCard.getAttribute('data-state')).toBe('failed');
     expect(within(failCard).getByTestId('session-failed-pill')).toBeTruthy();
+    const stopCard = screen.getByTestId('session-card-stop-1');
+    expect(stopCard.getAttribute('data-state')).toBe('stopped');
+    expect(within(stopCard).getByTestId('session-stopped-pill').getAttribute('title')).toBe(
+      'You stopped this answer after 6 min · 1.9k tokens'
+    );
     expect(screen.getByTestId('session-card-idle-1').getAttribute('data-state')).toBe('idle');
 
     // The running card sits in the Active now group, above every date group.

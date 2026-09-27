@@ -39,7 +39,7 @@ impl GooseAcpAgent {
         let recipe = self.resolve_recipe_from_meta(args.meta.as_ref()).await?;
         let session_name = match recipe.as_ref() {
             Some((recipe, _)) if !recipe.title.trim().is_empty() => recipe.title.clone(),
-            _ => "New Chat".to_string(),
+            _ => crate::session::session_naming::UNTITLED_SESSION_NAME.to_string(),
         };
 
         let session = self
