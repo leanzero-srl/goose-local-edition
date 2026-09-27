@@ -410,7 +410,7 @@ impl Core {
                     looks == 1,
                 )
                 .await;
-            let (prepared, plan) = match look {
+            let (first_prepared, _) = match look {
                 Look::Ready => return NodeEnsureServing::Ready,
                 Look::Refused(r) => return refused(r),
                 Look::Wait { reason, wake } => {
@@ -442,12 +442,14 @@ impl Core {
             // The swap: this process's one swap, then the Mac's swap claim — both waited for, and
             // both cancellable (a cancel here leaves nothing: no stop has begun).
             let swapping = Arc::clone(&self.swapping).lock_owned().await;
-            let claim = match self.claim(&node, &prepared, first).await {
+            let claim = match self.claim(&node, &first_prepared, first).await {
                 Ok(claim) => claim,
                 Err(r) => return refused(r),
             };
-            // Under the claim, look again: another loader may have switched meanwhile.
-            match self
+            // Under the claim, look again — and switch on what THIS look sees: another window's
+            // loader may have switched while this one waited for the claim, and the stop set read
+            // before it would miss the way that serves now.
+            let (prepared, plan) = match self
                 .look(&node, &target, seq, root.as_deref(), reply_opened, true)
                 .await
             {
@@ -457,8 +459,8 @@ impl Core {
                     drop((claim, swapping));
                     continue;
                 }
-                Look::Go(_) => {}
-            }
+                Look::Go(go) => *go,
+            };
             let loading = format!("loading {} for this chat", node.def.name);
             tell_first(first, &loading);
             let cancelled = Arc::new(AtomicBool::new(false));
@@ -742,17 +744,17 @@ async fn wait(notified: std::pin::Pin<&mut tokio::sync::futures::Notified<'_>>, 
                 _ = tokio::time::sleep(LOOK_AGAIN) => {}
             }
         }
+        // Only the reply's end (or its process's death) wakes this wait: the kernel releases the
+        // flock. This process's own changes do not — the demand is the queue's head, and every
+        // look it would make meanwhile would find the same reply open (and park one more thread on
+        // its lock). A reply that starts waiting in its own loader releases the lock too.
         Wake::ReplyEnd(lock) => {
             let ended = tokio::task::spawn_blocking(move || {
                 goose_sidecar::holders::wait_for_reply_end(&lock)
-            });
-            tokio::select! {
-                _ = notified => {}
-                result = ended => {
-                    if let Ok(Err(e)) = result {
-                        tracing::warn!(error = %format!("{e:#}"), "nodes loader: waiting on another window's reply failed; looking again");
-                    }
-                }
+            })
+            .await;
+            if let Ok(Err(e)) = ended {
+                tracing::warn!(error = %format!("{e:#}"), "nodes loader: waiting on another window's reply failed; looking again");
             }
         }
     }

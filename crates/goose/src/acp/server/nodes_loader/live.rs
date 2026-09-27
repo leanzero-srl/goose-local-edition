@@ -98,7 +98,7 @@ impl Ways for AgentWays {
         let settled = matches!(single.state.as_str(), "mounting" | "running");
         if let (Some(port), false) = (single.stray_listener_port, settled) {
             return Err(step(format!(
-                "this Mac's engine on port {port} is not this goose window's; switch it from the window that started it"
+                "this Mac's engine on port {port} is not this goose window's; switch it from the window that started it, or free the port with Stop in Run it"
             )));
         }
         let remote = match mlx_remote::read() {

@@ -766,6 +766,38 @@ async fn a_swap_claimed_by_another_loader_is_waited_for() {
     assert_eq!(fake.log().len(), 2);
 }
 
+/// While this loader waited for the swap claim, the other window's loader switched the Mac to
+/// another way: the switch stops what serves NOW, never the stop set read before the claim.
+#[tokio::test]
+async fn the_switch_after_the_claim_stops_what_serves_then_not_what_served_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), Some(dir.path().to_path_buf()));
+    let goose_sidecar::machine::LoadLockAttempt::Acquired(other) =
+        goose_sidecar::holders::try_claim_swap(dir.path(), "the other window switches", "m")
+            .unwrap()
+    else {
+        panic!()
+    };
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("s"));
+    let here = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the demand waits on the claim", || {
+        waiting(&core, "split").is_some_and(|w| w.contains("the other window switches"))
+    })
+    .await;
+    *fake.serving.lock().unwrap() = Some("studio".to_string());
+    drop(other);
+    assert_eq!(answer(here).await, NodeEnsureServing::Ready);
+    assert_eq!(
+        fake.log(),
+        vec![
+            "stop Peer Mihai-LeanZero/Qwen3.8-27B-Atlassian-Q8-mlx".to_string(),
+            "start split".to_string()
+        ]
+    );
+}
+
 #[tokio::test]
 async fn a_node_that_follows_this_mac_is_never_loaded() {
     let fake = flash_and_split();

@@ -42,7 +42,12 @@ pub(crate) fn expect(model: &str, key: PlacementKey, cancelled: Arc<AtomicBool>)
         cancelled,
         recorded: AtomicBool::new(false),
     });
-    EXPECTED.lock().unwrap().push(Arc::clone(&expected));
+    let mut all = EXPECTED.lock().unwrap();
+    // A load of the same model and way that no ready path recorded (a row it could not size) is
+    // over: this load replaces its expectation, so an old cancel never marks a new load.
+    all.retain(|e| !(e.model == expected.model && e.key == expected.key));
+    all.push(Arc::clone(&expected));
+    drop(all);
     expected
 }
 
