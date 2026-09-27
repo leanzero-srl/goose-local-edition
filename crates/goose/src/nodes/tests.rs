@@ -399,10 +399,12 @@ fn the_base_config_is_valid() {
     assert!(validate(&base()).is_empty());
 }
 
+type Mutation = Box<dyn Fn(&mut NodesConfig)>;
+
 #[test]
 fn each_validation_rule_refuses_by_code() {
     use NodesRefusalCode as C;
-    let cases: Vec<(&str, Box<dyn Fn(&mut NodesConfig)>, C)> = vec![
+    let cases: Vec<(&str, Mutation, C)> = vec![
         (
             "version",
             Box::new(|c| c.version = 2),
