@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "엔진 세부 정보"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "엔진이 {value} 사용 · {from, select, profile {시작 시 이 프로필} generationConfig {모델 자체 설정} other {엔진 대체값}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "보낸 값 없음 — 실행 중인 엔진이 {value}(으)로 샘플링한다고 보고합니다"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac}의 메모리"
   },

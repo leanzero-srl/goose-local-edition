@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Motor ayrıntıları"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "motor {value} kullanıyor · {from, select, profile {başlangıçtaki bu profil} generationConfig {modelin kendi yapılandırması} other {motorun yedek değeri}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Değer gönderilmiyor — çalışan motor {value} ile örnekleme yaptığını bildiriyor"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} üzerindeki bellek"
   },

@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "引擎详情"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "引擎使用 {value} · {from, select, profile {启动时的此配置文件} generationConfig {模型自带的配置} other {引擎的后备值}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "不发送值 — 运行中的引擎报告它以 {value} 采样"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} 的内存"
   },

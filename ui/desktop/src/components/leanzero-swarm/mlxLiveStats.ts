@@ -67,6 +67,60 @@ export interface MlxLiveStats {
   totalPromptTokens: number | null;
   totalCompletionTokens: number | null;
   requests: MlxLiveRequest[];
+  /**
+   * What the engine samples with when a request names nothing (`sampling_defaults`, reported by the
+   * split's rank 0 — rank_sampling.py); null when the engine does not report it (Rapid-MLX's single
+   * engine does not). The Sampling tab shows these instead of a bare "engine default" (Q-170).
+   */
+  samplingDefaults: EngineSamplingDefaults | null;
+}
+
+export type EngineSamplingKey =
+  | 'temperature'
+  | 'topP'
+  | 'topK'
+  | 'minP'
+  | 'repetitionPenalty'
+  | 'presencePenalty'
+  | 'frequencyPenalty';
+
+/** Where a default came from, in the order rank 0 resolves it (request > profile > config > fallback). */
+export type EngineSamplingLayer = 'profile' | 'generationConfig' | 'engineFallback';
+
+export type EngineSamplingDefaults = Partial<
+  Record<EngineSamplingKey, { value: number; from: EngineSamplingLayer }>
+>;
+
+const SAMPLING_WIRE_KEYS: Array<[string, EngineSamplingKey]> = [
+  ['temperature', 'temperature'],
+  ['top_p', 'topP'],
+  ['top_k', 'topK'],
+  ['min_p', 'minP'],
+  ['repetition_penalty', 'repetitionPenalty'],
+  ['presence_penalty', 'presencePenalty'],
+  ['frequency_penalty', 'frequencyPenalty'],
+];
+
+/** rank_sampling.py `SamplingDefaults.report()` → the value in force per field, and its layer. */
+export function parseSamplingDefaults(raw: unknown): EngineSamplingDefaults | null {
+  const root = obj(raw);
+  if (!root) return null;
+  const layers: Array<[EngineSamplingLayer, Record<string, unknown> | null]> = [
+    ['profile', obj(root.profile)],
+    ['generationConfig', obj(root.generation_config)],
+    ['engineFallback', obj(root.engine_fallback)],
+  ];
+  const out: EngineSamplingDefaults = {};
+  for (const [wire, key] of SAMPLING_WIRE_KEYS) {
+    for (const [from, layer] of layers) {
+      const value = layer ? num(layer[wire]) : null;
+      if (value != null) {
+        out[key] = { value, from };
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 export type MlxLiveRead = { ok: true; stats: MlxLiveStats } | { ok: false; detail: string };
@@ -124,6 +178,7 @@ export function parseMlxLiveStatus(body: unknown): MlxLiveRead {
       totalPromptTokens: num(root.total_prompt_tokens),
       totalCompletionTokens: num(root.total_completion_tokens),
       requests,
+      samplingDefaults: parseSamplingDefaults(root.sampling_defaults),
     },
   };
 }

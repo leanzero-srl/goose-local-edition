@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Engine-Details"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "Engine nutzt {value} · {from, select, profile {dieses Profil beim Start} generationConfig {die eigene Konfiguration des Modells} other {den Fallback der Engine}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Kein Wert gesendet — die laufende Engine meldet, dass sie mit {value} sampelt"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Speicher auf {mac}"
   },

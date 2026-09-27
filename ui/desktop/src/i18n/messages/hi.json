@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "इंजन विवरण"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "इंजन {value} उपयोग करता है · {from, select, profile {शुरू होने पर यह प्रोफ़ाइल} generationConfig {मॉडल का अपना कॉन्फ़िग} other {इंजन का फ़ॉलबैक}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "कोई मान नहीं भेजा गया — चल रहा इंजन बताता है कि वह {value} से सैंपल करता है"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} पर मेमोरी"
   },

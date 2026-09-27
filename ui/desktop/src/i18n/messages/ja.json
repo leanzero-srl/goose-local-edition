@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "エンジンの詳細"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "エンジンは {value} を使用 · {from, select, profile {起動時のこのプロファイル} generationConfig {モデル自身の設定} other {エンジンのフォールバック}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "値は送信されません — 実行中のエンジンは {value} でサンプリングすると報告しています"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "{mac} のメモリ"
   },

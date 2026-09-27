@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Butiran enjin"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "enjin menggunakan {value} · {from, select, profile {profil ini semasa mula} generationConfig {konfigurasi model itu sendiri} other {nilai sandaran enjin}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Tiada nilai dihantar — enjin yang berjalan melaporkan ia membuat pensampelan dengan {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memori di {mac}"
   },

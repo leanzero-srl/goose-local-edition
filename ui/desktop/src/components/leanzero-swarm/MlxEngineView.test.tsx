@@ -3390,3 +3390,51 @@ describe('Q-149: a split reads as served on Models and Sampling, this Mac and th
     unmount();
   });
 });
+
+/**
+ * Q-170, critic round 2 (3.0.57): under "Serving: Qwen3.8-27B … split across 2 Macs" the MODEL
+ * PROFILE opened on Flash (the last single mount) with every field "engine default", while the
+ * split's rank 0 reported temperature 1.0 / top_p 0.95 / top_k 20 on /v1/status.
+ */
+describe('Q-170: Sampling opens on the model serving chat and shows the engine’s own values', () => {
+  const bridge = window.electron as unknown as {
+    mlxLiveStatus?: (baseUrl: string) => Promise<unknown>;
+  };
+  afterEach(() => {
+    delete bridge.mlxLiveStatus;
+  });
+  const FLASH = 'rapid-mlx/Qwen3.8-Flash-Next-4bit';
+  const SPLIT = { ...FLASH_READY, modelId: QWEN, state: 'serving' };
+
+  it('defaults to the split’s model (not the last single mount) and reads its sampling_defaults', async () => {
+    mockFeatures.mlxDistributed = true;
+    mockDistributedStatus.mockResolvedValue(SPLIT);
+    mockSettingsRead.mockResolvedValue({ ...SETTINGS, modelId: FLASH, modelProfiles: {} });
+    mockModelsList.mockResolvedValue(
+      listOf([...MODELS, { id: FLASH, sizeBytes: 9 * GB, complete: true, missingFiles: 0 }])
+    );
+    bridge.mlxLiveStatus = vi.fn(async (baseUrl: string) => ({
+      ok: true,
+      url: `${baseUrl}/v1/status`,
+      body: {
+        status: 'idle',
+        requests: [],
+        sampling_defaults: {
+          profile: {},
+          generation_config: { temperature: 1.0, top_p: 0.95, top_k: 20 },
+          engine_fallback: { temperature: 0.7, top_p: 0.9 },
+        },
+      },
+    }));
+    const { unmount } = render(<MlxEngineView />);
+    await openSamplingTab();
+    const picker = await screen.findByRole('combobox', { name: 'Sampling model' });
+    await waitFor(() => expect(picker).toHaveTextContent(QWEN));
+    expect(picker).not.toHaveTextContent(FLASH);
+    const temperature = await screen.findByTestId('mlx-sampling-engine-temperature');
+    expect(temperature).toHaveTextContent('engine uses 1 · the model’s own config');
+    expect(screen.getByTestId('mlx-sampling-engine-topP')).toHaveTextContent('engine uses 0.95');
+    expect(screen.getByTestId('mlx-sampling-engine-topK')).toHaveTextContent('engine uses 20');
+    unmount();
+  });
+});

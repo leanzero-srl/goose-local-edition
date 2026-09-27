@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Detalles del motor"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "el motor usa {value} · {from, select, profile {este perfil al iniciar} generationConfig {la configuración propia del modelo} other {el valor de reserva del motor}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "No se envía ningún valor — el motor en marcha indica que muestrea con {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memoria en {mac}"
   },

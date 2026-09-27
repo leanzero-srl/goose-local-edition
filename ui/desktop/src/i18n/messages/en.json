@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Engine details"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "{from,select,profile{engine uses {value} · this profile at start} generationConfig{engine uses {value} · the model’s own config} other{engine uses {value} · the engine’s fallback}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "No value sent — the running engine reports it samples with {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memory on {mac}"
   },

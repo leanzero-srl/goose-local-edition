@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Detail mesin"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "mesin memakai {value} · {from, select, profile {profil ini saat mulai} generationConfig {konfigurasi model itu sendiri} other {nilai cadangan mesin}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Tidak ada nilai dikirim — mesin yang berjalan melaporkan sampling dengan {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Memori di {mac}"
   },

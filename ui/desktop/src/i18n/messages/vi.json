@@ -3824,6 +3824,12 @@
   "mlxEngineView.engineDetails": {
     "defaultMessage": "Chi tiết engine"
   },
+  "mlxEngineView.engineValue": {
+    "defaultMessage": "engine dùng {value} · {from, select, profile {hồ sơ này khi khởi động} generationConfig {cấu hình riêng của mô hình} other {giá trị dự phòng của engine}}"
+  },
+  "mlxEngineView.engineValueTitle": {
+    "defaultMessage": "Không gửi giá trị — engine đang chạy báo rằng nó lấy mẫu với {value}"
+  },
   "mlxEngineView.memoryOn": {
     "defaultMessage": "Bộ nhớ trên {mac}"
   },

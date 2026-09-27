@@ -105,6 +105,8 @@ import {
   pushSample,
   readMlxLiveStatus,
   readMainEngine,
+  type EngineSamplingDefaults,
+  type EngineSamplingLayer,
   type MlxLiveRead,
   type MountWatch,
   type SingleLoad,
@@ -140,6 +142,15 @@ import {
 export { formatBytesShort, formatCount, formatDate, formatGb } from './primitives';
 
 const i18n = defineMessages({
+  engineValue: {
+    id: 'mlxEngineView.engineValue',
+    defaultMessage:
+      'engine uses {value} · {from, select, profile {this profile at start} generationConfig {the model’s own config} other {the engine’s fallback}}',
+  },
+  engineValueTitle: {
+    id: 'mlxEngineView.engineValueTitle',
+    defaultMessage: 'No value sent — the running engine reports it samples with {value}',
+  },
   distributedOwns: { id: 'mlxEngineView.distributedOwns', defaultMessage: 'Split' },
   distributedOwnsText: {
     id: 'mlxEngineView.distributedOwnsText',
@@ -538,11 +549,15 @@ function NumericField({
   spec,
   text,
   onText,
+  engineValue,
 }: {
   spec: NumericFieldSpec;
   text: string;
   onText: (v: string) => void;
+  /** What the running engine samples with for this field when nothing is sent (Q-170). */
+  engineValue?: { value: number; from: EngineSamplingLayer };
 }) {
+  const intl = useIntl();
   const isSet = text.trim() !== '';
   const bump = (dir: 1 | -1) => {
     const base = isSet && !Number.isNaN(Number(text)) ? Number(text) : 0;
@@ -595,6 +610,17 @@ function NumericField({
           >
             Clear
           </Button>
+        ) : engineValue ? (
+          <span
+            className={cx(TYPE.meta, TNUM)}
+            data-testid={`mlx-sampling-engine-${spec.key}`}
+            title={intl.formatMessage(i18n.engineValueTitle, { value: engineValue.value })}
+          >
+            {intl.formatMessage(i18n.engineValue, {
+              value: engineValue.value,
+              from: engineValue.from,
+            })}
+          </span>
         ) : (
           <span className={TYPE.meta} title="No value sent — the engine uses its own default">
             engine default
@@ -1222,6 +1248,8 @@ interface SamplingSectionProps {
   saveError: string | null;
   /** What the Mac these profiles belong to serves — the one derivation (Q-149). */
   summary: MacSummary;
+  /** The running engine's own defaults for the selected model, when it serves it and reports them. */
+  engineDefaults: EngineSamplingDefaults | null;
 }
 
 function SamplingSection(props: SamplingSectionProps) {
@@ -1241,6 +1269,7 @@ function SamplingSection(props: SamplingSectionProps) {
     saving,
     saveError,
     summary,
+    engineDefaults,
   } = props;
   const intl = useIntl();
 
@@ -1330,6 +1359,7 @@ function SamplingSection(props: SamplingSectionProps) {
                   spec={spec}
                   text={drafts[spec.key]}
                   onText={(v) => setDraft(spec.key, v)}
+                  engineValue={spec.key === 'contextLimit' ? undefined : engineDefaults?.[spec.key]}
                 />
               ))}
               <NumericField
@@ -2692,24 +2722,63 @@ function MlxEngineViewBody() {
     };
   }, [samplingIsSelf, samplingMac, peerSettings, macsCtx, intl]);
 
-  // Sampling picker default: the running model, else the last-mounted settings.modelId, else the
-  // first complete model on that Mac. Once set (default, explicit pick, or the Models-tab shortcut)
-  // it is never yanked from under the user.
+  // Sampling picker default: the model that Mac serves chat with — the split's included (Q-170:
+  // under "Serving: 27B · split" the profile opened on Flash, the last single mount) — else the
+  // running single engine's, else the last-mounted settings.modelId, else the first complete model.
+  // A DEFAULT follows the serving model when it shows up later (the split's status can land after
+  // the settings); an explicit pick, a Models-tab shortcut or a typed value is never yanked.
+  const samplingServingModelId =
+    samplingSummary.modelId && modelRoleOn(samplingSummary, samplingSummary.modelId)
+      ? samplingSummary.modelId
+      : null;
+  const samplingPickIsDefault = useRef(false);
   useEffect(() => {
-    if (samplingModelId != null) return;
+    if (samplingModelId != null && !samplingPickIsDefault.current) return;
+    if (samplingModelId != null) {
+      if (samplingServingModelId && samplingServingModelId !== samplingModelId) {
+        setSamplingModelId(samplingServingModelId);
+      }
+      return;
+    }
     const candidate =
+      samplingServingModelId ||
       (samplingStatus?.state === 'running' && samplingStatus.modelId) ||
       samplingSettings?.modelId ||
       samplingModels.find((m) => m.complete)?.id ||
       null;
-    if (candidate) setSamplingModelId(candidate);
+    if (candidate) {
+      samplingPickIsDefault.current = true;
+      setSamplingModelId(candidate);
+    }
   }, [
     samplingModelId,
+    samplingServingModelId,
     samplingStatus,
     samplingSettings?.modelId,
     samplingModels,
     setSamplingModelId,
   ]);
+  const pickSamplingModel = useCallback(
+    (id: string | null) => {
+      samplingPickIsDefault.current = false;
+      setSamplingModelId(id);
+    },
+    [setSamplingModelId]
+  );
+  // The running engine's own defaults, shown for the model it serves on the Mac being edited:
+  // the split's rank 0 reports them on /v1/status (`sampling_defaults`); a read of another engine
+  // or another model is never shown as this one's.
+  const liveModelId =
+    liveEngine === 'distributed'
+      ? (distributed.status?.modelId ?? null)
+      : liveEngine === 'remote'
+        ? (remote?.modelId ?? null)
+        : (status?.modelId ?? null);
+  const liveOnSamplingMac = liveEngine === 'remote' ? remote?.peer === samplingMac : samplingIsSelf;
+  const samplingEngineDefaults =
+    live?.ok && liveOnSamplingMac && liveModelId != null && liveModelId === samplingModelId
+      ? live.stats.samplingDefaults
+      : null;
 
   const onMount = useCallback(() => {
     if (!mountModelId) return;
@@ -2841,6 +2910,7 @@ function MlxEngineViewBody() {
   const setProfileDraft = useCallback(
     (key: ProfileDraftKey, text: string) => {
       if (!samplingModelId || !samplingSettings) return;
+      samplingPickIsDefault.current = false;
       const k = draftKey(samplingMac, samplingModelId);
       setProfileDrafts((prev) => {
         const base =
@@ -2879,6 +2949,7 @@ function MlxEngineViewBody() {
   }, [samplingSettings, samplingModelId, samplingMac, profileDrafts, saveSettingsOn]);
 
   const openSamplingFor = useCallback((macKey: string, modelId: string) => {
+    samplingPickIsDefault.current = false;
     setPickedSamplingMac(macKey);
     setSamplingPick({ mac: macKey, id: modelId });
     setTab('sampling');
@@ -3013,7 +3084,7 @@ function MlxEngineViewBody() {
           onRemount={() => remountOn(samplingMac)}
           models={samplingModels}
           selectedModelId={samplingModelId}
-          onSelectModel={setSamplingModelId}
+          onSelectModel={pickSamplingModel}
           drafts={draftsForSelected}
           savedDrafts={savedDraftsForSelected}
           setDraft={setProfileDraft}
@@ -3021,6 +3092,7 @@ function MlxEngineViewBody() {
           saving={saving}
           saveError={saveError}
           summary={samplingSummary}
+          engineDefaults={samplingEngineDefaults}
         />
       )}
     </div>
