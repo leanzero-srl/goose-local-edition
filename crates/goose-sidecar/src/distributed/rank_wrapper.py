@@ -109,6 +109,16 @@
 #   caught, so `top_logprobs` 12 closed the connection with no reply; `n`, `response_format`, a
 #   `seed`, a malformed `stop` or `stream_options` are refused by name; and any other exception that
 #   escapes the handler before a response began is a 500 naming it, never a dropped connection.
+# - a request whose client went away ends at the next step (Q-181, `client_left`): mlx_lm noticed a
+#   closed connection only when a write failed, and nothing is written while an answer's text is
+#   withheld (a call's typed value, a held repeat, mlx_lm's own tool state) or while a non-streamed
+#   answer is generated. After goose's Stop the split generated 48,466 tokens over 4,413 s for a
+#   client that was gone, and would have run to max_tokens (222,148). Every piece the handler
+#   receives — each prompt-progress report and each generated token — first reads the socket
+#   without waiting: an EOF or a reset from the client is the signal (no clock). The handler stops
+#   its generation context (rank 0 shares the row's removal with every rank at the next step, as
+#   for any stop), and /v1/status's `last_engine_stop` and a GOOSE_RANK_CANCELLED_BY_CLIENT line
+#   name it.
 group =mx.distributed.init(strict=True, backend=spec["backend"])
 emit("RANK_GROUP", {"rank": group.rank(), "size": group.size(), "mlx": mx.__version__})
 # MLX's counters from before the load, so the weights arriving are the load's progress (measured
@@ -127,6 +137,7 @@ if spec.get("formation") is not None:
 
 
 import faulthandler  # noqa: E402
+import select  # noqa: E402
 import signal  # noqa: E402
 import socket  # noqa: E402
 from queue import Empty as QueueEmpty  # noqa: E402
@@ -720,9 +731,30 @@ server.ResponseGenerator._next_request = _next_request
 original_generate = server.ResponseGenerator.generate
 
 
-def generate(self, request, generation_args, progress_callback=None, watch=None):
+class ClientGone(BaseException):
+    """The client closed the connection while its answer was being generated (Q-181). A
+    BaseException, so mlx_lm's handler (`except Exception`) lets it through to do_POST."""
+
+
+def client_left(connection):
+    """How the client left — "eof", or the reset the socket reports — else None. A readiness poll
+    that does not wait, then a peek that consumes nothing: a client still reading has sent nothing
+    after its request, and a pipelined next request is data, not an end."""
+    poller = select.poll()
+    poller.register(connection, select.POLLIN)
+    if not poller.poll(0):
+        return None
+    try:
+        peeked = connection.recv(1, socket.MSG_PEEK)
+    except OSError as reset:
+        return f"{type(reset).__name__}: {reset}"
+    return None if peeked else "eof"
+
+
+def generate(self, request, generation_args, progress_callback=None, watch=None, client=None):
     # `watch` (rank_stream_watch.py): a streamed chat request's account of what its client has
-    # been sent, passed by the Q-141 relay below; None for every other request.
+    # been sent, passed by the Q-141 relay below; None for every other request. `client`: the
+    # handler's connection, read for the client's departure at every piece (Q-181).
     with lock:
         request_id = f"req-{next(live_ids)}"
         watches[request_id] = watch
@@ -742,8 +774,40 @@ def generate(self, request, generation_args, progress_callback=None, watch=None)
         }
         live[request_id] = entry
 
+    # The generation context, once mlx_lm hands it back: every piece arrives after it.
+    started = []
+
+    def still_there(phase):
+        """Raises ClientGone, the generation told to stop, once the client has left."""
+        if client is None:
+            return
+        how = client_left(client)
+        if how is None:
+            return
+        stop = {
+            "request_id": request_id,
+            "reason": "cancelled_by_client",
+            "how": how,
+            "phase": phase,
+            "prompt_tokens": entry["prompt_tokens"],
+            "prefilled": entry["prefilled"],
+            "completion_tokens": entry["completion"],
+        }
+        if watch is not None:
+            stop.update(
+                withholding=None if watch.episode is None else watch.episode["mode"],
+                generated_chars=watch.generated_chars,
+                sent_chars=watch.sent_chars,
+                tail=watch.tail,
+            )
+            watch.stop = stop
+        record_stop(stop)
+        started[0].stop()
+        raise ClientGone(how)
+
     def progress(processed, total):
         entry["prefilled"] = processed
+        still_there("prefill")
         if progress_callback is not None:
             progress_callback(processed, total)
 
@@ -764,6 +828,7 @@ def generate(self, request, generation_args, progress_callback=None, watch=None)
     except BaseException:
         leave()
         raise
+    started.append(ctx)
     entry["max_tokens"] = generation_args.max_tokens
     # The generation thread hands back the context as it takes the request into its batch: from
     # here the engine is reading the prompt, though mlx_lm reports the first progress only after
@@ -796,6 +861,7 @@ def generate(self, request, generation_args, progress_callback=None, watch=None)
                 entry["completion"] += 1
                 if watch is not None:
                     watch.take(response)
+                still_there("generation")
                 yield response
         finally:
             if watch is not None:
@@ -1012,7 +1078,7 @@ def do_GET(self):
             last_stop = engine_stops["last"]
         body = live_status({"num_running": state["inflight"], "num_waiting": 0}, rows)
         body["sampling_defaults"] = sampling_defaults.report()
-        # The last answer the engine ended itself (Q-161): its row leaves /v1/status with it.
+        # The last answer the engine ended itself (Q-161, Q-181): its row leaves /v1/status with it.
         body["last_engine_stop"] = last_stop
         return send_json(self, 200, body)
     if self.path.startswith("/v1/models"):
@@ -1077,6 +1143,9 @@ def do_POST(self):
         if refusal.param is not None:
             error["param"] = refusal.param
         send_json(self, refusal.status, {"error": error})
+    except ClientGone:
+        # Named where it was seen (GOOSE_RANK_CANCELLED_BY_CLIENT); nobody is left to answer.
+        self.close_connection = True
     except Exception as failure:
         # Q-177: http.server answers an escaped exception by closing the socket. Before any status
         # line was written (`_headers_buffer` exists from the first send_response) the client is
@@ -1192,17 +1261,21 @@ def delivered(tool_text, tools):
     return []
 
 
-# The last answer the engine ended itself (Q-161), for /v1/status once its row has left: the
-# request, why (`tool_call_repeated` / `text_cycle`), and the words.
+# The last answer the engine ended itself, for /v1/status once its row has left: the request, why
+# (`tool_call_repeated` / `text_cycle`, Q-161; `cancelled_by_client`, Q-181), and the words.
 engine_stops = {"last": None}
+
+
+def record_stop(stop):
+    with lock:
+        engine_stops["last"] = stop
+    emit(f"RANK_{stop['reason'].upper()}", stop)
 
 
 def engine_stop(watch, reason, detail):
     stop = {"request_id": watch.request_id, "reason": reason, **detail}
     watch.stop = stop
-    with lock:
-        engine_stops["last"] = stop
-    emit(f"RANK_{reason.upper()}", stop)
+    record_stop(stop)
 
 
 class StreamedCall:
@@ -1252,7 +1325,11 @@ class StreamedToolCalls:
 
     def generate(self, request, generation_args, progress_callback=None):
         ctx, tokens = self.upstream.generate(
-            request, generation_args, progress_callback, watch=self.watch
+            request,
+            generation_args,
+            progress_callback,
+            watch=self.watch,
+            client=self.handler.connection,
         )
         if not ctx.has_tool_calling:
             return ctx, tokens
@@ -1403,11 +1480,33 @@ class StreamedToolCalls:
         self.handler.wfile.flush()
 
 
+class ClientBound:
+    """The response generator as any other request's handler sees it: its connection is read for
+    the client's departure at every piece (Q-181)."""
+
+    def __init__(self, upstream, client):
+        self.upstream = upstream
+        self.client = client
+
+    def __getattr__(self, name):
+        return getattr(self.upstream, name)
+
+    def generate(self, request, generation_args, progress_callback=None):
+        return self.upstream.generate(
+            request, generation_args, progress_callback, client=self.client
+        )
+
+
 def handle_completion(self, request, stop_words):
     # Each field's layer rides the request to `generate` (and, pickled, to every rank — unread there).
     request.sampling_sources = self.sampling_sources
     if not (self.stream and self.object_type.startswith("chat.completion")):
-        return original_handle_completion(self, request, stop_words)
+        upstream = self.response_generator
+        self.response_generator = ClientBound(upstream, self.connection)
+        try:
+            return original_handle_completion(self, request, stop_words)
+        finally:
+            self.response_generator = upstream
     # rank_stream_watch.py (Q-146): every frame this handler builds is counted, and the request's
     # /v1/status row reads what was generated against what was sent.
     watch = StreamWatch(emit)
