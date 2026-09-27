@@ -197,8 +197,8 @@ impl Ways for Fake {
         Ok(())
     }
 
-    async fn unexplained_requests(&self) -> Option<u32> {
-        None
+    async fn unexplained_requests(&self) -> Result<Option<u32>, String> {
+        Ok(None)
     }
 }
 
@@ -393,7 +393,7 @@ async fn a_reply_opened_after_a_queued_demand_waits_behind_it() {
     let core = Core::new(fake.clone(), None);
     let reply_1 = core.holds().open_reply("chat-1");
     lease(&core, "chat-1", &fake, "flash");
-    let _reply_2 = core.holds().open_reply("chat-2");
+    let reply_2 = core.holds().open_reply("chat-2");
     let c = Arc::clone(&core);
     let d = demand(&fake, "split", Some("chat-2"));
     let chat_2 = tokio::spawn(async move { c.ensure_serving(d).await });
@@ -415,7 +415,13 @@ async fn a_reply_opened_after_a_queued_demand_waits_behind_it() {
     );
     drop(reply_1);
     assert_eq!(answer(chat_2).await, NodeEnsureServing::Ready);
-    // Chat 2's reply has no lease yet, so chat 3's switch back runs at once.
+    // Chat 2's reply holds the split it was switched to: chat 3 waits for that reply to end.
+    until("chat 3 waits for chat 2's reply", || {
+        waiting(&core, "flash").is_some_and(|w| w.contains("is answering 1 reply"))
+    })
+    .await;
+    assert_eq!(fake.log().len(), 2);
+    drop(reply_2);
     assert_eq!(answer(chat_3).await, NodeEnsureServing::Ready);
     assert_eq!(
         fake.log(),
@@ -446,8 +452,9 @@ async fn a_cancelled_demand_leaves_the_queue_before_any_stop() {
         core.queue.lock().unwrap().is_empty()
     })
     .await;
-    assert!(
-        !core.holds().reply("chat-2").unwrap().waiting,
+    assert_eq!(
+        core.holds().reply("chat-2").unwrap().waiting,
+        0,
         "the cancelled demand's reply holds its way again"
     );
     drop(reply_1);
@@ -567,7 +574,7 @@ async fn a_kept_loaded_way_and_a_step_refuse_before_anything_stops() {
 async fn replies_waiting_on_each_other_do_not_deadlock() {
     let fake = flash_and_split();
     let core = Core::new(fake.clone(), None);
-    let _reply_1 = core.holds().open_reply("chat-1");
+    let reply_1 = core.holds().open_reply("chat-1");
     lease(&core, "chat-1", &fake, "flash");
     let _reply_2 = core.holds().open_reply("chat-2");
     lease(&core, "chat-2", &fake, "flash");
@@ -583,6 +590,7 @@ async fn replies_waiting_on_each_other_do_not_deadlock() {
     .await;
     let two = tokio::spawn(async move { c2.ensure_serving(d2).await });
     assert_eq!(answer(one).await, NodeEnsureServing::Ready);
+    drop(reply_1);
     assert_eq!(answer(two).await, NodeEnsureServing::Ready);
     assert_eq!(fake.log().len(), 4, "{:?}", fake.log());
     assert_eq!(fake.serving().as_deref(), Some("studio"));
@@ -764,6 +772,87 @@ async fn a_swap_claimed_by_another_loader_is_waited_for() {
     drop(other);
     assert_eq!(answer(here).await, NodeEnsureServing::Ready);
     assert_eq!(fake.log().len(), 2);
+}
+
+/// A demand told Ready streams on the way it was switched to before the router notes its lease: its
+/// reply holds that way from the swap's end, so a switch queued behind it never stops the way
+/// under the call it is about to make.
+#[tokio::test]
+async fn the_reply_a_swap_served_holds_the_new_way_before_the_next_switch_looks() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let gate = Arc::new(Notify::new());
+    *fake.start_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let reply_1 = core.holds().open_reply("chat-1");
+    lease(&core, "chat-1", &fake, "flash");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("chat-1"));
+    let first = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the first switch is loading", || fake.log().len() == 2).await;
+    let _reply_2 = core.holds().open_reply("chat-2");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "studio", Some("chat-2"));
+    let second = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the second switch queues", || {
+        waiting(&core, "studio").is_some()
+    })
+    .await;
+    *fake.start_gate.lock().unwrap() = None;
+    gate.notify_one();
+    assert_eq!(answer(first).await, NodeEnsureServing::Ready);
+    until("the second switch waits on chat 1's reply", || {
+        waiting(&core, "studio").is_some_and(|w| w.contains("is answering 1 reply"))
+    })
+    .await;
+    assert_eq!(
+        fake.log().len(),
+        2,
+        "the split is not stopped under chat 1: {:?}",
+        fake.log()
+    );
+    drop(reply_1);
+    assert_eq!(answer(second).await, NodeEnsureServing::Ready);
+    assert_eq!(fake.log().len(), 4);
+}
+
+/// A reply's pause is a COUNT: its delegate's demand ending never resumes the reply while the
+/// parent's own demand still waits in the queue (a flag did, and deadlocked the demand between).
+#[tokio::test]
+async fn a_delegates_demand_ending_does_not_resume_a_parent_whose_own_demand_waits() {
+    let fake = flash_and_split();
+    let core = Core::new(fake.clone(), None);
+    let gate = Arc::new(Notify::new());
+    *fake.start_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let _parent = core.holds().open_reply("parent");
+    lease(&core, "parent", &fake, "flash");
+    core.holds().note_child("task", "parent");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "split", Some("task"));
+    let task = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the delegate's switch is loading", || fake.log().len() == 2).await;
+    let reply_x = core.holds().open_reply("chat-x");
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "studio", Some("chat-x"));
+    let chat_x = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("chat x queues", || waiting(&core, "studio").is_some()).await;
+    let c = Arc::clone(&core);
+    let d = demand(&fake, "flash", Some("parent"));
+    let parent = tokio::spawn(async move { c.ensure_serving(d).await });
+    until("the parent's own demand queues", || {
+        waiting(&core, "flash").is_some()
+    })
+    .await;
+    *fake.start_gate.lock().unwrap() = None;
+    gate.notify_one();
+    assert_eq!(answer(task).await, NodeEnsureServing::Ready);
+    assert_eq!(
+        answer(chat_x).await,
+        NodeEnsureServing::Ready,
+        "the parent waits in the queue: it holds nothing chat x must wait for"
+    );
+    drop(reply_x);
+    assert_eq!(answer(parent).await, NodeEnsureServing::Ready);
+    assert_eq!(fake.serving().as_deref(), Some("flash"));
 }
 
 /// While this loader waited for the swap claim, the other window's loader switched the Mac to

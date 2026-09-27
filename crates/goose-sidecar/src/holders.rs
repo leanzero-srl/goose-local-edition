@@ -298,6 +298,9 @@ pub struct Registration {
     /// The open replies' locks, by reply number.
     reply_locks: StdMutex<Vec<(u64, std::fs::File)>>,
     lock: Option<std::fs::File>,
+    /// Held from reading the record to renaming its file: writers publish one at a time, and each
+    /// publishes the record as it is when its turn comes (no older state lands over a newer one).
+    publishing: StdMutex<()>,
 }
 
 impl std::fmt::Debug for Registration {
@@ -328,6 +331,7 @@ impl Registration {
             record: StdMutex::new(record),
             reply_locks: StdMutex::new(Vec::new()),
             lock: Some(lock),
+            publishing: StdMutex::new(()),
         };
         registration.publish()?;
         Ok(registration)
@@ -346,6 +350,7 @@ impl Registration {
     }
 
     fn publish(&self) -> Result<()> {
+        let _turn = self.publishing.lock().unwrap();
         let record = self.record.lock().unwrap().clone();
         write_atomically(&self.json_path(&record), &serde_json::to_string(&record)?)
     }
@@ -631,6 +636,55 @@ mod tests {
         let text = serde_json::to_string(&tick).unwrap();
         assert!(text.contains(r#""kind":"tick""#), "{text}");
         assert_eq!(serde_json::from_str::<ReplyHold>(&text).unwrap(), tick);
+    }
+
+    /// Replies opening and closing on many threads at once: the published record always ends as
+    /// the registration holds it, and every read of it along the way parses.
+    #[test]
+    fn concurrent_changes_publish_whole_records_and_lose_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = std::sync::Arc::new(Registration::register(dir.path(), goosed()).unwrap());
+        let reader_dir = dir.path().to_path_buf();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let reading = std::sync::Arc::clone(&stop);
+        let reader = std::thread::spawn(move || {
+            while !reading.load(std::sync::atomic::Ordering::SeqCst) {
+                for entry in read_all(&reader_dir).unwrap() {
+                    assert!(
+                        !matches!(entry, HolderEntry::Unreadable { .. }),
+                        "{entry:?}"
+                    );
+                }
+            }
+        });
+        let writers: Vec<_> = (0..8u64)
+            .map(|t| {
+                let reg = std::sync::Arc::clone(&reg);
+                std::thread::spawn(move || {
+                    for i in 0..25u64 {
+                        let n = t * 100 + i;
+                        reg.open_reply(hold(n, &format!("chat-{n}"))).unwrap();
+                        if i % 2 == 0 {
+                            reg.close_reply(n).unwrap();
+                        }
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        reader.join().unwrap();
+        let read = read_all(dir.path()).unwrap();
+        let HolderKind::Goosed { replies } = &live(&read)[0].kind else {
+            panic!()
+        };
+        let HolderKind::Goosed { replies: held } = reg.record().kind else {
+            panic!()
+        };
+        assert_eq!(replies.len(), 8 * 12, "every open reply is published");
+        assert_eq!(*replies, held);
     }
 
     #[test]

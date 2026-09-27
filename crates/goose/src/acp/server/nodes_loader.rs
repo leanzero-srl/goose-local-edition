@@ -133,7 +133,8 @@ pub(crate) trait Ways: Send + Sync {
     /// Start the way and follow it until it answers; `Err` carries the engine's words.
     async fn start(&self, node: &ResolvedNodeDef, prepared: &Prepared) -> Result<(), String>;
     /// Requests on this Mac's engine that no reply accounts for (another client on the port).
-    async fn unexplained_requests(&self) -> Option<u32>;
+    /// `Err` when a running engine did not report them: unknown, never read as none.
+    async fn unexplained_requests(&self) -> Result<Option<u32>, String>;
 }
 
 /// Why a waiting demand looks again.
@@ -468,8 +469,13 @@ impl Core {
             let (done, result) = oneshot::channel();
             let core = Arc::clone(self);
             let owned = (ticket, paused, claim, swapping);
+            let holder = root.clone();
             tokio::spawn(async move {
+                let way = prepared.key.clone();
                 let answer = core.execute(&node, prepared, plan, cancelled).await;
+                if let (NodeEnsureServing::Ready, Some(root)) = (&answer, &holder) {
+                    core.holds.note_lease(root, way);
+                }
                 drop(owned);
                 let _ = done.send(answer);
             });
@@ -659,7 +665,16 @@ impl Core {
             };
         }
         if plan.stops.iter().any(|s| s.way == WayRef::local()) {
-            if let Some(requests) = self.ways.unexplained_requests().await {
+            let requests = match self.ways.unexplained_requests().await {
+                Ok(requests) => requests,
+                Err(why) => {
+                    return Look::Refused(Refusal::new(
+                        NodeLoadRefusalCode::Unknown,
+                        format!("Can't load {name}: whether this Mac's engine is answering anyone is unknown ({why})"),
+                    ))
+                }
+            };
+            if let Some(requests) = requests {
                 return Look::Wait {
                     reason: format!(
                         "this Mac's engine is answering {requests} request(s) from a client no goose reply accounts for; loading {name} when they finish"

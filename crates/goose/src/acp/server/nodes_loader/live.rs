@@ -379,9 +379,15 @@ impl Ways for AgentWays {
         }
     }
 
-    async fn unexplained_requests(&self) -> Option<u32> {
+    async fn unexplained_requests(&self) -> Result<Option<u32>, String> {
         let status = goose_sidecar::engine::global_manager().status().await;
-        status.active_requests.filter(|n| *n > 0)
+        match (status.state.as_str(), status.active_requests) {
+            (_, Some(n)) => Ok((n > 0).then_some(n)),
+            ("running", None) => Err(status
+                .active_requests_error
+                .unwrap_or_else(|| "the engine's /v1/status named no request counts".to_string())),
+            (_, None) => Ok(None),
+        }
     }
 }
 

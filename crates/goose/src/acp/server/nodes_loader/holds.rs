@@ -26,8 +26,9 @@ pub(crate) struct Reply {
     pub way: Option<PlacementKey>,
     /// When the reply opened, on the loader's one sequence (demands are numbered on it too).
     pub opened: u64,
-    /// Waiting in the loader: no model call of it is in flight.
-    pub waiting: bool,
+    /// How many of its demands wait in the loader. While any does, no model call of it is in
+    /// flight (a delegate's demand counts for its parent's reply).
+    pub waiting: u32,
     pub kind: ReplyKind,
 }
 
@@ -129,7 +130,7 @@ impl Holds {
                     root,
                     way: None,
                     opened: id,
-                    waiting: false,
+                    waiting: 0,
                     kind,
                 },
             );
@@ -217,11 +218,15 @@ impl Holds {
                 .replies
                 .get_mut(&id)
                 .expect("an open reply is registered");
-            if reply.waiting == waiting {
-                return;
-            }
-            reply.waiting = waiting;
-            reply.way.is_some().then_some(id)
+            let before = reply.waiting;
+            reply.waiting = if waiting {
+                before + 1
+            } else {
+                before.saturating_sub(1)
+            };
+            // Only the first demand to wait and the last to stop change what others see.
+            let crossed = (before == 0) != (reply.waiting == 0);
+            (crossed && reply.way.is_some()).then_some(id)
         };
         if let Some(id) = target {
             if waiting {
@@ -244,7 +249,7 @@ impl Holds {
             let mut here: Vec<&Reply> = state.replies.values().collect();
             here.sort_by_key(|r| r.opened);
             for reply in here {
-                if reply.waiting || Some(reply.root.as_str()) == own_root {
+                if reply.waiting > 0 || Some(reply.root.as_str()) == own_root {
                     continue;
                 }
                 if let Some(way) = reply.way.as_ref().and_then(words) {
