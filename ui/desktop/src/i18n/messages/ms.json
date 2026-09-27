@@ -7746,7 +7746,10 @@
     "defaultMessage": "Pemberitahuan"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Pastikan komputer anda kekal terjaga semasa goose sedang menjalankan tugasan (skrin masih boleh dikunci)"
+    "defaultMessage": "Halang komputer anda daripada tidur semasa goose dibuka (skrin masih boleh dimatikan dan dikunci)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Halang Tidur tidak berfungsi: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Cegah Tidur"

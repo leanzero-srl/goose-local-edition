@@ -7,6 +7,7 @@ import {
   type BenchmarkActivity,
 } from './benchActivity';
 import { spawnBenchmarkWithPower } from './benchPower';
+import { registerKeepAwake } from './keepAwake';
 import { publicScoreDetails } from './benchPublicScore';
 import { benchmarkModelIdProblem } from './benchModelIdentity';
 import { benchmarkProfileDirectory } from './benchProfile';
@@ -1130,7 +1131,6 @@ const appWindows = new Map<string, BrowserWindow>();
 
 const gooseServeLeases = new GooseServeLeaseRegistry(log);
 
-const windowPowerSaveBlockers = new Map<number, number>(); // windowId -> blockerId
 // Track pending initial messages per window
 const pendingInitialMessages = new Map<number, string>(); // windowId -> initialMessage
 const pendingInitialMessageNoAutoSubmit = new Set<number>(); // windowIds whose initialMessage should NOT auto-submit
@@ -1680,22 +1680,6 @@ const createChat = async (
     pendingInitialMessages.delete(windowId);
     pendingDeepLinks.delete(windowId);
     reactReadyWindows.delete(windowId);
-
-    if (windowPowerSaveBlockers.has(windowId)) {
-      const blockerId = windowPowerSaveBlockers.get(windowId)!;
-      try {
-        powerSaveBlocker.stop(blockerId);
-        console.log(
-          `[Main] Stopped power save blocker ${blockerId} for closing window ${windowId}`
-        );
-      } catch (error) {
-        console.error(
-          `[Main] Failed to stop power save blocker ${blockerId} for window ${windowId}:`,
-          error
-        );
-      }
-      windowPowerSaveBlockers.delete(windowId);
-    }
   });
   return mainWindow;
 };
@@ -2606,7 +2590,6 @@ ipcMain.handle('get-setting', (_event, key: SettingKey) => {
 const validSettingKeys: Set<string> = new Set([
   'showMenuBarIcon',
   'showDockIcon',
-  'enableWakelock',
   'enableNotifications',
   'spellcheckEnabled',
   'externalGoosed',
@@ -2819,41 +2802,15 @@ ipcMain.handle('open-notifications-settings', async () => {
   }
 });
 
-// Handle wakelock setting
-ipcMain.handle('set-wakelock', async (_event, enable: boolean) => {
-  updateSettings((s) => {
-    s.enableWakelock = enable;
-  });
-
-  // Stop all existing power save blockers when disabling the setting
-  if (!enable) {
-    for (const [windowId, blockerId] of windowPowerSaveBlockers.entries()) {
-      try {
-        powerSaveBlocker.stop(blockerId);
-        console.log(
-          `[Main] Stopped power save blocker ${blockerId} for window ${windowId} due to wakelock setting disabled`
-        );
-      } catch (error) {
-        console.error(
-          `[Main] Failed to stop power save blocker ${blockerId} for window ${windowId}:`,
-          error
-        );
-      }
-    }
-    windowPowerSaveBlockers.clear();
-  }
-
-  return true;
-});
-
-ipcMain.handle('get-wakelock-state', () => {
-  try {
-    const settings = getSettings();
-    return settings.enableWakelock ?? false;
-  } catch (error) {
-    console.error('Error getting wakelock state:', error);
-    return false;
-  }
+registerKeepAwake({
+  ipcMain,
+  app,
+  power: powerSaveBlocker,
+  readEnabled: () => getSettings().enableWakelock === true,
+  saveEnabled: (enabled) =>
+    updateSettings((s) => {
+      s.enableWakelock = enabled;
+    }),
 });
 
 ipcMain.handle('set-spellcheck', async (_event, enable: boolean) => {
@@ -6779,21 +6736,6 @@ app.on('will-quit', async () => {
     log.info(`App quitting, cleaning up ${gooseServeLeaseCount} backend lease(s)`);
     await gooseServeLeases.cleanupAll();
   }
-
-  for (const [windowId, blockerId] of windowPowerSaveBlockers.entries()) {
-    try {
-      powerSaveBlocker.stop(blockerId);
-      console.log(
-        `[Main] Stopped power save blocker ${blockerId} for window ${windowId} during app quit`
-      );
-    } catch (error) {
-      console.error(
-        `[Main] Failed to stop power save blocker ${blockerId} for window ${windowId}:`,
-        error
-      );
-    }
-  }
-  windowPowerSaveBlockers.clear();
 
   globalShortcut.unregisterAll();
 });

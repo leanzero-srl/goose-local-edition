@@ -7746,7 +7746,10 @@
     "defaultMessage": "Notifications"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Keep your computer awake while goose is running a task (screen can still lock)"
+    "defaultMessage": "Keep your computer from going to sleep while goose is open (the screen can still turn off and lock)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Prevent Sleep is not working: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Prevent Sleep"

@@ -7746,7 +7746,10 @@
     "defaultMessage": "Notifiche"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Mantieni il computer attivo mentre goose esegue un'attività (lo schermo può comunque bloccarsi)"
+    "defaultMessage": "Impedisce al computer di andare in stop mentre goose è aperto (lo schermo può comunque spegnersi e bloccarsi)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Impedisci lo stop non funziona: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Impedisci la sospensione"

@@ -7746,7 +7746,10 @@
     "defaultMessage": "Уведомления"
   },
   "settings.preventSleep.description": {
-    "defaultMessage": "Не давать компьютеру засыпать, пока goose выполняет задачу (экран все равно может блокироваться)"
+    "defaultMessage": "Не даёт компьютеру уходить в сон, пока goose открыт (экран по-прежнему может гаснуть и блокироваться)"
+  },
+  "settings.preventSleep.failed": {
+    "defaultMessage": "Запрет сна не работает: {reason}"
   },
   "settings.preventSleep.title": {
     "defaultMessage": "Запретить сон"
