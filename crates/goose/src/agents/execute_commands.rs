@@ -2,8 +2,16 @@ use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
 
+use chrono::{DateTime, Utc};
+use goose_sdk_types::custom_requests::{
+    LoopControlAction, LoopRecord, LoopStatus, LoopStatusReason, LoopTemplateId,
+    LoopsChangeResponse, LoopsControlRequest, LoopsGetRequest, LoopsGetResponse, LoopsStartRequest,
+};
+
 use crate::context_mgmt::compact_messages;
 use crate::conversation::message::Message;
+use crate::session_loops::rules::{self as loop_rules, LoopCommand};
+use crate::session_loops::{acp as loops_acp, agent_sync, record as loop_record};
 use crate::slash_commands::{recipe_slash_command, skill_slash_command};
 
 use super::Agent;
@@ -53,6 +61,10 @@ static COMMANDS: &[CommandDef] = &[
     CommandDef {
         name: "status",
         description: "Show session status: model, provider, mode, and token usage",
+    },
+    CommandDef {
+        name: "loop",
+        description: "Run a goal again and again in this chat: /loop <goal>, /loop every 10m <goal>, or /loop now | pause | resume | stop",
     },
 ];
 
@@ -133,6 +145,7 @@ impl Agent {
             "status" => self.handle_status_command(session_id).await,
             "goal" => self.handle_goal_command(params_str).await,
             "grind" => self.handle_grind_command(params_str).await,
+            "loop" => self.handle_loop_command(message_text, session_id).await,
             _ => {
                 if let Some(message) = self
                     .handle_recipe_command(command, params_str, session_id)
@@ -502,6 +515,203 @@ impl Agent {
         Ok(Some(Message::assistant().with_text(format!(
             "Grind goal set. The agent will keep working until max_turns is reached:\n\n> {goal}"
         ))))
+    }
+}
+
+pub const NO_LOOP: &str = "No loop in this chat. Use /loop <goal> or the Loop button.";
+
+fn local_utc_offset_minutes() -> i32 {
+    chrono::Local::now().offset().local_minus_utc() / 60
+}
+
+/// The loop's NOW line as read now, or the words of why it cannot be built.
+fn loop_sentence(
+    record: &LoopRecord,
+    status: LoopStatus,
+    reason: Option<&LoopStatusReason>,
+    now: DateTime<Utc>,
+    utc_offset_minutes: i32,
+) -> String {
+    match loop_rules::status_sentence(record, status, reason, now, utc_offset_minutes) {
+        Ok(sentence) => sentence.text,
+        Err(e) => format!("its status could not be read: {e}"),
+    }
+}
+
+/// `/loop` with nothing after it (design §7.2).
+fn loop_status_reply(
+    got: &LoopsGetResponse,
+    now: DateTime<Utc>,
+    utc_offset_minutes: i32,
+) -> String {
+    if let Some(error) = &got.error {
+        return error.clone();
+    }
+    let Some(record) = &got.record else {
+        return NO_LOOP.to_string();
+    };
+    let (status, reason) = match got.effective_status {
+        Some(status) => (status, got.effective_reason.as_ref()),
+        None => (record.status, record.status_reason.as_ref()),
+    };
+    let mut reply = format!(
+        "Loop: {} · {}",
+        loop_rules::goal_first_line(&record.goal),
+        loop_sentence(record, status, reason, now, utc_offset_minutes)
+    );
+    if let Some(last) = record.ticks.last() {
+        reply.push_str(&format!(" · tick {}", last.n));
+    }
+    reply
+}
+
+fn after_tick(record: &LoopRecord, verb: &str) -> String {
+    match record.ticks.last() {
+        Some(last) => format!("Loop {verb} after tick {}.", last.n),
+        None => format!("Loop {verb} before its first tick."),
+    }
+}
+
+/// The reply to a `/loop` line the runner accepted, from the record it answered with.
+fn loop_change_reply(
+    command: &LoopCommand,
+    record: &LoopRecord,
+    now: DateTime<Utc>,
+    utc_offset_minutes: i32,
+) -> String {
+    let sentence = || {
+        loop_sentence(
+            record,
+            record.status,
+            record.status_reason.as_ref(),
+            now,
+            utc_offset_minutes,
+        )
+    };
+    match command {
+        LoopCommand::Start { .. } => format!(
+            "Loop started: {} · {}. The first tick runs now.",
+            loop_rules::goal_first_line(&record.goal),
+            loop_rules::cadence_label(&record.cadence)
+        ),
+        LoopCommand::Now => match &record.offer {
+            Some(offer) => format!("Tick {} starts now.", offer.n),
+            None => sentence(),
+        },
+        LoopCommand::Pause => after_tick(record, "paused"),
+        LoopCommand::Stop => after_tick(record, "stopped"),
+        LoopCommand::Resume => {
+            let next = record
+                .next_tick
+                .as_ref()
+                .filter(|_| record.status == LoopStatus::Waiting)
+                .map(|next| {
+                    loop_record::parse_time(&next.at)
+                        .and_then(|at| loop_rules::clock_time(at, utc_offset_minutes))
+                });
+            match next {
+                Some(Ok(time)) => format!("Loop resumed — next tick {time}."),
+                Some(Err(e)) => format!("Loop resumed. Its next tick could not be read: {e}"),
+                None => format!("Loop resumed. {}", sentence()),
+            }
+        }
+        LoopCommand::Status | LoopCommand::Refused { .. } => sentence(),
+    }
+}
+
+fn loop_control_action(command: &LoopCommand) -> Option<LoopControlAction> {
+    match command {
+        LoopCommand::Now => Some(LoopControlAction::TickNow),
+        LoopCommand::Pause => Some(LoopControlAction::Pause),
+        LoopCommand::Resume => Some(LoopControlAction::Resume),
+        LoopCommand::Stop => Some(LoopControlAction::Stop),
+        LoopCommand::Status | LoopCommand::Start { .. } | LoopCommand::Refused { .. } => None,
+    }
+}
+
+impl Agent {
+    /// `/loop` (design §7.2), one grammar with the composer (`rules::parse_loop_command`). It never
+    /// starts a turn: a started loop's first tick arrives like every tick, through the runner's
+    /// offer and the prompt door. Start and the controls go through the bodies the `loops/*` ACP
+    /// methods use, and the `loop_report` tool is synced on this agent after each change, as the
+    /// ACP handlers sync it on theirs.
+    async fn handle_loop_command(
+        &self,
+        message_text: &str,
+        session_id: &str,
+    ) -> Result<Option<Message>> {
+        let Some(command) = loop_rules::parse_loop_command(message_text) else {
+            return Ok(None);
+        };
+        let manager = &self.config.session_manager;
+        let acp_error = |e: agent_client_protocol::Error| anyhow!("{e}");
+        let changed = match &command {
+            LoopCommand::Refused { reason, .. } => {
+                return Ok(Some(user_only_assistant_text(reason.clone())))
+            }
+            LoopCommand::Status => {
+                let got = loops_acp::get(
+                    manager,
+                    LoopsGetRequest {
+                        session_id: session_id.to_string(),
+                    },
+                )
+                .await
+                .map_err(acp_error)?;
+                return Ok(Some(user_only_assistant_text(loop_status_reply(
+                    &got,
+                    Utc::now(),
+                    local_utc_offset_minutes(),
+                ))));
+            }
+            LoopCommand::Start { goal, cadence } => loops_acp::start(
+                manager,
+                LoopsStartRequest {
+                    session_id: session_id.to_string(),
+                    goal: goal.clone(),
+                    template: LoopTemplateId::Blank,
+                    steps: String::new(),
+                    cadence: cadence.clone(),
+                    state_file: loop_rules::default_state_file(goal),
+                    check: None,
+                    stop_after_ticks: None,
+                },
+            )
+            .await
+            .map_err(acp_error)?,
+            control => {
+                let action = loop_control_action(control)
+                    .ok_or_else(|| anyhow!("/loop has no control for {control:?}"))?;
+                loops_acp::control(LoopsControlRequest {
+                    session_id: session_id.to_string(),
+                    action,
+                })
+                .await
+                .map_err(acp_error)?
+            }
+        };
+        let text = match changed {
+            LoopsChangeResponse {
+                refusal: Some(refusal),
+                ..
+            } => refusal.reason,
+            LoopsChangeResponse {
+                record: Some(record),
+                refusal: None,
+            } => {
+                let reply =
+                    loop_change_reply(&command, &record, Utc::now(), local_utc_offset_minutes());
+                match agent_sync::sync_on(self, session_id, &record).await {
+                    Ok(()) => reply,
+                    Err(e) => format!("{reply} {e}"),
+                }
+            }
+            LoopsChangeResponse {
+                record: None,
+                refusal: None,
+            } => "The loop runner answered with neither a loop nor a refusal.".to_string(),
+        };
+        Ok(Some(user_only_assistant_text(text)))
     }
 }
 

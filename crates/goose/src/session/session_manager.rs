@@ -2181,9 +2181,11 @@ impl SessionStorage {
             )
             .await?;
 
+        let mut extension_data = original_session.extension_data;
+        crate::session_loops::agent_sync::strip_for_fork(&mut extension_data);
         let mut builder = session_manager
             .update(&new_session.id)
-            .extension_data(original_session.extension_data)
+            .extension_data(extension_data)
             .schedule_id(original_session.schedule_id)
             .recipe(original_session.recipe)
             .user_recipe_values(original_session.user_recipe_values);

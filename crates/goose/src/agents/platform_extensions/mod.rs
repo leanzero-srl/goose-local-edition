@@ -6,6 +6,7 @@ pub mod code_execution;
 pub mod developer;
 pub mod ext_manager;
 pub mod ledger;
+pub mod loop_report;
 pub mod needs_you;
 pub mod orchestrator;
 pub mod recall;
@@ -90,6 +91,21 @@ pub static PLATFORM_EXTENSIONS: Lazy<HashMap<&'static str, PlatformExtensionDef>
                 hidden: false,
                 requires_human: true,
                 client_factory: |ctx| Box::new(needs_you::NeedsYouClient::new(ctx).unwrap()),
+            },
+        );
+
+        map.insert(
+            loop_report::EXTENSION_NAME,
+            PlatformExtensionDef {
+                name: loop_report::EXTENSION_NAME,
+                display_name: "Loop",
+                description:
+                    "The loop_report tool that ends each tick of this chat's loop; present only while the chat has a loop",
+                default_enabled: false,
+                unprefixed_tools: true,
+                hidden: true,
+                requires_human: false,
+                client_factory: |ctx| Box::new(loop_report::LoopReportClient::new(ctx).unwrap()),
             },
         );
 
