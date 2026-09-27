@@ -5,6 +5,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ToolCallArguments, ToolCallArgumentValue } from './ToolCallArguments';
 import MarkdownContent from './MarkdownContent';
 import {
+  isContentForUser,
   ToolRequestMessageContent,
   ToolResponseMessageContent,
   NotificationEvent,
@@ -209,10 +210,7 @@ function getToolResultContent(toolResult: Record<string, unknown>): ContentBlock
   }
   const value = toolResult.value as ToolResultValue | undefined;
   if (!Array.isArray(value?.content)) return [];
-  return value.content.filter((item) => {
-    const annotations = (item as { annotations?: { audience?: string[] } }).annotations;
-    return !annotations?.audience || annotations.audience.includes('user');
-  });
+  return value.content.filter(isContentForUser);
 }
 
 interface McpAppWrapperProps {
@@ -589,6 +587,7 @@ function toolFailureText(toolResult: unknown): string | null {
   const value = record.value as ToolResultValue | undefined;
   if (value?.isError !== true || !Array.isArray(value.content)) return null;
   const text = value.content
+    .filter(isContentForUser)
     .map((item) => ('text' in item && typeof item.text === 'string' ? item.text : ''))
     .filter((t) => t.trim())
     .join('\n')

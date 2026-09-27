@@ -52,17 +52,20 @@ type RawImageContent = {
 };
 
 type RawAudioContent = {
+  annotations?: ContentAnnotations;
   data: string;
   mimeType: string;
 };
 
 type RawEmbeddedResource = {
   _meta?: JsonObject;
+  annotations?: ContentAnnotations;
   resource: ResourceContents;
 };
 
 type RawResource = {
   _meta?: JsonObject;
+  annotations?: ContentAnnotations;
   description?: string;
   icons?: ContentIcon[];
   mimeType?: string;
@@ -242,6 +245,17 @@ export interface ImageData {
 export interface UserInput {
   msg: string;
   images: ImageData[];
+}
+
+/** Whether a content item is meant for the person (Q-212): an MCP server may mark an item for the
+ *  assistant alone (`audience: ['assistant']`) — context the model reads that the tool card must
+ *  not show. No audience means everyone. The engine carries the annotation on every tool-result
+ *  item; this is the one reading of it. */
+export function isContentForUser(item: { annotations?: unknown }): boolean {
+  const annotations = item.annotations;
+  if (!annotations || typeof annotations !== 'object') return true;
+  const audience = (annotations as { audience?: unknown }).audience;
+  return !Array.isArray(audience) || audience.includes('user');
 }
 
 export function createUserMessage(text: string, images?: ImageData[]): Message {

@@ -63,6 +63,8 @@ mod decisions;
 mod provider_failures;
 use decisions::PlanDecision;
 use provider_failures::{is_stream_decode_interrupt, sidecar_admission_cap_refusal};
+mod tool_output;
+use tool_output::tool_result_text;
 mod supervision;
 use supervision::{
     call_objective, clip_tail, earlier_span_block, fold_forming_event, forming_args_bytes,
@@ -10513,27 +10515,6 @@ fn summarize_tool_call(_name: &str, args: &serde_json::Value) -> String {
     } else {
         flat
     }
-}
-
-/// The text a tool call produced (its output), tail-capped for the run panel — this is the real "what
-/// happened": pytest results, a traceback, a printed value. Empty for image/resource-only results.
-fn tool_result_text<E>(result: &Result<rmcp::model::CallToolResult, E>) -> String {
-    let Ok(r) = result else {
-        return String::new();
-    };
-    let joined = r
-        .content
-        .iter()
-        .filter_map(|c| match &c.raw {
-            rmcp::model::RawContent::Text(t) => Some(t.text.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    // Generous cap: the desktop run panel shows this as the tool's real output (pytest results, a
-    // traceback, a printed value). Enough to read what happened, tail-kept so the informative end (the
-    // pass/fail line) survives even for a long log.
-    clip_tail(&joined, 4000)
 }
 
 /// G-2: how much of the ANSWER channel the digest's rolling window carries. A bound the digest

@@ -2272,18 +2272,50 @@ fn merge_replay_message_meta(meta: Option<Meta>, message: &Message) -> Meta {
     meta
 }
 
+fn acp_role(role: &Role) -> agent_client_protocol::schema::v1::Role {
+    match role {
+        Role::Assistant => agent_client_protocol::schema::v1::Role::Assistant,
+        Role::User => agent_client_protocol::schema::v1::Role::User,
+    }
+}
+
+/// An MCP content item's annotations as ACP carries them (Q-212). Any MCP server may mark an item
+/// for the user alone or the assistant alone (`audience`); the client's tool card shows only what
+/// is meant for the user, so the annotation has to reach it — dropped here, the card showed
+/// assistant-only content to the person.
+fn acp_annotations(annotations: Option<&rmcp::model::Annotations>) -> Option<Annotations> {
+    let annotations = annotations?;
+    Some(
+        Annotations::new()
+            .audience(
+                annotations
+                    .audience
+                    .as_ref()
+                    .map(|roles| roles.iter().map(acp_role).collect::<Vec<_>>()),
+            )
+            .priority(annotations.priority.map(f64::from))
+            .last_modified(annotations.last_modified.map(|at| at.to_rfc3339())),
+    )
+}
+
 fn build_tool_call_content(tool_result: &ToolResult<CallToolResult>) -> Vec<ToolCallContent> {
     match tool_result {
         Ok(result) => result
             .content
             .iter()
             .filter_map(|content| match &content.raw {
-                RawContent::Text(val) => Some(ToolCallContent::Content(Content::new(
-                    ContentBlock::Text(TextContent::new(val.text.clone())),
-                ))),
-                RawContent::Image(val) => Some(ToolCallContent::Content(Content::new(
-                    ContentBlock::Image(ImageContent::new(val.data.clone(), val.mime_type.clone())),
-                ))),
+                RawContent::Text(val) => {
+                    Some(ToolCallContent::Content(Content::new(ContentBlock::Text(
+                        TextContent::new(val.text.clone())
+                            .annotations(acp_annotations(content.annotations.as_ref())),
+                    ))))
+                }
+                RawContent::Image(val) => {
+                    Some(ToolCallContent::Content(Content::new(ContentBlock::Image(
+                        ImageContent::new(val.data.clone(), val.mime_type.clone())
+                            .annotations(acp_annotations(content.annotations.as_ref())),
+                    ))))
+                }
                 RawContent::Resource(val) => {
                     let resource = match &val.resource {
                         ResourceContents::TextResourceContents {
@@ -2306,7 +2338,10 @@ fn build_tool_call_content(tool_result: &ToolResult<CallToolResult>) -> Vec<Tool
                         ),
                     };
                     Some(ToolCallContent::Content(Content::new(
-                        ContentBlock::Resource(EmbeddedResource::new(resource)),
+                        ContentBlock::Resource(
+                            EmbeddedResource::new(resource)
+                                .annotations(acp_annotations(content.annotations.as_ref())),
+                        ),
                     )))
                 }
                 RawContent::Audio(_) | RawContent::ResourceLink(_) => None,
@@ -4136,6 +4171,86 @@ print(\"hello, world\")
             FILE_DIFF_META_KEY: {"path": "/w/a.md", "before": "file", "added": 1, "removed": 0,
                                  "unified": "--- /w/a.md\n+++ /w/a.md\n@@ -1 +1,2 @@\n a\n+b\n"},
         })))
+    }
+
+    /// The wire the desktop reads (Q-212): each tool-result item's `annotations` rides the ACP
+    /// update as `update.content[i].content.annotations`.
+    fn tool_call_update_wire(result: CallToolResult) -> serde_json::Value {
+        let update = ToolCallUpdate::new(
+            ToolCallId::new("req_1".to_string()),
+            ToolCallUpdateFields::new()
+                .status(ToolCallStatus::Completed)
+                .content(build_tool_call_content(&Ok(result))),
+        );
+        serde_json::to_value(SessionNotification::new(
+            SessionId::new("s1".to_string()),
+            SessionUpdate::ToolCallUpdate(update),
+        ))
+        .unwrap()["update"]
+            .clone()
+    }
+
+    #[test]
+    fn a_tool_results_audience_reaches_the_client_on_every_content_kind() {
+        let wire = tool_call_update_wire(CallToolResult::success(vec![
+            RmcpContent::text("for the model").with_audience(vec![Role::Assistant]),
+            RmcpContent::text("for the person").with_audience(vec![Role::User]),
+            RmcpContent::image("aGk=", "image/png").with_audience(vec![Role::Assistant]),
+            RmcpContent::embedded_text("file:///x", "body").with_audience(vec![Role::User]),
+            RmcpContent::text("both").with_audience(vec![Role::User, Role::Assistant]),
+        ]));
+        let audiences: Vec<serde_json::Value> = wire["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["content"]["annotations"]["audience"].clone())
+            .collect();
+        assert_eq!(
+            audiences,
+            vec![
+                serde_json::json!(["assistant"]),
+                serde_json::json!(["user"]),
+                serde_json::json!(["assistant"]),
+                serde_json::json!(["user"]),
+                serde_json::json!(["user", "assistant"]),
+            ],
+            "{wire}"
+        );
+    }
+
+    #[test]
+    fn priority_and_last_modified_ride_along() {
+        let at = chrono::DateTime::parse_from_rfc3339("2026-09-27T10:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let wire =
+            tool_call_update_wire(CallToolResult::success(vec![rmcp::model::Annotated::new(
+                RawContent::text("x"),
+                Some(rmcp::model::Annotations::for_resource(0.5, at)),
+            )]));
+        let annotations = &wire["content"][0]["content"]["annotations"];
+        assert_eq!(annotations["priority"], 0.5);
+        assert_eq!(annotations["lastModified"], "2026-09-27T10:00:00+00:00");
+        assert!(
+            annotations.get("audience").is_none_or(|a| a.is_null()),
+            "{wire}"
+        );
+    }
+
+    #[test]
+    fn unannotated_content_carries_no_annotations_as_before() {
+        let wire = tool_call_update_wire(CallToolResult::success(vec![
+            RmcpContent::text("plain"),
+            RmcpContent::image("aGk=", "image/png"),
+            RmcpContent::embedded_text("file:///x", "body"),
+        ]));
+        for item in wire["content"].as_array().unwrap() {
+            assert!(item["content"].get("annotations").is_none(), "{wire}");
+        }
+        assert_eq!(
+            wire["content"][0],
+            serde_json::json!({"type": "content", "content": {"type": "text", "text": "plain"}})
+        );
     }
 
     #[test]

@@ -1,15 +1,7 @@
 use super::*;
 
 fn replay_audience_annotations(audience: &[Role]) -> Annotations {
-    Annotations::new().audience(
-        audience
-            .iter()
-            .map(|role| match role {
-                Role::Assistant => agent_client_protocol::schema::v1::Role::Assistant,
-                Role::User => agent_client_protocol::schema::v1::Role::User,
-            })
-            .collect::<Vec<_>>(),
-    )
+    Annotations::new().audience(audience.iter().map(acp_role).collect::<Vec<_>>())
 }
 
 fn send_replay_content_chunk(

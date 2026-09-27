@@ -1,6 +1,7 @@
 use crate::config::Config;
+use crate::conversation::message::audience_includes;
 use chrono::Utc;
-use rmcp::model::{CallToolResult, Content, ErrorData};
+use rmcp::model::{CallToolResult, Content, ErrorData, RawContent, Role};
 use std::fs::File;
 use std::io::Write;
 
@@ -22,6 +23,14 @@ pub fn process_tool_response(
             let mut processed_contents = Vec::new();
 
             for content in result.content {
+                // A user-only item is the person's, not the model's (Q-211): pointing the model at a
+                // file holding it would hand it over, so it stays as it came and the provider path
+                // drops it for the model. An offloaded item's pointer keeps the item's annotations.
+                if !audience_includes(content.audience(), &Role::Assistant) {
+                    processed_contents.push(content);
+                    continue;
+                }
+                let annotations = content.annotations.clone();
                 match content.as_text() {
                     Some(text_content) => {
                         // Check if text exceeds threshold
@@ -35,7 +44,8 @@ pub fn process_tool_response(
                                         text_content.text.chars().count(),
                                         file_path
                                     );
-                                    processed_contents.push(Content::text(message));
+                                    processed_contents
+                                        .push(Content::new(RawContent::text(message), annotations));
                                 }
                                 Err(e) => {
                                     // If file writing fails, include original content with warning
@@ -44,7 +54,8 @@ pub fn process_tool_response(
                                         e,
                                         text_content.text
                                     );
-                                    processed_contents.push(Content::text(warning));
+                                    processed_contents
+                                        .push(Content::new(RawContent::text(warning), annotations));
                                 }
                             }
                         } else {
@@ -240,5 +251,37 @@ mod tests {
             }
             _ => panic!("Expected execution error"),
         }
+    }
+
+    /// Q-211: a large user-only item is the person's — it is never offloaded to a file the model is
+    /// pointed at; an offloaded item's pointer carries the item's own annotations.
+    #[test]
+    fn a_large_user_only_item_is_never_handed_to_the_model_as_a_file() {
+        let large = "s".repeat(DEFAULT_LARGE_TEXT_THRESHOLD + 10);
+        let user_only = Content::text(large.clone()).with_audience(vec![Role::User]);
+        let processed =
+            process_tool_response(Ok(CallToolResult::success(vec![user_only.clone()]))).unwrap();
+        assert_eq!(processed.content, vec![user_only]);
+
+        let for_model = Content::text(large).with_audience(vec![Role::Assistant]);
+        let processed =
+            process_tool_response(Ok(CallToolResult::success(vec![for_model]))).unwrap();
+        assert_eq!(
+            processed.content[0].audience(),
+            Some(&vec![Role::Assistant])
+        );
+        assert!(processed.content[0]
+            .as_text()
+            .unwrap()
+            .text
+            .contains("stored in the file"));
+    }
+
+    #[test]
+    fn an_unannotated_pointer_carries_no_annotations_as_before() {
+        let large = "u".repeat(DEFAULT_LARGE_TEXT_THRESHOLD + 10);
+        let processed =
+            process_tool_response(Ok(CallToolResult::success(vec![Content::text(large)]))).unwrap();
+        assert!(processed.content[0].annotations.is_none());
     }
 }
