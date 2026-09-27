@@ -1,6 +1,6 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 20:28 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-27 20:50 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed on both Macs: 3.0.60 (Q-182) — VERIFIED post-swap pids (studio 66645, macbook 35122); the 27B split
@@ -19,13 +19,19 @@ Updated: 2026-09-27 20:28 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   the machine's global config; fa15f595d pins the session model in the shared helper. PROVE: CI green on fa15f595d.
 
 ## Agents
+- OWNER BATCH 2026-09-27 (Q-189..196): lane D ARCHITECT (read-only + CDP walk + research) → DESIGN-NODES-AND-STRATEGIES.md:
+  Swarm Settings → left nav, My Macs → LeanZero MLX tab, node cards at a glance, virtual node definitions,
+  STRATEGIES (roles planning/execution/testing/frontend/backend, primary/secondary, weights, MLX load/unload).
+  On its return: adversarial review of the design, then dispatch its file-disjoint slices at once (owner: design
+  AND implement, lots of testing). Lane A+B: edit diffs in the card (user-only content) + right Changes rail.
+  Lane C: LeanZero pill + hitbox, Report a problem → form to office@leanzero.net + Discord.
 - Q-185 (worktree): background requests (fact check, title, label…) carry their kind; engine card, Run it and
   sidebar agree on 'checking the reply'; serving label keeps the session suffix.
 - Q-184 (memory-skills-surgeon, worktree): MemoryServer::new() writes global memories to ~/.config/goose under
   GOOSE_PATH_ROOT → through Paths.
 
 ## Next actions (in order)
-1. 3.0.61 DONE → install at a #3i turn boundary → split-start 27B → #3i continues (new session = #3j if needed).
+1. 3.0.61 DONE (glance + Q-183) → install at #3i turn-3 boundary (watcher b3ugzqvvu) → split-start 27B → #3i continues (new session = #3j if needed).
 2. Live critic round on 3.0.61: live states, needs-you card, engine glance on all three surfaces.
 3. Merge Q-184 (Rust: wincheck.sh before push) → next build.
 4. Flash pipeline E2E on lz-pipeline-qwen4.14 (Q-178/179/181 proof) + load run.
