@@ -27,6 +27,7 @@ pub mod hooks;
 pub mod import;
 pub mod instance_id;
 pub mod logging;
+pub mod loop_clock;
 pub mod mcp_utils;
 pub mod model_config;
 pub mod needs_you;
