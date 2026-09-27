@@ -1355,4 +1355,76 @@ impl GooseAcpAgent {
     ) -> Result<LeanzeroLinkRemoteExecuteResponse, agent_client_protocol::Error> {
         self.on_leanzero_link_remote_execute(req).await
     }
+
+    #[custom_method(NodesReadRequest)]
+    async fn dispatch_nodes_read(
+        &self,
+        req: NodesReadRequest,
+    ) -> Result<NodesReadResponse, agent_client_protocol::Error> {
+        crate::nodes::acp::read(req).await
+    }
+
+    #[custom_method(NodesWriteRequest)]
+    async fn dispatch_nodes_write(
+        &self,
+        req: NodesWriteRequest,
+    ) -> Result<NodesWriteResponse, agent_client_protocol::Error> {
+        crate::nodes::acp::write(req).await
+    }
+
+    #[custom_method(NodesRemoveNodeRequest)]
+    async fn dispatch_nodes_remove_node(
+        &self,
+        req: NodesRemoveNodeRequest,
+    ) -> Result<NodesWriteResponse, agent_client_protocol::Error> {
+        crate::nodes::acp::remove_node(&self.session_manager, req).await
+    }
+
+    #[custom_method(NodesRemoveStrategyRequest)]
+    async fn dispatch_nodes_remove_strategy(
+        &self,
+        req: NodesRemoveStrategyRequest,
+    ) -> Result<NodesWriteResponse, agent_client_protocol::Error> {
+        crate::nodes::acp::remove_strategy(req).await
+    }
+
+    #[custom_method(NodesBuildEligibilityRequest)]
+    async fn dispatch_nodes_build_eligibility(
+        &self,
+        req: NodesBuildEligibilityRequest,
+    ) -> Result<NodesBuildEligibilityResponse, agent_client_protocol::Error> {
+        crate::nodes::acp::build_eligibility(req).await
+    }
+
+    #[custom_method(NodesResidencyRequest)]
+    async fn dispatch_nodes_residency(
+        &self,
+        req: NodesResidencyRequest,
+    ) -> Result<NodesResidencyResponse, agent_client_protocol::Error> {
+        crate::nodes::acp::residency(req).await
+    }
+
+    #[custom_method(NodesLoadHistoryRequest)]
+    async fn dispatch_nodes_load_history(
+        &self,
+        req: NodesLoadHistoryRequest,
+    ) -> Result<NodesLoadHistoryResponse, agent_client_protocol::Error> {
+        crate::nodes::acp::load_history(req).await
+    }
+
+    #[custom_method(NodesServedLastRequest)]
+    async fn dispatch_nodes_served_last(
+        &self,
+        req: NodesServedLastRequest,
+    ) -> Result<NodesServedLastResponse, agent_client_protocol::Error> {
+        crate::nodes::acp::served_last(&self.session_manager, req).await
+    }
+
+    #[custom_method(NodesEnsureServingRequest)]
+    async fn dispatch_nodes_ensure_serving(
+        &self,
+        req: NodesEnsureServingRequest,
+    ) -> Result<NodesEnsureServingResponse, agent_client_protocol::Error> {
+        crate::nodes::acp::ensure_serving(req).await
+    }
 }

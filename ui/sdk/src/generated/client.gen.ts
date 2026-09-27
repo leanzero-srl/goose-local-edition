@@ -220,6 +220,22 @@ import type {
   MlxEngineStopOtherEngineRequest_unstable,
   MlxEngineStopOtherEngineResponse_unstable,
   MlxEngineUnmountRequest_unstable,
+  NodesBuildEligibilityRequest_unstable,
+  NodesBuildEligibilityResponse_unstable,
+  NodesEnsureServingRequest_unstable,
+  NodesEnsureServingResponse_unstable,
+  NodesLoadHistoryRequest_unstable,
+  NodesLoadHistoryResponse_unstable,
+  NodesReadRequest_unstable,
+  NodesReadResponse_unstable,
+  NodesRemoveNodeRequest_unstable,
+  NodesRemoveStrategyRequest_unstable,
+  NodesResidencyRequest_unstable,
+  NodesResidencyResponse_unstable,
+  NodesServedLastRequest_unstable,
+  NodesServedLastResponse_unstable,
+  NodesWriteRequest_unstable,
+  NodesWriteResponse_unstable,
   OnboardingImportApplyRequest_unstable,
   OnboardingImportApplyResponse_unstable,
   OnboardingImportScanRequest_unstable,
@@ -385,6 +401,13 @@ import {
   zMlxEngineSpeedHistoryResponse_unstable,
   zMlxEngineStatusResponse_unstable,
   zMlxEngineStopOtherEngineResponse_unstable,
+  zNodesBuildEligibilityResponse_unstable,
+  zNodesEnsureServingResponse_unstable,
+  zNodesLoadHistoryResponse_unstable,
+  zNodesReadResponse_unstable,
+  zNodesResidencyResponse_unstable,
+  zNodesServedLastResponse_unstable,
+  zNodesWriteResponse_unstable,
   zOnboardingImportApplyResponse_unstable,
   zOnboardingImportScanResponse_unstable,
   zParseRecipeResponse_unstable,
@@ -2198,6 +2221,109 @@ export class GooseExtClient {
     return zLeanzeroLinkRemoteExecuteResponse_unstable.parse(
       raw,
     ) as LeanzeroLinkRemoteExecuteResponse_unstable;
+  }
+
+  async nodesRead_unstable(
+    params: NodesReadRequest_unstable,
+  ): Promise<NodesReadResponse_unstable> {
+    const raw = await this.conn.extMethod("_goose/unstable/nodes/read", params);
+    return zNodesReadResponse_unstable.parse(raw) as NodesReadResponse_unstable;
+  }
+
+  async nodesWrite_unstable(
+    params: NodesWriteRequest_unstable,
+  ): Promise<NodesWriteResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/nodes/write",
+      params,
+    );
+    return zNodesWriteResponse_unstable.parse(
+      raw,
+    ) as NodesWriteResponse_unstable;
+  }
+
+  async nodesRemoveNode_unstable(
+    params: NodesRemoveNodeRequest_unstable,
+  ): Promise<NodesWriteResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/nodes/removeNode",
+      params,
+    );
+    return zNodesWriteResponse_unstable.parse(
+      raw,
+    ) as NodesWriteResponse_unstable;
+  }
+
+  async nodesRemoveStrategy_unstable(
+    params: NodesRemoveStrategyRequest_unstable,
+  ): Promise<NodesWriteResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/nodes/removeStrategy",
+      params,
+    );
+    return zNodesWriteResponse_unstable.parse(
+      raw,
+    ) as NodesWriteResponse_unstable;
+  }
+
+  async nodesBuildEligibility_unstable(
+    params: NodesBuildEligibilityRequest_unstable,
+  ): Promise<NodesBuildEligibilityResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/nodes/buildEligibility",
+      params,
+    );
+    return zNodesBuildEligibilityResponse_unstable.parse(
+      raw,
+    ) as NodesBuildEligibilityResponse_unstable;
+  }
+
+  async nodesResidency_unstable(
+    params: NodesResidencyRequest_unstable,
+  ): Promise<NodesResidencyResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/nodes/residency",
+      params,
+    );
+    return zNodesResidencyResponse_unstable.parse(
+      raw,
+    ) as NodesResidencyResponse_unstable;
+  }
+
+  async nodesLoadHistory_unstable(
+    params: NodesLoadHistoryRequest_unstable,
+  ): Promise<NodesLoadHistoryResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/nodes/loadHistory",
+      params,
+    );
+    return zNodesLoadHistoryResponse_unstable.parse(
+      raw,
+    ) as NodesLoadHistoryResponse_unstable;
+  }
+
+  async nodesServedLast_unstable(
+    params: NodesServedLastRequest_unstable,
+  ): Promise<NodesServedLastResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/nodes/servedLast",
+      params,
+    );
+    return zNodesServedLastResponse_unstable.parse(
+      raw,
+    ) as NodesServedLastResponse_unstable;
+  }
+
+  async nodesEnsureServing_unstable(
+    params: NodesEnsureServingRequest_unstable,
+  ): Promise<NodesEnsureServingResponse_unstable> {
+    const raw = await this.conn.extMethod(
+      "_goose/unstable/nodes/ensureServing",
+      params,
+    );
+    return zNodesEnsureServingResponse_unstable.parse(
+      raw,
+    ) as NodesEnsureServingResponse_unstable;
   }
 }
 
