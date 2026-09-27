@@ -244,6 +244,15 @@ impl RecallClient {
     /// named knowledge source. Both halves answer false on a knowledge-blind agent — a benchmark
     /// (frame 1.14 §2.6): the score must not depend on what this machine has learned, and the
     /// run's own corrections must not land in the store the next benchmark reads.
+    async fn history_tool(&self, session_id: &str) -> Option<String> {
+        let manager = self
+            .context
+            .extension_manager
+            .as_ref()
+            .and_then(|weak| weak.upgrade())?;
+        history_tool(&manager, session_id).await
+    }
+
     async fn extension_enabled(&self, name: &str) -> bool {
         match self
             .context
@@ -258,6 +267,50 @@ impl RecallClient {
             None => false,
         }
     }
+}
+
+/// The name under which this session lists the tool that opens a past session — `None` when the
+/// chatrecall extension is not enabled here. Measured (Q-14, 2026-09-25): with chatrecall
+/// `enabled: false` the `<past-session>` block still said "chatrecall(session_id) loads it", and
+/// "Write three sentences about the Alps." became "Let me check the previous session to avoid
+/// repeating what I already wrote" and 26 shell calls over 9 minutes looking for a tool that was
+/// not there.
+pub async fn history_tool(
+    manager: &crate::agents::extension_manager::ExtensionManager,
+    session_id: &str,
+) -> Option<String> {
+    if !manager
+        .is_extension_enabled(super::chatrecall::EXTENSION_NAME)
+        .await
+    {
+        return None;
+    }
+    let tools = match manager
+        .get_prefixed_tools(
+            session_id,
+            Some(super::chatrecall::EXTENSION_NAME.to_string()),
+        )
+        .await
+    {
+        Ok(tools) => tools,
+        Err(err) => {
+            tracing::warn!(%err, "recall: chatrecall is enabled but its tools are unreadable; the past session names no tool");
+            return None;
+        }
+    };
+    let own = super::chatrecall::TOOL_NAME;
+    let prefixed = format!("{}__{own}", super::chatrecall::EXTENSION_NAME);
+    let found = tools
+        .iter()
+        .map(|tool| tool.name.to_string())
+        .find(|name| name == own || *name == prefixed);
+    if found.is_none() {
+        tracing::warn!(
+            listed = tools.len(),
+            "recall: chatrecall is enabled but lists no {own} tool; the past session names no tool"
+        );
+    }
+    found
 }
 
 /// The one predicate behind recall's three gates (memory read, skills read, correction write):
@@ -874,26 +927,50 @@ pub fn past_session_candidates(
     lines.into_iter().map(|(_, line)| line).collect()
 }
 
-/// One line naming what rode along — shown to the person as a system notice and carried at the top of
-/// the part so the same words reach the model.
+/// One line saying, in plain words, what goose used — shown to the person as a system notice and
+/// carried at the top of the part so the same words reach the model. It counts notes and earlier
+/// chats instead of naming them: a store slug and a session id are jargon to the person (Q-24,
+/// 2026-09-25: "recalled: memories assistant-talk-and-swaps · past session 20260924_19"), and the
+/// model reads the names in the blocks below. Skills keep their names — the person installed them.
 pub fn recall_line(
     memories: &[SearchHit],
     skills: &[&SourceEntry],
     past: Option<&PastSession>,
+    extras: &Extras,
 ) -> String {
-    let mut parts = Vec::new();
+    let count =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let mut remembered = Vec::new();
     if !memories.is_empty() {
-        let names: Vec<&str> = memories.iter().map(|h| h.entry.category.as_str()).collect();
-        parts.push(format!("memories {}", names.join(", ")));
+        remembered.push(count(memories.len(), "note", "notes"));
+    }
+    if past.is_some() {
+        remembered.push(count(1, "earlier chat", "earlier chats"));
+    }
+    let mut parts = Vec::new();
+    if !remembered.is_empty() {
+        parts.push(format!("remembered: {}", remembered.join(", ")));
     }
     if !skills.is_empty() {
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
-        parts.push(format!("skills {}", names.join(", ")));
+        let noun = if skills.len() == 1 { "skill" } else { "skills" };
+        parts.push(format!("suggested {noun} {}", names.join(", ")));
     }
-    if let Some(past) = past {
-        parts.push(format!("past session {}", past.session_id));
+    if let Some((name, _)) = &extras.autoloaded {
+        parts.push(format!("loaded skill {name}"));
     }
-    format!("recalled: {}", parts.join(" · "))
+    if extras.correction_of.is_some() {
+        parts.push("noticed a correction".to_string());
+    }
+    if extras.answered.is_some() {
+        parts.push("noticed your answer".to_string());
+    }
+    let line = parts.join(" · ");
+    let mut chars = line.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => line,
+    }
 }
 
 /// The `<recall-line>` text of a turn-context block, if the block carries one.
@@ -910,6 +987,9 @@ pub struct Extras {
     pub autoloaded: Option<(String, String)>,
     pub correction_of: Option<String>,
     pub answered: Option<(String, String)>,
+    /// The tool that opens a past session, as this session lists it (`history_tool`) — `None` when
+    /// chatrecall is not enabled, and then the `<past-session>` block names no tool.
+    pub history_tool: Option<String>,
 }
 
 /// The turn-context part. None when there is nothing to say.
@@ -936,16 +1016,7 @@ pub fn render_with(
     {
         return None;
     }
-    let mut line = recall_line(memories, skills, past);
-    if let Some((name, _)) = &extras.autoloaded {
-        line.push_str(&format!(" · loaded {name}"));
-    }
-    if extras.correction_of.is_some() {
-        line.push_str(" · correction noticed");
-    }
-    if extras.answered.is_some() {
-        line.push_str(" · answer noticed");
-    }
+    let line = recall_line(memories, skills, past, extras);
     let mut sections = vec![format!("<recall-line>{line}</recall-line>")];
     if !memories.is_empty() {
         let mut block = String::from(
@@ -969,9 +1040,20 @@ pub fn render_with(
         sections.push(block);
     }
     if let Some(past) = past {
+        let how = match &extras.history_tool {
+            Some(tool) => format!(
+                "{tool} with session_id \"{}\" loads it if the history matters.",
+                past.session_id
+            ),
+            None => {
+                "That line is all goose has of it: no tool in this chat opens that session, so \
+                     do not go looking for it — answer this request as asked."
+                    .to_string()
+            }
+        };
         sections.push(format!(
             "<past-session>\nThis was discussed before — session {} (\"{}\", {}), the {} said: \"{}\". \
-             chatrecall(session_id) loads it if the history matters.\n</past-session>",
+             {how}\n</past-session>",
             past.session_id, past.description, past.when, past.role, past.headline
         ));
     }
@@ -1082,13 +1164,13 @@ impl McpClientTrait for RecallClient {
             (Ok(model_config), Some(manager)) => {
                 let provider = manager.get_provider().lock().await.clone();
                 match provider {
-                    Some(provider) => Some(
+                    Some(provider) => {
                         crate::context_mgmt::effective_context_limit(
                             provider.as_ref(),
                             &model_config,
                         )
-                        .await,
-                    ),
+                        .await
+                    }
                     None => None,
                 }
             }
@@ -1152,6 +1234,9 @@ impl McpClientTrait for RecallClient {
             }
         };
 
+        if past.is_some() {
+            extras.history_tool = self.history_tool(session_id).await;
+        }
         let part = render_with(&memories, &skills, past.as_ref(), &extras);
         let recalled: Vec<String> = memories
             .iter()
@@ -1608,9 +1693,8 @@ mod tests {
         assert_eq!(past.role, "user");
         assert_eq!(past.headline, "the bench vendor answers on port 8850");
         let block = render(&[], &[], Some(&past)).unwrap();
-        assert!(block.starts_with(
-            "<recall-line>recalled: past session s-old</recall-line>\n<past-session>"
-        ));
+        assert!(block
+            .starts_with("<recall-line>Remembered: 1 earlier chat</recall-line>\n<past-session>"));
         assert!(block.contains("session s-old (\"vendor port\","));
         assert!(select_past_session(&results, &query_terms("bake bread")).is_none());
 
@@ -1696,11 +1780,11 @@ mod tests {
         let refs: Vec<&SourceEntry> = skills.iter().collect();
         let block = render(&hits, &refs, None).unwrap();
         assert!(block.starts_with(
-            "<recall-line>recalled: memories postgres · skills jira-api</recall-line>\n"
+            "<recall-line>Remembered: 1 note · suggested skill jira-api</recall-line>\n"
         ));
         assert_eq!(
             recall_line_of(&block),
-            Some("recalled: memories postgres · skills jira-api")
+            Some("Remembered: 1 note · suggested skill jira-api")
         );
         assert_eq!(
             recall_line_of("<turn-context>\n<current-time>x</current-time>"),
@@ -2281,9 +2365,10 @@ mod tests {
             autoloaded: Some(("jira-api".to_string(), "BODY".to_string())),
             correction_of: Some("Deleted the tests".to_string()),
             answered: Some(("Which config?".to_string(), "prod".to_string())),
+            history_tool: None,
         };
         let out = render_with(&[], &[], None, &extras).unwrap();
-        assert!(out.starts_with("<recall-line>recalled:  · loaded jira-api · correction noticed · answer noticed</recall-line>"), "{out}");
+        assert!(out.starts_with("<recall-line>Loaded skill jira-api · noticed a correction · noticed your answer</recall-line>"), "{out}");
         assert!(out.contains("<loaded-skill name=\"jira-api\">"));
         assert!(out.contains("correction of what you just did (\"Deleted the tests\")"));
         assert!(out.contains("You asked \"Which config?\" and the user answered \"prod\""));

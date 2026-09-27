@@ -880,16 +880,21 @@ impl Agent {
             Ok(v) => v,
             Err(_) => {
                 let context_limit = match self.provider().await {
-                    Ok(provider) => provider
-                        .get_context_limit(&model_config)
-                        .await
-                        .unwrap_or_else(|_| model_config.context_limit()),
-                    Err(_) => goose_providers::model::DEFAULT_CONTEXT_LIMIT,
+                    Ok(provider) => match provider.get_context_limit(&model_config).await {
+                        Ok(limit) => Some(limit),
+                        Err(_) => model_config.context_limit,
+                    },
+                    Err(_) => model_config.context_limit,
                 };
                 let compaction_threshold = Config::global()
                     .get_param::<f64>("GOOSE_AUTO_COMPACT_THRESHOLD")
                     .unwrap_or(crate::context_mgmt::DEFAULT_COMPACTION_THRESHOLD);
-                crate::context_mgmt::compute_tool_call_cutoff(context_limit, compaction_threshold)
+                // An unknown window sizes no cutoff: old tool pairs are summarized against a
+                // window, and without one nothing is (the provider's context-length error still
+                // triggers recovery compaction).
+                context_limit.map_or(usize::MAX, |limit| {
+                    crate::context_mgmt::compute_tool_call_cutoff(limit, compaction_threshold)
+                })
             }
         };
 

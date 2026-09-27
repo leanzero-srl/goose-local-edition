@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 pub static EXTENSION_NAME: &str = "chatrecall";
+/// The extension's one tool; the model sees it prefixed, `chatrecall__chatrecall`.
+pub static TOOL_NAME: &str = "chatrecall";
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 struct ChatRecallParams {
@@ -246,7 +248,7 @@ impl ChatRecallClient {
             .clone();
 
         vec![Tool::new(
-            "chatrecall".to_string(),
+            TOOL_NAME.to_string(),
             indoc! {r#"
                 Search past chat or load session summaries. Use when it is clear user expects some memory or context.
 
@@ -290,7 +292,7 @@ impl McpClientTrait for ChatRecallClient {
     ) -> Result<CallToolResult, Error> {
         let session_id = &ctx.session_id;
         let content = match name {
-            "chatrecall" => self.handle_chatrecall(session_id, arguments).await,
+            name if name == TOOL_NAME => self.handle_chatrecall(session_id, arguments).await,
             _ => Err(format!("Unknown tool: {}", name)),
         };
 

@@ -1078,7 +1078,8 @@ fn configured_models_to_inventory(
     let mut result: Vec<InventoryModel> = Vec::new();
     let mut seen_names: HashSet<String> = HashSet::new();
     for model in models {
-        let enriched = enriched_model(provider_family, &model.name, Some(model.context_limit));
+        let declared = Some(model.context_limit).filter(|&limit| limit > 0);
+        let enriched = enriched_model(provider_family, &model.name, declared);
         if seen_names.insert(enriched.name.clone()) {
             result.push(enriched);
         }
