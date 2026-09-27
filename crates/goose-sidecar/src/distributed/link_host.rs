@@ -834,6 +834,7 @@ mod tests {
              class _Job:\n\
              \x20   row: object\n\
              \x20   produced: int = 0\n\
+             \x20   stream: object = None\n\
              @dataclass\n\
              class _State:\n\
              \x20   waiting: list = None\n\
