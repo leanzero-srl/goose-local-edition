@@ -102,3 +102,30 @@ enum DirType {
     Agents,
     AgentsHome,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Paths;
+
+    /// Q-184: goose-mcp cannot call `Paths` (goose depends on it), so its memory tool mirrors the
+    /// config-dir rule in `goose_mcp::goose_config_dir`. This pins the mirror to the rule: the memory
+    /// tool's global memories and proposals are the dirs recall, the importer and the desktop read.
+    #[test]
+    fn the_memory_tool_writes_where_goose_reads_under_a_path_root() {
+        let root = tempfile::tempdir().unwrap();
+        let _guard = env_lock::lock_env([("GOOSE_PATH_ROOT", root.path().to_str())]);
+        assert_eq!(Paths::config_dir(), root.path().join("config"));
+        assert_eq!(goose_mcp::goose_config_dir(), Paths::config_dir());
+
+        for server in [
+            goose_mcp::MemoryServer::new(),
+            goose_mcp::MemoryServer::with_proposals(true),
+        ] {
+            assert_eq!(server.global_memory_dir(), Paths::in_config_dir("memory"));
+            assert_eq!(
+                server.proposals_dir(),
+                Some(Paths::in_config_dir("proposals").as_path())
+            );
+        }
+    }
+}

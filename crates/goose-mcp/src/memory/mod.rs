@@ -1,4 +1,3 @@
-use etcetera::{choose_app_strategy, AppStrategy};
 use goose_memory_store::{
     scope_label, search_covering, search_terms, MemoryStore, RememberOutcome, STOPWORDS,
 };
@@ -191,11 +190,18 @@ impl Default for MemoryServer {
 
 #[tool_router(router = tool_router)]
 impl MemoryServer {
+    /// The server over goose's global memory dir, `<config>/memory` — the dir recall, the Claude Code
+    /// importer and the desktop Memories view read (Q-184).
     pub fn new() -> Self {
-        let global_memory_dir = choose_app_strategy(crate::APP_STRATEGY.clone())
-            .map(|strategy| strategy.in_config_dir("memory"))
-            .unwrap_or_else(|_| PathBuf::from(".config/goose/memory"));
-        Self::with_global_dir(global_memory_dir)
+        Self::with_global_dir(crate::goose_config_dir().join("memory"))
+    }
+
+    pub fn global_memory_dir(&self) -> &std::path::Path {
+        &self.global_memory_dir
+    }
+
+    pub fn proposals_dir(&self) -> Option<&std::path::Path> {
+        self.proposals_dir.as_deref()
     }
 
     /// The same server with `propose_knowledge` filing proposals (the owner's default) or writing
@@ -1707,5 +1713,50 @@ mod tests {
         assert!(home_folder_note(&home).is_some());
         let dir = tempdir().unwrap();
         assert_eq!(home_folder_note(dir.path()), None);
+    }
+
+    /// Q-184: under GOOSE_PATH_ROOT the memory tool wrote global memories and proposals to the
+    /// owner's ~/.config/goose while recall, the importer and the desktop read `<root>/config`.
+    #[test]
+    fn under_a_path_root_global_memories_and_proposals_live_in_the_roots_config() {
+        let root = tempdir().unwrap();
+        let config = crate::goose_config_dir_under(Some(root.path().as_os_str().to_owned()));
+        assert_eq!(config, root.path().join("config"));
+
+        let server = MemoryServer::with_global_dir(config.join("memory"));
+        assert_eq!(
+            server.global_memory_dir(),
+            root.path().join("config/memory")
+        );
+        assert_eq!(
+            server.proposals_dir(),
+            Some(root.path().join("config/proposals").as_path())
+        );
+
+        let wd = root.path().join("project");
+        server
+            .remember(
+                "context",
+                "editor-style",
+                "Tabs, never spaces.",
+                &["user"],
+                true,
+                Some(&wd),
+            )
+            .unwrap();
+        assert!(root.path().join("config/memory/editor-style.txt").is_file());
+    }
+
+    /// Unset, the dir is byte-identical to the one the memory tool always derived.
+    #[test]
+    fn without_a_path_root_the_config_dir_is_the_app_strategys() {
+        use etcetera::{choose_app_strategy, AppStrategy};
+        let before_q184 = choose_app_strategy(crate::APP_STRATEGY.clone())
+            .unwrap()
+            .in_config_dir("memory");
+        assert_eq!(
+            crate::goose_config_dir_under(None).join("memory"),
+            before_q184
+        );
     }
 }
