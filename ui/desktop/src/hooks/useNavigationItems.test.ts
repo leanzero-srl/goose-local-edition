@@ -7,7 +7,8 @@ import { NAV_ITEMS, SETTINGS_NAV_ITEM } from './useNavigationItems';
  * REMOVED from the nav (their routes stay reachable by URL). Pass C: the "Leanzero MLX" entry
  * became "Goose Swarm" (/leanzero-swarm — the three-tab management view; /mlx-engine
  * redirects). Pass D (owner): "New Chat" is GONE — sessions start from a project, and the only
- * session-creating affordance is the Projects tree's "+ New session here".
+ * session-creating affordance is the Projects tree's "+ New session here". 2026-09-27 (owner, Q-193):
+ * Nodes is the FIRST row, gated with Providers on the local edition or the MLX engine.
  *
  * Drift guard by design: adding or removing a nav entry MUST fail here so the change is a decision,
  * not an accident. Extend the fixture when the nav legitimately changes.
@@ -15,22 +16,32 @@ import { NAV_ITEMS, SETTINGS_NAV_ITEM } from './useNavigationItems';
 describe('NAV_ITEMS fixture', () => {
   it('contains exactly the expected entries, in order', () => {
     expect(NAV_ITEMS.map((i) => i.id)).toEqual([
+      'nodes',
       'extensions',
       'skills',
       'memories',
       'leanzero-swarm',
     ]);
     expect(NAV_ITEMS.map((i) => i.path)).toEqual([
+      '/nodes',
       '/extensions',
       '/skills',
       '/memories',
       '/leanzero-swarm',
     ]);
     expect(NAV_ITEMS.map((i) => i.label)).toEqual([
+      'Nodes',
       'MCPs',
       'Skills',
       'Memories',
       'Providers',
+    ]);
+  });
+
+  it('gates Nodes and Providers alike (local edition or MLX engine), and nothing else', () => {
+    expect(NAV_ITEMS.filter((i) => i.requires === 'localOrMlx').map((i) => i.id)).toEqual([
+      'nodes',
+      'leanzero-swarm',
     ]);
   });
 

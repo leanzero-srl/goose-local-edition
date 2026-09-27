@@ -2975,12 +2975,15 @@ function MlxEngineViewBody({
     })();
   }, [samplingSettings, samplingModelId, samplingMac, profileDrafts, saveSettingsOn]);
 
-  const openSamplingFor = useCallback((macKey: string, modelId: string) => {
-    samplingPickIsDefault.current = false;
-    setPickedSamplingMac(macKey);
-    setSamplingPick({ mac: macKey, id: modelId });
-    setTab('sampling');
-  }, [setTab]);
+  const openSamplingFor = useCallback(
+    (macKey: string, modelId: string) => {
+      samplingPickIsDefault.current = false;
+      setPickedSamplingMac(macKey);
+      setSamplingPick({ mac: macKey, id: modelId });
+      setTab('sampling');
+    },
+    [setTab]
+  );
 
   const managed = macsCtx.macs.filter((m) => m.online && !peerRefuses(m, 'manage'));
   const samplingMacPicker =

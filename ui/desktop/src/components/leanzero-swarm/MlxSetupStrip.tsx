@@ -159,7 +159,10 @@ export function MlxSetupStrip({
   return (
     <nav aria-label={intl.formatMessage(i18n.aria)} data-testid="mlx-setup-strip">
       {next && (
-        <div className="flex flex-wrap items-center gap-2 sm:hidden" data-testid="mlx-setup-compact">
+        <div
+          className="flex flex-wrap items-center gap-2 sm:hidden"
+          data-testid="mlx-setup-compact"
+        >
           <span className={TYPE.meta}>
             {intl.formatMessage(i18n.compact, {
               n: next.n,

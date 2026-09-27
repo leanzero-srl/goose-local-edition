@@ -4,14 +4,17 @@ import { Cloud, Laptop, Route as RouteIcon } from 'lucide-react';
 import { MainPanelLayout } from '../Layout/MainPanelLayout';
 import { ScrollArea } from '../ui/scroll-area';
 import SwarmNodesSection from '../leanzero-swarm/SwarmNodesSection';
-import { Button, EmptyState, PageHeader, SURFACE, Segmented, cx, type SegmentedOption } from '../lz';
-import { defineMessages, useIntl } from '../../i18n';
 import {
-  cloudHref,
-  mlxHref,
-  nodesTabOf,
-  type NodesTab,
-} from '../../utils/navigationUtils';
+  Button,
+  EmptyState,
+  PageHeader,
+  SURFACE,
+  Segmented,
+  cx,
+  type SegmentedOption,
+} from '../lz';
+import { defineMessages, useIntl } from '../../i18n';
+import { cloudHref, mlxHref, nodesTabOf, type NodesTab } from '../../utils/navigationUtils';
 
 const i18n = defineMessages({
   title: { id: 'nodes.title', defaultMessage: 'Nodes' },
