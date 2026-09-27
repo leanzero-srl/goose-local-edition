@@ -75,6 +75,12 @@ import { GooseServeLeaseRegistry, type GooseServeLease } from './gooseServeLease
 import { acpWebSocketUrlFromHttpBase, normalizeAcpHttpBaseUrl } from './acp/url';
 import { expandTilde } from './utils/pathUtils';
 import {
+  agentWorkRegistryPath,
+  gooseGlobalMemoryDir,
+  gooseMemoryProposalsDir,
+  resolveGoosePathRoot,
+} from './utils/goosePaths';
+import {
   BENCH_SPEC_FILE,
   BENCH_RENDER_PROBE,
   defaultBenchmarkTier,
@@ -1010,14 +1016,6 @@ const getBundledConfig = (): BundledConfig => {
 };
 
 const { defaultProvider, defaultModel, predefinedModels, version } = getBundledConfig();
-
-const resolveGoosePathRoot = (): string | undefined => {
-  const pathRoot = process.env.GOOSE_PATH_ROOT?.trim();
-  if (pathRoot) {
-    return expandTilde(pathRoot);
-  }
-  return undefined;
-};
 
 const GENERATED_SECRET = crypto.randomBytes(32).toString('hex');
 
@@ -6407,7 +6405,7 @@ async function appMain() {
     }
   });
 
-  // Read goose's stored memories for the Memories view. Global memories live in ~/.config/goose/memory/ as one
+  // Read goose's stored memories for the Memories view. Global memories live in <config>/memory/ (utils/goosePaths) as one
   // .txt per category; the optional local dir is <workingDir>/.goose/memory/. Each file is split into entries on
   // blank lines, and an entry's leading "# ..." line is its space-separated tags (see goose-mcp memory/mod.rs).
   ipcMain.handle('list-memories', async (_event, workingDir?: string) => {
@@ -6472,13 +6470,13 @@ async function appMain() {
       }
       return acc;
     };
-    const all = [...readDir(path.join(os.homedir(), '.config', 'goose', 'memory'), 'global')];
+    const all = [...readDir(gooseGlobalMemoryDir(), 'global')];
     if (workingDir) {
       all.push(...readDir(path.join(workingDir, '.goose', 'memory'), 'local'));
     }
     // Provenance: a memory saved from an agent's proposal keeps that proposal on disk (see
     // utils/memoryProvenance.ts). A missing proposals dir is an install that never proposed one.
-    const proposalsDir = path.join(os.homedir(), '.config', 'goose', 'proposals');
+    const proposalsDir = gooseMemoryProposalsDir();
     const proposalFiles: Array<{ key: string; json: string }> = [];
     if (fsSync.existsSync(proposalsDir)) {
       for (const name of fsSync.readdirSync(proposalsDir)) {
@@ -6505,12 +6503,12 @@ async function appMain() {
     return all;
   });
 
-  // Resolve a memory file's path from its scope (global = ~/.config/goose/memory, local = <wd>/.goose/memory)
+  // Resolve a memory file's path from its scope (global = <config>/memory, local = <wd>/.goose/memory)
   // and split a stored entry-block into its leading "# tags" line + body (mirrors the list-memories parse).
   const memoryFilePath = (scope: 'global' | 'local', category: string, workingDir?: string) =>
     scope === 'local' && workingDir
       ? path.join(workingDir, '.goose', 'memory', `${category}.txt`)
-      : path.join(os.homedir(), '.config', 'goose', 'memory', `${category}.txt`);
+      : path.join(gooseGlobalMemoryDir(), `${category}.txt`);
   const splitMemoryBlock = (block: string) => {
     const lines = block.split('\n');
     return lines[0].startsWith('#')
@@ -6779,15 +6777,13 @@ app.on('window-all-closed', () => {
 // picker, and the flag/decision files the engine folds on its next tick.
 // ---------------------------------------------------------------------------------------------
 
-const AGENT_WORK_REGISTRY = path.join(os.homedir(), '.config', 'goose', 'agent-work.json');
-
 interface AgentRegistry {
   agents: { dir: string; addedAt: string }[];
 }
 
 async function readAgentRegistry(): Promise<AgentRegistry> {
   try {
-    const raw = await fs.readFile(AGENT_WORK_REGISTRY, 'utf8');
+    const raw = await fs.readFile(agentWorkRegistryPath(), 'utf8');
     const parsed = JSON.parse(raw) as Partial<AgentRegistry>;
     return { agents: Array.isArray(parsed.agents) ? parsed.agents : [] };
   } catch {
@@ -6796,8 +6792,9 @@ async function readAgentRegistry(): Promise<AgentRegistry> {
 }
 
 async function writeAgentRegistry(reg: AgentRegistry): Promise<void> {
-  await fs.mkdir(path.dirname(AGENT_WORK_REGISTRY), { recursive: true });
-  await fs.writeFile(AGENT_WORK_REGISTRY, JSON.stringify(reg, null, 2), 'utf8');
+  const registry = agentWorkRegistryPath();
+  await fs.mkdir(path.dirname(registry), { recursive: true });
+  await fs.writeFile(registry, JSON.stringify(reg, null, 2), 'utf8');
 }
 
 const agentRuntimeDir = (dir: string) => path.join(expandTilde(dir), '.swarm', 'agent');
