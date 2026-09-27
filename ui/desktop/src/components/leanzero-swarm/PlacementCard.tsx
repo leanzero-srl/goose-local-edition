@@ -59,7 +59,7 @@ import {
   splitPlan,
   type SplitBlocker,
 } from './mlxDistributed';
-import { MLX_STATUS_POLL_MS } from './mlxLiveStats';
+import { MLX_STATUS_POLL_MS, type MlxActivity } from './mlxLiveStats';
 import { touchLocalNetwork } from './LocalNetworkNotice';
 import { distributedStateWord } from './mlxModeLabel';
 import { remotePhase, runPhase, singlePhase } from './mlxPhase';
@@ -786,19 +786,32 @@ export function waysOf(
   return { ways, otherSplits: [] };
 }
 
-/** The engine a way IS right now — whichever model it holds — in the engine-phase palette. */
+/** The live read of the engine that answers chat (the state tile's read), and which engine it is. */
+export interface WayActivity {
+  engine: MlxEngineKind;
+  activity: MlxActivity;
+}
+
+/**
+ * The engine a way IS right now — whichever model it holds — in the engine-phase palette. The way
+ * whose engine the live read came from takes its activity, exactly as the state tile does: a
+ * writing engine is green here too, never the idle grey (Q-26).
+ */
 export function wayServing(
   way: Way,
   single: MlxEngineStatus | null,
-  distributed: MlxDistributedStatus | null
+  distributed: MlxDistributedStatus | null,
+  liveActivity: WayActivity | null = null
 ): { phase: EnginePhase; state: string; modelId: string } | null {
+  const activity =
+    liveActivity && liveActivity.engine === engineOfWay(way) ? liveActivity.activity : null;
   if (way.kind === 'local') {
     if (!single?.modelId) return null;
     if (single.state !== 'mounting' && single.state !== 'running' && single.state !== 'failed') {
       return null;
     }
     return {
-      phase: singlePhase(single.state, false, null),
+      phase: singlePhase(single.state, false, activity),
       state: single.state,
       modelId: single.modelId,
     };
@@ -808,7 +821,7 @@ export function wayServing(
     if (!way.peerNodeId || remote?.peer !== way.peerNodeId || !remote.modelId) return null;
     if (remote.state === 'off') return null;
     return {
-      phase: remotePhase(remote.state, null),
+      phase: remotePhase(remote.state, activity),
       state: remote.state === 'ready' ? 'running' : remote.state,
       modelId: remote.modelId,
     };
@@ -816,7 +829,7 @@ export function wayServing(
   if (!distributed?.modelId) return null;
   if (!ownsTheMac(distributed) && distributed.state !== 'failed') return null;
   return {
-    phase: runPhase(distributed.state, distributed.admissionOpen),
+    phase: runPhase(distributed.state, distributed.admissionOpen, activity),
     state: distributed.state,
     modelId: distributed.modelId,
   };
@@ -827,9 +840,10 @@ export function wayLive(
   way: Way,
   modelId: string,
   single: MlxEngineStatus | null,
-  distributed: MlxDistributedStatus | null
+  distributed: MlxDistributedStatus | null,
+  liveActivity: WayActivity | null = null
 ): { phase: EnginePhase; state: string } | null {
-  const serving = wayServing(way, single, distributed);
+  const serving = wayServing(way, single, distributed, liveActivity);
   if (!serving || serving.modelId !== modelId) return null;
   return { phase: serving.phase, state: serving.state };
 }
@@ -939,6 +953,8 @@ interface PlacementCardProps {
   distributedCapability?: boolean;
   /** The split's own controls — set up, preflight, checks, events — folded under its Details. */
   splitDetails?: ReactNode;
+  /** The state tile's live read and the engine it came from: the running way's chip colour. */
+  liveActivity?: WayActivity | null;
 }
 
 function PlacementCardBody({
@@ -950,6 +966,7 @@ function PlacementCardBody({
   mountBusy,
   distributedCapability = false,
   splitDetails,
+  liveActivity = null,
 }: PlacementCardProps) {
   const intl = useIntl();
   const macs = useMacs();
@@ -1430,7 +1447,7 @@ function PlacementCardBody({
 
   const renderWay = (way: Way) => {
     const c = way.candidate;
-    const live = wayLive(way, modelId, single, distributed);
+    const live = wayLive(way, modelId, single, distributed, liveActivity);
     const running = live != null && live.state !== 'failed';
     const figure = c ? goalFigure(c, goal) : null;
     const action = c?.action ?? null;

@@ -925,6 +925,32 @@ describe('MlxEngineView state tile instrument', () => {
     unmount();
   });
 
+  it('Q-26: Run it’s chip on the serving Mac is the tile’s green while that engine writes — never grey', async () => {
+    bridge.mlxLiveStatus = vi.fn(async (baseUrl: string) => ({
+      ok: true,
+      url: `${baseUrl}/v1/status`,
+      body: GENERATING_STATUS,
+    }));
+    withMesh([
+      peerNode({
+        node_id: ROUTE.peer,
+        hostname: ROUTE.peerHostname,
+        computer_name: ROUTE.peerComputerName,
+      }),
+    ]);
+    mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
+    remoteStore.publish(ROUTE);
+    const { unmount } = render(<MlxEngineView />);
+    await screen.findByTestId('mlx-live-tps');
+    expect(screen.getByTestId('mlx-state-badge').className).toContain('bg-lz-phase-writing');
+    const peer = await screen.findByTestId('placement-way-peer');
+    await waitFor(() =>
+      expect(within(peer).getByTestId('placement-live')).toHaveAttribute('data-phase', 'writing')
+    );
+    expect(within(peer).getByTestId('placement-live')).toHaveTextContent('Running');
+    unmount();
+  });
+
   it('Stop on a route whose Mac is NOT answering: the route goes here at once, that Mac is asked in the background, a quiet line — no error, no spinner', async () => {
     mockStatus.mockResolvedValue(statusOf({ state: 'stopped' }));
     mockRemoteStop.mockImplementation(async () => {

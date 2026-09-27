@@ -680,6 +680,28 @@ describe('Run it on the real 27B plan', () => {
     expect(onStopHere).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * Q-26: the Studio's "Running" chip was grey (the idle tone) beside a green Writing tile — the chip
+   * was coloured with no activity at all. It takes the tile's own read when that read is its engine's.
+   */
+  it('Q-26: the running way’s chip is the tile’s colour — green while its engine writes', async () => {
+    mockPlan.mockResolvedValue(answer(PLAN_LINK));
+    remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
+    renderCard({ liveActivity: { engine: 'remote', activity: 'generating' } });
+    const peer = await screen.findByTestId('placement-way-peer');
+    const chip = within(peer).getByTestId('placement-live');
+    expect(chip).toHaveTextContent('Running');
+    expect(chip).toHaveAttribute('data-phase', 'writing');
+  });
+
+  it('Q-26: a read of another engine never colours this way; with no read it is the idle grey', async () => {
+    mockPlan.mockResolvedValue(answer(PLAN_LINK));
+    remoteLatest = { state: 'ready', peer: 'wh', modelId: MODEL };
+    renderCard({ liveActivity: { engine: 'single', activity: 'generating' } });
+    const peer = await screen.findByTestId('placement-way-peer');
+    expect(within(peer).getByTestId('placement-live')).toHaveAttribute('data-phase', 'idle');
+  });
+
   it('Run on the Studio starts its engine; a refusal reads in words, naming the Mac and the switch', async () => {
     mockPlan.mockResolvedValue(answer(PLAN_LINK));
     mockRemoteStart.mockResolvedValue({

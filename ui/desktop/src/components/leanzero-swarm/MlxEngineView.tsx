@@ -93,9 +93,11 @@ import { MlxStateTile, servingEngine } from './MlxStateTile';
 import { MlxRestoreBanner } from './MlxRestoreLine';
 import { settleRestoreLine } from './mlxRestore';
 import type { MlxServing } from '../../utils/mlxServing';
+import type { MlxEngineKind } from '../../utils/mlxInFlight';
 import {
   advanceMountWatch,
   liveDecodeTps,
+  mlxActivity,
   mountCostOf,
   mountFill,
   MLX_STATUS_POLL_MS,
@@ -760,6 +762,8 @@ interface EngineSectionProps {
   onRemount: () => void;
   /** The tile's live instrument while running — the last Rapid-MLX /v1/status read. */
   live: MlxLiveRead | null;
+  /** The engine `live` was read from; null before the first read. */
+  liveEngine: MlxEngineKind | null;
   tpsHistory: readonly TpsSample[];
   /** Who the engine is serving (main's read of goose's in-flight list). */
   serving: MlxServing | null;
@@ -812,6 +816,7 @@ function EngineSection(props: EngineSectionProps) {
     onUnmount,
     onRemount,
     live,
+    liveEngine,
     tpsHistory,
     serving,
     mountWatch,
@@ -1163,6 +1168,13 @@ function EngineSection(props: EngineSectionProps) {
           onStopHere={onUnmount}
           // The split owning this Mac is not a mount in flight: Run on this Mac stops it first (Q-28).
           mountBusy={engineBusy || state === 'mounting'}
+          // The tile's own read, tagged with its engine: the running way's chip is the tile's
+          // colour — green while it writes, never the idle grey (Q-26).
+          liveActivity={
+            live?.ok && liveEngine
+              ? { engine: liveEngine, activity: mlxActivity(live.stats) }
+              : null
+          }
           distributedCapability={distributedCapability}
           splitDetails={splitDetails}
         />
@@ -2460,6 +2472,7 @@ function MlxEngineViewBody() {
   // decode-rate history for the sparkline, and the memory watch across a mount. All of it rides the
   // SAME 2-second status poll below — no second clock.
   const [live, setLive] = useState<MlxLiveRead | null>(null);
+  const [liveEngine, setLiveEngine] = useState<MlxEngineKind | null>(null);
   const [tpsHistory, setTpsHistory] = useState<TpsSample[]>([]);
   const [serving, setServing] = useState<MlxServing | null>(null);
   const [mountWatch, setMountWatch] = useState<MountWatch | null>(null);
@@ -2528,6 +2541,7 @@ function MlxEngineViewBody() {
     try {
       const [read, main] = await Promise.all([readMlxLiveStatus(baseUrl), readMainEngine()]);
       setLive(read);
+      setLiveEngine(distUp ? 'distributed' : remoteUp ? 'remote' : 'single');
       setServing(main?.serving ?? null);
       if (read.ok) {
         const stats = read.stats;
@@ -2967,6 +2981,7 @@ function MlxEngineViewBody() {
           onUnmount={onUnmount}
           onRemount={onRemount}
           live={live}
+          liveEngine={liveEngine}
           tpsHistory={tpsHistory}
           serving={serving}
           mountWatch={mountWatch}
