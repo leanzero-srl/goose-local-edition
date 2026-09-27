@@ -144,7 +144,7 @@ export const Navigation: React.FC<{ className?: string }> = ({ className }) => {
 
       {/* The three trees, one shape (Mihai 2026-09-22): Projects, then Agent Work desks and
           Benchmark runs, each with its sessions under it. */}
-      <div data-testid="nav-trees" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div data-testid="nav-trees" className="flex min-h-[20%] flex-1 flex-col overflow-y-auto">
         <div className="flex shrink-0 flex-col">
           <ActiveNowSection className="mt-2 shrink-0" />
           <ProjectsSection className="mt-2 shrink-0" />

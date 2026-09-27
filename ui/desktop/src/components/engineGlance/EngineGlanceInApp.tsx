@@ -15,8 +15,8 @@ import { FOCUS, MOTION, PHASE_FILL, RADIUS, ROW, SURFACE, WEIGHT, cx } from '../
 
 /**
  * The engine glance inside a goose window: the card at the FOOT of the sidebar, between the
- * sessions and the bottom block. It is a fixed-height item of the sidebar's column, so the sessions'
- * scroll area ends where it begins and nothing expanding above ever draws under it (Q-216). There is
+ * sessions and the bottom block. It is its own item of the sidebar's column, so the sessions' scroll
+ * area ends where it begins and nothing expanding above ever draws under it (Q-216). There is
  * no floating card over the content any more (Q-217); the desktop mini window is for goose in the
  * background. Hidden by the person, it leaves one row that brings it back (Q-218).
  */
@@ -31,9 +31,12 @@ const i18n = defineMessages({
 
 /**
  * The slot's own item in the column, under a hairline: the sessions above scroll and are cut at a
- * visible edge, instead of reading as if they ran on under the card (Q-216).
+ * visible edge, instead of reading as if they ran on under the card (Q-216). In a short window the
+ * card gives way — the sessions keep their fifth of the column (NavigationPanel) and Settings stays
+ * on screen, and the card scrolls inside its slot (measured in Chromium: at 420 px the old
+ * full-height card pushed Settings out of the frame and left the sessions 0 px).
  */
-const DOCK_SLOT = cx('shrink-0 border-t px-2 py-2', SURFACE.hairline);
+const DOCK_SLOT = cx('min-h-0 shrink overflow-y-auto border-t px-2 py-2', SURFACE.hairline);
 
 function useOpeners() {
   const navigate = useNavigate();

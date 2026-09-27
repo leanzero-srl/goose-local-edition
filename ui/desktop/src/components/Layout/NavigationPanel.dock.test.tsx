@@ -15,10 +15,11 @@ import { GENERATING_STATUS } from '../leanzero-swarm/mlxLiveStatus.fixtures';
  *
  * jsdom lays nothing out, so this pins the facts that guarantee it, each compiled with the real
  * Tailwind pipeline (a class that compiles to nothing would be a silent no-op): the column is a
- * full-height flex column; the scroll area is the one item that grows and shrinks (flex 1, min
- * height 0 — without it an item never shrinks below its content) and scrolls; the card is the
- * NEXT item, does not shrink, and nothing on it or between it and the column is positioned out of
- * the flow. The same layout is measured in Chromium at 900/700/520/420 px in the Q-216 commit.
+ * full-height flex column; the scroll area is the one item that grows (flex 1), keeps a fifth of the
+ * column and scrolls; the card is the NEXT item, gives way in a short window (shrinks, scrolls in its
+ * slot), and nothing on it or between it and the column is positioned out of the flow. The same
+ * layout was measured in Chromium at 900/760/700/600/520/420 px (Q-216 commit): trees bottom ==
+ * card slot top at every height, Settings inside the frame at every height.
  */
 
 vi.mock('./NavigationContext', () => ({
@@ -80,11 +81,16 @@ describe('the engine card takes its own place in the sidebar column (Q-216)', ()
 
     const treesCss = await cssOf(trees);
     expect(treesCss).toMatch(/flex:\s*1/);
-    expect(treesCss).toMatch(/min-height:\s*(0|calc\(var\(--spacing\) \* 0\))/);
+    // The sessions keep a fifth of the column however short the window: a card never takes it all.
+    expect(treesCss).toMatch(/min-height:\s*20%/);
     expect(treesCss).toMatch(/overflow-y:\s*auto/);
 
+    // The card gives way in a short window (it shrinks and scrolls inside its slot), so Settings
+    // below it never leaves the frame.
     const dockCss = await cssOf(dock);
-    expect(dockCss).toMatch(/flex-shrink:\s*0/);
+    expect(dockCss).toMatch(/min-height:\s*(0|calc\(var\(--spacing\) \* 0\))/);
+    expect(dockCss).toMatch(/flex-shrink:\s*1/);
+    expect(dockCss).toMatch(/overflow-y:\s*auto/);
     // Nothing from the card up to the column takes it out of the flow.
     for (let el: HTMLElement | null = dock; el && el !== column; el = el.parentElement) {
       expect(await cssOf(el)).not.toMatch(/position:\s*(absolute|fixed)/);

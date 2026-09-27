@@ -63,7 +63,7 @@ describe('EngineGlanceDockSlot — the card at the foot of the sidebar', () => {
   it('writing: the docked card, idle or not — no room is measured and nothing floats', () => {
     renderDock(writing);
     expect(screen.getByTestId('engine-glance').dataset.variant).toBe('dock');
-    expect(screen.getByTestId('engine-glance-dock').className).toContain('shrink-0');
+    expect(screen.getByTestId('engine-glance-dock').className).toContain('overflow-y-auto');
   });
 
   it('idle: still docked (the quiet grey card)', () => {
