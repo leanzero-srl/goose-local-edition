@@ -509,7 +509,9 @@ fn swarm_rs_line_count_only_decreases() {
     // (ResearchAttempt, classify_research_attempt, ResearchFinding, research_lookups + tests) moved
     // to commands/swarm/research.rs, paying for the benchmark invariant's worker-door wiring, the
     // lane rows' `lookups` stamp and the grounded-research filing at the splice point.
-    const SWARM_RS_LINE_BASELINE: usize = 33_605;
+    // Tightened to 33,586 (Q-211): `tool_result_text` moved to commands/swarm/tool_output.rs with
+    // its byte-identity test, now reading the model-visible text of a tool result.
+    const SWARM_RS_LINE_BASELINE: usize = 33_586;
     let text = read("crates/goose-cli/src/commands/swarm.rs");
     let n = text.lines().count();
     assert!(
