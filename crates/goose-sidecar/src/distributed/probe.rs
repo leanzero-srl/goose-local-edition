@@ -716,17 +716,26 @@ Pages occupied by compressor:                 649325.
     /// (host_statistics64) within what moves between the two reads.
     #[cfg(target_os = "macos")]
     #[test]
+    /// The two readings are taken at different instants; under memory churn (a release build and a
+    /// 27B split on this Mac, 2026-09-28) available memory moved more than 1 GiB between them and the
+    /// test failed while both readers were right. So vm_stat is read BETWEEN two host readings and
+    /// must land inside the span they bracket, give or take the parse tolerance.
     fn vm_stat_agrees_with_host_statistics64_on_this_mac() {
+        let before = crate::measure().unwrap();
         let out = std::process::Command::new("/usr/bin/vm_stat")
             .output()
             .unwrap();
-        let measured = crate::measure().unwrap();
+        let after = crate::measure().unwrap();
         let parsed =
-            parse_vm_stat(&String::from_utf8_lossy(&out.stdout), measured.total_bytes).unwrap();
-        let diff = parsed.available_bytes.abs_diff(measured.available_bytes);
+            parse_vm_stat(&String::from_utf8_lossy(&out.stdout), after.total_bytes).unwrap();
+        let low = before.available_bytes.min(after.available_bytes);
+        let high = before.available_bytes.max(after.available_bytes);
         assert!(
-            diff < crate::GIB,
-            "vm_stat and host_statistics64 differ by {diff} bytes"
+            parsed.available_bytes + crate::GIB > low && parsed.available_bytes < high + crate::GIB,
+            "vm_stat says {} available; host_statistics64 said {} before and {} after",
+            parsed.available_bytes,
+            before.available_bytes,
+            after.available_bytes
         );
     }
 
