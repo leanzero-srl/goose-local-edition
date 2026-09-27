@@ -106,6 +106,19 @@ pub struct FormingProgress {
     pub unplaced_text_chars: usize,
     /// Finished calls that repeat an earlier call of the response word for word.
     pub repeats: RepeatedCalls,
+    /// Every call opened so far, in the order they opened (Q-151: the chat said "41 tool calls" and
+    /// named only the last one; a person could not see what the others were).
+    pub calls: Vec<FormingCall>,
+    /// The text `unplaced_text_chars` counts, whole (Q-151: the chat said "120 chars of text not
+    /// shown in the chat" and offered no way to read them).
+    pub unplaced_text: String,
+}
+
+/// One tool call as it forms: the tool it names and the argument characters received for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FormingCall {
+    pub name: String,
+    pub argument_chars: usize,
 }
 
 /// Calls of one response that repeat an earlier call of it: same tool, JSON-equal arguments (byte
@@ -170,9 +183,11 @@ tokio::task_local! {
     pub static FORMING_PROGRESS_OBSERVER: FormingProgressObserver
 }
 
-fn notify_forming_progress(progress: FormingProgress) {
-    // Unset is the designed default, as with TOOL_FORMING_OBSERVER: a pure side channel.
-    let _ = FORMING_PROGRESS_OBSERVER.try_with(|observer| observer(progress));
+fn notify_forming_progress(progress: &FormingProgress) {
+    // Unset is the designed default, as with TOOL_FORMING_OBSERVER: a pure side channel. The copy
+    // is made only for an observer: the progress carries every call and the text beside them, and
+    // the swarm's workers, which set none, decode every chunk through here.
+    let _ = FORMING_PROGRESS_OBSERVER.try_with(|observer| observer(progress.clone()));
 }
 
 /// The end of text that arrived while tool calls formed, for the warning that reports it: the log
@@ -1548,9 +1563,12 @@ where
                 yield (None, usage)
             } else if chunk.choices[0].delta.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()) {
                 let mut tool_call_data: ToolCallData = HashMap::new();
+                // Where each tool index's call sits in `forming.calls`.
+                let mut forming_slots: HashMap<i32, usize> = HashMap::new();
 
                 if let (Some(text), _) = extract_content_and_signature(chunk.choices[0].delta.content.as_ref()) {
                     forming.unplaced_text_chars += text.chars().count();
+                    forming.unplaced_text.push_str(&text);
                     unplaced_text.push_str(&text);
                 }
                 if let Some(rc) = chunk.choices[0].delta.reasoning_text() {
@@ -1560,9 +1578,12 @@ where
                     for (position, tool_call) in tool_calls.iter().enumerate() {
                         if let (Some(id), Some(name)) = (&tool_call.id, &tool_call.function.name) {
                             let index = tool_call.index.unwrap_or(position as i32);
+                            let argument_chars = tool_call.function.arguments.chars().count();
                             forming.tool_calls += 1;
                             forming.writing.clone_from(name);
-                            forming.argument_chars += tool_call.function.arguments.chars().count();
+                            forming.argument_chars += argument_chars;
+                            forming_slots.insert(index, forming.calls.len());
+                            forming.calls.push(FormingCall { name: name.clone(), argument_chars });
                             tool_call_data.insert(index, (id.clone(), name.clone(), tool_call.function.arguments.clone(), tool_call.extra.clone()));
                             notify_tool_forming(ToolFormingEvent::Forming {
                                 id: id.clone(),
@@ -1581,7 +1602,7 @@ where
 
                 forming.repeats = repeated_calls(&tool_call_data, chunk.choices[0].finish_reason.is_some());
                 let mut repeats_counted_at = forming.tool_calls;
-                notify_forming_progress(forming.clone());
+                notify_forming_progress(&forming);
 
                 let is_complete = chunk.choices[0].finish_reason == Some("tool_calls".to_string());
 
@@ -1629,6 +1650,7 @@ where
                                     }
                                     if let (Some(text), _) = extract_content_and_signature(tool_chunk.choices[0].delta.content.as_ref()) {
                                         forming.unplaced_text_chars += text.chars().count();
+                                        forming.unplaced_text.push_str(&text);
                                         unplaced_text.push_str(&text);
                                     }
                                     if let Some(delta_tool_calls) = &tool_chunk.choices[0].delta.tool_calls {
@@ -1641,7 +1663,11 @@ where
                                                             delta: delta_call.function.arguments.clone(),
                                                         });
                                                     }
-                                                    forming.argument_chars += delta_call.function.arguments.chars().count();
+                                                    let argument_chars = delta_call.function.arguments.chars().count();
+                                                    forming.argument_chars += argument_chars;
+                                                    if let Some(call) = forming_slots.get(&index).and_then(|slot| forming.calls.get_mut(*slot)) {
+                                                        call.argument_chars += argument_chars;
+                                                    }
                                                     args.push_str(&delta_call.function.arguments);
                                                     if extra.is_none() && delta_call.extra.is_some() {
                                                         *extra = delta_call.extra.clone();
@@ -1651,9 +1677,12 @@ where
                                                         }
                                                     }
                                                 } else if let (Some(id), Some(name)) = (&delta_call.id, &delta_call.function.name) {
+                                                    let argument_chars = delta_call.function.arguments.chars().count();
                                                     forming.tool_calls += 1;
                                                     forming.writing.clone_from(name);
-                                                    forming.argument_chars += delta_call.function.arguments.chars().count();
+                                                    forming.argument_chars += argument_chars;
+                                                    forming_slots.insert(index, forming.calls.len());
+                                                    forming.calls.push(FormingCall { name: name.clone(), argument_chars });
                                                     tool_call_data.insert(index, (id.clone(), name.clone(), delta_call.function.arguments.clone(), delta_call.extra.clone()));
                                                     notify_tool_forming(ToolFormingEvent::Forming {
                                                         id: id.clone(),
@@ -1677,7 +1706,7 @@ where
                                         forming.repeats = repeated_calls(&tool_call_data, finished);
                                         repeats_counted_at = forming.tool_calls;
                                     }
-                                    notify_forming_progress(forming.clone());
+                                    notify_forming_progress(&forming);
                                     if finished {
                                         done = true;
                                     }
@@ -3737,6 +3766,11 @@ data: [DONE]
                 reasoning_chars: 0,
                 unplaced_text_chars: 0,
                 repeats: RepeatedCalls::default(),
+                calls: vec![FormingCall {
+                    name: "memory__remember_memory".to_string(),
+                    argument_chars: "{\"category\":".chars().count(),
+                }],
+                unplaced_text: String::new(),
             }),
             "the open frame is reported the moment it arrives"
         );
@@ -3752,8 +3786,17 @@ data: [DONE]
                     count: 1,
                     one_original: Some("memory__remember_memory".to_string()),
                 },
+                calls: vec![
+                    FormingCall {
+                        name: "memory__remember_memory".to_string(),
+                        argument_chars: "{\"category\":\"releases\"}".chars().count(),
+                    };
+                    2
+                ],
+                unplaced_text: "Let me verify it landed.Done.".to_string(),
             }),
-            "the second call spells the first's arguments: once it finishes it is a repeat"
+            "each call carries its own arguments, the text beside them is kept whole, and once the \
+             second call finishes it is a repeat of the first"
         );
         assert!(
             seen.iter()
@@ -3912,6 +3955,10 @@ data: [DONE]
                 tool_calls: 1,
                 writing: "shell".to_string(),
                 argument_chars: 1,
+                calls: vec![FormingCall {
+                    name: "shell".to_string(),
+                    argument_chars: 1,
+                }],
                 ..Default::default()
             }),
             "the open frame names the tool the moment it arrives"
@@ -3929,6 +3976,14 @@ data: [DONE]
         assert_eq!(
             seen.last().map(|p| p.argument_chars),
             Some(arguments.chars().count())
+        );
+        assert_eq!(
+            seen.last().map(|p| p.calls.clone()),
+            Some(vec![FormingCall {
+                name: "shell".to_string(),
+                argument_chars: arguments.chars().count(),
+            }]),
+            "the fragments add to the call they belong to"
         );
 
         let contents: Vec<&MessageContent> = decoded

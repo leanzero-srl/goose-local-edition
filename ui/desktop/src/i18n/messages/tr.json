@@ -371,6 +371,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "uzantıları ara..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {‘{name}’ içinde meşgul} other {Başka bir sohbette meşgul}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "Şimdi gönderilen bir mesaj motoru o yanıtla paylaşır — daha yavaş çalışır veya yer yoksa bekler."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "Şimdi gönderilen bir mesaj, motorda yer açılana kadar bekler."
+  },
   "cardButtons.configure": {
     "defaultMessage": "Yapılandır"
   },
@@ -767,6 +776,9 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "Kayıtlı MLX modeli yok — Providers’ta bir tane seçin."
   },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "O sohbeti aç"
+  },
   "composerReadiness.openEngine": {
     "defaultMessage": "Motoru aç"
   },
@@ -934,6 +946,9 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "İşleniyor..."
+  },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} token bağlam + şu anda yazılan {live}, {limit} tokenlik pencereden"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Konuşma Sınırları"
@@ -2381,6 +2396,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose konuşmayı sıkıştırıyor..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} karakter"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {# araç çağrısı oluşuyor}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Şu ana kadar alınan: {arguments} karakter argüman{reasoning, select, none {} other {, {reasoning} karakter akıl yürütme}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Çağrıların yanına yazılan metin ({chars} karakter) — yanıtın parçası değil"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Gizle"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose bunun üzerinde çalışıyor…"
   },
@@ -2389,6 +2419,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "oturum yeniden başlatılıyor..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Oluşmakta olanı göster"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose bunun üzerinde çalışıyor…"
@@ -4742,6 +4775,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Kontrol ediliyor…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Kapat"
   },
@@ -4750,9 +4786,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Model yükleniyor..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Yerel Model Ayarları"
@@ -8014,6 +8047,33 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Bir süredir {mac} kaynağından kelime yok — kontrol ediliyor…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "{elapsed} süredir yazıyor · {tokens} token · {rate} tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "{elapsed} süredir yazıyor · {tokens} token"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "bu sohbet kontrol ediliyor…"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {{tool} için bir araç çağrısı} other {# araç çağrısı, sonuncusu {tool}}}"
+  },
+  "turnLine.formingRepeatsOfMany": {
+    "defaultMessage": "{count, plural, one {bunlardan # tanesi önceki bir çağrıyla aynı} other {bunlardan # tanesi önceki çağrılarla aynı}}"
+  },
+  "turnLine.formingRepeatsOfOne": {
+    "defaultMessage": "{count, plural, one {bunlardan # tanesi önceki bir {tool} çağrısıyla aynı} other {bunlardan # tanesi önceki bir {tool} çağrısıyla aynı}}"
+  },
+  "turnLine.formingWithRepeats": {
+    "defaultMessage": "{calls}, {repeats}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "sürü duraklatıldı — siz devam ettirene kadar hiçbir şey çalışmıyor"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Güncelleme arka planda otomatik olarak indirilecektir."

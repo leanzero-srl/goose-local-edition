@@ -2014,8 +2014,10 @@ fn send_status_message_update(
 }
 
 /// The loading line for a response whose tool calls are still forming, built only from what the
-/// decoder has received (see `FormingProgress`): the tool being written and the counts. `None` until
-/// there is something to report.
+/// decoder has received (see `FormingProgress`): the tool being written, by the name the chat gives
+/// tools (`format_tool_name`, Q-151), and the counts. `None` until there is something to report. The
+/// desktop leads with the engine's own tokens, elapsed and rate when it reads them and keeps these
+/// counts behind its disclosure; this line is what every other client shows.
 fn forming_progress_text(
     progress: &goose_providers::formats::openai::FormingProgress,
 ) -> Option<String> {
@@ -2027,13 +2029,11 @@ fn forming_progress_text(
         n if n < 1000 => format!("{n} chars"),
         n => format!("{:.1}k chars", n as f64 / 1000.0),
     };
+    let tool = format_tool_name(&progress.writing);
     let calls = if progress.tool_calls == 1 {
-        format!("a tool call to {}", progress.writing)
+        format!("a tool call to {tool}")
     } else {
-        format!(
-            "{} tool calls, the latest to {}",
-            progress.tool_calls, progress.writing
-        )
+        format!("{} tool calls, the latest to {tool}", progress.tool_calls)
     };
     let mut parts = Vec::new();
     parts.extend(forming_repeats_clause(&progress.repeats));
@@ -2045,7 +2045,7 @@ fn forming_progress_text(
     }
     if progress.unplaced_text_chars > 0 {
         parts.push(format!(
-            "{} of text not shown in the chat",
+            "{} of text beside the calls",
             chars(progress.unplaced_text_chars)
         ));
     }
@@ -2068,14 +2068,40 @@ fn forming_repeats_clause(
     };
     Some(match &repeats.one_original {
         Some(tool) => format!(
-            "{} of them {verb} identical to an earlier {tool} call",
-            repeats.count
+            "{} of them {verb} identical to an earlier {} call",
+            repeats.count,
+            format_tool_name(tool)
         ),
         None => format!(
             "{} of them {verb} identical to earlier calls",
             repeats.count
         ),
     })
+}
+
+/// The forming response as the chat lists it behind its status line (Q-151): every call, named as
+/// the chat names tools, with its own argument size, and the text that arrived beside them whole.
+fn forming_status(progress: &goose_providers::formats::openai::FormingProgress) -> FormingStatus {
+    FormingStatus {
+        calls: progress
+            .calls
+            .iter()
+            .map(|call| FormingCallStatus {
+                name: call.name.clone(),
+                title: format_tool_name(&call.name),
+                argument_chars: call.argument_chars as u64,
+            })
+            .collect(),
+        argument_chars: progress.argument_chars as u64,
+        reasoning_chars: progress.reasoning_chars as u64,
+        text: progress.unplaced_text.clone(),
+        repeated_calls: progress.repeats.count as u64,
+        repeated_title: progress
+            .repeats
+            .one_original
+            .as_deref()
+            .map(format_tool_name),
+    }
 }
 
 /// Sends the forming line as a progress status whenever its text changes — the counts are the
@@ -2104,6 +2130,7 @@ fn forming_progress_observer(
             update: GooseSessionUpdate::StatusMessage(StatusMessageUpdate {
                 status: StatusMessage::Progress {
                     message: message.clone(),
+                    forming: Some(forming_status(&progress)),
                 },
             }),
         };
@@ -2127,6 +2154,7 @@ fn status_message_from_system_notification(
         }),
         SystemNotificationType::ThinkingMessage => Some(StatusMessage::Progress {
             message: notification.msg.clone(),
+            forming: None,
         }),
         SystemNotificationType::CreditsExhausted => None,
     }
@@ -3315,7 +3343,7 @@ mod tests {
                 ..Default::default()
             })
             .as_deref(),
-            Some("goose is writing 2 tool calls, the latest to developer__text_editor")
+            Some("goose is writing 2 tool calls, the latest to developer: text editor")
         );
         assert_eq!(
             forming_progress_text(&FormingProgress {
@@ -3328,8 +3356,8 @@ mod tests {
             })
             .as_deref(),
             Some(
-                "goose is writing 36 tool calls, the latest to memory__remember_memory — 11.0k chars \
-                 of arguments, 2.1k chars of reasoning, 82.4k chars of text not shown in the chat"
+                "goose is writing 36 tool calls, the latest to memory: remember memory — 11.0k chars \
+                 of arguments, 2.1k chars of reasoning, 82.4k chars of text beside the calls"
             )
         );
     }
@@ -3352,8 +3380,8 @@ mod tests {
             }))
             .as_deref(),
             Some(
-                "goose is writing 57 tool calls, the latest to ledger__ledger_append — 54 of them \
-                 are identical to an earlier ledger__ledger_append call, 11.0k chars of arguments"
+                "goose is writing 57 tool calls, the latest to ledger: ledger append — 54 of them \
+                 are identical to an earlier ledger: ledger append call, 11.0k chars of arguments"
             )
         );
         assert_eq!(
@@ -3363,7 +3391,7 @@ mod tests {
             }))
             .as_deref(),
             Some(
-                "goose is writing 57 tool calls, the latest to ledger__ledger_append — 1 of them is \
+                "goose is writing 57 tool calls, the latest to ledger: ledger append — 1 of them is \
                  identical to an earlier shell call, 11.0k chars of arguments"
             )
         );
@@ -3374,17 +3402,101 @@ mod tests {
             }))
             .as_deref(),
             Some(
-                "goose is writing 57 tool calls, the latest to ledger__ledger_append — 3 of them are \
+                "goose is writing 57 tool calls, the latest to ledger: ledger append — 3 of them are \
                  identical to earlier calls, 11.0k chars of arguments"
             )
         );
         assert_eq!(
             forming_progress_text(&progress(RepeatedCalls::default())).as_deref(),
             Some(
-                "goose is writing 57 tool calls, the latest to ledger__ledger_append — 11.0k chars of \
+                "goose is writing 57 tool calls, the latest to ledger: ledger append — 11.0k chars of \
                  arguments"
             ),
             "no repeats, no clause"
+        );
+    }
+
+    /// Q-151, round live-1: 41 calls, the latest to `ledger__ledger_append`, 18.5k chars of
+    /// arguments and 120 chars of text beside them. The chat named only the last call by its raw id
+    /// and said the text was "not shown in the chat" with no way to read it; the status now carries
+    /// every call by the chat's tool name, each with its own size, and the text whole.
+    #[test]
+    fn forming_status_lists_every_call_and_carries_the_text_beside_them() {
+        use goose_providers::formats::openai::{FormingCall, FormingProgress, RepeatedCalls};
+        let text =
+            "Now I'll append the decisions to the ledger and write the notes file.".repeat(2);
+        let progress = FormingProgress {
+            tool_calls: 3,
+            writing: "ledger__ledger_append".to_string(),
+            argument_chars: 18_500,
+            reasoning_chars: 0,
+            unplaced_text_chars: text.chars().count(),
+            calls: vec![
+                FormingCall {
+                    name: "developer__text_editor".to_string(),
+                    argument_chars: 12_000,
+                },
+                FormingCall {
+                    name: "ledger__ledger_append".to_string(),
+                    argument_chars: 6_000,
+                },
+                FormingCall {
+                    name: "ledger__ledger_append".to_string(),
+                    argument_chars: 500,
+                },
+            ],
+            unplaced_text: text.clone(),
+            repeats: RepeatedCalls {
+                count: 1,
+                one_original: Some("ledger__ledger_append".to_string()),
+            },
+        };
+        let status = forming_status(&progress);
+        assert_eq!(
+            status
+                .calls
+                .iter()
+                .map(|c| (c.title.as_str(), c.argument_chars))
+                .collect::<Vec<_>>(),
+            vec![
+                ("developer: text editor", 12_000),
+                ("ledger: ledger append", 6_000),
+                ("ledger: ledger append", 500),
+            ]
+        );
+        assert_eq!(status.calls[1].name, "ledger__ledger_append");
+        assert_eq!(status.argument_chars, 18_500);
+        assert_eq!(status.text, text, "the text beside the calls arrives whole");
+
+        let wire = serde_json::to_value(StatusMessage::Progress {
+            message: forming_progress_text(&progress).unwrap(),
+            forming: Some(status),
+        })
+        .unwrap();
+        assert_eq!(wire["type"], "progress");
+        assert_eq!(
+            wire["message"],
+            "goose is writing 3 tool calls, the latest to ledger: ledger append — 1 of them is \
+             identical to an earlier ledger: ledger append call, 18.5k chars of arguments, 138 chars \
+             of text beside the calls"
+        );
+        assert_eq!(wire["forming"]["repeatedCalls"], 1);
+        assert_eq!(wire["forming"]["repeatedTitle"], "ledger: ledger append");
+        assert_eq!(wire["forming"]["calls"][0]["argumentChars"], 12_000);
+        assert_eq!(
+            wire["forming"]["calls"][0]["title"],
+            "developer: text editor"
+        );
+        assert_eq!(wire["forming"]["text"], text);
+
+        let plain = serde_json::to_value(StatusMessage::Progress {
+            message: "Compacting".to_string(),
+            forming: None,
+        })
+        .unwrap();
+        assert!(
+            plain.get("forming").is_none(),
+            "every other progress status keeps its old shape: {plain}"
         );
     }
 

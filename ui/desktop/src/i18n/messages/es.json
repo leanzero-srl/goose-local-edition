@@ -371,6 +371,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "buscar extensiones..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {Ocupado en «{name}»} other {Ocupado en otro chat}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "Un mensaje enviado ahora comparte el motor con esa respuesta: va más lento o espera si no hay espacio."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "Un mensaje enviado ahora espera hasta que el motor tenga espacio para él."
+  },
   "cardButtons.configure": {
     "defaultMessage": "Configurar"
   },
@@ -767,6 +776,9 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "No hay un modelo MLX guardado — elige uno en Providers."
   },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "Abrir ese chat"
+  },
   "composerReadiness.openEngine": {
     "defaultMessage": "Abrir motor"
   },
@@ -934,6 +946,9 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Procesando..."
+  },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} tokens de contexto + {live} escribiéndose ahora, de una ventana de {limit} tokens"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Límites de conversación"
@@ -2381,6 +2396,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose está compactando la conversación..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} caracteres"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, one {# llamada a herramienta en formación} other {# llamadas a herramientas en formación}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Recibido hasta ahora: {arguments} caracteres de argumentos{reasoning, select, none {} other {, {reasoning} caracteres de razonamiento}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Texto escrito junto a las llamadas ({chars} caracteres) — no forma parte de la respuesta"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Ocultar"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose está trabajando en ello…"
   },
@@ -2389,6 +2419,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "reiniciando sesión..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Mostrar lo que se está formando"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose está trabajando en ello…"
@@ -4742,6 +4775,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Comprobando…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Cerrar"
   },
@@ -4750,9 +4786,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Cargando modelo..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Ajustes del modelo local"
@@ -8014,6 +8047,33 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Sin palabras de {mac} desde hace un momento — comprobando…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Escribiendo desde hace {elapsed} · {tokens} tokens · {rate} tok/s"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Escribiendo desde hace {elapsed} · {tokens} tokens"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "comprobando este chat…"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {una llamada a {tool}} other {# llamadas a herramientas, la última a {tool}}}"
+  },
+  "turnLine.formingRepeatsOfMany": {
+    "defaultMessage": "{count, plural, one {# de ellas es idéntica a una llamada anterior} other {# de ellas son idénticas a llamadas anteriores}}"
+  },
+  "turnLine.formingRepeatsOfOne": {
+    "defaultMessage": "{count, plural, one {# de ellas es idéntica a una llamada anterior a {tool}} other {# de ellas son idénticas a una llamada anterior a {tool}}}"
+  },
+  "turnLine.formingWithRepeats": {
+    "defaultMessage": "{calls}, {repeats}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "enjambre en pausa — nada se ejecuta hasta que lo reanudes"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "La actualización se descargará automáticamente en segundo plano."

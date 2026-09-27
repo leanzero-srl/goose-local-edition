@@ -643,6 +643,51 @@ describe('createAcpSessionNotificationAdapter', () => {
       );
     });
 
+    it('keeps the forming calls and the text beside them on the live line (Q-151)', () => {
+      const adapter = createAcpSessionNotificationAdapter();
+      const forming = {
+        calls: [
+          { name: 'ledger__ledger_append', title: 'ledger: ledger append', argumentChars: 40 },
+        ],
+        argumentChars: 40,
+        reasoningChars: 0,
+        text: 'Let me record it.',
+      };
+      adapter.applyGoose(
+        gooseUpdate({
+          sessionUpdate: 'status_message',
+          status: { type: 'progress', message: 'goose is writing a tool call', forming },
+        })
+      );
+      let messages = expectOnlyMessagesChange(
+        adapter.applyGoose(
+          gooseUpdate({
+            sessionUpdate: 'status_message',
+            status: {
+              type: 'progress',
+              message: 'goose is writing a tool call',
+              forming: { ...forming, argumentChars: 80 },
+            },
+          })
+        )
+      );
+      expect(messages).toHaveLength(1);
+      expect(firstContent(messages[0])).toMatchObject({
+        data: { argumentChars: 80, text: 'Let me record it.' },
+      });
+
+      messages = expectOnlyMessagesChange(
+        adapter.applyGoose(
+          gooseUpdate({
+            sessionUpdate: 'status_message',
+            status: { type: 'progress', message: 'Compacting' },
+          })
+        )
+      );
+      expect(messages).toHaveLength(1);
+      expect(firstContent(messages[0])).toMatchObject({ msg: 'Compacting', data: undefined });
+    });
+
     it('does not fold a progress line into a notice', () => {
       const adapter = createAcpSessionNotificationAdapter();
       adapter.applyGoose(

@@ -13,7 +13,7 @@ import { useEdition } from '../contexts/EditionContext';
 import { useModelAndProvider } from './ModelAndProviderContext';
 import { ChatState } from '../types/chatState';
 import type { ChatServedBy } from './chatServedBy/chatServedBy';
-import { turnCueText } from './chatServedBy/turnCueText';
+import { turnLine } from './chatServedBy/turnLine';
 import { useTurnCue } from './chatServedBy/useTurnCue';
 import { ChatType } from '../types/chat';
 import { useIsMobile } from '../hooks/use-mobile';
@@ -27,12 +27,7 @@ import { RecipeWarningModal } from './ui/RecipeWarningModal';
 import { scanRecipe } from '../recipe';
 import type { Recipe } from '../recipe';
 import RecipeActivities from './recipes/RecipeActivities';
-import {
-  getThinkingMessage,
-  getTextAndImageContent,
-  type Message,
-  type UserInput,
-} from '../types/message';
+import { getTextAndImageContent, type Message, type UserInput } from '../types/message';
 import { substituteParameters } from '../utils/parameterSubstitution';
 import { useAutoSubmit } from '../hooks/useAutoSubmit';
 import { Goose, LeanZero } from './icons';
@@ -631,17 +626,7 @@ export default function BaseChat({
         <div className="absolute bottom-1 left-4 z-20 pointer-events-none">
           <LoadingGoose
             chatState={chatState}
-            message={
-              // A HELD swarm run outranks whatever the chat layer believes: the provider call is still
-              // open (so chatState is Streaming) but nothing is being computed. Say so plainly.
-              swarmRun.held
-                ? 'swarm paused — nothing is running until you resume'
-                : turnCue
-                  ? turnCueText(intl, turnCue)
-                  : messages.length > 0
-                    ? getThinkingMessage(messages[messages.length - 1])
-                    : undefined
-            }
+            {...turnLine(intl, chatState, swarmRun.held, turnCue, messages[messages.length - 1])}
           />
         </div>
       )}

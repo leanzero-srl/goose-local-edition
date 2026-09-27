@@ -371,6 +371,15 @@
   "bottomMenuExtensionSelection.searchExtensions": {
     "defaultMessage": "tìm kiếm tiện ích mở rộng..."
   },
+  "busyIn.headline": {
+    "defaultMessage": "{named, select, yes {Đang bận trong ‘{name}’} other {Đang bận trong cuộc trò chuyện khác}}{elapsed, select, none {} other { · {elapsed}}}"
+  },
+  "busyIn.sendShares": {
+    "defaultMessage": "Tin nhắn gửi bây giờ dùng chung engine với câu trả lời đó — chạy chậm hơn, hoặc chờ nếu không còn chỗ."
+  },
+  "busyIn.sendWaits": {
+    "defaultMessage": "Tin nhắn gửi bây giờ sẽ chờ cho tới khi engine có chỗ cho nó."
+  },
   "cardButtons.configure": {
     "defaultMessage": "Cấu hình"
   },
@@ -767,6 +776,9 @@
   "composerReadiness.noTarget": {
     "defaultMessage": "Không có mô hình MLX đã lưu — hãy chọn một trong Providers."
   },
+  "composerReadiness.openBusyChat": {
+    "defaultMessage": "Mở cuộc trò chuyện đó"
+  },
   "composerReadiness.openEngine": {
     "defaultMessage": "Mở Engine"
   },
@@ -934,6 +946,9 @@
   },
   "confirmationModal.processing": {
     "defaultMessage": "Đang xử lý..."
+  },
+  "contextWindowIndicator.liveTitle": {
+    "defaultMessage": "{context} token ngữ cảnh + {live} đang được viết, trên cửa sổ {limit} token"
   },
   "conversationLimitsDropdown.conversationLimits": {
     "defaultMessage": "Giới hạn cuộc trò chuyện"
@@ -2381,6 +2396,21 @@
   "loadingGoose.compacting": {
     "defaultMessage": "goose đang nén cuộc trò chuyện..."
   },
+  "loadingGoose.formingCallChars": {
+    "defaultMessage": "{chars} ký tự"
+  },
+  "loadingGoose.formingCallsHeading": {
+    "defaultMessage": "{count, plural, other {# lệnh gọi công cụ đang hình thành}}"
+  },
+  "loadingGoose.formingReceived": {
+    "defaultMessage": "Đã nhận: {arguments} ký tự đối số{reasoning, select, none {} other {, {reasoning} ký tự suy luận}}"
+  },
+  "loadingGoose.formingTextHeading": {
+    "defaultMessage": "Văn bản viết bên cạnh các lệnh gọi ({chars} ký tự) — không thuộc câu trả lời"
+  },
+  "loadingGoose.hideForming": {
+    "defaultMessage": "Ẩn"
+  },
   "loadingGoose.idle": {
     "defaultMessage": "goose đang xử lý…"
   },
@@ -2389,6 +2419,9 @@
   },
   "loadingGoose.restartingAgent": {
     "defaultMessage": "đang khởi động lại phiên..."
+  },
+  "loadingGoose.showForming": {
+    "defaultMessage": "Hiện nội dung đang hình thành"
   },
   "loadingGoose.streaming": {
     "defaultMessage": "goose đang xử lý…"
@@ -4742,6 +4775,9 @@
   "modelsBottomBar.changeProvider": {
     "defaultMessage": "Change Provider"
   },
+  "modelsBottomBar.checking": {
+    "defaultMessage": "Đang kiểm tra…"
+  },
   "modelsBottomBar.close": {
     "defaultMessage": "Đóng"
   },
@@ -4750,9 +4786,6 @@
   },
   "modelsBottomBar.leanzeroWebsite": {
     "defaultMessage": "LeanZero website"
-  },
-  "modelsBottomBar.loadingModel": {
-    "defaultMessage": "Đang tải mô hình..."
   },
   "modelsBottomBar.localModelSettings": {
     "defaultMessage": "Cài đặt mô hình cục bộ"
@@ -8014,6 +8047,33 @@
   },
   "turnCue.silent": {
     "defaultMessage": "Một lúc không có chữ nào từ {mac} — đang kiểm tra…"
+  },
+  "turnCue.writing": {
+    "defaultMessage": "Đang viết được {elapsed} · {tokens} token · {rate} token/giây"
+  },
+  "turnCue.writingNoRate": {
+    "defaultMessage": "Đang viết được {elapsed} · {tokens} token"
+  },
+  "turnLine.checking": {
+    "defaultMessage": "đang kiểm tra cuộc trò chuyện này…"
+  },
+  "turnLine.formingCalls": {
+    "defaultMessage": "{count, plural, one {một lệnh gọi tới {tool}} other {# lệnh gọi công cụ, mới nhất tới {tool}}}"
+  },
+  "turnLine.formingRepeatsOfMany": {
+    "defaultMessage": "{count, plural, one {# trong số đó giống hệt một lệnh gọi trước đó} other {# trong số đó giống hệt các lệnh gọi trước đó}}"
+  },
+  "turnLine.formingRepeatsOfOne": {
+    "defaultMessage": "{count, plural, one {# trong số đó giống hệt một lệnh gọi {tool} trước đó} other {# trong số đó giống hệt một lệnh gọi {tool} trước đó}}"
+  },
+  "turnLine.formingWithRepeats": {
+    "defaultMessage": "{calls}, {repeats}"
+  },
+  "turnLine.swarmHeld": {
+    "defaultMessage": "swarm đang tạm dừng — không có gì chạy cho tới khi bạn tiếp tục"
+  },
+  "turnLine.withForming": {
+    "defaultMessage": "{cue} — {forming}"
   },
   "updateSection.autoDownload": {
     "defaultMessage": "Goose sẽ tải bản cập nhật ở chế độ nền và cài đặt vào lần tiếp theo khi bạn thoát hoặc khởi động lại."
