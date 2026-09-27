@@ -7022,6 +7022,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "Sebuah giliran sedang berjalan, selama {elapsed}"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "Dihentikan"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, other {# membutuhkan Anda}}"
   },
@@ -7513,6 +7516,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "Parameter yang diperlukan tidak ada"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} j {minutes} mnt"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} mnt"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "Anda menghentikan jawaban ini setelah {elapsed}, sebelum model menulis apa pun"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} dtk"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "Anda menghentikan jawaban ini setelah {elapsed}"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "Anda menghentikan jawaban ini setelah {elapsed} · {tokens} token"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Penyedia {name} telah dikonfigurasi"

@@ -7022,6 +7022,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "Un turno è in corso da {elapsed}"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "Interrotta"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, one {# ha bisogno di te} other {# hanno bisogno di te}}"
   },
@@ -7513,6 +7516,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "Parametri richiesti mancanti"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} h {minutes} min"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} min"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "Hai interrotto questa risposta dopo {elapsed}, prima che il modello scrivesse qualcosa"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} s"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "Hai interrotto questa risposta dopo {elapsed}"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "Hai interrotto questa risposta dopo {elapsed} · {tokens} token"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Il provider {name} è configurato"

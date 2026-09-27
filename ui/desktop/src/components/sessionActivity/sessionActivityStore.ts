@@ -1,5 +1,10 @@
 import { useSyncExternalStore } from 'react';
-import type { FailedSessionDto, NeedsYouItemDto, RunningSessionDto } from '@aaif/goose-sdk';
+import type {
+  FailedSessionDto,
+  NeedsYouItemDto,
+  RunningSessionDto,
+  StoppedSessionDto,
+} from '@aaif/goose-sdk';
 import {
   pendingAcpElicitations,
   subscribePendingAcpElicitations,
@@ -26,10 +31,12 @@ export interface SessionActivitySnapshot {
   needsYou: NeedsYouItemDto[];
   /** Sessions whose LAST turn failed (a later completed turn clears it). */
   failed: FailedSessionDto[];
+  /** Sessions whose LAST turn the person stopped (a later completed turn clears it). */
+  stopped: StoppedSessionDto[];
   elicitations: AcpElicitationRequest[];
 }
 
-export type { FailedSessionDto, NeedsYouItemDto, RunningSessionDto };
+export type { FailedSessionDto, NeedsYouItemDto, RunningSessionDto, StoppedSessionDto };
 
 /** The poll only catches turns this window did not start; this window's own starts arrive at once. */
 export const ACTIVITY_POLL_MS = 5000;
@@ -38,6 +45,7 @@ const EMPTY: SessionActivitySnapshot = {
   running: [],
   needsYou: [],
   failed: [],
+  stopped: [],
   elicitations: [],
 };
 
@@ -62,17 +70,21 @@ export function getSessionActivitySnapshot(): SessionActivitySnapshot {
 export async function refreshSessionActivity(): Promise<void> {
   const generation = ++refreshGeneration;
   try {
-    const { running, needsYou, failed } = await acpSessionActivity();
+    const activity = await acpSessionActivity();
+    const { running, needsYou, failed } = activity;
+    // An engine older than Q-169 sends no `stopped` list: it records no stopped turns.
+    const stopped = activity.stopped ?? [];
     if (generation !== refreshGeneration) return;
     // The poll re-reads every few seconds; an unchanged answer must not re-render every list.
     if (
       JSON.stringify(running) === JSON.stringify(snapshot.running) &&
       JSON.stringify(needsYou) === JSON.stringify(snapshot.needsYou) &&
-      JSON.stringify(failed) === JSON.stringify(snapshot.failed)
+      JSON.stringify(failed) === JSON.stringify(snapshot.failed) &&
+      JSON.stringify(stopped) === JSON.stringify(snapshot.stopped)
     ) {
       return;
     }
-    emit({ ...snapshot, running, needsYou, failed });
+    emit({ ...snapshot, running, needsYou, failed, stopped });
   } catch (error) {
     console.warn('Failed to read session activity:', error);
   }
@@ -158,11 +170,18 @@ export interface SessionActivity {
   /** When the last turn failed; undefined = it did not. */
   failedAt?: string;
   failedReason?: string;
+  /** When the person stopped the last turn; undefined = they did not. */
+  stoppedAt?: string;
+  /** How long the stopped turn had run. */
+  stoppedElapsedMs?: number;
+  /** The output tokens the stopped turn had written; undefined = not counted. */
+  stoppedOutputTokens?: number;
 }
 
 export function activityOf(state: SessionActivitySnapshot, sessionId: string): SessionActivity {
   const running = state.running.find((row) => row.sessionId === sessionId);
   const failed = state.failed.find((row) => row.sessionId === sessionId);
+  const stopped = state.stopped.find((row) => row.sessionId === sessionId);
   const needsYou =
     state.needsYou.filter((item) => item.sessionId === sessionId).length +
     state.elicitations.filter((request) => request.sessionId === sessionId).length;
@@ -171,10 +190,13 @@ export function activityOf(state: SessionActivitySnapshot, sessionId: string): S
     needsYou,
     failedAt: failed?.failedAt,
     failedReason: failed?.reason ?? undefined,
+    stoppedAt: stopped?.stoppedAt,
+    stoppedElapsedMs: stopped?.elapsedMs,
+    stoppedOutputTokens: stopped?.outputTokens ?? undefined,
   };
 }
 
-export type SessionState = 'running' | 'needs-you' | 'failed' | 'idle';
+export type SessionState = 'running' | 'needs-you' | 'failed' | 'stopped' | 'idle';
 
 /**
  * Every state that holds, most urgent first. A new turn on a session whose last turn failed is
@@ -185,6 +207,7 @@ export function sessionStates(activity: SessionActivity): SessionState[] {
   if (activity.needsYou > 0) states.push('needs-you');
   if (activity.runningSince) states.push('running');
   if (states.length === 0 && activity.failedAt) states.push('failed');
+  if (states.length === 0 && activity.stoppedAt) states.push('stopped');
   return states.length > 0 ? states : ['idle'];
 }
 
@@ -205,7 +228,27 @@ export function useActivityOf(sessionId: string): SessionActivity {
     subscribe,
     () => activityOf(snapshot, sessionId).failedReason
   );
-  return { runningSince, needsYou, failedAt, failedReason };
+  const stoppedAt = useSyncExternalStore(
+    subscribe,
+    () => activityOf(snapshot, sessionId).stoppedAt
+  );
+  const stoppedElapsedMs = useSyncExternalStore(
+    subscribe,
+    () => activityOf(snapshot, sessionId).stoppedElapsedMs
+  );
+  const stoppedOutputTokens = useSyncExternalStore(
+    subscribe,
+    () => activityOf(snapshot, sessionId).stoppedOutputTokens
+  );
+  return {
+    runningSince,
+    needsYou,
+    failedAt,
+    failedReason,
+    stoppedAt,
+    stoppedElapsedMs,
+    stoppedOutputTokens,
+  };
 }
 
 /** A live MCP elicitation is shown pinned above the composer, so its inline copy steps aside. */

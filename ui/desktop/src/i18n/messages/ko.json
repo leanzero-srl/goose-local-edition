@@ -7022,6 +7022,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "턴이 {elapsed} 동안 실행 중입니다"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "중지됨"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, other {#개 확인 필요}}"
   },
@@ -7513,6 +7516,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "필수 매개변수가 누락되었습니다."
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours}시간 {minutes}분"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes}분"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "모델이 아무것도 쓰기 전에 {elapsed} 후 이 답변을 중지했습니다"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds}초"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "{elapsed} 후 이 답변을 중지했습니다"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "{elapsed} 후 이 답변을 중지했습니다 · {tokens} 토큰"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} 제공업체가 구성되었습니다."

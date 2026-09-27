@@ -41,6 +41,17 @@ function applyStatusMessage(
   // the status line. Every other status carries none, so an earlier line's list never lingers.
   const forming =
     update.status.type === 'progress' ? (update.status.forming ?? undefined) : undefined;
+  // Q-169: a stopped turn's notice carries its numbers; the chat renders its line from them.
+  const stopped =
+    update.status.type === 'notice' && update.status.stopped
+      ? {
+          kind: 'turnStopped' as const,
+          elapsedMs: update.status.stopped.elapsedMs,
+          ...(update.status.stopped.outputTokens != null
+            ? { outputTokens: update.status.stopped.outputTokens }
+            : {}),
+        }
+      : undefined;
 
   // A progress status replaces the one directly before it: the loading line reads only the last
   // message, and a live counter (a response forming tool calls) would otherwise add a message per tick.
@@ -62,6 +73,7 @@ function applyStatusMessage(
         notificationType,
         msg: update.status.message,
         ...(forming ? { data: forming } : {}),
+        ...(stopped ? { data: stopped } : {}),
       },
     ],
     metadata: {

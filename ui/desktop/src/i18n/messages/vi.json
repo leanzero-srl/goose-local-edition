@@ -7022,6 +7022,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "Một lượt đang chạy được {elapsed}"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "Đã dừng"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, other {# cần bạn}}"
   },
@@ -7513,6 +7516,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "Thiếu tham số bắt buộc"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} giờ {minutes} phút"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} phút"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "Bạn đã dừng câu trả lời này sau {elapsed}, trước khi mô hình viết gì"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} giây"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "Bạn đã dừng câu trả lời này sau {elapsed}"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "Bạn đã dừng câu trả lời này sau {elapsed} · {tokens} token"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "Nhà cung cấp {name} đã được định cấu hình"

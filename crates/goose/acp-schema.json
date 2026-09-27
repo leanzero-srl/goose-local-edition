@@ -13321,6 +13321,14 @@
             "$ref": "#/$defs/FailedSessionDto"
           },
           "description": "User/scheduled sessions whose LAST turn failed (a later completed turn clears it)."
+        },
+        "stopped": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/StoppedSessionDto"
+          },
+          "description": "User/scheduled sessions whose LAST turn the person stopped (a later completed turn clears it).",
+          "default": []
         }
       },
       "required": [
@@ -13450,6 +13458,45 @@
         "workingDir",
         "failedAt"
       ]
+    },
+    "StoppedSessionDto": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string"
+        },
+        "sessionName": {
+          "type": "string"
+        },
+        "workingDir": {
+          "type": "string"
+        },
+        "stoppedAt": {
+          "type": "string",
+          "description": "RFC 3339: when the person stopped the turn."
+        },
+        "elapsedMs": {
+          "type": "integer",
+          "description": "How long the turn had run.",
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "The output tokens the model had written; absent when goose could not count them.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "sessionId",
+        "sessionName",
+        "workingDir",
+        "stoppedAt",
+        "elapsedMs"
+      ],
+      "description": "A session whose LAST turn the person stopped (Q-169)."
     },
     "ResolveNeedsYouRequest_unstable": {
       "type": "object",
@@ -13636,6 +13683,17 @@
             "message": {
               "type": "string"
             },
+            "stopped": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/StoppedTurnStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The turn the person stopped, when this notice says so (Q-169) — the chat renders the\nline from these numbers. Absent for every other notice."
+            },
             "type": {
               "type": "string",
               "const": "notice"
@@ -13674,6 +13732,27 @@
           ]
         }
       ]
+    },
+    "StoppedTurnStatus": {
+      "type": "object",
+      "properties": {
+        "elapsedMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Absent when goose could not count them.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "elapsedMs"
+      ],
+      "description": "A turn the person stopped: how long it ran and the output tokens the model had written."
     },
     "FormingStatus": {
       "type": "object",

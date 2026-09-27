@@ -7022,6 +7022,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "A turn is running now, for {elapsed}"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "Stopped"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count,plural,one{# needs you} other{# need you}}"
   },
@@ -7513,6 +7516,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "Missing required parameters"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} h {minutes} min"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} min"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "You stopped this answer after {elapsed}, before the model wrote anything"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} s"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "You stopped this answer after {elapsed}"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "You stopped this answer after {elapsed} · {tokens} tokens"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} provider is configured"

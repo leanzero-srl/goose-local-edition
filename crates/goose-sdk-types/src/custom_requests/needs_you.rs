@@ -67,6 +67,22 @@ pub struct FailedSessionDto {
     pub reason: Option<String>,
 }
 
+/// A session whose LAST turn the person stopped (Q-169).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StoppedSessionDto {
+    pub session_id: String,
+    pub session_name: String,
+    pub working_dir: String,
+    /// RFC 3339: when the person stopped the turn.
+    pub stopped_at: String,
+    /// How long the turn had run.
+    pub elapsed_ms: u64,
+    /// The output tokens the model had written; absent when goose could not count them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, JsonRpcResponse)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionActivityResponse {
@@ -74,6 +90,9 @@ pub struct SessionActivityResponse {
     pub needs_you: Vec<NeedsYouItemDto>,
     /// User/scheduled sessions whose LAST turn failed (a later completed turn clears it).
     pub failed: Vec<FailedSessionDto>,
+    /// User/scheduled sessions whose LAST turn the person stopped (a later completed turn clears it).
+    #[serde(default)]
+    pub stopped: Vec<StoppedSessionDto>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

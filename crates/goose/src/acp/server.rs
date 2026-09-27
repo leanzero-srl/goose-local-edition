@@ -2151,6 +2151,12 @@ fn status_message_from_system_notification(
     match notification.notification_type {
         SystemNotificationType::InlineMessage => Some(StatusMessage::Notice {
             message: notification.msg.clone(),
+            stopped: crate::turn_outcome::stopped_of(notification).map(|stopped| {
+                StoppedTurnStatus {
+                    elapsed_ms: stopped.elapsed_ms,
+                    output_tokens: stopped.output_tokens,
+                }
+            }),
         }),
         SystemNotificationType::ThinkingMessage => Some(StatusMessage::Progress {
             message: notification.msg.clone(),
@@ -2648,6 +2654,9 @@ impl GooseAcpAgent {
         let mut stream = link_serve::tapped_reply(&session_id, stream);
 
         let mut was_cancelled = false;
+        // Q-169: what a stopped turn leaves behind — its wall time and the output it had streamed.
+        let mut meter = crate::turn_outcome::TurnMeter::start();
+        let args_observer = meter.tool_forming_observer();
         let mut first_event_logged = false;
         let mut event_count: u32 = 0;
         // Streaming chain buffer: tracks consecutive tool requests across
@@ -2680,7 +2689,11 @@ impl GooseAcpAgent {
                 // The provider stream is polled inside this future, so the scope reaches its
                 // decoder: a response still forming tool calls reports what it has received.
                 maybe_event = goose_providers::formats::openai::FORMING_PROGRESS_OBSERVER
-                    .scope(forming_observer.clone(), stream.next()) => match maybe_event {
+                    .scope(
+                        forming_observer.clone(),
+                        goose_providers::formats::openai::TOOL_FORMING_OBSERVER
+                            .scope(args_observer.clone(), stream.next()),
+                    ) => match maybe_event {
                     Some(event) => event,
                     None => break,
                 },
@@ -2704,6 +2717,17 @@ impl GooseAcpAgent {
                 Ok(crate::agents::AgentEvent::Message(message)) => {
                     // Agent persists messages via session_manager.add_message() internally.
                     let stored_message_id = message.id.clone();
+                    if message.role == rmcp::model::Role::Assistant && message.is_agent_visible() {
+                        for content in &message.content {
+                            match content {
+                                MessageContent::Text(text) => meter.on_output(&text.text),
+                                MessageContent::Thinking(thinking) => {
+                                    meter.on_output(&thinking.thinking)
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
 
                     let mut sessions = self.sessions.lock().await;
                     let Some(session) = sessions.get_mut(&session_id) else {
@@ -2770,6 +2794,7 @@ impl GooseAcpAgent {
                         break;
                     }
                 }
+                Ok(crate::agents::AgentEvent::Usage(usage)) => meter.on_usage(&usage),
                 Ok(crate::agents::AgentEvent::McpNotification((request_id, notification))) => {
                     if let Some(update) =
                         tool_notifications::tool_notification_update(request_id, notification)
@@ -2794,6 +2819,30 @@ impl GooseAcpAgent {
         // Drop the reply stream now (not at end of scope) so a cancelled run's in-flight provider
         // future — and any child process it spawned with kill_on_drop — is torn down immediately.
         drop(stream);
+
+        // Q-169: the dropped stream never reaches the agent's own end-of-turn record, so a stopped
+        // turn is recorded here — before the run-end update, so every list reads Stopped — with a
+        // chat line in the conversation where the answer would have been.
+        if was_cancelled {
+            let stopped = meter.stopped().await;
+            match crate::turn_outcome::record_stopped(&self.session_manager, &session_id, stopped)
+                .await
+            {
+                Ok(notice) => {
+                    for content in &notice.content {
+                        if let MessageContent::SystemNotification(notification) = content {
+                            send_status_message_update(
+                                cx,
+                                self.supports_goose_custom_notifications(),
+                                &session_id,
+                                notification,
+                            )?;
+                        }
+                    }
+                }
+                Err(error) => warn!(session_id, %error, "the stopped turn was not recorded"),
+            }
+        }
 
         {
             let mut sessions = self.sessions.lock().await;

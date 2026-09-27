@@ -7022,6 +7022,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "Bir tur {elapsed} süredir çalışıyor"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "Durduruldu"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, one {# sana ihtiyaç duyuyor} other {# sana ihtiyaç duyuyor}}"
   },
@@ -7513,6 +7516,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "Gerekli parametreler eksik"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} sa {minutes} dk"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} dk"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "Model bir şey yazmadan önce bu yanıtı {elapsed} sonra durdurdunuz"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} sn"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "Bu yanıtı {elapsed} sonra durdurdunuz"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "Bu yanıtı {elapsed} sonra durdurdunuz · {tokens} token"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} sağlayıcısı yapılandırıldı"

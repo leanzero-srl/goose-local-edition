@@ -63,7 +63,13 @@ pub struct StatusMessageUpdate {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StatusMessage {
     #[serde(rename_all = "camelCase")]
-    Notice { message: String },
+    Notice {
+        message: String,
+        /// The turn the person stopped, when this notice says so (Q-169) — the chat renders the
+        /// line from these numbers. Absent for every other notice.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stopped: Option<StoppedTurnStatus>,
+    },
     #[serde(rename_all = "camelCase")]
     Progress {
         message: String,
@@ -72,6 +78,16 @@ pub enum StatusMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         forming: Option<FormingStatus>,
     },
+}
+
+/// A turn the person stopped: how long it ran and the output tokens the model had written.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StoppedTurnStatus {
+    pub elapsed_ms: u64,
+    /// Absent when goose could not count them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
 }
 
 /// What the decoder has received of a response whose tool calls are still forming (Q-151): each
@@ -141,6 +157,7 @@ mod tests {
             update: GooseSessionUpdate::StatusMessage(StatusMessageUpdate {
                 status: StatusMessage::Notice {
                     message: "Compaction complete".to_string(),
+                    stopped: None,
                 },
             }),
         };

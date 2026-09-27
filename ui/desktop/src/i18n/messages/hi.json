@@ -7022,6 +7022,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "एक चरण अभी चल रहा है, {elapsed} से"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "रोका गया"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, one {# को आपकी ज़रूरत है} other {# को आपकी ज़रूरत है}}"
   },
@@ -7513,6 +7516,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "आवश्यक पैरामीटर गुम हैं"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} घं {minutes} मि"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} मि"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "आपने यह उत्तर {elapsed} के बाद रोक दिया, मॉडल के कुछ लिखने से पहले"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} से"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "आपने यह उत्तर {elapsed} के बाद रोक दिया"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "आपने यह उत्तर {elapsed} के बाद रोक दिया · {tokens} टोकन"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name} प्रदाता कॉन्फ़िगर किया गया है"

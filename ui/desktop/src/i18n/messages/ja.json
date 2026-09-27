@@ -7022,6 +7022,9 @@
   "sessionActivity.runningLabel": {
     "defaultMessage": "ターンを実行中（{elapsed}）"
   },
+  "sessionActivity.stopped": {
+    "defaultMessage": "停止"
+  },
   "sessionActivityIndicator.needsYou": {
     "defaultMessage": "{count, plural, other {対応が必要 #件}}"
   },
@@ -7513,6 +7516,24 @@
   },
   "standaloneAppView.missingParams": {
     "defaultMessage": "必須パラメータが不足しています"
+  },
+  "stoppedTurn.hours": {
+    "defaultMessage": "{hours} 時間 {minutes} 分"
+  },
+  "stoppedTurn.minutes": {
+    "defaultMessage": "{minutes} 分"
+  },
+  "stoppedTurn.nothingWritten": {
+    "defaultMessage": "モデルが何も書く前に、{elapsed} でこの回答を停止しました"
+  },
+  "stoppedTurn.seconds": {
+    "defaultMessage": "{seconds} 秒"
+  },
+  "stoppedTurn.uncounted": {
+    "defaultMessage": "{elapsed} でこの回答を停止しました"
+  },
+  "stoppedTurn.withTokens": {
+    "defaultMessage": "{elapsed} でこの回答を停止しました · {tokens} トークン"
   },
   "stringUtils.configuredProvider": {
     "defaultMessage": "{name}プロバイダーが設定されています"

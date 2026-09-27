@@ -575,6 +575,28 @@ describe('createAcpSessionNotificationAdapter', () => {
       ]);
     });
 
+    // Q-169: the stopped turn's notice keeps its numbers, so the chat renders its line from them.
+    it("keeps a stopped turn's numbers on its notice", () => {
+      const adapter = createAcpSessionNotificationAdapter();
+      const messages = expectOnlyMessagesChange(
+        adapter.applyGoose(
+          gooseUpdate({
+            sessionUpdate: 'status_message',
+            status: {
+              type: 'notice',
+              message: 'You stopped this answer after 6 min · 1.9k tokens',
+              stopped: { elapsedMs: 372_000, outputTokens: 1_900 },
+            },
+          })
+        )
+      );
+      expect(firstContent(messages[0])).toMatchObject({
+        type: 'systemNotification',
+        notificationType: 'inlineMessage',
+        data: { kind: 'turnStopped', elapsedMs: 372_000, outputTokens: 1_900 },
+      });
+    });
+
     it('maps status messages and keeps later id-less chunks separate', () => {
       const adapter = createAcpSessionNotificationAdapter();
 

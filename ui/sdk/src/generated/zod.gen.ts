@@ -5729,10 +5729,26 @@ export const zFailedSessionDto = z.object({
     ]).optional()
 });
 
+/**
+ * A session whose LAST turn the person stopped (Q-169).
+ */
+export const zStoppedSessionDto = z.object({
+    sessionId: z.string(),
+    sessionName: z.string(),
+    workingDir: z.string(),
+    stoppedAt: z.string(),
+    elapsedMs: z.number().int().gte(0),
+    outputTokens: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
 export const zSessionActivityResponse_unstable = z.object({
     running: z.array(zRunningSessionDto),
     needsYou: z.array(zNeedsYouItemDto),
-    failed: z.array(zFailedSessionDto)
+    failed: z.array(zFailedSessionDto),
+    stopped: z.array(zStoppedSessionDto).optional().default([])
 });
 
 export const zNeedsYouAction = z.enum(['answer', 'dismiss']);
@@ -5791,6 +5807,17 @@ export const zSessionUsageUpdate = z.object({
     ]).optional()
 });
 
+/**
+ * A turn the person stopped: how long it ran and the output tokens the model had written.
+ */
+export const zStoppedTurnStatus = z.object({
+    elapsedMs: z.number().int().gte(0),
+    outputTokens: z.union([
+        z.number().int().gte(0),
+        z.null()
+    ]).optional()
+});
+
 export const zFormingCallStatus = z.object({
     name: z.string(),
     title: z.string(),
@@ -5817,6 +5844,10 @@ export const zFormingStatus = z.object({
 export const zStatusMessage = z.union([
     z.object({
         message: z.string(),
+        stopped: z.union([
+            zStoppedTurnStatus,
+            z.null()
+        ]).optional(),
         type: z.literal('notice')
     }),
     z.object({
