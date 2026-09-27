@@ -1,39 +1,62 @@
 # MLX quality loop — BACKLOG (one row per open item; rewritten each tick; closed rows live in FINDINGS-LEDGER.md)
 
-Updated 2026-09-26 19:1x. Ratio today: 29 fixed (Q-111..Q-137) · 8 proven live · 21 awaiting live prove · 2 cutting · 6 open.
+Updated 2026-09-27 (ledger reconciled against main + the release checkouts). Ratio today: 167 rows · 55 proven live · 83 awaiting live prove · 2 cutting · 18 open (+ 4 shipped before proving existed · 3 parked · 2 refuted).
+Before the reconcile: 51 "open" · 6 cutting/framed · 49 awaiting · 28 "fixed" with no prove status · 23 proven · 10 other — of the 51 "open": 32 were already fixed and shipped (12 of them proven live), 2 parked, 1 refuted, 16 truly open.
 
-## 1. Awaiting LIVE proof on the next build (prove in the named run, then mark "PROVEN LIVE <run>")
+## 1. Awaiting LIVE proof (prove in the named run, then mark "PROVEN LIVE <run>")
 | id | what | proven by |
 |---|---|---|
-| Q-136 | split starts on the first try (readiness 503 + formation handshake) | split-start.mjs on 3.0.51 |
-| Q-137 | Link connects over the tailnet while the Funnel is dead | Link tab + route shown on 3.0.51 |
-| Q-114 | tensor split passes 10.5k generated tokens (buffer leak) | E2E #3c turn 0 / a 21k-token direct gen |
-| Q-135 | split turn 0 ≈ Studio (no xhigh thinking) | E2E #3c turn 0 secs vs #4 (170 s) |
-| Q-132 | checker runs reasoning-off, never blocks the next turn | E2E #3c calls.csv (checker rows) |
-| Q-121/122 | split-stop notice survives relaunch; cut answer says split stopped | relaunch after any split stop |
-| Q-112 | Run switch cancels the load it replaces | switch Studio→split during a restore |
-| Q-115 | goosed disk writes ~0 under a real run | harness/diskio.py during E2E |
-| Q-119/120/125 | Run it follows the picker; fits-once-stopped wording | walk Engine tab with Flash picked |
-| Q-123/124/129 | one run history; chip = this chat only; 303 runs in the estimate | critic walk + tile after relaunch |
-| Q-126 | no foreignEngines refusal from goose's own probes | pick model + Run at once |
-| Q-127 | Flash rank cache ≈ budget − plan − scores | rank0 log guardrails line (seen 12.1 GB on 3.0.49) |
-| Q-128/131 | chat follows the served model; engines answer every name of it | E2E #5b turn 0 + curl with the HF id |
-| Q-133 | undeclared tool name → failed call named, model retries | E2E #5b (Flash) |
-| Q-134 | pipeline admits a 2nd request mid-generation (decode −46% during join) | load.py 3 workers on Flash |
-| Q-116/117/118 | runner self-update; keyless search; bundled MCP paths | seen live — re-check once on 3.0.51 |
+| Q-107 · Q-141 · Q-142 | load_tools keeps the prefix; a tool call streams while written; 2nd+ tool calls read within ~4k of input | E2E #3f (27B tensor, jira brief, 3.0.56) calls.csv + chat |
+| Q-162 | no hang kill during a long prompt-cache search / compaction call | E2E #3f past its first compaction, rank0 log |
+| Q-13 · Q-151 · Q-153 | status line: "reading … of about Y at its measured Z tok/s", then "Writing for …"; counter adds tokens being written | E2E #3f turn 0 screenshots |
+| Q-147 | the running session is marked in every list; Active now | livecheck green during E2E #3f |
+| Q-132 · Q-109 | checker rows run reasoning-off and never block; "All N steps" with an undone step gets the goose check line | E2E #3f calls.csv checker rows; a 20-step census on 3.0.56 |
+| Q-84 · Q-91 · Q-88 · Q-94 | goose check line on a failed write / unsupported claim; condensed pairs are fact records; no empty "new turn" closing | E2E #3f transcript read turn by turn |
+| Q-96 · Q-97 · Q-99 · Q-100 | load_tools finds the right family; title within turn 0; tool cards carry the label + error; Thinking rows solid | E2E #3f screenshots |
+| Q-87 · Q-89 · Q-92 · Q-93 · Q-98 · Q-68 | two saves to one category both kept; a ~ chat keeps its own ledger; no invented reasons; card not clamped; memory search floor; recall suggestions | E2E memory turn (turn 1–2 of the jira brief) |
+| Q-79 · Q-104 · Q-115 | rank memory stays within the plan beside helper calls; goosed writes ~0 MB under a run | GOOSE_RANK_MEM + harness/diskio.py during E2E #3f |
+| Q-101 · Q-102 | the agent's shell runs the user's own node, shims only as fallback | `node -v` in an installed-app chat |
+| Q-148 · Q-149 · Q-150 · Q-152 · Q-154 · Q-155 · Q-156 · Q-157 · Q-158 | engine + chat surfaces from live round 1 | live critic round 2 on 3.0.56, during E2E #3f |
+| Q-12 · Q-41 · Q-42 · Q-43 · Q-44 · Q-45 · Q-46 | chip menu → Open Engine (no Switch-models dead end); fit badges name the Mac; details say whose engine; run book kept; Models chips; GB notes | live critic round 2 |
+| Q-67 · Q-71 · Q-72 · Q-80 · Q-82 · Q-130 | code themes both modes; split window wording; split trade-off + Long-documents ranking; Skills count; proposal card origin; Add node names | live critic round 2 |
+| Q-120 · Q-125 · Q-123 · Q-124 · Q-129 | fits-once-stopped badge; saved-setup line; tile = Run it = tray run count before/after relaunch; chip = this chat only | critic walk + relaunch with the Studio route up |
+| Q-33 · Q-58 · Q-59 · Q-63 · Q-64 | tile "Lost contact … reconnecting" (no raw 502); tray plain words; bar clears with main; one spinner side; one amber episode | recovery.mjs kill-link + relaunch-peer on 3.0.56 |
+| Q-111 | "isn't running" only after the Studio's own Leaving, with actions | quit goose on the Studio with a route up |
+| Q-17 | a foreign 39k request → the bar says busy, not "ready" | busy.mjs-style foreign request on the Studio, chat open |
+| Q-81 · Q-121 · Q-122 | split-stop notice survives relaunch; the cut answer says the split stopped | stop a split under a turn, relaunch, reopen |
+| Q-77 | restore waits out goose's own leftover rank | update + relaunch with the split up |
+| Q-29 · Q-76 · Q-106 | Run here mid-peer-mount → one engine; unproven pids never signalled; two loads at once → the second waits, named | R5 switch races on 3.0.56 + census |
+| Q-134 · Q-145 · Q-160 | pipeline admits a short request beside long ones; aging; admission by KV need | Flash pipeline load 26e (canaries every 60 s) |
+| Q-75 · Q-131 · Q-133 · Q-143 · Q-144 | pipeline restores prefixes; every served name answers; undeclared tool = failed call; turn-context on tool results; XML guard armed | E2E #5b on the Flash pipeline |
+| Q-138 · Q-139 | no bundled-mcps process after quit; MCP files never in the session dir | quit mid-session + ps; a search + fetch + doc in one chat |
+| Q-140 · Q-163 · Q-78 | load-sensitive tests and the pwd flake stay green; clean.sh flags a stand-in rank | the next CI runs on main; clean.sh on the next leftover |
 
 ## 2. Cutting now
 | id | what | owner |
 |---|---|---|
-| Q-138 | orphaned bundled MCPs spin 100% forever; goose never reaps them | worktree agent |
-| (CI) | leanzero-link tests flaky under parallel load | worktree agent |
+| Q-161 | tensor split: one answer of 221,604 tokens = 324 identical write+mkdir pairs | GPU investigation agent (worktree agent-abd19485320c16b61, sole GPU user) |
+| Q-164 | one /v1/completions request (IndexError in insert_segments) kills both split ranks | the same agent (same generation path, holds the repro) |
 
-## 3. Open (next to dispatch, in this order)
-| id | what | next step |
-|---|---|---|
-| Q-130 | Add node names LM Studio; promises an engine repoint it doesn't do | desktop agent after Q-138 merges |
-| Q-107 | tool deferral hides web search for minutes (E2E #4b) | E2E pair deferral on/off on the Studio route |
-| Q-103 | short requests wait behind prefills on the single engine (MTP verifier one-at-a-time) | re-measure after Q-134's approach; fork design |
-| Q-109 | reply-check step audit skipped once in 20 | replay with Q-132's reasoning-off checker |
-| Q-110 | Studio single engine OOM under opened admission | only if admission is reopened |
-| Q-19 | cache-size arms | only if a round shows cold calls |
+## 3. Open, ranked (dead end > misleads > stability > friction > cosmetic)
+| id | class | what | next step (where) |
+|---|---|---|---|
+| Q-14 | misleads | recall names chatrecall while it is disabled → 26 shell calls hunting a session | name it only when enabled (recall.rs:971-976) · engine |
+| Q-18 | misleads | the swarm session still defaults to 128000 until the router's first pick | read context_limit of a 3.0.56 chat in sessions.db; persist the probed window (providers/swarm.rs:623-627) · engine |
+| Q-146 | misleads | a streamed split answer can withhold text for 17+ min | read /v1/status stream.tail + withholding (56e1487ba, live since 3.0.55) on the next silent call, then fix from the words · engine (tensor wrapper) |
+| Q-6 | misleads | "Coding · Agent" toggle changes nothing; tooltip promises a loop | drop the persona state or relabel (ChatInput.tsx:1782-1788, PersonaChooser.tsx:51) · UI |
+| Q-37 | misleads | Link "did not come back:" prefix on every supervisor failure | show the supervisor's reason alone (LeanZeroLinkSection.tsx:392-398) · UI |
+| Q-7 | misleads | "Set up agent" is the recipes hub; its fleet wizard talks to LM Studio | route it through goose's served model (RecipeChatWizard.tsx:27-32, 105-109) · UI |
+| Q-103 | stability | a short request waits minutes behind a long prefill (single engine and tensor split) | carry Q-134's between-decode-steps admission to the single engine's MTP path; A/B the canary under R2 3×13k · engine (Rapid-MLX fork) |
+| Q-28 | friction | Run on this Mac refused while the split runs | stop the split first via the servingWays switch (PlacementCard.tsx:1456-1462, 1667-1671) · UI |
+| Q-38 | friction | the Reconnecting card never shows lastError | pass lastError to ConnectingCard (LeanZeroLinkSection.tsx:435-450, 762) · UI |
+| Q-9 | friction | one action, two names ("Generate diagnostics bundle" / "Report a Problem") | one name (ChatInput.tsx:1864-1881, Diagnostics.tsx:10-13) · UI |
+| Q-20 | friction | Sampling opens on this Mac while the Studio serves | default to the route's peer (MlxEngineView.tsx:2431) · UI |
+| Q-21 | friction | Escape does nothing in two overlays | the app's dialog primitive (Diagnostics.tsx:206-207, AgentSetupWizard.tsx:118-122) · UI |
+| Q-22 | friction | "requests not from this app's chats or /v1" | "N requests from another app" (mlxTray.ts:456, MlxStateTile.tsx:173) · UI |
+| Q-60 | cosmetic (regressed) | the context counter vanishes while the split is down | keep the last window (ChatInput.tsx:657-671) · UI |
+| Q-26 | cosmetic | a writing engine's Run it chip is grey | pass live activity into wayServing (PlacementCard.tsx:794-826) · UI |
+| Q-24 | cosmetic | "recalled: memories … · past session <id>" jargon, faded | plain words in recall_line (recall.rs:879-896) + solid ink · engine words + UI |
+| Q-23 | cosmetic | Report a Problem backdrop solid black; folder chip shows through | bg-black/50; drop z-[100] (Diagnostics.tsx:207, DirSwitcher.tsx:184) · UI |
+| Q-25 | cosmetic | "1 other split › not supported yet" outside Details | move under the split's Details (PlacementCard.tsx:1770-1795) · UI |
+
+Parked (evidence in the ledger): Q-11 (no panic in 115 min of R2), Q-90 (reviewer recall 33/40; the motivating pair 2/8, no design in hand), Q-19 update row (cache-size arms not needed).
