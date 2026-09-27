@@ -248,6 +248,69 @@ struct ChildHandle {
     pid: Option<u32>,
     stderr_tail: Arc<StdMutex<VecDeque<String>>>,
     stderr_lines: Arc<AtomicU64>,
+    /// The task filling `stderr_tail`; it ends at the pipe's EOF, which the kernel delivers once
+    /// every process holding the write end has exited. `None` once it has been awaited.
+    stderr_reader: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ChildHandle {
+    /// The stderr tail of a child that has EXITED (the caller reaped it), with every line it
+    /// wrote. A child that prints its error and exits at once can be reaped before the reader
+    /// task has taken those lines off the pipe (CI, 2026-09-28: "exited during startup (exit
+    /// status: 3). stderr:" with the words missing), so the tail waits for the reader's EOF —
+    /// the pipe closing is the event, there is no clock. EOF comes only when no writer is left:
+    /// when members of the child's process group (its descendants inherit the pipe) still live,
+    /// waiting could park forever behind an orphaned engine, so the tail is returned as read so
+    /// far and SAYS so.
+    async fn last_words(&mut self) -> String {
+        if let Some(reader) = self.stderr_reader.as_mut() {
+            if let Some(holders) = stderr_holders_left(self.pid) {
+                return format!(
+                    "{}\n({holders}; these are the lines read so far, its last ones may be missing)",
+                    stderr_tail_string(&self.stderr_tail)
+                );
+            }
+            let ended = reader.await;
+            self.stderr_reader = None;
+            if let Err(e) = ended {
+                return format!(
+                    "{}\n(the stderr reader ended abnormally, so lines may be missing: {e})",
+                    stderr_tail_string(&self.stderr_tail)
+                );
+            }
+        }
+        stderr_tail_string(&self.stderr_tail)
+    }
+}
+
+/// Who, besides the exited child, may still hold its stderr pipe open — `None` when provably
+/// nobody. The child spawns as the leader of its own process group (`configure_subprocess`), and
+/// its descendants inherit both the group and the pipe; `killpg(group, 0)` answering ESRCH proves
+/// the group empty, so the reader's EOF is due.
+#[cfg(unix)]
+fn stderr_holders_left(pid: Option<u32>) -> Option<String> {
+    let Some(pid) = pid else {
+        return Some("the exited child's pid was never known, so its process group cannot be checked for other stderr holders".to_string());
+    };
+    if unsafe { libc::killpg(pid as libc::pid_t, 0) } == 0 {
+        return Some(format!(
+            "process group {pid} still has live members after its leader exited, and they hold the stderr pipe open"
+        ));
+    }
+    let refused = std::io::Error::last_os_error();
+    match refused.raw_os_error() {
+        Some(libc::ESRCH) => None,
+        _ => Some(format!(
+            "process group {pid} could not be checked for other stderr holders: {refused}"
+        )),
+    }
+}
+
+/// Off Unix there is no process group to prove the pipe's other holders gone, and a descendant
+/// that inherited the pipe would hold the reader's EOF back indefinitely.
+#[cfg(not(unix))]
+fn stderr_holders_left(_pid: Option<u32>) -> Option<String> {
+    Some("off Unix the exited child's descendants cannot be proven gone, so its stderr is not waited to EOF".to_string())
 }
 
 struct State {
@@ -324,15 +387,14 @@ impl Sidecar {
         let Some(handle) = state.handle.as_mut() else {
             return Ok(None);
         };
-        Ok(handle
-            .child
-            .try_wait()
-            .context("try_wait on sidecar")?
-            .map(|status| SidecarExit {
-                pid: handle.pid,
-                status: status.to_string(),
-                stderr_tail: stderr_tail_string(&handle.stderr_tail),
-            }))
+        let Some(status) = handle.child.try_wait().context("try_wait on sidecar")? else {
+            return Ok(None);
+        };
+        Ok(Some(SidecarExit {
+            pid: handle.pid,
+            status: status.to_string(),
+            stderr_tail: handle.last_words().await,
+        }))
     }
 
     pub async fn healthy(&self) -> bool {
@@ -384,11 +446,11 @@ impl Sidecar {
             }
         };
 
-        let tail = state
-            .handle
-            .as_ref()
-            .map(|h| stderr_tail_string(&h.stderr_tail))
-            .unwrap_or_default();
+        let tail = match state.handle.as_mut() {
+            Some(h) if process_dead => h.last_words().await,
+            Some(h) => stderr_tail_string(&h.stderr_tail),
+            None => String::new(),
+        };
         tracing::warn!(
             sidecar = %self.config.name,
             process_dead,
@@ -467,28 +529,47 @@ impl Sidecar {
 
         let stderr_tail = Arc::new(StdMutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
         let stderr_lines = Arc::new(AtomicU64::new(0));
-        if let Some(stderr) = child.stderr.take() {
+        let stderr_reader = child.stderr.take().map(|stderr| {
             let tail = Arc::clone(&stderr_tail);
             let count = Arc::clone(&stderr_lines);
             let name = self.config.name.clone();
             tokio::spawn(async move {
-                let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    tracing::debug!(sidecar = %name, "{line}");
-                    count.fetch_add(1, Ordering::Relaxed);
+                let push = |line: String| {
                     let mut tail = tail.lock().unwrap();
                     if tail.len() == STDERR_TAIL_LINES {
                         tail.pop_front();
                     }
                     tail.push_back(line);
+                };
+                // Bytes, decoded lossily: `lines()` ends at the first non-UTF-8 byte, and every
+                // line after it — the traceback that explains a failed load — would be dropped.
+                let mut stderr = BufReader::new(stderr);
+                let mut buf = Vec::new();
+                loop {
+                    buf.clear();
+                    match stderr.read_until(b'\n', &mut buf).await {
+                        Ok(0) => break,
+                        Ok(_) => {
+                            let line = String::from_utf8_lossy(&buf);
+                            let line = line.trim_end_matches(['\n', '\r']).to_string();
+                            tracing::debug!(sidecar = %name, "{line}");
+                            count.fetch_add(1, Ordering::Relaxed);
+                            push(line);
+                        }
+                        Err(e) => {
+                            push(format!("(reading this engine's stderr failed: {e})"));
+                            break;
+                        }
+                    }
                 }
-            });
-        }
+            })
+        });
         Ok(ChildHandle {
             pid: child.id(),
             child,
             stderr_tail,
             stderr_lines,
+            stderr_reader,
         })
     }
 
@@ -514,7 +595,7 @@ impl Sidecar {
                 .into());
             }
             if let Some(status) = handle.child.try_wait().context("try_wait during startup")? {
-                let tail = stderr_tail_string(&handle.stderr_tail);
+                let tail = handle.last_words().await;
                 bail!(
                     "sidecar '{}' exited during startup ({status}). stderr:\n{tail}",
                     self.config.name
@@ -1097,5 +1178,78 @@ mod tests {
         let resolved = resolve_lsof_in(&known, Some(packaged_path)).unwrap();
         assert_eq!(resolved, PathBuf::from("/usr/sbin/lsof"));
         assert_eq!(resolve_lsof().unwrap(), PathBuf::from("/usr/sbin/lsof"));
+    }
+
+    #[cfg(unix)]
+    fn sidecar_running(script: &str) -> Sidecar {
+        Sidecar {
+            config: SidecarConfig::new(
+                "fast-exit",
+                vec!["sh".into(), "-c".into(), script.into()],
+                "http://127.0.0.1:9",
+                "unused",
+            ),
+            client: reqwest::Client::new(),
+            state: Mutex::new(State {
+                handle: None,
+                restarts: VecDeque::new(),
+                backoff: Duration::ZERO,
+            }),
+            cancel: StdMutex::new(None),
+        }
+    }
+
+    /// Blocks the runtime's ONE thread until the child has exited, so the stderr reader task
+    /// cannot have run: the CI race (2026-09-28), made certain instead of likely.
+    #[cfg(unix)]
+    fn reap_without_yielding(handle: &mut ChildHandle) {
+        while handle.child.try_wait().unwrap().is_none() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_exited_childs_last_words_are_read_to_eof_before_they_are_reported() {
+        let sidecar = sidecar_running(
+            "echo 'Loading model with BatchedEngine' >&2; echo 'ValueError: no weights' >&2; exit 3",
+        );
+        let mut handle = sidecar.spawn_child().unwrap();
+        reap_without_yielding(&mut handle);
+        assert!(
+            handle.stderr_tail.lock().unwrap().is_empty(),
+            "the reader has not taken a line yet — the race is set up"
+        );
+        assert_eq!(
+            handle.last_words().await,
+            "Loading model with BatchedEngine\nValueError: no weights"
+        );
+    }
+
+    /// A descendant that outlives the child keeps the pipe open, so EOF may never come: the
+    /// words are returned at once, and say they may be incomplete — never a wait on an orphan.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_descendant_holding_the_pipe_is_named_never_waited_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("orphan.pid");
+        let sidecar = sidecar_running(&format!(
+            "sleep 600 & echo $! > '{}'; echo 'ValueError: no weights' >&2; exit 3",
+            pid_file.display()
+        ));
+        let mut handle = sidecar.spawn_child().unwrap();
+        reap_without_yielding(&mut handle);
+        let words = handle.last_words().await;
+        let orphan: libc::pid_t = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        unsafe { libc::kill(orphan, libc::SIGKILL) };
+        assert!(
+            words.contains("still has live members after its leader exited")
+                && words.contains("its last ones may be missing"),
+            "{words}"
+        );
     }
 }
