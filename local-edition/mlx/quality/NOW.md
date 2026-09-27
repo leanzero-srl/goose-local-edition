@@ -1,10 +1,12 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 08:10 · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
+Updated: 2026-09-27 08:45 · heartbeat cron 90b0083a (silent 00:35→07:50!) + runwatch.sh per run
 
 ## Live
 - Installed on both Macs: 3.0.55 (Q-146 instrument, Q-159 sampling + guard, needs-you + Q-147 states, Q-145 aging).
-  NOT yet in a build: engine surfaces Q-148..Q-157, Q-160, CI flake fixes → 3.0.56.
+- BUILDING 3.0.56 from e9e988fb1: engine surfaces Q-148..Q-157, chat surfaces Q-151..Q-153/Q-158, Q-160 slots,
+  Q-162 (prefix search 164 s → 32 ms; CPU phase = progress), open chat stays in the sidebar, CI flake fixes.
+  Install WAITS for the Q-161 agent (it probes the live split).
 - E2E #3e (3.0.55, 27B tensor, sampled) FAILED unseen for 7 h: ONE answer of 221,604 tokens = 324 × identical
   write+mkdir (Q-161), then the hang rule killed the split mid prompt-cache search (Q-162), then r1 fired 29 dead
   turns (fixed: a notice ends the round). The cron heartbeat did not fire 00:35→07:50 — runwatch.sh now wakes on
@@ -14,8 +16,7 @@ Updated: 2026-09-27 08:10 · heartbeat cron 90b0083a (silent 00:35→07:50!) + r
 
 ## Agents (worktree)
 - Q-161 runaway answer on the tensor split — GPU replay on 8091, find the mechanism (restarted answer vs in-answer loop).
-- Q-162 hang rule counts rank-0 CPU as progress + fast prefix search on 259k prompts.
-- MERGE of the chat-surfaces branch (Q-151..Q-153, Q-158) onto main — conflicts in server.rs / openai.rs / sdk index.
+- Q-163 shell tool errors under CI load (two sibling tests) — cause hunt.
 
 ## Next actions (in order)
 1. Q-161 + Q-162 + chat merge land → 3.0.56 (with engine surfaces + Q-160) → install → split-start 27B → E2E #3f
