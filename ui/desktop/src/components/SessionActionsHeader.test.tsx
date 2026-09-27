@@ -6,6 +6,10 @@ import type { Session } from '../types/session';
 import { assertStudioClean } from './lz/assertStudioClean';
 import { missingUtilities } from './lz/compileStudioCss';
 import { acpExportSession } from '../acp/sessions';
+import {
+  publishListedNames,
+  resetListedNamesForTests,
+} from './sessionActivity/sessionActivityStore';
 
 /**
  * Pass E — the session header:
@@ -121,4 +125,36 @@ describe('SessionActionsHeader — the JSON viewer wears the Studio syntax palet
       ])
     ).toEqual([]);
   }, 30_000);
+});
+
+/**
+ * Q-171: the sidebar row read "Hi. I'm starting a · 3" and the header dropped the " · 3", so the
+ * chat could not be told from its two namesakes once opened.
+ */
+describe('SessionActionsHeader title matches the list row', () => {
+  it('shows the " · 3" the sidebar row shows', () => {
+    resetListedNamesForTests();
+    publishListedNames([
+      { id: 'sess-1', base: "Hi. I'm starting a", label: "Hi. I'm starting a · 3" },
+    ]);
+    mount(makeSession({ name: "Hi. I'm starting a" }));
+    expect(screen.getByTestId('session-title-trigger')).toHaveTextContent("Hi. I'm starting a · 3");
+  });
+
+  it('never carries a row label over a name the row was not grouped under', () => {
+    resetListedNamesForTests();
+    publishListedNames([
+      { id: 'sess-1', base: "Hi. I'm starting a", label: "Hi. I'm starting a · 3" },
+    ]);
+    mount(makeSession({ name: 'Jira Migration Readiness' }));
+    expect(screen.getByTestId('session-title-trigger')).toHaveTextContent(
+      /^Jira Migration Readiness$/
+    );
+  });
+
+  it('shows the bare name for a session no list has shown', () => {
+    resetListedNamesForTests();
+    mount(makeSession({ name: 'MLX confirmation' }));
+    expect(screen.getByTestId('session-title-trigger')).toHaveTextContent(/^MLX confirmation$/);
+  });
 });

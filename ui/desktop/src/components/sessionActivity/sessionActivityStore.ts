@@ -256,7 +256,7 @@ export function activeSessions(state: SessionActivitySnapshot): ActiveSession[] 
       running.startedAt;
   }
   return [...rows.values()].sort((a, b) => {
-    if ((a.needsYou > 0) !== (b.needsYou > 0)) return a.needsYou > 0 ? -1 : 1;
+    if (a.needsYou > 0 !== b.needsYou > 0) return a.needsYou > 0 ? -1 : 1;
     return (a.runningSince ?? '').localeCompare(b.runningSince ?? '');
   });
 }
@@ -309,12 +309,59 @@ export function disambiguatedNames<T extends { id: string; createdAt?: string }>
       out.set(group[0].id, name);
       continue;
     }
-    const ordered = [...group].sort((a, b) =>
-      (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
-    );
+    const ordered = [...group].sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
     ordered.forEach((session, index) =>
       out.set(session.id, index === 0 ? name : `${name} · ${index + 1}`)
     );
   }
   return out;
+}
+
+/** One list row's name: the bare name it was grouped by and the label it shows (" · 3" added). */
+export interface ListedName {
+  base: string;
+  label: string;
+}
+
+const listedNames = new Map<string, ListedName>();
+const listedNameListeners = new Set<() => void>();
+
+/**
+ * The sidebar lists publish the names they show, so the chat header reads the same " · 3" as the
+ * row it was opened from (Q-171: the row read "Hi. I'm starting a · 3", the header dropped the
+ * " · 3"). An entry is replaced only when it changed, so an unchanged list re-renders nothing.
+ */
+export function publishListedNames(rows: ReadonlyArray<{ id: string } & ListedName>): void {
+  let changed = false;
+  for (const { id, base, label } of rows) {
+    const current = listedNames.get(id);
+    if (current?.base === base && current.label === label) continue;
+    listedNames.set(id, { base, label });
+    changed = true;
+  }
+  if (!changed) return;
+  for (const listener of listedNameListeners) listener();
+}
+
+function subscribeListedNames(listener: () => void): () => void {
+  listedNameListeners.add(listener);
+  return () => {
+    listedNameListeners.delete(listener);
+  };
+}
+
+export function useListedName(sessionId: string | undefined): ListedName | undefined {
+  return useSyncExternalStore(subscribeListedNames, () =>
+    sessionId === undefined ? undefined : listedNames.get(sessionId)
+  );
+}
+
+/** The name as the lists show it: the row's label while the row was grouped under this very name. */
+export function listedTitle(name: string, listed: ListedName | undefined): string {
+  return listed && listed.base === name ? listed.label : name;
+}
+
+export function resetListedNamesForTests(): void {
+  listedNames.clear();
+  for (const listener of listedNameListeners) listener();
 }

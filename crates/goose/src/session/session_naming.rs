@@ -8,6 +8,9 @@ use crate::{providers::base::Provider, utils::safe_truncate};
 
 pub static MSG_COUNT_FOR_SESSION_NAME_GENERATION: usize = 3;
 
+/// The name a session is created with until it is titled (acp/server/new_session.rs).
+pub const UNTITLED_SESSION_NAME: &str = "New Chat";
+
 fn strip_xml_tags(text: &str) -> String {
     static BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?s)<([a-zA-Z][a-zA-Z0-9_]*)[^>]*>.*?</[a-zA-Z][a-zA-Z0-9_]*>").unwrap()
@@ -96,6 +99,47 @@ fn get_initial_user_messages(messages: &Conversation) -> Vec<String> {
     user_prompt_texts(messages)
         .take(MSG_COUNT_FOR_SESSION_NAME_GENERATION)
         .collect()
+}
+
+/// One title call per session at a time: the start-of-turn title and the end-of-turn retry can
+/// meet when a turn ends before the first title returns, and a second call would only race it.
+pub(crate) struct TitleInFlight(String);
+
+static TITLES_IN_FLIGHT: LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    LazyLock::new(Default::default);
+
+impl TitleInFlight {
+    pub(crate) fn claim(session_id: &str) -> Option<Self> {
+        TITLES_IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(session_id.to_string())
+            .then(|| Self(session_id.to_string()))
+    }
+}
+
+impl Drop for TitleInFlight {
+    fn drop(&mut self) {
+        TITLES_IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.0);
+    }
+}
+
+/// A session whose name no title model chose: the placeholder, or the first-words stump a
+/// provider without a title model stores (`cli_common::first_words_title`) — which is also what the
+/// swarm pool stores when it cannot answer the title request because the turn holds the node
+/// (Q-171: "Hi. I'm starting a" on a 1,361-message session, never asked again).
+pub(crate) fn is_untitled(name: &str, messages: &Conversation) -> bool {
+    let name = name.trim();
+    if name.is_empty() || name == UNTITLED_SESSION_NAME {
+        return true;
+    }
+    let prompts = get_initial_user_messages(messages);
+    (1..=prompts.len()).any(|carried| {
+        crate::providers::cli_common::first_words_title(&prompts[..carried].join("\n")) == name
+    })
 }
 
 /// Extracts preprompt context (assistant-audience blocks) from the first user message.

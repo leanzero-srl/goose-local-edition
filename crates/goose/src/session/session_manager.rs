@@ -6,7 +6,8 @@ use crate::providers::base::Provider;
 use crate::recipe::Recipe;
 use crate::session::extension_data::{ExtensionData, ExtensionState};
 use crate::session::session_naming::{
-    generate_session_name, user_prompt_count, MSG_COUNT_FOR_SESSION_NAME_GENERATION,
+    generate_session_name, is_untitled, user_prompt_count, TitleInFlight,
+    MSG_COUNT_FOR_SESSION_NAME_GENERATION,
 };
 use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
@@ -369,6 +370,12 @@ fn extension_state_json_path(key: &str) -> String {
     format!("$.\"{key}\"")
 }
 
+#[derive(Debug, Clone, Copy)]
+enum NamingMoment {
+    TurnStart,
+    TurnEnd,
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionNameUpdate {
     pub session_id: String,
@@ -563,10 +570,33 @@ impl SessionManager {
         })
     }
 
+    /// The title at the start of a turn: the first three prompts each ask (or refine) it.
     pub async fn maybe_update_name(
         &self,
         id: &str,
         provider: Arc<dyn Provider>,
+    ) -> Result<Option<SessionNameUpdate>> {
+        self.update_name(id, provider, NamingMoment::TurnStart)
+            .await
+    }
+
+    /// Q-171: at the end of a completed turn — the node the turn held is free again — a session
+    /// that no title model has named yet asks again, however many prompts it holds. The start-of-turn
+    /// title of a swarm chat meets the node the turn itself holds, so it stored the first-words stump
+    /// ("Hi. I'm starting a") and, past the third prompt, nothing ever asked again.
+    pub async fn retitle_if_untitled(
+        &self,
+        id: &str,
+        provider: Arc<dyn Provider>,
+    ) -> Result<Option<SessionNameUpdate>> {
+        self.update_name(id, provider, NamingMoment::TurnEnd).await
+    }
+
+    async fn update_name(
+        &self,
+        id: &str,
+        provider: Arc<dyn Provider>,
+        moment: NamingMoment,
     ) -> Result<Option<SessionNameUpdate>> {
         let session = self.get_session(id, true).await?;
 
@@ -587,6 +617,23 @@ impl SessionManager {
             return Ok(Some(self.system_generated_name_update(id, name).await?));
         }
 
+        let conversation = session
+            .conversation
+            .ok_or_else(|| anyhow::anyhow!("No messages found"))?;
+        let prompt_count = user_prompt_count(&conversation);
+        let eligible = match moment {
+            NamingMoment::TurnStart => {
+                (1..=MSG_COUNT_FOR_SESSION_NAME_GENERATION).contains(&prompt_count)
+            }
+            NamingMoment::TurnEnd => prompt_count >= 1 && is_untitled(&session.name, &conversation),
+        };
+        if !eligible {
+            return Ok(None);
+        }
+        let Some(_in_flight) = TitleInFlight::claim(id) else {
+            return Ok(None);
+        };
+
         let model_config = match session.model_config.clone() {
             Some(model_config) => model_config,
             None => {
@@ -602,17 +649,12 @@ impl SessionManager {
                 )?
             }
         };
-        let conversation = session
-            .conversation
-            .ok_or_else(|| anyhow::anyhow!("No messages found"))?;
-
-        let prompt_count = user_prompt_count(&conversation);
-        if (1..=MSG_COUNT_FOR_SESSION_NAME_GENERATION).contains(&prompt_count) {
-            let name =
-                generate_session_name(provider.as_ref(), &model_config, id, &conversation).await?;
-            return Ok(Some(self.system_generated_name_update(id, name).await?));
+        let name =
+            generate_session_name(provider.as_ref(), &model_config, id, &conversation).await?;
+        if name == session.name {
+            return Ok(None);
         }
-        Ok(None)
+        Ok(Some(self.system_generated_name_update(id, name).await?))
     }
 
     pub async fn search_chat_history(
@@ -2787,6 +2829,134 @@ mod tests {
             update.as_ref().map(|update| update.name.as_str()),
             Some(GENERATED_SESSION_NAME)
         );
+    }
+
+    /// Q-171 (session 20260926_20, 1,361 messages): the start-of-turn title of a swarm chat met the
+    /// node the turn itself held, so the pool stored the first-words stump "Hi. I'm starting a", and
+    /// past the third prompt nothing asked again. The end of a completed turn asks again.
+    #[tokio::test]
+    async fn a_first_words_stump_is_retitled_at_the_end_of_a_later_turn() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let session = sm
+            .create_session(
+                temp_dir.path().to_path_buf(),
+                "New Chat".to_string(),
+                SessionType::User,
+                GooseMode::default(),
+            )
+            .await
+            .unwrap();
+        for prompt in [
+            "Hi. I'm starting a Jira Data Center to Cloud migration readiness assessment",
+            "Remind me what inactive cutoff we settled on",
+            "Draft the email to Aoife that goes with the PDF",
+            "Last thing: write notes/status.md with a short checklist",
+        ] {
+            sm.add_message(&session.id, &Message::user().with_text(prompt))
+                .await
+                .unwrap();
+        }
+        sm.update(&session.id)
+            .system_generated_name("Hi. I'm starting a")
+            .model_config(ModelConfig::new("naming-test-model"))
+            .apply()
+            .await
+            .unwrap();
+
+        assert!(
+            sm.maybe_update_name(&session.id, naming_test_provider())
+                .await
+                .unwrap()
+                .is_none(),
+            "the start-of-turn window is the first three prompts"
+        );
+        let update = sm
+            .retitle_if_untitled(&session.id, naming_test_provider())
+            .await
+            .unwrap();
+        assert_eq!(
+            update.as_ref().map(|update| update.name.as_str()),
+            Some(GENERATED_SESSION_NAME)
+        );
+        assert_eq!(
+            sm.get_session(&session.id, false).await.unwrap().name,
+            GENERATED_SESSION_NAME
+        );
+        assert!(
+            sm.retitle_if_untitled(&session.id, naming_test_provider())
+                .await
+                .unwrap()
+                .is_none(),
+            "a session a title model named is not asked again"
+        );
+    }
+
+    /// The end-of-turn title asks only for a session no title model named: the placeholder, or the
+    /// stump of the prompts the title request carried. A real title and a name the person set stay.
+    #[tokio::test]
+    async fn only_an_untitled_session_is_retitled_at_the_end_of_a_turn() {
+        let temp_dir = TempDir::new().unwrap();
+        let sm = SessionManager::new(temp_dir.path().to_path_buf());
+        let make = |name: &'static str| {
+            let sm = &sm;
+            let dir = temp_dir.path().to_path_buf();
+            async move {
+                let session = sm
+                    .create_session(
+                        dir,
+                        name.to_string(),
+                        SessionType::User,
+                        GooseMode::default(),
+                    )
+                    .await
+                    .unwrap();
+                sm.update(&session.id)
+                    .model_config(ModelConfig::new("naming-test-model"))
+                    .apply()
+                    .await
+                    .unwrap();
+                sm.add_message(&session.id, &Message::user().with_text("Hi"))
+                    .await
+                    .unwrap();
+                sm.add_message(
+                    &session.id,
+                    &Message::user().with_text("I want to work on the Jira migration"),
+                )
+                .await
+                .unwrap();
+                session.id
+            }
+        };
+
+        let placeholder = make("New Chat").await;
+        let stump_of_two_prompts = make("Hi I want to").await;
+        let titled = make("Jira Migration Planning").await;
+        let renamed = make("New Chat").await;
+        sm.update(&renamed)
+            .user_provided_name("Hi I want to")
+            .apply()
+            .await
+            .unwrap();
+
+        for id in [&placeholder, &stump_of_two_prompts] {
+            assert!(
+                sm.retitle_if_untitled(id, naming_test_provider())
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "{id} is untitled"
+            );
+        }
+        for id in [&titled, &renamed] {
+            assert!(
+                sm.retitle_if_untitled(id, naming_test_provider())
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "{id} keeps its name"
+            );
+        }
     }
 
     #[tokio::test]

@@ -66,6 +66,7 @@ import { SessionActivityMarker, useSessionStateAttrs } from '../sessionActivity/
 import {
   activityOf,
   disambiguatedNames,
+  publishListedNames,
   useSessionActivity,
 } from '../sessionActivity/sessionActivityStore';
 import { useStartChatAbout } from './useStartChatAbout';
@@ -607,6 +608,15 @@ const ProjectRow: React.FC<ProjectRowProps> = ({
     () => disambiguatedNames(known, (s) => displaySessionListName(s.name)),
     [known]
   );
+  // The chat header reads these, so it shows the row's " · 3" too (Q-171).
+  useEffect(() => {
+    publishListedNames(
+      known.map((s) => {
+        const base = displaySessionListName(s.name);
+        return { id: s.id, base, label: labels.get(s.id) ?? base };
+      })
+    );
+  }, [known, labels]);
   const hiddenKnown = known.length - shown.length;
   // The server may hold sessions older than the recent list; it is asked only once the folder is
   // at least a full preview (a two-session folder is not hiding anything).

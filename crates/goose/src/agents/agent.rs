@@ -242,6 +242,12 @@ fn resolve_use_login_shell_path(explicit: Option<bool>, platform: &GoosePlatform
     explicit.unwrap_or(matches!(platform, GoosePlatform::GooseDesktop))
 }
 
+#[derive(Clone, Copy)]
+enum NamingAt {
+    TurnStart,
+    TurnEnd,
+}
+
 /// The main goose Agent
 pub struct Agent {
     pub(super) provider: SharedProvider,
@@ -456,6 +462,34 @@ impl Agent {
         self.set_repeat_guard(false);
         self.swarm_worker
             .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The title's two moments share one publish path: the start of a turn (the first three
+    /// prompts ask) and the end of a completed turn, when the node the turn held is free (Q-171: a
+    /// session the start-of-turn title left as a first-words stump or "New Chat" asks again).
+    fn spawn_session_naming(&self, session_id: String, provider: Arc<dyn Provider>, at: NamingAt) {
+        if self.config.disable_session_naming {
+            return;
+        }
+        let manager = self.config.session_manager.clone();
+        let session_name_update_tx = self.config.session_name_update_tx.clone();
+        tokio::spawn(async move {
+            let named = match at {
+                NamingAt::TurnStart => manager.maybe_update_name(&session_id, provider).await,
+                NamingAt::TurnEnd => manager.retitle_if_untitled(&session_id, provider).await,
+            };
+            match named {
+                Ok(Some(update)) => {
+                    if let Some(tx) = session_name_update_tx {
+                        if tx.send(update).is_err() {
+                            warn!("Failed to publish generated session name");
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => warn!("Failed to generate session description: {}", e),
+            }
+        });
     }
 
     pub(crate) fn is_swarm_worker(&self) -> bool {
@@ -1996,28 +2030,11 @@ impl Agent {
                 resolved_model: Some(resolved_model),
             });
         let session_manager = self.config.session_manager.clone();
-        let session_id = session_config.id.clone();
-        if !self.config.disable_session_naming {
-            let provider = provider.clone();
-            let manager_for_spawn = session_manager.clone();
-            let session_name_update_tx = self.config.session_name_update_tx.clone();
-            tokio::spawn(async move {
-                match manager_for_spawn
-                    .maybe_update_name(&session_id, provider)
-                    .await
-                {
-                    Ok(Some(update)) => {
-                        if let Some(tx) = session_name_update_tx {
-                            if tx.send(update).is_err() {
-                                warn!("Failed to publish generated session name");
-                            }
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => warn!("Failed to generate session description: {}", e),
-                }
-            });
-        }
+        self.spawn_session_naming(
+            session_config.id.clone(),
+            provider.clone(),
+            NamingAt::TurnStart,
+        );
 
         // Count tool calls present before this reply — everything added during
         // the reply loop is part of the current turn and should not be summarized.
@@ -3239,6 +3256,7 @@ impl Agent {
             // Swarm workers are left byte-identical (the golden engine); every other session
             // records how its turn ended.
             if !self.is_swarm_worker() {
+                let completed = turn_failure.is_none() && !is_token_cancelled(&cancel_token);
                 if let Err(error) = crate::turn_outcome::record(
                     &session_manager,
                     &session_config.id,
@@ -3247,6 +3265,16 @@ impl Agent {
                 .await
                 {
                     warn!("Failed to record the turn outcome: {}", error);
+                }
+                if completed {
+                    match self.provider().await {
+                        Ok(provider) => self.spawn_session_naming(
+                            session_config.id.clone(),
+                            provider,
+                            NamingAt::TurnEnd,
+                        ),
+                        Err(error) => warn!("The title could not be retried: {}", error),
+                    }
                 }
             }
 
