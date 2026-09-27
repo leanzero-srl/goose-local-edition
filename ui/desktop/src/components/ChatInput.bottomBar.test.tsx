@@ -56,7 +56,6 @@ vi.mock('./ModelAndProviderContext', () => ({
     currentProvider: 'anthropic',
   }),
 }));
-vi.mock('./swarm/AgentSetupWizard', () => ({ default: () => null }));
 vi.mock('./alerts', () => ({
   useAlerts: () => ({ alerts: [], addAlert: vi.fn(), clearAlerts: vi.fn() }),
   AlertType: { Error: 'error', Warning: 'warning', Info: 'info' },

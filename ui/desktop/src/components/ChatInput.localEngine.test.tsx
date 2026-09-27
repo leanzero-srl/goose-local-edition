@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 import ChatInput from './ChatInput';
 import { ChatState } from '../types/chatState';
@@ -58,10 +58,6 @@ vi.mock('./alerts', () => ({
 vi.mock('./ui/ReportProblemDialog', async (original) => ({
   ...(await original<typeof import('./ui/ReportProblemDialog')>()),
   ReportProblemDialog: () => null,
-}));
-vi.mock('./swarm/AgentSetupWizard', () => ({
-  default: ({ isOpen }: { isOpen: boolean }) =>
-    isOpen ? <div data-testid="recipes-and-loops-open" /> : null,
 }));
 
 class ResizeObserverMock {
@@ -140,37 +136,32 @@ describe('the context counter while the split that measured it is down (Q-60)', 
 });
 
 /**
- * Q-6, round live-1: a "Coding · Agent" toggle sat in the swarm composer. LEANZERO_PERSONA was read
- * nowhere — a send did the same thing either way — and "Agent" promised "Autonomous — runs a loop".
- * No mode that changes nothing: the bar carries no toggle, only the launcher, one click away.
+ * Q-6, round live-1: a "Coding · Agent" toggle sat in the swarm composer and changed nothing a send did.
+ * Q-227: the "Recipes & loops" launcher that replaced it is removed with its dialog — 0 schedules,
+ * 0 saved recipes and 0 of 387 user sessions from a recipe on this Mac. The bar carries neither, on
+ * any provider; the session loop's own button (DESIGN-SESSION-LOOPS L4) takes the slot later.
  */
-describe('the swarm composer has no mode toggle, only a launcher (Q-6)', () => {
+describe('the composer carries no mode toggle and no recipes launcher (Q-6, Q-227)', () => {
   beforeEach(() => {
     served = splitServing(null, 'unknown');
   });
 
   it('no pressed-button pair and no "Persona" group', async () => {
     render(input('s1', 'swarm-model', 'swarm'));
-    await screen.findByTestId('recipes-and-loops');
+    await screen.findByTestId('models-bottom-bar');
     expect(screen.queryByRole('group', { name: 'Persona' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^(Coding|Agent)$/ })).toBeNull();
     expect(document.querySelector('[aria-pressed]')).toBeNull();
   });
 
-  it('the launcher is there from the start and opens the hub in one click', async () => {
-    render(input('s1', 'swarm-model', 'swarm'));
-    fireEvent.click(await screen.findByTestId('recipes-and-loops'));
-    expect(screen.getByTestId('recipes-and-loops-open')).toBeInTheDocument();
-  });
-
-  // Q-7: "Set up agent" opened a recipes/loops hub, not agent settings. It is named for what it opens.
-  it('the launcher is named for what it opens — never "agent"', async () => {
-    render(input('s1', 'swarm-model', 'swarm'));
-    const launcher = await screen.findByTestId('recipes-and-loops');
-    expect(launcher).toHaveTextContent('Recipes & loops');
-    expect(launcher.getAttribute('title')).toBe(
-      'Build a recipe, then run it in a loop on a schedule'
-    );
-    expect(launcher.textContent + (launcher.getAttribute('title') ?? '')).not.toMatch(/agent/i);
-  });
+  it.each(['swarm', 'omlx', 'anthropic'])(
+    'no "Recipes & loops" launcher on %s',
+    async (provider) => {
+      render(input('s1', 'swarm-model', provider));
+      await screen.findByTestId('models-bottom-bar');
+      expect(screen.queryByTestId('recipes-and-loops')).toBeNull();
+      expect(screen.queryByText(/Recipes & loops/)).toBeNull();
+      expect(screen.queryByTitle(/run it in a loop on a schedule/)).toBeNull();
+    }
+  );
 });

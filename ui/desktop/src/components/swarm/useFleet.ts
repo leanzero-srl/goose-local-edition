@@ -4,7 +4,7 @@ import type { FleetProbeResult } from '../../utils/fleetProbe';
 import { DEFAULTS, type SwarmConfig } from '../settings/swarm/golden';
 import { NodeLane, NodeStatus } from './FanInCard';
 
-export { chatCompletionsUrl, modelsUrl } from '../../utils/fleetProbe';
+export { modelsUrl } from '../../utils/fleetProbe';
 
 /**
  * Live fleet discovery for Goose Local Edition — reads the LM Studio / LM Link endpoint so the swarm

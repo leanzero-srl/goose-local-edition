@@ -1,12 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import {
-  chatCompletionsUrl,
-  lmStudioApiToken,
-  modelsUrl,
-  postFleetChat,
-  probeFleetModels,
-  type FetchLike,
-} from '../fleetProbe';
+import { lmStudioApiToken, modelsUrl, probeFleetModels, type FetchLike } from '../fleetProbe';
 
 const LAN = 'http://192.168.8.220:1234';
 const LIVE = 'http://localhost:1234';
@@ -115,7 +108,9 @@ describe('probeFleetModels — the models probe as main runs it', () => {
  * and sends it as a bearer; a 401 is the typed `http` error naming the key, never `unreachable`.
  */
 describe('the LM Studio API token — the same LMSTUDIO_API_KEY the engine reads', () => {
-  const headersOf = (fetchImpl: { mock: ReturnType<typeof vi.fn>['mock'] }): Record<string, string> =>
+  const headersOf = (fetchImpl: {
+    mock: ReturnType<typeof vi.fn>['mock'];
+  }): Record<string, string> =>
     (fetchImpl.mock.calls[0] as [string, RequestInit])[1].headers as Record<string, string>;
 
   it('sends `Authorization: Bearer <token>` when a token is given', async () => {
@@ -130,17 +125,11 @@ describe('the LM Studio API token — the same LMSTUDIO_API_KEY the engine reads
     expect(headersOf(fetchImpl)).toEqual({});
   });
 
-  it('the wizard chat POST carries the same bearer and keeps its Content-Type', async () => {
-    const fetchImpl = fetchReturning(jsonResponse({ choices: [] }));
-    await postFleetChat(LIVE, {}, fetchImpl, 1000, 'lm-token-1');
-    expect(headersOf(fetchImpl)).toEqual({
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer lm-token-1',
-    });
-  });
-
   it('a 401 is the typed `http` error with status 401 naming the missing key — never `unreachable`', async () => {
-    const bare = await probeFleetModels(LIVE, fetchReturning(jsonResponse({ error: 'Unauthorized' }, 401)));
+    const bare = await probeFleetModels(
+      LIVE,
+      fetchReturning(jsonResponse({ error: 'Unauthorized' }, 401))
+    );
     expect(bare).toEqual({
       ok: false,
       url: 'http://127.0.0.1:1234/api/v0/models',
@@ -148,7 +137,12 @@ describe('the LM Studio API token — the same LMSTUDIO_API_KEY the engine reads
       status: 401,
       detail: 'fleet returned 401 — LM Studio wants an API token (set LMSTUDIO_API_KEY)',
     });
-    const rejected = await probeFleetModels(LIVE, fetchReturning(jsonResponse({}, 401)), 3000, 'wrong');
+    const rejected = await probeFleetModels(
+      LIVE,
+      fetchReturning(jsonResponse({}, 401)),
+      3000,
+      'wrong'
+    );
     expect(rejected).toMatchObject({
       ok: false,
       error: 'http',
@@ -165,50 +159,11 @@ describe('the LM Studio API token — the same LMSTUDIO_API_KEY the engine reads
   });
 });
 
-describe('postFleetChat — the wizard chat POST as main runs it', () => {
-  it('POSTs the body as JSON to <origin>/v1/chat/completions and returns the reply body', async () => {
-    const fetchImpl = fetchReturning(
-      jsonResponse({ choices: [{ message: { content: 'What does the recipe do?' } }] })
+describe('the url helper is shared verbatim with the renderer', () => {
+  it('derives from the origin and loopback-normalises', () => {
+    expect(modelsUrl('http://192.168.8.220:1234/v1')).toBe(
+      'http://192.168.8.220:1234/api/v0/models'
     );
-    const body = { model: 'm', messages: [], stream: false };
-    const r = await postFleetChat(LAN, body, fetchImpl);
-    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://192.168.8.220:1234/v1/chat/completions');
-    expect(init.method).toBe('POST');
-    expect(init.body).toBe(JSON.stringify(body));
-    expect(r).toEqual({
-      ok: true,
-      url: 'http://192.168.8.220:1234/v1/chat/completions',
-      body: { choices: [{ message: { content: 'What does the recipe do?' } }] },
-    });
-  });
-
-  it('carries the status of a non-2xx answer so the wizard says "fleet returned 500"', async () => {
-    const r = await postFleetChat(LIVE, {}, fetchReturning(jsonResponse({}, 500)));
-    expect(r).toMatchObject({ ok: false, error: 'http', status: 500, url: 'http://127.0.0.1:1234/v1/chat/completions' });
-  });
-});
-
-describe('the url helpers are shared verbatim with the renderer', () => {
-  it('derive from the origin and loopback-normalise', () => {
-    expect(modelsUrl('http://192.168.8.220:1234/v1')).toBe('http://192.168.8.220:1234/api/v0/models');
-    expect(chatCompletionsUrl(LIVE)).toBe('http://127.0.0.1:1234/v1/chat/completions');
-  });
-
-  // Q-7: the recipe interview follows chat onto a linked Mac — through the route's relay, whose
-  // capability lives in the PATH. The origin alone reached nothing.
-  it('an engine base keeps its own path; a host base and a /v1 base are unchanged', () => {
-    expect(chatCompletionsUrl('http://localhost:1234')).toBe(
-      'http://127.0.0.1:1234/v1/chat/completions'
-    );
-    expect(chatCompletionsUrl('http://127.0.0.1:9600/v1')).toBe(
-      'http://127.0.0.1:9600/v1/chat/completions'
-    );
-    expect(chatCompletionsUrl('http://127.0.0.1:9600/v1/')).toBe(
-      'http://127.0.0.1:9600/v1/chat/completions'
-    );
-    expect(chatCompletionsUrl('http://127.0.0.1:8095/relay/cap')).toBe(
-      'http://127.0.0.1:8095/relay/cap/v1/chat/completions'
-    );
+    expect(modelsUrl(LIVE)).toBe('http://127.0.0.1:1234/api/v0/models');
   });
 });
