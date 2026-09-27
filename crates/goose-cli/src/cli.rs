@@ -905,6 +905,12 @@ enum Command {
             help = "Allow an exact Origin value for ACP CORS; may be specified multiple times and replaces the default loopback origins"
         )]
         allowed_origins: Vec<String>,
+
+        #[arg(
+            long = "exit-when-stdin-closes",
+            help = "Tear down and exit when stdin reaches EOF (the desktop app holds the other end, so its exit ends this server however it exits)"
+        )]
+        exit_when_stdin_closes: bool,
     },
 
     /// Start or resume interactive chat sessions
@@ -1449,6 +1455,7 @@ struct ServeCommandArgs {
     builtins: Vec<String>,
     dangerously_unauthenticated: bool,
     allowed_origins: Vec<String>,
+    exit_when_stdin_closes: bool,
 }
 
 async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
@@ -1470,11 +1477,17 @@ async fn handle_serve_command(args: ServeCommandArgs) -> Result<()> {
         builtins,
         dangerously_unauthenticated,
         allowed_origins,
+        exit_when_stdin_closes,
     } = args;
 
     // Before anything binds or spawns: a stop that lands during startup must reach the
     // teardown, never the default action (which kills goosed and leaks its children).
     let mut exit_signals = ExitSignals::install()?;
+    // The desktop's end of stdin closes however the app ends — quit, crash or SIGKILL — so a
+    // goosed whose app is gone tears down and exits instead of living on as an orphan that
+    // keeps the mesh daemon (Q-223).
+    exit_signals.parent_gone =
+        exit_when_stdin_closes.then(|| crate::parent_watch::watch_for_eof(std::io::stdin()));
     // A goosed that crashed (or an older build) can leave its bundled MCPs orphaned; stop, per
     // pid, the ones that provably run goose's own bundled-MCP entries (Q-138).
     goose::agents::stdio_children::spawn_startup_reaper();
@@ -1633,11 +1646,17 @@ impl ExitSignal {
 /// that ends goosed without running the teardown leaks them — measured on the packaged app
 /// 2026-09-02: an orphaned `tailscaled` on the mesh socket and an orphaned `rapid-mlx` tree
 /// on the engine port after every relaunch, both refused by the next goosed by design.
+/// The desktop app that started this goosed is gone: its end of our stdin closed (Q-223). Exits
+/// like SIGHUP — the "whoever owned me went away" signal.
+const PARENT_GONE: &str = "stdin EOF (the app that started this server is gone)";
+
 #[cfg(unix)]
 struct ExitSignals {
     term: tokio::signal::unix::Signal,
     int: tokio::signal::unix::Signal,
     hup: tokio::signal::unix::Signal,
+    /// Armed by `--exit-when-stdin-closes`; `None` never fires.
+    parent_gone: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 #[cfg(unix)]
@@ -1648,6 +1667,7 @@ impl ExitSignals {
             term: signal(SignalKind::terminate())?,
             int: signal(SignalKind::interrupt())?,
             hup: signal(SignalKind::hangup())?,
+            parent_gone: None,
         })
     }
 
@@ -1657,24 +1677,26 @@ impl ExitSignals {
             _ = self.term.recv() => ExitSignal { name: "SIGTERM", number: SignalKind::terminate().as_raw_value() },
             _ = self.int.recv() => ExitSignal { name: "SIGINT", number: SignalKind::interrupt().as_raw_value() },
             _ = self.hup.recv() => ExitSignal { name: "SIGHUP", number: SignalKind::hangup().as_raw_value() },
+            _ = crate::parent_watch::parent_gone(self.parent_gone.take()) => ExitSignal { name: PARENT_GONE, number: SignalKind::hangup().as_raw_value() },
         }
     }
 }
 
 #[cfg(not(unix))]
-struct ExitSignals;
+struct ExitSignals {
+    parent_gone: Option<tokio::sync::oneshot::Receiver<()>>,
+}
 
 #[cfg(not(unix))]
 impl ExitSignals {
     fn install() -> Result<Self> {
-        Ok(Self)
+        Ok(Self { parent_gone: None })
     }
 
     async fn recv(&mut self) -> ExitSignal {
-        let _ = tokio::signal::ctrl_c().await;
-        ExitSignal {
-            name: "SIGINT",
-            number: 2,
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => ExitSignal { name: "SIGINT", number: 2 },
+            _ = crate::parent_watch::parent_gone(self.parent_gone.take()) => ExitSignal { name: PARENT_GONE, number: 1 },
         }
     }
 }
@@ -2437,6 +2459,7 @@ pub async fn cli() -> anyhow::Result<()> {
             builtins,
             dangerously_unauthenticated,
             allowed_origins,
+            exit_when_stdin_closes,
         }) => {
             handle_serve_command(ServeCommandArgs {
                 host,
@@ -2448,6 +2471,7 @@ pub async fn cli() -> anyhow::Result<()> {
                 builtins,
                 dangerously_unauthenticated,
                 allowed_origins,
+                exit_when_stdin_closes,
             })
             .await
         }
@@ -2761,6 +2785,24 @@ mod tests {
                 );
             }
             _ => panic!("expected serve command"),
+        }
+    }
+
+    /// The desktop passes `--exit-when-stdin-closes` (gooseServe.ts); a terminal `goose serve`
+    /// without it keeps its old lifecycle — stdin from /dev/null must not stop it (Q-223).
+    #[test]
+    fn serve_follows_its_parent_only_when_asked() {
+        for (argv, expected) in [
+            (vec!["goose", "serve"], false),
+            (vec!["goose", "serve", "--exit-when-stdin-closes"], true),
+        ] {
+            match Cli::try_parse_from(argv).expect("parse failed").command {
+                Some(Command::Serve {
+                    exit_when_stdin_closes,
+                    ..
+                }) => assert_eq!(exit_when_stdin_closes, expected),
+                _ => panic!("expected serve command"),
+            }
         }
     }
 
