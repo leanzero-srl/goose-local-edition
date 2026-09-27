@@ -1,13 +1,15 @@
 # MLX quality loop — NOW (rewritten every tick, ≤ 60 lines; history → FINDINGS-LEDGER.md / E2E-RUNS.md)
 
-Updated: 2026-09-27 20:23 (date) · heartbeat cron 90b0083a + runwatch.sh per run
+Updated: 2026-09-27 20:28 (date) · heartbeat cron 90b0083a + runwatch.sh per run
 
 ## Live
 - Installed on both Macs: 3.0.60 (Q-182) — VERIFIED post-swap pids (studio 66645, macbook 35122); the 27B split
   engine restarted 20:18:13 (after the swap) and split-start answered "OK.".
 - E2E #3h STOPPED at the turn-12 boundary (13/30 turns on 3.0.59; turn 5 alone 8,352 s) to install 3.0.60.
-- E2E #3i RUNNING on 3.0.60 (27B tensor, jira brief, fresh session) · runwatch bf4ph09vl. Turn 0 answer reuses
-  40,238 of 40,819 prompt tokens. Prove: no 0-cached
+- E2E #3i RUNNING on 3.0.60 (27B tensor, jira brief, fresh session) ·  Turn 0 done 336 s (answer reused
+  40,238 of 40,819 cached). LIVE at 17:23: Q-185 (fact check shown as an answer + session idle) → agent. The
+  view was moved to the Engine page 17:21:47 and r1 stalled (Q-186, fixed in r1 cfe43fb81 for the next run;
+  this r1 keeps old code — if VIEW_AWAY is last and the engine idles, navigate back by hand). runwatch bb4mz1ngg. Prove: no 0-cached
   full re-reads (Q-182), Q-181/161/164/177, livecheck green.
 - BUILDING 3.0.61 from d08278dce (engine glance = the owner's PiP idea + Q-183 paths), private TMPDIR · watcher
   b82f7bmhy. Install at a #3i turn boundary, then a live critic round on the glance (dock, float, desktop mini window).
@@ -17,6 +19,8 @@ Updated: 2026-09-27 20:23 (date) · heartbeat cron 90b0083a + runwatch.sh per ru
   the machine's global config; fa15f595d pins the session model in the shared helper. PROVE: CI green on fa15f595d.
 
 ## Agents
+- Q-185 (worktree): background requests (fact check, title, label…) carry their kind; engine card, Run it and
+  sidebar agree on 'checking the reply'; serving label keeps the session suffix.
 - Q-184 (memory-skills-surgeon, worktree): MemoryServer::new() writes global memories to ~/.config/goose under
   GOOSE_PATH_ROOT → through Paths.
 
